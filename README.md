@@ -103,6 +103,8 @@ npm run build
 npm run build   # повторная сборка без dist/public/public
 ```
 
+Bootstrap PTY integration tests use the `node-pty` devDependency and require a real pseudo-terminal. When PTY tooling is unavailable, those tests report an explicit SKIP reason instead of a silent pass.
+
 ## Docker
 
 ```bash

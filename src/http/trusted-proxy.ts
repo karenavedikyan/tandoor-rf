@@ -69,9 +69,19 @@ function expandIpv6(ip: string): string[] | null {
   return parts.map((part) => part.padStart(4, "0"));
 }
 
+function ipVersion(ip: string): 4 | 6 | null {
+  const version = net.isIP(ip);
+  return version === 4 || version === 6 ? version : null;
+}
+
 export function isIpInTrustedList(ip: string, trustedEntries: string[]): boolean {
   const normalized = normalizeIp(ip);
   if (!normalized) {
+    return false;
+  }
+
+  const targetVersion = ipVersion(normalized);
+  if (targetVersion === null) {
     return false;
   }
 
@@ -82,7 +92,7 @@ export function isIpInTrustedList(ip: string, trustedEntries: string[]): boolean
 
   for (const entry of trustedEntries) {
     const cidr = parseCidr(entry);
-    if (!cidr) {
+    if (!cidr || cidr.version !== targetVersion) {
       continue;
     }
     const base = ipToBigInt(cidr.base);
