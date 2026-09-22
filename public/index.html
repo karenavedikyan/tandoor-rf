@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tandoor-rf</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1 class="title">tandoor-rf</h1>
+      <p class="subtitle">Тестовый запуск нового ЛК</p>
+
+      <button
+        id="check-button"
+        type="button"
+        class="check-button"
+        aria-describedby="status-message"
+      >
+        Проверить сервер
+      </button>
+
+      <p
+        id="status-message"
+        class="status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      ></p>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
