@@ -1,8 +1,41 @@
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 
 const HEALTH_BODY = { status: "ok", app: "tandoor-rf" } as const;
+
+const SAFE_ERROR_MESSAGES: Readonly<Record<number, string>> = {
+  400: "Bad request",
+  404: "Not found",
+  416: "Range not satisfiable",
+  500: "Internal server error",
+};
+
+function getErrorStatus(err: unknown): number {
+  if (err !== null && typeof err === "object") {
+    const candidate = err as { status?: unknown; statusCode?: unknown };
+    const status =
+      typeof candidate.status === "number"
+        ? candidate.status
+        : typeof candidate.statusCode === "number"
+          ? candidate.statusCode
+          : undefined;
+
+    if (typeof status === "number" && status >= 400 && status < 600) {
+      return status;
+    }
+  }
+
+  return 500;
+}
+
+function getSafeErrorMessage(status: number): string {
+  return SAFE_ERROR_MESSAGES[status] ?? "An error occurred";
+}
+
+function isApiRequest(req: Request): boolean {
+  return req.path.startsWith("/api");
+}
 
 function parsePort(value: string | undefined): number {
   if (value === undefined) {
@@ -46,6 +79,28 @@ export function createApp(): express.Application {
   app.get("/", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "index.html"));
   });
+
+  app.use(
+    (err: unknown, req: Request, res: Response, next: NextFunction): void => {
+      if (res.headersSent) {
+        next(err);
+        return;
+      }
+
+      const status = getErrorStatus(err);
+
+      if (status >= 500) {
+        console.error(`Server error (${status}) ${req.method} ${req.path}`);
+      }
+
+      if (isApiRequest(req)) {
+        res.status(status).json({ error: getSafeErrorMessage(status) });
+        return;
+      }
+
+      res.status(status).type("text/plain").send(getSafeErrorMessage(status));
+    },
+  );
 
   return app;
 }

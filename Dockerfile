@@ -25,6 +25,7 @@ COPY --from=build /app/dist ./dist
 
 USER appuser
 
+ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 

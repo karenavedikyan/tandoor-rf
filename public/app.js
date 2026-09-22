@@ -40,7 +40,7 @@
       signal: controller.signal,
     })
       .then(function (response) {
-        if (!response.ok) {
+        if (response.status !== 200) {
           throw new Error(
             "Сервер вернул неожиданный код: " + response.status,
           );
