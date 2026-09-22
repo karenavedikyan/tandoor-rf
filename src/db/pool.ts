@@ -1,5 +1,6 @@
 import { Pool, type PoolConfig, type QueryResult } from "pg";
-import { getDatabaseUrl, getPgSslConfig } from "../config";
+import { createPgPoolOptions } from "../config/pg-ssl";
+import { getDatabaseUrl } from "../config";
 
 let pool: Pool | null | undefined;
 
@@ -14,13 +15,13 @@ export function getPool(): Pool | null {
     return null;
   }
 
-  const ssl = getPgSslConfig();
+  const pgOptions = createPgPoolOptions(databaseUrl);
   const config: PoolConfig = {
-    connectionString: databaseUrl,
+    connectionString: pgOptions.connectionString,
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
-    ssl: ssl === false ? false : ssl,
+    ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
   };
 
   pool = new Pool(config);

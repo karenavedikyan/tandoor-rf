@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { Pool } from "pg";
-import { getDatabaseUrl, getPgSslConfig } from "../config";
+import { createPgPoolOptions } from "../config/pg-ssl";
+import { getDatabaseUrl } from "../config";
 
 const MIGRATION_LOCK_KEY = 902_451_001;
 
@@ -26,15 +27,16 @@ export async function runMigrations(options?: { databaseUrl?: string }): Promise
     throw new Error("DATABASE_URL is required to run migrations.");
   }
 
-  const ssl = getPgSslConfig();
+  const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
-    connectionString: databaseUrl,
+    connectionString: pgOptions.connectionString,
     max: 1,
-    ssl: ssl === false ? false : ssl,
+    ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
   });
 
   const client = await pool.connect();
   const applied: string[] = [];
+  let lockHeld = false;
 
   try {
     await client.query("BEGIN");
@@ -45,6 +47,7 @@ export async function runMigrations(options?: { databaseUrl?: string }): Promise
     if (!lock.rows[0]?.locked) {
       throw new Error("Another migration process is already running.");
     }
+    lockHeld = true;
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -73,15 +76,18 @@ export async function runMigrations(options?: { databaseUrl?: string }): Promise
       applied.push(filename);
     }
 
-    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
     await client.query("COMMIT");
+    lockHeld = false;
+    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
     return applied;
   } catch (error) {
     await client.query("ROLLBACK");
-    try {
-      await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
-    } catch {
-      // ignore unlock failure after rollback
+    if (lockHeld) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
+      } catch {
+        // ignore unlock failure after rollback
+      }
     }
     throw error;
   } finally {

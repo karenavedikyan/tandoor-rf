@@ -1,49 +1,32 @@
 import { Pool } from "pg";
 import { runMigrations } from "../../src/db/migrate-runner";
-
-const TEST_DB_MARKER = "_test";
+import {
+  assertTestDatabaseUrl,
+  getRequiredTestDatabaseUrl,
+} from "../../src/shared/test-database-guard";
 
 export function getIntegrationDatabaseUrl(): string {
-  const url = process.env.TEST_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim();
-  if (!url) {
-    throw new Error(
-      "Integration tests require TEST_DATABASE_URL or DATABASE_URL pointing to a test database.",
-    );
+  const url = process.env.TEST_DATABASE_URL?.trim();
+  if (url) {
+    assertTestDatabaseUrl(url, "integration tests");
+    return url;
   }
-  assertTestDatabaseUrl(url);
-  return url;
+
+  const fallback = process.env.DATABASE_URL?.trim();
+  if (fallback) {
+    assertTestDatabaseUrl(fallback, "integration tests");
+    return fallback;
+  }
+
+  throw new Error(
+    "Integration tests require TEST_DATABASE_URL (preferred) or DATABASE_URL pointing to a test database.",
+  );
 }
 
-function extractDatabaseName(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const fromPath = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
-    if (fromPath) {
-      return fromPath;
-    }
-  } catch {
-    // fall through for non-standard postgres URLs
-  }
-
-  const match = url.match(/\/([^/?]+)(?:\?|$)/);
-  if (match?.[1]) {
-    return decodeURIComponent(match[1]);
-  }
-
-  throw new Error("Invalid database URL for integration tests.");
-}
-
-export function assertTestDatabaseUrl(url: string): void {
-  const dbName = extractDatabaseName(url);
-
-  if (dbName !== "tandoor_rf_test" && !dbName.endsWith(TEST_DB_MARKER)) {
-    throw new Error(
-      `Refusing to run integration tests against non-test database "${dbName}". Use tandoor_rf_test.`,
-    );
-  }
-}
+export { assertTestDatabaseUrl, getRequiredTestDatabaseUrl };
 
 export async function resetDatabase(databaseUrl: string): Promise<void> {
+  assertTestDatabaseUrl(databaseUrl, "resetDatabase");
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const client = await pool.connect();
   try {
@@ -59,6 +42,7 @@ export async function resetDatabase(databaseUrl: string): Promise<void> {
 }
 
 export async function prepareDatabase(databaseUrl: string): Promise<void> {
+  assertTestDatabaseUrl(databaseUrl, "prepareDatabase");
   await resetDatabase(databaseUrl);
   await runMigrations({ databaseUrl });
 }
@@ -67,7 +51,7 @@ export function setIntegrationEnv(databaseUrl: string, origin = "http://127.0.0.
   process.env.DATABASE_URL = databaseUrl;
   process.env.APP_ORIGIN = origin;
   process.env.PGSSLMODE = "disable";
-  process.env.TRUST_PROXY = "false";
+  process.env.TRUSTED_PROXIES = "";
   process.env.NODE_ENV = "test";
 }
 
@@ -80,6 +64,7 @@ export async function createTestUser(input: {
   status?: string;
   phone?: string | null;
 }): Promise<{ id: string }> {
+  assertTestDatabaseUrl(input.databaseUrl, "createTestUser");
   const { hashPassword } = await import("../../src/auth/password");
   const pool = new Pool({ connectionString: input.databaseUrl, max: 1 });
   const passwordHash = await hashPassword(input.password);

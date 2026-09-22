@@ -8,10 +8,13 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc && node scripts/copy-static.mjs",
     "start": "node dist/server.js",
+    "start:local": "node --env-file=.env dist/server.js",
     "migrate": "node dist/cli/migrate.js",
+    "migrate:local": "node --env-file=.env dist/cli/migrate.js",
     "bootstrap-admin": "node dist/cli/bootstrap-admin.js",
+    "bootstrap-admin:local": "node --env-file=.env dist/cli/bootstrap-admin.js",
     "test": "node --import tsx --test test/server.test.ts test/unit/**/*.test.ts",
-    "test:integration": "node --import tsx --test test/integration/**/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",
     "test:all": "npm test && npm run test:integration"
   },
   "engines": {

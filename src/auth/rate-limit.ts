@@ -19,99 +19,92 @@ function ipBucketKey(ip: string): string {
   return `ip:${ip}`;
 }
 
-async function checkBucket(
+/**
+ * Atomically reserves one login attempt in the bucket before password verification.
+ * Window semantics: attempts are counted inside a 15-minute sliding window;
+ * the 6th email attempt within the window returns 429 with Retry-After up to 15 minutes.
+ */
+async function reserveBucketAttempt(
   bucketKey: string,
   maxAttempts: number,
 ): Promise<RateLimitCheck> {
-  const now = Date.now();
   const result = await query<{
     attempt_count: number;
-    window_started_at: Date;
     locked_until: Date | null;
   }>(
     `
-      SELECT attempt_count, window_started_at, locked_until
-      FROM login_rate_limits
-      WHERE bucket_key = $1
+      INSERT INTO login_rate_limits (bucket_key, attempt_count, window_started_at, locked_until, updated_at)
+      VALUES ($1, 1, NOW(), NULL, NOW())
+      ON CONFLICT (bucket_key) DO UPDATE SET
+        attempt_count = CASE
+          WHEN login_rate_limits.locked_until IS NOT NULL AND login_rate_limits.locked_until > NOW()
+            THEN login_rate_limits.attempt_count
+          WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval
+            THEN 1
+          ELSE login_rate_limits.attempt_count + 1
+        END,
+        window_started_at = CASE
+          WHEN login_rate_limits.locked_until IS NOT NULL AND login_rate_limits.locked_until > NOW()
+            THEN login_rate_limits.window_started_at
+          WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval
+            THEN NOW()
+          ELSE login_rate_limits.window_started_at
+        END,
+        locked_until = CASE
+          WHEN login_rate_limits.locked_until IS NOT NULL AND login_rate_limits.locked_until > NOW()
+            THEN login_rate_limits.locked_until
+          WHEN (
+            CASE
+              WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval THEN 1
+              ELSE login_rate_limits.attempt_count + 1
+            END
+          ) > $3 THEN NOW() + ($4 || ' milliseconds')::interval
+          ELSE NULL
+        END,
+        updated_at = NOW()
+      RETURNING attempt_count, locked_until
     `,
-    [bucketKey],
+    [bucketKey, String(LOGIN_RATE_WINDOW_MS), maxAttempts, String(LOGIN_LOCK_MS)],
   );
 
-  const row = result.rows[0];
-  if (row?.locked_until && row.locked_until.getTime() > now) {
+  const row = result.rows[0]!;
+  const now = Date.now();
+  if (row.locked_until && row.locked_until.getTime() > now) {
     return {
       allowed: false,
       retryAfterSec: Math.max(1, Math.ceil((row.locked_until.getTime() - now) / 1000)),
     };
   }
 
-  if (row) {
-    const windowAge = now - row.window_started_at.getTime();
-    if (windowAge <= LOGIN_RATE_WINDOW_MS && row.attempt_count >= maxAttempts) {
-      return {
-        allowed: false,
-        retryAfterSec: Math.max(1, Math.ceil(LOGIN_LOCK_MS / 1000)),
-      };
-    }
+  if (row.attempt_count > maxAttempts) {
+    return {
+      allowed: false,
+      retryAfterSec: Math.max(1, Math.ceil(LOGIN_LOCK_MS / 1000)),
+    };
   }
 
   return { allowed: true };
 }
 
-export async function assertLoginAllowed(
+export async function reserveLoginAttempt(
   email: string,
   ip: string | null,
 ): Promise<RateLimitCheck> {
-  const emailCheck = await checkBucket(emailBucketKey(email), LOGIN_EMAIL_MAX_ATTEMPTS);
+  const emailCheck = await reserveBucketAttempt(
+    emailBucketKey(email),
+    LOGIN_EMAIL_MAX_ATTEMPTS,
+  );
   if (!emailCheck.allowed) {
     return emailCheck;
   }
+
   if (ip) {
-    const ipCheck = await checkBucket(ipBucketKey(ip), LOGIN_IP_MAX_ATTEMPTS);
+    const ipCheck = await reserveBucketAttempt(ipBucketKey(ip), LOGIN_IP_MAX_ATTEMPTS);
     if (!ipCheck.allowed) {
       return ipCheck;
     }
   }
-  return { allowed: true };
-}
 
-async function incrementBucket(bucketKey: string, maxAttempts: number): Promise<void> {
-  await query(
-    `
-      INSERT INTO login_rate_limits (bucket_key, attempt_count, window_started_at, locked_until, updated_at)
-      VALUES ($1, 1, NOW(), NULL, NOW())
-      ON CONFLICT (bucket_key) DO UPDATE SET
-        attempt_count = CASE
-          WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval THEN 1
-          ELSE login_rate_limits.attempt_count + 1
-        END,
-        window_started_at = CASE
-          WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval THEN NOW()
-          ELSE login_rate_limits.window_started_at
-        END,
-        locked_until = CASE
-          WHEN (
-            CASE
-              WHEN login_rate_limits.window_started_at < NOW() - ($2 || ' milliseconds')::interval THEN 1
-              ELSE login_rate_limits.attempt_count + 1
-            END
-          ) >= $3 THEN NOW() + ($4 || ' milliseconds')::interval
-          ELSE login_rate_limits.locked_until
-        END,
-        updated_at = NOW()
-    `,
-    [bucketKey, String(LOGIN_RATE_WINDOW_MS), maxAttempts, String(LOGIN_LOCK_MS)],
-  );
-}
-
-export async function recordLoginFailure(
-  email: string,
-  ip: string | null,
-): Promise<void> {
-  await incrementBucket(emailBucketKey(email), LOGIN_EMAIL_MAX_ATTEMPTS);
-  if (ip) {
-    await incrementBucket(ipBucketKey(ip), LOGIN_IP_MAX_ATTEMPTS);
-  }
   await query(
     `
       DELETE FROM login_rate_limits
@@ -120,11 +113,10 @@ export async function recordLoginFailure(
     `,
     [String(LOGIN_RATE_RETENTION_MS)],
   );
+
+  return { allowed: true };
 }
 
-export async function clearLoginFailures(email: string, ip: string | null): Promise<void> {
+export async function clearLoginFailuresForEmail(email: string): Promise<void> {
   await query("DELETE FROM login_rate_limits WHERE bucket_key = $1", [emailBucketKey(email)]);
-  if (ip) {
-    await query("DELETE FROM login_rate_limits WHERE bucket_key = $1", [ipBucketKey(ip)]);
-  }
 }

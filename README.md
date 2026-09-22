@@ -43,26 +43,35 @@
 
 | Параметр | Значение |
 |----------|----------|
-| Email | 5 неудачных попыток / 15 мин → блок 15 мин |
-| IP | 20 неудачных попыток / 15 мин → блок 15 мин |
+| Email | до 5 попыток за 15 мин → 6-я получает **429** + `Retry-After` |
+| IP | до 20 попыток за 15 мин (любые email) → 21-я получает **429** |
 | Хранение счётчиков | до 24 ч, без бессрочной блокировки |
 
-`X-Forwarded-For` **не доверяется**, пока явно не включён `TRUST_PROXY=true` (для TW — только после подтверждения схемы прокси).
+Попытка резервируется **атомарно до проверки пароля**. Успешный вход сбрасывает только email-bucket; IP-защита сохраняется.
+
+`X-Forwarded-For` **игнорируется**, пока не задан `TRUSTED_PROXIES` и socket не принадлежит доверенному прокси/CIDR. До проверки схемы TW посетители за одним NAT могут делить IP-лимит — это ожидаемое ограничение.
+
+### Выход из системы
+
+- Успешный `POST /api/auth/logout` отзывает серверную сессию и просит браузер удалить cookie.
+- Если отзыв сессии в БД не удался, API возвращает **503** и **не** сообщает об успехе; cookie может остаться локально, но повторный выход следует попробовать снова.
 
 ## Локальный запуск
 
 ```bash
 npm ci
 cp .env.example .env
-# отредактируйте DATABASE_URL и APP_ORIGIN
+# отредактируйте DATABASE_URL (только test/local) и APP_ORIGIN
 
 npm run build
-npm run migrate
-npm run bootstrap-admin   # один раз, интерактивно
-npm start
+npm run migrate:local
+npm run bootstrap-admin:local   # один раз, интерактивно
+npm run start:local
 ```
 
-Откройте http://localhost:3000
+Команды `*:local` загружают переменные из `.env` через встроенный механизм Node.js 22 (`--env-file=.env`). Файл `.env` не коммитится.
+
+Для production-like запуска используйте `npm start` и передавайте env через платформу деплоя.
 
 ### Тестовая PostgreSQL
 
@@ -73,10 +82,15 @@ npm start
 export TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test
 export DATABASE_URL="$TEST_DATABASE_URL"
 export APP_ORIGIN=http://127.0.0.1:3000
+export PGSSLMODE=disable
 npm run migrate
 ```
 
-Интеграционные тесты **отказываются** работать с БД без суффикса `_test`.
+Интеграционные тесты и `scripts/smoke-local.sh` **отказываются** работать с БД без суффикса `_test`.
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test ./scripts/smoke-local.sh
+```
 
 ### Проверки
 
@@ -86,6 +100,7 @@ npm run typecheck
 npm test
 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test npm run test:integration
 npm run build
+npm run build   # повторная сборка без dist/public/public
 ```
 
 ## Docker
@@ -93,8 +108,10 @@ npm run build
 ```bash
 docker build -t tandoor-rf .
 docker run --rm -p 3000:3000 \
-  -e APP_ORIGIN=http://localhost:3000 \
+  -e NODE_ENV=production \
+  -e APP_ORIGIN=https://your-app.example \
   -e DATABASE_URL=postgresql://user:pass@host:5432/tandoor_rf \
+  -e PGSSLROOTCERT=/path/to/ca.pem \
   tandoor-rf
 ```
 
@@ -107,10 +124,13 @@ docker run --rm -p 3000:3000 \
 | `PORT` | нет (3000) | HTTP-порт |
 | `APP_ORIGIN` | да для auth | доверенный Origin, напр. `http://localhost:3000` |
 | `DATABASE_URL` | для auth | PostgreSQL URL; prod: `tandoor_rf` на TW |
-| `NODE_ENV` | prod | `production` включает Secure cookie |
-| `PGSSLMODE` | локально | `disable` для локальных тестов без TLS |
-| `PGSSLROOTCERT` | prod TW | CA для проверки TLS |
-| `TRUST_PROXY` | нет | `true` — доверять `X-Forwarded-For` (только после настройки TW) |
+| `TEST_DATABASE_URL` | smoke/tests | только `tandoor_rf_test` или `*_test` |
+| `NODE_ENV` | prod | `production` включает Secure cookie и обязательный TLS к PostgreSQL |
+| `PGSSLMODE` | локально | `disable` только для local/test/development |
+| `PGSSLROOTCERT` | prod TW | PEM-содержимое CA **или** абсолютный путь к PEM-файлу |
+| `TRUSTED_PROXIES` | нет | CSV доверенных IP/CIDR прокси для цепочки `X-Forwarded-For` |
+
+В **production** запрещены `PGSSLMODE=disable` и `sslmode=disable|no-verify` в URL.
 
 Пример: `.env.example`
 
@@ -118,7 +138,7 @@ docker run --rm -p 3000:3000 \
 
 1. Согласовать и создать PostgreSQL `tandoor_rf` на TW (отдельно от старого `tandoor-platform`).
 2. Задеплоить образ из проверенного коммита (Dockerfile в корне, порт **3000**).
-3. Установить env: `DATABASE_URL`, `APP_ORIGIN` (технический домен TW), `NODE_ENV=production`.
+3. Установить env: `DATABASE_URL`, `APP_ORIGIN` (технический домен TW), `NODE_ENV=production`, `PGSSLROOTCERT`.
 4. Выполнить **вручную** (one-off job / SSH / console TW):
    ```bash
    npm run migrate

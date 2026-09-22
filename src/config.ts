@@ -21,6 +21,11 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+export function isDevelopmentLike(): boolean {
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
+  return nodeEnv === "development" || nodeEnv === "test" || !nodeEnv;
+}
+
 export function getDatabaseUrl(): string | undefined {
   const value = process.env.DATABASE_URL?.trim();
   return value || undefined;
@@ -29,23 +34,4 @@ export function getDatabaseUrl(): string | undefined {
 export function getAppOrigin(): string | undefined {
   const value = process.env.APP_ORIGIN?.trim();
   return value || undefined;
-}
-
-export function isTrustProxyEnabled(): boolean {
-  return process.env.TRUST_PROXY === "true";
-}
-
-export function getPgSslConfig(): false | { rejectUnauthorized: boolean; ca?: string } {
-  if (process.env.PGSSLMODE === "disable") {
-    return false;
-  }
-
-  if (isProduction()) {
-    const ca = process.env.PGSSLROOTCERT?.trim();
-    return ca
-      ? { rejectUnauthorized: true, ca }
-      : { rejectUnauthorized: true };
-  }
-
-  return false;
 }

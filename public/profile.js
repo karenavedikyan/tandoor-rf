@@ -131,8 +131,29 @@
     api.setStatus(statusEl, "Выход…", "loading");
     api
       .apiRequest("/api/auth/logout", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status === 200) {
+          redirectToLogin();
+          return;
+        }
+        api.setStatus(
+          statusEl,
+          api.extractErrorMessage(
+            result.data,
+            "Не удалось завершить выход. Повторите попытку.",
+          ),
+          "error",
+        );
+      })
+      .catch(function (err) {
+        api.setStatus(
+          statusEl,
+          api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+          "error",
+        );
+      })
       .finally(function () {
-        redirectToLogin();
+        logoutButton.disabled = false;
       });
   });
 

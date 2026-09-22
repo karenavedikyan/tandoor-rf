@@ -1,10 +1,6 @@
 import type { Request, Response } from "express";
 import { buildSessionCookie, clearSessionCookie, parseSessionToken } from "./cookie";
-import {
-  assertLoginAllowed,
-  clearLoginFailures,
-  recordLoginFailure,
-} from "./rate-limit";
+import { clearLoginFailuresForEmail, reserveLoginAttempt } from "./rate-limit";
 import {
   createSession,
   revokeSessionByToken,
@@ -51,7 +47,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   }
 
   const ip = getClientIp(req);
-  const rateLimit = await assertLoginAllowed(email, ip);
+  const rateLimit = await reserveLoginAttempt(email, ip);
   if (!rateLimit.allowed) {
     setNoStore(res);
     res.set("Retry-After", String(rateLimit.retryAfterSec));
@@ -85,7 +81,6 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
 
   const user = userResult.rows[0];
   if (passwordByteLength(password) > 72) {
-    await recordLoginFailure(email, ip);
     setNoStore(res);
     res.status(401).json(
       apiError(ERROR_CODES.INVALID_CREDENTIALS, INVALID_CREDENTIALS_MESSAGE),
@@ -98,7 +93,6 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   const passwordOk = await verifyPassword(password, hashToVerify);
 
   if (!user || user.status !== "active" || !passwordOk) {
-    await recordLoginFailure(email, ip);
     setNoStore(res);
     res.status(401).json(
       apiError(ERROR_CODES.INVALID_CREDENTIALS, INVALID_CREDENTIALS_MESSAGE),
@@ -107,7 +101,7 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   }
 
   const session = await createSession(user.id);
-  await clearLoginFailures(email, ip);
+  await clearLoginFailuresForEmail(email);
   await query(
     `
       UPDATE users
@@ -145,7 +139,14 @@ export async function logoutHandler(req: Request, res: Response): Promise<void> 
     try {
       await revokeSessionByToken(token);
     } catch {
-      // logout remains idempotent even if DB fails mid-flight
+      setNoStore(res);
+      res.status(503).json(
+        apiError(
+          ERROR_CODES.SERVICE_UNAVAILABLE,
+          "Не удалось завершить выход. Повторите попытку.",
+        ),
+      );
+      return;
     }
   }
 

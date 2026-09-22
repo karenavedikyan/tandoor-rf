@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at TIMESTAMPTZ,
-  CONSTRAINT users_full_name_len CHECK (char_length(full_name) >= 2 AND char_length(full_name) <= 200)
+  CONSTRAINT users_email_not_blank CHECK (BTRIM(email) <> ''),
+  CONSTRAINT users_email_normalized CHECK (email = LOWER(BTRIM(email))),
+  CONSTRAINT users_password_hash_not_blank CHECK (BTRIM(password_hash) <> ''),
+  CONSTRAINT users_full_name_trimmed CHECK (full_name = BTRIM(full_name)),
+  CONSTRAINT users_full_name_len CHECK (char_length(full_name) >= 2 AND char_length(full_name) <= 200),
+  CONSTRAINT users_phone_format CHECK (phone IS NULL OR phone ~ '^\+7\d{10}$')
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_normalized_uq ON users (LOWER(BTRIM(email)));

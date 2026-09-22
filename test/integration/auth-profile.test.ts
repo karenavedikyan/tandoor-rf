@@ -165,31 +165,33 @@ describe("auth and profile integration", { concurrency: false }, () => {
     assert.equal(badOrigin.status, 403);
   });
 
-  it("ignores spoofed X-Forwarded-For when TRUST_PROXY is false", async () => {
-    process.env.TRUST_PROXY = "false";
-    await createTestUser({
-      databaseUrl,
-      email: "ip-limit@example.com",
-      password: TEST_PASSWORD,
-      fullName: "IP Limit User",
-    });
-
+  it("ignores spoofed X-Forwarded-For without trusted proxy configuration", async () => {
+    process.env.TRUSTED_PROXIES = "";
     const app = await loadApp();
-    let saw429 = false;
-    for (let i = 0; i < 21; i += 1) {
+    const poolModule = await import("pg");
+    const pool = new poolModule.Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query("DELETE FROM login_rate_limits");
+    await pool.end();
+
+    for (let i = 0; i < 20; i += 1) {
       const res = await request(app)
         .post("/api/auth/login")
         .set({
           ...authHeaders(),
           "X-Forwarded-For": `203.0.113.${(i % 200) + 1}`,
         })
-        .send({ email: "ip-limit@example.com", password: "WrongPass123!" });
-      if (res.status === 429) {
-        saw429 = true;
-        break;
-      }
+        .send({ email: `ip-${i}@example.com`, password: "WrongPass123!" });
+      assert.equal(res.status, 401);
     }
-    assert.equal(saw429, true);
+
+    const blocked = await request(app)
+      .post("/api/auth/login")
+      .set({
+        ...authHeaders(),
+        "X-Forwarded-For": "198.51.100.99",
+      })
+      .send({ email: "ip-21@example.com", password: "WrongPass123!" });
+    assert.equal(blocked.status, 429);
   });
 
   it("supports logout, profile read/update, and blocks forbidden patch fields", async () => {

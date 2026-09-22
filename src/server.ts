@@ -47,6 +47,14 @@ function isApiRequest(req: Request): boolean {
   return req.path.startsWith("/api");
 }
 
+function isAuthProfileApi(req: Request): boolean {
+  return (
+    req.path.startsWith("/api/auth") ||
+    req.path.startsWith("/api/profile") ||
+    req.path.startsWith("/api/ready")
+  );
+}
+
 function parsePort(value: string | undefined): number {
   if (value === undefined) {
     return 3000;
@@ -103,6 +111,32 @@ export function createApp(): express.Application {
   });
 
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
+    if (!isAuthProfileApi(req)) {
+      next(err);
+      return;
+    }
+
+    const parserError = err as { type?: string; status?: number };
+    setNoStore(res);
+
+    if (err instanceof SyntaxError || parserError.type === "entity.parse.failed") {
+      res.status(400).json(
+        apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный JSON."),
+      );
+      return;
+    }
+
+    if (parserError.type === "entity.too.large" || parserError.status === 413) {
+      res.status(413).json(
+        apiError(ERROR_CODES.VALIDATION_ERROR, "Слишком большой запрос."),
+      );
+      return;
+    }
+
+    next(err);
+  });
 
   const authRouter = express.Router();
   authRouter.post(
@@ -181,6 +215,20 @@ export function createApp(): express.Application {
 
       if (status >= 500) {
         console.error(`Server error (${status}) ${req.method} ${req.path}`);
+      }
+
+      if (isAuthProfileApi(req)) {
+        setNoStore(res);
+        if (status >= 500) {
+          res.status(503).json(
+            apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Внутренняя ошибка сервера."),
+          );
+          return;
+        }
+        res.status(status).json(
+          apiError(ERROR_CODES.VALIDATION_ERROR, getSafeErrorMessage(status)),
+        );
+        return;
       }
 
       if (isApiRequest(req)) {
