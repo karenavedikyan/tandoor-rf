@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Вход — tandoor-rf</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page page--form">
+      <h1 class="title">Вход в ЛК</h1>
+      <p class="subtitle">tandoor-rf</p>
+
+      <form id="login-form" class="form" novalidate>
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autocomplete="username"
+            required
+            class="field__input"
+          />
+        </label>
+
+        <label class="field">
+          <span class="field__label">Пароль</span>
+          <div class="password-row">
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              class="field__input"
+            />
+            <button
+              id="toggle-password"
+              type="button"
+              class="secondary-button"
+              aria-label="Показать пароль"
+              aria-pressed="false"
+            >
+              Показать
+            </button>
+          </div>
+        </label>
+
+        <button id="login-button" type="submit" class="primary-button">
+          Войти
+        </button>
+      </form>
+
+      <p
+        id="status-message"
+        class="status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      ></p>
+
+      <p class="footer-link">
+        <a href="/">На тестовую страницу</a>
+      </p>
+    </main>
+    <script src="/common.js" defer></script>
+    <script src="/login.js" defer></script>
+  </body>
+</html>

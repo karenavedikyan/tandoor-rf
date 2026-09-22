@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import request from "supertest";
-import { createApp } from "../src/server";
+import { resetPoolForTests } from "../src/db/pool";
 
 describe("server", () => {
-  const app = createApp();
+  let app: ReturnType<typeof import("../src/server").createApp>;
+
+  before(async () => {
+    delete process.env.DATABASE_URL;
+    resetPoolForTests();
+    const { createApp } = await import("../src/server");
+    app = createApp();
+  });
+
+  after(() => {
+    resetPoolForTests();
+  });
 
   it("GET / returns HTML page", async () => {
     const res = await request(app).get("/");
@@ -17,6 +28,19 @@ describe("server", () => {
     const res = await request(app).get("/api/health");
     assert.equal(res.status, 200);
     assert.deepEqual(res.body, { status: "ok", app: "tandoor-rf" });
+    assert.equal(res.headers["cache-control"], "no-store");
+  });
+
+  it("GET /api/ready returns 503 when DATABASE_URL is not configured", async () => {
+    const res = await request(app).get("/api/ready");
+    assert.equal(res.status, 503);
+    assert.equal(res.body.status, "not_ready");
+  });
+
+  it("GET /login returns login page", async () => {
+    const res = await request(app).get("/login");
+    assert.equal(res.status, 200);
+    assert.match(res.text, /Войти/);
     assert.equal(res.headers["cache-control"], "no-store");
   });
 
