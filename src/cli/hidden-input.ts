@@ -24,56 +24,67 @@ export async function askHidden(label: string): Promise<string> {
     throw new Error("Interactive password input requires a TTY.");
   }
 
-  stdout.write(label);
-
   const previousRawMode = stdin.isRaw ?? false;
   stdin.setRawMode?.(true);
   stdin.resume();
   stdin.setEncoding("utf8");
 
   let password = "";
+  let cleanedUp = false;
+  let handleData: ((chunk: string) => void) | null = null;
+
+  const cleanup = (): void => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    if (handleData) {
+      stdin.removeListener("data", handleData);
+    }
+    stdin.setRawMode?.(previousRawMode);
+    stdin.pause();
+  };
 
   try {
     return await new Promise<string>((resolve, reject) => {
-      const cleanup = (): void => {
-        stdin.removeListener("data", onData);
-        stdin.setRawMode?.(previousRawMode);
-        stdin.pause();
-      };
-
-      const onData = (chunk: string): void => {
-        for (const char of chunk) {
-          switch (char) {
-            case "\n":
-            case "\r":
-            case "\u0004":
-              cleanup();
-              stdout.write("\n");
-              resolve(password);
-              return;
-            case "\u0003":
-              cleanup();
-              stdout.write("\n");
-              reject(Object.assign(new Error("Interrupted."), { code: "INT" }));
-              return;
-            case "\u007f":
-            case "\b":
-              password = password.slice(0, -1);
-              break;
-            default:
-              if (char >= " " || char > "\u007f") {
-                password += char;
-              }
-              break;
+      handleData = (chunk: string): void => {
+        try {
+          for (const char of chunk) {
+            switch (char) {
+              case "\n":
+              case "\r":
+              case "\u0004":
+                cleanup();
+                stdout.write("\n");
+                resolve(password);
+                return;
+              case "\u0003":
+                cleanup();
+                stdout.write("\n");
+                reject(Object.assign(new Error("Interrupted."), { code: "INT" }));
+                return;
+              case "\u007f":
+              case "\b":
+                password = password.slice(0, -1);
+                break;
+              default:
+                if (char >= " " || char > "\u007f") {
+                  password += char;
+                }
+                break;
+            }
           }
+        } catch (error) {
+          cleanup();
+          reject(error);
         }
       };
 
-      stdin.on("data", onData);
+      stdin.on("data", handleData);
+      stdout.write(label);
     });
   } catch (error) {
-    stdin.setRawMode?.(previousRawMode);
-    stdin.pause();
+    cleanup();
     throw error;
   }
 }

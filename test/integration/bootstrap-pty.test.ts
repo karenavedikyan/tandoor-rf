@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import type { TestContext } from "node:test";
 import { Pool } from "pg";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
@@ -11,6 +12,10 @@ import {
 const databaseUrl = getIntegrationDatabaseUrl();
 const SECRET_PASSWORD = "PtySecretPass12345";
 const BOOTSTRAP_BIN = "dist/cli/bootstrap-admin.js";
+const PTY_TIMEOUT_MS = 15_000;
+const PROMPT_FULL_NAME = "ФИО администратора:";
+const PROMPT_EMAIL = "Email администратора:";
+const PROMPT_PASSWORD = "Пароль администратора (ввод скрыт):";
 
 type PtyModule = typeof import("node-pty");
 
@@ -21,6 +26,7 @@ type BootstrapSession = {
 
 let ptyModule: PtyModule | null = null;
 let ptySkipReason: string | undefined;
+let ptyReady = false;
 
 async function initPtyModule(): Promise<void> {
   try {
@@ -41,12 +47,20 @@ async function initPtyModule(): Promise<void> {
         reject(new Error(`node-pty probe exited with code ${exitCode ?? "null"}`));
       });
     });
+    ptyReady = true;
   } catch (error) {
     ptyModule = null;
+    ptyReady = false;
     ptySkipReason =
       error instanceof Error
         ? `node-pty unavailable: ${error.message}`
         : "node-pty unavailable in this environment";
+  }
+}
+
+function skipUnlessPtyReady(context: TestContext): void {
+  if (!ptyReady || !ptyModule) {
+    context.skip(ptySkipReason ?? "node-pty unavailable");
   }
 }
 
@@ -76,16 +90,21 @@ async function runBootstrapInteractive(input: {
   email: string;
   password: string;
   sendCtrlCAtPassword?: boolean;
+  timeoutMs?: number;
 }): Promise<BootstrapSession> {
   if (!ptyModule) {
     throw new Error(ptySkipReason ?? "node-pty unavailable");
   }
 
+  const timeoutMs = input.timeoutMs ?? PTY_TIMEOUT_MS;
+
   return new Promise((resolve, reject) => {
     const outputChunks: string[] = [];
+    let outputBuffer = "";
     let fullNameSent = false;
     let emailSent = false;
     let passwordSent = false;
+    let settled = false;
 
     const shell = ptyModule.spawn(process.execPath, [BOOTSTRAP_BIN], {
       name: "xterm-color",
@@ -95,26 +114,50 @@ async function runBootstrapInteractive(input: {
       env: testEnv(),
     });
 
+    const finish = (result: BootstrapSession): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutHandle);
+      resolve(result);
+    };
+
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutHandle);
+      try {
+        shell.kill();
+      } catch {
+        // ignore kill failure after timeout
+      }
+      reject(error);
+    };
+
+    const timeoutHandle = setTimeout(() => {
+      fail(new Error(`Bootstrap PTY timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
     shell.onData((data) => {
       outputChunks.push(data);
+      outputBuffer += data;
 
-      if (!fullNameSent && data.includes("ФИО администратора:")) {
+      if (!fullNameSent && outputBuffer.includes(PROMPT_FULL_NAME)) {
         fullNameSent = true;
         shell.write(`${input.fullName}\r`);
         return;
       }
 
-      if (fullNameSent && !emailSent && data.includes("Email администратора:")) {
+      if (fullNameSent && !emailSent && outputBuffer.includes(PROMPT_EMAIL)) {
         emailSent = true;
         shell.write(`${input.email}\r`);
         return;
       }
 
-      if (
-        emailSent &&
-        !passwordSent &&
-        data.includes("Пароль администратора (ввод скрыт):")
-      ) {
+      if (emailSent && !passwordSent && outputBuffer.includes(PROMPT_PASSWORD)) {
         passwordSent = true;
         if (input.sendCtrlCAtPassword) {
           shell.write("\u0003");
@@ -125,20 +168,32 @@ async function runBootstrapInteractive(input: {
     });
 
     shell.onExit(({ exitCode, signal }) => {
-      if (exitCode === null && signal !== undefined) {
-        resolve({ output: outputChunks.join(""), exitCode: 1 });
+      if (settled) {
         return;
       }
-      resolve({ output: outputChunks.join(""), exitCode: exitCode ?? 1 });
+      if (exitCode === null && signal !== undefined) {
+        finish({ output: outputChunks.join(""), exitCode: 1 });
+        return;
+      }
+      finish({ output: outputChunks.join(""), exitCode: exitCode ?? 1 });
     });
 
     shell.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "EIO") {
         return;
       }
-      reject(error);
+      fail(error);
     });
   });
+}
+
+function assertPasswordNotEchoed(output: string, password: string): void {
+  assert.doesNotMatch(output, new RegExp(password));
+  const promptIndex = output.indexOf(PROMPT_PASSWORD);
+  if (promptIndex >= 0) {
+    const afterPrompt = output.slice(promptIndex + PROMPT_PASSWORD.length);
+    assert.doesNotMatch(afterPrompt, new RegExp(password));
+  }
 }
 
 describe("bootstrap-admin PTY", { concurrency: false }, () => {
@@ -157,27 +212,49 @@ describe("bootstrap-admin PTY", { concurrency: false }, () => {
   });
 
   it("documents node-pty availability", () => {
-    if (ptyModule) {
+    if (ptyReady && ptyModule) {
       assert.ok(true, "node-pty is available for bootstrap PTY tests");
       return;
     }
     assert.ok(ptySkipReason, "Expected explicit PTY skip reason when node-pty is unavailable");
   });
 
-  it("does not echo the password in PTY output", { skip: ptySkipReason }, async () => {
+  it("does not echo the password in PTY output", async (context) => {
+    skipUnlessPtyReady(context);
+
     const session = await runBootstrapInteractive({
       fullName: "Bootstrap Admin",
       email: "pty-admin@test.local",
       password: SECRET_PASSWORD,
     });
 
-    assert.doesNotMatch(session.output, new RegExp(SECRET_PASSWORD));
+    assertPasswordNotEchoed(session.output, SECRET_PASSWORD);
     assert.equal(session.exitCode, 0);
     assert.match(session.output, /Administrator created successfully/);
     assert.equal(await countAdmins(), 1);
   });
 
-  it("refuses second bootstrap when admin already exists", { skip: ptySkipReason }, async () => {
+  it("keeps hidden password input stable across repeated PTY runs", async (context) => {
+    skipUnlessPtyReady(context);
+
+    for (let run = 0; run < 20; run += 1) {
+      await prepareDatabase(databaseUrl);
+      const session = await runBootstrapInteractive({
+        fullName: `Stability Admin ${run}`,
+        email: `pty-stability-${run}@test.local`,
+        password: SECRET_PASSWORD,
+      });
+
+      assertPasswordNotEchoed(session.output, SECRET_PASSWORD);
+      assert.equal(session.exitCode, 0, `run ${run + 1}/20 should exit cleanly`);
+      assert.match(session.output, /Administrator created successfully/);
+      assert.equal(await countAdmins(), 1, `run ${run + 1}/20 should create exactly one admin`);
+    }
+  });
+
+  it("refuses second bootstrap when admin already exists", async (context) => {
+    skipUnlessPtyReady(context);
+
     const first = await runBootstrapInteractive({
       fullName: "First Admin",
       email: "first-admin@test.local",
@@ -196,7 +273,9 @@ describe("bootstrap-admin PTY", { concurrency: false }, () => {
     assert.equal(await countAdmins(), 1);
   });
 
-  it("handles Ctrl+C during hidden password input", { skip: ptySkipReason }, async () => {
+  it("handles Ctrl+C during hidden password input", async (context) => {
+    skipUnlessPtyReady(context);
+
     const session = await runBootstrapInteractive({
       fullName: "Interrupted Admin",
       email: "interrupted-admin@test.local",
@@ -209,7 +288,9 @@ describe("bootstrap-admin PTY", { concurrency: false }, () => {
     assert.equal(await countAdmins(), 0);
   });
 
-  it("refuses concurrent bootstrap attempts with overlapping processes", { skip: ptySkipReason }, async () => {
+  it("refuses concurrent bootstrap attempts with overlapping processes", async (context) => {
+    skipUnlessPtyReady(context);
+
     const [first, second] = await Promise.all([
       runBootstrapInteractive({
         fullName: "Locked Admin",
