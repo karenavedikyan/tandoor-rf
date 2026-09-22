@@ -20,18 +20,79 @@ body {
   text-align: center;
 }
 
+.page--form {
+  text-align: left;
+}
+
 .title {
   margin: 0 0 0.5rem;
   font-size: clamp(1.75rem, 5vw, 2.25rem);
   font-weight: 700;
+  text-align: center;
 }
 
 .subtitle {
   margin: 0 0 2rem;
   font-size: 1.125rem;
   color: #444;
+  text-align: center;
 }
 
+.form {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.field__input {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #bbb;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  background: #fff;
+}
+
+.field__input:focus-visible {
+  outline: 3px solid #1a1a1a;
+  outline-offset: 2px;
+}
+
+.field__input--readonly {
+  background: #ececec;
+  color: #444;
+}
+
+.password-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.button-row {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 30rem) {
+  .button-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.primary-button,
+.secondary-button,
 .check-button {
   display: inline-block;
   min-width: 12rem;
@@ -41,21 +102,39 @@ body {
   border-radius: 0.5rem;
   font-size: 1rem;
   font-weight: 600;
-  color: #fff;
-  background: #c45a2c;
   cursor: pointer;
   touch-action: manipulation;
 }
 
+.primary-button,
+.check-button {
+  color: #fff;
+  background: #c45a2c;
+}
+
+.primary-button:hover,
 .check-button:hover {
   background: #a84a22;
 }
 
+.secondary-button {
+  color: #1a1a1a;
+  background: #e6e6e6;
+}
+
+.secondary-button:hover {
+  background: #d5d5d5;
+}
+
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
 .check-button:focus-visible {
   outline: 3px solid #1a1a1a;
   outline-offset: 3px;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled,
 .check-button:disabled {
   opacity: 0.65;
   cursor: not-allowed;
@@ -65,6 +144,7 @@ body {
   margin: 1.5rem 0 0;
   min-height: 1.5rem;
   font-size: 1rem;
+  text-align: center;
 }
 
 .status--loading {
@@ -77,4 +157,20 @@ body {
 
 .status--error {
   color: #a11;
+}
+
+.footer-link {
+  margin: 1.5rem 0 0;
+  text-align: center;
+}
+
+.footer-link a {
+  color: #c45a2c;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footer-link a:focus-visible {
+  outline: 3px solid #1a1a1a;
+  outline-offset: 2px;
 }

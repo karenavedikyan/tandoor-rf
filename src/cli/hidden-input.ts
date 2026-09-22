@@ -1,0 +1,90 @@
+import readline from "readline";
+
+export async function askLine(label: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+
+  try {
+    return await new Promise<string>((resolve) => {
+      rl.question(label, (value) => resolve(value.trim()));
+    });
+  } finally {
+    rl.close();
+  }
+}
+
+export async function askHidden(label: string): Promise<string> {
+  const stdin = process.stdin;
+  const stdout = process.stdout;
+
+  if (!stdin.isTTY || !stdout.isTTY) {
+    throw new Error("Interactive password input requires a TTY.");
+  }
+
+  const previousRawMode = stdin.isRaw ?? false;
+  stdin.setRawMode?.(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+
+  let password = "";
+  let cleanedUp = false;
+  let handleData: ((chunk: string) => void) | null = null;
+
+  const cleanup = (): void => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    if (handleData) {
+      stdin.removeListener("data", handleData);
+    }
+    stdin.setRawMode?.(previousRawMode);
+    stdin.pause();
+  };
+
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      handleData = (chunk: string): void => {
+        try {
+          for (const char of chunk) {
+            switch (char) {
+              case "\n":
+              case "\r":
+              case "\u0004":
+                cleanup();
+                stdout.write("\n");
+                resolve(password);
+                return;
+              case "\u0003":
+                cleanup();
+                stdout.write("\n");
+                reject(Object.assign(new Error("Interrupted."), { code: "INT" }));
+                return;
+              case "\u007f":
+              case "\b":
+                password = password.slice(0, -1);
+                break;
+              default:
+                if (char >= " " || char > "\u007f") {
+                  password += char;
+                }
+                break;
+            }
+          }
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
+      };
+
+      stdin.on("data", handleData);
+      stdout.write(label);
+    });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
