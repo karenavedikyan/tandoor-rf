@@ -9,6 +9,7 @@ export const IMPORT_STATUSES = [
   "IMPORT_LOCKED",
   "STALE_RUNNING_IMPORT",
   "DATABASE_ERROR",
+  "COMMIT_UNCERTAIN",
   "ARGUMENT_ERROR",
 ] as const;
 
@@ -65,6 +66,7 @@ export type ValidatedClientsPayload = {
   recordCount: number;
   records: ParsedClientRecord[];
   warnings: ValidationWarning[];
+  warningCount: number;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";
@@ -85,6 +87,7 @@ export type ClientsImportResult = {
   errorsTruncated?: boolean;
   warningsTruncated?: boolean;
   message: string;
+  cleanupWarning?: string;
   apply?: {
     runId?: string;
     newCount?: number;

@@ -3,6 +3,8 @@ import { createPgPoolOptions } from "../config/pg-ssl";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
+export const DB_CONNECT_TIMEOUT_MS = 5_000;
+
 export type ApplyCounts = {
   newCount: number;
   changedCount: number;
@@ -10,17 +12,24 @@ export type ApplyCounts = {
 };
 
 export type ApplyResult =
-  | { ok: true; runId: string; counts: ApplyCounts }
+  | { ok: true; runId: string; counts: ApplyCounts; cleanupWarning?: string }
   | {
       ok: false;
       code:
         | "IMPORT_LOCKED"
         | "STALE_RUNNING_IMPORT"
         | "RECORD_COUNT_DECREASED"
-        | "DATABASE_ERROR";
+        | "DATABASE_ERROR"
+        | "COMMIT_UNCERTAIN";
       message: string;
       runId?: string;
     };
+
+export type ApplyTestHooks = {
+  afterRecordIndex?: number;
+  failUnlock?: boolean;
+  failCommit?: boolean;
+};
 
 type ExistingClientRow = {
   guid_client: string;
@@ -99,20 +108,73 @@ async function loadExistingClients(client: PoolClient): Promise<Map<string, Exis
   return map;
 }
 
-export async function applyClientsImport(options: {
-  databaseUrl: string;
-  payload: ValidatedClientsPayload;
-}): Promise<ApplyResult> {
-  const pgOptions = createPgPoolOptions(options.databaseUrl);
+async function insertRejectedRunJournal(
+  client: PoolClient,
+  payload: ValidatedClientsPayload,
+  errorCode: "RECORD_COUNT_DECREASED",
+): Promise<string | undefined> {
+  const runInsert = await client.query<{ id: string }>(
+    `
+      INSERT INTO onec_client_import_runs (
+        status,
+        mode,
+        source_sha256,
+        source_byte_size,
+        source_record_count,
+        finished_at,
+        error_code
+      )
+      VALUES ('failed', 'apply', $1, $2, $3, NOW(), $4)
+      RETURNING id::text
+    `,
+    [payload.sha256, payload.byteSize, payload.recordCount, errorCode],
+  );
+  return runInsert.rows[0]?.id;
+}
+
+async function releaseAdvisoryLock(
+  client: PoolClient,
+  testHooks?: ApplyTestHooks,
+): Promise<void> {
+  if (testHooks?.failUnlock) {
+    throw new Error("Advisory unlock failed.");
+  }
+  await client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+}
+
+function createImportPool(databaseUrl: string): Pool {
+  const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
     connectionString: pgOptions.connectionString,
     max: 1,
+    connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
     ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
   });
+  pool.on("error", () => {
+    // Connection lifecycle errors are handled per operation; avoid crashing the process.
+  });
+  return pool;
+}
 
-  const client = await pool.connect();
+export async function applyClientsImport(options: {
+  databaseUrl: string;
+  payload: ValidatedClientsPayload;
+  testHooks?: ApplyTestHooks;
+}): Promise<ApplyResult> {
+  const pool = createImportPool(options.databaseUrl);
+  let client: PoolClient | undefined;
   let lockHeld = false;
   let runId: string | undefined;
+  let commitConfirmed = false;
+  let commitAttempted = false;
+  let counts: ApplyCounts | undefined;
+
+  try {
+    client = await pool.connect();
+  } catch {
+    await pool.end();
+    return { ok: false, code: "DATABASE_ERROR", message: "Database connection failed." };
+  }
 
   try {
     const lock = await client.query<{ locked: boolean }>(
@@ -137,10 +199,12 @@ export async function applyClientsImport(options: {
       lastSuccessfulCount !== null &&
       options.payload.recordCount < lastSuccessfulCount
     ) {
+      runId = await insertRejectedRunJournal(client, options.payload, "RECORD_COUNT_DECREASED");
       return {
         ok: false,
         code: "RECORD_COUNT_DECREASED",
         message: "Source record count decreased compared to the last successful import.",
+        runId,
       };
     }
 
@@ -167,7 +231,8 @@ export async function applyClientsImport(options: {
     let changedCount = 0;
     let unchangedCount = 0;
 
-    for (const record of options.payload.records) {
+    for (let index = 0; index < options.payload.records.length; index += 1) {
+      const record = options.payload.records[index]!;
       const current = existing.get(record.guid_client);
       if (!current) {
         newCount += 1;
@@ -230,6 +295,10 @@ export async function applyClientsImport(options: {
           options.payload.sha256,
         ],
       );
+
+      if (options.testHooks?.afterRecordIndex === index) {
+        throw new Error("Simulated apply failure after record write.");
+      }
     }
 
     await client.query(
@@ -247,16 +316,40 @@ export async function applyClientsImport(options: {
       [runId, newCount, changedCount, unchangedCount],
     );
 
+    commitAttempted = true;
+    if (options.testHooks?.failCommit) {
+      throw new Error("Simulated commit response loss.");
+    }
+
     await client.query("COMMIT");
-    lockHeld = false;
-    await client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+    commitConfirmed = true;
+    counts = { newCount, changedCount, unchangedCount };
+
+    let cleanupWarning: string | undefined;
+    try {
+      await releaseAdvisoryLock(client, options.testHooks);
+      lockHeld = false;
+    } catch {
+      cleanupWarning =
+        "Import committed successfully but advisory lock release failed; verify no concurrent apply is running.";
+    }
 
     return {
       ok: true,
       runId: runId!,
-      counts: { newCount, changedCount, unchangedCount },
+      counts: counts!,
+      cleanupWarning,
     };
   } catch {
+    if (commitAttempted && !commitConfirmed) {
+      return {
+        ok: false,
+        code: "COMMIT_UNCERTAIN",
+        message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
+        runId,
+      };
+    }
+
     try {
       await client.query("ROLLBACK");
     } catch {
@@ -269,7 +362,7 @@ export async function applyClientsImport(options: {
           `
             UPDATE onec_client_import_runs
             SET status = 'failed', finished_at = NOW(), error_code = 'DATABASE_ERROR'
-            WHERE id = $1
+            WHERE id = $1 AND status = 'running'
           `,
           [runId],
         );
@@ -280,14 +373,16 @@ export async function applyClientsImport(options: {
 
     return { ok: false, code: "DATABASE_ERROR", message: "Database apply failed.", runId };
   } finally {
-    if (lockHeld) {
-      try {
-        await client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
-      } catch {
-        // ignore unlock failure
+    if (client) {
+      if (lockHeld) {
+        try {
+          await client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+        } catch {
+          // ignore unlock failure during connection cleanup
+        }
       }
+      client.release();
     }
-    client.release();
     await pool.end();
   }
 }

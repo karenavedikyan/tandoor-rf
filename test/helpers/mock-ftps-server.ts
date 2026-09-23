@@ -5,11 +5,14 @@ export type MockPlainFtpServerOptions = {
   authMode?: "accept" | "reject530";
   cwdMode?: "accept" | "reject550";
   listMode?: "success" | "reject550";
+  retrMode?: "success" | "reject550" | "hang";
   hangAfterAuth?: boolean;
   postAuthDelayMs?: number;
+  retrDelayMs?: number;
   basePath?: string;
   pwdPath?: string;
   files?: Array<{ name: string; type: "file" | "directory"; size: number }>;
+  retrContent?: Buffer;
 };
 
 export type MockPlainFtpServerHandle = {
@@ -58,6 +61,9 @@ export async function startMockPlainFtpServer(
   const server = net.createServer((socket) => {
     openSockets.push(socket);
     controlSocket = socket;
+    socket.on("error", () => {
+      // Client may abort during oversized transfers.
+    });
     socket.on("close", () => {
       controlClosed = true;
     });
@@ -69,7 +75,16 @@ export async function startMockPlainFtpServer(
     let activeDataServer: net.Server | null = null;
 
     const writeReply = (line: string): void => {
-      socket.write(`${line}\r\n`);
+      if (socket.destroyed || !socket.writable) {
+        return;
+      }
+      try {
+        socket.write(`${line}\r\n`, () => {
+          // ignore write completion errors
+        });
+      } catch {
+        // Client may abort during oversized transfers.
+      }
     };
 
     const trackCommand = (command: string): void => {
@@ -83,13 +98,62 @@ export async function startMockPlainFtpServer(
       }
     };
 
-    const sendListing = (dataSocket: net.Socket): void => {
-      const payload = `${files.map(formatListLine).join("\r\n")}\r\n`;
-      dataSocket.end(payload);
-      writeReply("226 Transfer complete.");
+    const sendDataPayload = (dataSocket: net.Socket, payload: Buffer | string): void => {
+      if (dataSocket.destroyed || !dataSocket.writable) {
+        return;
+      }
+      try {
+        dataSocket.end(payload);
+        writeReply("226 Transfer complete.");
+      } catch {
+        // Client may abort during oversized transfers.
+      }
       activeDataServer?.close();
       activeDataServer = null;
       pendingDataSocket = null;
+    };
+
+    const sendListing = (dataSocket: net.Socket): void => {
+      sendDataPayload(dataSocket, `${files.map(formatListLine).join("\r\n")}\r\n`);
+    };
+
+    const sendRetrContent = (dataSocket: net.Socket): void => {
+      const payload = options.retrContent ?? Buffer.from("[]", "utf8");
+      if (payload.length <= 64 * 1024) {
+        sendDataPayload(dataSocket, payload);
+        return;
+      }
+
+      let offset = 0;
+      const chunkSize = 64 * 1024;
+      const writeNext = (): void => {
+        if (dataSocket.destroyed || !dataSocket.writable) {
+          activeDataServer?.close();
+          activeDataServer = null;
+          pendingDataSocket = null;
+          return;
+        }
+        if (offset >= payload.length) {
+          dataSocket.end();
+          writeReply("226 Transfer complete.");
+          activeDataServer?.close();
+          activeDataServer = null;
+          pendingDataSocket = null;
+          return;
+        }
+        const chunk = payload.subarray(offset, Math.min(offset + chunkSize, payload.length));
+        offset += chunk.length;
+        dataSocket.write(chunk, (error) => {
+          if (error) {
+            activeDataServer?.close();
+            activeDataServer = null;
+            pendingDataSocket = null;
+            return;
+          }
+          writeNext();
+        });
+      };
+      writeNext();
     };
 
     const startPassiveDataServer = (): void => {
@@ -98,6 +162,9 @@ export async function startMockPlainFtpServer(
       }
       const dataServer = net.createServer((dataSocket) => {
         openSockets.push(dataSocket);
+        dataSocket.on("error", () => {
+          // Client may abort during oversized transfers.
+        });
         pendingDataSocket = dataSocket;
       });
       childServers.push(dataServer);
@@ -203,6 +270,40 @@ export async function startMockPlainFtpServer(
           if (pendingDataSocket) {
             sendListing(pendingDataSocket);
           }
+        });
+        return;
+      }
+      if (upper.startsWith("RETR") || upper.startsWith("SIZE")) {
+        respondLater(() => {
+          if (upper.startsWith("SIZE")) {
+            const payload = options.retrContent ?? Buffer.from("[]", "utf8");
+            writeReply(`213 ${payload.length}`);
+            return;
+          }
+          if (options.retrMode === "reject550") {
+            pendingDataSocket?.destroy();
+            pendingDataSocket = null;
+            activeDataServer?.close();
+            activeDataServer = null;
+            writeReply("550 File unavailable.");
+            return;
+          }
+          if (options.retrMode === "hang") {
+            writeReply("150 Opening data connection.");
+            return;
+          }
+          const delay = options.retrDelayMs ?? 0;
+          const send = (): void => {
+            writeReply("150 Opening data connection.");
+            if (pendingDataSocket) {
+              sendRetrContent(pendingDataSocket);
+            }
+          };
+          if (delay > 0) {
+            setTimeout(send, delay);
+            return;
+          }
+          send();
         });
         return;
       }

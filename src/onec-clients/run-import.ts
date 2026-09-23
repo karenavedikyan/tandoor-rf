@@ -1,7 +1,7 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { applyClientsImport } from "./apply";
-import { parseClientsImportCliArgs } from "./cli-args";
+import { CLI_ARGUMENT_ERROR_MESSAGES, parseClientsImportCliArgs } from "./cli-args";
 import { MAX_DETAILED_ERRORS, MAX_DETAILED_WARNINGS } from "./constants";
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
@@ -36,7 +36,7 @@ function validationFailedResult(input: {
     errors: input.issues.slice(0, MAX_DETAILED_ERRORS),
     warnings: input.warnings?.slice(0, MAX_DETAILED_WARNINGS),
     errorsTruncated: input.totalIssueCount > MAX_DETAILED_ERRORS,
-    warningsTruncated: (input.totalWarningCount ?? 0) > MAX_DETAILED_WARNINGS,
+    warningsTruncated: input.totalWarningCount > MAX_DETAILED_WARNINGS,
     message: "Client file validation failed.",
   };
 }
@@ -64,8 +64,8 @@ export async function runClientsImport(
         durationMs: Date.now() - startedAt,
         security: "plain",
         transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-        message: parsedArgs.message,
-        errorCode: "ARGUMENT_ERROR",
+        message: CLI_ARGUMENT_ERROR_MESSAGES[parsedArgs.code],
+        errorCode: parsedArgs.code,
       },
       [],
     );
@@ -122,8 +122,8 @@ export async function runClientsImport(
         startedAt,
         issues: validated.issues,
         warnings: validated.warnings,
-        totalIssueCount: validated.issues.length,
-        totalWarningCount: validated.warnings.length,
+        totalIssueCount: validated.issueCount,
+        totalWarningCount: validated.warningCount,
         byteSize: bytes.length,
       }),
       secrets,
@@ -143,9 +143,9 @@ export async function runClientsImport(
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        warningCount: payload.warnings.length,
+        warningCount: payload.warningCount,
         warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
-        warningsTruncated: payload.warnings.length > MAX_DETAILED_WARNINGS,
+        warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
         message: "Client file validation succeeded (dry run; no database changes).",
       },
       secrets,
@@ -160,8 +160,8 @@ export async function runClientsImport(
         durationMs: Date.now() - startedAt,
         security: "plain",
         transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-        message: "--apply requires --expected-sha256.",
-        errorCode: "ARGUMENT_ERROR",
+        message: CLI_ARGUMENT_ERROR_MESSAGES.APPLY_REQUIRES_EXPECTED_SHA256,
+        errorCode: "APPLY_REQUIRES_EXPECTED_SHA256",
       },
       secrets,
     );
@@ -234,10 +234,11 @@ export async function runClientsImport(
       sha256: payload.sha256,
       byteSize: payload.byteSize,
       recordCount: payload.recordCount,
-      warningCount: payload.warnings.length,
+      warningCount: payload.warningCount,
       warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
-      warningsTruncated: payload.warnings.length > MAX_DETAILED_WARNINGS,
+      warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
       message: "Client import applied successfully.",
+      cleanupWarning: applied.cleanupWarning,
       apply: {
         runId: applied.runId,
         newCount: applied.counts.newCount,

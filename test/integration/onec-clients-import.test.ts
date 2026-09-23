@@ -63,6 +63,13 @@ describe("onec clients import integration", { concurrency: false }, () => {
     assert.equal(result.status, "SUCCESS");
     assert.equal(result.mode, "dry_run");
     assert.equal(result.apply, undefined);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_client_import_runs",
+    );
+    await pool.end();
+    assert.equal(Number(journal.rows[0]?.count), 0);
   });
 
   it("apply rejects hash mismatch and missing hash", async () => {
@@ -142,7 +149,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     assert.equal(Number(count.rows[0]?.count), 3);
   });
 
-  it("blocks apply when record count decreases", async () => {
+  it("blocks apply when record count decreases and writes a journal entry", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
     const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
@@ -160,38 +167,154 @@ describe("onec clients import integration", { concurrency: false }, () => {
       fileBytes: reducedBytes,
     });
     assert.equal(reduced.status, "RECORD_COUNT_DECREASED");
+    assert.ok(reduced.apply?.runId);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const clientCount = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    const journal = await pool.query<{ status: string; error_code: string | null }>(
+      `
+        SELECT status, error_code
+        FROM onec_client_import_runs
+        WHERE id = $1
+      `,
+      [reduced.apply?.runId],
+    );
+    await pool.end();
+
+    assert.equal(Number(clientCount.rows[0]?.count), 2);
+    assert.equal(journal.rows[0]?.status, "failed");
+    assert.equal(journal.rows[0]?.error_code, "RECORD_COUNT_DECREASED");
   });
 
-  it("rolls back client changes on database failure", async () => {
+  it("rolls back client changes on database failure before cleanup", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
+    const seedBytes = buildClientsFileBytes([sampleClient()]);
+    const seedHash = buildClientsFileSha256([sampleClient()]);
+    const seeded = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", seedHash],
+      fileBytes: seedBytes,
+    });
+    assert.equal(seeded.status, "SUCCESS");
+
+    const twoClientBytes = buildClientsFileBytes([
+      sampleClient({ name_client: "Client Alpha Updated" }),
+      sampleClientTwo(),
+    ]);
+    const validated = validateClientsFileBytes(twoClientBytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const failed = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: { afterRecordIndex: 1 },
+    });
+    assert.equal(failed.ok, false);
+    if (!failed.ok) {
+      assert.equal(failed.code, "DATABASE_ERROR");
+      assert.ok(failed.runId);
+    }
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const clientCount = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    const clientName = await pool.query<{ name_client: string }>(
+      "SELECT name_client FROM onec_clients WHERE guid_client = $1",
+      [sampleClient().guid_client],
+    );
+    const journal = await pool.query<{ status: string; error_code: string | null }>(
+      `
+        SELECT status, error_code
+        FROM onec_client_import_runs
+        WHERE id = $1
+      `,
+      [failed.runId],
+    );
+    await pool.end();
+
+    assert.equal(Number(clientCount.rows[0]?.count), 1);
+    assert.equal(clientName.rows[0]?.name_client, "Client Alpha");
+    assert.equal(journal.rows[0]?.status, "failed");
+    assert.equal(journal.rows[0]?.error_code, "DATABASE_ERROR");
+  });
+
+  it("returns success with cleanup warning when unlock fails after commit", async () => {
     const bytes = buildClientsFileBytes([sampleClient()]);
-    const hash = buildClientsFileSha256([sampleClient()]);
     const validated = validateClientsFileBytes(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) {
       return;
     }
 
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: { failUnlock: true },
+    });
+
+    assert.equal(applied.ok, true);
+    if (applied.ok) {
+      assert.ok(applied.cleanupWarning);
+    }
+
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    await pool.query("ALTER TABLE onec_clients DROP COLUMN name_client");
-    await pool.end();
-
-    const failed = await applyClientsImport({ databaseUrl, payload: validated.payload });
-    assert.equal(failed.ok, false);
-
-    await prepareDatabase(databaseUrl);
-    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
-    const count = await poolAfter.query<{ count: string }>(
+    const count = await pool.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM onec_clients",
     );
-    await poolAfter.end();
-    assert.equal(Number(count.rows[0]?.count), 0);
+    await pool.end();
+    assert.equal(Number(count.rows[0]?.count), 1);
+  });
+
+  it("returns commit uncertain without claiming rollback when commit response is lost", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: { failCommit: true },
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "COMMIT_UNCERTAIN");
+      assert.ok(result.runId);
+      assert.match(result.message, /runId/i);
+    }
+  });
+
+  it("returns database error on connection failure and releases resources", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl: "postgres://invalid:5432/nonexistent",
+      payload: validated.payload,
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "DATABASE_ERROR");
+      assert.equal(result.message, "Database connection failed.");
+    }
   });
 
   it("blocks parallel apply while advisory lock is held", async () => {
-    const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const bytes = buildClientsFileBytes([sampleClient()]);
-    const hash = buildClientsFileSha256([sampleClient()]);
     const validated = validateClientsFileBytes(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) {
@@ -218,7 +341,6 @@ describe("onec clients import integration", { concurrency: false }, () => {
   });
 
   it("rejects apply while a stale running import exists", async () => {
-    const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const bytes = buildClientsFileBytes([sampleClient()]);
     const hash = buildClientsFileSha256([sampleClient()]);
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -232,7 +354,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     await pool.end();
 
     const result = await runClientsImport({
-      env,
+      env: { ...ftpEnv(), DATABASE_URL: databaseUrl },
       argv: ["--apply", "--expected-sha256", hash],
       fileBytes: bytes,
     });

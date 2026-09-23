@@ -61,6 +61,8 @@ export const defaultFtpReader: FtpReader = async (config) => {
   const client = new Client(config.timeoutMs);
   client.ftp.verbose = false;
 
+  const readDeadlineMs = Math.min(config.timeoutMs, FTP_READ_DEADLINE_MS);
+
   try {
     return await withReadDeadline(
       (async () => {
@@ -76,7 +78,7 @@ export const defaultFtpReader: FtpReader = async (config) => {
         await client.downloadTo(sink, remotePath);
         return { ok: true as const, bytes: sink.toBuffer(), remotePath };
       })(),
-      FTP_READ_DEADLINE_MS,
+      readDeadlineMs,
     );
   } catch (error) {
     if (error instanceof ReadDeadlineError) {
