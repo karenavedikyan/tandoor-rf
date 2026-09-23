@@ -4,12 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="auth-body">
     <main class="page">
+      <div class="auth-brand">
+        <img
+          class="auth-brand__logo"
+          data-legacy-logo
+          src="/brand/tandoor-logo-official.svg"
+          width="149"
+          height="42"
+          alt="Tandoor"
+        />
+        <p class="subtitle">Тестовый запуск нового ЛК</p>
+      </div>
       <h1 class="title">tandoor-rf</h1>
-      <p class="subtitle">Тестовый запуск нового ЛК</p>
 
       <button
         id="check-button"
@@ -19,6 +30,12 @@
       >
         Проверить сервер
       </button>
+
+      <p class="theme-row">
+        <button type="button" class="secondary-button" id="index-theme-toggle" data-theme-toggle>
+          Тёмная тема
+        </button>
+      </p>
 
       <p class="footer-link">
         <a href="/login">Войти в ЛК</a>
@@ -33,5 +50,7 @@
       ></p>
     </main>
     <script src="/app.js" defer></script>
+    <script src="/brand/shell-icons.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
   </body>
 </html>

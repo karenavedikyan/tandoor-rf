@@ -1,6 +1,4 @@
-@import url("./legacy-tokens.css");
-
-/* Backward-compatible aliases used by form pages and clients modules. */
+/* Tandoor legacy tokens — light (default) and dark themes. */
 :root {
   --rf-bg: #eeeff6;
   --rf-surface: #ffffff;
@@ -13,8 +11,13 @@
   --rf-border: #d8dce8;
   --rf-danger-text: #5a3140;
   --rf-shadow: 0 2px 8px rgba(34, 38, 49, 0.08);
+  --rf-shadow-sm: 0 1px 3px rgba(34, 38, 49, 0.08);
   --rf-radius: 0.5625rem;
   --rf-font: "Exo 2", system-ui, sans-serif;
+  --rf-sidebar-width: 16.25rem;
+  --rf-sidebar-compact: 4.25rem;
+  --rf-header-height: 3.5rem;
+  --rf-content-max: 87.5rem;
 }
 
 [data-theme="dark"] {
@@ -29,4 +32,5 @@
   --rf-border: #2a3324;
   --rf-danger-text: #d4a0b0;
   --rf-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --rf-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
