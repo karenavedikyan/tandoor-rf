@@ -3,15 +3,21 @@
   --rf-surface: #ffffff;
   --rf-surface-muted: #e3e6f3;
   --rf-text: #222631;
-  --rf-text-muted: #8f96b0;
+  --rf-text-muted: #5a6178;
   --rf-primary: hsl(82 57% 51%);
-  --rf-primary-hover: #86b832;
-  --rf-primary-text: #ffffff;
+  --rf-primary-hover: #7aab2e;
+  --rf-primary-text: #1a2e0a;
   --rf-border: #d8dce8;
   --rf-danger-text: #5a3140;
   --rf-shadow: 0 2px 8px rgba(34, 38, 49, 0.08);
   --rf-radius: 0.5625rem;
   --rf-font: "Exo 2", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body.workspace-body {
@@ -37,6 +43,7 @@ body.workspace-body {
 
 .workspace-header__inner {
   max-width: 72rem;
+  width: 100%;
   margin: 0 auto;
   padding: 0.85rem 1rem;
   display: flex;
@@ -80,6 +87,10 @@ body.workspace-body {
   text-decoration: none;
   color: var(--rf-text);
   font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
 
 .workspace-nav__link:hover {
@@ -96,9 +107,22 @@ body.workspace-body {
   outline-offset: 2px;
 }
 
+.workspace-logout-status {
+  flex-basis: 100%;
+  margin: 0;
+  min-height: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--rf-text-muted);
+}
+
+.workspace-logout-status--error {
+  color: var(--rf-danger-text);
+}
+
 .workspace-main {
   flex: 1;
   width: min(72rem, 100%);
+  max-width: 100%;
   margin: 0 auto;
   padding: 1rem;
 }
@@ -109,6 +133,7 @@ body.workspace-body {
   border-radius: var(--rf-radius);
   box-shadow: var(--rf-shadow);
   padding: 1rem;
+  max-width: 100%;
 }
 
 .workspace-button {

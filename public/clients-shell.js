@@ -28,9 +28,19 @@
       '" href="/profile">Мой профиль</a>' +
       '<button type="button" class="workspace-nav__link" id="workspace-logout">Выйти</button>' +
       "</nav>" +
+      '<p id="workspace-logout-status" class="workspace-logout-status" role="status" aria-live="polite"></p>' +
       "</div>" +
       "</header>"
     );
+  }
+
+  function setLogoutStatus(message, kind) {
+    var statusEl = document.getElementById("workspace-logout-status");
+    if (!statusEl) {
+      return;
+    }
+    statusEl.textContent = message || "";
+    statusEl.className = "workspace-logout-status" + (kind ? " workspace-logout-status--" + kind : "");
   }
 
   function mountShell(active) {
@@ -43,13 +53,27 @@
     if (logout && api) {
       logout.addEventListener("click", function () {
         logout.disabled = true;
+        setLogoutStatus("Выход…", "loading");
         api
           .apiRequest("/api/auth/logout", { method: "POST", body: {} })
-          .then(function () {
-            window.location.replace("/login");
+          .then(function (result) {
+            if (result.response.status === 200) {
+              window.location.replace("/login");
+              return;
+            }
+            setLogoutStatus(
+              api.extractErrorMessage(
+                result.data,
+                "Не удалось завершить выход. Повторите попытку.",
+              ),
+              "error",
+            );
           })
-          .catch(function () {
-            window.location.replace("/login");
+          .catch(function (err) {
+            setLogoutStatus(api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000), "error");
+          })
+          .finally(function () {
+            logout.disabled = false;
           });
       });
     }
@@ -58,23 +82,36 @@
   function ensureAdminAccess(onReady) {
     if (!api) {
       window.location.replace("/login");
-      return;
+      return Promise.resolve();
     }
-    api.apiRequest("/api/auth/me").then(function (result) {
-      if (result.response.status === 401) {
-        window.location.replace("/login");
-        return;
-      }
-      if (result.response.status !== 200 || !result.data || !result.data.user) {
-        onReady(null, "service");
-        return;
-      }
-      if (result.data.user.role !== "admin") {
-        onReady(null, "forbidden");
-        return;
-      }
-      onReady(result.data.user, null);
-    });
+    return api
+      .apiRequest("/api/auth/me")
+      .then(function (result) {
+        if (result.response.status === 401) {
+          window.location.replace("/login");
+          return;
+        }
+        if (result.response.status === 403) {
+          onReady(null, "forbidden");
+          return;
+        }
+        if (result.response.status === 503 || result.response.status >= 500) {
+          onReady(null, "service");
+          return;
+        }
+        if (result.response.status !== 200 || !result.data || !result.data.user) {
+          onReady(null, "service");
+          return;
+        }
+        if (result.data.user.role !== "admin") {
+          onReady(null, "forbidden");
+          return;
+        }
+        onReady(result.data.user, null);
+      })
+      .catch(function () {
+        onReady(null, "network");
+      });
   }
 
   function setPanelMessage(el, kind, title, text, actionHtml) {
@@ -82,6 +119,7 @@
       return;
     }
     el.hidden = false;
+    el.classList.remove("clients-hidden");
     el.innerHTML =
       '<div class="clients-empty">' +
       '<p class="clients-empty__title">' +

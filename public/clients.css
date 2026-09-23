@@ -24,6 +24,7 @@
 .clients-field {
   display: grid;
   gap: 0.35rem;
+  min-width: 0;
 }
 
 .clients-field__label {
@@ -34,6 +35,7 @@
 .clients-field__input,
 .clients-field__select {
   width: 100%;
+  max-width: 100%;
   min-height: 2.75rem;
   padding: 0.55rem 0.75rem;
   border: 1px solid var(--rf-border);
@@ -47,6 +49,38 @@
 .clients-field__select:focus-visible {
   outline: 3px solid var(--rf-text);
   outline-offset: 2px;
+}
+
+.clients-combobox {
+  position: relative;
+  min-width: 0;
+}
+
+.clients-combobox__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  max-height: 14rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  box-shadow: var(--rf-shadow);
+}
+
+.clients-combobox__option {
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+
+.clients-combobox__option:hover,
+.clients-combobox__option:focus {
+  background: var(--rf-surface-muted);
 }
 
 .clients-meta {
@@ -70,6 +104,7 @@
 
 .clients-table-wrap {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .clients-table {
@@ -84,6 +119,7 @@
   border-bottom: 1px solid var(--rf-border);
   text-align: left;
   vertical-align: top;
+  word-break: break-word;
 }
 
 .clients-table th {
@@ -116,6 +152,7 @@
 .clients-cards {
   display: grid;
   gap: 0.75rem;
+  max-width: 100%;
 }
 
 .clients-card {
@@ -123,6 +160,8 @@
   border-radius: var(--rf-radius);
   padding: 0.85rem;
   background: #fff;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .clients-card__title {

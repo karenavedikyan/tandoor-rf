@@ -17,12 +17,19 @@ describe("clients phone helpers", () => {
     assert.equal(escapeIlikePattern("100%_test"), "100\\%\\_test");
   });
 
-  it("accepts only unambiguous tel href numbers", () => {
+  it("builds tel href only for explicit international prefixes", () => {
+    assert.equal(telHrefFromPhone("+7 (999) 000-11-22"), "+79990001122");
+    assert.equal(telHrefFromPhone("0079990001122"), "+79990001122");
+    assert.equal(telHrefFromPhone("8 (999) 000-11-22"), null);
+    assert.equal(telHrefFromPhone("9990001122"), null);
+    assert.equal(telHrefFromPhone("12+345678901"), null);
+    assert.equal(telHrefFromPhone("8-800-555-35-35"), null);
+    assert.equal(telHrefFromPhone("доп. +7 999"), null);
+    assert.equal(telHrefFromPhone("+7 999, +7 888"), null);
+  });
+
+  it("mirrors tel recognition helper", () => {
     assert.equal(isRecognizedTelHref("+79990001122"), true);
     assert.equal(isRecognizedTelHref("8 800 555"), false);
-    assert.equal(isRecognizedTelHref("+7 (999) 000-11-22"), true);
-    assert.equal(isRecognizedTelHref("моб: +7 999"), false);
-    assert.equal(telHrefFromPhone("+7 (999) 000-11-22"), "+79990001122");
-    assert.equal(telHrefFromPhone("доп. +7 999 и +7 888"), null);
   });
 });

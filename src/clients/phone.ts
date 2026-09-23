@@ -8,28 +8,41 @@ export function escapeIlikePattern(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-export function isRecognizedTelHref(phone: string): boolean {
-  const trimmed = phone.trim();
-  if (!trimmed || trimmed.includes(",")) {
-    return false;
-  }
-  if (/[a-zA-Z\u0400-\u04FF]/.test(trimmed)) {
-    return false;
-  }
-  if ((trimmed.match(/\+/g) ?? []).length > 1) {
-    return false;
-  }
-  if (!/^[\d\s()+\-]+$/.test(trimmed)) {
-    return false;
-  }
-  const digits = normalizePhoneForSearch(trimmed);
-  return digits.length >= 10 && digits.length <= 15;
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
 }
 
 export function telHrefFromPhone(phone: string): string | null {
-  if (!isRecognizedTelHref(phone)) {
+  const trimmed = phone.trim();
+  if (!trimmed || trimmed.includes(",")) {
     return null;
   }
-  const digits = normalizePhoneForSearch(phone);
-  return `+${digits.replace(/^\+/, "")}`;
+  if (/[a-zA-Z\u0400-\u04FF]/.test(trimmed)) {
+    return null;
+  }
+  if (!/^[\d\s()+\-]+$/.test(trimmed)) {
+    return null;
+  }
+  if ((trimmed.match(/\+/g) ?? []).length > 1) {
+    return null;
+  }
+
+  let digits: string;
+  if (trimmed.startsWith("+")) {
+    digits = digitsOnly(trimmed.slice(1));
+  } else if (trimmed.startsWith("00")) {
+    digits = digitsOnly(trimmed.slice(2));
+  } else {
+    return null;
+  }
+
+  if (digits.length < 10 || digits.length > 15) {
+    return null;
+  }
+
+  return `+${digits}`;
+}
+
+export function isRecognizedTelHref(phone: string): boolean {
+  return telHrefFromPhone(phone) !== null;
 }

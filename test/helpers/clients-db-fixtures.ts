@@ -93,3 +93,22 @@ export async function insertFailedImportRun(databaseUrl: string): Promise<void> 
   );
   await pool.end();
 }
+
+export async function insertValidationFailedImportRun(databaseUrl: string): Promise<void> {
+  assertTestDatabaseUrl(databaseUrl, "insertValidationFailedImportRun");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  await pool.query(
+    `
+      INSERT INTO onec_client_import_runs (
+        status,
+        mode,
+        source_sha256,
+        finished_at,
+        error_code
+      )
+      VALUES ('validation_failed', 'apply', $1, NOW(), 'VALIDATION_FAILED')
+    `,
+    ["c".repeat(64)],
+  );
+  await pool.end();
+}

@@ -22,12 +22,33 @@ export type SqlFilter = {
   params: unknown[];
 };
 
+function rejectNonScalar(value: unknown): boolean {
+  return Array.isArray(value) || (value !== null && typeof value === "object");
+}
+
+function parseScalarString(value: unknown, fallback: string): string | null {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  return value.trim();
+}
+
 function parsePositiveInt(value: unknown, fallback: number, max?: number): number | null {
   if (value === undefined || value === null || value === "") {
     return fallback;
   }
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) {
+  if (rejectNonScalar(value)) {
+    return null;
+  }
+  const str = String(value).trim();
+  if (!/^\d+$/.test(str)) {
+    return null;
+  }
+  const parsed = Number(str);
+  if (!Number.isSafeInteger(parsed)) {
     return null;
   }
   if (max !== undefined && parsed > max) {
@@ -39,8 +60,27 @@ function parsePositiveInt(value: unknown, fallback: number, max?: number): numbe
   return parsed;
 }
 
+function parseOptionalUuid(value: unknown, label: string): string | undefined | null {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (rejectNonScalar(value)) {
+    return null;
+  }
+  if (typeof value !== "string" || !isValidUuidParam(value)) {
+    return null;
+  }
+  return value.trim().toLowerCase();
+}
+
 export function parseClientsListQuery(input: Record<string, unknown>): ParsedClientsListQuery {
-  const rawQ = typeof input.q === "string" ? input.q.trim() : "";
+  if (rejectNonScalar(input.q)) {
+    return { ok: false, message: "Некорректный параметр поиска." };
+  }
+  const rawQ = parseScalarString(input.q, "");
+  if (rawQ === null) {
+    return { ok: false, message: "Некорректный параметр поиска." };
+  }
   if (rawQ.length > MAX_SEARCH_LENGTH) {
     return { ok: false, message: "Слишком длинный поисковый запрос." };
   }
@@ -55,25 +95,31 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный размер страницы." };
   }
 
-  const phoneRaw = typeof input.phone === "string" ? input.phone.trim().toLowerCase() : "all";
-  if (phoneRaw !== "all" && phoneRaw !== "yes" && phoneRaw !== "no") {
+  const offset = (page - 1) * pageSize;
+  if (!Number.isSafeInteger(offset)) {
+    return { ok: false, message: "Некорректный номер страницы." };
+  }
+
+  if (rejectNonScalar(input.phone)) {
+    return { ok: false, message: "Некорректный фильтр телефона." };
+  }
+  const phoneRaw = parseScalarString(input.phone, "all") ?? "all";
+  if (phoneRaw === null) {
+    return { ok: false, message: "Некорректный фильтр телефона." };
+  }
+  const phoneNormalized = phoneRaw.toLowerCase();
+  if (phoneNormalized !== "all" && phoneNormalized !== "yes" && phoneNormalized !== "no") {
     return { ok: false, message: "Некорректный фильтр телефона." };
   }
 
-  let managerId: string | undefined;
-  if (input.manager !== undefined && input.manager !== null && input.manager !== "") {
-    if (typeof input.manager !== "string" || !isValidUuidParam(input.manager)) {
-      return { ok: false, message: "Некорректный фильтр менеджера." };
-    }
-    managerId = input.manager.trim().toLowerCase();
+  const managerId = parseOptionalUuid(input.manager, "менеджера");
+  if (managerId === null) {
+    return { ok: false, message: "Некорректный фильтр менеджера." };
   }
 
-  let holdingId: string | undefined;
-  if (input.holding !== undefined && input.holding !== null && input.holding !== "") {
-    if (typeof input.holding !== "string" || !isValidUuidParam(input.holding)) {
-      return { ok: false, message: "Некорректный фильтр холдинга." };
-    }
-    holdingId = input.holding.trim().toLowerCase();
+  const holdingId = parseOptionalUuid(input.holding, "холдинга");
+  if (holdingId === null) {
+    return { ok: false, message: "Некорректный фильтр холдинга." };
   }
 
   return {
@@ -82,7 +128,7 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       q: rawQ,
       managerId,
       holdingId,
-      phone: phoneRaw as PhoneFilter,
+      phone: phoneNormalized as PhoneFilter,
       page,
       pageSize,
     },

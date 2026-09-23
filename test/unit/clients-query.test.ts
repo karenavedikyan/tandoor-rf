@@ -8,6 +8,14 @@ describe("clients query parsing", () => {
     assert.equal(parseClientsListQuery({ pageSize: "101" }).ok, false);
     assert.equal(parseClientsListQuery({ phone: "maybe" }).ok, false);
     assert.equal(parseClientsListQuery({ manager: "not-a-uuid" }).ok, false);
+    assert.equal(parseClientsListQuery({ page: "1e308" }).ok, false);
+    assert.equal(parseClientsListQuery({ page: "999999999999999999999" }).ok, false);
+  });
+
+  it("rejects array and object query values", () => {
+    assert.equal(parseClientsListQuery({ q: ["альфа"] }).ok, false);
+    assert.equal(parseClientsListQuery({ phone: ["yes"] }).ok, false);
+    assert.equal(parseClientsListQuery({ manager: { id: "x" } }).ok, false);
   });
 
   it("builds phone filter without matching everything on empty normalized phone", () => {

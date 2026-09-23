@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import { Pool } from "pg";
 import request from "supertest";
+import { USER_ROLES } from "../../src/shared/user";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
   createTestUser,
@@ -12,6 +14,7 @@ import {
   insertFailedImportRun,
   insertSuccessfulImportRun,
   insertSyntheticClients,
+  insertValidationFailedImportRun,
 } from "../helpers/clients-db-fixtures";
 
 const ORIGIN = "http://127.0.0.1:3000";
@@ -179,7 +182,17 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.notDeepEqual(pageOne.body.items[0].guid, pageTwo.body.items[0].guid);
   });
 
-  it("returns distinct manager and holding options by UUID", async () => {
+  it("returns one option per UUID with deterministic label", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: "77777777-7777-4777-8777-777777777777",
+        name_client: "Дубликат UUID",
+        guid_manager: MANAGER_A,
+        name_manager: "Менеджер Иванов B",
+        address: "Екатеринбург",
+      },
+    ]);
+
     const app = await loadApp();
     const adminCookie = await login("admin@example.com");
     const res = await request(app).get("/api/clients/options").set(authHeaders(adminCookie));
@@ -187,6 +200,11 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(res.body.managers.length, 2);
     assert.equal(res.body.holdings.length, 1);
     assert.ok(res.body.managers.every((item: { shortId: string }) => item.shortId.length === 8));
+    const managerAOptions = res.body.managers.filter(
+      (item: { id: string }) => item.id === MANAGER_A,
+    );
+    assert.equal(managerAOptions.length, 1);
+    assert.equal(managerAOptions[0].name, "Менеджер Иванов");
   });
 
   it("returns client detail and validates UUID parameter", async () => {
@@ -232,6 +250,112 @@ describe("clients workspace integration", { concurrency: false }, () => {
       .set(authHeaders(adminCookie));
     assert.equal(afterFail.status, 200);
     assert.ok(afterFail.body.warning);
+    assert.ok(afterFail.body.lastSuccessfulImportAt);
+  });
+
+  it("reports warning after validation_failed import", async () => {
+    const app = await loadApp();
+    const adminCookie = await login("admin@example.com");
+    await insertValidationFailedImportRun(databaseUrl);
+    resetPoolForTests();
+    const res = await request(await loadApp())
+      .get("/api/clients/sync-status")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.ok(res.body.warning);
+    assert.ok(res.body.lastSuccessfulImportAt);
+  });
+
+  it("rejects malformed list query parameters with 400", async () => {
+    const app = await loadApp();
+    const adminCookie = await login("admin@example.com");
+    const invalidPage = await request(app)
+      .get("/api/clients?page=1e308")
+      .set(authHeaders(adminCookie));
+    assert.equal(invalidPage.status, 400);
+    assert.equal(invalidPage.headers["cache-control"], "no-store");
+
+    const arrayQ = await request(app)
+      .get("/api/clients?q%5B%5D=" + encodeURIComponent("альфа"))
+      .set(authHeaders(adminCookie));
+    assert.equal(arrayQ.status, 400);
+  });
+
+  it("denies every non-admin role on clients APIs", async () => {
+    const app = await loadApp();
+    const paths = [
+      "/api/clients",
+      "/api/clients/options",
+      "/api/clients/sync-status",
+      `/api/clients/${CLIENT_ONE}`,
+    ];
+
+    for (const role of USER_ROLES) {
+      if (role === "admin") {
+        continue;
+      }
+      await createTestUser({
+        databaseUrl,
+        email: `${role}-clients@example.com`,
+        password: TEST_PASSWORD,
+        fullName: role,
+        role,
+      });
+      const cookie = await login(`${role}-clients@example.com`);
+      for (const path of paths) {
+        const res = await request(app).get(path).set(authHeaders(cookie));
+        assert.equal(res.status, 403, `${role} should be forbidden on ${path}`);
+        assert.equal(res.headers["cache-control"], "no-store");
+      }
+    }
+  });
+
+  it("denies disabled users and expired sessions on clients APIs", async () => {
+    await createTestUser({
+      databaseUrl,
+      email: "disabled@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Disabled User",
+      role: "admin",
+      status: "disabled",
+    });
+
+    const app = await loadApp();
+    const disabledLogin = await request(app)
+      .post("/api/auth/login")
+      .set(authHeaders())
+      .send({ email: "disabled@example.com", password: TEST_PASSWORD });
+    assert.equal(disabledLogin.status, 401);
+
+    const activeAdmin = await login("admin@example.com");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      "UPDATE sessions SET expires_at = NOW() - interval '1 minute' WHERE revoked_at IS NULL",
+    );
+    await pool.end();
+    resetPoolForTests();
+
+    const expired = await request(await loadApp())
+      .get("/api/clients")
+      .set(authHeaders(activeAdmin));
+    assert.equal(expired.status, 401);
+    assert.equal(expired.headers["cache-control"], "no-store");
+  });
+
+  it("returns 503 without leaking details when database is unavailable", async () => {
+    const adminCookie = await login("admin@example.com");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query("DROP TABLE IF EXISTS onec_clients CASCADE");
+    await pool.end();
+    resetPoolForTests();
+
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients").set(authHeaders(adminCookie));
+    assert.equal(res.status, 503);
+    assert.equal(res.headers["cache-control"], "no-store");
+    assert.match(res.body.error.message, /недоступен|внутренняя ошибка сервера/i);
+    assert.equal(typeof res.body.error.message, "string");
+    assert.doesNotMatch(JSON.stringify(res.body), /password|secret|postgres|onec_clients|22P02|syntax error/i);
   });
 
   it("serves clients pages with no-store and keeps auth/profile health working", async () => {

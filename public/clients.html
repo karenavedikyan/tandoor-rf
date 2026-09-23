@@ -16,7 +16,7 @@
           <h1 class="clients-page-title">Клиенты</h1>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
-          <div id="state-panel" class="clients-hidden" role="status" aria-live="polite"></div>
+          <div id="init-panel" class="clients-hidden" role="alert"></div>
 
           <div id="clients-app" class="clients-hidden">
             <div class="clients-toolbar">
@@ -31,14 +31,42 @@
                 />
               </label>
               <div class="clients-toolbar__row clients-toolbar__row--filters">
-                <label class="clients-field">
-                  <span class="clients-field__label">Менеджер 1С</span>
-                  <select id="manager-filter" class="clients-field__select"></select>
-                </label>
-                <label class="clients-field">
-                  <span class="clients-field__label">Холдинг</span>
-                  <select id="holding-filter" class="clients-field__select"></select>
-                </label>
+                <div class="clients-field">
+                  <span class="clients-field__label" id="manager-filter-label">Менеджер 1С</span>
+                  <div class="clients-combobox" id="manager-combobox">
+                    <input
+                      id="manager-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="manager-filter-label"
+                      aria-controls="manager-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все менеджеры"
+                    />
+                    <input type="hidden" id="manager-filter" value="" />
+                    <ul id="manager-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <div class="clients-field">
+                  <span class="clients-field__label" id="holding-filter-label">Холдинг</span>
+                  <div class="clients-combobox" id="holding-combobox">
+                    <input
+                      id="holding-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="holding-filter-label"
+                      aria-controls="holding-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все холдинги"
+                    />
+                    <input type="hidden" id="holding-filter" value="" />
+                    <ul id="holding-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
                 <label class="clients-field">
                   <span class="clients-field__label">Телефон</span>
                   <select id="phone-filter" class="clients-field__select">
@@ -59,29 +87,32 @@
             </div>
 
             <div id="results-panel">
-              <div class="clients-table-wrap">
-                <table class="clients-table" aria-label="Список клиентов">
-                  <thead>
-                    <tr>
-                      <th scope="col">Клиент</th>
-                      <th scope="col">Холдинг</th>
-                      <th scope="col">Менеджер</th>
-                      <th scope="col">Адрес</th>
-                      <th scope="col">Телефон</th>
-                    </tr>
-                  </thead>
-                  <tbody id="clients-table-body"></tbody>
-                </table>
+              <div id="results-state" class="clients-hidden" role="status" aria-live="polite"></div>
+              <div id="results-content">
+                <div class="clients-table-wrap">
+                  <table class="clients-table" aria-label="Список клиентов">
+                    <thead>
+                      <tr>
+                        <th scope="col">Клиент</th>
+                        <th scope="col">Холдинг</th>
+                        <th scope="col">Менеджер</th>
+                        <th scope="col">Адрес</th>
+                        <th scope="col">Телефон</th>
+                      </tr>
+                    </thead>
+                    <tbody id="clients-table-body"></tbody>
+                  </table>
+                </div>
+                <div id="clients-cards" class="clients-cards"></div>
               </div>
-              <div id="clients-cards" class="clients-cards"></div>
+              <nav id="pagination" class="clients-pagination" aria-label="Пагинация"></nav>
             </div>
-
-            <nav id="pagination" class="clients-pagination" aria-label="Пагинация"></nav>
           </div>
         </div>
       </main>
     </div>
     <script src="/common.js" defer></script>
+    <script src="/clients-logic.js" defer></script>
     <script src="/clients-shell.js" defer></script>
     <script src="/clients.js" defer></script>
   </body>

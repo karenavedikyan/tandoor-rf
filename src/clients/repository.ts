@@ -80,19 +80,21 @@ export async function listClients(input: ClientsListQuery): Promise<ClientsListR
 export async function getClientOptions(): Promise<ClientsOptionsResponse> {
   const managers = await query<OptionRow>(
     `
-      SELECT guid_manager::text AS id, name_manager AS name
+      SELECT DISTINCT ON (guid_manager)
+        guid_manager::text AS id,
+        name_manager AS name
       FROM onec_clients
-      GROUP BY guid_manager, name_manager
-      ORDER BY name_manager ASC, guid_manager ASC
+      ORDER BY guid_manager ASC, name_manager ASC
     `,
   );
   const holdings = await query<OptionRow>(
     `
-      SELECT guid_holding::text AS id, name_holding AS name
+      SELECT DISTINCT ON (guid_holding)
+        guid_holding::text AS id,
+        name_holding AS name
       FROM onec_clients
       WHERE guid_holding IS NOT NULL
-      GROUP BY guid_holding, name_holding
-      ORDER BY name_holding ASC, guid_holding ASC
+      ORDER BY guid_holding ASC, name_holding ASC
     `,
   );
 
@@ -161,7 +163,7 @@ export async function getClientsSyncStatus(): Promise<ClientsSyncStatusResponse>
   if (
     lastSuccessfulImportAt &&
     latestRun &&
-    latestRun.status === "failed" &&
+    (latestRun.status === "failed" || latestRun.status === "validation_failed") &&
     latestRun.finished_at &&
     latestRun.finished_at > lastSuccessfulImportAt
   ) {
