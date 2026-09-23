@@ -29,9 +29,14 @@ const logic = require("../../public/clients-logic.js") as {
   };
 };
 
-const MANAGER_ID = "22222222-2222-4222-8222-222222222222";
+const MANAGER_A = "22222222-2222-4222-8222-222222222222";
+const HOLDING_H = "44444444-4444-4444-8444-444444444444";
 const CLIENT_GUID = "11111111-1111-4111-8111-111111111111";
-const managerOptions = [{ id: MANAGER_ID, name: "Тест Менеджер", shortId: "22222222" }];
+const managerOptions = [
+  { id: MANAGER_A, name: "Менеджер A", shortId: "22222222" },
+  { id: "55555555-5555-4555-8555-555555555555", name: "Менеджер B", shortId: "55555555" },
+];
+const holdingOptions = [{ id: HOLDING_H, name: "Холдинг H", shortId: "44444444" }];
 
 function comboboxMarkup(): string {
   return `
@@ -43,13 +48,28 @@ function comboboxMarkup(): string {
   `;
 }
 
-function mountTestCombobox(onApplySelection: (selectedId: string) => void) {
-  const dom = new JSDOM(`<!DOCTYPE html><html><body>${comboboxMarkup()}</body></html>`);
+function mountTestCombobox(
+  onApplySelection: (selectedId: string) => void,
+  config: {
+    idPrefix?: string;
+    allLabel?: string;
+    options?: () => Array<{ id: string; name: string; shortId: string }>;
+  } = {},
+) {
+  const idPrefix = config.idPrefix ?? "manager";
+  const markup = `
+    <div id="${idPrefix}-combobox">
+      <input id="${idPrefix}-filter-input" type="search" aria-controls="${idPrefix}-filter-list" />
+      <input type="hidden" id="${idPrefix}-filter" value="" />
+      <ul id="${idPrefix}-filter-list" class="clients-hidden"></ul>
+    </div>
+  `;
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>${markup}</body></html>`);
   const { document } = dom.window;
-  const input = document.getElementById("manager-filter-input") as HTMLInputElement;
-  const hidden = document.getElementById("manager-filter") as HTMLInputElement;
-  const listEl = document.getElementById("manager-filter-list") as HTMLElement;
-  const root = document.getElementById("manager-combobox") as HTMLElement;
+  const input = document.getElementById(`${idPrefix}-filter-input`) as HTMLInputElement;
+  const hidden = document.getElementById(`${idPrefix}-filter`) as HTMLInputElement;
+  const listEl = document.getElementById(`${idPrefix}-filter-list`) as HTMLElement;
+  const root = document.getElementById(`${idPrefix}-combobox`) as HTMLElement;
 
   const mounted = logic.mountCombobox({
     model: logic.createComboboxModel(),
@@ -57,13 +77,27 @@ function mountTestCombobox(onApplySelection: (selectedId: string) => void) {
     hidden,
     listEl,
     root,
-    listboxId: "manager-filter-list",
-    allLabel: "Все менеджеры",
-    options: () => managerOptions,
+    listboxId: `${idPrefix}-filter-list`,
+    allLabel: config.allLabel ?? "Все менеджеры",
+    options: config.options ?? (() => managerOptions),
     onApplySelection,
   });
 
-  return { dom, document, input, hidden, listEl, mounted };
+  return { dom, document, input, hidden, listEl, mounted, root };
+}
+
+function selectComboboxOption(
+  dom: JSDOM,
+  input: HTMLInputElement,
+  listEl: HTMLElement,
+  optionId: string,
+) {
+  input.focus();
+  input.dispatchEvent(new dom.window.Event("focus", { bubbles: true }));
+  input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  const option = listEl.querySelector(`[data-value="${optionId}"]`) as HTMLElement;
+  assert.ok(option, `option ${optionId} should exist`);
+  option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
 }
 
 describe("clients combobox DOM", () => {
@@ -90,17 +124,11 @@ describe("clients combobox DOM", () => {
       applied = selectedId;
     });
 
-    input.focus();
-    input.value = "Тест";
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    selectComboboxOption(dom, input, listEl, MANAGER_A);
 
-    const option = listEl.querySelector('[data-value="' + MANAGER_ID + '"]') as HTMLElement;
-    assert.ok(option);
-    option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
-
-    assert.equal(applied, MANAGER_ID);
-    assert.equal(hidden.value, MANAGER_ID);
-    assert.match(input.value, /Тест Менеджер/);
+    assert.equal(applied, MANAGER_A);
+    assert.equal(hidden.value, MANAGER_A);
+    assert.match(input.value, /Менеджер A/);
   });
 
   it("selects option with ArrowDown and Enter", () => {
@@ -110,14 +138,91 @@ describe("clients combobox DOM", () => {
     });
 
     input.focus();
-    input.value = "Тест";
+    input.value = "Менедж";
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 
-    assert.equal(applied, MANAGER_ID);
-    assert.equal(hidden.value, MANAGER_ID);
+    assert.equal(applied, MANAGER_A);
+    assert.equal(hidden.value, MANAGER_A);
+  });
+
+  it("restores applied manager after draft text cancelled with Escape", () => {
+    const { dom, input, hidden, listEl } = mountTestCombobox(() => {});
+
+    selectComboboxOption(dom, input, listEl, MANAGER_A);
+    assert.equal(hidden.value, MANAGER_A);
+
+    input.value = "Черновик B";
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    assert.equal(hidden.value, MANAGER_A);
+
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    assert.equal(hidden.value, MANAGER_A);
+    assert.match(input.value, /Менеджер A/);
+  });
+
+  it("restores applied manager after draft cancelled with Tab", () => {
+    const { dom, input, hidden, listEl } = mountTestCombobox(() => {});
+
+    selectComboboxOption(dom, input, listEl, MANAGER_A);
+    input.value = "Черновик B";
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+
+    assert.equal(hidden.value, MANAGER_A);
+    assert.match(input.value, /Менеджер A/);
+  });
+
+  it("restores applied manager after click outside without selection", () => {
+    const { dom, document, input, hidden, listEl, root } = mountTestCombobox(() => {});
+
+    selectComboboxOption(dom, input, listEl, MANAGER_A);
+    input.value = "Черновик B";
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+
+    assert.equal(hidden.value, MANAGER_A);
+    assert.match(input.value, /Менеджер A/);
+  });
+
+  it("keeps manager filter when selecting holding afterwards", () => {
+    const query = { manager: "", holding: "" };
+    const manager = mountTestCombobox((selectedId) => {
+      query.manager = selectedId;
+    });
+    const holding = mountTestCombobox(
+      (selectedId) => {
+        query.holding = selectedId;
+      },
+      {
+        idPrefix: "holding",
+        allLabel: "Все холдинги",
+        options: () => holdingOptions,
+      },
+    );
+
+    selectComboboxOption(manager.dom, manager.input, manager.listEl, MANAGER_A);
+    assert.equal(query.manager, MANAGER_A);
+    assert.equal(manager.hidden.value, MANAGER_A);
+
+    manager.input.value = "Черновик B";
+    manager.input.dispatchEvent(new manager.dom.window.Event("input", { bubbles: true }));
+    manager.input.dispatchEvent(
+      new manager.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+
+    selectComboboxOption(holding.dom, holding.input, holding.listEl, HOLDING_H);
+
+    assert.equal(query.manager, MANAGER_A);
+    assert.equal(manager.hidden.value, MANAGER_A);
+    assert.equal(query.holding, HOLDING_H);
+    assert.equal(holding.hidden.value, HOLDING_H);
   });
 
   it("clears filter when choosing «Все менеджеры»", () => {

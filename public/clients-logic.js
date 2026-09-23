@@ -104,7 +104,6 @@
 
   function comboboxOnInput(model, value) {
     model.searchText = value;
-    model.selectedId = "";
     model.activeIndex = -1;
     model.open = true;
     return model;

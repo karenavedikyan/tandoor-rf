@@ -34,6 +34,15 @@ const logic = require("../../public/clients-logic.js") as {
     selectedId: string,
     options: Array<{ id: string; name: string; shortId: string }>,
   ) => { selectedId: string; searchText: string };
+  comboboxSelect: (
+    model: { selectedId: string; searchText: string },
+    selectedId: string,
+    options: Array<{ id: string; name: string; shortId: string }>,
+  ) => { selectedId: string; searchText: string };
+  comboboxOnBlur: (
+    model: { selectedId: string; searchText: string },
+    options: Array<{ id: string; name: string; shortId: string }>,
+  ) => { selectedId: string; searchText: string };
 };
 
 describe("clients frontend logic", () => {
@@ -65,12 +74,15 @@ describe("clients frontend logic", () => {
     assert.equal(logic.filterOptions(items, "22222222").length, 1);
   });
 
-  it("separates combobox search text from selected UUID", () => {
+  it("keeps applied UUID while editing draft search text", () => {
+    const options = [{ id: "a", name: "Менеджер A", shortId: "11111111" }];
     const model = logic.createComboboxModel();
-    logic.comboboxOnInput(model, "Тест");
-    assert.equal(model.searchText, "Тест");
-    assert.equal(model.selectedId, "");
-    logic.comboboxApplyFromUrl(model, "", []);
-    assert.equal(model.searchText, "");
+    logic.comboboxSelect(model, "a", options);
+    logic.comboboxOnInput(model, "Черновик B");
+    assert.equal(model.searchText, "Черновик B");
+    assert.equal(model.selectedId, "a");
+    logic.comboboxOnBlur(model, options);
+    assert.match(model.searchText, /Менеджер A/);
+    assert.equal(model.selectedId, "a");
   });
 });
