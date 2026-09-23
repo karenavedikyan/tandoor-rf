@@ -5,14 +5,23 @@ const SECRET_KEYS = ["password", "ONEC_FTP_PASSWORD"] as const;
 export const MAX_PROBE_STRING_FIELD_LENGTH = 500;
 export const MAX_PROBE_REPORT_BYTES = 65_536;
 
+export function formatProbeReportForCli(result: OnecFtpProbeResult): string {
+  return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+export function probeReportByteLength(result: OnecFtpProbeResult): number {
+  return Buffer.byteLength(formatProbeReportForCli(result), "utf8");
+}
+
 export function redactSecrets(value: string, secrets: string[] = []): string {
-  let sanitized = value.replace(/[\r\n]+/g, " ").trim();
+  let sanitized = value;
   for (const secret of secrets) {
     if (!secret) {
       continue;
     }
     sanitized = sanitized.split(secret).join("[redacted]");
   }
+  sanitized = sanitized.replace(/[\r\n]+/g, " ").trim();
   sanitized = sanitized.replace(/ftp:\/\/[^\s]+/gi, "ftp://[redacted]");
   sanitized = sanitized.replace(/ONEC_FTP_PASSWORD=[^\s]+/gi, "ONEC_FTP_PASSWORD=[redacted]");
   return sanitized;
@@ -48,14 +57,18 @@ function removeSecretKeys(clone: Record<string, unknown>): void {
   }
 }
 
+function fitsProbeReportLimit(result: OnecFtpProbeResult): boolean {
+  return probeReportByteLength(result) <= MAX_PROBE_REPORT_BYTES;
+}
+
 function limitReportSize(result: OnecFtpProbeResult): OnecFtpProbeResult {
-  if (JSON.stringify(result).length <= MAX_PROBE_REPORT_BYTES) {
+  if (fitsProbeReportLimit(result)) {
     return result;
   }
 
   if (result.files && result.files.length > 0) {
     let files = result.files;
-    while (files.length > 0 && JSON.stringify({ ...result, files }).length > MAX_PROBE_REPORT_BYTES) {
+    while (files.length > 0 && !fitsProbeReportLimit({ ...result, files })) {
       files = files.slice(0, Math.max(0, files.length - 1));
     }
     const limited: OnecFtpProbeResult = {
@@ -65,7 +78,7 @@ function limitReportSize(result: OnecFtpProbeResult): OnecFtpProbeResult {
       truncated: true,
       message: sanitizeProbeMessage(result.message),
     };
-    if (JSON.stringify(limited).length <= MAX_PROBE_REPORT_BYTES) {
+    if (fitsProbeReportLimit(limited)) {
       return limited;
     }
   }
