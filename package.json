@@ -35,7 +35,6 @@
     "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.2",
     "node-pty": "^1.1.0",
-    "selfsigned": "^2.4.1",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

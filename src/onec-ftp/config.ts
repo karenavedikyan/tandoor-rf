@@ -1,4 +1,4 @@
-import type { OnecFtpConfig } from "./types";
+import type { OnecFtpConfig, OnecFtpSecurityMode } from "./types";
 
 const DEFAULT_PORT = 21;
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -70,6 +70,14 @@ function parsePort(env: NodeJS.ProcessEnv): number | null {
   return port;
 }
 
+function parseSecurityMode(env: NodeJS.ProcessEnv): OnecFtpSecurityMode | null {
+  const raw = env.ONEC_FTP_SECURITY?.trim().toLowerCase();
+  if (!raw || raw === "plain") {
+    return "plain";
+  }
+  return null;
+}
+
 function parseTimeoutMs(env: NodeJS.ProcessEnv): number | null {
   const raw = env.ONEC_FTP_TIMEOUT_MS?.trim();
   if (!raw) {
@@ -94,6 +102,7 @@ export function loadOnecFtpConfig(env: NodeJS.ProcessEnv = process.env): OnecFtp
     const basePath = readTrimmedRequired(env, "ONEC_FTP_BASE_PATH", "ONEC_FTP_BASE_PATH");
     const port = parsePort(env);
     const timeoutMs = parseTimeoutMs(env);
+    const security = parseSecurityMode(env);
 
     if (!host) {
       return { ok: false, message: "ONEC_FTP_HOST is required when ONEC_FTP_ENABLED=true." };
@@ -119,6 +128,12 @@ export function loadOnecFtpConfig(env: NodeJS.ProcessEnv = process.env): OnecFtp
         message: `ONEC_FTP_TIMEOUT_MS must be an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}.`,
       };
     }
+    if (security === null) {
+      return {
+        ok: false,
+        message: "ONEC_FTP_SECURITY must be 'plain'.",
+      };
+    }
 
     assertSafeFtpPath(basePath);
 
@@ -126,6 +141,7 @@ export function loadOnecFtpConfig(env: NodeJS.ProcessEnv = process.env): OnecFtp
       ok: true,
       config: {
         enabled: true,
+        security,
         host,
         port,
         user,

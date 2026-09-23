@@ -34,12 +34,39 @@ describe("onec ftp config", () => {
     assert.match(loaded.message, /ONEC_FTP_HOST/);
   });
 
+  it("defaults security mode to plain", () => {
+    process.env.ONEC_FTP_ENABLED = "true";
+    process.env.ONEC_FTP_HOST = "ftp.example.com";
+    process.env.ONEC_FTP_USER = "exchange-user";
+    process.env.ONEC_FTP_PASSWORD = "secret";
+    process.env.ONEC_FTP_BASE_PATH = "/1C/Exchange";
+    delete process.env.ONEC_FTP_SECURITY;
+    const loaded = loadOnecFtpConfig(process.env);
+    assert.equal(loaded.ok, true);
+    if (loaded.ok) {
+      assert.equal(loaded.config.security, "plain");
+    }
+  });
+
+  it("rejects non-plain security modes", () => {
+    process.env.ONEC_FTP_ENABLED = "true";
+    process.env.ONEC_FTP_HOST = "ftp.example.com";
+    process.env.ONEC_FTP_USER = "exchange-user";
+    process.env.ONEC_FTP_PASSWORD = "secret";
+    process.env.ONEC_FTP_BASE_PATH = "/1C/Exchange";
+    process.env.ONEC_FTP_SECURITY = "tls";
+    const loaded = loadOnecFtpConfig(process.env);
+    assert.equal(loaded.ok, false);
+    assert.match(loaded.message, /ONEC_FTP_SECURITY must be 'plain'/);
+  });
+
   it("preserves password special characters without trimming", () => {
     process.env.ONEC_FTP_ENABLED = "true";
     process.env.ONEC_FTP_HOST = "ftp.example.com";
     process.env.ONEC_FTP_USER = "exchange-user";
     process.env.ONEC_FTP_PASSWORD = " p@ss:word!#$ ";
-    process.env.ONEC_FTP_BASE_PATH = "/exchange";
+    process.env.ONEC_FTP_BASE_PATH = "/1C/Exchange";
+    process.env.ONEC_FTP_SECURITY = "plain";
     const loaded = loadOnecFtpConfig(process.env);
     assert.equal(loaded.ok, true);
     if (loaded.ok) {
@@ -52,7 +79,8 @@ describe("onec ftp config", () => {
     process.env.ONEC_FTP_HOST = "ftp.example.com\r\nUSER evil";
     process.env.ONEC_FTP_USER = "user";
     process.env.ONEC_FTP_PASSWORD = "secret";
-    process.env.ONEC_FTP_BASE_PATH = "/exchange";
+    process.env.ONEC_FTP_BASE_PATH = "/1C/Exchange";
+    process.env.ONEC_FTP_SECURITY = "plain";
     const loaded = loadOnecFtpConfig(process.env);
     assert.equal(loaded.ok, false);
     assert.match(loaded.message, /CR, LF, or NUL/);
@@ -67,7 +95,8 @@ describe("onec ftp config", () => {
     process.env.ONEC_FTP_HOST = "ftp.example.com";
     process.env.ONEC_FTP_USER = "user";
     process.env.ONEC_FTP_PASSWORD = "secret";
-    process.env.ONEC_FTP_BASE_PATH = "/exchange";
+    process.env.ONEC_FTP_BASE_PATH = "/1C/Exchange";
+    process.env.ONEC_FTP_SECURITY = "plain";
     process.env.ONEC_FTP_PORT = "70000";
     assert.equal(loadOnecFtpConfig(process.env).ok, false);
 

@@ -131,23 +131,26 @@ docker run --rm -p 3000:3000 \
 | `PGSSLMODE` | локально | `disable` только для local/test/development |
 | `PGSSLROOTCERT` | prod TW | PEM-содержимое CA **или** абсолютный путь к PEM-файлу |
 | `TRUSTED_PROXIES` | нет | CSV доверенных IP/CIDR прокси для цепочки `X-Forwarded-For` |
-| `ONEC_FTP_ENABLED` | нет (`false`) | Включает CLI-проверку FTPS к обмену 1С |
-| `ONEC_FTP_HOST` | при enabled | Хост FTPS-сервера обмена 1С |
-| `ONEC_FTP_PORT` | нет (`21`) | Порт FTPS |
+| `ONEC_FTP_ENABLED` | нет (`false`) | Включает CLI-проверку plain FTP к обмену 1С |
+| `ONEC_FTP_SECURITY` | нет (`plain`) | Режим FTP; поддерживается только `plain` (без TLS) |
+| `ONEC_FTP_HOST` | при enabled | Хост FTP-сервера обмена 1С |
+| `ONEC_FTP_PORT` | нет (`21`) | Порт FTP |
 | `ONEC_FTP_USER` | при enabled | Учётная запись только для чтения |
 | `ONEC_FTP_PASSWORD` | при enabled | Пароль; задавать **только** в env TW, не в GitHub/Cursor/аргументах CLI |
-| `ONEC_FTP_BASE_PATH` | при enabled | Явный базовый каталог FTP, напр. `/exchange` |
+| `ONEC_FTP_BASE_PATH` | при enabled | Явный базовый каталог FTP, напр. `/1C/Exchange` |
 | `ONEC_FTP_TIMEOUT_MS` | нет (`15000`) | Таймаут всей проверки, мс |
 
 В **production** запрещены `PGSSLMODE=disable` и `sslmode=disable|no-verify` в URL.
 
-### Проверка FTPS к обмену 1С (только CLI)
+### Проверка plain FTP к обмену 1С (только CLI)
 
 Интеграция **выключена по умолчанию** (`ONEC_FTP_ENABLED=false`) и не делает сетевых обращений при старте приложения, `GET /api/health` или `GET /api/ready`.
 
-Используется **explicit FTPS** с проверкой сертификата и имени сервера. Обычный FTP и `rejectUnauthorized:false` запрещены. Если сервер отвечает `534` на `AUTH TLS`, CLI возвращает `TLS_UNAVAILABLE` и **не отправляет** `USER`/`PASS`.
+Используется **обычный FTP без шифрования** (`ONEC_FTP_SECURITY=plain`, `secure: false`). CLI **не отправляет** `AUTH TLS`. Логин, пароль и данные каталога передаются по сети **без шифрования** — это согласованный режим для `gw.toopatch.ru:21`.
 
-На стороне IT должен быть включён защищённый транспорт FTPS. До этого реальное подключение к `gw.toopatch.ru` ожидаемо завершится статусом `TLS_UNAVAILABLE`.
+Проверка только на чтение: подключение, авторизация, `PWD` и список файлов в явно заданном `ONEC_FTP_BASE_PATH`. Запись, удаление, импорт в БД и автопоиск по старым каталогам не выполняются.
+
+TLS PostgreSQL и HTTPS приложения **не затрагиваются** этой интеграцией.
 
 **Команда на TW (one-off job / console):**
 
@@ -161,9 +164,9 @@ node dist/cli/onec-ftp-probe.js
 npm run onec-ftp-probe:local
 ```
 
-**Exit codes:** `0` — `SUCCESS` или `DISABLED`; `1` — любая ошибка конфигурации, TLS, авторизации, каталога или списка.
+**Exit codes:** `0` — `SUCCESS` или `DISABLED`; `1` — любая ошибка конфигурации, сети, авторизации, каталога или списка.
 
-**Примеры статусов JSON:** `DISABLED`, `SUCCESS`, `CONFIG_ERROR`, `TLS_UNAVAILABLE`, `TLS_ERROR`, `AUTH_FAILED`, `PATH_ACCESS_DENIED`, `LIST_FAILED`, `TIMEOUT`.
+**Примеры статусов JSON:** `DISABLED`, `SUCCESS`, `CONFIG_ERROR`, `NETWORK_ERROR`, `AUTH_FAILED`, `PATH_ACCESS_DENIED`, `LIST_FAILED`, `TIMEOUT`.
 
 Пароль и другие секреты не попадают в stdout/stderr. CLI не скачивает файлы, не пишет в БД и не создаёт каталоги на FTP.
 

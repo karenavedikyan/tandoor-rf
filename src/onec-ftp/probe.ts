@@ -1,4 +1,3 @@
-import tls from "node:tls";
 import { Client, FTPError, type FileInfo } from "basic-ftp";
 import { isOnecFtpEnabled, loadOnecFtpConfig } from "./config";
 import { sanitizeProbeMessage, sanitizeProbeResult } from "./sanitize";
@@ -35,14 +34,6 @@ function classifyError(
     const code = error.code;
     const message = sanitizeProbeMessage(error.message);
 
-    if (code === 534) {
-      return {
-        status: "TLS_UNAVAILABLE",
-        stage: "tls_negotiation",
-        ftpCode: code,
-        message: "Server rejected AUTH TLS; secure transport is unavailable.",
-      };
-    }
     if (code === 530) {
       return {
         status: "AUTH_FAILED",
@@ -88,14 +79,6 @@ function classifyError(
   }
 
   const code = getErrorCode(error);
-  if (isTlsError(error, code)) {
-    return {
-      status: "TLS_ERROR",
-      stage: stage === "connect" ? "tls_negotiation" : stage,
-      message: "Secure FTP TLS handshake or certificate verification failed.",
-    };
-  }
-
   if (isNetworkError(code)) {
     return {
       status: "NETWORK_ERROR",
@@ -124,14 +107,6 @@ function getErrorCode(error: unknown): string | undefined {
     return typeof code === "string" ? code : undefined;
   }
   return undefined;
-}
-
-function isTlsError(error: unknown, code: string | undefined): boolean {
-  if (code && /TLS|CERT|SSL/i.test(code)) {
-    return true;
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return /self signed certificate|certificate|tls|ssl/i.test(message);
 }
 
 function isNetworkError(code: string | undefined): boolean {
@@ -166,13 +141,22 @@ async function withProbeTimeout<T>(
 
 export type ProbeOnecFtpOptions = {
   clientFactory?: OnecFtpClientFactory;
-  secureOptions?: tls.ConnectionOptions;
 };
 
 export async function probeOnecFtp(
   config: OnecFtpConfig,
   options?: ProbeOnecFtpOptions,
 ): Promise<OnecFtpProbeResult> {
+  if (config.security !== "plain") {
+    return {
+      status: "CONFIG_ERROR",
+      stage: "config",
+      durationMs: 0,
+      message: "ONEC_FTP_SECURITY must be 'plain'.",
+      basePath: config.basePath,
+    };
+  }
+
   const startedAt = Date.now();
   const clientFactory = options?.clientFactory ?? defaultClientFactory;
   const client = clientFactory(config.timeoutMs);
@@ -187,24 +171,19 @@ export async function probeOnecFtp(
         port: config.port,
         user: config.user,
         password: config.password,
-        secure: true,
-        secureOptions: {
-          rejectUnauthorized: true,
-          servername: config.host,
-          ...options?.secureOptions,
-        },
+        secure: false,
       }),
       config.timeoutMs,
     );
 
     stage = "authentication";
     stage = "base_path_access";
-    stage = "list_transfer";
+    await withProbeTimeout(client.cd(config.basePath), config.timeoutMs);
 
-    const listing = await withProbeTimeout(
-      client.list(config.basePath),
-      config.timeoutMs,
-    );
+    const workingDirectory = await withProbeTimeout(client.pwd(), config.timeoutMs);
+
+    stage = "list_transfer";
+    const listing = await withProbeTimeout(client.list(), config.timeoutMs);
 
     const mapped = listing.map(mapFileInfo);
     const truncated = mapped.length > MAX_LIST_ENTRIES;
@@ -217,6 +196,7 @@ export async function probeOnecFtp(
         durationMs: Date.now() - startedAt,
         message: "Directory listing output exceeds the allowed size limit.",
         basePath: config.basePath,
+        workingDirectory,
         fileCount: files.length,
         truncated: true,
       };
@@ -227,8 +207,9 @@ export async function probeOnecFtp(
       status: "SUCCESS",
       stage: "complete",
       durationMs: Date.now() - startedAt,
-      message: "Secure FTP probe completed successfully.",
+      message: "Plain FTP probe completed successfully.",
       basePath: config.basePath,
+      workingDirectory,
       files,
       fileCount: files.length,
       truncated,

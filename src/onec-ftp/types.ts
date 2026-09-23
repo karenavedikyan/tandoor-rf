@@ -2,9 +2,7 @@ export const ONEC_FTP_PROBE_STATUSES = [
   "DISABLED",
   "SUCCESS",
   "CONFIG_ERROR",
-  "TLS_UNAVAILABLE",
   "NETWORK_ERROR",
-  "TLS_ERROR",
   "AUTH_FAILED",
   "PATH_ACCESS_DENIED",
   "LIST_FAILED",
@@ -12,12 +10,15 @@ export const ONEC_FTP_PROBE_STATUSES = [
   "OUTPUT_LIMIT_EXCEEDED",
 ] as const;
 
+export const ONEC_FTP_SECURITY_MODES = ["plain"] as const;
+
+export type OnecFtpSecurityMode = (typeof ONEC_FTP_SECURITY_MODES)[number];
+
 export type OnecFtpProbeStatus = (typeof ONEC_FTP_PROBE_STATUSES)[number];
 
 export const ONEC_FTP_PROBE_STAGES = [
   "config",
   "connect",
-  "tls_negotiation",
   "authentication",
   "base_path_access",
   "list_transfer",
@@ -35,6 +36,7 @@ export type OnecFtpFileEntry = {
 
 export type OnecFtpConfig = {
   enabled: true;
+  security: OnecFtpSecurityMode;
   host: string;
   port: number;
   user: string;
@@ -50,6 +52,7 @@ export type OnecFtpProbeResult = {
   ftpCode?: number;
   message: string;
   basePath?: string;
+  workingDirectory?: string;
   files?: OnecFtpFileEntry[];
   fileCount?: number;
   truncated?: boolean;
