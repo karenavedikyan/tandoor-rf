@@ -132,13 +132,13 @@ docker run --rm -p 3000:3000 \
 | `PGSSLROOTCERT` | prod TW | PEM-содержимое CA **или** абсолютный путь к PEM-файлу |
 | `TRUSTED_PROXIES` | нет | CSV доверенных IP/CIDR прокси для цепочки `X-Forwarded-For` |
 | `ONEC_FTP_ENABLED` | нет (`false`) | Включает CLI-проверку plain FTP к обмену 1С |
-| `ONEC_FTP_SECURITY` | нет (`plain`) | Режим FTP; поддерживается только `plain` (без TLS) |
+| `ONEC_FTP_SECURITY` | да (при enabled) | Обязательно `plain` (без TLS); отсутствие или другое значение → `CONFIG_ERROR` |
 | `ONEC_FTP_HOST` | при enabled | Хост FTP-сервера обмена 1С |
 | `ONEC_FTP_PORT` | нет (`21`) | Порт FTP |
 | `ONEC_FTP_USER` | при enabled | Учётная запись только для чтения |
 | `ONEC_FTP_PASSWORD` | при enabled | Пароль; задавать **только** в env TW, не в GitHub/Cursor/аргументах CLI |
 | `ONEC_FTP_BASE_PATH` | при enabled | Явный базовый каталог FTP, напр. `/1C/Exchange` |
-| `ONEC_FTP_TIMEOUT_MS` | нет (`15000`) | Таймаут всей проверки, мс |
+| `ONEC_FTP_TIMEOUT_MS` | нет (`15000`) | Единый deadline всей проверки (connect → list), мс |
 
 В **production** запрещены `PGSSLMODE=disable` и `sslmode=disable|no-verify` в URL.
 
@@ -146,7 +146,7 @@ docker run --rm -p 3000:3000 \
 
 Интеграция **выключена по умолчанию** (`ONEC_FTP_ENABLED=false`) и не делает сетевых обращений при старте приложения, `GET /api/health` или `GET /api/ready`.
 
-Используется **обычный FTP без шифрования** (`ONEC_FTP_SECURITY=plain`, `secure: false`). CLI **не отправляет** `AUTH TLS`. Логин, пароль и данные каталога передаются по сети **без шифрования** — это согласованный режим для `gw.toopatch.ru:21`.
+Используется **обычный FTP без шифрования** (`ONEC_FTP_SECURITY=plain`, `secure: false`). При `ONEC_FTP_ENABLED=true` переменная `ONEC_FTP_SECURITY=plain` **обязательна** — отсутствие, пустое или неизвестное значение даёт `CONFIG_ERROR` до сетевого обращения. CLI **не отправляет** `AUTH TLS`. Логин, пароль и данные каталога передаются по сети **без шифрования** — это согласованный режим для `gw.toopatch.ru:21`. JSON-отчёт содержит `security: "plain"` и `transportWarning`.
 
 Проверка только на чтение: подключение, авторизация, `PWD` и список файлов в явно заданном `ONEC_FTP_BASE_PATH`. Запись, удаление, импорт в БД и автопоиск по старым каталогам не выполняются.
 
@@ -168,7 +168,7 @@ npm run onec-ftp-probe:local
 
 **Примеры статусов JSON:** `DISABLED`, `SUCCESS`, `CONFIG_ERROR`, `NETWORK_ERROR`, `AUTH_FAILED`, `PATH_ACCESS_DENIED`, `LIST_FAILED`, `TIMEOUT`.
 
-Пароль и другие секреты не попадают в stdout/stderr. CLI не скачивает файлы, не пишет в БД и не создаёт каталоги на FTP.
+Пароль и другие секреты не попадают в stdout/stderr (очищаются во всех строковых полях отчёта, включая `basePath`, `workingDirectory` и `files[].name`). CLI не скачивает файлы, не пишет в БД и не создаёт каталоги на FTP.
 
 Включать `ONEC_FTP_ENABLED=true` только после review PR и отдельного согласования deployment/env в TW. Откат: вернуть `ONEC_FTP_ENABLED=false` (или удалить FTP env) и перезапустить приложение — основной ЛК продолжит работать.
 

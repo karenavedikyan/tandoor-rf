@@ -1,7 +1,12 @@
+import type { OnecFtpFileEntry, OnecFtpProbeResult } from "./types";
+
 const SECRET_KEYS = ["password", "ONEC_FTP_PASSWORD"] as const;
 
-export function sanitizeProbeMessage(message: string, secrets: string[] = []): string {
-  let sanitized = message.replace(/[\r\n]+/g, " ").trim();
+export const MAX_PROBE_STRING_FIELD_LENGTH = 500;
+export const MAX_PROBE_REPORT_BYTES = 65_536;
+
+export function redactSecrets(value: string, secrets: string[] = []): string {
+  let sanitized = value.replace(/[\r\n]+/g, " ").trim();
   for (const secret of secrets) {
     if (!secret) {
       continue;
@@ -10,19 +15,86 @@ export function sanitizeProbeMessage(message: string, secrets: string[] = []): s
   }
   sanitized = sanitized.replace(/ftp:\/\/[^\s]+/gi, "ftp://[redacted]");
   sanitized = sanitized.replace(/ONEC_FTP_PASSWORD=[^\s]+/gi, "ONEC_FTP_PASSWORD=[redacted]");
-  return sanitized.slice(0, 500);
+  return sanitized;
 }
 
-export function sanitizeProbeResult<T extends Record<string, unknown>>(
-  result: T,
-  secrets: string[] = [],
-): T {
-  const clone = structuredClone(result) as Record<string, unknown>;
-  if (typeof clone.message === "string") {
-    clone.message = sanitizeProbeMessage(clone.message, secrets);
+export function sanitizeProbeMessage(message: string, secrets: string[] = []): string {
+  return redactSecrets(message, secrets).slice(0, MAX_PROBE_STRING_FIELD_LENGTH);
+}
+
+function sanitizeOptionalString(
+  value: string | undefined,
+  secrets: string[],
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
   }
+  return redactSecrets(value, secrets).slice(0, MAX_PROBE_STRING_FIELD_LENGTH);
+}
+
+function sanitizeFileEntry(entry: OnecFtpFileEntry, secrets: string[]): OnecFtpFileEntry {
+  return {
+    ...entry,
+    name: redactSecrets(entry.name, secrets).slice(0, MAX_PROBE_STRING_FIELD_LENGTH),
+    modifiedAt: entry.modifiedAt
+      ? redactSecrets(entry.modifiedAt, secrets).slice(0, MAX_PROBE_STRING_FIELD_LENGTH)
+      : null,
+  };
+}
+
+function removeSecretKeys(clone: Record<string, unknown>): void {
   for (const key of SECRET_KEYS) {
     delete clone[key];
   }
-  return clone as T;
+}
+
+function limitReportSize(result: OnecFtpProbeResult): OnecFtpProbeResult {
+  if (JSON.stringify(result).length <= MAX_PROBE_REPORT_BYTES) {
+    return result;
+  }
+
+  if (result.files && result.files.length > 0) {
+    let files = result.files;
+    while (files.length > 0 && JSON.stringify({ ...result, files }).length > MAX_PROBE_REPORT_BYTES) {
+      files = files.slice(0, Math.max(0, files.length - 1));
+    }
+    const limited: OnecFtpProbeResult = {
+      ...result,
+      files,
+      fileCount: files.length,
+      truncated: true,
+      message: sanitizeProbeMessage(result.message),
+    };
+    if (JSON.stringify(limited).length <= MAX_PROBE_REPORT_BYTES) {
+      return limited;
+    }
+  }
+
+  const { files: _files, fileCount: _fileCount, truncated: _truncated, ...withoutFiles } = result;
+  const compact: OnecFtpProbeResult = {
+    ...withoutFiles,
+    truncated: true,
+    message: sanitizeProbeMessage(
+      "Probe report exceeded the allowed size limit; file listing omitted.",
+    ),
+  };
+  return compact;
+}
+
+export function sanitizeProbeResult(
+  result: OnecFtpProbeResult,
+  secrets: string[] = [],
+): OnecFtpProbeResult {
+  const clone = structuredClone(result) as OnecFtpProbeResult & Record<string, unknown>;
+  removeSecretKeys(clone);
+
+  clone.message = sanitizeProbeMessage(clone.message, secrets);
+  clone.basePath = sanitizeOptionalString(clone.basePath, secrets);
+  clone.workingDirectory = sanitizeOptionalString(clone.workingDirectory, secrets);
+
+  if (clone.files) {
+    clone.files = clone.files.map((entry) => sanitizeFileEntry(entry, secrets));
+  }
+
+  return limitReportSize(clone);
 }

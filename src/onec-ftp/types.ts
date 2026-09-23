@@ -49,6 +49,8 @@ export type OnecFtpProbeResult = {
   status: OnecFtpProbeStatus;
   stage: OnecFtpProbeStage;
   durationMs: number;
+  security?: OnecFtpSecurityMode;
+  transportWarning?: string;
   ftpCode?: number;
   message: string;
   basePath?: string;

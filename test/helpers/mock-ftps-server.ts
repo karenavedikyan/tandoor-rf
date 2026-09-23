@@ -6,7 +6,9 @@ export type MockPlainFtpServerOptions = {
   cwdMode?: "accept" | "reject550";
   listMode?: "success" | "reject550";
   hangAfterAuth?: boolean;
+  postAuthDelayMs?: number;
   basePath?: string;
+  pwdPath?: string;
   files?: Array<{ name: string; type: "file" | "directory"; size: number }>;
 };
 
@@ -16,6 +18,7 @@ export type MockPlainFtpServerHandle = {
   commands: string[];
   userReceived: boolean;
   passwordReceived: boolean;
+  controlEnded: boolean;
   close: () => Promise<void>;
 };
 
@@ -47,14 +50,21 @@ export async function startMockPlainFtpServer(
   const commands: string[] = [];
   let userReceived = false;
   let passwordReceived = false;
+  let controlClosed = false;
+  let controlSocket: net.Socket | undefined;
   const childServers: net.Server[] = [];
   const openSockets: net.Socket[] = [];
 
   const server = net.createServer((socket) => {
     openSockets.push(socket);
+    controlSocket = socket;
+    socket.on("close", () => {
+      controlClosed = true;
+    });
     let buffer = "";
     let authenticated = false;
     let currentPath = "/";
+    const pwdPath = options.pwdPath ?? basePath;
     let pendingDataSocket: net.Socket | null = null;
     let activeDataServer: net.Server | null = null;
 
@@ -103,6 +113,18 @@ export async function startMockPlainFtpServer(
       });
     };
 
+    const respondLater = (respond: () => void): void => {
+      const delay =
+        authenticated && options.postAuthDelayMs && options.postAuthDelayMs > 0
+          ? options.postAuthDelayMs
+          : 0;
+      if (delay > 0) {
+        setTimeout(respond, delay);
+        return;
+      }
+      respond();
+    };
+
     const handleCommand = (command: string): void => {
       trackCommand(command);
       const upper = command.toUpperCase();
@@ -146,17 +168,21 @@ export async function startMockPlainFtpServer(
         return;
       }
       if (upper.startsWith("CWD")) {
-        if (options.cwdMode === "reject550") {
-          writeReply("550 Access denied.");
-          socket.end();
-          return;
-        }
-        currentPath = basePath;
-        writeReply("250 Directory changed.");
+        respondLater(() => {
+          if (options.cwdMode === "reject550") {
+            writeReply("550 Access denied.");
+            socket.end();
+            return;
+          }
+          currentPath = basePath;
+          writeReply("250 Directory changed.");
+        });
         return;
       }
       if (upper.startsWith("PWD") || upper.startsWith("XPWD")) {
-        writeReply(`257 "${currentPath}" is the current directory.`);
+        respondLater(() => {
+          writeReply(`257 "${pwdPath}" is the current directory.`);
+        });
         return;
       }
       if (upper.startsWith("EPSV") || upper.startsWith("PASV")) {
@@ -164,18 +190,20 @@ export async function startMockPlainFtpServer(
         return;
       }
       if (upper.startsWith("LIST") || upper.startsWith("MLSD")) {
-        if (options.listMode === "reject550") {
-          pendingDataSocket?.destroy();
-          pendingDataSocket = null;
-          activeDataServer?.close();
-          activeDataServer = null;
-          writeReply("550 Listing denied.");
-          return;
-        }
-        writeReply("150 Opening data connection.");
-        if (pendingDataSocket) {
-          sendListing(pendingDataSocket);
-        }
+        respondLater(() => {
+          if (options.listMode === "reject550") {
+            pendingDataSocket?.destroy();
+            pendingDataSocket = null;
+            activeDataServer?.close();
+            activeDataServer = null;
+            writeReply("550 Listing denied.");
+            return;
+          }
+          writeReply("150 Opening data connection.");
+          if (pendingDataSocket) {
+            sendListing(pendingDataSocket);
+          }
+        });
         return;
       }
       if (upper.startsWith("QUIT")) {
@@ -215,6 +243,9 @@ export async function startMockPlainFtpServer(
     },
     get passwordReceived() {
       return passwordReceived;
+    },
+    get controlEnded() {
+      return controlClosed || controlSocket?.destroyed === true;
     },
     close: async () => {
       for (const child of childServers.splice(0)) {

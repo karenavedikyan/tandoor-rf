@@ -1,6 +1,6 @@
 import { Client, FTPError, type FileInfo } from "basic-ftp";
 import { isOnecFtpEnabled, loadOnecFtpConfig } from "./config";
-import { sanitizeProbeMessage, sanitizeProbeResult } from "./sanitize";
+import { sanitizeProbeResult } from "./sanitize";
 import type {
   OnecFtpConfig,
   OnecFtpFileEntry,
@@ -10,6 +10,8 @@ import type {
 } from "./types";
 
 export const MAX_LIST_ENTRIES = 500;
+export const PLAIN_FTP_TRANSPORT_WARNING =
+  "Login, password, and file data are transmitted without encryption.";
 
 export type OnecFtpClientFactory = (timeoutMs: number) => Client;
 
@@ -32,7 +34,6 @@ function classifyError(
 ): Pick<OnecFtpProbeResult, "status" | "stage" | "ftpCode" | "message"> {
   if (error instanceof FTPError) {
     const code = error.code;
-    const message = sanitizeProbeMessage(error.message);
 
     if (code === 530) {
       return {
@@ -66,7 +67,7 @@ function classifyError(
       status: stage === "list_transfer" ? "LIST_FAILED" : "NETWORK_ERROR",
       stage,
       ftpCode: code,
-      message: message || "FTP command failed.",
+      message: "FTP command failed.",
     };
   }
 
@@ -101,6 +102,36 @@ class ProbeTimeoutError extends Error {
   }
 }
 
+class ProbeDeadline {
+  private readonly expiresAt: number;
+  private timer: NodeJS.Timeout | undefined;
+  private readonly abortPromise: Promise<never>;
+
+  constructor(timeoutMs: number) {
+    this.expiresAt = Date.now() + timeoutMs;
+    this.abortPromise = new Promise((_, reject) => {
+      this.timer = setTimeout(() => reject(new ProbeTimeoutError()), timeoutMs);
+    });
+  }
+
+  dispose(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+    }
+  }
+
+  remainingMs(): number {
+    return Math.max(0, this.expiresAt - Date.now());
+  }
+
+  async run<T>(promise: Promise<T>): Promise<T> {
+    if (this.remainingMs() <= 0) {
+      throw new ProbeTimeoutError();
+    }
+    return Promise.race([promise, this.abortPromise]);
+  }
+}
+
 function getErrorCode(error: unknown): string | undefined {
   if (error !== null && typeof error === "object" && "code" in error) {
     const code = (error as { code?: unknown }).code;
@@ -120,23 +151,14 @@ function isNetworkError(code: string | undefined): boolean {
   );
 }
 
-async function withProbeTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new ProbeTimeoutError()), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
+function withProbeMetadata(
+  result: Omit<OnecFtpProbeResult, "security" | "transportWarning">,
+): OnecFtpProbeResult {
+  return {
+    ...result,
+    security: "plain",
+    transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+  };
 }
 
 export type ProbeOnecFtpOptions = {
@@ -158,6 +180,7 @@ export async function probeOnecFtp(
   }
 
   const startedAt = Date.now();
+  const deadline = new ProbeDeadline(config.timeoutMs);
   const clientFactory = options?.clientFactory ?? defaultClientFactory;
   const client = clientFactory(config.timeoutMs);
   client.ftp.verbose = false;
@@ -165,7 +188,7 @@ export async function probeOnecFtp(
   let stage: OnecFtpProbeStage = "connect";
 
   try {
-    await withProbeTimeout(
+    await deadline.run(
       client.access({
         host: config.host,
         port: config.port,
@@ -173,59 +196,66 @@ export async function probeOnecFtp(
         password: config.password,
         secure: false,
       }),
-      config.timeoutMs,
     );
 
     stage = "authentication";
     stage = "base_path_access";
-    await withProbeTimeout(client.cd(config.basePath), config.timeoutMs);
+    await deadline.run(client.cd(config.basePath));
 
-    const workingDirectory = await withProbeTimeout(client.pwd(), config.timeoutMs);
+    const workingDirectory = await deadline.run(client.pwd());
 
     stage = "list_transfer";
-    const listing = await withProbeTimeout(client.list(), config.timeoutMs);
+    const listing = await deadline.run(client.list());
 
     const mapped = listing.map(mapFileInfo);
     const truncated = mapped.length > MAX_LIST_ENTRIES;
     const files = mapped.slice(0, MAX_LIST_ENTRIES);
 
     if (JSON.stringify(files).length > 64_000) {
-      const limited: OnecFtpProbeResult = {
-        status: "OUTPUT_LIMIT_EXCEEDED",
-        stage: "list_transfer",
-        durationMs: Date.now() - startedAt,
-        message: "Directory listing output exceeds the allowed size limit.",
-        basePath: config.basePath,
-        workingDirectory,
-        fileCount: files.length,
-        truncated: true,
-      };
-      return sanitizeProbeResult(limited, [config.password]);
+      return sanitizeProbeResult(
+        withProbeMetadata({
+          status: "OUTPUT_LIMIT_EXCEEDED",
+          stage: "list_transfer",
+          durationMs: Date.now() - startedAt,
+          message: "Directory listing output exceeds the allowed size limit.",
+          basePath: config.basePath,
+          workingDirectory,
+          fileCount: files.length,
+          truncated: true,
+        }),
+        [config.password],
+      );
     }
 
-    const success: OnecFtpProbeResult = {
-      status: "SUCCESS",
-      stage: "complete",
-      durationMs: Date.now() - startedAt,
-      message: "Plain FTP probe completed successfully.",
-      basePath: config.basePath,
-      workingDirectory,
-      files,
-      fileCount: files.length,
-      truncated,
-    };
-    return sanitizeProbeResult(success, [config.password]);
+    return sanitizeProbeResult(
+      withProbeMetadata({
+        status: "SUCCESS",
+        stage: "complete",
+        durationMs: Date.now() - startedAt,
+        message: "Plain FTP probe completed successfully.",
+        basePath: config.basePath,
+        workingDirectory,
+        files,
+        fileCount: files.length,
+        truncated,
+      }),
+      [config.password],
+    );
   } catch (error) {
+    if (error instanceof ProbeTimeoutError && !client.closed) {
+      client.close();
+    }
     const classified = classifyError(error, stage);
     return sanitizeProbeResult(
-      {
+      withProbeMetadata({
         ...classified,
         durationMs: Date.now() - startedAt,
         basePath: config.basePath,
-      },
+      }),
       [config.password],
     );
   } finally {
+    deadline.dispose();
     client.close();
   }
 }

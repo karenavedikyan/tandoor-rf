@@ -71,8 +71,15 @@ function parsePort(env: NodeJS.ProcessEnv): number | null {
 }
 
 function parseSecurityMode(env: NodeJS.ProcessEnv): OnecFtpSecurityMode | null {
-  const raw = env.ONEC_FTP_SECURITY?.trim().toLowerCase();
-  if (!raw || raw === "plain") {
+  const raw = env.ONEC_FTP_SECURITY;
+  if (raw === undefined) {
+    return null;
+  }
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed === "plain") {
     return "plain";
   }
   return null;
