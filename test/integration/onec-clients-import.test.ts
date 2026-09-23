@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { applyClientsImport } from "../../src/onec-clients/apply";
 import { IMPORT_ADVISORY_LOCK_KEY } from "../../src/onec-clients/constants";
 import { validateClientsFileBytes } from "../../src/onec-clients/validate";
@@ -16,6 +18,25 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+
+function emitClientFault(client: PoolClient): void {
+  client.emit("error", Object.assign(new Error("connection terminated"), { code: "ECONNRESET" }));
+}
+
+async function collectProcessOutput(child: ReturnType<typeof spawn>): Promise<{
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  child.stdout?.on("data", (chunk) => stdout.push(String(chunk)));
+  child.stderr?.on("data", (chunk) => stderr.push(String(chunk)));
+  const code = await new Promise<number | null>((resolve) => {
+    child.on("close", (exitCode) => resolve(exitCode));
+  });
+  return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+}
 
 function ftpEnv(): NodeJS.ProcessEnv {
   return {
@@ -290,6 +311,119 @@ describe("onec clients import integration", { concurrency: false }, () => {
       assert.equal(result.code, "COMMIT_UNCERTAIN");
       assert.ok(result.runId);
       assert.match(result.message, /runId/i);
+    }
+  });
+
+  it("handles async PoolClient error before commit", async () => {
+    const validated = validateClientsFileBytes(
+      buildClientsFileBytes([sampleClient(), sampleClientTwo()]),
+    );
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: {
+        onClientReady(client) {
+          emitClientFault(client);
+        },
+      },
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "DATABASE_ERROR");
+      assert.equal(result.message, "Database connection failed during apply.");
+      assert.equal(JSON.stringify(result).includes("ECONNRESET"), false);
+    }
+  });
+
+  it("survives real socket disconnect in a child process without unhandled errors", async () => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", path.join("test/helpers/apply-socket-disconnect-child.ts")],
+      {
+        env: {
+          ...process.env,
+          TEST_DATABASE_URL: databaseUrl,
+          DATABASE_URL: databaseUrl,
+          PGSSLMODE: "disable",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const output = await collectProcessOutput(child);
+    assert.equal(output.code, 0, output.stderr);
+    assert.equal(output.stderr.includes("Unhandled"), false);
+    assert.equal(output.stderr.includes("ECONNRESET"), false);
+
+    const parsed = JSON.parse(output.stdout) as { ok: boolean; code?: string };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code === "DATABASE_ERROR" || parsed.code === "COMMIT_UNCERTAIN", true);
+  });
+
+  it("keeps success when release fails after commit", async () => {
+    const validated = validateClientsFileBytes(buildClientsFileBytes([sampleClient()]));
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: { failRelease: true },
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.match(result.cleanupWarning ?? "", /release/i);
+    }
+  });
+
+  it("keeps success when pool end fails after commit", async () => {
+    const validated = validateClientsFileBytes(buildClientsFileBytes([sampleClient()]));
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: { failPoolEnd: true },
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.match(result.cleanupWarning ?? "", /pool shutdown/i);
+    }
+  });
+
+  it("does not hide apply failure when cleanup also fails", async () => {
+    const validated = validateClientsFileBytes(buildClientsFileBytes([sampleClient()]));
+    assert.equal(validated.ok, true);
+    if (!validated.ok) {
+      return;
+    }
+
+    const result = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      testHooks: {
+        afterRecordIndex: 0,
+        failRelease: true,
+        failPoolEnd: true,
+      },
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "DATABASE_ERROR");
     }
   });
 

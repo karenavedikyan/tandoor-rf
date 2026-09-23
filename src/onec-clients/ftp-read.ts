@@ -38,7 +38,11 @@ export type FtpReadResult =
   | { ok: true; bytes: Buffer; remotePath: string }
   | { ok: false; code: "TIMEOUT" | "FILE_TOO_LARGE" | "FTP_ERROR"; message: string };
 
-export type FtpReader = (config: OnecFtpConfig) => Promise<FtpReadResult>;
+export type FtpReaderContext = {
+  readDeadlineMs?: number;
+};
+
+export type FtpReader = (config: OnecFtpConfig, context?: FtpReaderContext) => Promise<FtpReadResult>;
 
 async function withReadDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -56,12 +60,11 @@ async function withReadDeadline<T>(promise: Promise<T>, timeoutMs: number): Prom
   }
 }
 
-export const defaultFtpReader: FtpReader = async (config) => {
+export const defaultFtpReader: FtpReader = async (config, context) => {
   const remotePath = buildClientsFilePath(config.basePath);
   const client = new Client(config.timeoutMs);
   client.ftp.verbose = false;
-
-  const readDeadlineMs = Math.min(config.timeoutMs, FTP_READ_DEADLINE_MS);
+  const readDeadlineMs = context?.readDeadlineMs ?? FTP_READ_DEADLINE_MS;
 
   try {
     return await withReadDeadline(
@@ -97,6 +100,7 @@ export const defaultFtpReader: FtpReader = async (config) => {
 export async function readClientsFileFromFtp(
   config: OnecFtpConfig,
   reader: FtpReader = defaultFtpReader,
+  context?: FtpReaderContext,
 ): Promise<FtpReadResult> {
-  return reader(config);
+  return reader(config, context);
 }

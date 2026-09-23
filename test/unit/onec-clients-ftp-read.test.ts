@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { MAX_SOURCE_BYTES } from "../../src/onec-clients/constants";
+import { FTP_READ_DEADLINE_MS, MAX_SOURCE_BYTES } from "../../src/onec-clients/constants";
 import { defaultFtpReader } from "../../src/onec-clients/ftp-read";
 import { buildClientsFileBytes, sampleClient } from "../helpers/onec-clients-fixtures";
 import { startMockPlainFtpServer } from "../helpers/mock-ftps-server";
@@ -90,7 +90,7 @@ describe("onec clients defaultFtpReader", () => {
     }
   });
 
-  it("times out on the overall read deadline and closes the connection", async () => {
+  it("times out on the overall read deadline during an ongoing transfer", async () => {
     const server = await startMockPlainFtpServer({
       basePath: "/LC",
       retrMode: "hang",
@@ -98,24 +98,35 @@ describe("onec clients defaultFtpReader", () => {
     });
 
     try {
-      const result = await defaultFtpReader({
-        enabled: true,
-        security: "plain",
-        host: server.host,
-        port: server.port,
-        user: "lc_exchange",
-        password: "test-password",
-        basePath: "/LC",
-        timeoutMs: 100,
-      });
+      const startedAt = Date.now();
+      const result = await defaultFtpReader(
+        {
+          enabled: true,
+          security: "plain",
+          host: server.host,
+          port: server.port,
+          user: "lc_exchange",
+          password: "test-password",
+          basePath: "/LC",
+          timeoutMs: 5_000,
+        },
+        { readDeadlineMs: 150 },
+      );
+      const elapsedMs = Date.now() - startedAt;
 
       assert.equal(result.ok, false);
       if (!result.ok) {
         assert.equal(result.code, "TIMEOUT");
       }
+      assert.ok(elapsedMs >= 100);
+      assert.ok(elapsedMs < 2_000);
       await assertControlEnded(server);
     } finally {
       await server.close();
     }
+  });
+
+  it("uses the production read deadline by default", async () => {
+    assert.equal(FTP_READ_DEADLINE_MS, 60_000);
   });
 });
