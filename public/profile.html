@@ -5,69 +5,76 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Профиль — tandoor-rf</title>
     <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
+    <link rel="stylesheet" href="/brand/legacy-shell.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <main class="page page--form">
-      <h1 class="title">Мой профиль</h1>
-      <p class="subtitle">tandoor-rf</p>
+  <body class="legacy-body">
+    <div class="legacy-app">
+      <div id="workspace-sidebar"></div>
+      <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
+      <div class="legacy-frame">
+        <div id="workspace-topbar"></div>
+        <main class="legacy-content">
+          <header class="profile-page-header">
+            <h1 class="profile-page-title">Мой профиль</h1>
+          </header>
 
-      <form id="profile-form" class="form" hidden>
-        <label class="field">
-          <span class="field__label">ФИО</span>
-          <input id="full-name" name="fullName" type="text" required class="field__input" />
-        </label>
+          <div class="profile-card">
+            <form id="profile-form" class="form" hidden>
+              <label class="field">
+                <span class="field__label">ФИО</span>
+                <input id="full-name" name="fullName" type="text" required class="field__input" />
+              </label>
 
-        <label class="field">
-          <span class="field__label">Email</span>
-          <input id="email" name="email" type="email" readonly class="field__input field__input--readonly" />
-        </label>
+              <label class="field">
+                <span class="field__label">Email</span>
+                <input id="email" name="email" type="email" readonly class="field__input field__input--readonly" />
+              </label>
 
-        <label class="field">
-          <span class="field__label">Телефон</span>
-          <input
-            id="phone"
-            name="phone"
-            type="tel"
-            autocomplete="tel"
-            class="field__input"
-            placeholder="+7XXXXXXXXXX"
-          />
-        </label>
+              <label class="field">
+                <span class="field__label">Телефон</span>
+                <input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  autocomplete="tel"
+                  class="field__input"
+                  placeholder="+7XXXXXXXXXX"
+                />
+              </label>
 
-        <label class="field">
-          <span class="field__label">Роль</span>
-          <input id="role" name="role" type="text" readonly class="field__input field__input--readonly" />
-        </label>
+              <label class="field">
+                <span class="field__label">Роль</span>
+                <input id="role" name="role" type="text" readonly class="field__input field__input--readonly" />
+              </label>
 
-        <label class="field">
-          <span class="field__label">Статус</span>
-          <input id="status" name="status" type="text" readonly class="field__input field__input--readonly" />
-        </label>
+              <label class="field">
+                <span class="field__label">Статус</span>
+                <input id="status" name="status" type="text" readonly class="field__input field__input--readonly" />
+              </label>
 
-        <p id="admin-clients-link" class="admin-link clients-hidden">
-          <a href="/clients">Справочник клиентов 1С</a>
-        </p>
+              <div class="button-row">
+                <button id="save-button" type="submit" class="primary-button">Сохранить</button>
+              </div>
+            </form>
 
-        <div class="button-row">
-          <button id="save-button" type="submit" class="primary-button">Сохранить</button>
-          <button id="logout-button" type="button" class="secondary-button">Выйти</button>
-        </div>
-      </form>
+            <p
+              id="status-message"
+              class="status"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            ></p>
 
-      <p
-        id="status-message"
-        class="status"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      ></p>
-
-      <p class="footer-link">
-        <a href="/">На тестовую страницу</a>
-      </p>
-    </main>
+            <p class="footer-link">
+              <a href="/">На тестовую страницу</a>
+            </p>
+          </div>
+        </main>
+      </div>
+    </div>
     <script src="/common.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
     <script src="/profile.js" defer></script>
   </body>
 </html>

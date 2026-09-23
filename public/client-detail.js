@@ -4,14 +4,13 @@
   var api = window.TandoorRf;
   var shell = window.ClientsShell;
   var logic = window.ClientsLogic;
+  var sections = window.ClientDetailSections;
 
   var accessPanel = document.getElementById("access-panel");
   var initPanel = document.getElementById("init-panel");
   var statePanel = document.getElementById("state-panel");
   var detailEl = document.getElementById("client-detail");
-  var backLink = document.getElementById("back-link");
-  var copyAddressBtn = document.getElementById("copy-address");
-  var copyAddressStatus = document.getElementById("copy-address-status");
+  var detailRoot = document.getElementById("client-detail-root");
 
   function parseReturnQuery() {
     return logic.parseReturnQuery(window.location.search);
@@ -27,11 +26,6 @@
     } catch (_err) {
       return null;
     }
-  }
-
-  function setCopyStatus(message, kind) {
-    copyAddressStatus.textContent = message;
-    copyAddressStatus.className = "workspace-status" + (kind ? " workspace-status--" + kind : "");
   }
 
   function hideAllPanels() {
@@ -98,8 +92,38 @@
     showInitError("Ошибка сети", "Не удалось связаться с сервером. Проверьте подключение.", onRetry);
   }
 
+  function setCopyStatus(message, kind) {
+    var statusEl = document.getElementById("copy-address-status");
+    if (!statusEl) {
+      return;
+    }
+    statusEl.textContent = message;
+    statusEl.className = "workspace-status" + (kind ? " workspace-status--" + kind : "");
+  }
+
+  function bindCopyAddress() {
+    var copyAddressBtn = document.getElementById("copy-address");
+    if (!copyAddressBtn) {
+      return;
+    }
+    copyAddressBtn.addEventListener("click", function () {
+      var address = document.getElementById("client-address")?.textContent || "";
+      shell
+        .copyText(address)
+        .then(function () {
+          setCopyStatus("Адрес скопирован", "success");
+        })
+        .catch(function () {
+          setCopyStatus("Не удалось скопировать адрес", "error");
+        });
+    });
+  }
+
   function renderPhones(phones) {
     var container = document.getElementById("client-phones");
+    if (!container) {
+      return;
+    }
     if (!phones || phones.length === 0) {
       container.innerHTML = '<p class="clients-phone-muted">Не указан</p>';
       return;
@@ -150,31 +174,44 @@
     });
   }
 
+  function renderDetailLayout(returnQuery) {
+    if (!detailRoot) {
+      return;
+    }
+    detailRoot.innerHTML = sections.renderAllSections(returnQuery);
+    sections.initCollapsibles(detailRoot);
+    bindCopyAddress();
+  }
+
   function renderClient(client) {
     hideAllPanels();
-    document.getElementById("client-name").textContent = client.name;
-    document.getElementById("client-source").textContent = client.sourceLabel;
-    document.getElementById("client-manager").textContent =
-      client.manager.name + " · " + client.manager.shortId;
-    document.getElementById("client-address").textContent = client.address || "—";
-    document.getElementById("client-last-import").textContent =
-      "Последняя загрузка этой записи: " + client.lastImportedAtLabel + " (МСК)";
-    document.getElementById("client-uuid").textContent = client.guid;
+    var returnQuery = parseReturnQuery();
+    renderDetailLayout(returnQuery);
 
-    var holdingEl = document.getElementById("client-holding");
-    if (client.holding) {
-      holdingEl.innerHTML =
-        shell.escapeHtml(client.holding.name) +
-        ' · <a class="clients-link clients-link--filter" href="/clients?holding=' +
-        encodeURIComponent(client.holding.id) +
-        '">' +
-        shell.escapeHtml(client.holding.id.slice(0, 8).toUpperCase()) +
-        "</a>";
-    } else {
-      holdingEl.textContent = "—";
+    var headerEl = detailRoot.querySelector(".client-detail-header");
+    if (headerEl) {
+      headerEl.outerHTML = sections.renderHeader(client, returnQuery, shell.escapeHtml);
+    }
+
+    sections.mountTeamSection(document.getElementById("client-team-section"), client, shell.escapeHtml);
+
+    var addressEl = document.getElementById("client-address");
+    if (addressEl) {
+      addressEl.textContent = client.address || "—";
+    }
+
+    var lastImportEl = document.getElementById("client-last-import");
+    if (lastImportEl) {
+      lastImportEl.textContent = client.lastImportedAtLabel + " (МСК)";
+    }
+
+    var uuidEl = document.getElementById("client-uuid");
+    if (uuidEl) {
+      uuidEl.textContent = client.guid;
     }
 
     renderPhones(client.phones);
+    sections.initCollapsibles(detailRoot);
     detailEl.classList.remove("clients-hidden");
   }
 
@@ -261,19 +298,6 @@
     },
   });
 
-  copyAddressBtn?.addEventListener("click", function () {
-    var address = document.getElementById("client-address")?.textContent || "";
-    shell
-      .copyText(address)
-      .then(function () {
-        setCopyStatus("Адрес скопирован", "success");
-      })
-      .catch(function () {
-        setCopyStatus("Не удалось скопировать адрес", "error");
-      });
-  });
-
-  shell.mountShell("clients");
-  backLink.href = "/clients" + parseReturnQuery();
+  shell.mountShell("clients", { showClients: true });
   detailController.bootstrap();
 })();

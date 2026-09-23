@@ -4,12 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Вход — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="auth-body">
     <main class="page page--form">
+      <div class="auth-brand">
+        <img
+          class="auth-brand__logo"
+          data-legacy-logo
+          src="/brand/tandoor-logo-official.svg"
+          width="149"
+          height="42"
+          alt="Tandoor"
+        />
+        <p class="subtitle">tandoor-rf</p>
+      </div>
       <h1 class="title">Вход в ЛК</h1>
-      <p class="subtitle">tandoor-rf</p>
 
       <form id="login-form" class="form" novalidate>
         <label class="field">
@@ -47,10 +58,14 @@
           </div>
         </label>
 
-        <button id="login-button" type="submit" class="primary-button">
-          Войти
-        </button>
+        <button id="login-button" type="submit" class="primary-button">Войти</button>
       </form>
+
+      <p class="theme-row">
+        <button type="button" class="secondary-button" id="login-theme-toggle" data-theme-toggle>
+          Тёмная тема
+        </button>
+      </p>
 
       <p
         id="status-message"
@@ -65,6 +80,7 @@
       </p>
     </main>
     <script src="/common.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
     <script src="/login.js" defer></script>
   </body>
 </html>

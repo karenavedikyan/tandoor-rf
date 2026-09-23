@@ -2,6 +2,7 @@
   "use strict";
 
   var api = window.TandoorRf;
+  var shell = window.ClientsShell;
   var form = document.getElementById("profile-form");
   var fullNameInput = document.getElementById("full-name");
   var emailInput = document.getElementById("email");
@@ -9,9 +10,7 @@
   var roleInput = document.getElementById("role");
   var statusInput = document.getElementById("status");
   var saveButton = document.getElementById("save-button");
-  var logoutButton = document.getElementById("logout-button");
   var statusEl = document.getElementById("status-message");
-  var adminClientsLink = document.getElementById("admin-clients-link");
   var saving = false;
 
   var ROLE_LABELS = {
@@ -46,13 +45,6 @@
     roleInput.value = ROLE_LABELS[user.role] || user.role || "";
     statusInput.value = STATUS_LABELS[user.status] || user.status || "";
     form.hidden = false;
-    if (adminClientsLink) {
-      if (user.role === "admin") {
-        adminClientsLink.classList.remove("clients-hidden");
-      } else {
-        adminClientsLink.classList.add("clients-hidden");
-      }
-    }
   }
 
   function loadProfile() {
@@ -134,42 +126,21 @@
       });
   });
 
-  logoutButton?.addEventListener("click", function () {
-    logoutButton.disabled = true;
-    api.setStatus(statusEl, "Выход…", "loading");
-    api
-      .apiRequest("/api/auth/logout", { method: "POST", body: {} })
-      .then(function (result) {
-        if (result.response.status === 200) {
-          redirectToLogin();
-          return;
-        }
-        api.setStatus(
-          statusEl,
-          api.extractErrorMessage(
-            result.data,
-            "Не удалось завершить выход. Повторите попытку.",
-          ),
-          "error",
-        );
-      })
-      .catch(function (err) {
-        api.setStatus(
-          statusEl,
-          api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
-          "error",
-        );
-      })
-      .finally(function () {
-        logoutButton.disabled = false;
-      });
-  });
-
-  loadProfile().catch(function (err) {
-    api.setStatus(
-      statusEl,
-      api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
-      "error",
-    );
+  shell.mountAuthenticatedShell("profile", function (user, reason) {
+    if (reason) {
+      api.setStatus(statusEl, "Не удалось проверить доступ. Обновите страницу.", "error");
+      return;
+    }
+    if (!user) {
+      redirectToLogin();
+      return;
+    }
+    loadProfile().catch(function (err) {
+      api.setStatus(
+        statusEl,
+        api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+        "error",
+      );
+    });
   });
 })();
