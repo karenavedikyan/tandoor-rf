@@ -137,7 +137,7 @@ docker run --rm -p 3000:3000 \
 | `ONEC_FTP_PORT` | нет (`21`) | Порт FTP |
 | `ONEC_FTP_USER` | при enabled | Учётная запись только для чтения |
 | `ONEC_FTP_PASSWORD` | при enabled | Пароль; задавать **только** в env TW, не в GitHub/Cursor/аргументах CLI |
-| `ONEC_FTP_BASE_PATH` | при enabled | Явный базовый каталог FTP, напр. `/1C/Exchange` |
+| `ONEC_FTP_BASE_PATH` | при enabled | Базовый каталог FTP, напр. `/LC` (файл клиентов: `<base>/clients/all_clients.json`) |
 | `ONEC_FTP_TIMEOUT_MS` | нет (`15000`) | Единый deadline всей проверки (connect → list), мс |
 
 В **production** запрещены `PGSSLMODE=disable` и `sslmode=disable|no-verify` в URL.
@@ -173,6 +173,57 @@ npm run onec-ftp-probe:local
 Включать `ONEC_FTP_ENABLED=true` только после review PR и отдельного согласования deployment/env в TW. Откат: вернуть `ONEC_FTP_ENABLED=false` (или удалить FTP env) и перезапустить приложение — основной ЛК продолжит работать.
 
 Пример: `.env.example`
+
+### Импорт клиентов 1С из FTP (только CLI)
+
+Отдельная команда читает `/LC/clients/all_clients.json` (путь строится из `ONEC_FTP_BASE_PATH`), **валидирует** файл и по умолчанию работает в режиме **dry-run** без подключения к PostgreSQL и без записи в журнал.
+
+**Проверка (dry-run, по умолчанию):**
+
+```bash
+node dist/cli/onec-clients-import.js
+# или явно:
+node dist/cli/onec-clients-import.js --dry-run
+```
+
+**Применение** (только после успешной проверки и согласования):
+
+```bash
+# 1) Получить sha256 из dry-run
+node dist/cli/onec-clients-import.js --dry-run
+# 2) Применить с тем же хешом (файл будет перечитан и провалидирован заново)
+node dist/cli/onec-clients-import.js --apply --expected-sha256 <64-char-hex>
+```
+
+Локально: `npm run onec-clients-import:local` (с `--` для аргументов).
+
+Ограничения: 10 MiB, 50 000 записей, 60 с на чтение FTP; plain FTP (`secure: false`, без `AUTH TLS`). Отчёт CLI не содержит названий клиентов, адресов, телефонов и секретов. Dry-run **не** обещает число новых/изменённых записей без сравнения с БД.
+
+Перед первым apply выполнить миграции: `node dist/cli/migrate.js`.
+
+**Новые env не требуются** — используются существующие `ONEC_FTP_*` и `DATABASE_URL` (только для `--apply`).
+
+**Диагностика `running` в журнале:** если импорт прервался аварийно, в `onec_client_import_runs` может остаться строка со статусом `running`. Такой запуск **не считается успешным**; повторный `--apply` вернёт `STALE_RUNNING_IMPORT` до ручного разбора. Проверка:
+
+```sql
+SELECT id, started_at, finished_at, status, error_code
+FROM onec_client_import_runs
+ORDER BY started_at DESC
+LIMIT 5;
+```
+
+**План первого запуска на TW:** (1) `migrate`, (2) dry-run и сохранить `sha256`, (3) `--apply --expected-sha256 …`, (4) проверить `onec_client_import_runs` и `SELECT COUNT(*) FROM onec_clients`.
+
+**Восстановление и откат (разные сценарии):**
+
+1. **Откат кода/deployment** — задеплоить предыдущий коммит и отключить импорт (`ONEC_FTP_ENABLED=false`). Данные в PostgreSQL **не меняются** автоматически.
+2. **Восстановление данных** — только из резервной копии БД (`onec_clients`, `onec_client_import_runs`) или ручной SQL-корректировки по согласованному плану. CLI **не выполняет** restore и **не удаляет** строки автоматически.
+3. **Повтор apply с предыдущим полным файлом** — **не** полный откат: клиенты, добавленные более поздним импортом, **остаются** в БД; apply с **меньшим** числом записей блокируется (`RECORD_COUNT_DECREASED`) и пишет запись в журнал без изменения клиентов.
+4. **Ручной разбор** — при `running` в журнале, `COMMIT_UNCERTAIN`, `DATABASE_ERROR` или расхождении данных: проверить `onec_client_import_runs` по `runId`, сверить `onec_clients`, при необходимости восстановить из backup. CLI **не меняет** статусы журнала post-factum.
+
+**Ранние отказы только в CLI (без записи в журнал):** ошибки аргументов (`ARGUMENT_ERROR`), конфигурации (`CONFIG_ERROR`), FTP/валидации в dry-run и apply до блокировки БД; `HASH_MISMATCH` после чтения файла; `IMPORT_LOCKED` когда advisory lock занят другим процессом.
+
+Хеш и валидация не доказывают бизнес-полноту выгрузки 1С и не гарантируют атомарную публикацию файла на FTP.
 
 ## Будущий деплой на Timeweb Cloud
 
