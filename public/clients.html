@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Клиенты — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
+    <link rel="stylesheet" href="/brand/workspace.css" />
+    <link rel="stylesheet" href="/clients.css" />
+  </head>
+  <body class="workspace-body">
+    <div class="workspace-shell">
+      <div id="workspace-shell"></div>
+      <main class="workspace-main">
+        <div class="workspace-card">
+          <h1 class="clients-page-title">Клиенты</h1>
+
+          <div id="access-panel" class="clients-hidden" role="alert"></div>
+          <div id="state-panel" class="clients-hidden" role="status" aria-live="polite"></div>
+
+          <div id="clients-app" class="clients-hidden">
+            <div class="clients-toolbar">
+              <label class="clients-field">
+                <span class="clients-field__label">Поиск</span>
+                <input
+                  id="search-input"
+                  class="clients-field__input"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Название, холдинг, менеджер, адрес или телефон"
+                />
+              </label>
+              <div class="clients-toolbar__row clients-toolbar__row--filters">
+                <label class="clients-field">
+                  <span class="clients-field__label">Менеджер 1С</span>
+                  <select id="manager-filter" class="clients-field__select"></select>
+                </label>
+                <label class="clients-field">
+                  <span class="clients-field__label">Холдинг</span>
+                  <select id="holding-filter" class="clients-field__select"></select>
+                </label>
+                <label class="clients-field">
+                  <span class="clients-field__label">Телефон</span>
+                  <select id="phone-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="yes">Есть</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+                <button id="reset-filters" type="button" class="workspace-button workspace-button--ghost">
+                  Сбросить
+                </button>
+              </div>
+            </div>
+
+            <div class="clients-meta">
+              <p id="result-count">Найдено 0 клиентов</p>
+              <p id="sync-status" class="clients-sync"></p>
+            </div>
+
+            <div id="results-panel">
+              <div class="clients-table-wrap">
+                <table class="clients-table" aria-label="Список клиентов">
+                  <thead>
+                    <tr>
+                      <th scope="col">Клиент</th>
+                      <th scope="col">Холдинг</th>
+                      <th scope="col">Менеджер</th>
+                      <th scope="col">Адрес</th>
+                      <th scope="col">Телефон</th>
+                    </tr>
+                  </thead>
+                  <tbody id="clients-table-body"></tbody>
+                </table>
+              </div>
+              <div id="clients-cards" class="clients-cards"></div>
+            </div>
+
+            <nav id="pagination" class="clients-pagination" aria-label="Пагинация"></nav>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/common.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
+    <script src="/clients.js" defer></script>
+  </body>
+</html>

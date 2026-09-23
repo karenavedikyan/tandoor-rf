@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Клиент — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
+    <link rel="stylesheet" href="/brand/workspace.css" />
+    <link rel="stylesheet" href="/clients.css" />
+  </head>
+  <body class="workspace-body">
+    <div class="workspace-shell">
+      <div id="workspace-shell"></div>
+      <main class="workspace-main">
+        <div class="workspace-card">
+          <p>
+            <a id="back-link" class="workspace-button workspace-button--ghost" href="/clients"
+              >← Назад к списку</a
+            >
+          </p>
+
+          <div id="access-panel" class="clients-hidden" role="alert"></div>
+          <div id="state-panel" class="clients-hidden" role="status" aria-live="polite"></div>
+
+          <div id="client-detail" class="clients-hidden">
+            <h1 id="client-name" class="clients-page-title"></h1>
+            <p id="client-source" class="clients-sync"></p>
+
+            <div class="client-detail-grid">
+              <section class="client-detail-section">
+                <h2 class="client-detail-section__label">Ответственный из 1С</h2>
+                <p id="client-manager" class="client-detail-section__value"></p>
+              </section>
+
+              <section class="client-detail-section">
+                <h2 class="client-detail-section__label">Адрес</h2>
+                <p id="client-address" class="client-detail-section__value"></p>
+                <button id="copy-address" type="button" class="workspace-button workspace-button--secondary">
+                  Копировать адрес
+                </button>
+                <p id="copy-address-status" class="workspace-status" role="status" aria-live="polite"></p>
+              </section>
+
+              <section class="client-detail-section">
+                <h2 class="client-detail-section__label">Телефоны</h2>
+                <div id="client-phones" class="client-detail-phones"></div>
+              </section>
+
+              <section class="client-detail-section">
+                <h2 class="client-detail-section__label">Холдинг</h2>
+                <p id="client-holding" class="client-detail-section__value"></p>
+              </section>
+            </div>
+
+            <div class="client-detail-meta">
+              <p id="client-last-import"></p>
+              <p>Технический UUID: <span id="client-uuid" class="client-detail-uuid"></span></p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/common.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
+    <script src="/client-detail.js" defer></script>
+  </body>
+</html>

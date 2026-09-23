@@ -11,6 +11,7 @@
   var saveButton = document.getElementById("save-button");
   var logoutButton = document.getElementById("logout-button");
   var statusEl = document.getElementById("status-message");
+  var adminClientsLink = document.getElementById("admin-clients-link");
   var saving = false;
 
   var ROLE_LABELS = {
@@ -45,6 +46,13 @@
     roleInput.value = ROLE_LABELS[user.role] || user.role || "";
     statusInput.value = STATUS_LABELS[user.status] || user.status || "";
     form.hidden = false;
+    if (adminClientsLink) {
+      if (user.role === "admin") {
+        adminClientsLink.classList.remove("clients-hidden");
+      } else {
+        adminClientsLink.classList.add("clients-hidden");
+      }
+    }
   }
 
   function loadProfile() {

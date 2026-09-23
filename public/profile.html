@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Профиль — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -43,6 +44,10 @@
           <span class="field__label">Статус</span>
           <input id="status" name="status" type="text" readonly class="field__input field__input--readonly" />
         </label>
+
+        <p id="admin-clients-link" class="admin-link clients-hidden">
+          <a href="/clients">Справочник клиентов 1С</a>
+        </p>
 
         <div class="button-row">
           <button id="save-button" type="submit" class="primary-button">Сохранить</button>
