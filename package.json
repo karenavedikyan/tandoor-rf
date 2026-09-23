@@ -13,6 +13,8 @@
     "migrate:local": "node --env-file=.env dist/cli/migrate.js",
     "bootstrap-admin": "node dist/cli/bootstrap-admin.js",
     "bootstrap-admin:local": "node --env-file=.env dist/cli/bootstrap-admin.js",
+    "onec-ftp-probe": "node dist/cli/onec-ftp-probe.js",
+    "onec-ftp-probe:local": "node --env-file=.env dist/cli/onec-ftp-probe.js",
     "test": "node --import tsx --test test/server.test.ts test/unit/**/*.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",
     "test:all": "npm test && npm run test:integration"
@@ -21,6 +23,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "basic-ftp": "^5.3.1",
     "bcryptjs": "^2.4.3",
     "express": "^4.21.2",
     "pg": "^8.13.1"
@@ -32,6 +35,7 @@
     "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.2",
     "node-pty": "^1.1.0",
+    "selfsigned": "^2.4.1",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
