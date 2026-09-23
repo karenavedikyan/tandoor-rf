@@ -30,6 +30,8 @@
   var activeRequestId = 0;
   var managerOptions = [];
   var holdingOptions = [];
+  var managerCombobox = null;
+  var holdingCombobox = null;
 
   function readStateFromUrl() {
     return logic.readStateFromSearch(window.location.search);
@@ -70,8 +72,12 @@
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
     appEl.dataset.page = String(state.page);
-    syncComboboxInput("manager", state.manager);
-    syncComboboxInput("holding", state.holding);
+    if (managerCombobox) {
+      managerCombobox.syncFromUrl(state.manager);
+    }
+    if (holdingCombobox) {
+      holdingCombobox.syncFromUrl(state.holding);
+    }
   }
 
   function listReturnQuery() {
@@ -82,105 +88,41 @@
     return "/clients/" + encodeURIComponent(guid) + "?return=" + encodeURIComponent(listReturnQuery());
   }
 
-  function optionLabel(item) {
-    return item.name + " · " + item.shortId;
+  function applyComboboxFilter() {
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    var state = currentStateFromForm();
+    state.page = 1;
+    loadList(state, false);
   }
 
-  function syncComboboxInput(kind, selectedId) {
-    var input = kind === "manager" ? managerFilterInput : holdingFilterInput;
-    var options = kind === "manager" ? managerOptions : holdingOptions;
-    if (!selectedId) {
-      input.value = "";
-      return;
-    }
-    var match = options.find(function (item) {
-      return item.id === selectedId;
-    });
-    input.value = match ? optionLabel(match) : selectedId.slice(0, 8).toUpperCase();
-  }
-
-  function renderComboboxList(kind, query) {
-    var listEl = kind === "manager" ? managerFilterList : holdingFilterList;
-    var input = kind === "manager" ? managerFilterInput : holdingFilterInput;
-    var hidden = kind === "manager" ? managerFilter : holdingFilter;
-    var options = kind === "manager" ? managerOptions : holdingOptions;
-    var filtered = logic.filterOptions(options, query);
-
-    listEl.innerHTML = "";
-    var allOption = document.createElement("li");
-    allOption.className = "clients-combobox__option";
-    allOption.setAttribute("role", "option");
-    allOption.dataset.value = "";
-    allOption.textContent = kind === "manager" ? "Все менеджеры" : "Все холдинги";
-    listEl.appendChild(allOption);
-
-    filtered.forEach(function (item) {
-      var option = document.createElement("li");
-      option.className = "clients-combobox__option";
-      option.setAttribute("role", "option");
-      option.dataset.value = item.id;
-      option.textContent = optionLabel(item);
-      listEl.appendChild(option);
+  function mountFilterComboboxes() {
+    managerCombobox = logic.mountCombobox({
+      model: logic.createComboboxModel(),
+      input: managerFilterInput,
+      hidden: managerFilter,
+      listEl: managerFilterList,
+      root: document.getElementById("manager-combobox"),
+      listboxId: "manager-filter-list",
+      allLabel: "Все менеджеры",
+      options: function () {
+        return managerOptions;
+      },
+      onApplySelection: applyComboboxFilter,
     });
 
-    var expanded = filtered.length > 0 || query.length > 0 || document.activeElement === input;
-    listEl.classList.toggle("clients-hidden", !expanded);
-    input.setAttribute("aria-expanded", expanded ? "true" : "false");
-    if (hidden.value) {
-      input.setAttribute("aria-activedescendant", "");
-    }
-  }
-
-  function mountCombobox(kind) {
-    var input = kind === "manager" ? managerFilterInput : holdingFilterInput;
-    var listEl = kind === "manager" ? managerFilterList : holdingFilterList;
-    var hidden = kind === "manager" ? managerFilter : holdingFilter;
-
-    input.addEventListener("focus", function () {
-      renderComboboxList(kind, input.value);
-    });
-
-    input.addEventListener("input", function () {
-      hidden.value = "";
-      renderComboboxList(kind, input.value);
-      invalidateInFlightRequests();
-      scheduleLoad(true, true);
-    });
-
-    input.addEventListener("keydown", function (event) {
-      if (event.key === "Escape") {
-        listEl.classList.add("clients-hidden");
-        input.setAttribute("aria-expanded", "false");
-      }
-    });
-
-    listEl.addEventListener("mousedown", function (event) {
-      var target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-      var option = target.closest(".clients-combobox__option");
-      if (!option) {
-        return;
-      }
-      event.preventDefault();
-      hidden.value = option.dataset.value || "";
-      syncComboboxInput(kind, hidden.value);
-      listEl.classList.add("clients-hidden");
-      input.setAttribute("aria-expanded", "false");
-      cancelScheduledLoad();
-      invalidateInFlightRequests();
-      scheduleLoad(true, false);
-    });
-
-    document.addEventListener("click", function (event) {
-      var combobox = kind === "manager" ? document.getElementById("manager-combobox") : document.getElementById("holding-combobox");
-      if (!combobox || combobox.contains(event.target)) {
-        return;
-      }
-      listEl.classList.add("clients-hidden");
-      input.setAttribute("aria-expanded", "false");
-      syncComboboxInput(kind, hidden.value);
+    holdingCombobox = logic.mountCombobox({
+      model: logic.createComboboxModel(),
+      input: holdingFilterInput,
+      hidden: holdingFilter,
+      listEl: holdingFilterList,
+      root: document.getElementById("holding-combobox"),
+      listboxId: "holding-filter-list",
+      allLabel: "Все холдинги",
+      options: function () {
+        return holdingOptions;
+      },
+      onApplySelection: applyComboboxFilter,
     });
   }
 
@@ -401,8 +343,12 @@
       }
       managerOptions = result.data.managers || [];
       holdingOptions = result.data.holdings || [];
-      syncComboboxInput("manager", managerFilter.value);
-      syncComboboxInput("holding", holdingFilter.value);
+      if (managerCombobox) {
+        managerCombobox.syncFromUrl(managerFilter.value);
+      }
+      if (holdingCombobox) {
+        holdingCombobox.syncFromUrl(holdingFilter.value);
+      }
       return { ok: true };
     });
   }
@@ -515,11 +461,13 @@
     cancelScheduledLoad();
     invalidateInFlightRequests();
     searchInput.value = "";
-    managerFilter.value = "";
-    holdingFilter.value = "";
-    managerFilterInput.value = "";
-    holdingFilterInput.value = "";
     phoneFilter.value = "all";
+    if (managerCombobox) {
+      managerCombobox.reset();
+    }
+    if (holdingCombobox) {
+      holdingCombobox.reset();
+    }
     loadList({ q: "", manager: "", holding: "", phone: "all", page: 1 }, false);
   }
 
@@ -561,8 +509,7 @@
     loadList(readStateFromUrl(), true);
   });
 
-  mountCombobox("manager");
-  mountCombobox("holding");
+  mountFilterComboboxes();
 
   shell.mountShell("clients");
   shell.ensureAdminAccess(function (_user, reason) {

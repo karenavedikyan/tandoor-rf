@@ -24,6 +24,16 @@ const logic = require("../../public/clients-logic.js") as {
     items: Array<{ id: string; name: string; shortId: string }>,
     query: string,
   ) => Array<{ id: string; name: string; shortId: string }>;
+  createComboboxModel: () => { selectedId: string; searchText: string };
+  comboboxOnInput: (
+    model: { selectedId: string; searchText: string },
+    value: string,
+  ) => { selectedId: string; searchText: string };
+  comboboxApplyFromUrl: (
+    model: { selectedId: string; searchText: string },
+    selectedId: string,
+    options: Array<{ id: string; name: string; shortId: string }>,
+  ) => { selectedId: string; searchText: string };
 };
 
 describe("clients frontend logic", () => {
@@ -53,5 +63,14 @@ describe("clients frontend logic", () => {
     ];
     assert.equal(logic.filterOptions(items, "петр").length, 1);
     assert.equal(logic.filterOptions(items, "22222222").length, 1);
+  });
+
+  it("separates combobox search text from selected UUID", () => {
+    const model = logic.createComboboxModel();
+    logic.comboboxOnInput(model, "Тест");
+    assert.equal(model.searchText, "Тест");
+    assert.equal(model.selectedId, "");
+    logic.comboboxApplyFromUrl(model, "", []);
+    assert.equal(model.searchText, "");
   });
 });

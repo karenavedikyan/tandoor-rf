@@ -79,7 +79,8 @@
 }
 
 .clients-combobox__option:hover,
-.clients-combobox__option:focus {
+.clients-combobox__option:focus,
+.clients-combobox__option.is-active {
   background: var(--rf-surface-muted);
 }
 

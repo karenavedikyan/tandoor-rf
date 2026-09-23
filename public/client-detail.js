@@ -13,8 +13,6 @@
   var copyAddressBtn = document.getElementById("copy-address");
   var copyAddressStatus = document.getElementById("copy-address-status");
 
-  var currentGuid = null;
-
   function parseReturnQuery() {
     return logic.parseReturnQuery(window.location.search);
   }
@@ -36,12 +34,37 @@
     copyAddressStatus.className = "workspace-status" + (kind ? " workspace-status--" + kind : "");
   }
 
-  function showInitError(title, text) {
+  function hideAllPanels() {
     detailEl.classList.add("clients-hidden");
     statePanel.classList.add("clients-hidden");
     accessPanel.classList.add("clients-hidden");
+    if (initPanel) {
+      initPanel.classList.add("clients-hidden");
+    }
+  }
+
+  function bindRetryButton(buttonId, onRetry) {
+    var button = document.getElementById(buttonId);
+    if (!button) {
+      return;
+    }
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      Promise.resolve()
+        .then(onRetry)
+        .catch(function () {
+          /* errors handled by onRetry callbacks */
+        })
+        .finally(function () {
+          button.disabled = false;
+        });
+    });
+  }
+
+  function showInitError(title, text, onRetry) {
+    hideAllPanels();
     if (!initPanel) {
-      showState(title, text, true);
+      showState(title, text, onRetry);
       return;
     }
     initPanel.classList.remove("clients-hidden");
@@ -52,22 +75,11 @@
       text,
       '<button type="button" class="workspace-button workspace-button--primary" id="retry-init">Повторить</button>',
     );
-    document.getElementById("retry-init")?.addEventListener("click", function () {
-      shell.ensureAdminAccess(function (_user, reason) {
-        if (reason) {
-          handleAccessReason(reason);
-          return;
-        }
-        if (currentGuid) {
-          loadClient(currentGuid);
-        }
-      });
-    });
+    bindRetryButton("retry-init", onRetry);
   }
 
-  function handleAccessReason(reason) {
-    detailEl.classList.add("clients-hidden");
-    statePanel.classList.add("clients-hidden");
+  function handleAccessReason(reason, onRetry) {
+    hideAllPanels();
     if (reason === "forbidden") {
       accessPanel.classList.remove("clients-hidden");
       shell.setPanelMessage(
@@ -80,10 +92,10 @@
       return;
     }
     if (reason === "service") {
-      showInitError("Сервис временно недоступен", "Не удалось проверить доступ. Повторите попытку.");
+      showInitError("Сервис временно недоступен", "Не удалось проверить доступ. Повторите попытку.", onRetry);
       return;
     }
-    showInitError("Ошибка сети", "Не удалось связаться с сервером. Проверьте подключение.");
+    showInitError("Ошибка сети", "Не удалось связаться с сервером. Проверьте подключение.", onRetry);
   }
 
   function renderPhones(phones) {
@@ -139,6 +151,7 @@
   }
 
   function renderClient(client) {
+    hideAllPanels();
     document.getElementById("client-name").textContent = client.name;
     document.getElementById("client-source").textContent = client.sourceLabel;
     document.getElementById("client-manager").textContent =
@@ -163,68 +176,90 @@
 
     renderPhones(client.phones);
     detailEl.classList.remove("clients-hidden");
-    statePanel.classList.add("clients-hidden");
-    if (initPanel) {
-      initPanel.classList.add("clients-hidden");
-    }
   }
 
-  function showState(title, text, withRetry) {
-    detailEl.classList.add("clients-hidden");
+  function showState(title, text, onRetry) {
+    hideAllPanels();
     statePanel.classList.remove("clients-hidden");
     shell.setPanelMessage(
       statePanel,
       "info",
       title,
       text,
-      withRetry
+      onRetry
         ? '<button type="button" class="workspace-button workspace-button--primary" id="retry-detail">Повторить</button>'
         : "",
     );
-    if (withRetry) {
-      document.getElementById("retry-detail")?.addEventListener("click", function () {
-        if (currentGuid) {
-          loadClient(currentGuid);
-        }
-      });
+    if (onRetry) {
+      bindRetryButton("retry-detail", onRetry);
     }
   }
 
-  function loadClient(guid) {
-    currentGuid = guid;
-    showState("Загрузка карточки…", "", false);
-    return api.apiRequest("/api/clients/" + encodeURIComponent(guid)).then(function (result) {
+  var detailController = logic.createDetailController({
+    parseGuidFromPath: clientGuidFromPath,
+    ensureAdminAccess: function (callback) {
+      return shell.ensureAdminAccess(callback);
+    },
+    showInvalidGuid: function () {
+      showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", null);
+    },
+    showLoading: function () {
+      showState("Загрузка карточки…", "", null);
+    },
+    fetchClient: function (guid) {
+      return api.apiRequest("/api/clients/" + encodeURIComponent(guid));
+    },
+    handleClientResult: function (result) {
       if (result.response.status === 401) {
         window.location.replace("/login");
         return;
       }
       if (result.response.status === 403) {
-        handleAccessReason("forbidden");
+        handleAccessReason("forbidden", function () {
+          return detailController.ensureAccessAndLoad();
+        });
         return;
       }
       if (result.response.status === 400) {
-        showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", false);
+        showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", null);
         return;
       }
       if (result.response.status === 404) {
-        showState("Клиент не найден", "Проверьте ссылку или вернитесь к списку.", false);
+        showState("Клиент не найден", "Проверьте ссылку или вернитесь к списку.", null);
         return;
       }
       if (result.response.status === 503) {
         showState(
           "Сервис временно недоступен",
           api.extractErrorMessage(result.data, "Повторите попытку позже."),
-          true,
+          function () {
+            return detailController.loadClient();
+          },
         );
         return;
       }
       if (result.response.status !== 200 || !result.data || !result.data.client) {
-        showState("Не удалось загрузить карточку", "Повторите попытку позже.", true);
+        showState("Не удалось загрузить карточку", "Повторите попытку позже.", function () {
+          return detailController.loadClient();
+        });
         return;
       }
       renderClient(result.data.client);
-    });
-  }
+    },
+    showClientError: function (err, onRetry) {
+      showState("Ошибка загрузки", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000), onRetry);
+    },
+    showInitError: function (err, onRetry) {
+      showInitError(
+        "Ошибка инициализации",
+        api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+        onRetry,
+      );
+    },
+    handleAccessReason: function (reason, onRetry) {
+      handleAccessReason(reason, onRetry);
+    },
+  });
 
   copyAddressBtn?.addEventListener("click", function () {
     var address = document.getElementById("client-address")?.textContent || "";
@@ -240,19 +275,5 @@
 
   shell.mountShell("clients");
   backLink.href = "/clients" + parseReturnQuery();
-
-  shell.ensureAdminAccess(function (_user, reason) {
-    if (reason) {
-      handleAccessReason(reason);
-      return;
-    }
-    var guid = clientGuidFromPath();
-    if (!guid) {
-      showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", false);
-      return;
-    }
-    loadClient(guid).catch(function (err) {
-      showState("Ошибка загрузки", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000), true);
-    });
-  });
+  detailController.bootstrap();
 })();
