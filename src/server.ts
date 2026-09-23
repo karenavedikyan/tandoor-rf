@@ -9,6 +9,7 @@ import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
 import { requireDatabaseReady } from "./middleware/database";
+import { createClientsRouter } from "./clients/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { apiError, ERROR_CODES } from "./shared/errors";
 
@@ -47,10 +48,11 @@ function isApiRequest(req: Request): boolean {
   return req.path.startsWith("/api");
 }
 
-function isAuthProfileApi(req: Request): boolean {
+function isStructuredApi(req: Request): boolean {
   return (
     req.path.startsWith("/api/auth") ||
     req.path.startsWith("/api/profile") ||
+    req.path.startsWith("/api/clients") ||
     req.path.startsWith("/api/ready")
   );
 }
@@ -113,7 +115,7 @@ export function createApp(): express.Application {
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   app.use((err: unknown, req: Request, res: Response, next: NextFunction): void => {
-    if (!isAuthProfileApi(req)) {
+    if (!isStructuredApi(req)) {
       next(err);
       return;
     }
@@ -185,6 +187,7 @@ export function createApp(): express.Application {
 
   app.use("/api/auth", authRouter);
   app.use("/api/profile", profileRouter);
+  app.use("/api/clients", createClientsRouter());
 
   app.use("/api", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });
@@ -204,6 +207,14 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "profile.html");
   });
 
+  app.get("/clients", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "clients.html");
+  });
+
+  app.get("/clients/:guid", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "client-detail.html");
+  });
+
   app.use(
     (err: unknown, req: Request, res: Response, next: NextFunction): void => {
       if (res.headersSent) {
@@ -217,7 +228,7 @@ export function createApp(): express.Application {
         console.error(`Server error (${status}) ${req.method} ${req.path}`);
       }
 
-      if (isAuthProfileApi(req)) {
+      if (isStructuredApi(req)) {
         setNoStore(res);
         if (status >= 500) {
           res.status(503).json(

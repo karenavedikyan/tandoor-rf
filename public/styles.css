@@ -7,7 +7,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Exo 2", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
   color: #1a1a1a;
   background: #f5f5f5;
@@ -157,6 +157,19 @@ body {
 
 .status--error {
   color: #a11;
+}
+
+.admin-link {
+  margin: 0 0 1rem;
+}
+
+.admin-link a {
+  color: #2f6b1f;
+  font-weight: 600;
+}
+
+.clients-hidden {
+  display: none !important;
 }
 
 .footer-link {

@@ -1,0 +1,264 @@
+.clients-page-title {
+  margin: 0 0 1rem;
+  font-size: clamp(1.35rem, 4vw, 1.75rem);
+}
+
+.clients-toolbar {
+  display: grid;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.clients-toolbar__row {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .clients-toolbar__row--filters {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    align-items: end;
+  }
+}
+
+.clients-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.clients-field__label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.clients-field__input,
+.clients-field__select {
+  width: 100%;
+  max-width: 100%;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  font: inherit;
+  background: #fff;
+  color: var(--rf-text);
+}
+
+.clients-field__input:focus-visible,
+.clients-field__select:focus-visible {
+  outline: 3px solid var(--rf-text);
+  outline-offset: 2px;
+}
+
+.clients-combobox {
+  position: relative;
+  min-width: 0;
+}
+
+.clients-combobox__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  max-height: 14rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  box-shadow: var(--rf-shadow);
+}
+
+.clients-combobox__option {
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+
+.clients-combobox__option:hover,
+.clients-combobox__option:focus,
+.clients-combobox__option.is-active {
+  background: var(--rf-surface-muted);
+}
+
+.clients-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  color: var(--rf-text-muted);
+  font-size: 0.925rem;
+}
+
+.clients-sync {
+  font-size: 0.875rem;
+}
+
+.clients-sync--warning {
+  color: var(--rf-danger-text);
+}
+
+.clients-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.clients-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.clients-table th,
+.clients-table td {
+  padding: 0.75rem 0.65rem;
+  border-bottom: 1px solid var(--rf-border);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.clients-table th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--rf-text-muted);
+}
+
+.clients-link {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.clients-link:focus-visible {
+  outline: 3px solid var(--rf-text);
+  outline-offset: 2px;
+}
+
+.clients-link--filter {
+  font-weight: 500;
+}
+
+.clients-phone-muted {
+  color: var(--rf-text-muted);
+}
+
+.clients-cards {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 100%;
+}
+
+.clients-card {
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  padding: 0.85rem;
+  background: #fff;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.clients-card__title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.clients-card__line {
+  margin: 0.15rem 0;
+  color: var(--rf-text-muted);
+  font-size: 0.9rem;
+}
+
+.clients-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.clients-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--rf-text-muted);
+}
+
+.clients-empty__title {
+  margin: 0 0 0.35rem;
+  color: var(--rf-text);
+  font-size: 1.1rem;
+}
+
+@media (max-width: 767px) {
+  .clients-table-wrap {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .clients-cards {
+    display: none;
+  }
+}
+
+.client-detail-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.client-detail-section {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.client-detail-section__label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--rf-text-muted);
+}
+
+.client-detail-section__value {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.client-detail-phones {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.client-detail-phone-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.client-detail-meta {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rf-border);
+  font-size: 0.875rem;
+  color: var(--rf-text-muted);
+}
+
+.client-detail-uuid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.clients-hidden {
+  display: none !important;
+}
