@@ -52,7 +52,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
     const { resetDatabase } = await import("../helpers/test-db");
     await resetDatabase(databaseUrl);
     const first = await runMigrations({ databaseUrl });
-    assert.deepEqual(first, ["001_initial_auth.sql"]);
+    assert.deepEqual(first, ["001_initial_auth.sql", "002_onec_clients.sql"]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);
   });
