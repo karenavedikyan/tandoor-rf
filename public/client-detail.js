@@ -179,7 +179,6 @@
       return;
     }
     detailRoot.innerHTML = sections.renderAllSections(returnQuery);
-    sections.initCollapsibles(detailRoot);
     bindCopyAddress();
   }
 

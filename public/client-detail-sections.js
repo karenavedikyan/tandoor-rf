@@ -262,10 +262,14 @@
       return;
     }
     root.querySelectorAll(".legacy-details").forEach(function (details) {
+      if (details.getAttribute("data-collapsible-init") === "true") {
+        return;
+      }
       var summary = details.querySelector("summary");
       if (!summary) {
         return;
       }
+      details.setAttribute("data-collapsible-init", "true");
       summary.setAttribute("role", "button");
       var setExpanded = function () {
         summary.setAttribute("aria-expanded", details.open ? "true" : "false");
@@ -273,6 +277,19 @@
       setExpanded();
       details.addEventListener("toggle", setExpanded);
     });
+  }
+
+  function countCollapsibleListeners(root) {
+    if (!root) {
+      return 0;
+    }
+    var count = 0;
+    root.querySelectorAll(".legacy-details").forEach(function (details) {
+      if (details.getAttribute("data-collapsible-init") === "true") {
+        count += 1;
+      }
+    });
+    return count;
   }
 
   var exported = {
@@ -283,6 +300,7 @@
     renderHeader: renderHeader,
     mountTeamSection: mountTeamSection,
     initCollapsibles: initCollapsibles,
+    countCollapsibleListeners: countCollapsibleListeners,
     escapeHtml: escapeHtml,
     dash: dash,
   };

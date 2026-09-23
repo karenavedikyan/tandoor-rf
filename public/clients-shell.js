@@ -2,8 +2,14 @@
   "use strict";
 
   var api = typeof window !== "undefined" ? window.TandoorRf : undefined;
+  var ICONS = typeof window !== "undefined" && window.ShellIcons ? window.ShellIcons : {};
   var THEME_KEY = "tandoor-rf-theme";
   var SIDEBAR_KEY = "tandoor-rf-sidebar-collapsed";
+  var DESKTOP_MQ = "(min-width: 1024px)";
+
+  var mobileTrapHandler = null;
+  var mobileEscapeHandler = null;
+  var resizeHandlerBound = false;
 
   function escapeHtml(value) {
     return String(value)
@@ -11,6 +17,13 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function isDesktopViewport() {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return true;
+    }
+    return window.matchMedia(DESKTOP_MQ).matches;
   }
 
   function readTheme() {
@@ -48,15 +61,13 @@
 
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
-    var logos = document.querySelectorAll("[data-legacy-logo]");
-    logos.forEach(function (img) {
+    document.querySelectorAll("[data-legacy-logo-full], [data-legacy-logo]").forEach(function (img) {
       img.setAttribute(
         "src",
         theme === "dark" ? "/brand/tandoor-logo-light.svg" : "/brand/tandoor-logo-official.svg",
       );
     });
-    var toggles = document.querySelectorAll("[data-theme-toggle]");
-    toggles.forEach(function (btn) {
+    document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
       var next = theme === "dark" ? "Светлая тема" : "Тёмная тема";
       btn.textContent = next;
       btn.setAttribute("aria-label", "Переключить на " + next.toLowerCase());
@@ -74,21 +85,27 @@
     var src =
       theme === "dark" ? "/brand/tandoor-logo-light.svg" : "/brand/tandoor-logo-official.svg";
     return (
-      '<img class="legacy-sidebar__logo" data-legacy-logo src="' +
+      '<img class="legacy-sidebar__logo legacy-sidebar__logo--full" data-legacy-logo-full src="' +
       src +
-      '" width="149" height="42" alt="Tandoor" />'
+      '" width="149" height="42" alt="Tandoor" />' +
+      '<img class="legacy-sidebar__logo legacy-sidebar__logo--compact" src="/brand/tandoor-triangle-mark.svg" width="32" height="32" alt="Tandoor" />'
     );
   }
 
-  function navLink(href, label, icon, active, activeKey) {
+  function navLink(href, label, iconKey, active, activeKey) {
     var isActive = active === activeKey;
+    var icon = ICONS[iconKey] || "";
     return (
       '<a class="legacy-nav-link' +
       (isActive ? " is-active" : "") +
       '" href="' +
       href +
+      '" aria-label="' +
+      escapeHtml(label) +
+      '" title="' +
+      escapeHtml(label) +
       '">' +
-      '<span class="legacy-nav-link__icon" aria-hidden="true">' +
+      '<span class="legacy-nav-link__icon">' +
       icon +
       "</span>" +
       '<span class="legacy-nav-link__text">' +
@@ -100,26 +117,30 @@
 
   function renderSidebar(active, showClients) {
     var clientsLink = showClients
-      ? navLink("/clients", "Клиенты", "👥", active, "clients")
+      ? navLink("/clients", "Клиенты", "clients", active, "clients")
       : "";
     return (
       '<aside class="legacy-sidebar" id="legacy-sidebar" aria-label="Основная навигация">' +
       '<div class="legacy-sidebar__head">' +
       '<a class="legacy-sidebar__brand" href="' +
       (showClients ? "/clients" : "/profile") +
-      '">' +
+      '" aria-label="Tandoor tandoor-rf">' +
       logoMarkup() +
       '<span class="legacy-sidebar__project">tandoor-rf</span>' +
       "</a>" +
-      '<button type="button" class="legacy-sidebar__collapse" id="legacy-sidebar-collapse" aria-label="Свернуть меню" aria-pressed="false">≡</button>' +
+      '<button type="button" class="legacy-sidebar__collapse" id="legacy-sidebar-collapse" aria-label="Свернуть меню" aria-pressed="false">' +
+      (ICONS.collapse || "") +
+      "</button>" +
       "</div>" +
       '<nav class="legacy-sidebar__nav">' +
       clientsLink +
-      navLink("/profile", "Мой профиль", "👤", active, "profile") +
+      navLink("/profile", "Мой профиль", "profile", active, "profile") +
       "</nav>" +
       '<div class="legacy-sidebar__footer">' +
-      '<button type="button" class="legacy-nav-link" id="legacy-logout">' +
-      '<span class="legacy-nav-link__icon" aria-hidden="true">⎋</span>' +
+      '<button type="button" class="legacy-nav-link" id="legacy-logout" aria-label="Выйти" title="Выйти">' +
+      '<span class="legacy-nav-link__icon">' +
+      (ICONS.logout || "") +
+      "</span>" +
       '<span class="legacy-nav-link__text">Выйти</span>' +
       "</button>" +
       '<p id="legacy-logout-status" class="legacy-logout-status" role="status" aria-live="polite"></p>' +
@@ -131,7 +152,9 @@
   function renderTopbar() {
     return (
       '<header class="legacy-topbar" id="legacy-topbar">' +
-      '<button type="button" class="legacy-topbar__menu" id="legacy-menu-toggle" aria-expanded="false" aria-controls="legacy-sidebar" aria-label="Открыть меню">☰</button>' +
+      '<button type="button" class="legacy-topbar__menu" id="legacy-menu-toggle" aria-expanded="false" aria-controls="legacy-sidebar" aria-label="Открыть меню">' +
+      (ICONS.menu || "") +
+      "</button>" +
       '<span class="legacy-topbar__spacer"></span>' +
       '<button type="button" class="legacy-topbar__theme" data-theme-toggle aria-label="Переключить тему"></button>' +
       "</header>"
@@ -179,21 +202,203 @@
     });
   }
 
-  function setMobileMenuOpen(open) {
+  function focusElement(el) {
+    if (el && typeof el.focus === "function") {
+      el.focus();
+    }
+  }
+
+  function isSidebarFocusCandidate(el) {
+    if (!el || el.hasAttribute("disabled") || el.hidden) {
+      return false;
+    }
+    if (el.getAttribute("aria-hidden") === "true") {
+      return false;
+    }
+    if (!isDesktopViewport() && el.classList.contains("legacy-sidebar__collapse")) {
+      return false;
+    }
+    return true;
+  }
+
+  function getSidebarFocusables(sidebar) {
+    if (!sidebar) {
+      return [];
+    }
+    var selector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    return Array.prototype.filter.call(sidebar.querySelectorAll(selector), isSidebarFocusCandidate);
+  }
+
+  function getFirstDrawerFocusTarget(sidebar) {
+    if (!sidebar) {
+      return null;
+    }
+    return (
+      sidebar.querySelector(".legacy-sidebar__nav .legacy-nav-link") ||
+      sidebar.querySelector(".legacy-sidebar__footer .legacy-nav-link") ||
+      getSidebarFocusables(sidebar)[0] ||
+      null
+    );
+  }
+
+  function storeTabIndex(el) {
+    if (!el.hasAttribute("data-legacy-tabindex")) {
+      el.setAttribute("data-legacy-tabindex", el.getAttribute("tabindex") || "");
+    }
+  }
+
+  function restoreTabIndex(el) {
+    var stored = el.getAttribute("data-legacy-tabindex");
+    if (stored === null) {
+      return;
+    }
+    if (stored === "") {
+      el.removeAttribute("tabindex");
+    } else {
+      el.setAttribute("tabindex", stored);
+    }
+    el.removeAttribute("data-legacy-tabindex");
+  }
+
+  function setSidebarInert(sidebar, inert) {
+    if (!sidebar) {
+      return;
+    }
+    var focusables = sidebar.querySelectorAll(
+      "a, button, input, select, textarea, [tabindex]",
+    );
+    if (inert) {
+      sidebar.setAttribute("aria-hidden", "true");
+      if ("inert" in sidebar) {
+        sidebar.inert = true;
+      }
+      focusables.forEach(function (el) {
+        storeTabIndex(el);
+        el.setAttribute("tabindex", "-1");
+      });
+    } else {
+      sidebar.removeAttribute("aria-hidden");
+      if ("inert" in sidebar) {
+        sidebar.inert = false;
+      }
+      focusables.forEach(function (el) {
+        restoreTabIndex(el);
+      });
+    }
+  }
+
+  function removeMobileTrap() {
+    if (mobileTrapHandler) {
+      document.removeEventListener("keydown", mobileTrapHandler, true);
+      mobileTrapHandler = null;
+    }
+    if (mobileEscapeHandler) {
+      document.removeEventListener("keydown", mobileEscapeHandler, true);
+      mobileEscapeHandler = null;
+    }
+  }
+
+  function installMobileTrap(sidebar, toggle) {
+    removeMobileTrap();
+    mobileTrapHandler = function (event) {
+      if (event.key !== "Tab" || isDesktopViewport()) {
+        return;
+      }
+      var focusables = getSidebarFocusables(sidebar);
+      if (focusables.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      var first = focusables[0];
+      var last = focusables[focusables.length - 1];
+      var active = sidebar.ownerDocument.activeElement;
+      if (event.shiftKey) {
+        if (active === first || !sidebar.contains(active)) {
+          event.preventDefault();
+          focusElement(last);
+        }
+      } else if (active === last || !sidebar.contains(active)) {
+        event.preventDefault();
+        focusElement(first);
+      }
+    };
+    mobileEscapeHandler = function (event) {
+      if (event.key === "Escape" && !isDesktopViewport()) {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener("keydown", mobileTrapHandler, true);
+    document.addEventListener("keydown", mobileEscapeHandler, true);
+  }
+
+  function isMobileMenuOpen() {
+    var toggle = document.getElementById("legacy-menu-toggle");
+    return toggle ? toggle.getAttribute("aria-expanded") === "true" : false;
+  }
+
+  function setMobileMenuOpen(open, options) {
+    var opts = options || {};
     var sidebar = document.getElementById("legacy-sidebar");
     var backdrop = document.getElementById("legacy-backdrop");
     var toggle = document.getElementById("legacy-menu-toggle");
     if (!sidebar || !backdrop || !toggle) {
       return;
     }
+
+    if (isDesktopViewport()) {
+      open = false;
+    }
+
     sidebar.classList.toggle("is-open", open);
     backdrop.hidden = !open;
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
+
     if (open) {
-      var firstLink = sidebar.querySelector(".legacy-nav-link");
-      if (firstLink instanceof HTMLElement) {
-        firstLink.focus();
+      setSidebarInert(sidebar, false);
+      focusElement(getFirstDrawerFocusTarget(sidebar));
+      installMobileTrap(sidebar, toggle);
+    } else {
+      removeMobileTrap();
+      if (!isDesktopViewport()) {
+        setSidebarInert(sidebar, true);
+      } else {
+        setSidebarInert(sidebar, false);
       }
+      if (!opts.skipFocus) {
+        focusElement(toggle);
+      }
+    }
+  }
+
+  function syncSidebarLayout() {
+    var sidebar = document.getElementById("legacy-sidebar");
+    var app = document.querySelector(".legacy-app");
+    var collapseBtn = document.getElementById("legacy-sidebar-collapse");
+    if (!sidebar || !app) {
+      return;
+    }
+
+    var wantCollapsed = readSidebarCollapsed();
+
+    if (collapseBtn) {
+      collapseBtn.hidden = !isDesktopViewport();
+    }
+
+    if (isDesktopViewport()) {
+      setMobileMenuOpen(false, { skipFocus: true });
+      sidebar.classList.toggle("is-collapsed", wantCollapsed);
+      app.classList.toggle("sidebar-collapsed", wantCollapsed);
+      setSidebarInert(sidebar, false);
+      if (collapseBtn) {
+        collapseBtn.setAttribute("aria-pressed", wantCollapsed ? "true" : "false");
+        collapseBtn.setAttribute("aria-label", wantCollapsed ? "Развернуть меню" : "Свернуть меню");
+        collapseBtn.innerHTML = wantCollapsed ? ICONS.expand || "" : ICONS.collapse || "";
+      }
+    } else {
+      sidebar.classList.remove("is-collapsed");
+      app.classList.remove("sidebar-collapsed");
+      setSidebarInert(sidebar, !isMobileMenuOpen());
     }
   }
 
@@ -204,16 +409,14 @@
       return;
     }
     toggle.addEventListener("click", function () {
+      if (isDesktopViewport()) {
+        return;
+      }
       var open = toggle.getAttribute("aria-expanded") !== "true";
       setMobileMenuOpen(open);
     });
     backdrop.addEventListener("click", function () {
       setMobileMenuOpen(false);
-    });
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape") {
-        setMobileMenuOpen(false);
-      }
     });
   }
 
@@ -224,21 +427,28 @@
     if (!collapseBtn || !sidebar || !app) {
       return;
     }
-    var collapsed = readSidebarCollapsed();
-    if (collapsed) {
-      sidebar.classList.add("is-collapsed");
-      app.classList.add("sidebar-collapsed");
-      collapseBtn.setAttribute("aria-pressed", "true");
-      collapseBtn.setAttribute("aria-label", "Развернуть меню");
-    }
     collapseBtn.addEventListener("click", function () {
-      var next = !sidebar.classList.contains("is-collapsed");
-      sidebar.classList.toggle("is-collapsed", next);
-      app.classList.toggle("sidebar-collapsed", next);
-      collapseBtn.setAttribute("aria-pressed", next ? "true" : "false");
-      collapseBtn.setAttribute("aria-label", next ? "Развернуть меню" : "Свернуть меню");
+      if (!isDesktopViewport()) {
+        return;
+      }
+      var next = !readSidebarCollapsed();
       writeSidebarCollapsed(next);
+      syncSidebarLayout();
     });
+  }
+
+  function bindViewportSync() {
+    if (resizeHandlerBound || typeof window === "undefined") {
+      return;
+    }
+    resizeHandlerBound = true;
+    var runSync = function () {
+      syncSidebarLayout();
+    };
+    window.addEventListener("resize", runSync);
+    if (window.matchMedia) {
+      window.matchMedia(DESKTOP_MQ).addEventListener("change", runSync);
+    }
   }
 
   function bindThemeToggles() {
@@ -261,6 +471,8 @@
     bindMobileMenu();
     bindSidebarCollapse();
     bindThemeToggles();
+    bindViewportSync();
+    syncSidebarLayout();
   }
 
   function mountShell(active, options) {
@@ -398,6 +610,10 @@
     readTheme: readTheme,
     toggleTheme: toggleTheme,
     setMobileMenuOpen: setMobileMenuOpen,
+    syncSidebarLayout: syncSidebarLayout,
+    isDesktopViewport: isDesktopViewport,
+    readSidebarCollapsed: readSidebarCollapsed,
+    writeSidebarCollapsed: writeSidebarCollapsed,
   };
 
   if (typeof window !== "undefined") {
