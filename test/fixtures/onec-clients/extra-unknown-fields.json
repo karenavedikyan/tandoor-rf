@@ -8,8 +8,8 @@
     "name_manager": "Synthetic Manager One",
     "address": "Synthetic Address",
     "telephone": ["+70000000008"],
-    "Discount": 5,
-    "DiscountAmount": 100,
-    "Markups": [{ "scope": "synthetic-only", "value": 1.1 }]
+    "Discount": "SYNTHETIC-DISCOUNT-PROGRAM",
+    "DiscountAmount": 0,
+    "Markups": [{ "Name": "", "Percentage": 10.5 }]
   }
 ]

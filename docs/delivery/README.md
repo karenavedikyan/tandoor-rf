@@ -52,7 +52,7 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 | Этап | ID промпта | Статус на main (2026-09-28) |
 |------|------------|----------------------------|
 | R0.1 | Аудит и граница R1 | ✅ merged (`5c2636c`) |
-| R0.2 | Контракты + синтетика; блокеры 1С | **в PR R0.2** |
+| R0.2 | Контракты + синтетика; сверка имеющихся материалов | **🟡 partial** (PR #9 + продолжение) |
 | R1.1–R1.5 | Мои клиенты | не начато |
 
 Подробности: [release-plan.md](./release-plan.md).
@@ -63,6 +63,7 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 |------|------------|
 | [release-plan.md](./release-plan.md) | Границы R0–R8, зависимости, блокеры, карта экранов прототипа |
 | [source-contracts.md](./source-contracts.md) | Индекс контрактов R0.2 |
+| [r02-existing-evidence.md](./r02-existing-evidence.md) | Метаданные ранее прочитанного снимка 1С |
 | [clients-field-contract.md](./clients-field-contract.md) | Поля `all_clients.json` |
 | [exchange-rules.md](./exchange-rules.md) | Правила snapshot / повтор / unknown |
 | [catalog-contract-spec.md](./catalog-contract-spec.md) | Каталог (spec R3.1, XML blocked) |
