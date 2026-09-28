@@ -262,12 +262,19 @@
   margin-bottom: 0.5rem;
 }
 
-.client-detail-header__title {
-  margin: 0 0 0.5rem;
-  font-size: clamp(1.35rem, 3vw, 1.85rem);
+.client-detail-name {
+  display: block;
+  font-size: clamp(1.2rem, 2.5vw, 1.45rem);
   font-weight: 700;
   line-height: 1.25;
-  word-break: break-word;
+}
+
+.client-detail-value--muted {
+  color: var(--rf-text-muted);
+}
+
+.client-detail-note--tech {
+  margin-bottom: 0.75rem;
 }
 
 .client-detail-header__meta {

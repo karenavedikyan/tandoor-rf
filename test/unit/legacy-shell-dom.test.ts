@@ -366,6 +366,7 @@ describe("client detail sections DOM", () => {
     const { sections } = loadBrowserModules(true);
     const html = sections.renderAllSections("");
     assert.match(html, /Торговые точки/);
-    assert.doesNotMatch(html, /stores_count|0%|Discount|Markups/i);
+    assert.doesNotMatch(html, /stores_count|0%|Discount|Markups|snapshot/i);
+    assert.match(html, /Технические идентификаторы/);
   });
 });

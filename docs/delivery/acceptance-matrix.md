@@ -84,12 +84,13 @@
 |----|------------|------------|-------|---------|----------|
 | R1-P01 | Список: поиск, фильтры, сброс, пагинация | `public/clients.js` + API | unit clients-*; integration workspace | 🟡 prep | PR head |
 | R1-P02 | Возврат из карточки с query | `return` param | unit client-detail-display | 🟡 prep | PR head |
-| R1-P03 | Карточка: шапка, контакты, данные 1С | `client-detail-sections.js` | unit client-detail-display, legacy-shell-dom | 🟡 prep | PR head |
-| R1-P04 | «Загружено в ЛК», не «Обновлено в 1С» | `formatLoadedInLkLabel`, sync status | unit clients-frontend | 🟡 prep | PR head |
-| R1-P05 | Без коммерции / демоданных | placeholders only | unit asserts no Discount | 🟡 prep | PR head |
-| R1-P06 | admin-only сохранён | `requireAdmin` без изменений | integration clients-workspace | 🟡 prep | main |
-| R1-P07 | Exo 2 сохранён; Golos не утверждён | без смены шрифта | n/a | ⏸ blocked UI-B06 | — |
-| R1-P08 | Сверка с прототипом v2 PDF | **не выполнялась** (эталон не в repo) | Chromium visual — см. PR | ⏸ blocked UI-B07 | — |
+| R1-P03 | Карточка: сотруднические подписи, без UUID в основном UI | `client-detail-sections.js` | unit + browser mocked API | 🟡 prep | PR head |
+| R1-P04 | «Загружено в ЛК»; «Время обновления в 1С не передано» | `formatLoadedInLkLabel`, sync status | unit + browser | 🟡 prep | PR head |
+| R1-P05 | Копирование адреса (пустой / пробелы / ошибка clipboard) | `resolveAddressPresentation`, copy controller | unit address + browser | 🟡 prep | PR head |
+| R1-P06 | Без коммерции / демоданных | placeholders only | unit asserts no Discount | 🟡 prep | PR head |
+| R1-P07 | admin-only сохранён | `requireAdmin` без изменений | **integration не перезапускался** (нет PostgreSQL) | 🟡 prep | main |
+| R1-P08 | Exo 2 сохранён; Golos не утверждён | без смены шрифта | n/a | ⏸ blocked UI-B06 | — |
+| R1-P09 | Сверка с прототипом v2 PDF | **не выполнялась** (эталон не в repo) | browser 8 screenshots (real pages, mocked API) | ⏸ blocked UI-B07 | PR head |
 
 **R1.4-prep:** 🟡 partial prep — UI на 8 полях; **не** R1.4, **не** пилот. R0.2 partial; R1.1–R1.3 не завершены.
 

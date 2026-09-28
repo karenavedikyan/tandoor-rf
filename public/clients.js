@@ -194,8 +194,6 @@
       encodeURIComponent(item.holding.id) +
       '">' +
       shell.escapeHtml(item.holding.name) +
-      " · " +
-      shell.escapeHtml(item.holding.id.slice(0, 8).toUpperCase()) +
       "</a>"
     );
   }
@@ -213,11 +211,7 @@
           "<td>" +
           renderHoldingCell(item) +
           "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</td>" +
+          "<td>" + shell.escapeHtml(item.manager.name) + "</td>" +
           "<td>" +
           shell.escapeHtml(item.address || "—") +
           "</td>" +
@@ -243,8 +237,6 @@
           "</p>" +
           '<p class="clients-card__line"><strong>Менеджер:</strong> ' +
           shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
           "</p>" +
           '<p class="clients-card__line"><strong>Адрес:</strong> ' +
           shell.escapeHtml(item.address || "—") +

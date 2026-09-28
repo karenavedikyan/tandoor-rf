@@ -149,7 +149,60 @@
     if (!lastImportedAtLabel || String(lastImportedAtLabel).trim() === "") {
       return "Сведения о загрузке отсутствуют";
     }
-    return "Загружено в ЛК: " + lastImportedAtLabel + " (МСК)";
+    return lastImportedAtLabel + " (МСК)";
+  }
+
+  var SOURCE_UPDATED_UNKNOWN = "Время обновления в 1С не передано";
+
+  function resolveAddressPresentation(rawAddress) {
+    if (rawAddress === null || rawAddress === undefined) {
+      return { displayText: "Адрес не указан", copyValue: null, copyEnabled: false };
+    }
+    var raw = String(rawAddress);
+    if (raw.trim().length === 0) {
+      return { displayText: "Адрес не указан", copyValue: null, copyEnabled: false };
+    }
+    return { displayText: raw.trim(), copyValue: raw, copyEnabled: true };
+  }
+
+  function createAddressCopyController(deps) {
+    return {
+      bind: function () {
+        var copyBtn = deps.getCopyButton();
+        var statusEl = deps.getStatusElement();
+        var copyValue = deps.getCopyValue();
+
+        if (!copyBtn || !statusEl) {
+          return;
+        }
+
+        if (!copyValue) {
+          copyBtn.hidden = true;
+          copyBtn.disabled = true;
+          statusEl.textContent = "";
+          statusEl.className = "workspace-status";
+          return;
+        }
+
+        copyBtn.hidden = false;
+        copyBtn.disabled = false;
+        statusEl.textContent = "";
+        statusEl.className = "workspace-status";
+
+        copyBtn.onclick = function () {
+          deps
+            .copyText(copyValue)
+            .then(function () {
+              statusEl.textContent = "Адрес скопирован";
+              statusEl.className = "workspace-status workspace-status--success";
+            })
+            .catch(function () {
+              statusEl.textContent = "Не удалось скопировать адрес";
+              statusEl.className = "workspace-status workspace-status--error";
+            });
+        };
+      },
+    };
   }
 
   function formatSyncStatusParts(data) {
@@ -418,6 +471,9 @@
     readStateFromSearch: readStateFromSearch,
     buildListQueryString: buildListQueryString,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
+    SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,
+    resolveAddressPresentation: resolveAddressPresentation,
+    createAddressCopyController: createAddressCopyController,
     formatSyncStatusParts: formatSyncStatusParts,
     parseReturnQuery: parseReturnQuery,
     shouldAcceptListResponse: shouldAcceptListResponse,

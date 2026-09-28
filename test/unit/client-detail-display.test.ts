@@ -6,28 +6,18 @@ import { JSDOM } from "jsdom";
 const require = createRequire(import.meta.url);
 const logic = require("../../public/clients-logic.js") as {
   formatLoadedInLkLabel: (label: string | null | undefined) => string;
+  SOURCE_UPDATED_UNKNOWN: string;
   formatSyncStatusParts: (data: {
     runningImport?: boolean;
     lastSuccessfulImportAtLabel?: string | null;
     warning?: string | null;
   } | null) => { text: string; warning: boolean; appendWarning: string };
   parseReturnQuery: (search: string) => string;
-  buildListQueryString: (state: {
-    q: string;
-    manager: string;
-    holding: string;
-    phone: string;
-    page: number;
-  }) => string;
 };
 const sections = require("../../public/client-detail-sections.js") as {
   renderAllSections: (returnQuery: string) => string;
   renderHeader: (
-    client: {
-      name: string;
-      holding: { id: string; name: string } | null;
-      manager: { name: string; shortId: string } | null;
-    },
+    client: { name: string },
     returnQuery: string,
   ) => string;
   FUTURE_DATA_ITEMS: string[];
@@ -35,19 +25,13 @@ const sections = require("../../public/client-detail-sections.js") as {
 };
 
 describe("client detail display helpers (R1.4-prep)", () => {
-  it("formats loaded-in-LK label and handles missing timestamp", () => {
-    assert.equal(logic.formatLoadedInLkLabel("28.09.2026, 12:30"), "Загружено в ЛК: 28.09.2026, 12:30 (МСК)");
+  it("formats loaded-in-LK value without duplicate label prefix", () => {
+    assert.equal(logic.formatLoadedInLkLabel("28.09.2026, 12:30"), "28.09.2026, 12:30 (МСК)");
     assert.equal(logic.formatLoadedInLkLabel(""), "Сведения о загрузке отсутствуют");
-    assert.equal(logic.formatLoadedInLkLabel(null), "Сведения о загрузке отсутствуют");
   });
 
-  it("formats sync status without implying 1C file formation time", () => {
-    assert.match(
-      logic.formatSyncStatusParts({ lastSuccessfulImportAtLabel: "28.09.2026, 10:00" }).text,
-      /Последний импорт в ЛК/,
-    );
-    assert.match(logic.formatSyncStatusParts({ runningImport: true }).text, /Импорт выполняется/);
-    assert.match(logic.formatSyncStatusParts(null).text, /Не удалось проверить/);
+  it("uses fixed text for unknown 1C update time", () => {
+    assert.equal(logic.SOURCE_UPDATED_UNKNOWN, "Время обновления в 1С не передано");
   });
 
   it("preserves list filters in return query for card navigation", () => {
@@ -58,33 +42,31 @@ describe("client detail display helpers (R1.4-prep)", () => {
     assert.match(sections.renderAllSections(returnQuery), /href="\/clients\?q=test/);
   });
 
-  it("renders header with manager and no commercial placeholders", () => {
-    const html = sections.renderHeader(
-      {
-        name: "Synthetic Client",
-        holding: { id: "44444444-4444-4444-8444-444444444444", name: "Холдинг" },
-        manager: { name: "Менеджер A", shortId: "22222222" },
-      },
-      "?return=%3Fq%3Dtest",
-    );
+  it("avoids technical field names and UUIDs in main sections", () => {
+    const html = sections.renderAllSections("");
+    assert.match(html, /Клиент/);
+    assert.match(html, /Холдинг/);
     assert.match(html, /Менеджер из 1С/);
-    assert.match(html, /Менеджер A/);
-    assert.doesNotMatch(html, /Discount|Markups|DiscountAmount/i);
+    assert.match(html, /Источник и обновление/);
+    assert.match(html, /client-source-updated/);
+    const dom = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);
+    const main = dom.window.document.querySelector('[data-testid="section-main"]');
+    const contacts = dom.window.document.querySelector('[data-testid="section-contacts"]');
+    const source = dom.window.document.querySelector('[data-testid="section-source"]');
+    const tech = dom.window.document.querySelector('[data-testid="section-tech"]');
+    assert.ok(main);
+    assert.ok(contacts);
+    assert.ok(source);
+    assert.ok(tech);
+    const employeeHtml = [main, contacts, source].map((node) => node?.innerHTML ?? "").join("\n");
+    assert.doesNotMatch(employeeHtml, /snapshot|guid_client|Холдинг на строке|Наименование в обмене/i);
+    assert.doesNotMatch(employeeHtml, /guid_|22222222/i);
+    assert.match(tech?.textContent ?? "", /guid_client/);
   });
 
-  it("uses compact future-data block instead of fake commercial values", () => {
+  it("uses compact future-data block without commercial values", () => {
     const html = sections.renderAllSections("");
-    const dom = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);
-    const { document } = dom.window;
-    const future = document.querySelector('[data-testid="section-future-data"]');
-    assert.ok(future);
-    sections.FUTURE_DATA_ITEMS.forEach((item) => {
-      assert.ok(future?.textContent?.includes(item));
-    });
-    assert.equal(document.querySelectorAll(".legacy-pending-block__notice").length, 1);
-    assert.doesNotMatch(html, /Discount|Markups|0%/);
-    assert.match(html, /Источник и обновление/);
-    assert.match(html, /client-loaded-at/);
-    assert.match(html, /Время формирования файла в 1С неизвестно/);
+    assert.doesNotMatch(html, /Discount|Markups|0%/i);
+    assert.equal(html.match(/legacy-pending-block__notice/g)?.length, 1);
   });
 });

@@ -81,22 +81,6 @@
 
   function renderHeader(client, returnQuery, escapeFn) {
     var esc = escapeFn || escapeHtml;
-    var holdingHtml = "—";
-    if (client.holding) {
-      holdingHtml =
-        esc(client.holding.name) +
-        ' · <a class="clients-link clients-link--filter" href="/clients?holding=' +
-        encodeURIComponent(client.holding.id) +
-        '">' +
-        esc(client.holding.id.slice(0, 8).toUpperCase()) +
-        "</a>";
-    }
-    var managerHtml = "—";
-    if (client.manager && client.manager.name) {
-      managerHtml =
-        esc(client.manager.name) +
-        (client.manager.shortId ? " · " + esc(client.manager.shortId) : "");
-    }
     return (
       '<header class="client-detail-header">' +
       '<nav class="client-detail-breadcrumb" aria-label="Навигация">' +
@@ -105,7 +89,7 @@
       '">Клиенты</a>' +
       '<span class="client-detail-breadcrumb__sep" aria-hidden="true">/</span>' +
       '<span class="client-detail-breadcrumb__current">' +
-      esc(client.name) +
+      esc(client.name || "Клиент") +
       "</span>" +
       "</nav>" +
       '<div class="client-detail-header__actions">' +
@@ -113,22 +97,27 @@
       esc(returnQuery) +
       '">← К списку</a>' +
       "</div>" +
-      '<h1 class="client-detail-header__title">' +
-      esc(client.name) +
-      "</h1>" +
-      '<div class="client-detail-header__meta">' +
-      '<span class="client-detail-header__holding">' +
-      '<span class="client-detail-header__holding-label">Холдинг:</span> ' +
-      holdingHtml +
-      "</span>" +
-      '<span class="client-detail-header__manager">' +
-      '<span class="client-detail-header__holding-label">Менеджер из 1С:</span> ' +
-      '<span id="client-header-manager">' +
-      managerHtml +
-      "</span>" +
-      "</span>" +
-      "</div>" +
       "</header>"
+    );
+  }
+
+  function renderMainSection() {
+    return (
+      openSection(
+        "section-main",
+        "Сведения",
+        '<dl class="legacy-field-list">' +
+          fieldRow(
+            "Клиент",
+            '<span id="client-name" class="client-detail-name client-detail-value"></span>',
+          ) +
+          fieldRow("Холдинг", '<span id="client-holding-name" class="client-detail-value"></span>') +
+          fieldRow(
+            "Менеджер из 1С",
+            '<span id="client-manager-name" class="client-detail-value"></span>',
+          ) +
+          "</dl>",
+      )
     );
   }
 
@@ -137,29 +126,13 @@
       openSection(
         "section-contacts",
         "Контакты",
-        '<p class="client-detail-note">Фактический адрес из обмена 1С. Не является торговой точкой автоматически.</p>' +
-          '<dl class="legacy-field-list">' +
-          fieldRow("Фактический адрес", '<span id="client-address" class="client-detail-value"></span>') +
+        '<dl class="legacy-field-list">' +
+          fieldRow("Адрес", '<span id="client-address" class="client-detail-value"></span>') +
           '<div class="client-detail-copy-row">' +
           '<button type="button" id="copy-address" class="workspace-button workspace-button--secondary">Копировать адрес</button>' +
           '<p id="copy-address-status" class="workspace-status" role="status" aria-live="polite"></p>' +
           "</div>" +
           fieldRow("Телефоны", '<div id="client-phones" class="client-detail-phones"></div>') +
-          "</dl>",
-      )
-    );
-  }
-
-  function renderOneCDataSection() {
-    return (
-      openSection(
-        "section-onec-data",
-        "Данные 1С",
-        '<p class="client-detail-note">Плоская запись snapshot из обмена. Смысл <code>guid_client</code> (юрлицо, торговая точка или иное) уточняется у 1С.</p>' +
-          '<dl class="legacy-field-list">' +
-          fieldRow("Наименование в обмене", '<span id="client-onec-name" class="client-detail-value"></span>') +
-          fieldRow("Холдинг на строке", '<span id="client-onec-holding" class="client-detail-value"></span>') +
-          fieldRow("Менеджер из 1С", '<span id="client-onec-manager" class="client-detail-value"></span>') +
           "</dl>",
       )
     );
@@ -171,10 +144,13 @@
         "section-source",
         "Источник и обновление",
         '<dl class="legacy-field-list">' +
-          fieldRow("Источник бизнес-данных", '<span class="legacy-badge">1С</span>') +
-          fieldRow("Загрузка в ЛК", '<span id="client-loaded-at" class="client-detail-value"></span>') +
-          "</dl>" +
-          '<p id="client-source-note" class="client-detail-note">Время формирования файла в 1С неизвестно и не подменяется временем импорта в ЛК.</p>',
+          fieldRow("Источник", '<span class="legacy-badge">1С</span>') +
+          fieldRow("Загружено в ЛК", '<span id="client-loaded-at" class="client-detail-value"></span>') +
+          fieldRow(
+            "Обновление в 1С",
+            '<span id="client-source-updated" class="client-detail-value client-detail-value--muted"></span>',
+          ) +
+          "</dl>",
       )
     );
   }
@@ -197,6 +173,7 @@
 
   function renderTechSection() {
     var body =
+      '<p class="client-detail-note client-detail-note--tech">Технические идентификаторы записи из обмена 1С. Тип записи уточняется у специалиста 1С.</p>' +
       '<dl class="legacy-field-list">' +
       fieldRow("guid_client", '<span id="client-uuid" class="client-detail-uuid"></span>') +
       fieldRow("guid_holding", '<span id="client-holding-uuid" class="client-detail-uuid"></span>') +
@@ -207,10 +184,10 @@
 
   function renderAllSections(returnQuery) {
     return (
-      renderHeader({ name: "", holding: null, manager: null }, returnQuery) +
+      renderHeader({ name: "" }, returnQuery) +
       '<div id="client-detail-sections" class="client-detail-sections">' +
+      renderMainSection() +
       renderContactsSection() +
-      renderOneCDataSection() +
       renderSourceSection() +
       renderFutureDataSection() +
       renderTechSection() +
