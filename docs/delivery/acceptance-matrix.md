@@ -106,6 +106,23 @@
 
 **R1.4-prep:** 🟡 partial prep — UI на 8 полях; **не** R1.4, **не** пилот. R0.2 partial; R1.1–R1.3 не завершены.
 
+### R1.3-prep — матрица ролей и прав (docs only)
+
+| ID | Требование | Реализация | Тесты | Приёмка | SHA доказательства |
+|----|------------|------------|-------|---------|----------|
+| R1-3P01 | Матрица ролей (A/B/поля) | [access-matrix.md](./access-matrix.md) | n/a (spec) | 📋 prep | PR head |
+| R1-3P02 | Правила, иерархия, 1С-link, безопасность | [access-rules.md](./access-rules.md) | n/a | 📋 prep | PR head |
+| R1-3P03 | Сценарии будущих тестов доступа | [access-acceptance-scenarios.md](./access-acceptance-scenarios.md) | **не выполнялись** | 📋 prep | PR head |
+| R1-3P04 | Роли assistant/coordinator + delegations (**предложение**, migration) | access-matrix § рекомендуемая модель | n/a | 📋 prep | PR head |
+| R1-3P07 | Серверная проверка срока замещения на каждом запросе | access-rules §6 | ACC-120…123 spec | 📋 prep | PR head |
+| R1-3P08 | История после отзыва — без read клиентских данных ассистентом | access-rules §4.5 | ACC-45…46 spec | 📋 prep | PR head |
+| R1-3P09 | draft/pending_approval не дают доступ; approval ≠ дата | access-rules §6.1.1 | ACC-170…173 spec | 📋 prep | PR head |
+| R1-3P10 | search/filters/total/export/cache — scope на сервере | access-rules §7.2 | ACC-90…95 spec | 📋 prep | PR head |
+| R1-3P05 | Серверная фильтрация по ролям | **не реализована** (`requireAdmin`) | integration 403 manager only | ❌ missing R1.3 | main |
+| R1-3P06 | user ↔ ID сотрудника 1С | **не реализована** | — | ❌ missing R1.3 | main |
+
+**R1.3-prep:** 📋 prep — документация и сценарии; **не** R1.3, **не** пилот. R0.2, R1.1, R1.2 не закрыты.
+
 ---
 
 ## UI / Brand (interim PR #7)
@@ -177,6 +194,17 @@
 | Тема | штатная кнопка `[data-theme-toggle]`; логотип official/light; `localStorage` после reload |
 | Chromium 1440/390 light+dark × list+card | **8 скриншотов** в `test-results/screenshots/` (переопределение: `TANDOOR_BROWSER_SCREENSHOT_DIR`) |
 | Production FTP/БД | **не подключались** |
+
+### R1.3-prep (2026-09-28, PR #13)
+
+| Проверка | Результат |
+|----------|-----------|
+| SHA main (база) | `d2ece0bede51a4543c0ab8c7c9b30435fabefed0` |
+| Проверенный commit PR #13 | `00c54dfb39d59b437f6e07c551dd433d7415435f` |
+| Код приложения | **не менялся** |
+| БД / миграции / импорт / права | **не менялись** |
+| `npm test` / integration | **не перезапускались** (docs-only PR) |
+| Сценарии ACC-* | спецификация; **автотесты не реализованы** |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
 
