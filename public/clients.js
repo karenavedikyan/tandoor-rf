@@ -194,8 +194,6 @@
       encodeURIComponent(item.holding.id) +
       '">' +
       shell.escapeHtml(item.holding.name) +
-      " · " +
-      shell.escapeHtml(item.holding.id.slice(0, 8).toUpperCase()) +
       "</a>"
     );
   }
@@ -213,11 +211,7 @@
           "<td>" +
           renderHoldingCell(item) +
           "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</td>" +
+          "<td>" + shell.escapeHtml(item.manager.name) + "</td>" +
           "<td>" +
           shell.escapeHtml(item.address || "—") +
           "</td>" +
@@ -243,8 +237,6 @@
           "</p>" +
           '<p class="clients-card__line"><strong>Менеджер:</strong> ' +
           shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
           "</p>" +
           '<p class="clients-card__line"><strong>Адрес:</strong> ' +
           shell.escapeHtml(item.address || "—") +
@@ -304,25 +296,9 @@
   }
 
   function renderSyncStatus(data) {
-    if (!data) {
-      syncStatusEl.textContent = "";
-      syncStatusEl.className = "clients-sync clients-sync--warning";
-      syncStatusEl.textContent = "Не удалось проверить свежесть данных.";
-      return;
-    }
-    var parts = [];
-    if (data.runningImport) {
-      parts.push("Импорт выполняется…");
-    } else if (data.lastSuccessfulImportAtLabel) {
-      parts.push("Последняя успешная загрузка из 1С: " + data.lastSuccessfulImportAtLabel + " (МСК)");
-    } else {
-      parts.push("Успешная загрузка из 1С ещё не выполнялась.");
-    }
-    syncStatusEl.textContent = parts.join(" ");
-    syncStatusEl.className = "clients-sync" + (data.warning ? " clients-sync--warning" : "");
-    if (data.warning) {
-      syncStatusEl.textContent += " " + data.warning;
-    }
+    var formatted = logic.formatSyncStatusParts(data);
+    syncStatusEl.textContent = formatted.text + formatted.appendWarning;
+    syncStatusEl.className = "clients-sync" + (formatted.warning ? " clients-sync--warning" : "");
   }
 
   function loadSyncStatus() {

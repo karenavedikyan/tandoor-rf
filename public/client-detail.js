@@ -92,31 +92,24 @@
     showInitError("Ошибка сети", "Не удалось связаться с сервером. Проверьте подключение.", onRetry);
   }
 
-  function setCopyStatus(message, kind) {
-    var statusEl = document.getElementById("copy-address-status");
-    if (!statusEl) {
-      return;
-    }
-    statusEl.textContent = message;
-    statusEl.className = "workspace-status" + (kind ? " workspace-status--" + kind : "");
-  }
+  var addressCopyValue = null;
+  var addressCopyController = logic.createAddressCopyController({
+    getCopyButton: function () {
+      return document.getElementById("copy-address");
+    },
+    getStatusElement: function () {
+      return document.getElementById("copy-address-status");
+    },
+    getCopyValue: function () {
+      return addressCopyValue;
+    },
+    copyText: function (value) {
+      return shell.copyText(value);
+    },
+  });
 
   function bindCopyAddress() {
-    var copyAddressBtn = document.getElementById("copy-address");
-    if (!copyAddressBtn) {
-      return;
-    }
-    copyAddressBtn.addEventListener("click", function () {
-      var address = document.getElementById("client-address")?.textContent || "";
-      shell
-        .copyText(address)
-        .then(function () {
-          setCopyStatus("Адрес скопирован", "success");
-        })
-        .catch(function () {
-          setCopyStatus("Не удалось скопировать адрес", "error");
-        });
-    });
+    addressCopyController.bind();
   }
 
   function renderPhones(phones) {
@@ -179,7 +172,6 @@
       return;
     }
     detailRoot.innerHTML = sections.renderAllSections(returnQuery);
-    bindCopyAddress();
   }
 
   function renderClient(client) {
@@ -192,16 +184,39 @@
       headerEl.outerHTML = sections.renderHeader(client, returnQuery, shell.escapeHtml);
     }
 
-    sections.mountTeamSection(document.getElementById("client-team-section"), client, shell.escapeHtml);
-
-    var addressEl = document.getElementById("client-address");
-    if (addressEl) {
-      addressEl.textContent = client.address || "—";
+    var nameEl = document.getElementById("client-name");
+    if (nameEl) {
+      nameEl.textContent = client.name || "—";
     }
 
-    var lastImportEl = document.getElementById("client-last-import");
-    if (lastImportEl) {
-      lastImportEl.textContent = client.lastImportedAtLabel + " (МСК)";
+    var holdingNameEl = document.getElementById("client-holding-name");
+    if (holdingNameEl) {
+      holdingNameEl.textContent =
+        client.holding && client.holding.name && client.holding.name.trim()
+          ? client.holding.name
+          : "—";
+    }
+
+    var managerNameEl = document.getElementById("client-manager-name");
+    if (managerNameEl) {
+      managerNameEl.textContent = client.manager && client.manager.name ? client.manager.name : "—";
+    }
+
+    var addressPresentation = logic.resolveAddressPresentation(client.address);
+    addressCopyValue = addressPresentation.copyValue;
+    var addressEl = document.getElementById("client-address");
+    if (addressEl) {
+      addressEl.textContent = addressPresentation.displayText;
+    }
+
+    var loadedAtEl = document.getElementById("client-loaded-at");
+    if (loadedAtEl) {
+      loadedAtEl.textContent = logic.formatLoadedInLkLabel(client.lastImportedAtLabel);
+    }
+
+    var sourceUpdatedEl = document.getElementById("client-source-updated");
+    if (sourceUpdatedEl) {
+      sourceUpdatedEl.textContent = logic.SOURCE_UPDATED_UNKNOWN;
     }
 
     var uuidEl = document.getElementById("client-uuid");
@@ -209,7 +224,18 @@
       uuidEl.textContent = client.guid;
     }
 
+    var holdingUuidEl = document.getElementById("client-holding-uuid");
+    if (holdingUuidEl) {
+      holdingUuidEl.textContent = client.holding && client.holding.id ? client.holding.id : "—";
+    }
+
+    var managerUuidEl = document.getElementById("client-manager-uuid");
+    if (managerUuidEl) {
+      managerUuidEl.textContent = client.manager ? client.manager.id : "—";
+    }
+
     renderPhones(client.phones);
+    bindCopyAddress();
     sections.initCollapsibles(detailRoot);
     detailEl.classList.remove("clients-hidden");
   }

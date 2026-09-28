@@ -22,7 +22,7 @@ type SectionsModule = {
   initCollapsibles: (root: ParentNode) => void;
   countCollapsibleListeners: (root: ParentNode) => number;
   PENDING_NOTICE: string;
-  REQUISITES_LABELS: string[];
+  FUTURE_DATA_ITEMS: string[];
 };
 
 const uncaughtErrors: unknown[] = [];
@@ -314,22 +314,20 @@ describe("client detail sections DOM", () => {
     assert.equal(uncaughtErrors.length, 0);
   });
 
-  it("renders pending notice once per unconnected block, not per label row", () => {
+  it("renders one compact pending block for future unconnected data", () => {
     const { sections } = loadBrowserModules(true);
     const html = sections.renderAllSections("?return=%3Fq%3Dtest");
     const dom = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);
     const { document } = dom.window;
 
     const notices = document.querySelectorAll(".legacy-pending-block__notice");
-    assert.ok(notices.length >= 2);
-    notices.forEach((node) => {
-      assert.equal(node.textContent, sections.PENDING_NOTICE);
-    });
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0]?.textContent, sections.PENDING_NOTICE);
 
-    const requisites = document.querySelector('[data-testid="section-requisites"]');
-    assert.ok(requisites);
-    sections.REQUISITES_LABELS.forEach((label) => {
-      assert.ok(requisites?.textContent?.includes(label));
+    const future = document.querySelector('[data-testid="section-future-data"]');
+    assert.ok(future);
+    sections.FUTURE_DATA_ITEMS.forEach((label) => {
+      assert.ok(future?.textContent?.includes(label));
     });
   });
 
@@ -364,10 +362,11 @@ describe("client detail sections DOM", () => {
     assert.equal(sections.countCollapsibleListeners(root), root.querySelectorAll(".legacy-details").length);
   });
 
-  it("shows honest stores message without fake rows", () => {
+  it("lists stores among future data without fake rows or commercial values", () => {
     const { sections } = loadBrowserModules(true);
     const html = sections.renderAllSections("");
-    assert.match(html, /Торговые точки ещё не подключены/);
-    assert.doesNotMatch(html, /stores_count|0%/);
+    assert.match(html, /Торговые точки/);
+    assert.doesNotMatch(html, /stores_count|0%|Discount|Markups|snapshot/i);
+    assert.match(html, /Технические идентификаторы/);
   });
 });
