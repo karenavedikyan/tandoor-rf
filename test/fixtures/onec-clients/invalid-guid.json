@@ -1,0 +1,12 @@
+[
+  {
+    "guid_client": "00000000-0000-0000-0000-000000000000",
+    "name_client": "Synthetic Null UUID",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000006"]
+  }
+]

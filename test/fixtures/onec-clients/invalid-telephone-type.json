@@ -1,0 +1,12 @@
+[
+  {
+    "guid_client": "88888888-8888-4888-8888-888888888888",
+    "name_client": "Synthetic Bad Phone Type",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": [70000000007]
+  }
+]

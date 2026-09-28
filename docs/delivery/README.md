@@ -51,8 +51,8 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 
 | Этап | ID промпта | Статус на main (2026-09-28) |
 |------|------------|----------------------------|
-| R0.1 | Аудит и граница R1 | **в PR #8** (docs) |
-| R0.2 | Контракты по фактической структуре обмена и подтверждениям 1С; синтетика для тестов (не доказательство полей); без production | **следующий** после приёмки R0.1 |
+| R0.1 | Аудит и граница R1 | ✅ merged (`5c2636c`) |
+| R0.2 | Контракты + синтетика; блокеры 1С | **в PR R0.2** |
 | R1.1–R1.5 | Мои клиенты | не начато |
 
 Подробности: [release-plan.md](./release-plan.md).
@@ -62,7 +62,11 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 | Файл | Назначение |
 |------|------------|
 | [release-plan.md](./release-plan.md) | Границы R0–R8, зависимости, блокеры, карта экранов прототипа |
-| [source-contracts.md](./source-contracts.md) | Подтверждённые поля, связи, разрешённые пути FTP |
+| [source-contracts.md](./source-contracts.md) | Индекс контрактов R0.2 |
+| [clients-field-contract.md](./clients-field-contract.md) | Поля `all_clients.json` |
+| [exchange-rules.md](./exchange-rules.md) | Правила snapshot / повтор / unknown |
+| [catalog-contract-spec.md](./catalog-contract-spec.md) | Каталог (spec R3.1, XML blocked) |
+| [onec-specialist-questions.md](./onec-specialist-questions.md) | Вопросы 1С |
 | [brand-contract.md](./brand-contract.md) | Ассеты, токены, прототип v2, открытые вопросы |
 | [acceptance-matrix.md](./acceptance-matrix.md) | Эталон → требование → реализация → тест → статус |
 
