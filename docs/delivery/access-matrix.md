@@ -1,8 +1,8 @@
 # Матрица доступа — R1.3-prep
 
-**Этап:** R1.3-prep (документация и сценарии; **реализация прав не выполнялась**)  
-**SHA main (база):** `d2ece0bede51a4543c0ab8c7c9b30435fabefed0`  
-**Дата:** 2026-09-28  
+**Этап:** R1.3-prep (документация и сценарии; **реализация прав не выполнялась**)
+**SHA main (база):** `d2ece0bede51a4543c0ab8c7c9b30435fabefed0`
+**Дата:** 2026-09-28
 **Связанные документы:** [access-rules.md](./access-rules.md) · [access-acceptance-scenarios.md](./access-acceptance-scenarios.md)
 
 ## Легенда

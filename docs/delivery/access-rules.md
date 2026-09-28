@@ -1,7 +1,7 @@
 # Правила доступа и источники назначений — R1.3-prep
 
-**Этап:** R1.3-prep · документация · **без изменения кода, БД, импорта и выдачи прав**  
-**SHA main (база):** `d2ece0bede51a4543c0ab8c7c9b30435fabefed0`  
+**Этап:** R1.3-prep · документация · **без изменения кода, БД, импорта и выдачи прав**
+**SHA main (база):** `d2ece0bede51a4543c0ab8c7c9b30435fabefed0`
 **См. также:** [access-matrix.md](./access-matrix.md) · [access-acceptance-scenarios.md](./access-acceptance-scenarios.md)
 
 ---
