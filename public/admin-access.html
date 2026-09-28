@@ -16,91 +16,95 @@
       <div class="legacy-frame">
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
-          <header class="profile-page-header">
-            <h1 class="profile-page-title">Настройка доступа</h1>
-            <p class="clients-subtitle">Диагностика ролей, связей 1С, назначений и замещений (R1.3).</p>
+          <header class="clients-page-header">
+            <h1 class="clients-page-title">Настройка доступа</h1>
+            <p class="clients-subtitle">Техническая конфигурация R1.3: связи, назначения, команды, замещения.</p>
           </header>
 
           <div id="access-panel" class="clients-panel" hidden></div>
 
           <div id="admin-access-app" class="clients-panel clients-hidden">
-            <section class="clients-card" aria-labelledby="overview-heading">
-              <h2 id="overview-heading" class="clients-card__title">Обзор конфигурации</h2>
-              <div id="overview-content" class="clients-table-wrap"></div>
+            <section class="clients-card">
+              <h2 class="clients-card__title">Поиск пользователя</h2>
+              <div class="clients-filters">
+                <label class="field">
+                  <span class="field__label">Имя или email</span>
+                  <input id="user-search-input" class="field__input" type="search" placeholder="ivanov@" />
+                </label>
+                <button type="button" class="workspace-button workspace-button--primary" id="user-search-btn">
+                  Найти
+                </button>
+              </div>
+              <div id="user-search-results" class="clients-table-wrap"></div>
             </section>
 
-            <section class="clients-card" aria-labelledby="explain-heading">
-              <h2 id="explain-heading" class="clients-card__title">Почему доступ разрешён или запрещён</h2>
+            <section class="clients-card">
+              <h2 class="clients-card__title">Обзор конфигурации</h2>
+              <div id="overview-tabs" class="clients-toolbar__row"></div>
+              <div id="overview-table" class="clients-table-wrap"></div>
+            </section>
+
+            <section class="clients-card">
+              <h2 class="clients-card__title">Диагностика доступа</h2>
               <form id="explain-form" class="clients-filters">
                 <label class="field">
-                  <span class="field__label">User ID</span>
+                  <span class="field__label">Пользователь (ID из поиска)</span>
                   <input id="explain-user-id" class="field__input" type="text" required />
                 </label>
                 <label class="field">
-                  <span class="field__label">Client GUID</span>
+                  <span class="field__label">Клиент GUID</span>
                   <input id="explain-client-guid" class="field__input" type="text" required />
                 </label>
                 <button type="submit" class="workspace-button workspace-button--primary">Проверить</button>
               </form>
-              <pre id="explain-result" class="clients-code-block"></pre>
+              <div id="explain-result" class="clients-table-wrap"></div>
             </section>
 
-            <section class="clients-card" aria-labelledby="link-heading">
-              <h2 id="link-heading" class="clients-card__title">Связь user ↔ сотрудник 1С</h2>
+            <section class="clients-card">
+              <h2 class="clients-card__title">Связь user ↔ сотрудник 1С</h2>
               <form id="link-form" class="clients-filters">
-                <label class="field">
-                  <span class="field__label">User ID</span>
-                  <input id="link-user-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Employee ID (1С)</span>
-                  <input id="link-employee-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Основание</span>
-                  <input id="link-basis" class="field__input" type="text" required />
-                </label>
-                <button type="submit" class="workspace-button workspace-button--primary">Создать связь</button>
+                <label class="field"><span class="field__label">User ID</span><input id="link-user-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Employee ID</span><input id="link-employee-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Основание</span><input id="link-basis" class="field__input" required /></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Создать</button>
               </form>
             </section>
 
-            <section class="clients-card" aria-labelledby="grant-heading">
-              <h2 id="grant-heading" class="clients-card__title">Назначение клиента (regional / исключение)</h2>
+            <section class="clients-card">
+              <h2 class="clients-card__title">Назначение клиента</h2>
               <form id="grant-form" class="clients-filters">
-                <label class="field">
-                  <span class="field__label">User ID</span>
-                  <input id="grant-user-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Client GUID</span>
-                  <input id="grant-object-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Основание</span>
-                  <input id="grant-basis" class="field__input" type="text" required />
-                </label>
-                <button type="submit" class="workspace-button workspace-button--primary">Создать назначение</button>
+                <label class="field"><span class="field__label">User ID</span><input id="grant-user-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Client GUID</span><input id="grant-object-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Основание</span><input id="grant-basis" class="field__input" required /></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Назначить</button>
               </form>
             </section>
 
-            <section class="clients-card" aria-labelledby="team-heading">
-              <h2 id="team-heading" class="clients-card__title">Команда РОП</h2>
+            <section class="clients-card">
+              <h2 class="clients-card__title">Команда РОП</h2>
               <form id="team-form" class="clients-filters">
-                <label class="field">
-                  <span class="field__label">ROP User ID</span>
-                  <input id="team-rop-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Member User ID</span>
-                  <input id="team-member-id" class="field__input" type="text" required />
-                </label>
-                <label class="field">
-                  <span class="field__label">Основание</span>
-                  <input id="team-basis" class="field__input" type="text" required />
-                </label>
-                <button type="submit" class="workspace-button workspace-button--primary">Добавить в команду</button>
+                <label class="field"><span class="field__label">ROP User ID</span><input id="team-rop-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Member User ID</span><input id="team-member-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Основание</span><input id="team-basis" class="field__input" required /></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Добавить</button>
               </form>
             </section>
+
+            <section class="clients-card">
+              <h2 class="clients-card__title">Замещение (через API ролей — admin только фиксация)</h2>
+              <p class="clients-subtitle">Создание замещений менеджерами/РОП — через <code>/api/access/delegations</code>. Admin может зафиксировать внешнее согласование.</p>
+              <form id="record-approval-form" class="clients-filters">
+                <label class="field"><span class="field__label">Delegation ID</span><input id="approval-delegation-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Business approver User ID (РОП/директор)</span><input id="approval-approver-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Основание решения</span><input id="approval-basis" class="field__input" required /></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Зафиксировать согласование</button>
+              </form>
+            </section>
+
+            <details class="clients-card">
+              <summary class="clients-card__title">Техническая JSON-детализация</summary>
+              <pre id="overview-json" class="clients-code-block"></pre>
+            </details>
 
             <p id="admin-access-status" class="status" role="status" aria-live="polite"></p>
           </div>

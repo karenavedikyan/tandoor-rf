@@ -13,37 +13,68 @@ function scopedWhere(innerSql: string, params: unknown[]): ClientScopeSql {
   };
 }
 
-export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
-  if (context.fullClientBase) {
-    return { whereSql: "", params: [] };
+function appendDenials(scope: ClientScopeSql, userId: string): ClientScopeSql {
+  if (scope.whereSql === "WHERE FALSE") {
+    return scope;
   }
 
-  if (!context.hasScopedClientAccess || context.employeeLinkConflict) {
+  const userParam = scope.params.length + 1;
+  const denialClause = `NOT EXISTS (
+    SELECT 1
+    FROM access_denials ad
+    WHERE ad.user_id = $${userParam}::uuid
+      AND ad.revoked_at IS NULL
+      AND (
+        ad.scope_type = 'all_clients'
+        OR ad.object_id = onec_clients.guid_client
+      )
+  )`;
+
+  if (!scope.whereSql) {
+    return {
+      whereSql: `WHERE ${denialClause}`,
+      params: [...scope.params, userId],
+    };
+  }
+
+  const scopeClause = scope.whereSql.replace(/^WHERE\s+/, "");
+  return {
+    whereSql: `WHERE (${scopeClause}) AND (${denialClause})`,
+    params: [...scope.params, userId],
+  };
+}
+
+export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
+  if (context.explicitlyDeniedAll) {
+    return DENY_SCOPE;
+  }
+
+  if (context.fullClientBase) {
+    return appendDenials({ whereSql: "", params: [] }, context.userId);
+  }
+
+  if (!context.hasScopedClientAccess || context.employeeLinkConflict || !context.hasEmployeeLink) {
     return DENY_SCOPE;
   }
 
   const userParam = context.userId;
 
+  let scope: ClientScopeSql;
   switch (context.role) {
     case "manager": {
-      if (!context.employeeId) {
-        return DENY_SCOPE;
-      }
-      return scopedWhere(
+      scope = scopedWhere(
         `
           SELECT guid_client
           FROM onec_clients
           WHERE guid_manager = $1::uuid
         `,
-        [context.employeeId],
+        [context.employeeId!],
       );
+      break;
     }
 
     case "rop": {
-      if (!context.employeeId) {
-        return DENY_SCOPE;
-      }
-      return scopedWhere(
+      scope = scopedWhere(
         `
           SELECT oc.guid_client
           FROM onec_clients oc
@@ -57,12 +88,13 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
             SELECT $2::uuid
           )
         `,
-        [userParam, context.employeeId],
+        [userParam, context.employeeId!],
       );
+      break;
     }
 
     case "regional_manager":
-      return scopedWhere(
+      scope = scopedWhere(
         `
           SELECT object_id AS guid_client
           FROM access_grants
@@ -72,9 +104,10 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
         `,
         [userParam],
       );
+      break;
 
     case "assistant":
-      return scopedWhere(
+      scope = scopedWhere(
         `
           SELECT dc.guid_client
           FROM delegations d
@@ -85,54 +118,32 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
             AND d.revoked_at IS NULL
             AND d.starts_at <= NOW()
             AND d.ends_at > NOW()
+            AND NOT EXISTS (
+              SELECT 1
+              FROM delegation_change_requests dcr
+              WHERE dcr.delegation_id = d.id
+                AND dcr.status = 'pending_approval'
+            )
             AND EXISTS (
               SELECT 1
               FROM onec_clients oc
               JOIN user_onec_employee_links uoel
-                ON uoel.user_id = d.delegator_user_id AND uoel.revoked_at IS NULL
+                ON uoel.user_id = d.delegator_user_id
+               AND uoel.revoked_at IS NULL
+              JOIN users delegator ON delegator.id = d.delegator_user_id
               WHERE oc.guid_client = dc.guid_client
                 AND oc.guid_manager = uoel.employee_id
+                AND delegator.status = 'active'
+                AND delegator.role IN ('manager', 'rop')
             )
         `,
         [userParam],
       );
+      break;
 
     default:
       return DENY_SCOPE;
   }
-}
 
-export function mergeScopeWithFilter(
-  scope: ClientScopeSql,
-  filterWhereSql: string,
-  filterParams: unknown[],
-): ClientScopeSql {
-  if (scope.whereSql === "WHERE FALSE") {
-    return scope;
-  }
-
-  const scopeOffset = filterParams.length;
-  const scopeParams = scope.params.map((_, index) => `$${scopeOffset + index + 1}`);
-  const scopeInner = scope.whereSql.replace(/^WHERE onec_clients\.guid_client IN \(/, "").replace(/\)$/, "");
-  const rebasedInner = scopeInner.replace(/\$(\d+)/g, (_match, num) => `$${scopeOffset + Number(num)}`);
-
-  const filterClause = filterWhereSql.startsWith("WHERE ")
-    ? filterWhereSql.slice(7)
-    : filterWhereSql;
-
-  if (!scope.whereSql) {
-    return {
-      whereSql: filterWhereSql,
-      params: filterParams,
-    };
-  }
-
-  if (!filterClause) {
-    return scope;
-  }
-
-  return {
-    whereSql: `WHERE onec_clients.guid_client IN (${rebasedInner}) AND (${filterClause})`,
-    params: [...filterParams, ...scope.params],
-  };
+  return appendDenials(scope, context.userId);
 }

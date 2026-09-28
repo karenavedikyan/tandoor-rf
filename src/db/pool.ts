@@ -51,6 +51,6 @@ export async function closePool(): Promise<void> {
   }
 }
 
-export function resetPoolForTests(): void {
-  pool = undefined;
+export async function resetPoolForTests(): Promise<void> {
+  await closePool();
 }

@@ -89,47 +89,35 @@ export async function listClients(
   };
 }
 
-function scopeFromClause(scope: ReturnType<typeof buildClientScopeSql>): {
-  fromSql: string;
-  params: unknown[];
-} {
-  if (scope.whereSql === "WHERE FALSE") {
-    return { fromSql: "onec_clients WHERE FALSE", params: [] };
-  }
-  if (!scope.whereSql) {
-    return { fromSql: "onec_clients", params: [] };
-  }
-  const clause = scope.whereSql.replace(/^WHERE\s+onec_clients\.guid_client IN\s+/i, "");
-  return {
-    fromSql: `onec_clients WHERE guid_client IN ${clause}`,
-    params: scope.params,
-  };
-}
-
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
   const scope = buildClientScopeSql(context);
-  const scoped = scopeFromClause(scope);
+  const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
+  const holdingFilter = combineScopeAndFilter(scope, {
+    whereSql: "WHERE guid_holding IS NOT NULL",
+    params: [],
+  });
 
   const managers = await query<OptionRow>(
     `
       SELECT DISTINCT ON (guid_manager)
         guid_manager::text AS id,
         name_manager AS name
-      FROM ${scoped.fromSql}
+      FROM onec_clients
+      ${managerFilter.whereSql}
       ORDER BY guid_manager ASC, name_manager ASC
     `,
-    scoped.params,
+    managerFilter.params,
   );
   const holdings = await query<OptionRow>(
     `
       SELECT DISTINCT ON (guid_holding)
         guid_holding::text AS id,
         name_holding AS name
-      FROM ${scoped.fromSql}
-      WHERE guid_holding IS NOT NULL
+      FROM onec_clients
+      ${holdingFilter.whereSql}
       ORDER BY guid_holding ASC, name_holding ASC
     `,
-    scoped.params,
+    holdingFilter.params,
   );
 
   return {
@@ -143,14 +131,13 @@ export async function getClientByGuid(
   guid: string,
 ): Promise<ClientDetailDto | null> {
   const scope = buildClientScopeSql(context);
-  if (scope.whereSql === "WHERE FALSE") {
+  const detailFilter = combineScopeAndFilter(scope, {
+    whereSql: "WHERE guid_client = $1::uuid",
+    params: [guid],
+  });
+  if (detailFilter.whereSql === "WHERE FALSE") {
     return null;
   }
-
-  const guidParamIndex = scope.params.length + 1;
-  const scopeClause = scope.whereSql
-    ? scope.whereSql.replace(/^WHERE\s+onec_clients\./i, "WHERE ")
-    : "WHERE TRUE";
 
   const result = await query<ClientRow>(
     `
@@ -165,10 +152,9 @@ export async function getClientByGuid(
         telephone,
         last_imported_at
       FROM onec_clients
-      ${scopeClause}
-        AND guid_client = $${guidParamIndex}::uuid
+      ${detailFilter.whereSql}
     `,
-    [...scope.params, guid],
+    detailFilter.params,
   );
   const row = result.rows[0];
   if (!row) {

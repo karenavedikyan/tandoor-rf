@@ -33,7 +33,7 @@ function authHeaders(cookie?: string): Record<string, string> {
 }
 
 async function loadApp() {
-  resetPoolForTests();
+  await resetPoolForTests();
   const { createApp } = await import("../../src/server");
   return createApp();
 }
@@ -66,7 +66,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
 
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
-    resetPoolForTests();
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
     await createTestUser({
       databaseUrl,
@@ -247,7 +247,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(initial.body.warning, null);
 
     await insertFailedImportRun(databaseUrl);
-    resetPoolForTests();
+    await resetPoolForTests();
     const appAfterFail = await loadApp();
     const afterFail = await request(appAfterFail)
       .get("/api/clients/sync-status")
@@ -261,7 +261,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     const app = await loadApp();
     const adminCookie = await login("admin@example.com");
     await insertValidationFailedImportRun(databaseUrl);
-    resetPoolForTests();
+    await resetPoolForTests();
     const res = await request(await loadApp())
       .get("/api/clients/sync-status")
       .set(authHeaders(adminCookie));
@@ -313,8 +313,29 @@ describe("clients workspace integration", { concurrency: false }, () => {
     const directorList = await request(app)
       .get("/api/clients")
       .set(authHeaders(directorCookie));
-    assert.equal(directorList.status, 200);
-    assert.equal(directorList.body.total, 3);
+    assert.equal(directorList.status, 403);
+
+    const adminCookieForLink = await login("admin@example.com");
+    const pool = new (await import("pg")).Pool({ connectionString: databaseUrl, max: 1 });
+    const directorRow = await pool.query<{ id: string }>(
+      "SELECT id::text FROM users WHERE email = 'director-clients@example.com'",
+    );
+    await pool.end();
+    const linkRes = await request(app)
+      .post("/api/admin/access/employee-links")
+      .set(authHeaders(adminCookieForLink))
+      .send({
+        userId: directorRow.rows[0]!.id,
+        employeeId: "88888888-8888-4888-8888-888888888888",
+        basis: "integration director link",
+      });
+    assert.equal(linkRes.status, 201);
+    await resetPoolForTests();
+    const directorLinked = await request(await loadApp())
+      .get("/api/clients")
+      .set(authHeaders(directorCookie));
+    assert.equal(directorLinked.status, 200);
+    assert.equal(directorLinked.body.total, 3);
 
     const adminCookie = await login("admin@example.com");
     const sync = await request(app)
@@ -346,7 +367,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
       "UPDATE sessions SET expires_at = NOW() - interval '1 minute' WHERE revoked_at IS NULL",
     );
     await pool.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const expired = await request(await loadApp())
       .get("/api/clients")
@@ -360,7 +381,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query("DROP TABLE IF EXISTS onec_clients CASCADE");
     await pool.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const app = await loadApp();
     const res = await request(app).get("/api/clients").set(authHeaders(adminCookie));

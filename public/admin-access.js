@@ -3,55 +3,139 @@
 
   var api = window.TandoorRf;
   var shell = window.ClientsShell;
-  var accessPanel = document.getElementById("access-panel");
-  var appEl = document.getElementById("admin-access-app");
-  var overviewEl = document.getElementById("overview-content");
-  var statusEl = document.getElementById("admin-access-status");
-  var explainResultEl = document.getElementById("explain-result");
+  var overviewData = null;
+  var activeTab = "links";
 
   function setStatus(text, kind) {
-    api.setStatus(statusEl, text, kind);
+    api.setStatus(document.getElementById("admin-access-status"), text, kind);
   }
 
-  function showForbidden() {
-    appEl.classList.add("clients-hidden");
-    accessPanel.hidden = false;
-    accessPanel.classList.remove("clients-hidden");
-    shell.setPanelMessage(
-      accessPanel,
-      "forbidden",
-      "Нет доступа",
-      "Раздел доступен только техническому администратору.",
-      '<a class="workspace-button workspace-button--secondary" href="/profile">В профиль</a>',
-    );
-  }
-
-  function renderOverview(data) {
-    var sections = [
-      ["Пользователи", data.users],
-      ["Связи 1С", data.links],
-      ["Назначения", data.grants],
-      ["Команды РОП", data.teams],
-      ["Координаторы", data.coordinatorTeams],
-      ["Замещения", data.delegations],
-      ["Аудит", data.audit],
-    ];
-    overviewEl.innerHTML = sections
-      .map(function (entry) {
-        var title = entry[0];
-        var rows = entry[1] || [];
+  function renderTable(columns, rows) {
+    if (!rows || rows.length === 0) {
+      return '<p class="clients-subtitle">Нет записей.</p>';
+    }
+    var head =
+      "<thead><tr>" +
+      columns.map(function (col) {
+        return "<th>" + shell.escapeHtml(col.label) + "</th>";
+      }).join("") +
+      "</tr></thead>";
+    var body = rows
+      .map(function (row) {
         return (
-          '<h3 class="clients-card__subtitle">' +
-          shell.escapeHtml(title) +
-          " (" +
-          rows.length +
-          ")</h3>" +
-          '<pre class="clients-code-block">' +
-          shell.escapeHtml(JSON.stringify(rows.slice(0, 20), null, 2)) +
-          "</pre>"
+          "<tr>" +
+          columns
+            .map(function (col) {
+              var value = row[col.key];
+              if (value === null || value === undefined) {
+                value = "—";
+              } else if (typeof value === "object") {
+                value = JSON.stringify(value);
+              }
+              return "<td>" + shell.escapeHtml(String(value)) + "</td>";
+            })
+            .join("") +
+          "</tr>"
         );
       })
       .join("");
+    return '<table class="clients-table">' + head + "<tbody>" + body + "</tbody></table>";
+  }
+
+  function tabDefinitions() {
+    return {
+      links: {
+        label: "Связи 1С",
+        columns: [
+          { key: "user_email", label: "Пользователь" },
+          { key: "employee_id", label: "Employee ID" },
+          { key: "basis", label: "Основание" },
+          { key: "revoked_at", label: "Отозвано" },
+        ],
+        rows: overviewData ? overviewData.links : [],
+      },
+      grants: {
+        label: "Назначения",
+        columns: [
+          { key: "user_email", label: "Пользователь" },
+          { key: "client_name", label: "Клиент" },
+          { key: "object_id", label: "GUID" },
+          { key: "basis", label: "Основание" },
+        ],
+        rows: overviewData ? overviewData.grants : [],
+      },
+      teams: {
+        label: "Команды РОП",
+        columns: [
+          { key: "rop_email", label: "РОП" },
+          { key: "member_email", label: "Участник" },
+          { key: "basis", label: "Основание" },
+        ],
+        rows: overviewData ? overviewData.teams : [],
+      },
+      delegations: {
+        label: "Замещения",
+        columns: [
+          { key: "delegator_email", label: "Передающий" },
+          { key: "assistant_email", label: "Ассистент" },
+          { key: "status", label: "Статус" },
+          { key: "starts_at", label: "Начало" },
+          { key: "ends_at", label: "Конец" },
+          { key: "approver_email", label: "Согласовал" },
+        ],
+        rows: overviewData ? overviewData.delegations : [],
+      },
+      denials: {
+        label: "Запреты",
+        columns: [
+          { key: "user_email", label: "Пользователь" },
+          { key: "scope_type", label: "Тип" },
+          { key: "object_id", label: "Объект" },
+          { key: "reason", label: "Причина" },
+        ],
+        rows: overviewData ? overviewData.denials : [],
+      },
+      audit: {
+        label: "Аудит",
+        columns: [
+          { key: "created_at", label: "Когда" },
+          { key: "actor_email", label: "Исполнитель" },
+          { key: "business_actor_email", label: "Согласующий" },
+          { key: "action", label: "Действие" },
+          { key: "basis", label: "Основание" },
+        ],
+        rows: overviewData ? overviewData.audit : [],
+      },
+    };
+  }
+
+  function renderOverview() {
+    var tabs = tabDefinitions();
+    var tabsEl = document.getElementById("overview-tabs");
+    var tableEl = document.getElementById("overview-table");
+    var jsonEl = document.getElementById("overview-json");
+    tabsEl.innerHTML = Object.keys(tabs)
+      .map(function (key) {
+        return (
+          '<button type="button" class="workspace-button' +
+          (activeTab === key ? " workspace-button--primary" : " workspace-button--secondary") +
+          '" data-tab="' +
+          key +
+          '">' +
+          shell.escapeHtml(tabs[key].label) +
+          "</button>"
+        );
+      })
+      .join(" ");
+    tabsEl.querySelectorAll("[data-tab]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        activeTab = btn.getAttribute("data-tab");
+        renderOverview();
+      });
+    });
+    var current = tabs[activeTab];
+    tableEl.innerHTML = renderTable(current.columns, current.rows);
+    jsonEl.textContent = JSON.stringify(overviewData, null, 2);
   }
 
   function loadOverview() {
@@ -59,38 +143,83 @@
       if (result.response.status !== 200) {
         throw new Error(api.extractErrorMessage(result.data, "Не удалось загрузить обзор."));
       }
-      renderOverview(result.data);
+      overviewData = result.data;
+      renderOverview();
     });
   }
 
   function bindForm(formId, handler) {
     var form = document.getElementById(formId);
-    if (!form) {
-      return;
-    }
+    if (!form) return;
     form.addEventListener("submit", function (event) {
       event.preventDefault();
-      handler(new FormData(form)).catch(function (err) {
-        setStatus(err.message || "Ошибка операции.", "error");
+      Promise.resolve(handler()).catch(function (err) {
+        setStatus(err.message || "Ошибка.", "error");
       });
     });
   }
 
+  document.getElementById("user-search-btn")?.addEventListener("click", function () {
+    var q = document.getElementById("user-search-input").value.trim();
+    if (q.length < 2) {
+      setStatus("Введите минимум 2 символа.", "error");
+      return;
+    }
+    api
+      .apiRequest("/api/admin/access/users/search?q=" + encodeURIComponent(q))
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Поиск не удался."));
+        }
+        document.getElementById("user-search-results").innerHTML = renderTable(
+          [
+            { key: "full_name", label: "ФИО" },
+            { key: "email", label: "Email" },
+            { key: "role", label: "Роль" },
+            { key: "status", label: "Статус" },
+            { key: "id", label: "User ID" },
+            { key: "employee_id", label: "Employee ID" },
+          ],
+          result.data.users,
+        );
+      })
+      .catch(function (err) {
+        setStatus(err.message, "error");
+      });
+  });
+
   bindForm("explain-form", function () {
     var userId = document.getElementById("explain-user-id").value.trim();
     var clientGuid = document.getElementById("explain-client-guid").value.trim();
-    var query =
-      "/api/admin/access/explain?userId=" +
-      encodeURIComponent(userId) +
-      "&clientGuid=" +
-      encodeURIComponent(clientGuid);
-    return api.apiRequest(query).then(function (result) {
-      if (result.response.status !== 200) {
-        throw new Error(api.extractErrorMessage(result.data, "Не удалось выполнить проверку."));
-      }
-      explainResultEl.textContent = JSON.stringify(result.data.explain, null, 2);
-      setStatus("Диагностика выполнена.", "success");
-    });
+    return api
+      .apiRequest(
+        "/api/admin/access/explain?userId=" +
+          encodeURIComponent(userId) +
+          "&clientGuid=" +
+          encodeURIComponent(clientGuid),
+      )
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Диагностика не удалась."));
+        }
+        document.getElementById("explain-result").innerHTML = renderTable(
+          [
+            { key: "allowed", label: "Разрешено" },
+            { key: "reason", label: "Причина" },
+            { key: "details", label: "Пояснение" },
+            { key: "userStatus", label: "Статус user" },
+          ],
+          [
+            {
+              allowed: result.data.explain.allowed ? "да" : "нет",
+              reason: result.data.explain.reason,
+              details: result.data.explain.details,
+              userStatus: result.data.userStatus,
+            },
+          ],
+        );
+        setStatus("Диагностика выполнена.", "success");
+      });
   });
 
   bindForm("link-form", function () {
@@ -145,7 +274,26 @@
         if (result.response.status !== 201) {
           throw new Error(api.extractErrorMessage(result.data, "Не удалось добавить в команду."));
         }
-        setStatus("Участник команды добавлен.", "success");
+        setStatus("Участник добавлен.", "success");
+        return loadOverview();
+      });
+  });
+
+  bindForm("record-approval-form", function () {
+    var delegationId = document.getElementById("approval-delegation-id").value.trim();
+    return api
+      .apiRequest("/api/admin/access/delegations/" + encodeURIComponent(delegationId) + "/record-approval", {
+        method: "POST",
+        body: {
+          businessApproverUserId: document.getElementById("approval-approver-id").value.trim(),
+          basis: document.getElementById("approval-basis").value.trim(),
+        },
+      })
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось зафиксировать согласование."));
+        }
+        setStatus("Согласование зафиксировано.", "success");
         return loadOverview();
       });
   });
@@ -153,16 +301,20 @@
   shell.mountShell("admin-access", { showClients: true, showAdminAccess: true });
   shell.ensureAdminAccess(function (_user, reason) {
     if (reason === "forbidden") {
-      showForbidden();
+      document.getElementById("admin-access-app").classList.add("clients-hidden");
+      document.getElementById("access-panel").hidden = false;
+      shell.setPanelMessage(
+        document.getElementById("access-panel"),
+        "forbidden",
+        "Нет доступа",
+        "Раздел доступен только техническому администратору.",
+        "",
+      );
       return;
     }
-    if (reason) {
-      setStatus("Не удалось проверить доступ.", "error");
-      return;
-    }
-    appEl.classList.remove("clients-hidden");
+    document.getElementById("admin-access-app").classList.remove("clients-hidden");
     loadOverview().catch(function (err) {
-      setStatus(err.message || "Ошибка загрузки.", "error");
+      setStatus(err.message, "error");
     });
   });
 })();

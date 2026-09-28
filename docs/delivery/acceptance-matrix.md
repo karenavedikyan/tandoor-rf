@@ -123,23 +123,28 @@
 
 **R1.3-prep:** 📋 prep — документация и сценарии; **не** R1.3, **не** пилот. R0.2, R1.1, R1.2 не закрыты.
 
-### R1.3 — серверные права (implementation draft PR)
+### R1.3 — серверные права (implementation draft PR #14)
 
 | ID | Требование | Реализация | Тесты | Приёмка | Примечание |
 |----|------------|------------|-------|---------|------------|
-| R1-3I01 | Migration: roles assistant/coordinator + access tables | `003_access_control.sql` | integration (needs PG) | 🟡 draft | rollback: [r13-rollback.md](./r13-rollback.md) |
-| R1-3I02 | user ↔ employee link (no auto-match) | `user_onec_employee_links` + admin API | ACC-71/72 spec | 🟡 draft | |
-| R1-3I03 | Manager scope via guid_manager | `access/scope-sql.ts` | ACC-01…05 | 🟡 draft | |
-| R1-3I04 | ROP team scope | `rop_team_members` | ACC-20…21 | 🟡 draft | |
-| R1-3I05 | Regional explicit grants | `access_grants` | ACC-30…32 | 🟡 draft | |
-| R1-3I06 | Delegations minimal | `delegations` + clients | ACC-40…47, 170…173 | 🟡 draft | auto-active after approval |
-| R1-3I07 | Server filter list/options/total/detail | clients repository | ACC-90…91 | 🟡 draft | |
-| R1-3I08 | sync-status admin-only | clients router | integration | 🟡 draft | |
-| R1-3I09 | Admin diagnostics UI | `/admin/access` | browser screenshots | 🟡 draft | |
-| R1-3I10 | Coordinator no cards default | policy | ACC-141 | 🟡 draft | |
-| R1-3I11 | guid_holding no auto-expand | documented | ACC-35 | 📋 policy only | hierarchy Q-HIER-* open |
+| R1-3I01 | Migration: roles assistant/coordinator + access tables | `003` + `004_access_control_fixes.sql` | integration PG | 🟡 draft | partial unique link; denials; change-requests |
+| R1-3I02 | user ↔ employee link (no auto-match) | admin API + revoke/re-link | ACC-71, re-link after revoke | 🟡 draft | |
+| R1-3I03 | Manager scope via guid_manager | `access/scope-sql.ts` | ACC-01…05 HTTP | 🟡 draft | |
+| R1-3I04 | ROP team scope | `rop_team_members` | ACC-20…21, foreign ROP 403 | 🟡 draft | |
+| R1-3I05 | Regional explicit grants | `access_grants` | ACC-30 | 🟡 draft | |
+| R1-3I06 | Delegations + approval workflow | `/api/access/*` + record-approval admin | ACC-40…47, 170…171, 120…121, overlap revoke | 🟡 draft | no client `status=active`; admin needs businessApprover |
+| R1-3I07 | Server filter list/options/total/detail | `combineScopeAndFilter` in repository | ACC-01 options/search/total | 🟡 draft | fixed double WHERE on holdings |
+| R1-3I08 | sync-status admin-only | clients router | clients-workspace integration | 🟡 draft | |
+| R1-3I09 | Admin / role UI tables | `/admin/access` tabbed forms | screenshots PR #14 | 🟡 draft | JSON in `<details>` only |
+| R1-3I10 | Coordinator no cards default | policy | ACC-141 HTTP 403 | 🟡 draft | |
+| R1-3I11 | Explicit denial priority | `access_denials` + scope SQL | denial integration | 🟡 draft | |
+| R1-3I12 | Change request before re-approval | `delegation_change_requests` | HTTP expand blocked until approve | 🟡 draft | |
+| R1-3I13 | Employee link required (director/regional) | `context.ts` | director list + unlinked 403 | 🟡 draft | admin exception only |
+| R1-3I14 | Transactions + audit | `withTransaction` in service | double-approve 409 | 🟡 draft | FOR UPDATE on approve/revoke |
 
-**Pre-pilot setup:** admin создаёт links/grants/teams/delegations через `/admin/access`; **не** mass grant в production.
+**Pre-pilot setup:** admin создаёт links/grants/teams; менеджер/РОП — замещения через `/api/access`; **не** mass grant в production.
+
+**R1.3 не завершён:** часть ACC-* (coordinator CRUD, concurrent approve/revoke, atomicity failure injection, session cache) ещё не автоматизирована; пилот не разрешён.
 
 ---
 
@@ -223,6 +228,20 @@
 | БД / миграции / импорт / права | **не менялись** |
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
 | Сценарии ACC-* | спецификация; **автотесты не реализованы** |
+
+### R1.3 fixes (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| Базовый SHA (до fixes) | `2862d8e7d798d9c4c1b9b07752ebb196bd79d315` |
+| PostgreSQL | `TEST_DATABASE_URL` → `tandoor_rf_test` (локально / CI) |
+| `npm run typecheck` | OK |
+| `npm run build` | OK |
+| `npm test` (unit) | **140 passed**, 0 failed |
+| `npm run test:browser` | **12 passed**, 0 failed |
+| `npm run test:integration` | **73 passed**, 0 failed (19 access-control HTTP scenarios) |
+| Production FTP/БД/импорт/деплой | **не затронуты** |
+| R1.3 приёмка | **не заявлена** — часть ACC-* и coordinator ops остаются 🟡 draft |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
 
