@@ -71,7 +71,7 @@
 | R1-A18 | passport (пр.05) | Юрлица / ТТ / доставка | placeholder | — | 🔲 placeholder | 5c2636c |
 | R1-A19 | passport | Коммерческие условия | placeholder | — | 🔲 placeholder | 5c2636c |
 | R1-A20 | passport | Команда (regional, ROP) | placeholder | — | 🔲 placeholder | 5c2636c |
-| R1-I01 | import | 8-field JSON CLI | `src/onec-clients/*` | R0.1: 116 unit passed; R0.2: **125 unit passed** + fixtures; integration — **не проверено** | n/a | 5c2636c |
+| R1-I01 | import | 8-field JSON CLI | `src/onec-clients/*` | R0.1: 116 unit passed; R0.2: **126 unit passed** + fixtures; integration — **не проверено** | n/a | 5c2636c |
 | R1-I02 | R1.1 | Discount, Markups | `EXTRA_FIELDS`, не сохраняется | R0.2: `extra-unknown-fields.json` — warn + 8 ключей в parsed | ⏸ blocked Q4–Q6 | 5c2636c |
 | R1-I03 | R1.2 | Extended 1C structure | **нет** | — | ⏸ blocked Q8 | 5c2636c |
 | R1-I04 | R1.5 | Scheduled import | CLI only | — | ❌ missing | 5c2636c |
@@ -83,7 +83,7 @@
 
 | ID | Область | Требование | Реализация | Тесты | Приёмка | SHA main |
 |----|---------|------------|------------|-------|---------|----------|
-| UI-B01 | Shell | Layout sidebar/header | legacy-shell.css/js | unit legacy-shell-dom; R0.2: 125 passed | n/a R1 | 5c2636c |
+| UI-B01 | Shell | Layout sidebar/header | legacy-shell.css/js | unit legacy-shell-dom; R0.2: 126 passed | n/a R1 | 5c2636c |
 | UI-B02 | Shell | Light/dark | legacy-tokens.css | unit R0.1/R0.2 | n/a R1 | 5c2636c |
 | UI-B03 | Shell | Mobile a11y | focus trap, inert | unit R0.1/R0.2; Chromium **не проверено** | n/a R1 | 5c2636c |
 | UI-B04 | Shell | SVG icons | shell-icons.js | unit R0.1/R0.2 | n/a R1 | 5c2636c |
@@ -126,7 +126,7 @@
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `5c2636c3e5e4321f3a53ca680e03b545635a6f51` |
-| `npm test` (unit) | **125 passed**, 0 failed |
+| `npm test` (unit) | **126 passed**, 0 failed |
 | `npm run typecheck` | OK |
 | `npm run test:integration` | **не выполнялся** |
 | Образец XML `/LC/catalog/` | **не получен** |
