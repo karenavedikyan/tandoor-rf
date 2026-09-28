@@ -2,8 +2,8 @@
 
 Обезличенные примеры для **локальных unit-тестов** валидатора `validateClientsFileBytes`.
 
-- Не являются реальной выгрузкой 1С.
-- Не доказывают наличие полей (`Discount`, `Markups` и др.) в production-обмене.
+- **Значения вымышлены**; форма основана на структурном аудите снимка 23.09.2026; **это не исходная выгрузка**.
+- `extra-unknown-fields.json`: `Discount` (string), `DiscountAmount` (number), `Markups[]` с `Name`/`Percentage` — только для теста `EXTRA_FIELDS`.
 - Не коммитить сюда реальные FTP-файлы или PII.
 
 См. [docs/delivery/clients-field-contract.md](../../docs/delivery/clients-field-contract.md).
