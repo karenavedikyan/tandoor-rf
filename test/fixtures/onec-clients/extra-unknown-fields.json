@@ -1,0 +1,15 @@
+[
+  {
+    "guid_client": "99999999-9999-4999-8999-999999999999",
+    "name_client": "Synthetic Extra Fields",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000008"],
+    "Discount": 5,
+    "DiscountAmount": 100,
+    "Markups": [{ "scope": "synthetic-only", "value": 1.1 }]
+  }
+]

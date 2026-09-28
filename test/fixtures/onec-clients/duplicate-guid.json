@@ -1,0 +1,22 @@
+[
+  {
+    "guid_client": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "name_client": "Synthetic Duplicate A",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000004"]
+  },
+  {
+    "guid_client": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    "name_client": "Synthetic Duplicate B",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000005"]
+  }
+]

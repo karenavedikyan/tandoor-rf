@@ -1,0 +1,12 @@
+[
+  {
+    "guid_client": "10101010-1010-4010-8010-101010101010",
+    "name_client": "Synthetic Holding Mismatch",
+    "guid_holding": "44444444-4444-4444-8444-444444444444",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Synthetic Manager One",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000009"]
+  }
+]
