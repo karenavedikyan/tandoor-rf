@@ -104,11 +104,12 @@
 | Серверная область clients API | 🟡 draft — manager/ROP/regional/director + employee link |
 | Делегирование | 🟡 draft — draft/pending only; ROP/director approve; admin record-approval |
 | Admin UI `/admin/access` | 🟡 draft — техническая настройка, coordinator teams, record-approval + decisionReference |
-| Role UI `/access` | 🟡 draft — manager/ROP/coordinator/director замещения |
-| Integration tests (PostgreSQL) | 28 HTTP-сценариев access-control; **82** integration total |
+| Role UI `/access` | 🟡 draft — DOM-кнопки, MSK datetime, client picker/search, coordinator create, detail/change |
+| Integration tests (PostgreSQL) | **34** access-control HTTP; **87** integration total; concurrent approve/revoke |
+| Browser e2e (PostgreSQL) | manager → ROP approve → assistant scope → change → revoke |
 | Production / import / grants | **не менялись** |
 
-**Не заявляется завершённым:** coordinator team assignment UI, concurrent approve/revoke, полный ACC-* matrix, пилот R1.5.
+**Не заявляется завершённым:** полный ACC-* matrix, session cache tests, director self-service change UI, пилот R1.5.
 
 **Блокеры финальной приёмки R1.4:** Golos vs Exo 2 (владелец); сверка с PDF прототипом v2; R1.1–R1.3; семантика `guid_client` (1С).
 

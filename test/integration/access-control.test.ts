@@ -816,6 +816,45 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     assert.equal(res.body.explain.allowed, true);
   });
 
+  it("hides client existence on self explain: foreign and missing GUID both 404", async () => {
+    const managerBCookie = await login("manager-b@example.com");
+    const app = await loadApp();
+    const foreignRes = await request(app)
+      .get(`/api/access/explain?userId=${managerBUserId}&clientGuid=${CLIENT_ONE}`)
+      .set(authHeaders(managerBCookie));
+    const missingGuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const missingRes = await request(app)
+      .get(`/api/access/explain?userId=${managerBUserId}&clientGuid=${missingGuid}`)
+      .set(authHeaders(managerBCookie));
+    assert.equal(foreignRes.status, 404);
+    assert.equal(missingRes.status, 404);
+    assert.deepEqual(foreignRes.body, missingRes.body);
+  });
+
+  it("admin explain still distinguishes missing client for diagnostics", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+    const foreignRes = await request(app)
+      .get(`/api/admin/access/explain?userId=${managerBUserId}&clientGuid=${CLIENT_ONE}`)
+      .set(authHeaders(adminCookie));
+    const missingGuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const missingRes = await request(app)
+      .get(`/api/admin/access/explain?userId=${managerBUserId}&clientGuid=${missingGuid}`)
+      .set(authHeaders(adminCookie));
+    assert.equal(foreignRes.status, 200);
+    assert.equal(missingRes.status, 200);
+    assert.equal(foreignRes.body.explain.reason, "not_in_scope");
+    assert.equal(missingRes.body.explain.reason, "client_not_found");
+  });
+
+  it("ROP cannot explain team member with client outside ROP scope", async () => {
+    const ropCookie = await login("rop@example.com");
+    const res = await request(await loadApp())
+      .get(`/api/access/explain?userId=${managerBUserId}&clientGuid=${CLIENT_TWO}`)
+      .set(authHeaders(ropCookie));
+    assert.equal(res.status, 404);
+  });
+
   it("denial on manager blocks assistant delegation access", async () => {
     const managerCookie = await login("manager-a@example.com");
     const ropCookie = await login("rop@example.com");
@@ -963,7 +1002,112 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     }
   });
 
-  it("concurrent approve and revoke: exactly one succeeds", async () => {
+  it("serialized approve then revoke: both succeed, final revoked", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const assistantCookie = await login("assistant@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "concurrency approve then revoke",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const approveRes = await accessPost(
+      `/api/access/delegations/${delegationId}/approve`,
+      { basis: "first approve" },
+      ropCookie,
+    );
+    assert.equal(approveRes.status, 200);
+
+    const active = await request(await loadApp())
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(assistantCookie));
+    assert.equal(active.status, 200);
+
+    const revokeRes = await accessPost(
+      `/api/access/delegations/${delegationId}/revoke`,
+      { basis: "then revoke", reason: "after approve" },
+      managerCookie,
+    );
+    assert.equal(revokeRes.status, 200);
+
+    const blocked = await request(await loadApp())
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(assistantCookie));
+    assert.equal(blocked.status, 404);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query(
+      "SELECT status, revoked_at IS NOT NULL AS revoked FROM delegations WHERE id = $1::uuid",
+      [delegationId],
+    );
+    await pool.end();
+    assert.equal(row.rows[0]?.status, "revoked");
+    assert.equal(row.rows[0]?.revoked, true);
+  });
+
+  it("concurrent revoke before approve: approve rejected, final revoked", async () => {
+    const { armConcurrencyHold, releaseConcurrencyHold } = await import("../../src/access/service");
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_THREE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "concurrency revoke first",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    armConcurrencyHold("revoke");
+    const app = await loadApp();
+    const revokePromise = request(app)
+      .post(`/api/access/delegations/${delegationId}/revoke`)
+      .set(authHeaders(managerCookie))
+      .send({ basis: "revoke first", reason: "race" });
+    await new Promise((r) => setTimeout(r, 50));
+    const approvePromise = request(await loadApp())
+      .post(`/api/access/delegations/${delegationId}/approve`)
+      .set(authHeaders(ropCookie))
+      .send({ basis: "late approve" });
+    releaseConcurrencyHold();
+    const [revokeRes, approveRes] = await Promise.all([revokePromise, approvePromise]);
+    assert.equal(revokeRes.status, 200);
+    assert.equal(approveRes.status, 409);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query(
+      "SELECT status, revoked_at IS NOT NULL AS revoked FROM delegations WHERE id = $1::uuid",
+      [delegationId],
+    );
+    await pool.end();
+    assert.equal(row.rows[0]?.status, "revoked");
+    assert.equal(row.rows[0]?.revoked, true);
+  });
+
+  it("concurrent propose change supersedes stale approve-change attempt", async () => {
+    const { armConcurrencyHold, releaseConcurrencyHold } = await import("../../src/access/service");
     const managerCookie = await login("manager-a@example.com");
     const ropCookie = await login("rop@example.com");
     const startsAt = new Date(Date.now() - 60_000).toISOString();
@@ -977,27 +1121,65 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
         startsAt,
         endsAt,
         submit: true,
-        basis: "concurrency",
+        basis: "change race base",
       },
       managerCookie,
     );
     assert.equal(create.status, 201);
     const delegationId = create.body.id;
+    await accessPost(
+      `/api/access/delegations/${delegationId}/approve`,
+      { basis: "approve base" },
+      ropCookie,
+    );
 
-    const app = await loadApp();
-    const [approveRes, revokeRes] = await Promise.all([
-      request(app)
-        .post(`/api/access/delegations/${delegationId}/approve`)
-        .set(authHeaders(ropCookie))
-        .send({ basis: "race approve" }),
-      request(app)
-        .post(`/api/access/delegations/${delegationId}/revoke`)
-        .set(authHeaders(managerCookie))
-        .send({ basis: "race revoke", reason: "race" }),
-    ]);
+    const changeA = await accessPost(
+      `/api/access/delegations/${delegationId}/change-requests`,
+      {
+        clientGuids: [CLIENT_ONE, CLIENT_THREE],
+        startsAt,
+        endsAt,
+        basis: "change A",
+      },
+      managerCookie,
+    );
+    assert.equal(changeA.status, 201);
+    const changeAId = changeA.body.id;
 
-    assert.ok(!(approveRes.status === 200 && revokeRes.status === 200));
-    assert.ok(approveRes.status === 200 || revokeRes.status === 200 || approveRes.status === 409 || revokeRes.status === 409);
+    armConcurrencyHold("propose-change");
+    const proposePromise = accessPost(
+      `/api/access/delegations/${delegationId}/change-requests`,
+      {
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt: new Date(Date.now() + 7200_000).toISOString(),
+        basis: "change B",
+      },
+      managerCookie,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const approvePromise = accessPost(
+      `/api/access/delegations/change-requests/${changeAId}/approve`,
+      { basis: "approve stale A" },
+      ropCookie,
+    );
+    releaseConcurrencyHold();
+    const [proposeRes, approveRes] = await Promise.all([proposePromise, approvePromise]);
+    assert.equal(proposeRes.status, 201);
+    assert.ok(approveRes.status === 404 || approveRes.status === 409);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const pending = await pool.query(
+      `
+        SELECT id::text, status
+        FROM delegation_change_requests
+        WHERE delegation_id = $1::uuid AND status = 'pending_approval'
+      `,
+      [delegationId],
+    );
+    await pool.end();
+    assert.equal(pending.rows.length, 1);
+    assert.notEqual(pending.rows[0]?.id, changeAId);
   });
 
   it("disabled manager session loses client access without cache bypass", async () => {

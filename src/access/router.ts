@@ -7,8 +7,11 @@ import {
   accessExplainHandler,
   approveDelegationChangeHandler,
   approveDelegationHandler,
+  coordinatorManagersHandler,
   createDelegationHandler,
   createCoordinatorTeamHandler,
+  delegationDetailHandler,
+  delegatorClientsHandler,
   createDenialHandler,
   createEmployeeLinkHandler,
   createGrantHandler,
@@ -148,6 +151,33 @@ export function createAccessRouter(): express.Router {
     requireAnyRole(["rop"]),
     (req, res, next) => {
       void ropTeamMembersHandler(req, res).catch(next);
+    },
+  );
+
+  router.get(
+    "/coordinator-managers",
+    ...authChain,
+    requireAnyRole(["coordinator"]),
+    (req, res, next) => {
+      void coordinatorManagersHandler(req, res).catch(next);
+    },
+  );
+
+  router.get(
+    "/delegators/:delegatorUserId/clients",
+    ...authChain,
+    requireAnyRole(["manager", "rop", "coordinator"]),
+    (req, res, next) => {
+      void delegatorClientsHandler(req, res).catch(next);
+    },
+  );
+
+  router.get(
+    "/delegations/:delegationId",
+    ...authChain,
+    requireAnyRole(["manager", "rop", "coordinator", "director"]),
+    (req, res, next) => {
+      void delegationDetailHandler(req, res).catch(next);
     },
   );
 

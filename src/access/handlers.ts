@@ -5,7 +5,7 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "../clients/uuid-param";
 import { loadAccessContext } from "./context";
 import { AccessServiceError } from "./db";
-import { assertCanExplainAccess } from "./explain-auth";
+import { assertCallerCanExplainClient, assertCanExplainAccess } from "./explain-auth";
 import { explainClientAccess } from "./policy";
 import * as service from "./service";
 import { parseDelegationWindow, parseStrictClientGuids } from "./validation";
@@ -62,8 +62,21 @@ export async function accessExplainHandler(
     return;
   }
 
+  if (!adminRoute) {
+    try {
+      await assertCallerCanExplainClient({
+        callerUserId: req.authUser!.id,
+        callerRole: req.authUser!.role,
+        clientGuid,
+      });
+    } catch (error) {
+      handleServiceError(res, error);
+      return;
+    }
+  }
+
   const context = await loadAccessContext(userId);
-  const explain = await explainClientAccess(context, clientGuid);
+  const explain = await explainClientAccess(context, clientGuid, { hideExistenceLeak: !adminRoute });
   setNoStore(res);
   res.status(200).json({ explain, userStatus: context.status });
 }
@@ -90,6 +103,67 @@ export async function searchAssistantsHandler(req: AuthenticatedRequest, res: Re
   const assistants = await service.searchAssistants(q);
   setNoStore(res);
   res.status(200).json({ assistants });
+}
+
+export async function delegationDetailHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const delegationId = parseUuid(req.params.delegationId);
+  if (!delegationId) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный ID замещения."));
+    return;
+  }
+  try {
+    const detail = await service.getDelegationDetail({
+      actorUserId: req.authUser!.id,
+      actorRole: req.authUser!.role,
+      delegationId,
+    });
+    setNoStore(res);
+    res.status(200).json({ delegation: detail });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+}
+
+export async function delegatorClientsHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const delegatorUserId = parseUuid(req.params.delegatorUserId);
+  const page = Number.parseInt(String(req.query.page ?? "1"), 10);
+  const pageSize = Number.parseInt(String(req.query.pageSize ?? "50"), 10);
+  const q = parseNonEmptyString(req.query.q) ?? "";
+  if (!delegatorUserId || !Number.isFinite(page) || page < 1 || !Number.isFinite(pageSize) || pageSize < 1) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры."));
+    return;
+  }
+  try {
+    const result = await service.listClientsForDelegator({
+      actorUserId: req.authUser!.id,
+      actorRole: req.authUser!.role,
+      delegatorUserId,
+      page,
+      pageSize: Math.min(pageSize, 100),
+      q,
+    });
+    setNoStore(res);
+    res.status(200).json(result);
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+}
+
+export async function coordinatorManagersHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  if (req.authUser!.role !== "coordinator") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступно только координатору."));
+    return;
+  }
+  try {
+    const result = await service.listCoordinatorManagers(req.authUser!.id);
+    setNoStore(res);
+    res.status(200).json({ managers: result.rows });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
 }
 
 export async function ropTeamMembersHandler(req: AuthenticatedRequest, res: Response): Promise<void> {

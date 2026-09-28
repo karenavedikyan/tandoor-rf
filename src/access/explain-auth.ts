@@ -2,8 +2,10 @@ import { query } from "../db/pool";
 import { isClientReadRole } from "../shared/user";
 import { AccessServiceError, withTransaction } from "./db";
 import { ropManagesDelegator } from "./authorization";
+import { loadAccessContext } from "./context";
+import { isClientInScope } from "./policy";
 
-const EXPLAIN_DENIED = "Нет доступа к диагностике для указанного пользователя или объекта.";
+export const EXPLAIN_DENIED = "Нет доступа к диагностике для указанного пользователя или объекта.";
 
 export async function assertCanExplainAccess(input: {
   callerUserId: string;
@@ -59,4 +61,17 @@ export async function assertCanExplainAccess(input: {
   }
 
   throw new AccessServiceError(EXPLAIN_DENIED, "NOT_FOUND");
+}
+
+/** User-scoped explain: caller must have the client in their own scope. */
+export async function assertCallerCanExplainClient(input: {
+  callerUserId: string;
+  callerRole: string;
+  clientGuid: string;
+}): Promise<void> {
+  const callerContext = await loadAccessContext(input.callerUserId, input.callerRole as never);
+  const allowed = await isClientInScope(callerContext, input.clientGuid);
+  if (!allowed) {
+    throw new AccessServiceError(EXPLAIN_DENIED, "NOT_FOUND");
+  }
 }

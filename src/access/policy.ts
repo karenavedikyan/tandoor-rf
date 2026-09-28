@@ -71,6 +71,7 @@ export async function isClientInScope(
 export async function explainClientAccess(
   context: AccessContext,
   guidClient: string,
+  options?: { hideExistenceLeak?: boolean },
 ): Promise<AccessExplainResult> {
   if (context.status !== "active") {
     return {
@@ -140,6 +141,13 @@ export async function explainClientAccess(
         allowed: false,
         reason: "explicit_denial",
         details: "Действует явный запрет на этот объект.",
+      };
+    }
+    if (options?.hideExistenceLeak) {
+      return {
+        allowed: false,
+        reason: "not_in_scope",
+        details: "Объект недоступен для диагностики.",
       };
     }
     return {

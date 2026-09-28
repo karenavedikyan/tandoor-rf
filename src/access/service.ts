@@ -11,8 +11,17 @@ import {
   ropManagesDelegator,
 } from "./authorization";
 import { assertDelegatorEffectiveClientAccess } from "./delegator-access";
+import { enrichDelegationRow } from "./delegation-status";
 
 let testFaultAfterDelegationClients = false;
+
+type ConcurrencyHoldPoint = "approve" | "revoke" | "propose-change" | "approve-change";
+
+let concurrencyHold: {
+  point: ConcurrencyHoldPoint;
+  release: () => void;
+  wait: Promise<void>;
+} | null = null;
 
 /** @internal test-only fault injection */
 export function setTestFaultAfterDelegationClients(enabled: boolean): void {
@@ -20,6 +29,30 @@ export function setTestFaultAfterDelegationClients(enabled: boolean): void {
     return;
   }
   testFaultAfterDelegationClients = enabled;
+}
+
+/** @internal test-only concurrency barrier */
+export function armConcurrencyHold(point: ConcurrencyHoldPoint): void {
+  if (process.env.NODE_ENV !== "test") {
+    return;
+  }
+  let releaseFn!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    releaseFn = resolve;
+  });
+  concurrencyHold = { point, release: releaseFn, wait };
+}
+
+/** @internal test-only concurrency barrier */
+export function releaseConcurrencyHold(): void {
+  concurrencyHold?.release();
+  concurrencyHold = null;
+}
+
+async function maybeHoldConcurrencyAt(point: ConcurrencyHoldPoint): Promise<void> {
+  if (concurrencyHold?.point === point) {
+    await concurrencyHold.wait;
+  }
 }
 
 type AuditInput = {
@@ -618,6 +651,7 @@ export async function approveDelegationRequest(input: {
 }): Promise<void> {
   return withTransaction(async (client) => {
     const delegation = await getDelegationForUpdate(client, input.delegationId);
+    await maybeHoldConcurrencyAt("approve");
     if (delegation.status !== "pending_approval" || delegation.revoked_at) {
       throw new AccessServiceError("Замещение недоступно для согласования.", "CONFLICT");
     }
@@ -724,6 +758,7 @@ export async function revokeDelegationRequest(input: {
 }): Promise<void> {
   return withTransaction(async (client) => {
     const delegation = await getDelegationForUpdate(client, input.delegationId);
+    await maybeHoldConcurrencyAt("revoke");
     if (delegation.revoked_at) {
       throw new AccessServiceError("Замещение уже отозвано.", "CONFLICT");
     }
@@ -775,6 +810,7 @@ export async function proposeDelegationChange(input: {
 }): Promise<{ id: string }> {
   return withTransaction(async (client) => {
     const delegation = await getDelegationForUpdate(client, input.delegationId);
+    await maybeHoldConcurrencyAt("propose-change");
     if (delegation.status !== "active" || delegation.revoked_at) {
       throw new AccessServiceError("Изменять можно только действующее согласованное замещение.", "CONFLICT");
     }
@@ -881,6 +917,7 @@ export async function approveDelegationChange(input: {
     if (!change || change.status !== "pending_approval") {
       throw new AccessServiceError("Запрос изменения не найден.", "NOT_FOUND");
     }
+    await maybeHoldConcurrencyAt("approve-change");
     let businessApproverId: string;
 
     if (input.actorRole === "admin") {
@@ -1043,7 +1080,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         [actorUserId],
       ),
     );
-    return { delegations: result.rows };
+    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
   }
 
   if (actorRole === "manager") {
@@ -1077,7 +1114,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         [actorUserId],
       ),
     );
-    return { delegations: result.rows };
+    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
   }
 
   if (actorRole === "director") {
@@ -1107,7 +1144,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `,
       ),
     );
-    return { delegations: result.rows };
+    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
   }
 
   if (actorRole === "coordinator") {
@@ -1160,7 +1197,10 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         [actorUserId],
       ),
     );
-    return { teams: teams.rows, delegations: delegations.rows };
+    return {
+      teams: teams.rows,
+      delegations: delegations.rows.map((row) => enrichDelegationRow(row)),
+    };
   }
 
   throw new AccessServiceError("Недостаточно прав для просмотра.", "FORBIDDEN");
@@ -1284,4 +1324,149 @@ export async function searchAssistants(queryText: string, limit = 20) {
     [`%${queryText}%`, limit],
   );
   return result.rows;
+}
+
+export async function listClientsForDelegator(input: {
+  actorUserId: string;
+  actorRole: string;
+  delegatorUserId: string;
+  page: number;
+  pageSize: number;
+  q?: string;
+}) {
+  if (input.actorRole === "manager" && input.actorUserId !== input.delegatorUserId) {
+    throw new AccessServiceError("Менеджер может выбирать только своих клиентов.", "FORBIDDEN");
+  }
+  if (input.actorRole === "coordinator") {
+    const allowed = await withTransaction(async (client) =>
+      coordinatorAssignedToDelegatorTeam(client, input.actorUserId, input.delegatorUserId),
+    );
+    if (!allowed) {
+      throw new AccessServiceError("Координатор не назначен на команду передающего.", "FORBIDDEN");
+    }
+  }
+  if (input.actorRole === "rop") {
+    const allowed = await withTransaction(async (client) =>
+      ropManagesDelegator(client, input.actorUserId, input.delegatorUserId),
+    );
+    if (!allowed && input.actorUserId !== input.delegatorUserId) {
+      throw new AccessServiceError("РОП может выбирать клиентов только своей команды.", "FORBIDDEN");
+    }
+  }
+
+  const { loadAccessContext } = await import("./context");
+  const { listClients } = await import("../clients/repository");
+  const context = await loadAccessContext(input.delegatorUserId);
+  return listClients(context, {
+    q: input.q ?? "",
+    phone: "all",
+    page: input.page,
+    pageSize: input.pageSize,
+  });
+}
+
+export async function listCoordinatorManagers(coordinatorUserId: string) {
+  return withTransaction(async (client) =>
+    client.query(
+      `
+        SELECT DISTINCT
+          member.id::text,
+          member.full_name,
+          member.email,
+          member.role
+        FROM coordinator_team_assignments cta
+        JOIN rop_team_members rtm
+          ON rtm.rop_user_id = cta.rop_user_id
+         AND rtm.revoked_at IS NULL
+        JOIN users member ON member.id = rtm.member_user_id
+        WHERE cta.coordinator_user_id = $1::uuid
+          AND cta.revoked_at IS NULL
+          AND member.status = 'active'
+        ORDER BY member.full_name ASC
+      `,
+      [coordinatorUserId],
+    ),
+  );
+}
+
+export async function getDelegationDetail(input: {
+  actorUserId: string;
+  actorRole: string;
+  delegationId: string;
+}) {
+  return withTransaction(async (client) => {
+    const result = await client.query(
+      `
+        SELECT
+          d.id::text,
+          d.delegator_user_id::text,
+          d.assistant_user_id::text,
+          d.status,
+          d.starts_at,
+          d.ends_at,
+          d.revoked_at,
+          d.approved_at,
+          delegator.full_name AS delegator_name,
+          delegator.email AS delegator_email,
+          assistant.full_name AS assistant_name,
+          assistant.email AS assistant_email,
+          EXISTS (
+            SELECT 1 FROM delegation_change_requests dcr
+            WHERE dcr.delegation_id = d.id AND dcr.status = 'pending_approval'
+          ) AS pending_change
+        FROM delegations d
+        JOIN users delegator ON delegator.id = d.delegator_user_id
+        JOIN users assistant ON assistant.id = d.assistant_user_id
+        WHERE d.id = $1::uuid
+      `,
+      [input.delegationId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new AccessServiceError("Замещение не найдено.", "NOT_FOUND");
+    }
+    await assertCanManageDelegation(client, input.actorUserId, input.actorRole, {
+      delegator_user_id: row.delegator_user_id,
+    });
+
+    const clients = await client.query(
+      `
+        SELECT oc.guid_client::text AS guid, oc.name_client AS name
+        FROM delegation_clients dc
+        JOIN onec_clients oc ON oc.guid_client = dc.guid_client
+        WHERE dc.delegation_id = $1::uuid
+        ORDER BY oc.name_client ASC
+      `,
+      [input.delegationId],
+    );
+
+    const pendingChange = await client.query(
+      `
+        SELECT
+          dcr.id::text,
+          dcr.proposed_starts_at,
+          dcr.proposed_ends_at,
+          COALESCE(
+            (
+              SELECT json_agg(json_build_object('guid', oc.guid_client::text, 'name', oc.name_client) ORDER BY oc.name_client)
+              FROM delegation_change_request_clients dcc
+              JOIN onec_clients oc ON oc.guid_client = dcc.guid_client
+              WHERE dcc.change_request_id = dcr.id
+            ),
+            '[]'::json
+          ) AS proposed_clients
+        FROM delegation_change_requests dcr
+        WHERE dcr.delegation_id = $1::uuid AND dcr.status = 'pending_approval'
+        LIMIT 1
+      `,
+      [input.delegationId],
+    );
+
+    const enriched = enrichDelegationRow(row);
+    return {
+      ...enriched,
+      clients: clients.rows,
+      pending_change_request: pendingChange.rows[0] ?? null,
+    };
+  });
 }
