@@ -53,7 +53,9 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 |------|------------|----------------------------|
 | R0.1 | Аудит и граница R1 | ✅ merged (`5c2636c`) |
 | R0.2 | Контракты + синтетика; сверка имеющихся материалов | **🟡 partial** (PR #9 + продолжение) |
-| R1.1–R1.5 | Мои клиенты | не начато |
+| R1.1–R1.2 | Мои клиенты (данные) | не начато |
+| **R1.3-prep** | Матрица ролей и прав (docs) | **в PR** |
+| R1.3–R1.5 | Права, UI, пилот | не начато |
 
 Подробности: [release-plan.md](./release-plan.md).
 
@@ -70,6 +72,9 @@ R0.1 (аудит) → R0.2 (контракты по фактическому о�
 | [onec-specialist-questions.md](./onec-specialist-questions.md) | Вопросы 1С |
 | [brand-contract.md](./brand-contract.md) | Ассеты, токены, прототип v2, открытые вопросы |
 | [acceptance-matrix.md](./acceptance-matrix.md) | Эталон → требование → реализация → тест → статус |
+| [access-matrix.md](./access-matrix.md) | R1.3-prep: компактная матрица ролей (A/B/поля) |
+| [access-rules.md](./access-rules.md) | R1.3-prep: правила, иерархия, замещение, безопасность |
+| [access-acceptance-scenarios.md](./access-acceptance-scenarios.md) | R1.3-prep: сценарии будущих тестов доступа |
 
 ## Аудит R0.1
 
