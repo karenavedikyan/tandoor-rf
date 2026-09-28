@@ -70,8 +70,8 @@
 | Вход, сессия, rate limit, CSRF | ✅ | код + тесты |
 | Роли в БД (8 значений) | ✅ | код |
 | Профиль self | ✅ | код + тесты |
-| Связь user ↔ ID сотрудника 1С | ❌ | нужно (R1.3) |
-| Область manager / regional / ROP | ❌ (`requireAdmin`) | нужно (R1.3) |
+| Связь user ↔ ID сотрудника 1С | 🟡 | R1.3 PR (admin setup, без production grant) |
+| Область manager / regional / ROP | 🟡 | R1.3 PR (server scope) |
 | Список, поиск, фильтры | 🟡 admin-only | частично |
 | Карточка (8 полей + заглушки) | 🟡 → **R1.4-prep** | частично; UI уточняется в отдельном PR |
 | Импорт CLI | ✅ | код + тесты |

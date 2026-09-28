@@ -3,6 +3,14 @@
 
   var api = typeof window !== "undefined" ? window.TandoorRf : undefined;
   var ICONS = typeof window !== "undefined" && window.ShellIcons ? window.ShellIcons : {};
+  var CLIENT_READ_ROLES = {
+    admin: true,
+    director: true,
+    rop: true,
+    regional_manager: true,
+    manager: true,
+    assistant: true,
+  };
   var THEME_KEY = "tandoor-rf-theme";
   var SIDEBAR_KEY = "tandoor-rf-sidebar-collapsed";
   var DESKTOP_MQ = "(min-width: 1024px)";
@@ -115,9 +123,16 @@
     );
   }
 
-  function renderSidebar(active, showClients) {
+  function canReadClients(user) {
+    return Boolean(user && CLIENT_READ_ROLES[user.role]);
+  }
+
+  function renderSidebar(active, showClients, showAdminAccess) {
     var clientsLink = showClients
       ? navLink("/clients", "Клиенты", "clients", active, "clients")
+      : "";
+    var adminLink = showAdminAccess
+      ? navLink("/admin/access", "Доступ", "profile", active, "admin-access")
       : "";
     return (
       '<aside class="legacy-sidebar" id="legacy-sidebar" aria-label="Основная навигация">' +
@@ -134,6 +149,7 @@
       "</div>" +
       '<nav class="legacy-sidebar__nav">' +
       clientsLink +
+      adminLink +
       navLink("/profile", "Мой профиль", "profile", active, "profile") +
       "</nav>" +
       '<div class="legacy-sidebar__footer">' +
@@ -457,11 +473,11 @@
     });
   }
 
-  function mountShellParts(active, showClients) {
+  function mountShellParts(active, showClients, showAdminAccess) {
     var sidebarMount = document.getElementById("workspace-sidebar");
     var topbarMount = document.getElementById("workspace-topbar");
     if (sidebarMount) {
-      sidebarMount.innerHTML = renderSidebar(active, showClients);
+      sidebarMount.innerHTML = renderSidebar(active, showClients, showAdminAccess);
     }
     if (topbarMount) {
       topbarMount.innerHTML = renderTopbar();
@@ -478,7 +494,8 @@
   function mountShell(active, options) {
     var opts = options || {};
     var showClients = opts.showClients !== false;
-    mountShellParts(active, showClients);
+    var showAdminAccess = opts.showAdminAccess === true;
+    mountShellParts(active, showClients, showAdminAccess);
     if (typeof opts.onReady === "function") {
       opts.onReady();
     }
@@ -529,17 +546,32 @@
     });
   }
 
+  function ensureClientsReadAccess(onReady) {
+    return ensureAuthenticated(function (user, reason) {
+      if (reason) {
+        onReady(null, reason);
+        return;
+      }
+      if (!canReadClients(user)) {
+        onReady(null, "forbidden");
+        return;
+      }
+      onReady(user, null);
+    });
+  }
+
   function mountAuthenticatedShell(active, onUserReady) {
     return ensureAuthenticated(function (user, reason) {
       if (reason === "forbidden" || reason === "service" || reason === "network") {
-        mountShellParts(active, false);
+        mountShellParts(active, false, false);
         if (typeof onUserReady === "function") {
           onUserReady(null, reason);
         }
         return;
       }
+      var showClients = canReadClients(user);
       var isAdmin = user && user.role === "admin";
-      mountShellParts(active, isAdmin);
+      mountShellParts(active, showClients, isAdmin);
       if (typeof onUserReady === "function") {
         onUserReady(user, null);
       }
@@ -602,6 +634,8 @@
     mountShell: mountShell,
     mountAuthenticatedShell: mountAuthenticatedShell,
     ensureAdminAccess: ensureAdminAccess,
+    ensureClientsReadAccess: ensureClientsReadAccess,
+    canReadClients: canReadClients,
     ensureAuthenticated: ensureAuthenticated,
     setPanelMessage: setPanelMessage,
     escapeHtml: escapeHtml,

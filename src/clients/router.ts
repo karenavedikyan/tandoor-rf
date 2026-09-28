@@ -1,4 +1,8 @@
 import express from "express";
+import {
+  attachAccessContext,
+  requireClientReadAccess,
+} from "../access/middleware";
 import { requireAuth } from "../middleware/auth";
 import { requireAdmin } from "../middleware/require-admin";
 import { requireDatabaseReady } from "../middleware/database";
@@ -12,21 +16,26 @@ import {
 export function createClientsRouter(): express.Router {
   const router = express.Router();
 
-  const adminChain = [requireDatabaseReady, requireAuth, requireAdmin] as const;
+  const readChain = [
+    requireDatabaseReady,
+    requireAuth,
+    attachAccessContext,
+    requireClientReadAccess,
+  ] as const;
 
-  router.get("/options", ...adminChain, (req, res, next) => {
-    void clientOptionsHandler(req, res).catch(next);
-  });
-
-  router.get("/sync-status", ...adminChain, (req, res, next) => {
+  router.get("/sync-status", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
     void clientSyncStatusHandler(req, res).catch(next);
   });
 
-  router.get("/", ...adminChain, (req, res, next) => {
+  router.get("/options", ...readChain, (req, res, next) => {
+    void clientOptionsHandler(req, res).catch(next);
+  });
+
+  router.get("/", ...readChain, (req, res, next) => {
     void listClientsHandler(req, res).catch(next);
   });
 
-  router.get("/:guid", ...adminChain, (req, res, next) => {
+  router.get("/:guid", ...readChain, (req, res, next) => {
     void getClientHandler(req, res).catch(next);
   });
 

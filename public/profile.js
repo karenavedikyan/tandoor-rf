@@ -22,6 +22,8 @@
     marketer: "Маркетолог",
     analyst: "Аналитик",
     category_manager: "Категорийный менеджер",
+    assistant: "Ассистент",
+    coordinator: "Координатор",
   };
 
   var STATUS_LABELS = {

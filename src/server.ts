@@ -9,6 +9,7 @@ import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
 import { requireDatabaseReady } from "./middleware/database";
+import { createAccessAdminRouter } from "./access/router";
 import { createClientsRouter } from "./clients/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { apiError, ERROR_CODES } from "./shared/errors";
@@ -53,6 +54,7 @@ function isStructuredApi(req: Request): boolean {
     req.path.startsWith("/api/auth") ||
     req.path.startsWith("/api/profile") ||
     req.path.startsWith("/api/clients") ||
+    req.path.startsWith("/api/admin/access") ||
     req.path.startsWith("/api/ready")
   );
 }
@@ -188,6 +190,7 @@ export function createApp(): express.Application {
   app.use("/api/auth", authRouter);
   app.use("/api/profile", profileRouter);
   app.use("/api/clients", createClientsRouter());
+  app.use("/api/admin/access", createAccessAdminRouter());
 
   app.use("/api", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });
@@ -213,6 +216,10 @@ export function createApp(): express.Application {
 
   app.get("/clients/:guid", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "client-detail.html");
+  });
+
+  app.get("/admin/access", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "admin-access.html");
   });
 
   app.use(

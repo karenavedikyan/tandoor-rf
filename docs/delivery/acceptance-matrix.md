@@ -123,6 +123,24 @@
 
 **R1.3-prep:** 📋 prep — документация и сценарии; **не** R1.3, **не** пилот. R0.2, R1.1, R1.2 не закрыты.
 
+### R1.3 — серверные права (implementation draft PR)
+
+| ID | Требование | Реализация | Тесты | Приёмка | Примечание |
+|----|------------|------------|-------|---------|------------|
+| R1-3I01 | Migration: roles assistant/coordinator + access tables | `003_access_control.sql` | integration (needs PG) | 🟡 draft | rollback: [r13-rollback.md](./r13-rollback.md) |
+| R1-3I02 | user ↔ employee link (no auto-match) | `user_onec_employee_links` + admin API | ACC-71/72 spec | 🟡 draft | |
+| R1-3I03 | Manager scope via guid_manager | `access/scope-sql.ts` | ACC-01…05 | 🟡 draft | |
+| R1-3I04 | ROP team scope | `rop_team_members` | ACC-20…21 | 🟡 draft | |
+| R1-3I05 | Regional explicit grants | `access_grants` | ACC-30…32 | 🟡 draft | |
+| R1-3I06 | Delegations minimal | `delegations` + clients | ACC-40…47, 170…173 | 🟡 draft | auto-active after approval |
+| R1-3I07 | Server filter list/options/total/detail | clients repository | ACC-90…91 | 🟡 draft | |
+| R1-3I08 | sync-status admin-only | clients router | integration | 🟡 draft | |
+| R1-3I09 | Admin diagnostics UI | `/admin/access` | browser screenshots | 🟡 draft | |
+| R1-3I10 | Coordinator no cards default | policy | ACC-141 | 🟡 draft | |
+| R1-3I11 | guid_holding no auto-expand | documented | ACC-35 | 📋 policy only | hierarchy Q-HIER-* open |
+
+**Pre-pilot setup:** admin создаёт links/grants/teams/delegations через `/admin/access`; **не** mass grant в production.
+
 ---
 
 ## UI / Brand (interim PR #7)

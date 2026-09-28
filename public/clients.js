@@ -134,7 +134,7 @@
       accessPanel,
       "forbidden",
       "Нет доступа",
-      "Раздел доступен только администратору.",
+      "У вашей роли нет доступа к разделу «Клиенты».",
       '<a class="workspace-button workspace-button--secondary" href="/profile">В профиль</a>',
     );
   }
@@ -488,7 +488,7 @@
   mountFilterComboboxes();
 
   shell.mountShell("clients");
-  shell.ensureAdminAccess(function (_user, reason) {
+  shell.ensureClientsReadAccess(function (_user, reason) {
     if (reason === "forbidden") {
       showAccessDenied();
       return;

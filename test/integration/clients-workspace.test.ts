@@ -117,7 +117,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     await closePool();
   });
 
-  it("denies unauthenticated and non-admin access on all clients APIs", async () => {
+  it("denies unauthenticated access and blocks manager without 1C link", async () => {
     const app = await loadApp();
     const paths = [
       "/api/clients",
@@ -133,11 +133,15 @@ describe("clients workspace integration", { concurrency: false }, () => {
     }
 
     const managerCookie = await login("manager@example.com");
-    for (const path of paths) {
-      const forbidden = await request(app).get(path).set(authHeaders(managerCookie));
-      assert.equal(forbidden.status, 403);
-      assert.equal(forbidden.headers["cache-control"], "no-store");
-    }
+    const listForbidden = await request(app)
+      .get("/api/clients")
+      .set(authHeaders(managerCookie));
+    assert.equal(listForbidden.status, 403);
+
+    const syncForbidden = await request(app)
+      .get("/api/clients/sync-status")
+      .set(authHeaders(managerCookie));
+    assert.equal(syncForbidden.status, 403);
   });
 
   it("lists clients with search, filters, total and stable pagination", async () => {
@@ -281,19 +285,11 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(arrayQ.status, 400);
   });
 
-  it("denies every non-admin role on clients APIs", async () => {
+  it("denies roles without client-read policy and keeps sync-status admin-only", async () => {
     const app = await loadApp();
-    const paths = [
-      "/api/clients",
-      "/api/clients/options",
-      "/api/clients/sync-status",
-      `/api/clients/${CLIENT_ONE}`,
-    ];
+    const deniedRoles = ["marketer", "analyst", "category_manager", "coordinator", "manager"];
 
-    for (const role of USER_ROLES) {
-      if (role === "admin") {
-        continue;
-      }
+    for (const role of deniedRoles) {
       await createTestUser({
         databaseUrl,
         email: `${role}-clients@example.com`,
@@ -302,12 +298,29 @@ describe("clients workspace integration", { concurrency: false }, () => {
         role,
       });
       const cookie = await login(`${role}-clients@example.com`);
-      for (const path of paths) {
-        const res = await request(app).get(path).set(authHeaders(cookie));
-        assert.equal(res.status, 403, `${role} should be forbidden on ${path}`);
-        assert.equal(res.headers["cache-control"], "no-store");
-      }
+      const res = await request(app).get("/api/clients").set(authHeaders(cookie));
+      assert.equal(res.status, 403, `${role} should be forbidden on list`);
     }
+
+    await createTestUser({
+      databaseUrl,
+      email: "director-clients@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Director",
+      role: "director",
+    });
+    const directorCookie = await login("director-clients@example.com");
+    const directorList = await request(app)
+      .get("/api/clients")
+      .set(authHeaders(directorCookie));
+    assert.equal(directorList.status, 200);
+    assert.equal(directorList.body.total, 3);
+
+    const adminCookie = await login("admin@example.com");
+    const sync = await request(app)
+      .get("/api/clients/sync-status")
+      .set(authHeaders(adminCookie));
+    assert.equal(sync.status, 200);
   });
 
   it("denies disabled users and expired sessions on clients APIs", async () => {

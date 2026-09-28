@@ -80,7 +80,7 @@
         accessPanel,
         "forbidden",
         "Нет доступа",
-        "Раздел доступен только администратору.",
+        "У вашей роли нет доступа к разделу «Клиенты».",
         '<a class="workspace-button workspace-button--secondary" href="/profile">В профиль</a>',
       );
       return;
@@ -261,7 +261,7 @@
   var detailController = logic.createDetailController({
     parseGuidFromPath: clientGuidFromPath,
     ensureAdminAccess: function (callback) {
-      return shell.ensureAdminAccess(callback);
+      return shell.ensureClientsReadAccess(callback);
     },
     showInvalidGuid: function () {
       showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", null);
