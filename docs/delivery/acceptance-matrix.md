@@ -155,7 +155,7 @@
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `371b40d67193efa48a1c48fe14bd43aca530ae9ae` (PR #10) |
-| Проверенный commit PR #11 | см. HEAD ветки `cursor/r1.4-prep-clients-ui-896d` |
+| Проверенный commit PR #11 | `91315723922340825ac56606d64bf3dab32e0f72` |
 | `npm test` (unit) | **137 passed**, 0 failed |
 | `npm run test:browser` | **11 passed**, 0 failed (Playwright; **mocked API**, real HTML/JS/shell; без прав администратора) |
 | `npm run typecheck` | OK |
