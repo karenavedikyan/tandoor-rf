@@ -127,12 +127,15 @@
     return Boolean(user && CLIENT_READ_ROLES[user.role]);
   }
 
-  function renderSidebar(active, showClients, showAdminAccess) {
+  function renderSidebar(active, showClients, showAdminAccess, showAccessWorkspace) {
     var clientsLink = showClients
       ? navLink("/clients", "Клиенты", "clients", active, "clients")
       : "";
+    var workspaceLink = showAccessWorkspace
+      ? navLink("/access", "Замещения", "profile", active, "access-workspace")
+      : "";
     var adminLink = showAdminAccess
-      ? navLink("/admin/access", "Доступ", "profile", active, "admin-access")
+      ? navLink("/admin/access", "Настройка доступа", "profile", active, "admin-access")
       : "";
     return (
       '<aside class="legacy-sidebar" id="legacy-sidebar" aria-label="Основная навигация">' +
@@ -149,6 +152,7 @@
       "</div>" +
       '<nav class="legacy-sidebar__nav">' +
       clientsLink +
+      workspaceLink +
       adminLink +
       navLink("/profile", "Мой профиль", "profile", active, "profile") +
       "</nav>" +
@@ -473,11 +477,11 @@
     });
   }
 
-  function mountShellParts(active, showClients, showAdminAccess) {
+  function mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace) {
     var sidebarMount = document.getElementById("workspace-sidebar");
     var topbarMount = document.getElementById("workspace-topbar");
     if (sidebarMount) {
-      sidebarMount.innerHTML = renderSidebar(active, showClients, showAdminAccess);
+      sidebarMount.innerHTML = renderSidebar(active, showClients, showAdminAccess, showAccessWorkspace);
     }
     if (topbarMount) {
       topbarMount.innerHTML = renderTopbar();
@@ -491,11 +495,23 @@
     syncSidebarLayout();
   }
 
+  var ACCESS_WORKSPACE_ROLES = {
+    manager: true,
+    rop: true,
+    coordinator: true,
+    director: true,
+  };
+
+  function canUseAccessWorkspace(user) {
+    return Boolean(user && ACCESS_WORKSPACE_ROLES[user.role]);
+  }
+
   function mountShell(active, options) {
     var opts = options || {};
     var showClients = opts.showClients !== false;
     var showAdminAccess = opts.showAdminAccess === true;
-    mountShellParts(active, showClients, showAdminAccess);
+    var showAccessWorkspace = opts.showAccessWorkspace === true;
+    mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace);
     if (typeof opts.onReady === "function") {
       opts.onReady();
     }
@@ -563,7 +579,7 @@
   function mountAuthenticatedShell(active, onUserReady) {
     return ensureAuthenticated(function (user, reason) {
       if (reason === "forbidden" || reason === "service" || reason === "network") {
-        mountShellParts(active, false, false);
+        mountShellParts(active, false, false, false);
         if (typeof onUserReady === "function") {
           onUserReady(null, reason);
         }
@@ -571,7 +587,8 @@
       }
       var showClients = canReadClients(user);
       var isAdmin = user && user.role === "admin";
-      mountShellParts(active, showClients, isAdmin);
+      var showAccessWorkspace = canUseAccessWorkspace(user);
+      mountShellParts(active, showClients, isAdmin, showAccessWorkspace);
       if (typeof onUserReady === "function") {
         onUserReady(user, null);
       }

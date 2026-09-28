@@ -135,6 +135,16 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
                 AND oc.guid_manager = uoel.employee_id
                 AND delegator.status = 'active'
                 AND delegator.role IN ('manager', 'rop')
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM access_denials ad
+                  WHERE ad.user_id = d.delegator_user_id
+                    AND ad.revoked_at IS NULL
+                    AND (
+                      ad.scope_type = 'all_clients'
+                      OR ad.object_id = dc.guid_client
+                    )
+                )
             )
         `,
         [userParam],

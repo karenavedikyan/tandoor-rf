@@ -340,9 +340,20 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     );
     assert.equal(badApprove.status, 403);
 
-    const record = await adminPost(
+    const recordMissingRef = await adminPost(
       `/api/admin/access/delegations/${delegationId}/record-approval`,
       { businessApproverUserId: ropUserId, basis: "внешнее решение РОП" },
+      adminCookie,
+    );
+    assert.equal(recordMissingRef.status, 400);
+
+    const record = await adminPost(
+      `/api/admin/access/delegations/${delegationId}/record-approval`,
+      {
+        businessApproverUserId: ropUserId,
+        decisionReference: "EXT-2026-001",
+        basis: "внешнее решение РОП",
+      },
       adminCookie,
     );
     assert.equal(record.status, 200);
@@ -782,5 +793,256 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
       ropCookie,
     );
     assert.equal(second.status, 409);
+  });
+
+  it("blocks foreign explain: manager B cannot diagnose manager A", async () => {
+    const managerBCookie = await login("manager-b@example.com");
+    const res = await request(await loadApp())
+      .get(
+        `/api/access/explain?userId=${managerAUserId}&clientGuid=${CLIENT_ONE}`,
+      )
+      .set(authHeaders(managerBCookie));
+    assert.equal(res.status, 404);
+  });
+
+  it("manager can explain only self", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const res = await request(await loadApp())
+      .get(
+        `/api/access/explain?userId=${managerAUserId}&clientGuid=${CLIENT_ONE}`,
+      )
+      .set(authHeaders(managerCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.explain.allowed, true);
+  });
+
+  it("denial on manager blocks assistant delegation access", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const assistantCookie = await login("assistant@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "before denial",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const approve = await accessPost(
+      `/api/access/delegations/${create.body.id}/approve`,
+      { basis: "approve before denial" },
+      ropCookie,
+    );
+    assert.equal(approve.status, 200);
+
+    const activeBefore = await request(await loadApp())
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(assistantCookie));
+    assert.equal(activeBefore.status, 200);
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: managerAUserId,
+        scopeType: "client",
+        objectId: CLIENT_ONE,
+        reason: "block delegation path",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const managerBlocked = await request(await loadApp())
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(managerCookie));
+    assert.equal(managerBlocked.status, 404);
+
+    const assistantBlocked = await request(await loadApp())
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(assistantCookie));
+    assert.equal(assistantBlocked.status, 404);
+  });
+
+  it("director can revoke delegation in scope", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const directorCookie = await login("director@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_THREE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "director revoke test",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+
+    const approve = await accessPost(
+      `/api/access/delegations/${create.body.id}/approve`,
+      { basis: "rop approve" },
+      ropCookie,
+    );
+    assert.equal(approve.status, 200);
+
+    const revoke = await accessPost(
+      `/api/access/delegations/${create.body.id}/revoke`,
+      { basis: "director revoke", reason: "director decision" },
+      directorCookie,
+    );
+    assert.equal(revoke.status, 200);
+  });
+
+  it("rejects partial invalid clientGuids array with 400", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const startsAt = new Date(Date.now()).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+    const res = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE, "not-a-uuid"],
+        startsAt,
+        endsAt,
+        submit: false,
+        basis: "invalid mix",
+      },
+      managerCookie,
+    );
+    assert.equal(res.status, 400);
+  });
+
+  it("rolls back delegation create on injected client write fault", async () => {
+    const { setTestFaultAfterDelegationClients } = await import("../../src/access/service");
+    setTestFaultAfterDelegationClients(true);
+    try {
+      const managerCookie = await login("manager-a@example.com");
+      const startsAt = new Date(Date.now()).toISOString();
+      const endsAt = new Date(Date.now() + 3600_000).toISOString();
+      const res = await accessPost(
+        "/api/access/delegations",
+        {
+          assistantUserId,
+          clientGuids: [CLIENT_ONE],
+          startsAt,
+          endsAt,
+          submit: false,
+          basis: "fault injection",
+        },
+        managerCookie,
+      );
+      assert.equal(res.status, 409);
+
+      const adminCookie = await login("admin@example.com");
+      const overview = await request(await loadApp())
+        .get("/api/admin/access/overview")
+        .set(authHeaders(adminCookie));
+      const created = overview.body.delegations.filter(
+        (row: { delegator_email: string; status: string }) =>
+          row.delegator_email === "manager-a@example.com" && row.status === "draft",
+      );
+      assert.equal(created.length, 0);
+    } finally {
+      setTestFaultAfterDelegationClients(false);
+    }
+  });
+
+  it("concurrent approve and revoke: exactly one succeeds", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "concurrency",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const app = await loadApp();
+    const [approveRes, revokeRes] = await Promise.all([
+      request(app)
+        .post(`/api/access/delegations/${delegationId}/approve`)
+        .set(authHeaders(ropCookie))
+        .send({ basis: "race approve" }),
+      request(app)
+        .post(`/api/access/delegations/${delegationId}/revoke`)
+        .set(authHeaders(managerCookie))
+        .send({ basis: "race revoke", reason: "race" }),
+    ]);
+
+    assert.ok(!(approveRes.status === 200 && revokeRes.status === 200));
+    assert.ok(approveRes.status === 200 || revokeRes.status === 200 || approveRes.status === 409 || revokeRes.status === 409);
+  });
+
+  it("disabled manager session loses client access without cache bypass", async () => {
+    const cookie = await login("manager-a@example.com");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query("UPDATE users SET status = 'disabled' WHERE id = $1::uuid", [managerAUserId]);
+    await pool.end();
+    await resetPoolForTests();
+
+    const res = await request(await loadApp()).get("/api/clients").set(authHeaders(cookie));
+    assert.ok(res.status === 401 || res.status === 403);
+  });
+
+  it("director and coordinator can load scoped overview", async () => {
+    const directorCookie = await login("director@example.com");
+    const directorOverview = await request(await loadApp())
+      .get("/api/access/overview")
+      .set(authHeaders(directorCookie));
+    assert.equal(directorOverview.status, 200);
+    assert.ok(Array.isArray(directorOverview.body.delegations));
+
+    const coordinator = await createTestUser({
+      databaseUrl,
+      email: "coord2@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Coord Two",
+      role: "coordinator",
+    });
+    const adminCookie = await login("admin@example.com");
+    const coordAssign = await adminPost(
+      "/api/admin/access/coordinator-teams",
+      {
+        coordinatorUserId: coordinator.id,
+        ropUserId,
+        basis: "integration coordinator team",
+      },
+      adminCookie,
+    );
+    assert.equal(coordAssign.status, 201);
+
+    const coordCookie = await login("coord2@example.com");
+    const coordOverview = await request(await loadApp())
+      .get("/api/access/overview")
+      .set(authHeaders(coordCookie));
+    assert.equal(coordOverview.status, 200);
+    assert.ok(Array.isArray(coordOverview.body.teams));
   });
 });

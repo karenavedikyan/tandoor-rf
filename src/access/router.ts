@@ -8,17 +8,21 @@ import {
   approveDelegationChangeHandler,
   approveDelegationHandler,
   createDelegationHandler,
+  createCoordinatorTeamHandler,
   createDenialHandler,
   createEmployeeLinkHandler,
   createGrantHandler,
   createRopTeamHandler,
   proposeDelegationChangeHandler,
+  revokeCoordinatorTeamHandler,
   revokeDenialHandler,
   revokeDelegationHandler,
   revokeEmployeeLinkHandler,
   revokeGrantHandler,
   revokeRopTeamHandler,
+  ropTeamMembersHandler,
   scopedOverviewHandler,
+  searchAssistantsHandler,
   searchUsersHandler,
   submitDelegationHandler,
 } from "./handlers";
@@ -91,6 +95,19 @@ export function createAccessAdminRouter(): express.Router {
     },
   );
 
+  router.post("/coordinator-teams", csrfProtection, ...adminChain, (req, res, next) => {
+    void createCoordinatorTeamHandler(req, res).catch(next);
+  });
+
+  router.post(
+    "/coordinator-teams/:assignmentId/revoke",
+    csrfProtection,
+    ...adminChain,
+    (req, res, next) => {
+      void revokeCoordinatorTeamHandler(req, res).catch(next);
+    },
+  );
+
   return router;
 }
 
@@ -98,16 +115,39 @@ export function createAccessRouter(): express.Router {
   const router = express.Router();
   const authChain = [requireDatabaseReady, requireAuth] as const;
 
-  router.get("/overview", ...authChain, (req, res, next) => {
-    void scopedOverviewHandler(req, res).catch(next);
-  });
+  router.get(
+    "/overview",
+    ...authChain,
+    requireAnyRole(["manager", "rop", "coordinator", "director"]),
+    (req, res, next) => {
+      void scopedOverviewHandler(req, res).catch(next);
+    },
+  );
 
   router.get(
     "/explain",
     ...authChain,
-    requireAnyRole(["admin", "rop", "director", "manager"]),
+    requireAnyRole(["rop", "director", "manager"]),
     (req, res, next) => {
       void accessExplainHandler(req, res).catch(next);
+    },
+  );
+
+  router.get(
+    "/assistants/search",
+    ...authChain,
+    requireAnyRole(["manager", "rop", "coordinator", "director"]),
+    (req, res, next) => {
+      void searchAssistantsHandler(req, res).catch(next);
+    },
+  );
+
+  router.get(
+    "/team-members",
+    ...authChain,
+    requireAnyRole(["rop"]),
+    (req, res, next) => {
+      void ropTeamMembersHandler(req, res).catch(next);
     },
   );
 

@@ -279,6 +279,25 @@
       });
   });
 
+  bindForm("coordinator-team-form", function () {
+    return api
+      .apiRequest("/api/admin/access/coordinator-teams", {
+        method: "POST",
+        body: {
+          coordinatorUserId: document.getElementById("coord-user-id").value.trim(),
+          ropUserId: document.getElementById("coord-rop-id").value.trim(),
+          basis: document.getElementById("coord-basis").value.trim(),
+        },
+      })
+      .then(function (result) {
+        if (result.response.status !== 201) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось назначить координатора."));
+        }
+        setStatus("Координатор назначен на команду.", "success");
+        return loadOverview();
+      });
+  });
+
   bindForm("record-approval-form", function () {
     var delegationId = document.getElementById("approval-delegation-id").value.trim();
     return api
@@ -286,6 +305,7 @@
         method: "POST",
         body: {
           businessApproverUserId: document.getElementById("approval-approver-id").value.trim(),
+          decisionReference: document.getElementById("approval-decision-ref").value.trim(),
           basis: document.getElementById("approval-basis").value.trim(),
         },
       })

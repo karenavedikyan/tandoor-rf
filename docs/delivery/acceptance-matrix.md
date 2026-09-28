@@ -140,7 +140,13 @@
 | R1-3I11 | Explicit denial priority | `access_denials` + scope SQL | denial integration | 🟡 draft | |
 | R1-3I12 | Change request before re-approval | `delegation_change_requests` | HTTP expand blocked until approve | 🟡 draft | |
 | R1-3I13 | Employee link required (director/regional) | `context.ts` | director list + unlinked 403 | 🟡 draft | admin exception only |
-| R1-3I14 | Transactions + audit | `withTransaction` in service | double-approve 409 | 🟡 draft | FOR UPDATE on approve/revoke |
+| R1-3I14 | Transactions + audit | `withTransaction` in service | double-approve 409, fault rollback | 🟡 draft | FOR UPDATE on approve/revoke |
+| R1-3I15 | Scoped explain (no foreign userId) | `explain-auth.ts` | manager B → 404 | 🟡 draft | admin route separate |
+| R1-3I16 | Denial limits delegation | delegator denial in scope SQL | assistant blocked after manager denial | 🟡 draft | |
+| R1-3I17 | Director revoke + overview | `assertCanManageDelegation` | HTTP 200 revoke, overview | 🟡 draft | |
+| R1-3I18 | Strict clientGuids validation | `validation.ts` | invalid UUID → 400 | 🟡 draft | |
+| R1-3I19 | Role workspace UI `/access` | access-workspace.html/js | browser 3 roles | 🟡 draft | admin stays `/admin/access` |
+| R1-3I20 | Admin record-approval decisionReference | handlers + audit | 400 without ref | 🟡 draft | |
 
 **Pre-pilot setup:** admin создаёт links/grants/teams; менеджер/РОП — замещения через `/api/access`; **не** mass grant в production.
 
@@ -237,11 +243,11 @@
 | PostgreSQL | `TEST_DATABASE_URL` → `tandoor_rf_test` (локально / CI) |
 | `npm run typecheck` | OK |
 | `npm run build` | OK |
-| `npm test` (unit) | **140 passed**, 0 failed |
-| `npm run test:browser` | **12 passed**, 0 failed |
-| `npm run test:integration` | **73 passed**, 0 failed (19 access-control HTTP scenarios) |
+| `npm test` (unit) | **144 passed**, 0 failed |
+| `npm run test:browser` | **15 passed**, 0 failed (manager/ROP/coordinator UI) |
+| `npm run test:integration` | **82 passed**, 0 failed (28 access-control HTTP scenarios) |
 | Production FTP/БД/импорт/деплой | **не затронуты** |
-| R1.3 приёмка | **не заявлена** — часть ACC-* и coordinator ops остаются 🟡 draft |
+| R1.3 приёмка | **не заявлена** — полный ACC-* и coordinator CRUD в UI частично 🟡 draft |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
 

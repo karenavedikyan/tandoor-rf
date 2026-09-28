@@ -81,6 +81,16 @@
             </section>
 
             <section class="clients-card">
+              <h2 class="clients-card__title">Назначение команды координатору</h2>
+              <form id="coordinator-team-form" class="clients-filters">
+                <label class="field"><span class="field__label">Coordinator User ID</span><input id="coord-user-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">ROP User ID</span><input id="coord-rop-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Основание</span><input id="coord-basis" class="field__input" required /></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Назначить</button>
+              </form>
+            </section>
+
+            <section class="clients-card">
               <h2 class="clients-card__title">Команда РОП</h2>
               <form id="team-form" class="clients-filters">
                 <label class="field"><span class="field__label">ROP User ID</span><input id="team-rop-id" class="field__input" required /></label>
@@ -96,6 +106,7 @@
               <form id="record-approval-form" class="clients-filters">
                 <label class="field"><span class="field__label">Delegation ID</span><input id="approval-delegation-id" class="field__input" required /></label>
                 <label class="field"><span class="field__label">Business approver User ID (РОП/директор)</span><input id="approval-approver-id" class="field__input" required /></label>
+                <label class="field"><span class="field__label">Идентификатор внешнего решения (decisionReference)</span><input id="approval-decision-ref" class="field__input" required /></label>
                 <label class="field"><span class="field__label">Основание решения</span><input id="approval-basis" class="field__input" required /></label>
                 <button type="submit" class="workspace-button workspace-button--primary">Зафиксировать согласование</button>
               </form>

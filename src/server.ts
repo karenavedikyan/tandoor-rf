@@ -224,6 +224,10 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "admin-access.html");
   });
 
+  app.get("/access", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "access-workspace.html");
+  });
+
   app.use(
     (err: unknown, req: Request, res: Response, next: NextFunction): void => {
       if (res.headersSent) {

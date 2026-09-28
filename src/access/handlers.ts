@@ -5,8 +5,10 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "../clients/uuid-param";
 import { loadAccessContext } from "./context";
 import { AccessServiceError } from "./db";
+import { assertCanExplainAccess } from "./explain-auth";
 import { explainClientAccess } from "./policy";
 import * as service from "./service";
+import { parseDelegationWindow, parseStrictClientGuids } from "./validation";
 
 function parseUuid(value: unknown): string | null {
   if (typeof value !== "string" || !isValidUuidParam(value.trim())) {
@@ -23,16 +25,6 @@ function parseNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function parseClientGuids(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const guids = (value as unknown[])
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim().toLowerCase())
-    .filter((item) => isValidUuidParam(item));
-  return guids;
-}
 
 function handleServiceError(res: Response, error: unknown): void {
   setNoStore(res);
@@ -57,6 +49,19 @@ export async function accessExplainHandler(
     return;
   }
 
+  const adminRoute = req.baseUrl.includes("/api/admin/access");
+  try {
+    await assertCanExplainAccess({
+      callerUserId: req.authUser!.id,
+      callerRole: req.authUser!.role,
+      targetUserId: userId,
+      adminRoute,
+    });
+  } catch (error) {
+    handleServiceError(res, error);
+    return;
+  }
+
   const context = await loadAccessContext(userId);
   const explain = await explainClientAccess(context, clientGuid);
   setNoStore(res);
@@ -73,6 +78,33 @@ export async function searchUsersHandler(req: AuthenticatedRequest, res: Respons
   const users = await service.searchUsers(q);
   setNoStore(res);
   res.status(200).json({ users });
+}
+
+export async function searchAssistantsHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const q = parseNonEmptyString(req.query.q) ?? "";
+  if (q.length < 2) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Минимум 2 символа для поиска."));
+    return;
+  }
+  const assistants = await service.searchAssistants(q);
+  setNoStore(res);
+  res.status(200).json({ assistants });
+}
+
+export async function ropTeamMembersHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  if (req.authUser!.role !== "rop") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступно только РОП."));
+    return;
+  }
+  try {
+    const result = await service.listRopTeamMembers(req.authUser!.id);
+    setNoStore(res);
+    res.status(200).json({ members: result.rows });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
 }
 
 export async function scopedOverviewHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -288,25 +320,30 @@ export async function createDelegationHandler(
       ? req.authUser!.id
       : parseUuid(req.body?.delegatorUserId);
   const assistantUserId = parseUuid(req.body?.assistantUserId);
-  const startsAt = parseNonEmptyString(req.body?.startsAt);
-  const endsAt = parseNonEmptyString(req.body?.endsAt);
   const basis = parseNonEmptyString(req.body?.basis);
-  const clientGuids = parseClientGuids(req.body?.clientGuids);
   const submit = req.body?.submit === true;
+  const clientGuidsParsed = parseStrictClientGuids(req.body?.clientGuids);
+  const windowParsed = parseDelegationWindow(req.body?.startsAt, req.body?.endsAt);
 
-  if (
-    !delegatorUserId ||
-    !assistantUserId ||
-    !startsAt ||
-    !endsAt ||
-    !basis ||
-    !clientGuids ||
-    clientGuids.length === 0
-  ) {
+  if (!delegatorUserId || !assistantUserId || !basis) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры замещения."));
     return;
   }
+  if ("error" in clientGuidsParsed) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, clientGuidsParsed.error));
+    return;
+  }
+  if ("error" in windowParsed) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, windowParsed.error));
+    return;
+  }
+
+  const clientGuids = clientGuidsParsed.guids;
+  const startsAt = windowParsed.startsAt;
+  const endsAt = windowParsed.endsAt;
 
   if (req.body?.status === "active") {
     setNoStore(res);
@@ -365,6 +402,7 @@ export async function approveDelegationHandler(
   const delegationId = parseUuid(req.params.delegationId);
   const basis = parseNonEmptyString(req.body?.basis);
   const businessApproverUserId = parseUuid(req.body?.businessApproverUserId);
+  const decisionReference = parseNonEmptyString(req.body?.decisionReference);
   if (!delegationId || !basis) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры."));
@@ -380,6 +418,16 @@ export async function approveDelegationHandler(
     );
     return;
   }
+  if (req.authUser!.role === "admin" && !decisionReference) {
+    setNoStore(res);
+    res.status(400).json(
+      apiError(
+        ERROR_CODES.VALIDATION_ERROR,
+        "Администратор должен указать decisionReference.",
+      ),
+    );
+    return;
+  }
   try {
     await service.approveDelegationRequest({
       actorUserId: req.authUser!.id,
@@ -387,6 +435,7 @@ export async function approveDelegationHandler(
       delegationId,
       basis,
       businessApproverUserId,
+      decisionReference,
     });
     setNoStore(res);
     res.status(200).json({ ok: true });
@@ -427,13 +476,22 @@ export async function proposeDelegationChangeHandler(
   res: Response,
 ): Promise<void> {
   const delegationId = parseUuid(req.params.delegationId);
-  const startsAt = parseNonEmptyString(req.body?.startsAt);
-  const endsAt = parseNonEmptyString(req.body?.endsAt);
   const basis = parseNonEmptyString(req.body?.basis);
-  const clientGuids = parseClientGuids(req.body?.clientGuids);
-  if (!delegationId || !startsAt || !endsAt || !basis || !clientGuids || clientGuids.length === 0) {
+  const clientGuidsParsed = parseStrictClientGuids(req.body?.clientGuids);
+  const windowParsed = parseDelegationWindow(req.body?.startsAt, req.body?.endsAt);
+  if (!delegationId || !basis) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры изменения."));
+    return;
+  }
+  if ("error" in clientGuidsParsed) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, clientGuidsParsed.error));
+    return;
+  }
+  if ("error" in windowParsed) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, windowParsed.error));
     return;
   }
   try {
@@ -441,9 +499,9 @@ export async function proposeDelegationChangeHandler(
       actorUserId: req.authUser!.id,
       actorRole: req.authUser!.role,
       delegationId,
-      clientGuids,
-      startsAt,
-      endsAt,
+      clientGuids: clientGuidsParsed.guids,
+      startsAt: windowParsed.startsAt,
+      endsAt: windowParsed.endsAt,
       basis,
     });
     setNoStore(res);
@@ -472,6 +530,58 @@ export async function approveDelegationChangeHandler(
       changeRequestId,
       basis,
       businessApproverUserId,
+    });
+    setNoStore(res);
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+}
+
+export async function createCoordinatorTeamHandler(
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> {
+  const coordinatorUserId = parseUuid(req.body?.coordinatorUserId);
+  const ropUserId = parseUuid(req.body?.ropUserId);
+  const basis = parseNonEmptyString(req.body?.basis);
+  if (!coordinatorUserId || !ropUserId || !basis) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры назначения."));
+    return;
+  }
+  try {
+    const result = await service.addCoordinatorTeamAssignment({
+      actorUserId: req.authUser!.id,
+      coordinatorUserId,
+      ropUserId,
+      basis,
+    });
+    setNoStore(res);
+    res.status(201).json(result);
+  } catch (error) {
+    handleServiceError(res, error);
+  }
+}
+
+export async function revokeCoordinatorTeamHandler(
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> {
+  const assignmentId = parseUuid(req.params.assignmentId);
+  const basis = parseNonEmptyString(req.body?.basis);
+  const reason = parseNonEmptyString(req.body?.reason) ?? "Назначение отозвано";
+  if (!assignmentId || !basis) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры."));
+    return;
+  }
+  try {
+    await service.revokeCoordinatorTeamAssignment({
+      actorUserId: req.authUser!.id,
+      assignmentId,
+      reason,
+      basis,
     });
     setNoStore(res);
     res.status(200).json({ ok: true });

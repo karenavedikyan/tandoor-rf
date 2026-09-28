@@ -3,7 +3,6 @@ import { AccessServiceError, withTransaction } from "./db";
 import { ACCESS_AUDIT_ACTIONS } from "./constants";
 import {
   assertClientsExist,
-  assertManagerOwnsClients,
   canBusinessApproveDelegation,
   coordinatorAssignedToDelegatorTeam,
   getActiveUser,
@@ -11,6 +10,17 @@ import {
   getEmployeeId,
   ropManagesDelegator,
 } from "./authorization";
+import { assertDelegatorEffectiveClientAccess } from "./delegator-access";
+
+let testFaultAfterDelegationClients = false;
+
+/** @internal test-only fault injection */
+export function setTestFaultAfterDelegationClients(enabled: boolean): void {
+  if (process.env.NODE_ENV !== "test") {
+    return;
+  }
+  testFaultAfterDelegationClients = enabled;
+}
 
 type AuditInput = {
   client: TransactionClient;
@@ -470,7 +480,7 @@ export async function createDelegationRequest(input: {
     }
 
     await assertClientsExist(client, input.clientGuids);
-    await assertManagerOwnsClients(client, input.delegatorUserId, input.clientGuids);
+    await assertDelegatorEffectiveClientAccess(client, input.delegatorUserId, input.clientGuids);
 
     const status = input.submit ? "pending_approval" : "draft";
     const inserted = await client.query<{ id: string }>(
@@ -495,6 +505,9 @@ export async function createDelegationRequest(input: {
     );
     const delegationId = inserted.rows[0]!.id;
     await insertDelegationClients(client, delegationId, input.clientGuids);
+    if (testFaultAfterDelegationClients) {
+      throw new AccessServiceError("Тестовый сбой записи клиентов замещения.", "CONFLICT");
+    }
     await recordDelegationHistory(client, delegationId, input.actorUserId, "create", null, {
       status,
       clientGuids: input.clientGuids,
@@ -581,6 +594,17 @@ async function assertCanManageDelegation(
       return;
     }
   }
+  if (actorRole === "director") {
+    const actor = await getActiveUser(client, actorUserId);
+    const allowed = await canBusinessApproveDelegation(
+      client,
+      actor,
+      delegation.delegator_user_id,
+    );
+    if (allowed) {
+      return;
+    }
+  }
   throw new AccessServiceError("Недостаточно прав для управления замещением.", "FORBIDDEN");
 }
 
@@ -590,6 +614,7 @@ export async function approveDelegationRequest(input: {
   delegationId: string;
   basis: string;
   businessApproverUserId?: string | null;
+  decisionReference?: string | null;
 }): Promise<void> {
   return withTransaction(async (client) => {
     const delegation = await getDelegationForUpdate(client, input.delegationId);
@@ -604,6 +629,12 @@ export async function approveDelegationRequest(input: {
       if (!input.businessApproverUserId) {
         throw new AccessServiceError(
           "Администратор должен указать businessApproverUserId уполномоченного руководителя.",
+          "VALIDATION",
+        );
+      }
+      if (!input.decisionReference?.trim()) {
+        throw new AccessServiceError(
+          "Администратор должен указать decisionReference — идентификатор внешнего решения.",
           "VALIDATION",
         );
       }
@@ -630,6 +661,17 @@ export async function approveDelegationRequest(input: {
       businessApproverId = actor.id;
     }
 
+    const clientRows = await client.query<{ guid_client: string }>(
+      `
+        SELECT guid_client::text
+        FROM delegation_clients
+        WHERE delegation_id = $1::uuid
+      `,
+      [input.delegationId],
+    );
+    const clientGuids = clientRows.rows.map((row) => row.guid_client);
+    await assertDelegatorEffectiveClientAccess(client, delegation.delegator_user_id, clientGuids);
+
     const updated = await client.query(
       `
         UPDATE delegations
@@ -654,6 +696,11 @@ export async function approveDelegationRequest(input: {
       status: "active",
       businessApproverId,
     });
+    const auditBasis =
+      input.actorRole === "admin" && input.decisionReference
+        ? `[decision:${input.decisionReference.trim()}] ${input.basis}`
+        : input.basis;
+
     await writeAudit({
       client,
       actorUserId,
@@ -662,8 +709,8 @@ export async function approveDelegationRequest(input: {
       entityType: "delegation",
       entityId: input.delegationId,
       before: delegation,
-      after: { status: "active", businessApproverId },
-      basis: input.basis,
+      after: { status: "active", businessApproverId, decisionReference: input.decisionReference ?? null },
+      basis: auditBasis,
     });
   });
 }
@@ -733,8 +780,17 @@ export async function proposeDelegationChange(input: {
     }
     await assertCanManageDelegation(client, input.actorUserId, input.actorRole, delegation);
     await assertClientsExist(client, input.clientGuids);
-    await assertManagerOwnsClients(client, delegation.delegator_user_id, input.clientGuids);
+    await assertDelegatorEffectiveClientAccess(client, delegation.delegator_user_id, input.clientGuids);
 
+    await client.query(
+      `
+        SELECT id
+        FROM delegation_change_requests
+        WHERE delegation_id = $1::uuid AND status = 'pending_approval'
+        FOR UPDATE
+      `,
+      [input.delegationId],
+    );
     await client.query(
       `
         UPDATE delegation_change_requests
@@ -791,6 +847,21 @@ export async function approveDelegationChange(input: {
   businessApproverUserId?: string | null;
 }): Promise<void> {
   return withTransaction(async (client) => {
+    const changePeek = await client.query<{ delegation_id: string; status: string }>(
+      `
+        SELECT delegation_id::text, status
+        FROM delegation_change_requests
+        WHERE id = $1::uuid
+      `,
+      [input.changeRequestId],
+    );
+    const peek = changePeek.rows[0];
+    if (!peek || peek.status !== "pending_approval") {
+      throw new AccessServiceError("Запрос изменения не найден.", "NOT_FOUND");
+    }
+
+    const delegation = await getDelegationForUpdate(client, peek.delegation_id);
+
     const changeResult = await client.query<{
       id: string;
       delegation_id: string;
@@ -810,8 +881,6 @@ export async function approveDelegationChange(input: {
     if (!change || change.status !== "pending_approval") {
       throw new AccessServiceError("Запрос изменения не найден.", "NOT_FOUND");
     }
-
-    const delegation = await getDelegationForUpdate(client, change.delegation_id);
     let businessApproverId: string;
 
     if (input.actorRole === "admin") {
@@ -850,7 +919,7 @@ export async function approveDelegationChange(input: {
       [input.changeRequestId],
     );
     const clientGuids = clients.rows.map((row) => row.guid_client);
-    await assertManagerOwnsClients(client, delegation.delegator_user_id, clientGuids);
+    await assertDelegatorEffectiveClientAccess(client, delegation.delegator_user_id, clientGuids);
 
     await client.query(`DELETE FROM delegation_clients WHERE delegation_id = $1::uuid`, [
       delegation.id,
@@ -943,12 +1012,24 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `
           SELECT
             d.id::text,
-            delegator.email AS delegator_email,
-            assistant.email AS assistant_email,
             d.status,
             d.starts_at,
             d.ends_at,
-            d.revoked_at
+            d.revoked_at,
+            delegator.full_name AS delegator_name,
+            delegator.email AS delegator_email,
+            assistant.full_name AS assistant_name,
+            assistant.email AS assistant_email,
+            (
+              SELECT COUNT(*)::int
+              FROM delegation_clients dc
+              WHERE dc.delegation_id = d.id
+            ) AS client_count,
+            EXISTS (
+              SELECT 1
+              FROM delegation_change_requests dcr
+              WHERE dcr.delegation_id = d.id AND dcr.status = 'pending_approval'
+            ) AS pending_change
           FROM delegations d
           JOIN users delegator ON delegator.id = d.delegator_user_id
           JOIN users assistant ON assistant.id = d.assistant_user_id
@@ -969,10 +1050,28 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
     const result = await withTransaction(async (client) =>
       client.query(
         `
-          SELECT id::text, status, starts_at, ends_at, assistant_user_id::text, revoked_at
-          FROM delegations
-          WHERE delegator_user_id = $1::uuid
-          ORDER BY created_at DESC
+          SELECT
+            d.id::text,
+            d.status,
+            d.starts_at,
+            d.ends_at,
+            d.revoked_at,
+            assistant.full_name AS assistant_name,
+            assistant.email AS assistant_email,
+            (
+              SELECT COUNT(*)::int
+              FROM delegation_clients dc
+              WHERE dc.delegation_id = d.id
+            ) AS client_count,
+            EXISTS (
+              SELECT 1
+              FROM delegation_change_requests dcr
+              WHERE dcr.delegation_id = d.id AND dcr.status = 'pending_approval'
+            ) AS pending_change
+          FROM delegations d
+          JOIN users assistant ON assistant.id = d.assistant_user_id
+          WHERE d.delegator_user_id = $1::uuid
+          ORDER BY d.created_at DESC
           LIMIT 100
         `,
         [actorUserId],
@@ -981,5 +1080,208 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
     return { delegations: result.rows };
   }
 
+  if (actorRole === "director") {
+    const result = await withTransaction(async (client) =>
+      client.query(
+        `
+          SELECT
+            d.id::text,
+            d.status,
+            d.starts_at,
+            d.ends_at,
+            d.revoked_at,
+            delegator.full_name AS delegator_name,
+            delegator.email AS delegator_email,
+            assistant.full_name AS assistant_name,
+            assistant.email AS assistant_email,
+            EXISTS (
+              SELECT 1
+              FROM delegation_change_requests dcr
+              WHERE dcr.delegation_id = d.id AND dcr.status = 'pending_approval'
+            ) AS pending_change
+          FROM delegations d
+          JOIN users delegator ON delegator.id = d.delegator_user_id
+          JOIN users assistant ON assistant.id = d.assistant_user_id
+          ORDER BY d.created_at DESC
+          LIMIT 100
+        `,
+      ),
+    );
+    return { delegations: result.rows };
+  }
+
+  if (actorRole === "coordinator") {
+    const teams = await withTransaction(async (client) =>
+      client.query(
+        `
+          SELECT
+            cta.id::text,
+            rop.full_name AS rop_name,
+            rop.email AS rop_email,
+            cta.basis
+          FROM coordinator_team_assignments cta
+          JOIN users rop ON rop.id = cta.rop_user_id
+          WHERE cta.coordinator_user_id = $1::uuid
+            AND cta.revoked_at IS NULL
+          ORDER BY rop.full_name ASC
+        `,
+        [actorUserId],
+      ),
+    );
+    const delegations = await withTransaction(async (client) =>
+      client.query(
+        `
+          SELECT
+            d.id::text,
+            d.status,
+            d.starts_at,
+            d.ends_at,
+            d.revoked_at,
+            delegator.full_name AS delegator_name,
+            assistant.full_name AS assistant_name,
+            EXISTS (
+              SELECT 1
+              FROM delegation_change_requests dcr
+              WHERE dcr.delegation_id = d.id AND dcr.status = 'pending_approval'
+            ) AS pending_change
+          FROM delegations d
+          JOIN users delegator ON delegator.id = d.delegator_user_id
+          JOIN users assistant ON assistant.id = d.assistant_user_id
+          JOIN rop_team_members rtm
+            ON rtm.member_user_id = d.delegator_user_id
+           AND rtm.revoked_at IS NULL
+          JOIN coordinator_team_assignments cta
+            ON cta.rop_user_id = rtm.rop_user_id
+           AND cta.coordinator_user_id = $1::uuid
+           AND cta.revoked_at IS NULL
+          ORDER BY d.created_at DESC
+          LIMIT 100
+        `,
+        [actorUserId],
+      ),
+    );
+    return { teams: teams.rows, delegations: delegations.rows };
+  }
+
   throw new AccessServiceError("Недостаточно прав для просмотра.", "FORBIDDEN");
+}
+
+export async function listRopTeamMembers(ropUserId: string) {
+  return withTransaction(async (client) =>
+    client.query(
+      `
+        SELECT
+          rtm.id::text,
+          member.full_name AS member_name,
+          member.email AS member_email,
+          member.role AS member_role,
+          rtm.basis
+        FROM rop_team_members rtm
+        JOIN users member ON member.id = rtm.member_user_id
+        WHERE rtm.rop_user_id = $1::uuid
+          AND rtm.revoked_at IS NULL
+        ORDER BY member.full_name ASC
+      `,
+      [ropUserId],
+    ),
+  );
+}
+
+export async function addCoordinatorTeamAssignment(input: {
+  actorUserId: string;
+  coordinatorUserId: string;
+  ropUserId: string;
+  basis: string;
+}): Promise<{ id: string }> {
+  return withTransaction(async (client) => {
+    const coordinator = await getActiveUser(client, input.coordinatorUserId);
+    if (coordinator.role !== "coordinator") {
+      throw new AccessServiceError("Пользователь не является координатором.", "VALIDATION");
+    }
+    const rop = await getActiveUser(client, input.ropUserId);
+    if (rop.role !== "rop") {
+      throw new AccessServiceError("Пользователь не является РОП.", "VALIDATION");
+    }
+    const inserted = await client.query<{ id: string }>(
+      `
+        INSERT INTO coordinator_team_assignments (
+          coordinator_user_id, rop_user_id, basis, created_by_user_id
+        )
+        VALUES ($1::uuid, $2::uuid, $3, $4::uuid)
+        RETURNING id::text AS id
+      `,
+      [input.coordinatorUserId, input.ropUserId, input.basis, input.actorUserId],
+    );
+    await writeAudit({
+      client,
+      actorUserId: input.actorUserId,
+      action: ACCESS_AUDIT_ACTIONS.COORDINATOR_TEAM_ADD,
+      entityType: "coordinator_team_assignment",
+      entityId: inserted.rows[0]!.id,
+      after: input,
+      basis: input.basis,
+    });
+    return { id: inserted.rows[0]!.id };
+  });
+}
+
+export async function revokeCoordinatorTeamAssignment(input: {
+  actorUserId: string;
+  assignmentId: string;
+  reason: string;
+  basis: string;
+}): Promise<void> {
+  return withTransaction(async (client) => {
+    const before = await client.query(
+      "SELECT * FROM coordinator_team_assignments WHERE id = $1::uuid FOR UPDATE",
+      [input.assignmentId],
+    );
+    const row = before.rows[0];
+    if (!row || row.revoked_at) {
+      throw new AccessServiceError("Назначение координатора не найдено.", "NOT_FOUND");
+    }
+    const updated = await client.query(
+      `
+        UPDATE coordinator_team_assignments
+        SET revoked_at = NOW(), revoked_by_user_id = $2::uuid, revoke_reason = $3
+        WHERE id = $1::uuid AND revoked_at IS NULL
+      `,
+      [input.assignmentId, input.actorUserId, input.reason],
+    );
+    if (updated.rowCount !== 1) {
+      throw new AccessServiceError("Назначение координатора не найдено.", "NOT_FOUND");
+    }
+    await writeAudit({
+      client,
+      actorUserId: input.actorUserId,
+      action: ACCESS_AUDIT_ACTIONS.COORDINATOR_TEAM_REVOKE,
+      entityType: "coordinator_team_assignment",
+      entityId: input.assignmentId,
+      before: row,
+      after: { revoked: true },
+      basis: input.basis,
+    });
+  });
+}
+
+export async function searchAssistants(queryText: string, limit = 20) {
+  const { query } = await import("../db/pool");
+  const result = await query<{
+    id: string;
+    email: string;
+    full_name: string;
+    status: string;
+  }>(
+    `
+      SELECT id::text, email, full_name, status
+      FROM users
+      WHERE role = 'assistant'
+        AND status = 'active'
+        AND (email ILIKE $1 OR full_name ILIKE $1)
+      ORDER BY full_name ASC
+      LIMIT $2
+    `,
+    [`%${queryText}%`, limit],
+  );
+  return result.rows;
 }

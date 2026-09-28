@@ -103,8 +103,9 @@
 | Миграции `003` + `004` | 🟡 draft — partial unique link, denials, change-requests |
 | Серверная область clients API | 🟡 draft — manager/ROP/regional/director + employee link |
 | Делегирование | 🟡 draft — draft/pending only; ROP/director approve; admin record-approval |
-| Admin UI `/admin/access` | 🟡 draft — таблицы, формы, поиск пользователей |
-| Integration tests (PostgreSQL) | 19 HTTP-сценариев access-control; **73** integration total |
+| Admin UI `/admin/access` | 🟡 draft — техническая настройка, coordinator teams, record-approval + decisionReference |
+| Role UI `/access` | 🟡 draft — manager/ROP/coordinator/director замещения |
+| Integration tests (PostgreSQL) | 28 HTTP-сценариев access-control; **82** integration total |
 | Production / import / grants | **не менялись** |
 
 **Не заявляется завершённым:** coordinator team assignment UI, concurrent approve/revoke, полный ACC-* matrix, пилот R1.5.
