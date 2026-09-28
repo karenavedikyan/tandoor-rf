@@ -9,10 +9,12 @@
 
 - **M-A**, **M-B** — менеджеры с разными `employee_id` и непересекающимися клиентами.
 - **ROP-1** — РОП команды M-A.
-- **REG-1** — региональный с назначением только на **ТТ-X**.
-- **ASST-1** — ассистent.
+- **REG-1** — региональный с назначением только на **TT-X**.
+- **ASST-1** — ассистент (роль `assistant` — **предложение**).
+- **COORD-1** — координатор (**предложение**).
 - **C1**, **C2** — клиенты (GUID); **C1** ∈ M-A, **C2** ∈ M-B.
-- **TT-X** — торговая точка; **H1** — холдинг.
+- **TT-X**, **TT-Y** — торговые точки; **H1** — холдинг.
+- **T0** — момент `starts_at`; **T1** — момент `ends_at` (exclusive).
 
 ---
 
@@ -20,11 +22,11 @@
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-01 | M-A active, link 1С OK, клиенты C1∈M-A | `GET /api/clients` | 200; items **только** C1 (и свои); total = count своих |
-| ACC-02 | M-A | `GET /api/clients/{C2}` | **404** (или 403 по политике); тело без данных C2 |
+| ACC-01 | M-A active, link 1С OK, C1∈M-A | `GET /api/clients` | 200; items **только** свои; total = count своих |
+| ACC-02 | M-A | `GET /api/clients/{C2}` | 404/403 **по выбранной политике**; тело **без данных C2** |
 | ACC-03 | M-A | `GET /clients/{C2}` UI | «не найден» / «нет доступа»; без leak имени |
 | ACC-04 | M-B | `GET /api/clients?q=<имя C1>` | 200; items **пусто**; total=0 |
-| ACC-05 | M-A | фильтр manager= M-B employee | options **не содержат** чужих; list пуст |
+| ACC-05 | M-A | filter manager= M-B employee | options **без** чужих; list пуст |
 
 ---
 
@@ -32,8 +34,8 @@
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-10 | M-A | `GET /api/clients/{C2}` | 404/403; JSON error без PII |
-| ACC-11 | M-A | перебор UUID (rate limited) | нет diff timing/size для exist vs forbidden |
+| ACC-10 | M-A | `GET /api/clients/{C2}` | 404/403; JSON error **без PII** |
+| ACC-11 | M-A | запрос чужого существующего GUID vs несуществующего | **нет раскрывающих различий** в статусе/содержимом **по выбранной политике** (не требовать абсолютного равенства времени ответа) |
 | ACC-12 | M-A | export/bulk (будущее) | только C1; audit log |
 
 ---
@@ -42,7 +44,7 @@
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-20 | ROP-1, команда {M-A} | `GET /api/clients` | все клиенты менеджеров команды |
+| ACC-20 | ROP-1, команда {M-A} | `GET /api/clients` | клиенты команды |
 | ACC-21 | ROP-1 | `GET /api/clients/{C2}` (M-B вне команды) | 404/403 |
 | ACC-22 | ROP-1 | создать delegation M-A → ASST-1 | 201; audit |
 | ACC-23 | ROP-2 (чужая команда) | `GET /api/clients` клиентов ROP-1 | без данных ROP-1 |
@@ -53,10 +55,12 @@
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-30 | REG-1 grant только TT-X | list clients | только клиенты/контекст TT-X |
-| ACC-31 | REG-1, TT-X ⊂ H1 | открыть финансы/коммерцию H1 | **запрещено** или «недоступно» |
-| ACC-32 | REG-1, другая TT-Y same city | `GET` TT-Y | 404/403 |
-| ACC-33 | REG-1 | filter by region=city | **не расширяет** scope beyond grants |
+| ACC-30 | REG-1 grant только TT-X | list | только контекст TT-X |
+| ACC-31 | REG-1, TT-X ⊂ H1 | финансы/коммерция H1 | **запрещено** / «недоступно» |
+| ACC-32 | REG-1, TT-Y same city | `GET` TT-Y | 404/403 |
+| ACC-33 | REG-1 | filter by city | **не расширяет** scope |
+| ACC-34 | REG-1, TT-X | навигация: имя H1 | **только** метаданные; карточка H1 **запрещена** |
+| ACC-35 | M-A на C1 с `guid_holding=H1` | без grant на H1 | **не** видит других клиентов H1 |
 
 ---
 
@@ -64,98 +68,140 @@
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-40 | delegation draft, starts завтра | ASST-1 `GET /api/clients/{C1}` | 404/403 |
-| ACC-41 | delegation active, C1 in scope | ASST-1 `GET /api/clients/{C1}` | 200; рабочие поля; **не** admin endpoints |
+| ACC-40 | delegation до T0 | ASST-1 `GET /api/clients/{C1}` | 404/403 |
+| ACC-41 | delegation active | ASST-1 `GET /api/clients/{C1}` | 200; рабочие поля; **не** admin endpoints |
 | ACC-42 | active | ASST-1 `GET /api/clients/{C2}` | 404/403 |
-| ACC-43 | ends_at прошло | ASST-1 `GET /api/clients/{C1}` | 404/403 немедленно |
-| ACC-44 | после отзыва | M-A `GET` задачи/черновики ASST | работа возвращена; история ASST видна в audit |
+| ACC-43 | после T1 (ends exclusive) | ASST-1 `GET /api/clients/{C1}` | 404/403 **на следующем запросе** |
+| ACC-44 | после отзыва | M-A видит audit/историю ASST | история **для уполномоченных**; работа возвращена M-A |
+| ACC-45 | после отзыва | ASST-1 `GET /api/clients/{C1}` | 404/403 |
+| ACC-46 | после отзыва | ASST-1 `GET` history/attachments с данными C1 | **403**; история **не** substitute для доступа |
+| ACC-47 | active | ASST-1 создать sub-delegation | **403** (запрет повторного делегирования) |
 
 ---
 
-## 6. Два одновременных замещения
+## 6. Границы срока и фоновое задание
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-50 | ASST-1: M-A→C1 и M-B→C2 active | list | C1 ∪ C2 |
+| ACC-120 | delegation T0=12:00, ends T1=18:00 | запрос в 11:59 MSK | 404/403 |
+| ACC-121 | то же | запрос ровно в 12:00 MSK | 200 |
+| ACC-122 | то же | запрос ровно в 18:00 MSK | 404/403 (ends **exclusive**) |
+| ACC-123 | ends_at прошло; worker/cron **не работает** | ASST-1 `GET C1` | 404/403 — доступ определяется **запросом**, не job |
+
+---
+
+## 7. Два одновременных замещения
+
+| ID | Условие | Действие | Ожидаемый результат |
+|----|---------|----------|---------------------|
+| ACC-50 | ASST-1: delegations M-A→C1 и M-B→C2 active | list | C1 ∪ C2 |
 | ACC-51 | ASST-1 | `GET C1`, `GET C2` | оба 200 |
-| ACC-52 | отозвать только M-A delegation | `GET C1` | 403; `GET C2` still 200 |
+| ACC-52 | отозвать **только** delegation M-A→C1 | `GET C1` | 404/403; `GET C2` **200** |
 
 ---
 
-## 7. Досрочный отзыв
+## 8. Досрочный отзыв и обход
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-60 | active delegation | ROP revoke | status=revoked; ASST теряет доступ на след. запрос |
-| ACC-61 | revoked | ASST повтор `GET C1` | 404/403 |
-| ACC-62 | revoked | audit | revoke_reason, revoked_by записаны |
+| ACC-60 | active delegation | revoke | ASST теряет доступ **на след. запросе** |
+| ACC-61 | revoked | ASST `GET C1` | 404/403 |
+| ACC-62 | revoked | audit | revoke_reason, revoked_by |
+| ACC-130 | revoked; старая session cookie | `GET C1` | 404/403 |
+| ACC-131 | revoked | export / cached URL / attachment link C1 | **403**; no-store |
 
 ---
 
-## 8. Отсутствующая и конфликтная привязка к 1С
+## 9. Координатор
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-70 | user без `user_onec_link` | login | OK (если active) |
-| ACC-71 | нет link | `GET /api/clients` | 403 или 200 empty + warning (**на согласование**) |
-| ACC-72 | 2 users → 1 employee_id | любой clients API | 403 до разрешения конфликта |
-| ACC-73 | auto-match по email= name_manager | система | **не выполняется**; no link created |
+| ACC-140 | COORD-1 без client grant | календарь/загрузка delegations | 200; метаданные |
+| ACC-141 | COORD-1 без client grant | `GET /api/clients/{C1}` | 404/403 |
+| ACC-142 | COORD-1 | автоматически как замещающий M-A | **нет** прав без delegation |
 
 ---
 
-## 9. Заблокированная учётная запись
+## 10. Смена закрепления и зависимые замещения
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-80 | status=disabled | login | 401 идентичный unknown user |
-| ACC-81 | disabled, старая session cookie | `GET /api/clients` | 401 |
-| ACC-82 | invited (не active) | login | отказ (**уточнить** политику invited) |
+| ACC-150 | C1 передан M-B в 1С; delegation M-A→ASST active | ASST `GET C1` | **403** или пересмотр delegation (**на согласование** instant vs grace) |
+| ACC-151 | отозван grant M-A на C1 | ASST delegation от M-A на C1 | **403**; delegation **не** обходит отзыв |
 
 ---
 
-## 10. Утечка через поиск, фильтры, счётчики, экспорт
+## 11. Fixed-list delegation и новая ТТ
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-90 | M-A | `GET /api/clients/options` | managers/holdings **только** из scope M-A |
-| ACC-91 | M-A | `GET /api/clients` total | = count(C own), не 3808 |
-| ACC-92 | M-A | search substring имени C2 | 0 results |
-| ACC-93 | M-A | phone filter matching C2 phone | 0 results |
-| ACC-94 | M-A | export | только C1; event in audit |
-| ACC-95 | M-A после admin visit same browser | back button | no cached admin JSON (no-store) |
+| ACC-160 | delegation scope=[C1] fixed | в 1С добавлена TT-NEW под C1 | ASST **не** видит TT-NEW без обновления scope |
 
 ---
 
-## 11. Скрытые комментарии рекламации (R2.4)
+## 12. Identity и блокировка
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-100 | M-A имеет C1 | открыть рекламацию C1 | только **published summary** |
-| ACC-101 | M-A | API claim detail | нет internal comments, assignee chat |
-| ACC-102 | M-A | попытка ID задачи B24 напрямую | 403/redirect B24 with own ACL |
+| ACC-70 | user без link 1С | login | OK if active |
+| ACC-71 | нет link | `GET /api/clients` | 403 или empty (**на согласование**) |
+| ACC-72 | 2 users → 1 employee_id | clients API | 403 до разрешения |
+| ACC-73 | auto-match по email/name | система | **не выполняется** |
+| ACC-80 | disabled | login | 401 как unknown |
+| ACC-81 | disabled, старая cookie | `GET /api/clients` | 401 |
 
 ---
 
-## 12. Дополнительные сценарии (admin, director, hierarchy)
+## 13. Утечка через поиск, фильтры, счётчики
 
 | ID | Условие | Действие | Ожидаемый результат |
 |----|---------|----------|---------------------|
-| ACC-110 | admin | `GET /api/clients` | 200 all (current behavior) |
-| ACC-111 | director confirmed | list | все sales clients |
-| ACC-112 | manager grant holding H1 | open legal entity L2 not in H1 | 404 |
-| ACC-113 | grant TT-X only | aggregate sales H1 | «недоступно», не fake TT split |
+| ACC-90 | M-A | `GET /api/clients/options` | только scope M-A |
+| ACC-91 | M-A | total | count своих, не global |
+| ACC-92 | M-A | search имени C2 | 0 |
+| ACC-95 | M-A после admin в том же browser | back | no cached admin JSON |
+
+---
+
+## 14. Рекламации и Битрикс24 (R2.4 / R4.4)
+
+| ID | Условие | Действие | Ожидаемый результат |
+|----|---------|----------|---------------------|
+| ACC-100 | M-A, C1 | рекламация в ЛК | только **published summary** |
+| ACC-101 | M-A | API claim detail | нет internal comments |
+| ACC-102 | M-A | deep link B24 | **отдельная** проверка прав **B24**; ЛК **не** обещает поведение B24 |
+| ACC-103 | после отзыва delegation | ASST open B24 task C1 | права **B24** отдельно; в ЛК — 403 |
+
+> Сценарии ACC-102/103: **две** независимые проверки — ответ ЛК и ACL внешней системы.
+
+---
+
+## 15. Admin, director, hierarchy
+
+| ID | Условие | Действие | Ожидаемый результат |
+|----|---------|----------|---------------------|
+| ACC-110 | admin | `GET /api/clients` | 200 all (**реализовано**) |
+| ACC-111 | director confirmed | list | sales scope (**будущее**) |
+| ACC-113 | grant TT-X only | aggregate sales H1 | «недоступно», не fake split |
+| ACC-114 | admin | назначить себе клиента без audit | **запрещено** (**будущее**) |
 
 ---
 
 ## Статус
 
-| Категория | Сценариев | Автотесты R1.3 |
-|-----------|-----------|----------------|
-| Менеджеры / IDOR | ACC-01…12 | ❌ не реализованы |
-| РОП / regional | ACC-20…33 | ❌ |
-| Ассистент / delegation | ACC-40…62 | ❌ (R4.3) |
-| Identity / block | ACC-70…82 | частично auth tests |
+| Категория | Сценариев | Автотесты |
+|-----------|-----------|-----------|
+| Менеджеры / IDOR | ACC-01…12 | ❌ |
+| РОП / regional / hierarchy | ACC-20…35 | ❌ |
+| Ассистент / срок / history | ACC-40…47, 120…123 | ❌ |
+| Два delegations / revoke | ACC-50…52, 60…62, 130…131 | ❌ |
+| Coordinator | ACC-140…142 | ❌ |
+| Assignment change | ACC-150…151 | ❌ |
+| Fixed-list / new TT | ACC-160 | ❌ |
+| Identity / block | ACC-70…81 | частично auth |
 | Leak vectors | ACC-90…95 | ❌ |
-| Claims | ACC-100…102 | ❌ (R2.4) |
+| Claims / B24 | ACC-100…103 | ❌ |
 
-**Текущий факт:** integration `clients-workspace.test.ts` проверяет **403 для manager** (admin-only), не scope по назначениям.
+**Текущий факт:** `clients-workspace.test.ts` — **403 для manager** (admin-only); scope/delegation **не** реализованы.
+
+**UI/бренд:** сценарии не меняют требования PR #12; UI в этом этапе **не изменялся**.

@@ -113,7 +113,9 @@
 | R1-3P01 | Матрица ролей (A/B/поля) | [access-matrix.md](./access-matrix.md) | n/a (spec) | 📋 prep | PR head |
 | R1-3P02 | Правила, иерархия, 1С-link, безопасность | [access-rules.md](./access-rules.md) | n/a | 📋 prep | PR head |
 | R1-3P03 | Сценарии будущих тестов доступа | [access-acceptance-scenarios.md](./access-acceptance-scenarios.md) | **не выполнялись** | 📋 prep | PR head |
-| R1-3P04 | Ассистент/координатор — варианты без изменения enum | access-matrix § assistant | n/a | 📋 prep | PR head |
+| R1-3P04 | Роли assistant/coordinator + delegations (**предложение**, migration) | access-matrix § рекомендуемая модель | n/a | 📋 prep | PR head |
+| R1-3P07 | Серверная проверка срока замещения на каждом запросе | access-rules §6 | ACC-120…123 spec | 📋 prep | PR head |
+| R1-3P08 | История после отзыва — без read клиентских данных ассистентом | access-rules §4.5 | ACC-45…46 spec | 📋 prep | PR head |
 | R1-3P05 | Серверная фильтрация по ролям | **не реализована** (`requireAdmin`) | integration 403 manager only | ❌ missing R1.3 | main |
 | R1-3P06 | user ↔ ID сотрудника 1С | **не реализована** | — | ❌ missing R1.3 | main |
 

@@ -87,7 +87,9 @@
 
 **Разрешено:** документы [access-matrix.md](./access-matrix.md), [access-rules.md](./access-rules.md), [access-acceptance-scenarios.md](./access-acceptance-scenarios.md); ссылки в README и acceptance-matrix.
 
-**Запрещено:** изменение кода, БД, миграций, enum ролей, `requireAdmin`, импорта; выдача реальных доступов; заявление «R1.3 реализован»; разрешение пилота.
+**Запрещено:** изменение кода, БД, миграций, enum ролей, `requireAdmin`, импорта; выдача реальных доступов; заявление «R1.3 реализован»; разрешение пилота; изменение UI/бренда (PR #12).
+
+**Целевая модель (предложение, на согласование):** роли `assistant` + `coordinator` и таблица `delegations` — потребуют migration при реализации R1.3/R4.3.
 
 **Не закрывает:** R0.2, R1.1, R1.2, R1.3 (implementation), R1.4, R1.5.
 
