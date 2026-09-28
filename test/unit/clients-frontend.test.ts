@@ -43,6 +43,12 @@ const logic = require("../../public/clients-logic.js") as {
     model: { selectedId: string; searchText: string },
     options: Array<{ id: string; name: string; shortId: string }>,
   ) => { selectedId: string; searchText: string };
+  formatLoadedInLkLabel: (label: string | null | undefined) => string;
+  formatSyncStatusParts: (data: {
+    runningImport?: boolean;
+    lastSuccessfulImportAtLabel?: string | null;
+    warning?: string | null;
+  } | null) => { text: string; warning: boolean; appendWarning: string };
 };
 
 describe("clients frontend logic", () => {
@@ -72,6 +78,12 @@ describe("clients frontend logic", () => {
     ];
     assert.equal(logic.filterOptions(items, "петр").length, 1);
     assert.equal(logic.filterOptions(items, "22222222").length, 1);
+  });
+
+  it("labels sync status as LK import, not 1C file time", () => {
+    const formatted = logic.formatSyncStatusParts({ lastSuccessfulImportAtLabel: "28.09.2026, 09:00" });
+    assert.match(formatted.text, /Последний импорт в ЛК/);
+    assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С/i);
   });
 
   it("keeps applied UUID while editing draft search text", () => {

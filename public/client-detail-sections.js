@@ -3,33 +3,12 @@
 
   var PENDING_NOTICE = "Подключение данных не завершено";
 
-  var REQUISITES_LABELS = [
-    "Юридическое наименование",
-    "ИНН",
-    "КПП",
-    "ОГРН",
-    "Номер MA",
-    "Регион",
-    "Город",
-    "Email",
+  var FUTURE_DATA_ITEMS = [
+    "Юрлица и реквизиты",
+    "Торговые точки",
+    "Региональный менеджер и руководитель отдела продаж (РОП)",
+    "Коммерческие условия (скидки и наценки)",
   ];
-
-  var COMMERCIAL_GROUPS = [
-    {
-      title: "Условия",
-      labels: ["Тип клиента", "Форма оплаты"],
-    },
-    {
-      title: "Скидки и наценки",
-      labels: ["Тип скидки", "Размер скидки", "Наценки"],
-    },
-    {
-      title: "План",
-      labels: ["Сумма плана", "Ретро-бонус"],
-    },
-  ];
-
-  var TEAM_PLACEHOLDER_LABELS = ["Региональный менеджер", "Фурнитурный менеджер"];
 
   function escapeHtml(value) {
     return String(value)
@@ -56,24 +35,6 @@
       '<dd class="legacy-field-row__value">' +
       valueHtml +
       "</dd>" +
-      "</div>"
-    );
-  }
-
-  function pendingBlock(labels) {
-    var list = labels
-      .map(function (label) {
-        return "<li>" + escapeHtml(label) + "</li>";
-      })
-      .join("");
-    return (
-      '<div class="legacy-pending-block">' +
-      '<p class="legacy-pending-block__notice">' +
-      escapeHtml(PENDING_NOTICE) +
-      "</p>" +
-      '<ul class="legacy-pending-block__labels">' +
-      list +
-      "</ul>" +
       "</div>"
     );
   }
@@ -130,6 +91,12 @@
         esc(client.holding.id.slice(0, 8).toUpperCase()) +
         "</a>";
     }
+    var managerHtml = "—";
+    if (client.manager && client.manager.name) {
+      managerHtml =
+        esc(client.manager.name) +
+        (client.manager.shortId ? " · " + esc(client.manager.shortId) : "");
+    }
     return (
       '<header class="client-detail-header">' +
       '<nav class="client-detail-breadcrumb" aria-label="Навигация">' +
@@ -150,12 +117,15 @@
       esc(client.name) +
       "</h1>" +
       '<div class="client-detail-header__meta">' +
-      '<span class="legacy-badge">' +
-      esc(client.sourceLabel || "Данные из 1С") +
-      "</span>" +
       '<span class="client-detail-header__holding">' +
       '<span class="client-detail-header__holding-label">Холдинг:</span> ' +
       holdingHtml +
+      "</span>" +
+      '<span class="client-detail-header__manager">' +
+      '<span class="client-detail-header__holding-label">Менеджер из 1С:</span> ' +
+      '<span id="client-header-manager">' +
+      managerHtml +
+      "</span>" +
       "</span>" +
       "</div>" +
       "</header>"
@@ -167,7 +137,8 @@
       openSection(
         "section-contacts",
         "Контакты",
-        '<dl class="legacy-field-list">' +
+        '<p class="client-detail-note">Фактический адрес из обмена 1С. Не является торговой точкой автоматически.</p>' +
+          '<dl class="legacy-field-list">' +
           fieldRow("Фактический адрес", '<span id="client-address" class="client-detail-value"></span>') +
           '<div class="client-detail-copy-row">' +
           '<button type="button" id="copy-address" class="workspace-button workspace-button--secondary">Копировать адрес</button>' +
@@ -179,81 +150,71 @@
     );
   }
 
-  function renderRequisitesSection() {
-    return collapsibleSection("section-requisites", "Реквизиты", pendingBlock(REQUISITES_LABELS), {
-      expanded: false,
-    });
-  }
-
-  function renderTeamSection(managerName, managerShortId, escapeFn) {
-    var esc = escapeFn || escapeHtml;
-    var managerValue = esc(dash(managerName)) + (managerShortId ? " · " + esc(managerShortId) : "");
-    var body =
-      '<dl class="legacy-field-list">' +
-      fieldRow("Менеджер из 1С", managerValue) +
-      TEAM_PLACEHOLDER_LABELS.map(function (label) {
-        return fieldRow(label, '<span class="legacy-value-pending">' + esc(PENDING_NOTICE) + "</span>");
-      }).join("") +
-      "</dl>";
-    return openSection("section-team", "Команда", body);
-  }
-
-  function renderCommercialSection() {
-    var body = COMMERCIAL_GROUPS.map(function (group) {
-      return (
-        '<div class="legacy-subgroup">' +
-        '<h3 class="legacy-subgroup__title">' +
-        escapeHtml(group.title) +
-        "</h3>" +
-        pendingBlock(group.labels) +
-        "</div>"
-      );
-    }).join("");
-    return collapsibleSection("section-commercial", "Коммерческие условия", body, { expanded: false });
-  }
-
-  function renderStoresSection() {
-    return openSection(
-      "section-stores",
-      "Торговые точки",
-      '<p class="legacy-honest-empty">Торговые точки ещё не подключены</p>',
+  function renderOneCDataSection() {
+    return (
+      openSection(
+        "section-onec-data",
+        "Данные 1С",
+        '<p class="client-detail-note">Плоская запись snapshot из обмена. Смысл <code>guid_client</code> (юрлицо, торговая точка или иное) уточняется у 1С.</p>' +
+          '<dl class="legacy-field-list">' +
+          fieldRow("Наименование в обмене", '<span id="client-onec-name" class="client-detail-value"></span>') +
+          fieldRow("Холдинг на строке", '<span id="client-onec-holding" class="client-detail-value"></span>') +
+          fieldRow("Менеджер из 1С", '<span id="client-onec-manager" class="client-detail-value"></span>') +
+          "</dl>",
+      )
     );
+  }
+
+  function renderSourceSection() {
+    return (
+      openSection(
+        "section-source",
+        "Источник и обновление",
+        '<dl class="legacy-field-list">' +
+          fieldRow("Источник бизнес-данных", '<span class="legacy-badge">1С</span>') +
+          fieldRow("Загрузка в ЛК", '<span id="client-loaded-at" class="client-detail-value"></span>') +
+          "</dl>" +
+          '<p id="client-source-note" class="client-detail-note">Время формирования файла в 1С неизвестно и не подменяется временем импорта в ЛК.</p>',
+      )
+    );
+  }
+
+  function renderFutureDataSection() {
+    var list = FUTURE_DATA_ITEMS.map(function (item) {
+      return "<li>" + escapeHtml(item) + "</li>";
+    }).join("");
+    var body =
+      '<div class="legacy-pending-block">' +
+      '<p class="legacy-pending-block__notice">' +
+      escapeHtml(PENDING_NOTICE) +
+      "</p>" +
+      '<ul class="legacy-pending-block__labels">' +
+      list +
+      "</ul>" +
+      "</div>";
+    return collapsibleSection("section-future-data", "Неподключённые данные", body, { expanded: false });
   }
 
   function renderTechSection() {
     var body =
       '<dl class="legacy-field-list">' +
-      fieldRow("UUID", '<span id="client-uuid" class="client-detail-uuid"></span>') +
-      fieldRow(
-        "Загрузка записи",
-        '<span id="client-last-import" class="client-detail-value"></span>',
-      ) +
+      fieldRow("guid_client", '<span id="client-uuid" class="client-detail-uuid"></span>') +
+      fieldRow("guid_holding", '<span id="client-holding-uuid" class="client-detail-uuid"></span>') +
+      fieldRow("guid_manager", '<span id="client-manager-uuid" class="client-detail-uuid"></span>') +
       "</dl>";
-    return collapsibleSection("section-tech", "Техническая информация", body, { expanded: false });
+    return collapsibleSection("section-tech", "Технические идентификаторы", body, { expanded: false });
   }
 
   function renderAllSections(returnQuery) {
     return (
-      renderHeader({ name: "", sourceLabel: "Данные из 1С", holding: null }, returnQuery) +
+      renderHeader({ name: "", holding: null, manager: null }, returnQuery) +
       '<div id="client-detail-sections" class="client-detail-sections">' +
       renderContactsSection() +
-      renderRequisitesSection() +
-      '<div id="client-team-section"></div>' +
-      renderCommercialSection() +
-      renderStoresSection() +
+      renderOneCDataSection() +
+      renderSourceSection() +
+      renderFutureDataSection() +
       renderTechSection() +
       "</div>"
-    );
-  }
-
-  function mountTeamSection(container, client, escapeFn) {
-    if (!container) {
-      return;
-    }
-    container.innerHTML = renderTeamSection(
-      client.manager ? client.manager.name : "",
-      client.manager ? client.manager.shortId : "",
-      escapeFn,
     );
   }
 
@@ -294,11 +255,9 @@
 
   var exported = {
     PENDING_NOTICE: PENDING_NOTICE,
-    REQUISITES_LABELS: REQUISITES_LABELS,
-    COMMERCIAL_GROUPS: COMMERCIAL_GROUPS,
+    FUTURE_DATA_ITEMS: FUTURE_DATA_ITEMS,
     renderAllSections: renderAllSections,
     renderHeader: renderHeader,
-    mountTeamSection: mountTeamSection,
     initCollapsibles: initCollapsibles,
     countCollapsibleListeners: countCollapsibleListeners,
     escapeHtml: escapeHtml,

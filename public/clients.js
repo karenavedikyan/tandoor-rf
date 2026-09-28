@@ -304,25 +304,9 @@
   }
 
   function renderSyncStatus(data) {
-    if (!data) {
-      syncStatusEl.textContent = "";
-      syncStatusEl.className = "clients-sync clients-sync--warning";
-      syncStatusEl.textContent = "Не удалось проверить свежесть данных.";
-      return;
-    }
-    var parts = [];
-    if (data.runningImport) {
-      parts.push("Импорт выполняется…");
-    } else if (data.lastSuccessfulImportAtLabel) {
-      parts.push("Последняя успешная загрузка из 1С: " + data.lastSuccessfulImportAtLabel + " (МСК)");
-    } else {
-      parts.push("Успешная загрузка из 1С ещё не выполнялась.");
-    }
-    syncStatusEl.textContent = parts.join(" ");
-    syncStatusEl.className = "clients-sync" + (data.warning ? " clients-sync--warning" : "");
-    if (data.warning) {
-      syncStatusEl.textContent += " " + data.warning;
-    }
+    var formatted = logic.formatSyncStatusParts(data);
+    syncStatusEl.textContent = formatted.text + formatted.appendWarning;
+    syncStatusEl.className = "clients-sync" + (formatted.warning ? " clients-sync--warning" : "");
   }
 
   function loadSyncStatus() {

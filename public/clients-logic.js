@@ -145,6 +145,36 @@
     return model;
   }
 
+  function formatLoadedInLkLabel(lastImportedAtLabel) {
+    if (!lastImportedAtLabel || String(lastImportedAtLabel).trim() === "") {
+      return "Сведения о загрузке отсутствуют";
+    }
+    return "Загружено в ЛК: " + lastImportedAtLabel + " (МСК)";
+  }
+
+  function formatSyncStatusParts(data) {
+    if (!data) {
+      return {
+        text: "Не удалось проверить статус загрузки.",
+        warning: true,
+        appendWarning: "",
+      };
+    }
+    var parts = [];
+    if (data.runningImport) {
+      parts.push("Импорт выполняется…");
+    } else if (data.lastSuccessfulImportAtLabel) {
+      parts.push("Последний импорт в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+    } else {
+      parts.push("Импорт в ЛК ещё не выполнялся.");
+    }
+    return {
+      text: parts.join(" "),
+      warning: !!data.warning,
+      appendWarning: data.warning ? " " + data.warning : "",
+    };
+  }
+
   function createDetailController(deps) {
     var pageGuid = null;
     var activeRequestId = 0;
@@ -387,6 +417,8 @@
   return {
     readStateFromSearch: readStateFromSearch,
     buildListQueryString: buildListQueryString,
+    formatLoadedInLkLabel: formatLoadedInLkLabel,
+    formatSyncStatusParts: formatSyncStatusParts,
     parseReturnQuery: parseReturnQuery,
     shouldAcceptListResponse: shouldAcceptListResponse,
     shouldAcceptDetailResponse: shouldAcceptDetailResponse,

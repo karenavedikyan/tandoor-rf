@@ -78,6 +78,21 @@
 | R1-I04 | R1.5 | Scheduled import | CLI only | — | ❌ missing | 5c2636c |
 | R1-U01 | R1.4 | UI = прототип v2 | PR #7 interim | Chromium **не проверено**; unit legacy-shell — R0.1/R0.2 | ⏸ blocked | 5c2636c |
 
+### R1.4-prep — подготовка UI «Клиенты» (ограниченный объём)
+
+| ID | Требование | Реализация | Тесты | Приёмка | SHA доказательства |
+|----|------------|------------|-------|---------|----------|
+| R1-P01 | Список: поиск, фильтры, сброс, пагинация | `public/clients.js` + API | unit clients-*; integration workspace | 🟡 prep | PR head |
+| R1-P02 | Возврат из карточки с query | `return` param | unit client-detail-display | 🟡 prep | PR head |
+| R1-P03 | Карточка: шапка, контакты, данные 1С | `client-detail-sections.js` | unit client-detail-display, legacy-shell-dom | 🟡 prep | PR head |
+| R1-P04 | «Загружено в ЛК», не «Обновлено в 1С» | `formatLoadedInLkLabel`, sync status | unit clients-frontend | 🟡 prep | PR head |
+| R1-P05 | Без коммерции / демоданных | placeholders only | unit asserts no Discount | 🟡 prep | PR head |
+| R1-P06 | admin-only сохранён | `requireAdmin` без изменений | integration clients-workspace | 🟡 prep | main |
+| R1-P07 | Exo 2 сохранён; Golos не утверждён | без смены шрифта | n/a | ⏸ blocked UI-B06 | — |
+| R1-P08 | Сверка с прототипом v2 PDF | **не выполнялась** (эталон не в repo) | Chromium visual — см. PR | ⏸ blocked UI-B07 | — |
+
+**R1.4-prep:** 🟡 partial prep — UI на 8 полях; **не** R1.4, **не** пилот. R0.2 partial; R1.1–R1.3 не завершены.
+
 ---
 
 ## UI / Brand (interim PR #7)
@@ -131,6 +146,17 @@
 | `npm run typecheck` | OK |
 | `npm run test:integration` | **не выполнялся** |
 | Образец XML `/LC/catalog/` | **не получен** |
+| Production FTP/БД | **не подключались** |
+
+### R1.4-prep (2026-09-28)
+
+| Проверка | Результат |
+|----------|-----------|
+| SHA main (база) | `371b40d` (PR #10 merged) |
+| `npm test` (unit) | **132 passed**, 0 failed |
+| `npm run typecheck` | OK |
+| `npm run test:integration` | **не выполнялся** (нет PostgreSQL в среде агента) |
+| Chromium 1440/390 light+dark | статические превью + скриншоты в PR (не live API) |
 | Production FTP/БД | **не подключались** |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)

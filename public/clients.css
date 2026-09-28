@@ -282,6 +282,22 @@
   color: var(--rf-text-muted);
 }
 
+.client-detail-header__manager {
+  word-break: break-word;
+}
+
+.client-detail-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--rf-text-muted);
+  line-height: 1.45;
+}
+
+.client-detail-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+}
+
 .legacy-badge {
   display: inline-flex;
   align-items: center;

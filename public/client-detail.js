@@ -192,21 +192,50 @@
       headerEl.outerHTML = sections.renderHeader(client, returnQuery, shell.escapeHtml);
     }
 
-    sections.mountTeamSection(document.getElementById("client-team-section"), client, shell.escapeHtml);
-
     var addressEl = document.getElementById("client-address");
     if (addressEl) {
       addressEl.textContent = client.address || "—";
     }
 
-    var lastImportEl = document.getElementById("client-last-import");
-    if (lastImportEl) {
-      lastImportEl.textContent = client.lastImportedAtLabel + " (МСК)";
+    var onecNameEl = document.getElementById("client-onec-name");
+    if (onecNameEl) {
+      onecNameEl.textContent = client.name || "—";
+    }
+
+    var onecHoldingEl = document.getElementById("client-onec-holding");
+    if (onecHoldingEl) {
+      if (client.holding && client.holding.id) {
+        onecHoldingEl.textContent = client.holding.name + " · " + client.holding.id;
+      } else {
+        onecHoldingEl.textContent = "—";
+      }
+    }
+
+    var onecManagerEl = document.getElementById("client-onec-manager");
+    if (onecManagerEl) {
+      onecManagerEl.textContent = client.manager
+        ? client.manager.name + " · " + client.manager.shortId
+        : "—";
+    }
+
+    var loadedAtEl = document.getElementById("client-loaded-at");
+    if (loadedAtEl) {
+      loadedAtEl.textContent = logic.formatLoadedInLkLabel(client.lastImportedAtLabel);
     }
 
     var uuidEl = document.getElementById("client-uuid");
     if (uuidEl) {
       uuidEl.textContent = client.guid;
+    }
+
+    var holdingUuidEl = document.getElementById("client-holding-uuid");
+    if (holdingUuidEl) {
+      holdingUuidEl.textContent = client.holding && client.holding.id ? client.holding.id : "—";
+    }
+
+    var managerUuidEl = document.getElementById("client-manager-uuid");
+    if (managerUuidEl) {
+      managerUuidEl.textContent = client.manager ? client.manager.id : "—";
     }
 
     renderPhones(client.phones);
