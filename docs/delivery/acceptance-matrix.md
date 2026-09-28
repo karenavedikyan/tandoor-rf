@@ -191,11 +191,12 @@
 | Chromium 1440/390 light+dark × list+card | **8 скриншотов** в `test-results/screenshots/` (переопределение: `TANDOOR_BROWSER_SCREENSHOT_DIR`) |
 | Production FTP/БД | **не подключались** |
 
-### R1.3-prep (2026-09-28, PR)
+### R1.3-prep (2026-09-28, PR #13)
 
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `d2ece0bede51a4543c0ab8c7c9b30435fabefed0` |
+| Проверенный commit PR #13 | `8ed42b2` |
 | Код приложения | **не менялся** |
 | БД / миграции / импорт / права | **не менялись** |
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
