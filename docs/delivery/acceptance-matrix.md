@@ -149,15 +149,19 @@
 | Образец XML `/LC/catalog/` | **не получен** |
 | Production FTP/БД | **не подключались** |
 
-### R1.4-prep (2026-09-28)
+### R1.4-prep (2026-09-28, PR #11)
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA main (база) | `371b40d` (PR #10 merged) |
-| `npm test` (unit) | **132 passed**, 0 failed |
+| SHA main (база) | `371b40d67193efa48a1c48fe14bd43aca530ae9ae` (PR #10) |
+| Проверенный commit PR #11 | `58254e4d5d937922cbe6878441fd179307682f3e` |
+| `npm test` (unit) | **137 passed**, 0 failed |
+| `npm run test:browser` | **7 passed**, 0 failed (Playwright; **mocked API**, real HTML/JS/shell) |
 | `npm run typecheck` | OK |
+| `npm run build` | OK |
 | `npm run test:integration` | **не выполнялся** (нет PostgreSQL в среде агента) |
-| Chromium 1440/390 light+dark | статические превью + скриншоты в PR (не live API) |
+| Серверный requireAdmin (API 401/403) | **не перепроверялся** в этом прогоне; код не менялся |
+| Chromium 1440/390 light+dark × list+card | **8 скриншотов** реальных `/clients` и `/clients/:id` (mock API) |
 | Production FTP/БД | **не подключались** |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
