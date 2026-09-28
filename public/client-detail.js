@@ -236,6 +236,7 @@
 
     renderPhones(client.phones);
     bindCopyAddress();
+    window.ClientCardPrototype.mount(detailRoot, client);
     sections.initCollapsibles(detailRoot);
     detailEl.classList.remove("clients-hidden");
   }

@@ -210,6 +210,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await page.waitForURL(`**/clients/${SYNTHETIC_CLIENT_GUID}**`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
     assert.match(await page.locator("#client-name").textContent(), /Synthetic Client Alpha/);
+    await page.click('[data-card-tab="data"]');
     assert.match(await page.locator("#client-loaded-at").textContent(), /28.09.2026, 12:30/);
     assert.match(await page.locator("#client-source-updated").textContent(), /не передано/);
     await page.click('a.workspace-button--ghost:has-text("К списку")');
@@ -222,6 +223,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     const { page, context } = await openPage();
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    await page.click('[data-card-tab="data"]');
     await page.waitForSelector("#copy-address:not([hidden])");
     await page.click("#copy-address");
     await page.waitForSelector("#copy-address-status.workspace-status--success");
@@ -235,6 +237,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     const { page, context } = await openPage();
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    await page.click('[data-card-tab="data"]');
     const phoneRow = page.locator(".client-detail-phone-row").first();
     await phoneRow.waitFor({ state: "visible" });
     const phoneStatus = phoneRow.locator('[role="status"]');
@@ -285,6 +288,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     const { page, context } = await openPage({}, [CLIPBOARD_REJECT_INIT]);
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    await page.click('[data-card-tab="data"]');
     await page.waitForSelector("#copy-address:not([hidden])");
     await page.click("#copy-address");
     await page.waitForSelector("#copy-address-status.workspace-status--error");
@@ -303,6 +307,8 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.ok(state.listCalls >= 2);
 
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    await page.click('[data-card-tab="data"]');
     await page.waitForSelector('[data-testid="section-tech"] summary');
     await page.click('[data-testid="section-tech"] summary');
     await page.waitForSelector("#client-uuid");
@@ -375,6 +381,12 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await captureScreenshot(page, "clients-detail-1440-dark.png", { width: 1440, height: 900 }, "dark");
     await captureScreenshot(page, "clients-detail-390-light.png", { width: 390, height: 844 }, "light");
     await captureScreenshot(page, "clients-detail-390-dark.png", { width: 390, height: 844 }, "dark");
+    await page.click('[data-card-tab="data"]');
+    for (const width of [1440, 390]) {
+      for (const theme of ["light", "dark"] as const) {
+        await captureScreenshot(page, `clients-data-${width}-${theme}.png`, {width,height:900}, theme);
+      }
+    }
 
     for (const name of [
       "clients-list-1440-light.png",
@@ -388,6 +400,26 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     ]) {
       assert.ok(fs.existsSync(path.join(SCREENSHOT_DIR, name)), `missing screenshot ${name}`);
     }
+    await closePage(page, context);
+  });
+
+  it("navigates prototype tabs without fabricating missing data", async () => {
+    const { page, context } = await openPage();
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#pc-panel-overview");
+    assert.equal(await page.locator('[role="tab"]').count(), 9);
+    assert.equal(await page.locator(".pc-number").allTextContents().then(x => x.join("")), "————");
+    await page.click('[data-card-open="data"]');
+    assert.ok(await page.locator("#pc-panel-data").isVisible());
+    await page.keyboard.press("ArrowRight");
+    assert.ok(await page.locator("#pc-panel-work").isVisible());
+    assert.match(await page.locator("#pc-panel-work").textContent(), /ещё не подключён/);
+    await page.keyboard.press("Home");
+    assert.ok(await page.locator("#pc-panel-overview").isVisible());
+    await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(() => !document.querySelector(".legacy-app")?.classList.contains("sidebar-collapsed"));
+    await page.waitForTimeout(250);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     await closePage(page, context);
   });
 });
