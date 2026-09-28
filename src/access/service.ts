@@ -11,7 +11,13 @@ import {
   ropManagesDelegator,
 } from "./authorization";
 import { assertDelegatorEffectiveClientAccess } from "./delegator-access";
+import {
+  assertActorCanViewDelegationClientsForApproval,
+  resolveDelegationClientsAccess,
+  type DelegationClientEntry,
+} from "./delegation-client-visibility";
 import { enrichDelegationRow } from "./delegation-status";
+import { listDelegatorClientsPicker } from "./delegator-client-picker";
 
 let testFaultAfterDelegationClients = false;
 
@@ -53,6 +59,66 @@ async function maybeHoldConcurrencyAt(point: ConcurrencyHoldPoint): Promise<void
   if (concurrencyHold?.point === point) {
     await concurrencyHold.wait;
   }
+}
+
+async function loadDelegationClientEntries(delegationIds: string[]): Promise<Map<string, DelegationClientEntry[]>> {
+  if (delegationIds.length === 0) {
+    return new Map();
+  }
+  const { query } = await import("../db/pool");
+  const result = await query<{
+    delegation_id: string;
+    guid: string;
+    name: string;
+  }>(
+    `
+      SELECT
+        dc.delegation_id::text,
+        oc.guid_client::text AS guid,
+        oc.name_client AS name
+      FROM delegation_clients dc
+      JOIN onec_clients oc ON oc.guid_client = dc.guid_client
+      WHERE dc.delegation_id = ANY($1::uuid[])
+      ORDER BY oc.name_client ASC
+    `,
+    [delegationIds],
+  );
+  const grouped = new Map<string, DelegationClientEntry[]>();
+  for (const row of result.rows) {
+    const list = grouped.get(row.delegation_id) ?? [];
+    list.push({ guid: row.guid, name: row.name });
+    grouped.set(row.delegation_id, list);
+  }
+  return grouped;
+}
+
+async function enrichOverviewDelegations(
+  actorUserId: string,
+  actorRole: string,
+  rows: Array<Record<string, unknown>>,
+) {
+  const grouped = await loadDelegationClientEntries(rows.map((row) => String(row.id)));
+  const enriched = [];
+  for (const row of rows) {
+    const delegationId = String(row.id);
+    const delegatorUserId = String(row.delegator_user_id ?? actorUserId);
+    const entries = grouped.get(delegationId) ?? [];
+    const access = await resolveDelegationClientsAccess({
+      actorUserId,
+      actorRole,
+      delegatorUserId,
+      entries,
+    });
+    enriched.push(
+      enrichDelegationRow({
+        ...row,
+        client_count: access.access === "visible" ? entries.length : null,
+        clients_access: access.access,
+        clients_access_message: access.access === "restricted" ? access.message : null,
+      }),
+    );
+  }
+  return enriched;
 }
 
 type AuditInput = {
@@ -695,16 +761,26 @@ export async function approveDelegationRequest(input: {
       businessApproverId = actor.id;
     }
 
-    const clientRows = await client.query<{ guid_client: string }>(
+    const clientRows = await client.query<{ guid_client: string; name_client: string }>(
       `
-        SELECT guid_client::text
-        FROM delegation_clients
-        WHERE delegation_id = $1::uuid
+        SELECT oc.guid_client::text, oc.name_client
+        FROM delegation_clients dc
+        JOIN onec_clients oc ON oc.guid_client = dc.guid_client
+        WHERE dc.delegation_id = $1::uuid
       `,
       [input.delegationId],
     );
     const clientGuids = clientRows.rows.map((row) => row.guid_client);
     await assertDelegatorEffectiveClientAccess(client, delegation.delegator_user_id, clientGuids);
+    await assertActorCanViewDelegationClientsForApproval({
+      actorUserId: input.actorUserId,
+      actorRole: input.actorRole,
+      delegatorUserId: delegation.delegator_user_id,
+      entries: clientRows.rows.map((row) => ({
+        guid: row.guid_client,
+        name: row.name_client,
+      })),
+    });
 
     const updated = await client.query(
       `
@@ -947,16 +1023,26 @@ export async function approveDelegationChange(input: {
       businessApproverId = actor.id;
     }
 
-    const clients = await client.query<{ guid_client: string }>(
+    const clients = await client.query<{ guid_client: string; name_client: string }>(
       `
-        SELECT guid_client::text
-        FROM delegation_change_request_clients
-        WHERE change_request_id = $1::uuid
+        SELECT oc.guid_client::text, oc.name_client
+        FROM delegation_change_request_clients dcc
+        JOIN onec_clients oc ON oc.guid_client = dcc.guid_client
+        WHERE dcc.change_request_id = $1::uuid
       `,
       [input.changeRequestId],
     );
     const clientGuids = clients.rows.map((row) => row.guid_client);
     await assertDelegatorEffectiveClientAccess(client, delegation.delegator_user_id, clientGuids);
+    await assertActorCanViewDelegationClientsForApproval({
+      actorUserId: input.actorUserId,
+      actorRole: input.actorRole,
+      delegatorUserId: delegation.delegator_user_id,
+      entries: clients.rows.map((row) => ({
+        guid: row.guid_client,
+        name: row.name_client,
+      })),
+    });
 
     await client.query(`DELETE FROM delegation_clients WHERE delegation_id = $1::uuid`, [
       delegation.id,
@@ -1049,6 +1135,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `
           SELECT
             d.id::text,
+            d.delegator_user_id::text,
             d.status,
             d.starts_at,
             d.ends_at,
@@ -1057,11 +1144,6 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
             delegator.email AS delegator_email,
             assistant.full_name AS assistant_name,
             assistant.email AS assistant_email,
-            (
-              SELECT COUNT(*)::int
-              FROM delegation_clients dc
-              WHERE dc.delegation_id = d.id
-            ) AS client_count,
             EXISTS (
               SELECT 1
               FROM delegation_change_requests dcr
@@ -1080,7 +1162,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         [actorUserId],
       ),
     );
-    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
+    return { delegations: await enrichOverviewDelegations(actorUserId, actorRole, result.rows) };
   }
 
   if (actorRole === "manager") {
@@ -1089,17 +1171,13 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `
           SELECT
             d.id::text,
+            d.delegator_user_id::text,
             d.status,
             d.starts_at,
             d.ends_at,
             d.revoked_at,
             assistant.full_name AS assistant_name,
             assistant.email AS assistant_email,
-            (
-              SELECT COUNT(*)::int
-              FROM delegation_clients dc
-              WHERE dc.delegation_id = d.id
-            ) AS client_count,
             EXISTS (
               SELECT 1
               FROM delegation_change_requests dcr
@@ -1114,7 +1192,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         [actorUserId],
       ),
     );
-    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
+    return { delegations: await enrichOverviewDelegations(actorUserId, actorRole, result.rows) };
   }
 
   if (actorRole === "director") {
@@ -1123,6 +1201,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `
           SELECT
             d.id::text,
+            d.delegator_user_id::text,
             d.status,
             d.starts_at,
             d.ends_at,
@@ -1144,7 +1223,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `,
       ),
     );
-    return { delegations: result.rows.map((row) => enrichDelegationRow(row)) };
+    return { delegations: await enrichOverviewDelegations(actorUserId, actorRole, result.rows) };
   }
 
   if (actorRole === "coordinator") {
@@ -1170,6 +1249,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
         `
           SELECT
             d.id::text,
+            d.delegator_user_id::text,
             d.status,
             d.starts_at,
             d.ends_at,
@@ -1199,7 +1279,7 @@ export async function listScopedOverview(actorUserId: string, actorRole: string)
     );
     return {
       teams: teams.rows,
-      delegations: delegations.rows.map((row) => enrichDelegationRow(row)),
+      delegations: await enrichOverviewDelegations(actorUserId, actorRole, delegations.rows),
     };
   }
 
@@ -1335,14 +1415,14 @@ export async function listClientsForDelegator(input: {
   q?: string;
 }) {
   if (input.actorRole === "manager" && input.actorUserId !== input.delegatorUserId) {
-    throw new AccessServiceError("Менеджер может выбирать только своих клиентов.", "FORBIDDEN");
+    throw new AccessServiceError("Менеджер может выбирать только своих клиентов.", "NOT_FOUND");
   }
   if (input.actorRole === "coordinator") {
     const allowed = await withTransaction(async (client) =>
       coordinatorAssignedToDelegatorTeam(client, input.actorUserId, input.delegatorUserId),
     );
     if (!allowed) {
-      throw new AccessServiceError("Координатор не назначен на команду передающего.", "FORBIDDEN");
+      throw new AccessServiceError("Нет доступа к клиентам передающего.", "NOT_FOUND");
     }
   }
   if (input.actorRole === "rop") {
@@ -1350,14 +1430,13 @@ export async function listClientsForDelegator(input: {
       ropManagesDelegator(client, input.actorUserId, input.delegatorUserId),
     );
     if (!allowed && input.actorUserId !== input.delegatorUserId) {
-      throw new AccessServiceError("РОП может выбирать клиентов только своей команды.", "FORBIDDEN");
+      throw new AccessServiceError("Нет доступа к клиентам передающего.", "NOT_FOUND");
     }
   }
 
   const { loadAccessContext } = await import("./context");
-  const { listClients } = await import("../clients/repository");
   const context = await loadAccessContext(input.delegatorUserId);
-  return listClients(context, {
+  return listDelegatorClientsPicker(context, {
     q: input.q ?? "",
     phone: "all",
     page: input.page,
@@ -1462,11 +1541,47 @@ export async function getDelegationDetail(input: {
       [input.delegationId],
     );
 
+    const currentAccess = await resolveDelegationClientsAccess({
+      actorUserId: input.actorUserId,
+      actorRole: input.actorRole,
+      delegatorUserId: row.delegator_user_id,
+      entries: clients.rows.map((entry) => ({
+        guid: entry.guid,
+        name: entry.name,
+      })),
+    });
+
+    let pendingChangePayload: Record<string, unknown> | null = null;
+    const pendingRow = pendingChange.rows[0];
+    if (pendingRow) {
+      const proposedRaw = Array.isArray(pendingRow.proposed_clients)
+        ? (pendingRow.proposed_clients as Array<{ guid: string; name: string }>)
+        : [];
+      const proposedAccess = await resolveDelegationClientsAccess({
+        actorUserId: input.actorUserId,
+        actorRole: input.actorRole,
+        delegatorUserId: row.delegator_user_id,
+        entries: proposedRaw.map((entry) => ({ guid: entry.guid, name: entry.name })),
+      });
+      pendingChangePayload = {
+        id: pendingRow.id,
+        proposed_starts_at: pendingRow.proposed_starts_at,
+        proposed_ends_at: pendingRow.proposed_ends_at,
+        proposed_clients: proposedAccess.access === "visible" ? proposedAccess.clients : null,
+        clients_access: proposedAccess.access,
+        clients_access_message:
+          proposedAccess.access === "restricted" ? proposedAccess.message : null,
+      };
+    }
+
     const enriched = enrichDelegationRow(row);
     return {
       ...enriched,
-      clients: clients.rows,
-      pending_change_request: pendingChange.rows[0] ?? null,
+      clients: currentAccess.access === "visible" ? currentAccess.clients : null,
+      clients_access: currentAccess.access,
+      clients_access_message:
+        currentAccess.access === "restricted" ? currentAccess.message : null,
+      pending_change_request: pendingChangePayload,
     };
   });
 }

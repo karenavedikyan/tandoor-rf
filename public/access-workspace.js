@@ -277,7 +277,13 @@
       addTextCell(statusLabel(row));
       addTextCell(formatMsk(row.starts_at));
       addTextCell(formatMsk(row.ends_at));
-      addTextCell(row.client_count != null ? String(row.client_count) : "—");
+      addTextCell(
+        row.clients_access === "restricted"
+          ? "—"
+          : row.client_count != null
+            ? String(row.client_count)
+            : "—",
+      );
 
       var actionsTd = document.createElement("td");
       actionsTd.className = "delegation-actions";
@@ -289,7 +295,8 @@
       );
 
       var effective = row.effective_status || row.status;
-      if (canApprove(currentUser.role)) {
+      var clientsVisible = row.clients_access !== "restricted";
+      if (canApprove(currentUser.role) && clientsVisible) {
         if (effective === "pending_approval") {
           actionsTd.appendChild(
             createActionButton("Согласовать", "workspace-button--primary", function () {
@@ -304,6 +311,12 @@
             }),
           );
         }
+      }
+      if (row.clients_access === "restricted") {
+        var restrictedNote = document.createElement("span");
+        restrictedNote.className = "clients-subtitle";
+        restrictedNote.textContent = " Состав клиентов недоступен";
+        actionsTd.appendChild(restrictedNote);
       }
 
       if (effective !== "revoked") {
@@ -340,7 +353,13 @@
     lines.push("<p><strong>Начало (МСК):</strong> " + escapeCell(formatMsk(detail.starts_at)) + "</p>");
     lines.push("<p><strong>Окончание (МСК):</strong> " + escapeCell(formatMsk(detail.ends_at)) + "</p>");
 
-    if (detail.clients && detail.clients.length) {
+    if (detail.clients_access === "restricted") {
+      lines.push(
+        "<p class=\"clients-subtitle\">" +
+          escapeCell(detail.clients_access_message || "Состав клиентов недоступен в пределах ваших полномочий.") +
+          "</p>",
+      );
+    } else if (detail.clients && detail.clients.length) {
       lines.push("<p><strong>Клиенты:</strong></p><ul>");
       detail.clients.forEach(function (c) {
         lines.push("<li>" + escapeCell(c.name) + " (" + escapeCell(c.guid.slice(0, 8)) + "…)</li>");
@@ -353,14 +372,20 @@
       lines.push("<p><strong>Ожидает согласования изменение:</strong></p>");
       lines.push("<p>Начало: " + escapeCell(formatMsk(pcr.proposed_starts_at)) + "</p>");
       lines.push("<p>Окончание: " + escapeCell(formatMsk(pcr.proposed_ends_at)) + "</p>");
-      if (pcr.proposed_clients && pcr.proposed_clients.length) {
+      if (pcr.clients_access === "restricted") {
+        lines.push(
+          "<p class=\"clients-subtitle\">" +
+            escapeCell(pcr.clients_access_message || "Предлагаемый состав недоступен для просмотра.") +
+            "</p>",
+        );
+      } else if (pcr.proposed_clients && pcr.proposed_clients.length) {
         lines.push("<p>Клиенты после изменения:</p><ul>");
         pcr.proposed_clients.forEach(function (c) {
           lines.push("<li>" + escapeCell(c.name) + "</li>");
         });
         lines.push("</ul>");
       }
-      if (detail.clients && detail.clients.length) {
+      if (detail.clients_access !== "restricted" && detail.clients && detail.clients.length) {
         lines.push("<p><em>Отличия от текущего состава — см. списки выше.</em></p>");
       }
     }
@@ -387,9 +412,12 @@
           canProposeChange(currentUser.role) &&
           activeDetail.effective_status === "active" &&
           !activeDetail.pending_change;
-        changeForm.classList.toggle("clients-hidden", !canChange);
+        changeForm.classList.toggle(
+          "clients-hidden",
+          !canChange || activeDetail.clients_access === "restricted",
+        );
 
-        if (canChange) {
+        if (canChange && activeDetail.clients_access !== "restricted") {
           pickers.change.delegatorId = activeDetail.delegator_user_id;
           pickers.change.selected = {};
           (activeDetail.clients || []).forEach(function (c) {
@@ -402,14 +430,23 @@
           loadDelegatorClients("change", "change-client-picker");
         }
 
-        if (intent === "approve" && canApprove(currentUser.role)) {
+        if (
+          intent === "approve" &&
+          canApprove(currentUser.role) &&
+          activeDetail.clients_access !== "restricted"
+        ) {
           actionsEl.appendChild(
             createActionButton("Подтвердить согласование", "workspace-button--primary", function () {
               approveDelegation(activeDetail.id);
             }),
           );
         }
-        if (intent === "approve-change" && canApprove(currentUser.role) && activeDetail.pending_change_request) {
+        if (
+          intent === "approve-change" &&
+          canApprove(currentUser.role) &&
+          activeDetail.pending_change_request &&
+          activeDetail.pending_change_request.clients_access !== "restricted"
+        ) {
           actionsEl.appendChild(
             createActionButton("Подтвердить изменение", "workspace-button--primary", function () {
               approveDelegationChange(activeDetail.pending_change_request.id);

@@ -1227,4 +1227,246 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     assert.equal(coordOverview.status, 200);
     assert.ok(Array.isArray(coordOverview.body.teams));
   });
+
+  it("coordinator delegator client picker returns minimal fields only", async () => {
+    const coordinator = await createTestUser({
+      databaseUrl,
+      email: "coord-picker@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Coord Picker",
+      role: "coordinator",
+    });
+    const adminCookie = await login("admin@example.com");
+    await adminPost(
+      "/api/admin/access/coordinator-teams",
+      {
+        coordinatorUserId: coordinator.id,
+        ropUserId,
+        basis: "picker minimal dto",
+      },
+      adminCookie,
+    );
+    const coordCookie = await login("coord-picker@example.com");
+    const res = await request(await loadApp())
+      .get(
+        `/api/access/delegators/${managerAUserId}/clients?page=1&pageSize=10&q=${encodeURIComponent("Альфа")}`,
+      )
+      .set(authHeaders(coordCookie));
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.items));
+    assert.ok(res.body.items.length >= 1);
+    const item = res.body.items[0];
+    assert.deepEqual(Object.keys(item).sort(), ["guid", "name"]);
+    assert.equal(item.guid, CLIENT_ONE);
+    assert.match(item.name, /Альфа/);
+    assert.equal(res.body.holding, undefined);
+    assert.equal(res.body.address, undefined);
+    assert.equal(res.body.phonePreview, undefined);
+    assert.equal(typeof res.body.total, "number");
+    assert.equal(typeof res.body.page, "number");
+    assert.equal(typeof res.body.pageSize, "number");
+    assert.equal(typeof res.body.totalPages, "number");
+  });
+
+  it("coordinator cannot load client picker for foreign team manager", async () => {
+    const coordinator = await createTestUser({
+      databaseUrl,
+      email: "coord-foreign@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Coord Foreign",
+      role: "coordinator",
+    });
+    const adminCookie = await login("admin@example.com");
+    await adminPost(
+      "/api/admin/access/coordinator-teams",
+      {
+        coordinatorUserId: coordinator.id,
+        ropUserId,
+        basis: "picker foreign guard",
+      },
+      adminCookie,
+    );
+    const coordCookie = await login("coord-foreign@example.com");
+    const res = await request(await loadApp())
+      .get(`/api/access/delegators/${managerBUserId}/clients?page=1&pageSize=10`)
+      .set(authHeaders(coordCookie));
+    assert.equal(res.status, 404);
+    assert.equal(res.body.items, undefined);
+    assert.equal(res.body.total, undefined);
+  });
+
+  it("all_clients deny hides client composition in delegation detail and overview", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "before all_clients deny",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: managerAUserId,
+        scopeType: "all_clients",
+        reason: "global deny detail leak test",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const clientsApi = await request(await loadApp())
+      .get("/api/clients")
+      .set(authHeaders(managerCookie));
+    assert.equal(clientsApi.status, 403);
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(managerCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(CLIENT_ONE));
+
+    const overview = await request(await loadApp())
+      .get("/api/access/overview")
+      .set(authHeaders(managerCookie));
+    assert.equal(overview.status, 200);
+    const row = overview.body.delegations.find((item: { id: string }) => item.id === delegationId);
+    assert.ok(row);
+    assert.equal(row.client_count, null);
+    assert.equal(row.clients_access, "restricted");
+
+    const ropDetail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(ropCookie));
+    assert.equal(ropDetail.status, 200);
+    assert.equal(ropDetail.body.delegation.clients_access, "visible");
+    assert.ok(Array.isArray(ropDetail.body.delegation.clients));
+    assert.ok(ropDetail.body.delegation.clients.length >= 1);
+
+    const approve = await accessPost(
+      `/api/access/delegations/${delegationId}/approve`,
+      { basis: "blocked by delegator deny" },
+      ropCookie,
+    );
+    assert.equal(approve.status, 403);
+
+    const revoke = await accessPost(
+      `/api/access/delegations/${delegationId}/revoke`,
+      { basis: "denied manager revoke", reason: "policy" },
+      managerCookie,
+    );
+    assert.equal(revoke.status, 200);
+  });
+
+  it("single client deny hides composition without leaking denied client", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE, CLIENT_THREE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "partial deny leak test",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: managerAUserId,
+        scopeType: "client",
+        objectId: CLIENT_ONE,
+        reason: "hide alpha only",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(managerCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(CLIENT_ONE));
+    assert.doesNotMatch(JSON.stringify(detail.body), /Gamma/);
+  });
+
+  it("revoked employee link blocks delegation client composition read", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: false,
+        basis: "link revoke leak test",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const overviewBefore = await request(await loadApp())
+      .get("/api/admin/access/overview")
+      .set(authHeaders(adminCookie));
+    const link = overviewBefore.body.links.find(
+      (row: { user_id: string; revoked_at: string | null }) =>
+        row.user_id === managerAUserId && !row.revoked_at,
+    );
+    assert.ok(link);
+    const revokeLink = await adminPost(
+      `/api/admin/access/employee-links/${link.id}/revoke`,
+      { basis: "revoke link", reason: "rotation" },
+      adminCookie,
+    );
+    assert.equal(revokeLink.status, 200);
+
+    const clientsApi = await request(await loadApp())
+      .get("/api/clients")
+      .set(authHeaders(managerCookie));
+    assert.equal(clientsApi.status, 403);
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(managerCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+  });
 });

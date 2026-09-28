@@ -235,6 +235,17 @@
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
 | Сценарии ACC-* | спецификация; **автотесты не реализованы** |
 
+### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| Базовый SHA (до round 4) | `3e52e42271c6a67213fa66e98c0c36303640aeb8` |
+| Coordinator picker DTO | только `guid` + `name` + pagination; foreign manager → 404 |
+| Delegation detail leak | `clients_access: restricted` при deny; без GUID/имён в JSON |
+| `npm run test:integration` | **92 passed**, 0 failed (**39** access-control) |
+| `npm test` (unit) | **148 passed** |
+| `npm run test:browser` | **20 passed** |
+
 ### R1.3 fixes round 3 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
 
 | Проверка | Результат |
