@@ -19,16 +19,33 @@
 
 | Поле | Тип JSON | Смысл (контракт UI/БД) | Обязательность | Пустые значения | ID / связи | Импорт main | Релиз |
 |------|----------|------------------------|----------------|---------------|------------|-------------|-------|
-| `guid_client` | string UUID v4 | Стабильный ID **строки snapshot** в ЛК; PK `onec_clients` | да | null UUID запрещён | PK; **не** утверждение «юрлицо» или «ТТ» | validate + upsert | **R1** (есть) |
+| `guid_client` | string UUID | Стабильный ID **строки snapshot** в ЛК; PK `onec_clients` | да | null UUID запрещён | PK; **не** утверждение «юрлицо» или «ТТ» | validate + upsert | **R1** (есть) |
 | `name_client` | string | Отображаемое имя клиента в списке/карточке | да | trim → пусто = **ошибка** `EMPTY_NAME` | не связывать с другими объектами по имени | сохраняется | R1 |
 | `guid_holding` | string | UUID холдинга **на строке** | ключ обязателен | `""` → NULL в БД | пара с `name_holding`; **не** нормализованная таблица | сохраняется | R1 |
 | `name_holding` | string | Имя холдинга на строке | ключ обязателен | `""` допустимо только если `guid_holding` тоже `""` | **HOLDING_CONTRACT:** id и name оба пустые или оба непустые | сохраняется | R1 |
-| `guid_manager` | string UUID | ID менеджера **из 1С** на записи клиента | да | null UUID запрещён | **не** `users.id` ЛК; **не** проверяется на существование справочника сотрудников | сохраняется | R1 |
+| `guid_manager` | string UUID | ID менеджера **из 1С** на записи клиента | да | null UUID запрещён; см. §1.1 | **не** `users.id` ЛК; **не** проверяется на существование справочника сотрудников | сохраняется | R1 |
 | `name_manager` | string | ФИО/имя менеджера из 1С | да | trim → пусто = **ошибка** | не использовать для user↔1C mapping | сохраняется | R1 |
 | `address` | string | Фактический адрес (как в выгрузке) | ключ обязателен | `""` → warning `EMPTY_ADDRESS`, запись **принимается** | **не** место доставки и **не** ТТ автоматически | сохраняется как есть | R1 |
 | `telephone` | string[] | Массив телефонных строк | ключ обязателен | `[]` или все пустые → warning `EMPTY_TELEPHONE` | элементы — string; не связывать клиентов по телефону | JSONB array | R1 |
 
 **Источник кода:** `src/onec-clients/constants.ts`, `validate.ts`, migration `002_onec_clients.sql`.
+
+### 1.1 Правила UUID в валидаторе (контракт кода, не 1С)
+
+Источник: `src/onec-clients/uuid.ts` → `isValidNonZeroUuid` / `isEmptyOrValidNonZeroUuid`.
+
+| Правило | Поведение |
+|---------|-----------|
+| Формат | RFC-4122-подобная строка `8-4-4-4-12` hex |
+| Версия (4-й блок, старший nibble) | **1–5** допустимы |
+| Variant (4-й блок, старший nibble 3-й группы) | **8, 9, a, b** (регистр не важен до normalize) |
+| Null UUID | `00000000-0000-0000-0000-000000000000` → **отклоняется** |
+| Нормализация | trim + lower case в parsed-записи |
+| `guid_holding` | дополнительно: пустая строка **без** UUID допустима |
+
+**Не утверждается:** какую версию UUID генерирует 1С — только то, что **принимает** текущий импорт.
+
+Синтетика: `valid-uuid-v5.json` (R0.2 fixtures).
 
 ---
 
@@ -89,6 +106,7 @@
 | `extra-unknown-fields.json` | Discount/Markups (синтетика) | ok + `EXTRA_FIELDS` |
 | `holding-id-without-name.json` | несогласованная пара holding | `HOLDING_CONTRACT` |
 | `invalid-json.json`, `truncated-json.json` | повреждённый документ | `INVALID_JSON` |
-| `repeat-snapshot.json` | повтор того же ID | ok (повторная загрузка — см. exchange-rules) |
+| `repeat-snapshot.json` | та же нормализованная запись, что первая в `valid-two-records` | ok (**только** validate; не apply/БД) |
+| `valid-uuid-v5.json` | ненулевой UUID версии 5 | ok |
 
 Тесты: `test/unit/onec-clients-synthetic-fixtures.test.ts`.

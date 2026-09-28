@@ -1,0 +1,12 @@
+[
+  {
+    "guid_client": "886313e1-3b8a-5372-9b63-92f9c79bd42a",
+    "name_client": "Synthetic UUID v5 Client",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    "name_manager": "Synthetic Manager UUID v1",
+    "address": "Synthetic Address",
+    "telephone": ["+70000000010"]
+  }
+]

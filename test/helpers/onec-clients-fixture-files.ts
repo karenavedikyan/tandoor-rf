@@ -18,4 +18,5 @@ export const CLIENTS_FIXTURE_NAMES = {
   invalidJson: "invalid-json.json",
   truncatedJson: "truncated-json.json",
   repeatSnapshot: "repeat-snapshot.json",
+  validUuidV5: "valid-uuid-v5.json",
 } as const;
