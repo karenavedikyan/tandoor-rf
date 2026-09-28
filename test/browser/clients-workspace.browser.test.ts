@@ -15,7 +15,27 @@ import {
   type MockOptions,
 } from "./helpers/clients-api-mocks";
 
-const SCREENSHOT_DIR = "/opt/cursor/artifacts/screenshots";
+const SCREENSHOT_DIR =
+  process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
+  path.join(process.cwd(), "test-results", "screenshots");
+
+const CLIPBOARD_SPY_INIT = () => {
+  const win = window as typeof window & { __clipboardWriteCalls?: string[] };
+  win.__clipboardWriteCalls = [];
+  const clipboard = navigator.clipboard;
+  if (!clipboard?.writeText) {
+    return;
+  }
+  const original = clipboard.writeText.bind(clipboard);
+  clipboard.writeText = async (text: string) => {
+    win.__clipboardWriteCalls!.push(text);
+    return original(text);
+  };
+};
+
+const CLIPBOARD_REJECT_INIT = () => {
+  navigator.clipboard.writeText = () => Promise.reject(new Error("clipboard denied"));
+};
 
 type MockState = { listCalls: number };
 
@@ -58,14 +78,35 @@ function createMockController(page: Page, initial: MockOptions = {}) {
   };
 }
 
-async function setTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.evaluate((value) => {
-    if (value === "dark") {
-      document.documentElement.setAttribute("data-theme", "dark");
-    } else {
-      document.documentElement.removeAttribute("data-theme");
-    }
-  }, theme);
+async function readTheme(page: Page): Promise<"light" | "dark"> {
+  return page.evaluate(() =>
+    document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light",
+  );
+}
+
+async function readStoredTheme(page: Page): Promise<string | null> {
+  return page.evaluate(() => localStorage.getItem("tandoor-rf-theme"));
+}
+
+async function readLogoSrc(page: Page): Promise<string> {
+  const src = await page.locator("[data-legacy-logo-full]").first().getAttribute("src");
+  assert.ok(src);
+  return src;
+}
+
+async function ensureTheme(page: Page, theme: "light" | "dark"): Promise<void> {
+  if ((await readTheme(page)) === theme) {
+    return;
+  }
+  await page.click("[data-theme-toggle]");
+  await page.waitForFunction(
+    (expected) => {
+      const actual =
+        document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+      return actual === expected;
+    },
+    theme,
+  );
 }
 
 async function captureScreenshot(
@@ -75,7 +116,7 @@ async function captureScreenshot(
   theme: "light" | "dark",
 ): Promise<void> {
   await page.setViewportSize(viewport);
-  await setTheme(page, theme);
+  await ensureTheme(page, theme);
   await page.waitForTimeout(200);
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
   await page.screenshot({
@@ -111,8 +152,12 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
 
   async function openPage(
     options: MockOptions = {},
+    initScripts: Array<() => void> = [],
   ): Promise<{ page: Page; context: BrowserContext; mocks: ReturnType<typeof createMockController> }> {
     const context = await browser.newContext();
+    for (const script of initScripts) {
+      await context.addInitScript(script);
+    }
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
     const page = await context.newPage();
     const mocks = createMockController(page, options);
@@ -159,7 +204,6 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
 
   it("opens card and returns to list preserving query", async () => {
     const { page, context } = await openPage();
-    const returnQuery = encodeURIComponent("?q=Synthetic&page=1");
     await page.goto(`${baseUrl}/clients?q=Synthetic&page=1`);
     await page.waitForSelector(".clients-table tbody tr a.clients-link");
     await page.click(".clients-table tbody tr a.clients-link");
@@ -174,19 +218,54 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
-  it("handles address copy, empty address, and phone copy controls", async () => {
-    const { page, context, mocks } = await openPage();
+  it("copies address with exact clipboard content and success message", async () => {
+    const { page, context } = await openPage();
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
     await page.waitForSelector("#copy-address:not([hidden])");
     await page.click("#copy-address");
-    await page.waitForFunction(() => {
-      const el = document.getElementById("copy-address-status");
-      return Boolean(el?.textContent?.trim());
-    });
-    assert.match(await page.textContent("#copy-address-status"), /скопирован|Не удалось/i);
+    await page.waitForSelector("#copy-address-status.workspace-status--success");
+    assert.equal(await page.textContent("#copy-address-status"), "Адрес скопирован");
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(clipboardText, "Москва, ул. Пример 1");
+    await closePage(page, context);
+  });
 
-    mocks.set({ detailBody: syntheticDetailPayload({ address: "   " }) });
+  it("copies phone with exact clipboard content and success message", async () => {
+    const { page, context } = await openPage();
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    const phoneRow = page.locator(".client-detail-phone-row").first();
+    await phoneRow.waitFor({ state: "visible" });
+    const phoneStatus = phoneRow.locator('[role="status"]');
+    await phoneRow.locator('button:has-text("Копировать")').click();
+    await phoneStatus.waitFor({ state: "visible" });
+    await phoneRow.locator(".workspace-status--success").waitFor();
+    assert.equal(await phoneStatus.textContent(), "Скопировано");
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(clipboardText, "+7 (999) 000-11-22");
+    await closePage(page, context);
+  });
+
+  it("does not call clipboard for empty or whitespace-only address", async () => {
+    const { page, context, mocks } = await openPage(
+      { detailBody: syntheticDetailPayload({ address: "   " }) },
+      [CLIPBOARD_SPY_INIT],
+    );
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    assert.match(await page.locator("#client-address").textContent(), /Адрес не указан/);
+    assert.equal(
+      await page.locator("#copy-address").evaluate((el) => (el as HTMLButtonElement).hidden),
+      true,
+    );
+    let clipboardCalls = await page.evaluate(() => {
+      const win = window as typeof window & { __clipboardWriteCalls?: string[] };
+      return win.__clipboardWriteCalls?.length ?? 0;
+    });
+    assert.equal(clipboardCalls, 0, "whitespace-only address must not invoke clipboard");
+
+    mocks.set({ detailBody: syntheticDetailPayload({ address: "" }) });
     await page.reload();
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
     assert.match(await page.locator("#client-address").textContent(), /Адрес не указан/);
@@ -194,14 +273,23 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
       await page.locator("#copy-address").evaluate((el) => (el as HTMLButtonElement).hidden),
       true,
     );
+    clipboardCalls = await page.evaluate(() => {
+      const win = window as typeof window & { __clipboardWriteCalls?: string[] };
+      return win.__clipboardWriteCalls?.length ?? 0;
+    });
+    assert.equal(clipboardCalls, 0, "empty address must not invoke clipboard");
+    await closePage(page, context);
+  });
 
-    mocks.set({ detailBody: syntheticDetailPayload() });
-    await page.reload();
+  it("shows address copy error without false success when clipboard fails", async () => {
+    const { page, context } = await openPage({}, [CLIPBOARD_REJECT_INIT]);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#client-detail:not(.clients-hidden)");
-    const phoneRow = page.locator(".client-detail-phone-row").first();
-    await phoneRow.waitFor({ state: "visible" });
-    assert.match(await phoneRow.textContent(), /\+7/);
-    assert.ok(await phoneRow.locator('button:has-text("Копировать")').isVisible());
+    await page.waitForSelector("#copy-address:not([hidden])");
+    await page.click("#copy-address");
+    await page.waitForSelector("#copy-address-status.workspace-status--error");
+    assert.equal(await page.textContent("#copy-address-status"), "Не удалось скопировать адрес");
+    assert.notEqual(await page.locator("#copy-address-status").getAttribute("class"), "workspace-status workspace-status--success");
     await closePage(page, context);
   });
 
@@ -227,7 +315,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
-  it("shows forbidden access for non-admin and keeps keyboard focus on search", async () => {
+  it("shows forbidden access for non-admin mock and keeps keyboard focus on search", async () => {
     const { page, context } = await openPage({ role: "manager" });
     await page.goto(`${baseUrl}/clients`);
     await page.waitForSelector('#access-panel[data-state="forbidden"]');
@@ -241,6 +329,33 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     const focused = await adminPage.page.evaluate(() => document.activeElement?.id);
     assert.equal(focused, "search-input");
     await closePage(adminPage.page, adminPage.context);
+  });
+
+  it("switches theme via app toggle, updates logo, and persists after reload", async () => {
+    const { page, context } = await openPage();
+    await page.goto(`${baseUrl}/clients`);
+    await page.waitForSelector("[data-theme-toggle]");
+
+    await ensureTheme(page, "light");
+    assert.match(await readLogoSrc(page), /tandoor-logo-official\.svg/);
+
+    await page.click("[data-theme-toggle]");
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
+    assert.equal(await readTheme(page), "dark");
+    assert.match(await readLogoSrc(page), /tandoor-logo-light\.svg/);
+    assert.equal(await readStoredTheme(page), "dark");
+
+    await page.reload();
+    await page.waitForSelector("[data-theme-toggle]");
+    assert.equal(await readTheme(page), "dark");
+    assert.match(await readLogoSrc(page), /tandoor-logo-light\.svg/);
+
+    await page.click("[data-theme-toggle]");
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light");
+    assert.equal(await readTheme(page), "light");
+    assert.match(await readLogoSrc(page), /tandoor-logo-official\.svg/);
+    assert.equal(await readStoredTheme(page), "light");
+    await closePage(page, context);
   });
 
   it("captures eight real UI screenshots on synthetic mocked data", async () => {

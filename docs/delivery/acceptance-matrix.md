@@ -86,11 +86,12 @@
 | R1-P02 | Возврат из карточки с query | `return` param | unit client-detail-display | 🟡 prep | PR head |
 | R1-P03 | Карточка: сотруднические подписи, без UUID в основном UI | `client-detail-sections.js` | unit + browser mocked API | 🟡 prep | PR head |
 | R1-P04 | «Загружено в ЛК»; «Время обновления в 1С не передано» | `formatLoadedInLkLabel`, sync status | unit + browser | 🟡 prep | PR head |
-| R1-P05 | Копирование адреса (пустой / пробелы / ошибка clipboard) | `resolveAddressPresentation`, copy controller | unit address + browser | 🟡 prep | PR head |
+| R1-P05 | Копирование адреса и телефона (точный буфер, успех/ошибка, без вызова clipboard для пустого) | `resolveAddressPresentation`, copy controller | unit address + browser (отдельные сценарии адрес/телефон/отказ) | 🟡 prep | PR head |
 | R1-P06 | Без коммерции / демоданных | placeholders only | unit asserts no Discount | 🟡 prep | PR head |
 | R1-P07 | admin-only сохранён | `requireAdmin` без изменений | **integration не перезапускался** (нет PostgreSQL) | 🟡 prep | main |
 | R1-P08 | Exo 2 сохранён; Golos не утверждён | без смены шрифта | n/a | ⏸ blocked UI-B06 | — |
-| R1-P09 | Сверка с прототипом v2 PDF | **не выполнялась** (эталон не в repo) | browser 8 screenshots (real pages, mocked API) | ⏸ blocked UI-B07 | PR head |
+| R1-P09 | Сверка с прототипом v2 PDF | **не выполнялась** (эталон не в repo) | browser 8 screenshots (`test-results/screenshots`, theme toggle UI) | ⏸ blocked UI-B07 | PR head |
+| R1-P10 | Переключение темы через UI, логотип, сохранение после reload | `clients-shell.js` toggle | browser mocked API | 🟡 prep | PR head |
 
 **R1.4-prep:** 🟡 partial prep — UI на 8 полях; **не** R1.4, **не** пилот. R0.2 partial; R1.1–R1.3 не завершены.
 
@@ -154,14 +155,16 @@
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `371b40d67193efa48a1c48fe14bd43aca530ae9ae` (PR #10) |
-| Проверенный commit PR #11 | `58254e4d5d937922cbe6878441fd179307682f3e` |
+| Проверенный commit PR #11 | см. HEAD ветки `cursor/r1.4-prep-clients-ui-896d` |
 | `npm test` (unit) | **137 passed**, 0 failed |
-| `npm run test:browser` | **7 passed**, 0 failed (Playwright; **mocked API**, real HTML/JS/shell) |
+| `npm run test:browser` | **11 passed**, 0 failed (Playwright; **mocked API**, real HTML/JS/shell; без прав администратора) |
 | `npm run typecheck` | OK |
 | `npm run build` | OK |
 | `npm run test:integration` | **не выполнялся** (нет PostgreSQL в среде агента) |
-| Серверный requireAdmin (API 401/403) | **не перепроверялся** в этом прогоне; код не менялся |
-| Chromium 1440/390 light+dark × list+card | **8 скриншотов** реальных `/clients` и `/clients/:id` (mock API) |
+| Серверный requireAdmin (API 401/403) | **не перепроверялся**; mock «Нет доступа» ≠ проверка серверной защиты |
+| Копирование адрес/телефон | отдельные клики; точный буфер; успех/ошибка без «ИЛИ»; пустой/пробельный адрес — 0 вызовов clipboard |
+| Тема | штатная кнопка `[data-theme-toggle]`; логотип official/light; `localStorage` после reload |
+| Chromium 1440/390 light+dark × list+card | **8 скриншотов** в `test-results/screenshots/` (переопределение: `TANDOOR_BROWSER_SCREENSHOT_DIR`) |
 | Production FTP/БД | **не подключались** |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
