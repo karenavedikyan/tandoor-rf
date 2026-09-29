@@ -79,6 +79,8 @@ export type ClientsSyncStatusResponse = {
   lastAttemptAtLabel: string | null;
   lastVerifiedAt: string | null;
   lastVerifiedAtLabel: string | null;
+  /** Whether 1C source formation time is known (distinct from LK load time). */
+  sourceFormationKnown: boolean;
   lastSourceModifiedAt: string | null;
   lastSourceModifiedAtLabel: string | null;
   runningImport: boolean;
@@ -90,6 +92,7 @@ export type ClientsSyncStatusResponse = {
     committedSha256: string | null;
     verifiedSha256: string | null;
     warningCount: number | null;
+    warningsTruncated: boolean | null;
     applyBlocked: boolean;
   };
 };

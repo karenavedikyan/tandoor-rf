@@ -96,6 +96,23 @@ describe("scheduled exchange integration", { concurrency: false }, () => {
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM onec_clients")).rows[0].count, 1);
   });
 
+  it("records CONFIG_ERROR in journal when database is available", async () => {
+    const result = await runScheduledExchangeCycle({
+      env: { ...env, ONEC_FTP_ENABLED: "false" },
+      ftpReader: reader,
+    });
+    assert.equal(result.status, "CONFIG_ERROR");
+    assert.ok(result.checkRunId);
+    const journal = (
+      await pool.query<{ mode: string; stage: string; error_code: string | null }>(
+        "SELECT mode, stage, error_code FROM onec_client_import_runs ORDER BY started_at DESC LIMIT 1",
+      )
+    ).rows[0];
+    assert.equal(journal?.mode, "scheduled_check");
+    assert.equal(journal?.stage, "config");
+    assert.equal(journal?.error_code, "CONFIG_ERROR");
+  });
+
   it("skips when FTP matches the committed database snapshot", async () => {
     const sha = buildClientsFileSha256([sampleClient()]);
     const applied = await runScheduledExchangeCycle({

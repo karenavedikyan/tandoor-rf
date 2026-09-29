@@ -99,6 +99,16 @@ describe("clients frontend logic", () => {
     assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С|FTP/i);
   });
 
+  it("shows unknown 1C formation date separately from LK load time", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      lastSuccessfulImportAtLabel: "28.09.2026, 09:00",
+      sourceFormationKnown: false,
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК/);
+    assert.match(formatted.text, /Дата формирования выгрузки 1С неизвестна/);
+  });
+
   it("keeps applied UUID while editing draft search text", () => {
     const options = [{ id: "a", name: "Менеджер A", shortId: "11111111" }];
     const model = logic.createComboboxModel();

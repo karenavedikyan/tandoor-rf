@@ -1,7 +1,8 @@
 import { combineScopeAndFilter } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
-import { query } from "../db/pool";
+import { getPool, query } from "../db/pool";
+import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
 import {
@@ -199,9 +200,10 @@ export async function getClientsSyncStatus(options: {
     finished_at: Date | null;
     error_code: string | null;
     warning_count: number | null;
+    warnings_truncated: boolean | null;
   }>(
     `
-      SELECT status, finished_at, error_code, warning_count
+      SELECT status, finished_at, error_code, warning_count, warnings_truncated
       FROM onec_client_import_runs
       ORDER BY started_at DESC
       LIMIT 1
@@ -228,7 +230,20 @@ export async function getClientsSyncStatus(options: {
   const lastAttemptAt = state?.last_attempt_at ?? null;
   const lastVerifiedAt = state?.last_verified_at ?? null;
   const lastVerifiedSha256 = state?.last_verified_sha256 ?? null;
-  const committedSha256 = state?.last_successful_apply_sha256 ?? null;
+  const sourceFormationKnown = state?.last_source_modified_at != null;
+
+  let committedSha256 = state?.last_successful_apply_sha256 ?? null;
+  if (!committedSha256) {
+    const activePool = getPool();
+    if (activePool) {
+      const client = await activePool.connect();
+      try {
+        committedSha256 = await getCommittedSnapshotSha(client);
+      } finally {
+        client.release();
+      }
+    }
+  }
   const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
   const latestRun = latest.rows[0];
 
@@ -275,6 +290,7 @@ export async function getClientsSyncStatus(options: {
     lastAttemptAtLabel: lastAttemptAt ? formatMskDateTime(lastAttemptAt) : null,
     lastVerifiedAt: lastVerifiedAt?.toISOString() ?? null,
     lastVerifiedAtLabel: lastVerifiedAt ? formatMskDateTime(lastVerifiedAt) : null,
+    sourceFormationKnown,
     lastSourceModifiedAt: state?.last_source_modified_at?.toISOString() ?? null,
     lastSourceModifiedAtLabel: state?.last_source_modified_at
       ? formatMskDateTime(state.last_source_modified_at)
@@ -290,6 +306,7 @@ export async function getClientsSyncStatus(options: {
       committedSha256,
       verifiedSha256: lastVerifiedSha256,
       warningCount: latestRun?.warning_count ?? null,
+      warningsTruncated: latestRun?.warnings_truncated ?? null,
       applyBlocked: state?.apply_blocked ?? false,
     };
   }

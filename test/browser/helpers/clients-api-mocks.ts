@@ -105,6 +105,8 @@ export function syntheticSyncStatusPayload() {
     freshnessState: "current",
     lastSuccessfulImportAt: "2026-09-28T09:00:00.000Z",
     lastSuccessfulImportAtLabel: "28.09.2026, 12:00",
+    sourceFormationKnown: false,
+    lastSourceModifiedAtLabel: null,
     runningImport: false,
     warning: null,
   };

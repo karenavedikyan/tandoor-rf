@@ -8,11 +8,13 @@ import { tryAcquireImportLock, releaseImportLock } from "../onec-clients/import-
 import { readStableClientsFile } from "../onec-clients/read-stable";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
 import {
-  getDbCommittedSnapshotSha,
+  ensureExchangeStateInitialized,
+  getCommittedSnapshotSha,
   loadExchangeState,
   markExchangeAttempt,
   markExchangeVerified,
 } from "../onec-exchange/state";
+import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { loadScheduledExchangeConfig, type ScheduledExchangeConfig } from "./config";
 
 export type ScheduledExchangeStage =
@@ -63,6 +65,7 @@ async function insertCycleJournal(
     recordCount?: number;
     warningCount?: number;
     warningsJson?: string;
+    warningsTruncated?: boolean;
     errorCode?: string;
     durationMs?: number;
     parentRunId?: string;
@@ -80,8 +83,9 @@ async function insertCycleJournal(
           source_record_count = COALESCE($6, source_record_count),
           warning_count = COALESCE($7, warning_count),
           warnings = COALESCE($8::jsonb, warnings),
-          error_code = $9,
-          duration_ms = COALESCE($10, duration_ms),
+          warnings_truncated = COALESCE($9, warnings_truncated),
+          error_code = $10,
+          duration_ms = COALESCE($11, duration_ms),
           finished_at = CASE WHEN $2 = 'running' THEN NULL ELSE NOW() END
         WHERE id = $1::uuid
       `,
@@ -94,6 +98,7 @@ async function insertCycleJournal(
         input.recordCount ?? null,
         input.warningCount ?? null,
         input.warningsJson ?? null,
+        input.warningsTruncated ?? null,
         input.errorCode ?? null,
         input.durationMs ?? null,
       ],
@@ -114,6 +119,7 @@ async function insertCycleJournal(
         source_record_count,
         warning_count,
         warnings,
+        warnings_truncated,
         error_code,
         duration_ms,
         finished_at
@@ -131,6 +137,7 @@ async function insertCycleJournal(
         $8::jsonb,
         $9,
         $10,
+        $11,
         CASE WHEN $1 = 'running' THEN NULL ELSE NOW() END
       )
       RETURNING id::text
@@ -144,6 +151,7 @@ async function insertCycleJournal(
       input.recordCount ?? null,
       input.warningCount ?? null,
       input.warningsJson ?? null,
+      input.warningsTruncated ?? false,
       input.errorCode ?? null,
       input.durationMs ?? null,
     ],
@@ -153,6 +161,7 @@ async function insertCycleJournal(
 
 function resolveApplyAuthorization(
   config: ScheduledExchangeConfig,
+  committedSha: string | null,
   state: Awaited<ReturnType<typeof loadExchangeState>>,
   payload: ValidatedClientsPayload,
 ): { ok: true } | { ok: false; code: "BASELINE_REQUIRED" | "HASH_MISMATCH"; message: string } {
@@ -160,7 +169,7 @@ function resolveApplyAuthorization(
     return { ok: false, code: "HASH_MISMATCH", message: "Apply disabled." };
   }
 
-  if (!state.last_successful_apply_at) {
+  if (!committedSha) {
     const baseline = config.acceptedBaselineSha256 ?? state.accepted_baseline_sha256;
     if (!baseline) {
       return {
@@ -187,6 +196,15 @@ function failureResult(
   return { ...input, durationMs: Date.now() - input.startedAt };
 }
 
+function journalizePayloadWarnings(payload: ValidatedClientsPayload) {
+  const prepared = prepareJournalWarnings(payload.warnings);
+  return {
+    warningCount: prepared.warningCount,
+    warningsJson: prepared.warningsJson,
+    warningsTruncated: prepared.warningsTruncated,
+  };
+}
+
 export async function runScheduledExchangeCycle(
   options: {
     env?: NodeJS.ProcessEnv;
@@ -197,17 +215,6 @@ export async function runScheduledExchangeCycle(
   const startedAt = Date.now();
   const env = options.env ?? process.env;
   const config = options.config ?? loadScheduledExchangeConfig(env);
-
-  const loadedConfig = loadOnecFtpConfig(env);
-  if (!loadedConfig.ok) {
-    return failureResult({
-      status: "CONFIG_ERROR",
-      stage: "config",
-      startedAt,
-      errorCode: "CONFIG_ERROR",
-      message: loadedConfig.message,
-    });
-  }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
@@ -234,6 +241,25 @@ export async function runScheduledExchangeCycle(
 
   try {
     client = await pool.connect();
+
+    const loadedConfig = loadOnecFtpConfig(env);
+    if (!loadedConfig.ok) {
+      cycleRunId = await insertCycleJournal(client, {
+        status: "failed",
+        stage: "config",
+        errorCode: "CONFIG_ERROR",
+        durationMs: Date.now() - startedAt,
+      });
+      return failureResult({
+        status: "CONFIG_ERROR",
+        stage: "config",
+        startedAt,
+        checkRunId: cycleRunId,
+        errorCode: "CONFIG_ERROR",
+        message: loadedConfig.message,
+      });
+    }
+
     await markExchangeAttempt(client);
 
     lockHeld = await tryAcquireImportLock(client);
@@ -259,7 +285,8 @@ export async function runScheduledExchangeCycle(
       stage: "lock",
     });
 
-    const committedBeforeRead = await getDbCommittedSnapshotSha(client);
+    await ensureExchangeStateInitialized(client);
+    const committedBeforeRead = await getCommittedSnapshotSha(client);
 
     let stableRead = await readStableClientsFile(loadedConfig.config, {
       reader: options.ftpReader,
@@ -306,6 +333,7 @@ export async function runScheduledExchangeCycle(
     }
 
     const payload = stableRead.payload;
+    const payloadWarnings = journalizePayloadWarnings(payload);
     await markExchangeVerified(client, { sha256: payload.sha256 });
 
     await insertCycleJournal(client, {
@@ -315,8 +343,9 @@ export async function runScheduledExchangeCycle(
       sha256: payload.sha256,
       byteSize: payload.byteSize,
       recordCount: payload.recordCount,
-      warningCount: payload.warningCount,
-      warningsJson: JSON.stringify(payload.warnings),
+      warningCount: payloadWarnings.warningCount,
+      warningsJson: payloadWarnings.warningsJson,
+      warningsTruncated: payloadWarnings.warningsTruncated,
     });
 
     if (payload.sha256 === committedBeforeRead) {
@@ -327,8 +356,9 @@ export async function runScheduledExchangeCycle(
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        warningCount: payload.warningCount,
-        warningsJson: JSON.stringify(payload.warnings),
+        warningCount: payloadWarnings.warningCount,
+        warningsJson: payloadWarnings.warningsJson,
+        warningsTruncated: payloadWarnings.warningsTruncated,
         durationMs: Date.now() - startedAt,
       });
       return failureResult({
@@ -351,8 +381,9 @@ export async function runScheduledExchangeCycle(
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        warningCount: payload.warningCount,
-        warningsJson: JSON.stringify(payload.warnings),
+        warningCount: payloadWarnings.warningCount,
+        warningsJson: payloadWarnings.warningsJson,
+        warningsTruncated: payloadWarnings.warningsTruncated,
         durationMs: Date.now() - startedAt,
       });
       return failureResult({
@@ -370,7 +401,7 @@ export async function runScheduledExchangeCycle(
     }
 
     const state = await loadExchangeState(client);
-    const auth = resolveApplyAuthorization(config, state, payload);
+    const auth = resolveApplyAuthorization(config, committedBeforeRead, state, payload);
     if (!auth.ok) {
       await insertCycleJournal(client, {
         id: cycleRunId,
@@ -396,6 +427,7 @@ export async function runScheduledExchangeCycle(
     }
 
     const applied = await applyClientsImport({
+      databaseUrl,
       client,
       payload,
       lockAlreadyHeld: true,
@@ -444,8 +476,9 @@ export async function runScheduledExchangeCycle(
       sha256: payload.sha256,
       byteSize: payload.byteSize,
       recordCount: payload.recordCount,
-      warningCount: payload.warningCount,
-      warningsJson: JSON.stringify(payload.warnings),
+      warningCount: payloadWarnings.warningCount,
+      warningsJson: payloadWarnings.warningsJson,
+      warningsTruncated: payloadWarnings.warningsTruncated,
       durationMs: Date.now() - startedAt,
     });
 

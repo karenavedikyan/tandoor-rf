@@ -68,6 +68,10 @@ export async function clientSyncStatusHandler(
     res.status(200).json({
       freshnessState: status.freshnessState,
       lastSuccessfulImportAtLabel: status.lastSuccessfulImportAtLabel,
+      sourceFormationKnown: status.sourceFormationKnown,
+      lastSourceModifiedAtLabel: status.sourceFormationKnown
+        ? status.lastSourceModifiedAtLabel
+        : null,
       runningImport: status.runningImport,
       warning: status.warning,
     });

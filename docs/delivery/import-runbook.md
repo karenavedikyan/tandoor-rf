@@ -123,7 +123,7 @@
 | `GUID_SET_SHRINK` | Исчезли ранее известные GUID | Согласовать с 1С; не форсировать apply |
 | `IMPORT_LOCKED` | Другой apply/цикл в процессе | Подождать или разобрать параллельный запуск |
 | `STALE_RUNNING_IMPORT` | Зависший `running` в журнале | SQL-разбор; не запускать apply до закрытия |
-| `COMMIT_UNCERTAIN` | Исход commit неизвестен | Проверить `onec_client_import_runs` по runId; `apply_blocked=true` до восстановления |
+| `COMMIT_UNCERTAIN` | Исход commit неизвестен | Проверить `onec_client_import_runs` по runId; `apply_blocked=true` через **новое** соединение; clients/journal/state коммитятся **атомарно** |
 | `APPLY_BLOCKED` | Apply заблокирован после uncertain | Восстановить состояние; снять блокировку только после review |
 | `FTP_ERROR` / `TIMEOUT` | FTP недоступен | Проверить TW egress, учётные данные, сеть |
 | `IMPORT_JOB_FAILED` | Worker: конфиг / внутренняя ошибка | Проверить env FTP, логи worker |
@@ -134,7 +134,9 @@
 
 1. **Остановить** TW cron / operator jobs (`006` inserts не создавать).
 2. **Диагностика:** `onec_client_import_runs`, `onec_exchange_state`, `onec_import_jobs`.
-3. **COMMIT_UNCERTAIN:** сверить `runId`, `onec_clients.source_sha256`, counts; не повторять apply до выяснения.
+3. **COMMIT_UNCERTAIN:** сверить `runId`, `onec_clients.source_sha256`, counts; блокировка ставится на исправном соединении; apply разблокируется только после `resolveCommitUncertainOutcome`.
+4. **Bootstrap после migration `007`/`008`:** при пустом `onec_exchange_state` committed SHA берётся из последнего success apply в journal под advisory lock.
+5. **Warnings в journal:** сохраняются усечённо; полный `warning_count` и флаг `warnings_truncated` (migration `009`).
 4. **Зависший `running`:** закрыть запись в журнале только после подтверждения, что apply не завершился.
 5. **Откат данных клиентов** — только backup PostgreSQL. **Не** откатывать users, employee links, команды, grants/denials и замещения вместе со snapshot.
 

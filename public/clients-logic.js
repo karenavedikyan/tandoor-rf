@@ -226,6 +226,11 @@
       parts.push("Актуальность данных в ЛК может быть устаревшей.");
     } else if (data.lastSuccessfulImportAtLabel) {
       parts.push("Данные загружены в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+      if (data.sourceFormationKnown && data.lastSourceModifiedAtLabel) {
+        parts.push("Выгрузка 1С сформирована: " + data.lastSourceModifiedAtLabel + " (МСК)");
+      } else if (data.sourceFormationKnown === false) {
+        parts.push("Дата формирования выгрузки 1С неизвестна.");
+      }
     } else {
       parts.push("Актуальность данных неизвестна.");
     }

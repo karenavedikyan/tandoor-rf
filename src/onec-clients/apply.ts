@@ -1,6 +1,15 @@
 import { Pool, type PoolClient } from "pg";
+import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
-import { blockExchangeApply, markExchangeApplied } from "../onec-exchange/state";
+import {
+  blockExchangeApplyFresh,
+  ensureExchangeStateInitialized,
+  getCommittedSnapshotSha,
+  parseCommitUncertainRunId,
+  resolveCommitUncertainFresh,
+  resolveCommitUncertainOutcome,
+  updateExchangeStateAfterApplyInTxn,
+} from "../onec-exchange/state";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
 import type { ParsedClientRecord, ValidatedClientsPayload, ValidationWarning } from "./types";
 
@@ -35,6 +44,7 @@ export type ApplyTestHooks = {
   afterRecordIndex?: number;
   failUnlock?: boolean;
   failCommit?: boolean;
+  failExchangeStateUpdate?: boolean;
   failRelease?: boolean;
   failPoolEnd?: boolean;
   onClientReady?: (client: PoolClient) => void;
@@ -392,6 +402,7 @@ export async function applyClientsImport(options: {
   let managed: ManagedClient | undefined;
   let ownsPool = false;
   let ownsClient = false;
+  const resolvedDatabaseUrl = options.databaseUrl ?? getDatabaseUrl() ?? undefined;
   const phase: ApplyPhaseState = {
     lockHeld: options.lockAlreadyHeld === true,
     commitAttempted: false,
@@ -408,11 +419,11 @@ export async function applyClientsImport(options: {
     managed = managePoolClient(options.client);
     options.testHooks?.onClientReady?.(managed.client);
   } else {
-    if (!options.databaseUrl) {
+    if (!resolvedDatabaseUrl) {
       return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
     }
     try {
-      pool = createImportPool(options.databaseUrl);
+      pool = createImportPool(resolvedDatabaseUrl);
       ownsPool = true;
     } catch {
       return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
@@ -447,27 +458,42 @@ export async function applyClientsImport(options: {
     }
 
     if (!outcome) {
+      await ensureExchangeStateInitialized(managed.client);
       const blocked = await queryManaged<{ apply_blocked: boolean; apply_blocked_reason: string | null }>(
         managed,
         "SELECT apply_blocked, apply_blocked_reason FROM onec_exchange_state WHERE id = 1",
       );
       if (blocked.rows[0]?.apply_blocked) {
-        outcome = {
-          ok: false,
-          code: "APPLY_BLOCKED",
-          message:
-            blocked.rows[0].apply_blocked_reason ??
-            "Import apply is blocked until the previous uncertain outcome is resolved.",
-        };
+        const uncertainRunId = parseCommitUncertainRunId(blocked.rows[0].apply_blocked_reason);
+        if (uncertainRunId) {
+          const resolution = await resolveCommitUncertainOutcome(managed.client, uncertainRunId);
+          if (resolution === "committed") {
+            // Block cleared; continue apply checks below.
+          } else if (resolution === "still_uncertain") {
+            outcome = {
+              ok: false,
+              code: "APPLY_BLOCKED",
+              message:
+                blocked.rows[0].apply_blocked_reason ??
+                "Import apply is blocked until the previous uncertain outcome is resolved.",
+            };
+          } else {
+            // not_committed — block cleared, continue.
+          }
+        } else {
+          outcome = {
+            ok: false,
+            code: "APPLY_BLOCKED",
+            message:
+              blocked.rows[0].apply_blocked_reason ??
+              "Import apply is blocked until the previous uncertain outcome is resolved.",
+          };
+        }
       }
     }
 
     if (!outcome && options.expectedCommittedSha256 !== undefined) {
-      const currentCommitted = await queryManaged<{ last_successful_apply_sha256: string | null }>(
-        managed,
-        "SELECT last_successful_apply_sha256 FROM onec_exchange_state WHERE id = 1",
-      );
-      const committedSha = currentCommitted.rows[0]?.last_successful_apply_sha256 ?? null;
+      const committedSha = await getCommittedSnapshotSha(managed.client);
       if (committedSha !== options.expectedCommittedSha256) {
         outcome = {
           ok: false,
@@ -648,6 +674,17 @@ export async function applyClientsImport(options: {
             [phase.runId, newCount, changedCount, unchangedCount],
           );
 
+          if (options.syncExchangeState !== false) {
+            if (options.testHooks?.failExchangeStateUpdate) {
+              throw new Error("Simulated exchange state update failure.");
+            }
+            await updateExchangeStateAfterApplyInTxn(managed.client, {
+              sha256: options.payload.sha256,
+              acceptedBaselineSha256: options.payload.sha256,
+            });
+          }
+
+          phase.counts = { newCount, changedCount, unchangedCount };
           phase.commitAttempted = true;
           if (options.testHooks?.failCommit) {
             throw new Error("Simulated commit response loss.");
@@ -655,14 +692,6 @@ export async function applyClientsImport(options: {
 
           await queryManaged(managed, "COMMIT");
           phase.commitConfirmed = true;
-          phase.counts = { newCount, changedCount, unchangedCount };
-
-          if (options.syncExchangeState !== false) {
-            await markExchangeApplied(managed.client, {
-              sha256: options.payload.sha256,
-              acceptedBaselineSha256: options.payload.sha256,
-            });
-          }
 
           let postCommitCleanupWarning: string | undefined;
           if (!options.retainLock) {
@@ -691,20 +720,52 @@ export async function applyClientsImport(options: {
     } else if (phase.commitAttempted && !phase.commitConfirmed) {
       if (managed && !managed.faulted()) {
         try {
-          await blockExchangeApply(
-            managed.client,
-            `COMMIT_UNCERTAIN for run ${phase.runId ?? "unknown"}`,
-          );
+          await managed.client.query("ROLLBACK");
         } catch {
-          // ignore exchange block failure
+          // Rollback is best-effort when commit response was lost.
         }
       }
-      outcome = {
-        ok: false,
-        code: "COMMIT_UNCERTAIN",
-        message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
-        runId: phase.runId,
-      };
+
+      if (phase.runId && resolvedDatabaseUrl) {
+        try {
+          await blockExchangeApplyFresh(
+            resolvedDatabaseUrl,
+            `COMMIT_UNCERTAIN for run ${phase.runId}`,
+          );
+          const resolution = await resolveCommitUncertainFresh(resolvedDatabaseUrl, phase.runId);
+          if (resolution === "committed" && phase.counts) {
+            outcome = {
+              ok: true,
+              runId: phase.runId,
+              counts: phase.counts,
+            };
+          } else {
+            outcome = {
+              ok: false,
+              code: resolution === "still_uncertain" ? "COMMIT_UNCERTAIN" : "DATABASE_ERROR",
+              message:
+                resolution === "still_uncertain"
+                  ? "Commit outcome is unknown; inspect the import run journal by runId before retrying."
+                  : "Database apply failed.",
+              runId: phase.runId,
+            };
+          }
+        } catch {
+          outcome = {
+            ok: false,
+            code: "COMMIT_UNCERTAIN",
+            message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
+            runId: phase.runId,
+          };
+        }
+      } else {
+        outcome = {
+          ok: false,
+          code: "COMMIT_UNCERTAIN",
+          message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
+          runId: phase.runId,
+        };
+      }
     } else {
       if (managed && !managed.faulted()) {
         try {

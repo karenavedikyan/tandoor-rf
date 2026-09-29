@@ -235,20 +235,24 @@
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
 | Сценарии ACC-* | спецификация; **автотесты не реализованы** |
 
-### R1.5 secure import + pilot prep (draft PR, branch `cursor/r15-secure-onec-import-9e11`)
+### R1.5 secure import + pilot prep (draft PR #16, branch `cursor/r15-secure-onec-import-9e11`)
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA main (база) | `3927923` |
-| Scheduled exchange lock-through-apply | единая critical section, `SUPERSEDED_BY_NEWER_IMPORT` |
-| Exchange state sync | manual/scheduled/operator_job → `onec_exchange_state` |
-| Freshness API | `pending_apply` / stale по apply-at, не по check-at |
-| Migrations | `006` + `007` + `008` |
-| Runbook / pilot checklist | порядок деплоя, TW cron blocker, COMMIT_UNCERTAIN |
+| SHA PR head (review round 2) | см. PR #16 |
+| Apply atomicity | clients + journal success + `onec_exchange_state` в одной транзакции до COMMIT |
+| COMMIT_UNCERTAIN recovery | блокировка через fresh connection; разбор по runId; auto-resolve при success |
+| Unified committed SHA | `getCommittedSnapshotSha` + bootstrap из journal под lock (`onec-exchange-bootstrap.test.ts`) |
+| CONFIG_ERROR journal | DB connect → journal при доступной БД (`onec-scheduled-exchange.test.ts`) |
+| Warnings journal | `warningCount` + `warnings_truncated` (migration `009`) |
+| Freshness API/UI | `sourceFormationKnown` отдельно от даты загрузки в ЛК |
+| Manager change + sessions | `manager-change-import.test.ts` — один app instance, без reset после import |
+| Migrations | `006`–`009` |
+| Runbook / pilot checklist | COMMIT_UNCERTAIN, bootstrap, warnings truncation |
 | Users / links / grants / teams | **не изменялись** |
 | Production import / cron / migrate | **не запускались** |
-| `npm test` | **156 passed**, 0 failed |
-| `npm run test:integration` | **122 passed**, 0 failed |
+| `npm test` | **159 passed**, 0 failed |
+| `npm run test:integration` | **129 passed**, 0 failed |
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 
