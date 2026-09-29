@@ -220,8 +220,10 @@
       parts.push("Данные клиентов в ЛК ещё не загружались.");
     } else if (data.freshnessState === "error") {
       parts.push("Последняя попытка обновления завершилась с ошибкой.");
+    } else if (data.freshnessState === "pending_apply") {
+      parts.push("Обнаружен новый файл, ожидается согласованное обновление.");
     } else if (data.freshnessState === "stale") {
-      parts.push("Актуальность данных может быть устаревшей.");
+      parts.push("Актуальность данных в ЛК может быть устаревшей.");
     } else if (data.lastSuccessfulImportAtLabel) {
       parts.push("Данные загружены в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
     } else {
@@ -229,7 +231,11 @@
     }
     return {
       text: parts.join(" "),
-      warning: !!data.warning || data.freshnessState === "error" || data.freshnessState === "stale",
+      warning:
+        !!data.warning ||
+        data.freshnessState === "error" ||
+        data.freshnessState === "stale" ||
+        data.freshnessState === "pending_apply",
       appendWarning: data.warning ? " " + data.warning : "",
     };
   }

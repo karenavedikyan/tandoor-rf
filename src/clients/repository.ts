@@ -163,6 +163,16 @@ export async function getClientByGuid(
   return toClientDetail(row);
 }
 
+type ExchangeStateQueryRow = {
+  last_attempt_at: Date | null;
+  last_verified_at: Date | null;
+  last_verified_sha256: string | null;
+  last_successful_apply_at: Date | null;
+  last_successful_apply_sha256: string | null;
+  last_source_modified_at: Date | null;
+  apply_blocked: boolean;
+};
+
 export async function getClientsSyncStatus(options: {
   staleAfterHours?: number;
   includeAdminDetail?: boolean;
@@ -184,24 +194,41 @@ export async function getClientsSyncStatus(options: {
       WHERE status = 'running'
     `,
   );
-  const latest = await query<{ status: string; finished_at: Date | null; error_code: string | null }>(
+  const latest = await query<{
+    status: string;
+    finished_at: Date | null;
+    error_code: string | null;
+    warning_count: number | null;
+  }>(
     `
-      SELECT status, finished_at, error_code
+      SELECT status, finished_at, error_code, warning_count
       FROM onec_client_import_runs
       ORDER BY started_at DESC
       LIMIT 1
     `,
   );
-  const exchangeState = await query<{ last_checked_at: Date | null }>(
+  const exchangeState = await query<ExchangeStateQueryRow>(
     `
-      SELECT last_checked_at
+      SELECT
+        last_attempt_at,
+        last_verified_at,
+        last_verified_sha256,
+        last_successful_apply_at,
+        last_successful_apply_sha256,
+        last_source_modified_at,
+        apply_blocked
       FROM onec_exchange_state
       WHERE id = 1
     `,
   );
 
-  const lastSuccessfulImportAt = lastSuccess.rows[0]?.finished_at ?? null;
-  const lastCheckedAt = exchangeState.rows[0]?.last_checked_at ?? null;
+  const state = exchangeState.rows[0];
+  const lastSuccessfulImportAt =
+    state?.last_successful_apply_at ?? lastSuccess.rows[0]?.finished_at ?? null;
+  const lastAttemptAt = state?.last_attempt_at ?? null;
+  const lastVerifiedAt = state?.last_verified_at ?? null;
+  const lastVerifiedSha256 = state?.last_verified_sha256 ?? null;
+  const committedSha256 = state?.last_successful_apply_sha256 ?? null;
   const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
   const latestRun = latest.rows[0];
 
@@ -221,11 +248,21 @@ export async function getClientsSyncStatus(options: {
     freshnessState = "error";
     warning =
       "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
+  } else if (
+    lastVerifiedSha256 &&
+    committedSha256 &&
+    lastVerifiedSha256 !== committedSha256
+  ) {
+    freshnessState = "pending_apply";
+    warning =
+      "На FTP обнаружен новый файл, но он ещё не применён в ЛК; отображаются данные последней успешной загрузки.";
   } else {
     const staleMs = staleAfterHours * 60 * 60 * 1000;
-    const reference = lastCheckedAt ?? lastSuccessfulImportAt;
     freshnessState =
-      reference && Date.now() - reference.getTime() > staleMs ? "stale" : "current";
+      lastSuccessfulImportAt &&
+      Date.now() - lastSuccessfulImportAt.getTime() > staleMs
+        ? "stale"
+        : "current";
   }
 
   const response: ClientsSyncStatusResponse = {
@@ -234,8 +271,14 @@ export async function getClientsSyncStatus(options: {
     lastSuccessfulImportAtLabel: lastSuccessfulImportAt
       ? formatMskDateTime(lastSuccessfulImportAt)
       : null,
-    lastCheckedAt: lastCheckedAt?.toISOString() ?? null,
-    lastCheckedAtLabel: lastCheckedAt ? formatMskDateTime(lastCheckedAt) : null,
+    lastAttemptAt: lastAttemptAt?.toISOString() ?? null,
+    lastAttemptAtLabel: lastAttemptAt ? formatMskDateTime(lastAttemptAt) : null,
+    lastVerifiedAt: lastVerifiedAt?.toISOString() ?? null,
+    lastVerifiedAtLabel: lastVerifiedAt ? formatMskDateTime(lastVerifiedAt) : null,
+    lastSourceModifiedAt: state?.last_source_modified_at?.toISOString() ?? null,
+    lastSourceModifiedAtLabel: state?.last_source_modified_at
+      ? formatMskDateTime(state.last_source_modified_at)
+      : null,
     runningImport,
     warning,
   };
@@ -244,6 +287,10 @@ export async function getClientsSyncStatus(options: {
     response.adminDetail = {
       lastErrorCode: latestRun?.error_code ?? null,
       recordCount: lastSuccess.rows[0]?.source_record_count ?? null,
+      committedSha256,
+      verifiedSha256: lastVerifiedSha256,
+      warningCount: latestRun?.warning_count ?? null,
+      applyBlocked: state?.apply_blocked ?? false,
     };
   }
 

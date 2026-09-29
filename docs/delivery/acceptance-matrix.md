@@ -240,14 +240,15 @@
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `3927923` |
-| Scheduled exchange CLI | `onec-scheduled-exchange`, double SHA read, apply off by default |
-| Operator import jobs | migration `006`, worker CLI only, no HTTP/startup |
-| Exchange state | migration `007`, `GUID_SET_SHRINK`, freshness UI |
-| Runbook / pilot checklist | `import-runbook.md`, `pilot-checklist.md` |
+| Scheduled exchange lock-through-apply | единая critical section, `SUPERSEDED_BY_NEWER_IMPORT` |
+| Exchange state sync | manual/scheduled/operator_job → `onec_exchange_state` |
+| Freshness API | `pending_apply` / stale по apply-at, не по check-at |
+| Migrations | `006` + `007` + `008` |
+| Runbook / pilot checklist | порядок деплоя, TW cron blocker, COMMIT_UNCERTAIN |
 | Users / links / grants / teams | **не изменялись** |
 | Production import / cron / migrate | **не запускались** |
-| `npm test` | **155 passed**, 0 failed |
-| `npm run test:integration` | **113 passed**, 0 failed |
+| `npm test` | **156 passed**, 0 failed |
+| `npm run test:integration` | **122 passed**, 0 failed |
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 

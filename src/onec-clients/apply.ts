@@ -1,7 +1,10 @@
 import { Pool, type PoolClient } from "pg";
 import { createPgPoolOptions } from "../config/pg-ssl";
+import { blockExchangeApply, markExchangeApplied } from "../onec-exchange/state";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
-import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
+import type { ParsedClientRecord, ValidatedClientsPayload, ValidationWarning } from "./types";
+
+export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
 export const DB_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -21,7 +24,9 @@ export type ApplyResult =
         | "RECORD_COUNT_DECREASED"
         | "GUID_SET_SHRINK"
         | "DATABASE_ERROR"
-        | "COMMIT_UNCERTAIN";
+        | "COMMIT_UNCERTAIN"
+        | "SUPERSEDED_BY_NEWER_IMPORT"
+        | "APPLY_BLOCKED";
       message: string;
       runId?: string;
     };
@@ -174,16 +179,36 @@ async function getLastSuccessfulRecordCount(managed: ManagedClient): Promise<num
   return result.rows[0]?.source_record_count ?? null;
 }
 
-async function hasStaleRunningImport(managed: ManagedClient): Promise<boolean> {
+async function hasStaleRunningImport(
+  managed: ManagedClient,
+  excludeRunIds: string[] = [],
+): Promise<boolean> {
+  if (excludeRunIds.length === 0) {
+    const result = await queryManaged<{ count: string }>(
+      managed,
+      `
+        SELECT COUNT(*)::text AS count
+        FROM onec_client_import_runs
+        WHERE status = 'running'
+      `,
+    );
+    return Number(result.rows[0]?.count ?? "0") > 0;
+  }
   const result = await queryManaged<{ count: string }>(
     managed,
     `
       SELECT COUNT(*)::text AS count
       FROM onec_client_import_runs
       WHERE status = 'running'
+        AND NOT (id = ANY($1::uuid[]))
     `,
+    [excludeRunIds],
   );
   return Number(result.rows[0]?.count ?? "0") > 0;
+}
+
+function serializeWarnings(warnings: ValidationWarning[]): string {
+  return JSON.stringify(warnings);
 }
 
 async function loadExistingClients(managed: ManagedClient): Promise<Map<string, ExistingClientRow>> {
@@ -217,6 +242,7 @@ async function insertRejectedRunJournal(
   managed: ManagedClient,
   payload: ValidatedClientsPayload,
   errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK",
+  journal: ApplyJournalContext,
 ): Promise<string | undefined> {
   const runInsert = await queryManaged<{ id: string }>(
     managed,
@@ -224,18 +250,40 @@ async function insertRejectedRunJournal(
       INSERT INTO onec_client_import_runs (
         status,
         mode,
+        trigger_source,
+        parent_run_id,
         source_sha256,
         source_byte_size,
         source_record_count,
+        warning_count,
+        warnings,
         finished_at,
         error_code
       )
-      VALUES ('failed', 'apply', $1, $2, $3, NOW(), $4)
+      VALUES ('failed', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, NOW(), $8)
       RETURNING id::text
     `,
-    [payload.sha256, payload.byteSize, payload.recordCount, errorCode],
+    [
+      journal.triggerSource ?? null,
+      journal.parentRunId ?? null,
+      payload.sha256,
+      payload.byteSize,
+      payload.recordCount,
+      payload.warningCount,
+      serializeWarnings(payload.warnings),
+      errorCode,
+    ],
   );
   return runInsert.rows[0]?.id;
+}
+
+type ApplyJournalContext = {
+  triggerSource?: ImportTriggerSource;
+  parentRunId?: string;
+};
+
+export function attachManagedPoolClient(client: PoolClient): ManagedClient {
+  return managePoolClient(client);
 }
 
 async function releaseAdvisoryLock(
@@ -328,50 +376,109 @@ function appendCleanupWarnings(result: ApplyResult, cleanupWarnings: string[]): 
 }
 
 export async function applyClientsImport(options: {
-  databaseUrl: string;
+  databaseUrl?: string;
   payload: ValidatedClientsPayload;
+  client?: PoolClient;
+  lockAlreadyHeld?: boolean;
+  retainLock?: boolean;
+  triggerSource?: ImportTriggerSource;
+  parentRunId?: string;
+  excludeRunIds?: string[];
+  expectedCommittedSha256?: string | null;
+  syncExchangeState?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   let pool: Pool | undefined;
   let managed: ManagedClient | undefined;
+  let ownsPool = false;
+  let ownsClient = false;
   const phase: ApplyPhaseState = {
-    lockHeld: false,
+    lockHeld: options.lockAlreadyHeld === true,
     commitAttempted: false,
     commitConfirmed: false,
   };
   let outcome: ApplyResult | undefined;
   const cleanupWarnings: string[] = [];
+  const journal: ApplyJournalContext = {
+    triggerSource: options.triggerSource,
+    parentRunId: options.parentRunId,
+  };
 
-  try {
-    pool = createImportPool(options.databaseUrl);
-  } catch {
-    return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
-  }
-
-  try {
-    const connected = await pool.connect();
-    managed = managePoolClient(connected);
+  if (options.client) {
+    managed = managePoolClient(options.client);
     options.testHooks?.onClientReady?.(managed.client);
-  } catch {
-    const poolWarning = await safeEndPool(pool, options.testHooks);
-    if (poolWarning) {
-      cleanupWarnings.push(poolWarning);
+  } else {
+    if (!options.databaseUrl) {
+      return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
     }
-    return { ok: false, code: "DATABASE_ERROR", message: "Database connection failed." };
+    try {
+      pool = createImportPool(options.databaseUrl);
+      ownsPool = true;
+    } catch {
+      return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
+    }
+
+    try {
+      const connected = await pool.connect();
+      managed = managePoolClient(connected);
+      ownsClient = true;
+      options.testHooks?.onClientReady?.(managed.client);
+    } catch {
+      const poolWarning = await safeEndPool(pool, options.testHooks);
+      if (poolWarning) {
+        cleanupWarnings.push(poolWarning);
+      }
+      return { ok: false, code: "DATABASE_ERROR", message: "Database connection failed." };
+    }
   }
 
   try {
-    const lock = await queryManaged<{ locked: boolean }>(
-      managed,
-      "SELECT pg_try_advisory_lock($1) AS locked",
-      [IMPORT_ADVISORY_LOCK_KEY],
-    );
-    if (!lock.rows[0]?.locked) {
-      outcome = { ok: false, code: "IMPORT_LOCKED", message: "Another clients import is already running." };
-    } else {
-      phase.lockHeld = true;
+    if (!options.lockAlreadyHeld) {
+      const lock = await queryManaged<{ locked: boolean }>(
+        managed,
+        "SELECT pg_try_advisory_lock($1) AS locked",
+        [IMPORT_ADVISORY_LOCK_KEY],
+      );
+      if (!lock.rows[0]?.locked) {
+        outcome = { ok: false, code: "IMPORT_LOCKED", message: "Another clients import is already running." };
+      } else {
+        phase.lockHeld = true;
+      }
+    }
 
-      if (await hasStaleRunningImport(managed)) {
+    if (!outcome) {
+      const blocked = await queryManaged<{ apply_blocked: boolean; apply_blocked_reason: string | null }>(
+        managed,
+        "SELECT apply_blocked, apply_blocked_reason FROM onec_exchange_state WHERE id = 1",
+      );
+      if (blocked.rows[0]?.apply_blocked) {
+        outcome = {
+          ok: false,
+          code: "APPLY_BLOCKED",
+          message:
+            blocked.rows[0].apply_blocked_reason ??
+            "Import apply is blocked until the previous uncertain outcome is resolved.",
+        };
+      }
+    }
+
+    if (!outcome && options.expectedCommittedSha256 !== undefined) {
+      const currentCommitted = await queryManaged<{ last_successful_apply_sha256: string | null }>(
+        managed,
+        "SELECT last_successful_apply_sha256 FROM onec_exchange_state WHERE id = 1",
+      );
+      const committedSha = currentCommitted.rows[0]?.last_successful_apply_sha256 ?? null;
+      if (committedSha !== options.expectedCommittedSha256) {
+        outcome = {
+          ok: false,
+          code: "SUPERSEDED_BY_NEWER_IMPORT",
+          message: "A newer import was committed after this snapshot was verified.",
+        };
+      }
+    }
+
+    if (!outcome) {
+      if (await hasStaleRunningImport(managed, options.excludeRunIds ?? [])) {
         outcome = {
           ok: false,
           code: "STALE_RUNNING_IMPORT",
@@ -383,7 +490,12 @@ export async function applyClientsImport(options: {
           lastSuccessfulCount !== null &&
           options.payload.recordCount < lastSuccessfulCount
         ) {
-          phase.runId = await insertRejectedRunJournal(managed, options.payload, "RECORD_COUNT_DECREASED");
+          phase.runId = await insertRejectedRunJournal(
+            managed,
+            options.payload,
+            "RECORD_COUNT_DECREASED",
+            journal,
+          );
           outcome = {
             ok: false,
             code: "RECORD_COUNT_DECREASED",
@@ -398,7 +510,12 @@ export async function applyClientsImport(options: {
             );
             const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
             if (missingGuids.length > 0) {
-              phase.runId = await insertRejectedRunJournal(managed, options.payload, "GUID_SET_SHRINK");
+              phase.runId = await insertRejectedRunJournal(
+                managed,
+                options.payload,
+                "GUID_SET_SHRINK",
+                journal,
+              );
               outcome = {
                 ok: false,
                 code: "GUID_SET_SHRINK",
@@ -415,14 +532,26 @@ export async function applyClientsImport(options: {
               INSERT INTO onec_client_import_runs (
                 status,
                 mode,
+                trigger_source,
+                parent_run_id,
                 source_sha256,
                 source_byte_size,
-                source_record_count
+                source_record_count,
+                warning_count,
+                warnings
               )
-              VALUES ('running', 'apply', $1, $2, $3)
+              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb)
               RETURNING id::text
             `,
-            [options.payload.sha256, options.payload.byteSize, options.payload.recordCount],
+            [
+              journal.triggerSource ?? null,
+              journal.parentRunId ?? null,
+              options.payload.sha256,
+              options.payload.byteSize,
+              options.payload.recordCount,
+              options.payload.warningCount,
+              serializeWarnings(options.payload.warnings),
+            ],
           );
           phase.runId = runInsert.rows[0]?.id;
 
@@ -528,13 +657,22 @@ export async function applyClientsImport(options: {
           phase.commitConfirmed = true;
           phase.counts = { newCount, changedCount, unchangedCount };
 
+          if (options.syncExchangeState !== false) {
+            await markExchangeApplied(managed.client, {
+              sha256: options.payload.sha256,
+              acceptedBaselineSha256: options.payload.sha256,
+            });
+          }
+
           let postCommitCleanupWarning: string | undefined;
-          try {
-            await releaseAdvisoryLock(managed, options.testHooks);
-            phase.lockHeld = false;
-          } catch {
-            postCommitCleanupWarning =
-              "Import committed successfully but advisory lock release failed; verify no concurrent apply is running.";
+          if (!options.retainLock) {
+            try {
+              await releaseAdvisoryLock(managed, options.testHooks);
+              phase.lockHeld = false;
+            } catch {
+              postCommitCleanupWarning =
+                "Import committed successfully but advisory lock release failed; verify no concurrent apply is running.";
+            }
           }
 
           outcome = {
@@ -551,6 +689,16 @@ export async function applyClientsImport(options: {
     if (isConnectionFault(error, managed)) {
       outcome = resolveConnectionFault(phase);
     } else if (phase.commitAttempted && !phase.commitConfirmed) {
+      if (managed && !managed.faulted()) {
+        try {
+          await blockExchangeApply(
+            managed.client,
+            `COMMIT_UNCERTAIN for run ${phase.runId ?? "unknown"}`,
+          );
+        } catch {
+          // ignore exchange block failure
+        }
+      }
       outcome = {
         ok: false,
         code: "COMMIT_UNCERTAIN",
@@ -584,21 +732,27 @@ export async function applyClientsImport(options: {
       outcome = { ok: false, code: "DATABASE_ERROR", message: "Database apply failed.", runId: phase.runId };
     }
   } finally {
-    const unlockWarning = await safeUnlockAdvisoryLock(managed, phase.lockHeld);
-    if (unlockWarning) {
-      cleanupWarnings.push(unlockWarning);
-      phase.lockHeld = false;
+    if (!options.retainLock) {
+      const unlockWarning = await safeUnlockAdvisoryLock(managed, phase.lockHeld);
+      if (unlockWarning) {
+        cleanupWarnings.push(unlockWarning);
+        phase.lockHeld = false;
+      }
     }
 
-    const releaseWarning = safeReleaseClient(managed, options.testHooks);
-    if (releaseWarning) {
-      cleanupWarnings.push(releaseWarning);
+    if (ownsClient) {
+      const releaseWarning = safeReleaseClient(managed, options.testHooks);
+      if (releaseWarning) {
+        cleanupWarnings.push(releaseWarning);
+      }
     }
     managed = undefined;
 
-    const poolWarning = await safeEndPool(pool, options.testHooks);
-    if (poolWarning) {
-      cleanupWarnings.push(poolWarning);
+    if (ownsPool) {
+      const poolWarning = await safeEndPool(pool, options.testHooks);
+      if (poolWarning) {
+        cleanupWarnings.push(poolWarning);
+      }
     }
     pool = undefined;
   }

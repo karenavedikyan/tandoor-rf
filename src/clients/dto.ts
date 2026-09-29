@@ -68,20 +68,29 @@ export type ClientsSyncFreshnessState =
   | "stale"
   | "error"
   | "updating"
+  | "pending_apply"
   | "unknown";
 
 export type ClientsSyncStatusResponse = {
   freshnessState: ClientsSyncFreshnessState;
   lastSuccessfulImportAt: string | null;
   lastSuccessfulImportAtLabel: string | null;
-  lastCheckedAt: string | null;
-  lastCheckedAtLabel: string | null;
+  lastAttemptAt: string | null;
+  lastAttemptAtLabel: string | null;
+  lastVerifiedAt: string | null;
+  lastVerifiedAtLabel: string | null;
+  lastSourceModifiedAt: string | null;
+  lastSourceModifiedAtLabel: string | null;
   runningImport: boolean;
   warning: string | null;
   /** Admin-only detail; omitted for scoped roles. */
   adminDetail?: {
     lastErrorCode: string | null;
     recordCount: number | null;
+    committedSha256: string | null;
+    verifiedSha256: string | null;
+    warningCount: number | null;
+    applyBlocked: boolean;
   };
 };
 

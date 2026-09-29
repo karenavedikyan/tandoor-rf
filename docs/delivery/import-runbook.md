@@ -17,7 +17,23 @@
 
 ---
 
-## 2. Три способа запуска
+## 2. Порядок включения (production)
+
+1. **Резервная копия** PostgreSQL.
+2. **Миграции** `006_onec_import_jobs.sql` и `007_onec_exchange_state.sql` (+ `008_onec_exchange_journal_links.sql`) — только по согласованному плану деплоя.
+3. **Деплой кода** PR R1.5; `ONEC_SCHEDULED_EXCHANGE_APPLY=false`.
+4. **Dry-run** (ручной CLI или scheduled check-only) → review SHA и counts.
+5. **Согласованное apply** с `--expected-sha256` или operator job.
+6. **Проверка прав** (ACC smoke, manager/ROP visibility).
+7. **Отдельное согласование** частоты cron и `ONEC_SCHEDULED_EXCHANGE_APPLY=true`.
+
+**Инфраструктурный блокер:** доступность внешнего планировщика TW для текущего размещения **не подтверждена** этим PR. До проверенного способа cron используйте ручной CLI или operator job worker. **Не** заменяйте внешний запуск таймером внутри веб-сервера, HTTP, health/readiness или startup.
+
+**API статуса актуальности** (`/api/clients/sync-status`) зависит от migration `007`/`008` (`onec_exchange_state`).
+
+---
+
+## 3. Три способа запуска
 
 ### A. TW Cloud Cron → scheduled exchange CLI (рекомендуется для расписания)
 
@@ -81,7 +97,7 @@
 
 ---
 
-## 3. Рекомендуемое расписание (до ответов 1С по E2)
+## 4. Рекомендуемое расписание (до ответов 1С по E2)
 
 | Параметр | Рекомендация |
 |----------|--------------|
@@ -93,22 +109,38 @@
 
 ---
 
-## 4. Коды ошибок и действия
+## 5. Коды ошибок и действия
 
 | Код / статус | Значение | Действие оператора |
 |--------------|----------|-------------------|
 | `SUCCESS` | Файл принят | Проверить counts в журнале / UI |
+| `PENDING_APPLY` | FTP проверен, apply выключен | Review; ручной apply или включить scheduled apply |
+| `SKIPPED_UNCHANGED` | SHA совпадает с committed snapshot | Мониторинг; не считать новой выгрузкой 1С |
 | `VALIDATION_FAILED` | Ошибки в записях | Эскалация 1С; apply не выполнять |
 | `HASH_MISMATCH` | Файл изменился между dry-run и apply | Повторить dry-run, новый SHA |
+| `SUPERSEDED_BY_NEWER_IMPORT` | Более новый commit во время цикла | Проверить журнал; не повторять apply вслепую |
 | `RECORD_COUNT_DECREASED` | Меньше записей, чем в БД | Согласовать с 1С; не форсировать apply |
-| `IMPORT_LOCKED` | Другой apply в процессе | Подождать или разобрать параллельный запуск |
+| `GUID_SET_SHRINK` | Исчезли ранее известные GUID | Согласовать с 1С; не форсировать apply |
+| `IMPORT_LOCKED` | Другой apply/цикл в процессе | Подождать или разобрать параллельный запуск |
 | `STALE_RUNNING_IMPORT` | Зависший `running` в журнале | SQL-разбор; не запускать apply до закрытия |
+| `COMMIT_UNCERTAIN` | Исход commit неизвестен | Проверить `onec_client_import_runs` по runId; `apply_blocked=true` до восстановления |
+| `APPLY_BLOCKED` | Apply заблокирован после uncertain | Восстановить состояние; снять блокировку только после review |
 | `FTP_ERROR` / `TIMEOUT` | FTP недоступен | Проверить TW egress, учётные данные, сеть |
 | `IMPORT_JOB_FAILED` | Worker: конфиг / внутренняя ошибка | Проверить env FTP, логи worker |
 
 ---
 
-## 5. Откат
+## 6. Остановка расписания и восстановление
+
+1. **Остановить** TW cron / operator jobs (`006` inserts не создавать).
+2. **Диагностика:** `onec_client_import_runs`, `onec_exchange_state`, `onec_import_jobs`.
+3. **COMMIT_UNCERTAIN:** сверить `runId`, `onec_clients.source_sha256`, counts; не повторять apply до выяснения.
+4. **Зависший `running`:** закрыть запись в журнале только после подтверждения, что apply не завершился.
+5. **Откат данных клиентов** — только backup PostgreSQL. **Не** откатывать users, employee links, команды, grants/denials и замещения вместе со snapshot.
+
+---
+
+## 7. Откат
 
 1. **Откат кода** — предыдущий коммит; данные БД не меняются автоматически.
 2. **Откат данных** — только из backup PostgreSQL или согласованного SQL-плана.
@@ -116,8 +148,8 @@
 
 ---
 
-## 6. Что runbook не делает
+## 8. Что runbook не делает
 
 - Не создаёт и не меняет `users`, `user_onec_employee_links`, `access_grants`, `rop_team_members`.
 - Не включает production-расписание сам по себе — cron/TW настраивает оператор после приёмки PR.
-- Не закрывает пилот — см. [pilot-checklist.md](./pilot-checklist.md).
+- Не объявляет пилот или весь R1 завершёнными — см. [pilot-checklist.md](./pilot-checklist.md).

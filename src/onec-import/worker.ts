@@ -80,6 +80,7 @@ export async function runOneImportJob(
       env,
       argv: buildImportArgv(job),
       ftpReader: reader,
+      triggerSource: "operator_job",
     });
     const serialized = JSON.stringify(importResult);
     const config = loadOnecFtpConfig(env);

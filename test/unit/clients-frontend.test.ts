@@ -80,6 +80,16 @@ describe("clients frontend logic", () => {
     assert.equal(logic.filterOptions(items, "22222222").length, 1);
   });
 
+  it("shows pending apply when verified FTP differs from LK snapshot", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "pending_apply",
+      lastSuccessfulImportAtLabel: "20.09.2026, 09:00",
+      warning: "На FTP обнаружен новый файл, но он ещё не применён в ЛК.",
+    });
+    assert.match(formatted.text, /ожидается согласованное обновление/);
+    assert.equal(formatted.warning, true);
+  });
+
   it("labels sync status as LK import, not 1C file time", () => {
     const formatted = logic.formatSyncStatusParts({
       freshnessState: "current",

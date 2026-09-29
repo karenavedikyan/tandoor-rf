@@ -1,6 +1,6 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport } from "./apply";
+import { applyClientsImport, type ImportTriggerSource } from "./apply";
 import { CLI_ARGUMENT_ERROR_MESSAGES, parseClientsImportCliArgs } from "./cli-args";
 import { MAX_DETAILED_ERRORS, MAX_DETAILED_WARNINGS } from "./constants";
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
@@ -46,6 +46,7 @@ export type RunClientsImportOptions = {
   argv?: string[];
   ftpReader?: FtpReader;
   fileBytes?: Buffer;
+  triggerSource?: ImportTriggerSource;
 };
 
 export async function runClientsImport(
@@ -204,7 +205,11 @@ export async function runClientsImport(
     );
   }
 
-  const applied = await applyClientsImport({ databaseUrl, payload });
+  const applied = await applyClientsImport({
+    databaseUrl,
+    payload,
+    triggerSource: options.triggerSource ?? "manual",
+  });
   if (!applied.ok) {
     return sanitizeImportResult(
       {

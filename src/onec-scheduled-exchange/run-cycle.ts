@@ -2,12 +2,17 @@ import { Pool, type PoolClient } from "pg";
 import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport } from "../onec-clients/apply";
-import { DB_CONNECT_TIMEOUT_MS } from "../onec-clients/apply";
+import { applyClientsImport, DB_CONNECT_TIMEOUT_MS } from "../onec-clients/apply";
 import { type FtpReader } from "../onec-clients/ftp-read";
 import { tryAcquireImportLock, releaseImportLock } from "../onec-clients/import-lock";
 import { readStableClientsFile } from "../onec-clients/read-stable";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
+import {
+  getDbCommittedSnapshotSha,
+  loadExchangeState,
+  markExchangeAttempt,
+  markExchangeVerified,
+} from "../onec-exchange/state";
 import { loadScheduledExchangeConfig, type ScheduledExchangeConfig } from "./config";
 
 export type ScheduledExchangeStage =
@@ -22,12 +27,14 @@ export type ScheduledExchangeResult = {
   status:
     | "SUCCESS"
     | "CHECK_ONLY"
+    | "PENDING_APPLY"
     | "SKIPPED_UNCHANGED"
-    | "APPLY_DISABLED"
     | "BASELINE_REQUIRED"
     | "HASH_MISMATCH"
     | "CONFIG_ERROR"
     | "IMPORT_LOCKED"
+    | "APPLY_BLOCKED"
+    | "SUPERSEDED_BY_NEWER_IMPORT"
     | "FTP_ERROR"
     | "TIMEOUT"
     | "VALIDATION_FAILED"
@@ -40,30 +47,60 @@ export type ScheduledExchangeResult = {
   recordCount?: number;
   readCount?: number;
   applyRunId?: string;
+  checkRunId?: string;
   errorCode?: string;
   message: string;
 };
 
-type ExchangeStateRow = {
-  last_checked_at: Date | null;
-  last_checked_sha256: string | null;
-  last_successful_apply_at: Date | null;
-  last_successful_apply_sha256: string | null;
-  accepted_baseline_sha256: string | null;
-};
-
-async function insertAttemptJournal(
+async function insertCycleJournal(
   client: PoolClient,
   input: {
+    id?: string;
     status: "running" | "success" | "failed" | "validation_failed";
     stage: ScheduledExchangeStage;
     sha256?: string;
     byteSize?: number;
     recordCount?: number;
+    warningCount?: number;
+    warningsJson?: string;
     errorCode?: string;
-    durationMs: number;
+    durationMs?: number;
+    parentRunId?: string;
   },
-): Promise<string | undefined> {
+): Promise<string> {
+  if (input.id) {
+    await client.query(
+      `
+        UPDATE onec_client_import_runs
+        SET
+          status = $2,
+          stage = $3,
+          source_sha256 = COALESCE($4, source_sha256),
+          source_byte_size = COALESCE($5, source_byte_size),
+          source_record_count = COALESCE($6, source_record_count),
+          warning_count = COALESCE($7, warning_count),
+          warnings = COALESCE($8::jsonb, warnings),
+          error_code = $9,
+          duration_ms = COALESCE($10, duration_ms),
+          finished_at = CASE WHEN $2 = 'running' THEN NULL ELSE NOW() END
+        WHERE id = $1::uuid
+      `,
+      [
+        input.id,
+        input.status === "running" ? "running" : input.status,
+        input.stage,
+        input.sha256 ?? null,
+        input.byteSize ?? null,
+        input.recordCount ?? null,
+        input.warningCount ?? null,
+        input.warningsJson ?? null,
+        input.errorCode ?? null,
+        input.durationMs ?? null,
+      ],
+    );
+    return input.id;
+  }
+
   const result = await client.query<{ id: string }>(
     `
       INSERT INTO onec_client_import_runs (
@@ -71,88 +108,52 @@ async function insertAttemptJournal(
         mode,
         trigger_source,
         stage,
-        duration_ms,
+        parent_run_id,
         source_sha256,
         source_byte_size,
         source_record_count,
+        warning_count,
+        warnings,
         error_code,
+        duration_ms,
         finished_at
       )
-      VALUES ($1, 'scheduled_check', 'scheduled', $2, $3, $4, $5, $6, $7, CASE WHEN $1 = 'running' THEN NULL ELSE NOW() END)
+      VALUES (
+        $1,
+        'scheduled_check',
+        'scheduled',
+        $2,
+        $3::uuid,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8::jsonb,
+        $9,
+        $10,
+        CASE WHEN $1 = 'running' THEN NULL ELSE NOW() END
+      )
       RETURNING id::text
     `,
     [
       input.status === "running" ? "running" : input.status,
       input.stage,
-      input.durationMs,
+      input.parentRunId ?? null,
       input.sha256 ?? null,
       input.byteSize ?? null,
       input.recordCount ?? null,
+      input.warningCount ?? null,
+      input.warningsJson ?? null,
       input.errorCode ?? null,
+      input.durationMs ?? null,
     ],
   );
-  return result.rows[0]?.id;
-}
-
-async function loadExchangeState(client: PoolClient): Promise<ExchangeStateRow> {
-  const result = await client.query<ExchangeStateRow>(
-    `
-      SELECT
-        last_checked_at,
-        last_checked_sha256,
-        last_successful_apply_at,
-        last_successful_apply_sha256,
-        accepted_baseline_sha256
-      FROM onec_exchange_state
-      WHERE id = 1
-    `,
-  );
-  return (
-    result.rows[0] ?? {
-      last_checked_at: null,
-      last_checked_sha256: null,
-      last_successful_apply_at: null,
-      last_successful_apply_sha256: null,
-      accepted_baseline_sha256: null,
-    }
-  );
-}
-
-async function updateExchangeState(
-  client: PoolClient,
-  input: Partial<{
-    lastCheckedAt: Date;
-    lastCheckedSha256: string;
-    lastSuccessfulApplyAt: Date;
-    lastSuccessfulApplySha256: string;
-    acceptedBaselineSha256: string;
-  }>,
-): Promise<void> {
-  await client.query(
-    `
-      UPDATE onec_exchange_state
-      SET
-        last_checked_at = COALESCE($1, last_checked_at),
-        last_checked_sha256 = COALESCE($2, last_checked_sha256),
-        last_successful_apply_at = COALESCE($3, last_successful_apply_at),
-        last_successful_apply_sha256 = COALESCE($4, last_successful_apply_sha256),
-        accepted_baseline_sha256 = COALESCE($5, accepted_baseline_sha256),
-        updated_at = NOW()
-      WHERE id = 1
-    `,
-    [
-      input.lastCheckedAt ?? null,
-      input.lastCheckedSha256 ?? null,
-      input.lastSuccessfulApplyAt ?? null,
-      input.lastSuccessfulApplySha256 ?? null,
-      input.acceptedBaselineSha256 ?? null,
-    ],
-  );
+  return result.rows[0]!.id;
 }
 
 function resolveApplyAuthorization(
   config: ScheduledExchangeConfig,
-  state: ExchangeStateRow,
+  state: Awaited<ReturnType<typeof loadExchangeState>>,
   payload: ValidatedClientsPayload,
 ): { ok: true } | { ok: false; code: "BASELINE_REQUIRED" | "HASH_MISMATCH"; message: string } {
   if (!config.applyEnabled) {
@@ -180,6 +181,12 @@ function resolveApplyAuthorization(
   return { ok: true };
 }
 
+function failureResult(
+  input: Omit<ScheduledExchangeResult, "durationMs"> & { startedAt: number },
+): ScheduledExchangeResult {
+  return { ...input, durationMs: Date.now() - input.startedAt };
+}
+
 export async function runScheduledExchangeCycle(
   options: {
     env?: NodeJS.ProcessEnv;
@@ -193,24 +200,24 @@ export async function runScheduledExchangeCycle(
 
   const loadedConfig = loadOnecFtpConfig(env);
   if (!loadedConfig.ok) {
-    return {
+    return failureResult({
       status: "CONFIG_ERROR",
       stage: "config",
-      durationMs: Date.now() - startedAt,
+      startedAt,
       errorCode: "CONFIG_ERROR",
       message: loadedConfig.message,
-    };
+    });
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return {
+    return failureResult({
       status: "DATABASE_ERROR",
       stage: "config",
-      durationMs: Date.now() - startedAt,
+      startedAt,
       errorCode: "DATABASE_ERROR",
       message: "DATABASE_URL is required for scheduled exchange.",
-    };
+    });
   }
 
   const pgOptions = createPgPoolOptions(databaseUrl);
@@ -223,19 +230,36 @@ export async function runScheduledExchangeCycle(
 
   let client: PoolClient | undefined;
   let lockHeld = false;
+  let cycleRunId: string | undefined;
 
   try {
     client = await pool.connect();
+    await markExchangeAttempt(client);
+
     lockHeld = await tryAcquireImportLock(client);
     if (!lockHeld) {
-      return {
+      cycleRunId = await insertCycleJournal(client, {
+        status: "failed",
+        stage: "lock",
+        errorCode: "IMPORT_LOCKED",
+        durationMs: Date.now() - startedAt,
+      });
+      return failureResult({
         status: "IMPORT_LOCKED",
         stage: "lock",
-        durationMs: Date.now() - startedAt,
+        startedAt,
+        checkRunId: cycleRunId,
         errorCode: "IMPORT_LOCKED",
         message: "Another clients import or exchange cycle is already running.",
-      };
+      });
     }
+
+    cycleRunId = await insertCycleJournal(client, {
+      status: "running",
+      stage: "lock",
+    });
+
+    const committedBeforeRead = await getDbCommittedSnapshotSha(client);
 
     let stableRead = await readStableClientsFile(loadedConfig.config, {
       reader: options.ftpReader,
@@ -252,14 +276,14 @@ export async function runScheduledExchangeCycle(
     }
 
     if (!stableRead.ok) {
-      await insertAttemptJournal(client, {
+      await insertCycleJournal(client, {
+        id: cycleRunId,
         status: stableRead.code === "VALIDATION_FAILED" ? "validation_failed" : "failed",
         stage: "stable_read",
-        durationMs: Date.now() - startedAt,
-        errorCode: stableRead.code,
         sha256: stableRead.firstSha256,
+        errorCode: stableRead.code,
+        durationMs: Date.now() - startedAt,
       });
-      await updateExchangeState(client, { lastCheckedAt: new Date() });
 
       const statusMap = {
         FTP_ERROR: "FTP_ERROR",
@@ -269,156 +293,195 @@ export async function runScheduledExchangeCycle(
         HASH_MISMATCH: "VALIDATION_FAILED",
       } as const;
 
-      return {
+      return failureResult({
         status: statusMap[stableRead.code] ?? "FTP_ERROR",
         stage: "stable_read",
-        durationMs: Date.now() - startedAt,
+        startedAt,
         readCount: stableRead.readCount,
         sha256: stableRead.firstSha256,
+        checkRunId: cycleRunId,
         errorCode: stableRead.code,
         message: stableRead.message,
-      };
+      });
     }
 
     const payload = stableRead.payload;
-    const state = await loadExchangeState(client);
+    await markExchangeVerified(client, { sha256: payload.sha256 });
 
-    await updateExchangeState(client, {
-      lastCheckedAt: new Date(),
-      lastCheckedSha256: payload.sha256,
+    await insertCycleJournal(client, {
+      id: cycleRunId,
+      status: "running",
+      stage: "stable_read",
+      sha256: payload.sha256,
+      byteSize: payload.byteSize,
+      recordCount: payload.recordCount,
+      warningCount: payload.warningCount,
+      warningsJson: JSON.stringify(payload.warnings),
     });
 
-    if (
-      state.last_successful_apply_sha256 === payload.sha256 ||
-      (state.last_checked_sha256 === payload.sha256 && !config.applyEnabled)
-    ) {
-      await insertAttemptJournal(client, {
+    if (payload.sha256 === committedBeforeRead) {
+      await insertCycleJournal(client, {
+        id: cycleRunId,
         status: "success",
         stage: "check_only",
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
+        warningCount: payload.warningCount,
+        warningsJson: JSON.stringify(payload.warnings),
         durationMs: Date.now() - startedAt,
       });
-      return {
+      return failureResult({
         status: "SKIPPED_UNCHANGED",
         stage: "check_only",
-        durationMs: Date.now() - startedAt,
+        startedAt,
         sha256: payload.sha256,
         recordCount: payload.recordCount,
         readCount: stableRead.readCount,
-        message: "Source unchanged since last successful check or apply.",
-      };
+        checkRunId: cycleRunId,
+        message: "Source matches the last committed snapshot in the database.",
+      });
     }
 
     if (!config.applyEnabled) {
-      await insertAttemptJournal(client, {
+      await insertCycleJournal(client, {
+        id: cycleRunId,
         status: "success",
         stage: "check_only",
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
+        warningCount: payload.warningCount,
+        warningsJson: JSON.stringify(payload.warnings),
         durationMs: Date.now() - startedAt,
       });
-      return {
-        status: "CHECK_ONLY",
+      return failureResult({
+        status: committedBeforeRead ? "PENDING_APPLY" : "CHECK_ONLY",
         stage: "check_only",
-        durationMs: Date.now() - startedAt,
+        startedAt,
         sha256: payload.sha256,
         recordCount: payload.recordCount,
         readCount: stableRead.readCount,
-        message: "Stable source validated; scheduled apply is disabled.",
-      };
+        checkRunId: cycleRunId,
+        message: committedBeforeRead
+          ? "New source verified on FTP; scheduled apply is disabled and LK data was not updated."
+          : "Stable source validated; scheduled apply is disabled.",
+      });
     }
 
+    const state = await loadExchangeState(client);
     const auth = resolveApplyAuthorization(config, state, payload);
     if (!auth.ok) {
-      await insertAttemptJournal(client, {
+      await insertCycleJournal(client, {
+        id: cycleRunId,
         status: "failed",
         stage: "apply",
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        durationMs: Date.now() - startedAt,
         errorCode: auth.code,
+        durationMs: Date.now() - startedAt,
       });
-      return {
+      return failureResult({
         status: auth.code,
         stage: "apply",
-        durationMs: Date.now() - startedAt,
+        startedAt,
         sha256: payload.sha256,
         recordCount: payload.recordCount,
         readCount: stableRead.readCount,
+        checkRunId: cycleRunId,
         errorCode: auth.code,
         message: auth.message,
-      };
+      });
     }
 
-    await releaseImportLock(client);
+    const applied = await applyClientsImport({
+      client,
+      payload,
+      lockAlreadyHeld: true,
+      retainLock: false,
+      triggerSource: "scheduled",
+      parentRunId: cycleRunId,
+      excludeRunIds: cycleRunId ? [cycleRunId] : [],
+      expectedCommittedSha256: committedBeforeRead,
+      syncExchangeState: true,
+    });
     lockHeld = false;
-    client.release();
-    client = undefined;
-
-    const applied = await applyClientsImport({ databaseUrl, payload });
-    const reconnect = await pool.connect();
-    client = reconnect;
 
     if (!applied.ok) {
-      await insertAttemptJournal(client, {
+      await insertCycleJournal(client, {
+        id: cycleRunId,
         status: "failed",
         stage: "apply",
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        durationMs: Date.now() - startedAt,
         errorCode: applied.code,
-      });
-      return {
-        status: "APPLY_FAILED",
-        stage: "apply",
         durationMs: Date.now() - startedAt,
+      });
+      const statusMap = {
+        SUPERSEDED_BY_NEWER_IMPORT: "SUPERSEDED_BY_NEWER_IMPORT",
+        APPLY_BLOCKED: "APPLY_BLOCKED",
+      } as const;
+      return failureResult({
+        status: statusMap[applied.code as keyof typeof statusMap] ?? "APPLY_FAILED",
+        stage: "apply",
+        startedAt,
         sha256: payload.sha256,
         recordCount: payload.recordCount,
         readCount: stableRead.readCount,
         applyRunId: applied.runId,
+        checkRunId: cycleRunId,
         errorCode: applied.code,
         message: applied.message,
-      };
+      });
     }
 
-    await updateExchangeState(client, {
-      lastSuccessfulApplyAt: new Date(),
-      lastSuccessfulApplySha256: payload.sha256,
-      acceptedBaselineSha256: state.accepted_baseline_sha256 ?? config.acceptedBaselineSha256 ?? payload.sha256,
-    });
-
-    await insertAttemptJournal(client, {
+    await insertCycleJournal(client, {
+      id: cycleRunId,
       status: "success",
       stage: "apply",
       sha256: payload.sha256,
       byteSize: payload.byteSize,
       recordCount: payload.recordCount,
+      warningCount: payload.warningCount,
+      warningsJson: JSON.stringify(payload.warnings),
       durationMs: Date.now() - startedAt,
     });
 
-    return {
+    return failureResult({
       status: "SUCCESS",
       stage: "apply",
-      durationMs: Date.now() - startedAt,
+      startedAt,
       sha256: payload.sha256,
       recordCount: payload.recordCount,
       readCount: stableRead.readCount,
       applyRunId: applied.runId,
+      checkRunId: cycleRunId,
       message: "Scheduled exchange applied successfully.",
-    };
+    });
   } catch {
-    return {
+    if (client && cycleRunId) {
+      try {
+        await insertCycleJournal(client, {
+          id: cycleRunId,
+          status: "failed",
+          stage: "state_update",
+          errorCode: "DATABASE_ERROR",
+          durationMs: Date.now() - startedAt,
+        });
+      } catch {
+        // ignore secondary journal failure
+      }
+    }
+    return failureResult({
       status: "DATABASE_ERROR",
       stage: "state_update",
-      durationMs: Date.now() - startedAt,
+      startedAt,
+      checkRunId: cycleRunId,
       errorCode: "DATABASE_ERROR",
       message: "Scheduled exchange database operation failed.",
-    };
+    });
   } finally {
     if (client) {
       if (lockHeld) {

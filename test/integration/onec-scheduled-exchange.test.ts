@@ -43,7 +43,20 @@ describe("scheduled exchange integration", { concurrency: false }, () => {
   beforeEach(async () => {
     reads = 0;
     await pool.query("TRUNCATE onec_client_import_runs RESTART IDENTITY CASCADE");
-    await pool.query("UPDATE onec_exchange_state SET last_checked_at = NULL, last_checked_sha256 = NULL, last_successful_apply_at = NULL, last_successful_apply_sha256 = NULL, accepted_baseline_sha256 = NULL");
+    await pool.query(`
+      UPDATE onec_exchange_state
+      SET
+        last_attempt_at = NULL,
+        last_verified_at = NULL,
+        last_verified_sha256 = NULL,
+        last_checked_at = NULL,
+        last_checked_sha256 = NULL,
+        last_successful_apply_at = NULL,
+        last_successful_apply_sha256 = NULL,
+        accepted_baseline_sha256 = NULL,
+        apply_blocked = false,
+        apply_blocked_reason = NULL
+    `);
     await pool.query("TRUNCATE onec_clients RESTART IDENTITY CASCADE");
   });
 
@@ -83,11 +96,22 @@ describe("scheduled exchange integration", { concurrency: false }, () => {
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM onec_clients")).rows[0].count, 1);
   });
 
-  it("skips unchanged source on repeat check", async () => {
-    const first = await runScheduledExchangeCycle({ env, ftpReader: reader });
-    assert.equal(first.status, "CHECK_ONLY");
+  it("skips when FTP matches the committed database snapshot", async () => {
+    const sha = buildClientsFileSha256([sampleClient()]);
+    const applied = await runScheduledExchangeCycle({
+      env: {
+        ...env,
+        ONEC_SCHEDULED_EXCHANGE_APPLY: "true",
+        ONEC_SCHEDULED_EXCHANGE_ACCEPTED_BASELINE_SHA256: sha,
+      },
+      ftpReader: reader,
+    });
+    assert.equal(applied.status, "SUCCESS");
     reads = 0;
-    const second = await runScheduledExchangeCycle({ env, ftpReader: reader });
+    const second = await runScheduledExchangeCycle({
+      env: { ...env, ONEC_SCHEDULED_EXCHANGE_APPLY: "false" },
+      ftpReader: reader,
+    });
     assert.equal(second.status, "SKIPPED_UNCHANGED");
     assert.equal(reads, 2);
   });

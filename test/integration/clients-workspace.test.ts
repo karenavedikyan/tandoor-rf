@@ -259,6 +259,31 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.ok(afterFail.body.lastSuccessfulImportAt);
   });
 
+  it("reports pending_apply when verified FTP differs from committed snapshot", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`
+      UPDATE onec_exchange_state
+      SET
+        last_successful_apply_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        last_verified_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        last_verified_at = NOW(),
+        last_successful_apply_at = NOW() - INTERVAL '10 days'
+    `);
+    await pool.end();
+    await resetPoolForTests();
+
+    const app = await loadApp();
+    const adminCookie = await login("admin@example.com");
+    const res = await request(app)
+      .get("/api/clients/sync-status")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.freshnessState, "pending_apply");
+    assert.ok(res.body.warning);
+    assert.equal(res.body.adminDetail.committedSha256, "a".repeat(64));
+    assert.equal(res.body.adminDetail.verifiedSha256, "b".repeat(64));
+  });
+
   it("reports warning after validation_failed import", async () => {
     const app = await loadApp();
     const adminCookie = await login("admin@example.com");

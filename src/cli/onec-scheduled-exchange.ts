@@ -6,8 +6,8 @@ async function main(): Promise<void> {
   const exitCode =
     result.status === "SUCCESS" ||
     result.status === "CHECK_ONLY" ||
-    result.status === "SKIPPED_UNCHANGED" ||
-    result.status === "APPLY_DISABLED"
+    result.status === "PENDING_APPLY" ||
+    result.status === "SKIPPED_UNCHANGED"
       ? 0
       : 1;
   process.exit(exitCode);
