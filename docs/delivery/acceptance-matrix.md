@@ -263,7 +263,7 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review fixes) | см. PR #17 |
+| SHA PR head (review fixes) | `1e522bc` |
 | 1 completeness/required fields | rejected/total mismatch → PARTIAL; обязательные поля; probe.status — `bitrix24-read-tasks.test.ts` |
 | 2 full IP normalization | ipaddr.js; все формы IPv6; blocked+allowed — `bitrix24-ip-security.test.ts` |
 | 3 safe error payloads | без raw transport/result — `bitrix24-read-errors-canary.test.ts` |
