@@ -263,7 +263,7 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head | см. PR |
+| SHA PR head | `58edcfd` |
 | Серверный модуль | `src/bitrix24/*` — webhook config, injectable transport, `user.get` + `tasks.task.list` only |
 | CLI диагностика | `bitrix24-probe` — local без сети; `--live --bitrix-user-id` для ограниченной live-выборки |
 | Disabled by default | `BITRIX24_ENABLED=false`; health/login/clients без Bitrix24 |
