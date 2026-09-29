@@ -214,16 +214,33 @@
       };
     }
     var parts = [];
-    if (data.runningImport) {
-      parts.push("Импорт выполняется…");
+    if (data.runningImport || data.freshnessState === "updating") {
+      parts.push("Обновление данных выполняется…");
+    } else if (data.freshnessState === "never") {
+      parts.push("Данные клиентов в ЛК ещё не загружались.");
+    } else if (data.freshnessState === "error") {
+      parts.push("Последняя попытка обновления завершилась с ошибкой.");
+    } else if (data.freshnessState === "pending_apply") {
+      parts.push("Обнаружен новый файл, ожидается согласованное обновление.");
+    } else if (data.freshnessState === "stale") {
+      parts.push("Актуальность данных в ЛК может быть устаревшей.");
     } else if (data.lastSuccessfulImportAtLabel) {
-      parts.push("Последний импорт в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+      parts.push("Данные загружены в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+      if (data.sourceFormationKnown && data.lastSourceModifiedAtLabel) {
+        parts.push("Выгрузка 1С сформирована: " + data.lastSourceModifiedAtLabel + " (МСК)");
+      } else if (data.sourceFormationKnown === false) {
+        parts.push("Дата формирования выгрузки 1С неизвестна.");
+      }
     } else {
-      parts.push("Импорт в ЛК ещё не выполнялся.");
+      parts.push("Актуальность данных неизвестна.");
     }
     return {
       text: parts.join(" "),
-      warning: !!data.warning,
+      warning:
+        !!data.warning ||
+        data.freshnessState === "error" ||
+        data.freshnessState === "stale" ||
+        data.freshnessState === "pending_apply",
       appendWarning: data.warning ? " " + data.warning : "",
     };
   }

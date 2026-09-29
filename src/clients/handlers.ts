@@ -1,5 +1,6 @@
 import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
+import { loadScheduledExchangeConfig } from "../onec-scheduled-exchange/config";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
@@ -56,8 +57,26 @@ export async function clientSyncStatusHandler(
   req: AccessRequest,
   res: Response,
 ): Promise<void> {
-  const status = await getClientsSyncStatus();
+  const context = req.accessContext!;
+  const isAdmin = context.role === "admin";
+  const status = await getClientsSyncStatus({
+    staleAfterHours: loadScheduledExchangeConfig().staleAfterHours,
+    includeAdminDetail: isAdmin,
+  });
   setNoStore(res);
+  if (!isAdmin) {
+    res.status(200).json({
+      freshnessState: status.freshnessState,
+      lastSuccessfulImportAtLabel: status.lastSuccessfulImportAtLabel,
+      sourceFormationKnown: status.sourceFormationKnown,
+      lastSourceModifiedAtLabel: status.sourceFormationKnown
+        ? status.lastSourceModifiedAtLabel
+        : null,
+      runningImport: status.runningImport,
+      warning: status.warning,
+    });
+    return;
+  }
   res.status(200).json(status);
 }
 

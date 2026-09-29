@@ -1,7 +1,8 @@
 import { combineScopeAndFilter } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
-import { query } from "../db/pool";
+import { getPool, query } from "../db/pool";
+import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
 import {
@@ -163,10 +164,24 @@ export async function getClientByGuid(
   return toClientDetail(row);
 }
 
-export async function getClientsSyncStatus(): Promise<ClientsSyncStatusResponse> {
-  const lastSuccess = await query<{ finished_at: Date | null }>(
+type ExchangeStateQueryRow = {
+  last_attempt_at: Date | null;
+  last_verified_at: Date | null;
+  last_verified_sha256: string | null;
+  last_successful_apply_at: Date | null;
+  last_successful_apply_sha256: string | null;
+  last_source_modified_at: Date | null;
+  apply_blocked: boolean;
+};
+
+export async function getClientsSyncStatus(options: {
+  staleAfterHours?: number;
+  includeAdminDetail?: boolean;
+} = {}): Promise<ClientsSyncStatusResponse> {
+  const staleAfterHours = options.staleAfterHours ?? 72;
+  const lastSuccess = await query<{ finished_at: Date | null; source_record_count: number | null }>(
     `
-      SELECT finished_at
+      SELECT finished_at, source_record_count
       FROM onec_client_import_runs
       WHERE status = 'success' AND mode = 'apply'
       ORDER BY finished_at DESC NULLS LAST
@@ -180,37 +195,121 @@ export async function getClientsSyncStatus(): Promise<ClientsSyncStatusResponse>
       WHERE status = 'running'
     `,
   );
-  const latest = await query<{ status: string; finished_at: Date | null; error_code: string | null }>(
+  const latest = await query<{
+    status: string;
+    finished_at: Date | null;
+    error_code: string | null;
+    warning_count: number | null;
+    warnings_truncated: boolean | null;
+  }>(
     `
-      SELECT status, finished_at, error_code
+      SELECT status, finished_at, error_code, warning_count, warnings_truncated
       FROM onec_client_import_runs
       ORDER BY started_at DESC
       LIMIT 1
     `,
   );
+  const exchangeState = await query<ExchangeStateQueryRow>(
+    `
+      SELECT
+        last_attempt_at,
+        last_verified_at,
+        last_verified_sha256,
+        last_successful_apply_at,
+        last_successful_apply_sha256,
+        last_source_modified_at,
+        apply_blocked
+      FROM onec_exchange_state
+      WHERE id = 1
+    `,
+  );
 
-  const lastSuccessfulImportAt = lastSuccess.rows[0]?.finished_at ?? null;
+  const state = exchangeState.rows[0];
+  const lastSuccessfulImportAt =
+    state?.last_successful_apply_at ?? lastSuccess.rows[0]?.finished_at ?? null;
+  const lastAttemptAt = state?.last_attempt_at ?? null;
+  const lastVerifiedAt = state?.last_verified_at ?? null;
+  const lastVerifiedSha256 = state?.last_verified_sha256 ?? null;
+  const sourceFormationKnown = state?.last_source_modified_at != null;
+
+  let committedSha256 = state?.last_successful_apply_sha256 ?? null;
+  if (!committedSha256) {
+    const activePool = getPool();
+    if (activePool) {
+      const client = await activePool.connect();
+      try {
+        committedSha256 = await getCommittedSnapshotSha(client);
+      } finally {
+        client.release();
+      }
+    }
+  }
   const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
   const latestRun = latest.rows[0];
 
   let warning: string | null = null;
-  if (
-    lastSuccessfulImportAt &&
+  let freshnessState: ClientsSyncStatusResponse["freshnessState"] = "unknown";
+
+  if (runningImport) {
+    freshnessState = "updating";
+  } else if (!lastSuccessfulImportAt) {
+    freshnessState = "never";
+  } else if (
     latestRun &&
     (latestRun.status === "failed" || latestRun.status === "validation_failed") &&
     latestRun.finished_at &&
-    latestRun.finished_at > lastSuccessfulImportAt
+    (!lastSuccessfulImportAt || latestRun.finished_at > lastSuccessfulImportAt)
   ) {
+    freshnessState = "error";
     warning =
-      "Последний импорт завершился с ошибкой; в базе остаются данные предыдущей успешной загрузки.";
+      "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
+  } else if (
+    lastVerifiedSha256 &&
+    committedSha256 &&
+    lastVerifiedSha256 !== committedSha256
+  ) {
+    freshnessState = "pending_apply";
+    warning =
+      "На FTP обнаружен новый файл, но он ещё не применён в ЛК; отображаются данные последней успешной загрузки.";
+  } else {
+    const staleMs = staleAfterHours * 60 * 60 * 1000;
+    freshnessState =
+      lastSuccessfulImportAt &&
+      Date.now() - lastSuccessfulImportAt.getTime() > staleMs
+        ? "stale"
+        : "current";
   }
 
-  return {
+  const response: ClientsSyncStatusResponse = {
+    freshnessState,
     lastSuccessfulImportAt: lastSuccessfulImportAt?.toISOString() ?? null,
     lastSuccessfulImportAtLabel: lastSuccessfulImportAt
       ? formatMskDateTime(lastSuccessfulImportAt)
       : null,
+    lastAttemptAt: lastAttemptAt?.toISOString() ?? null,
+    lastAttemptAtLabel: lastAttemptAt ? formatMskDateTime(lastAttemptAt) : null,
+    lastVerifiedAt: lastVerifiedAt?.toISOString() ?? null,
+    lastVerifiedAtLabel: lastVerifiedAt ? formatMskDateTime(lastVerifiedAt) : null,
+    sourceFormationKnown,
+    lastSourceModifiedAt: state?.last_source_modified_at?.toISOString() ?? null,
+    lastSourceModifiedAtLabel: state?.last_source_modified_at
+      ? formatMskDateTime(state.last_source_modified_at)
+      : null,
     runningImport,
     warning,
   };
+
+  if (options.includeAdminDetail) {
+    response.adminDetail = {
+      lastErrorCode: latestRun?.error_code ?? null,
+      recordCount: lastSuccess.rows[0]?.source_record_count ?? null,
+      committedSha256,
+      verifiedSha256: lastVerifiedSha256,
+      warningCount: latestRun?.warning_count ?? null,
+      warningsTruncated: latestRun?.warnings_truncated ?? null,
+      applyBlocked: state?.apply_blocked ?? false,
+    };
+  }
+
+  return response;
 }

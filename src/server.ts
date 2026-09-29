@@ -284,9 +284,9 @@ export function startServer(): ReturnType<express.Application["listen"]> {
     void Promise.resolve().then(async () => {
       const pool = getPool();
       if (!pool) return;
-      const status = await runOneDiagnosticJob(pool);
-      if (status !== "idle") console.log(`1C diagnostic job: ${status}`);
-    }).catch(() => console.error("1C diagnostic worker unavailable"));
+      const diagnosticStatus = await runOneDiagnosticJob(pool);
+      if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
+    }).catch(() => console.error("1C background workers unavailable"));
   });
 
   process.on("SIGTERM", () => {

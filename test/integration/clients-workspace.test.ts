@@ -243,8 +243,10 @@ describe("clients workspace integration", { concurrency: false }, () => {
       .set(authHeaders(adminCookie));
     assert.equal(initial.status, 200);
     assert.ok(initial.body.lastSuccessfulImportAt);
+    assert.equal(initial.body.freshnessState, "current");
     assert.equal(initial.body.runningImport, false);
     assert.equal(initial.body.warning, null);
+    assert.ok(initial.body.adminDetail);
 
     await insertFailedImportRun(databaseUrl);
     await resetPoolForTests();
@@ -255,6 +257,31 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(afterFail.status, 200);
     assert.ok(afterFail.body.warning);
     assert.ok(afterFail.body.lastSuccessfulImportAt);
+  });
+
+  it("reports pending_apply when verified FTP differs from committed snapshot", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`
+      UPDATE onec_exchange_state
+      SET
+        last_successful_apply_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        last_verified_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        last_verified_at = NOW(),
+        last_successful_apply_at = NOW() - INTERVAL '10 days'
+    `);
+    await pool.end();
+    await resetPoolForTests();
+
+    const app = await loadApp();
+    const adminCookie = await login("admin@example.com");
+    const res = await request(app)
+      .get("/api/clients/sync-status")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.freshnessState, "pending_apply");
+    assert.ok(res.body.warning);
+    assert.equal(res.body.adminDetail.committedSha256, "a".repeat(64));
+    assert.equal(res.body.adminDetail.verifiedSha256, "b".repeat(64));
   });
 
   it("reports warning after validation_failed import", async () => {
@@ -285,7 +312,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(arrayQ.status, 400);
   });
 
-  it("denies roles without client-read policy and keeps sync-status admin-only", async () => {
+  it("denies roles without client-read policy on list and sync-status", async () => {
     const app = await loadApp();
     const deniedRoles = ["marketer", "analyst", "category_manager", "coordinator", "manager"];
 

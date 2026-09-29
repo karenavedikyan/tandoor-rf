@@ -162,12 +162,12 @@ describe("onec clients import integration", { concurrency: false }, () => {
       argv: ["--apply", "--expected-sha256", replacedHash],
       fileBytes: replacedBytes,
     });
-    assert.equal(replaced.status, "SUCCESS");
+    assert.equal(replaced.status, "GUID_SET_SHRINK");
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const count = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients");
     await pool.end();
-    assert.equal(Number(count.rows[0]?.count), 3);
+    assert.equal(Number(count.rows[0]?.count), 2);
   });
 
   it("blocks apply when record count decreases and writes a journal entry", async () => {
@@ -207,6 +207,40 @@ describe("onec clients import integration", { concurrency: false }, () => {
     assert.equal(Number(clientCount.rows[0]?.count), 2);
     assert.equal(journal.rows[0]?.status, "failed");
     assert.equal(journal.rows[0]?.error_code, "RECORD_COUNT_DECREASED");
+  });
+
+  it("blocks apply when existing client GUID disappears with same record count", async () => {
+    const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
+    const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", fullHash],
+      fileBytes: fullBytes,
+    });
+
+    const replacedBytes = buildClientsFileBytes([
+      sampleClient(),
+      sampleClient({
+        guid_client: "66666666-6666-4666-8666-666666666666",
+        name_client: "Client Gamma",
+      }),
+    ]);
+    const replacedHash = buildClientsFileSha256(JSON.parse(replacedBytes.toString("utf8")));
+    const replaced = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", replacedHash],
+      fileBytes: replacedBytes,
+    });
+    assert.equal(replaced.status, "GUID_SET_SHRINK");
+    assert.ok(replaced.apply?.runId);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const clientCount = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await pool.end();
+    assert.equal(Number(clientCount.rows[0]?.count), 2);
   });
 
   it("rolls back client changes on database failure before cleanup", async () => {

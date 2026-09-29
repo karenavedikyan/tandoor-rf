@@ -62,11 +62,39 @@ export type ClientsOptionsResponse = {
   holdings: ClientOptionDto[];
 };
 
+export type ClientsSyncFreshnessState =
+  | "never"
+  | "current"
+  | "stale"
+  | "error"
+  | "updating"
+  | "pending_apply"
+  | "unknown";
+
 export type ClientsSyncStatusResponse = {
+  freshnessState: ClientsSyncFreshnessState;
   lastSuccessfulImportAt: string | null;
   lastSuccessfulImportAtLabel: string | null;
+  lastAttemptAt: string | null;
+  lastAttemptAtLabel: string | null;
+  lastVerifiedAt: string | null;
+  lastVerifiedAtLabel: string | null;
+  /** Whether 1C source formation time is known (distinct from LK load time). */
+  sourceFormationKnown: boolean;
+  lastSourceModifiedAt: string | null;
+  lastSourceModifiedAtLabel: string | null;
   runningImport: boolean;
   warning: string | null;
+  /** Admin-only detail; omitted for scoped roles. */
+  adminDetail?: {
+    lastErrorCode: string | null;
+    recordCount: number | null;
+    committedSha256: string | null;
+    verifiedSha256: string | null;
+    warningCount: number | null;
+    warningsTruncated: boolean | null;
+    applyBlocked: boolean;
+  };
 };
 
 type ClientRow = {

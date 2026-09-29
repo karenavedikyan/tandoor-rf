@@ -80,10 +80,33 @@ describe("clients frontend logic", () => {
     assert.equal(logic.filterOptions(items, "22222222").length, 1);
   });
 
+  it("shows pending apply when verified FTP differs from LK snapshot", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "pending_apply",
+      lastSuccessfulImportAtLabel: "20.09.2026, 09:00",
+      warning: "На FTP обнаружен новый файл, но он ещё не применён в ЛК.",
+    });
+    assert.match(formatted.text, /ожидается согласованное обновление/);
+    assert.equal(formatted.warning, true);
+  });
+
   it("labels sync status as LK import, not 1C file time", () => {
-    const formatted = logic.formatSyncStatusParts({ lastSuccessfulImportAtLabel: "28.09.2026, 09:00" });
-    assert.match(formatted.text, /Последний импорт в ЛК/);
-    assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С/i);
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      lastSuccessfulImportAtLabel: "28.09.2026, 09:00",
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК/);
+    assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С|FTP/i);
+  });
+
+  it("shows unknown 1C formation date separately from LK load time", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      lastSuccessfulImportAtLabel: "28.09.2026, 09:00",
+      sourceFormationKnown: false,
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК/);
+    assert.match(formatted.text, /Дата формирования выгрузки 1С неизвестна/);
   });
 
   it("keeps applied UUID while editing draft search text", () => {
