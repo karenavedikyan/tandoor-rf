@@ -21,6 +21,8 @@
     "onec-import-job-worker:local": "node --env-file=.env dist/cli/onec-import-job-worker.js",
     "onec-scheduled-exchange": "node dist/cli/onec-scheduled-exchange.js",
     "onec-scheduled-exchange:local": "node --env-file=.env dist/cli/onec-scheduled-exchange.js",
+    "bitrix24-probe": "node dist/cli/bitrix24-probe.js",
+    "bitrix24-probe:local": "node --env-file=.env dist/cli/bitrix24-probe.js",
     "test": "node --import tsx --test test/server.test.ts test/unit/**/*.test.ts",
     "test:browser": "node --import tsx --test --test-concurrency=1 test/browser/**/*.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",

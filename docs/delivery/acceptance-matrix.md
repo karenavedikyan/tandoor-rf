@@ -259,6 +259,28 @@
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 
+### R2.1 Bitrix24 read module (draft PR, branch `cursor/r21-bitrix24-module-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| SHA PR head | см. PR |
+| Серверный модуль | `src/bitrix24/*` — webhook config, injectable transport, `user.get` + `tasks.task.list` only |
+| CLI диагностика | `bitrix24-probe` — local без сети; `--live --bitrix-user-id` для ограниченной live-выборки |
+| Disabled by default | `BITRIX24_ENABLED=false`; health/login/clients без Bitrix24 |
+| Контракт / runbook | [bitrix24-contract.md](./bitrix24-contract.md), [bitrix24-runbook.md](./bitrix24-runbook.md) |
+| Раздельные ID | ЛК user / 1C employee / Bitrix user — не взаимозаменяемы; автосвязь запрещена |
+| R2.2 scope only in docs | кэш, journal, UI «Моя работа» — **не реализованы** |
+| Live portal check | **не выполнялась** (нет production webhook в среде агента) |
+| UI / brand | **не менялись** |
+| 1C import / schedule / clients / access | **не менялись** |
+| Migrations / business tables | **не добавлялись** |
+| Unit tests | `bitrix24-*.test.ts` — config, transport, pagination, sanitize, probe |
+| Integration regression | `bitrix24-no-side-effects.test.ts` + existing auth/clients suites |
+| `npm test` | **182 passed**, 0 failed |
+| `npm run test:integration` | **139 passed**, 0 failed |
+| `npm run test:browser` | **20 passed**, 0 failed |
+| typecheck / build | pass |
+
 ### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
 
 | Проверка | Результат |
