@@ -26,7 +26,7 @@ function authHeaders(cookie?: string): Record<string, string> {
 }
 
 async function loadApp() {
-  resetPoolForTests();
+  await resetPoolForTests();
   const { createApp } = await import("../../src/server");
   return createApp();
 }
@@ -61,7 +61,7 @@ async function removeRevokeFault(): Promise<void> {
 describe("logout failure handling", { concurrency: false }, () => {
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
-    resetPoolForTests();
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
   });
 
@@ -86,7 +86,7 @@ describe("logout failure handling", { concurrency: false }, () => {
     const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 
     await installRevokeFault();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const logout = await request(await loadApp())
       .post("/api/auth/logout")

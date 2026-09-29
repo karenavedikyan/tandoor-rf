@@ -1,6 +1,6 @@
 import type { Response } from "express";
+import type { AccessRequest } from "../access/middleware";
 import { setNoStore } from "../http/no-store";
-import type { AuthenticatedRequest } from "../middleware/auth";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
 import { parseClientsListQuery } from "./query";
@@ -18,23 +18,24 @@ function sendValidationError(res: Response, message: string): void {
 }
 
 export async function listClientsHandler(
-  req: AuthenticatedRequest,
+  req: AccessRequest,
   res: Response,
 ): Promise<void> {
+  const context = req.accessContext!;
   const parsed = parseClientsListQuery(req.query as Record<string, unknown>);
   if (!parsed.ok) {
     sendValidationError(res, parsed.message);
     return;
   }
 
-  const result = await listClients(parsed.query);
+  const result = await listClients(context, parsed.query);
   const hasFilters = Boolean(
     parsed.query.q ||
       parsed.query.managerId ||
       parsed.query.holdingId ||
       parsed.query.phone !== "all",
   );
-  if (!hasFilters && result.total === 0) {
+  if (!hasFilters && result.total === 0 && context.fullClientBase) {
     result.isEmptyDatabase = (await countAllClients()) === 0;
   }
 
@@ -43,16 +44,16 @@ export async function listClientsHandler(
 }
 
 export async function clientOptionsHandler(
-  _req: AuthenticatedRequest,
+  req: AccessRequest,
   res: Response,
 ): Promise<void> {
-  const options = await getClientOptions();
+  const options = await getClientOptions(req.accessContext!);
   setNoStore(res);
   res.status(200).json(options);
 }
 
 export async function clientSyncStatusHandler(
-  _req: AuthenticatedRequest,
+  req: AccessRequest,
   res: Response,
 ): Promise<void> {
   const status = await getClientsSyncStatus();
@@ -61,7 +62,7 @@ export async function clientSyncStatusHandler(
 }
 
 export async function getClientHandler(
-  req: AuthenticatedRequest,
+  req: AccessRequest,
   res: Response,
 ): Promise<void> {
   const guid = typeof req.params.guid === "string" ? req.params.guid.trim() : "";
@@ -70,7 +71,7 @@ export async function getClientHandler(
     return;
   }
 
-  const client = await getClientByGuid(guid.toLowerCase());
+  const client = await getClientByGuid(req.accessContext!, guid.toLowerCase());
   setNoStore(res);
   if (!client) {
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Клиент не найден."));

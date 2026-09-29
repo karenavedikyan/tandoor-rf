@@ -1,7 +1,7 @@
 # Матрица доступа — R1.3-prep
 
-**Этап:** R1.3-prep (документация и сценарии; **реализация прав не выполнялась**)
-**SHA main (база):** `d2ece0bede51a4543c0ab8c7c9b30435fabefed0`
+**Этап:** R1.3 (реализация серверных прав; см. PR R1.3)
+**SHA main (база до R1.3):** `a9e275d` (после merge PR #13)
 **Дата:** 2026-09-28
 **Связанные документы:** [access-rules.md](./access-rules.md) · [access-acceptance-scenarios.md](./access-acceptance-scenarios.md)
 
@@ -34,13 +34,13 @@
 |--------|----------------|
 | Роли в БД | 8 значений: `admin`, `director`, `rop`, `regional_manager`, `manager`, `marketer`, `analyst`, `category_manager` — `src/shared/user.ts`, migration `001` |
 | Статусы пользователя | `invited`, `active`, `disabled` |
-| `/api/clients/*` | **только** `requireAdmin` — любая другая роль → **403** |
+| `/api/clients/*` (read) | **R1.3:** scope по роли + link/grant/delegation; `sync-status` — admin-only |
 | Клиенты API (read) | `GET /api/clients`, `GET /api/clients/options`, `GET /api/clients/sync-status`, `GET /api/clients/:guid` — **только чтение**, POST/PATCH/DELETE **отсутствуют** |
-| Связь user ↔ сотрудник 1С | **отсутствует** (нет FK, нет таблицы назначений, нет таблицы замещений) |
+| Связь user ↔ сотрудник 1С | **R1.3:** `user_onec_employee_links` (подтверждённый ID, без auto-match) |
 | `onec_clients` | 8 полей импорта JSON (`guid_client`, `name_client`, `guid_holding`, `name_holding`, `guid_manager`, `name_manager`, `address`, `telephone`) + служебные `source_sha256`, `first_imported_at`, `last_imported_at`, `updated_at`; **нет FK** на `users`; `guid_manager` **не** используется для фильтрации доступа |
 | Данные 1С | read-only snapshot в ЛК; редактирование первичного источника **не** предусмотрено |
 | UI «Клиенты» | скрывает раздел для non-admin на клиенте; **не** заменяет серверную проверку |
-| Ассистент / координатор | **нет** в enum ролей; замещений **нет** |
+| Ассистент / координатор | **R1.3:** роли `assistant`, `coordinator`; таблица `delegations` |
 
 ---
 
@@ -197,7 +197,7 @@
 | Серверная фильтрация (search/filters/total/export/cache) | ❌ (`requireAdmin`); требования §7.2 access-rules |
 | Статусы delegation draft/pending | 📋 spec §6.1.1 |
 | user ↔ 1С | ❌ |
-| **R1.3 закрыт** | **нет** |
+| **R1.3 impl (draft PR)** | 🟡 partial — сервер + admin UI + тесты; пилот/1C org — нет |
 | R0.2, R1.1, R1.2, пилот | **не закрыты** |
 
 Открытые вопросы: [access-rules.md §8](./access-rules.md#8-открытые-вопросы).

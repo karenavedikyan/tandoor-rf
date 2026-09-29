@@ -123,6 +123,35 @@
 
 **R1.3-prep:** 📋 prep — документация и сценарии; **не** R1.3, **не** пилот. R0.2, R1.1, R1.2 не закрыты.
 
+### R1.3 — серверные права (implementation draft PR #14)
+
+| ID | Требование | Реализация | Тесты | Приёмка | Примечание |
+|----|------------|------------|-------|---------|------------|
+| R1-3I01 | Migration: roles assistant/coordinator + access tables | `003` + `004_access_control_fixes.sql` | integration PG | 🟡 draft | partial unique link; denials; change-requests |
+| R1-3I02 | user ↔ employee link (no auto-match) | admin API + revoke/re-link | ACC-71, re-link after revoke | 🟡 draft | |
+| R1-3I03 | Manager scope via guid_manager | `access/scope-sql.ts` | ACC-01…05 HTTP | 🟡 draft | |
+| R1-3I04 | ROP team scope | `rop_team_members` | ACC-20…21, foreign ROP 403 | 🟡 draft | |
+| R1-3I05 | Regional explicit grants | `access_grants` | ACC-30 | 🟡 draft | |
+| R1-3I06 | Delegations + approval workflow | `/api/access/*` + record-approval admin | ACC-40…47, 170…171, 120…121, overlap revoke | 🟡 draft | no client `status=active`; admin needs businessApprover |
+| R1-3I07 | Server filter list/options/total/detail | `combineScopeAndFilter` in repository | ACC-01 options/search/total | 🟡 draft | fixed double WHERE on holdings |
+| R1-3I08 | sync-status admin-only | clients router | clients-workspace integration | 🟡 draft | |
+| R1-3I09 | Admin / role UI tables | `/admin/access` tabbed forms | screenshots PR #14 | 🟡 draft | JSON in `<details>` only |
+| R1-3I10 | Coordinator no cards default | policy | ACC-141 HTTP 403 | 🟡 draft | |
+| R1-3I11 | Explicit denial priority | `access_denials` + scope SQL | denial integration | 🟡 draft | |
+| R1-3I12 | Change request before re-approval | `delegation_change_requests` | HTTP expand blocked until approve | 🟡 draft | |
+| R1-3I13 | Employee link required (director/regional) | `context.ts` | director list + unlinked 403 | 🟡 draft | admin exception only |
+| R1-3I14 | Transactions + audit | `withTransaction` in service | double-approve 409, fault rollback | 🟡 draft | FOR UPDATE on approve/revoke |
+| R1-3I15 | Scoped explain (no foreign userId / client leak) | `explain-auth.ts` + caller client scope | self+foreign/missing GUID → 404; admin `/api/admin/access/explain` | 🟡 draft | одинаковое тело 404 для user endpoint |
+| R1-3I16 | Denial limits delegation | delegator denial in scope SQL | assistant blocked after manager denial | 🟡 draft | |
+| R1-3I17 | Director revoke + overview | `assertCanManageDelegation` | HTTP 200 revoke, overview | 🟡 draft | |
+| R1-3I18 | Strict clientGuids validation | `validation.ts` | invalid UUID → 400 | 🟡 draft | |
+| R1-3I19 | Role workspace UI `/access` | access-workspace + datetime MSK | browser mocked + e2e PG | 🟡 draft | DOM-кнопки; picker/search; coordinator create |
+| R1-3I20 | Admin record-approval decisionReference | handlers + audit | 400 without ref | 🟡 draft | |
+
+**Pre-pilot setup:** admin создаёт links/grants/teams; менеджер/РОП — замещения через `/api/access`; **не** mass grant в production.
+
+**R1.3 не завершён:** часть ACC-* (session cache, полный mobile UX таблиц, director UI change-flow) ещё не автоматизирована; пилот не разрешён.
+
 ---
 
 ## UI / Brand (interim PR #7)
@@ -205,6 +234,32 @@
 | БД / миграции / импорт / права | **не менялись** |
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
 | Сценарии ACC-* | спецификация; **автотесты не реализованы** |
+
+### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| Базовый SHA (до round 4) | `3e52e42271c6a67213fa66e98c0c36303640aeb8` |
+| Coordinator picker DTO | только `guid` + `name` + pagination; foreign manager → 404 |
+| Delegation detail leak | `clients_access: restricted` при deny; без GUID/имён в JSON |
+| `npm run test:integration` | **92 passed**, 0 failed (**39** access-control) |
+| `npm test` (unit) | **148 passed** |
+| `npm run test:browser` | **20 passed** |
+
+### R1.3 fixes round 3 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| Базовый SHA (до round 3) | `01611a4696a8fe18f9e891e6ddd7a38fc32307d4` |
+| PostgreSQL | `TEST_DATABASE_URL` → `tandoor_rf_test` (локально / CI) |
+| `npm run typecheck` | OK |
+| `npm run build` | OK |
+| `npm test` (unit) | **148 passed**, 0 failed |
+| `npm run test:browser` | **20 passed**, 0 failed (mocked UI + e2e PG flow) |
+| `npm run test:integration` | **87 passed**, 0 failed (**34** access-control HTTP scenarios) |
+| Сквозной e2e | manager UI → ROP approve (кнопки) → assistant access → change → revoke |
+| Production FTP/БД/импорт/деплой | **не затронуты** |
+| R1.3 приёмка | **не заявлена** — пилот не разрешён; director change UI минимален |
 
 ### R0.2 продолжение — сверка имеющихся материалов (2026-09-28)
 

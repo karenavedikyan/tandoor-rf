@@ -8,13 +8,13 @@ describe("server", () => {
 
   before(async () => {
     delete process.env.DATABASE_URL;
-    resetPoolForTests();
+    await resetPoolForTests();
     const { createApp } = await import("../src/server");
     app = createApp();
   });
 
-  after(() => {
-    resetPoolForTests();
+  after(async () => {
+    await resetPoolForTests();
   });
 
   it("GET / returns HTML page", async () => {

@@ -321,8 +321,8 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
-  it("shows forbidden access for non-admin mock and keeps keyboard focus on search", async () => {
-    const { page, context } = await openPage({ role: "manager" });
+  it("shows forbidden access for role without client-read policy and keeps keyboard focus on search", async () => {
+    const { page, context } = await openPage({ role: "marketer" });
     await page.goto(`${baseUrl}/clients`);
     await page.waitForSelector('#access-panel[data-state="forbidden"]');
     assert.match(await page.textContent("#access-panel"), /Нет доступа/);

@@ -21,7 +21,7 @@ function authHeaders(): Record<string, string> {
 }
 
 async function loadApp() {
-  resetPoolForTests();
+  await resetPoolForTests();
   const { createApp } = await import("../../src/server");
   return createApp();
 }
@@ -30,7 +30,7 @@ describe("concurrent login rate limits", { concurrency: false }, () => {
   beforeEach(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl, ORIGIN);
-    resetPoolForTests();
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
   });
 

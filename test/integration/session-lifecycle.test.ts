@@ -26,7 +26,7 @@ function authHeaders(cookie?: string): Record<string, string> {
 }
 
 async function loadApp() {
-  resetPoolForTests();
+  await resetPoolForTests();
   const { createApp } = await import("../../src/server");
   return createApp();
 }
@@ -34,7 +34,7 @@ async function loadApp() {
 describe("session lifecycle", { concurrency: false }, () => {
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
-    resetPoolForTests();
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
   });
 
@@ -62,7 +62,7 @@ describe("session lifecycle", { concurrency: false }, () => {
       "UPDATE sessions SET expires_at = NOW() - interval '1 minute' WHERE revoked_at IS NULL",
     );
     await pool.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const expired = await request(await loadApp())
       .get("/api/auth/me")
@@ -79,7 +79,7 @@ describe("session lifecycle", { concurrency: false }, () => {
       "UPDATE sessions SET revoked_at = NOW() WHERE revoked_at IS NULL",
     );
     await pool2.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const revoked = await request(await loadApp())
       .get("/api/auth/me")
@@ -105,7 +105,7 @@ describe("session lifecycle", { concurrency: false }, () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query("UPDATE users SET status = 'disabled' WHERE id = $1", [user.id]);
     await pool.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const me = await request(await loadApp()).get("/api/auth/me").set("Cookie", cookie);
     assert.equal(me.status, 401);
@@ -133,7 +133,7 @@ describe("session lifecycle", { concurrency: false }, () => {
     const cookieA = loginA.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 
     await closePool();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const app2 = await loadApp();
     const meA = await request(app2).get("/api/auth/me").set("Cookie", cookieA);

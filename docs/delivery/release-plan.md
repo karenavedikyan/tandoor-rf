@@ -70,9 +70,10 @@
 | Вход, сессия, rate limit, CSRF | ✅ | код + тесты |
 | Роли в БД (8 значений) | ✅ | код |
 | Профиль self | ✅ | код + тесты |
-| Связь user ↔ ID сотрудника 1С | ❌ | нужно (R1.3) |
-| Область manager / regional / ROP | ❌ (`requireAdmin`) | нужно (R1.3) |
-| Список, поиск, фильтры | 🟡 admin-only | частично |
+| Связь user ↔ ID сотрудника 1С | 🟡 | Draft PR #14: admin API + revoke/re-link (`004`) |
+| Область manager / regional / ROP | 🟡 | Draft PR #14: server scope + denials |
+| Замещения (delegations) | 🟡 | Draft PR #14: `/api/access/*`, approval workflow |
+| Список, поиск, фильтры | 🟡 | role-scoped API (не только admin) |
 | Карточка (8 полей + заглушки) | 🟡 → **R1.4-prep** | частично; UI уточняется в отдельном PR |
 | Импорт CLI | ✅ | код + тесты |
 | Регулярный обмен | ❌ | R1.5 |
@@ -92,6 +93,23 @@
 **Целевая модель (предложение, на согласование):** роли `assistant` + `coordinator` и таблица `delegations` — потребуют migration при реализации R1.3/R4.3.
 
 **Не закрывает:** R0.2, R1.1, R1.2, R1.3 (implementation), R1.4, R1.5.
+
+### R1.3 — implementation (Draft PR #14, 2026-09-28)
+
+**Ветка:** `cursor/r13-access-control-9e11` · **не merge / не undraft / не deploy**
+
+| Область | Статус |
+|---------|--------|
+| Миграции `003` + `004` | 🟡 draft — partial unique link, denials, change-requests |
+| Серверная область clients API | 🟡 draft — manager/ROP/regional/director + employee link |
+| Делегирование | 🟡 draft — draft/pending only; ROP/director approve; admin record-approval |
+| Admin UI `/admin/access` | 🟡 draft — техническая настройка, coordinator teams, record-approval + decisionReference |
+| Role UI `/access` | 🟡 draft — DOM-кнопки, MSK datetime, client picker/search, coordinator create, detail/change |
+| Integration tests (PostgreSQL) | **34** access-control HTTP; **87** integration total; concurrent approve/revoke |
+| Browser e2e (PostgreSQL) | manager → ROP approve → assistant scope → change → revoke |
+| Production / import / grants | **не менялись** |
+
+**Не заявляется завершённым:** полный ACC-* matrix, session cache tests, director self-service change UI, пилот R1.5.
 
 **Блокеры финальной приёмки R1.4:** Golos vs Exo 2 (владелец); сверка с PDF прототипом v2; R1.1–R1.3; семантика `guid_client` (1С).
 

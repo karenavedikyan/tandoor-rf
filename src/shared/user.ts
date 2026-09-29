@@ -7,7 +7,25 @@ export const USER_ROLES = [
   "marketer",
   "analyst",
   "category_manager",
+  "assistant",
+  "coordinator",
 ] as const;
+
+/** Roles that may call read-only clients API when scope permits. */
+export const CLIENT_READ_ROLES = [
+  "admin",
+  "director",
+  "rop",
+  "regional_manager",
+  "manager",
+  "assistant",
+] as const;
+
+export type ClientReadRole = (typeof CLIENT_READ_ROLES)[number];
+
+export function isClientReadRole(role: string): role is ClientReadRole {
+  return (CLIENT_READ_ROLES as readonly string[]).includes(role);
+}
 
 export type UserRole = (typeof USER_ROLES)[number];
 

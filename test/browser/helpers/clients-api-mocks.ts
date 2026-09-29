@@ -3,7 +3,7 @@ export const SYNTHETIC_CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
-export type MockRole = "admin" | "manager" | "anonymous";
+export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
 
 export function adminUserPayload() {
   return {
@@ -21,6 +21,16 @@ export function managerUserPayload() {
       role: "manager",
       email: "manager@synthetic.test",
       fullName: "Synthetic Manager",
+    },
+  };
+}
+
+export function marketerUserPayload() {
+  return {
+    user: {
+      role: "marketer",
+      email: "marketer@synthetic.test",
+      fullName: "Synthetic Marketer",
     },
   };
 }
@@ -168,6 +178,9 @@ export function resolveMockResponse(
     }
     if (options.role === "manager") {
       return jsonResponse(200, managerUserPayload());
+    }
+    if (options.role === "marketer") {
+      return jsonResponse(200, marketerUserPayload());
     }
     return jsonResponse(200, adminUserPayload());
   }

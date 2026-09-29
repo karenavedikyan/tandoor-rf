@@ -26,7 +26,7 @@ function authHeaders(cookie?: string): Record<string, string> {
 }
 
 async function loadApp() {
-  resetPoolForTests();
+  await resetPoolForTests();
   const { createApp } = await import("../../src/server");
   return createApp();
 }
@@ -40,7 +40,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
 
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
-    resetPoolForTests();
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
   });
 
@@ -52,7 +52,12 @@ describe("auth and profile integration", { concurrency: false }, () => {
     const { resetDatabase } = await import("../helpers/test-db");
     await resetDatabase(databaseUrl);
     const first = await runMigrations({ databaseUrl });
-    assert.deepEqual(first, ["001_initial_auth.sql", "002_onec_clients.sql"]);
+    assert.deepEqual(first, [
+      "001_initial_auth.sql",
+      "002_onec_clients.sql",
+      "003_access_control.sql",
+      "004_access_control_fixes.sql",
+    ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);
   });
@@ -63,7 +68,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
     const pool = new poolModule.Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query("DROP TABLE IF EXISTS users CASCADE");
     await pool.end();
-    resetPoolForTests();
+    await resetPoolForTests();
 
     const app = await loadApp();
     const res = await request(app)
