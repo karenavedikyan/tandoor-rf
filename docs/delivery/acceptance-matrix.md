@@ -263,7 +263,7 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review fixes) | см. PR #17 |
+| SHA PR head (review fixes) | `c012788` |
 | P1 DNS/SSRF pinned transport | все A/AAAA проверяются; connect на pinned IP + TLS SNI; port≠443 rejected; `bitrix24-ip-security.test.ts`, `bitrix24-dns-resolve.test.ts`, `bitrix24-transport.test.ts` |
 | P1 envelope completeness | invalid `{}` / `tasks:"bad"` / empty+next → error или partial; `bitrix24-read-tasks.test.ts` |
 | P1 safe errors / no PII | фиксированные сообщения; canary без ФИО/email/текста задачи — `bitrix24-probe.test.ts`, `bitrix24-transport.test.ts` |
