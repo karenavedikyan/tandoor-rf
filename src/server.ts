@@ -4,7 +4,8 @@ import path from "path";
 import { loginHandler, logoutHandler, meHandler } from "./auth/handlers";
 import { JSON_BODY_LIMIT } from "./config";
 import { checkReadiness } from "./db/readiness";
-import { closePool } from "./db/pool";
+import { closePool, getPool } from "./db/pool";
+import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
 import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
@@ -280,6 +281,12 @@ export function startServer(): ReturnType<express.Application["listen"]> {
 
   const server = app.listen(port, "0.0.0.0", () => {
     console.log(`Server listening on 0.0.0.0:${port}`);
+    void Promise.resolve().then(async () => {
+      const pool = getPool();
+      if (!pool) return;
+      const status = await runOneDiagnosticJob(pool);
+      if (status !== "idle") console.log(`1C diagnostic job: ${status}`);
+    }).catch(() => console.error("1C diagnostic worker unavailable"));
   });
 
   process.on("SIGTERM", () => {
