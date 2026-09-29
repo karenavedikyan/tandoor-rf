@@ -1,6 +1,5 @@
 import { combineScopeAndFilter } from "./combine-filters";
-import { buildClientScopeSql } from "./scope-sql";
-import type { AccessContext } from "./types";
+import type { ClientScopeSql } from "./types";
 import { query } from "../db/pool";
 import { buildClientsFilter, type ClientsListQuery } from "../clients/query";
 
@@ -21,11 +20,10 @@ type CountRow = { count: string };
 type PickRow = { guid_client: string; name_client: string };
 
 export async function listDelegatorClientsPicker(
-  delegatorContext: AccessContext,
+  scope: ClientScopeSql,
   input: ClientsListQuery,
 ): Promise<DelegatorClientPickerResponse> {
   const userFilter = buildClientsFilter(input);
-  const scope = buildClientScopeSql(delegatorContext);
   const filter = combineScopeAndFilter(scope, userFilter);
 
   const totalResult = await query<CountRow>(

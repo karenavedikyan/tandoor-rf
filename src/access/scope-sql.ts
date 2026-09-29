@@ -13,7 +13,7 @@ function scopedWhere(innerSql: string, params: unknown[]): ClientScopeSql {
   };
 }
 
-function appendDenials(scope: ClientScopeSql, userId: string): ClientScopeSql {
+export function appendUserDenials(scope: ClientScopeSql, userId: string): ClientScopeSql {
   if (scope.whereSql === "WHERE FALSE") {
     return scope;
   }
@@ -50,7 +50,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
   }
 
   if (context.fullClientBase) {
-    return appendDenials({ whereSql: "", params: [] }, context.userId);
+    return appendUserDenials({ whereSql: "", params: [] }, context.userId);
   }
 
   if (!context.hasScopedClientAccess || context.employeeLinkConflict || !context.hasEmployeeLink) {
@@ -155,5 +155,5 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
       return DENY_SCOPE;
   }
 
-  return appendDenials(scope, context.userId);
+  return appendUserDenials(scope, context.userId);
 }

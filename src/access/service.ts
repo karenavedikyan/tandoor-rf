@@ -23,11 +23,31 @@ let testFaultAfterDelegationClients = false;
 
 type ConcurrencyHoldPoint = "approve" | "revoke" | "propose-change" | "approve-change";
 
-let concurrencyHold: {
+type ConcurrencyHoldState = {
   point: ConcurrencyHoldPoint;
   release: () => void;
   wait: Promise<void>;
-} | null = null;
+  acquired?: () => void;
+  acquiredPromise?: Promise<void>;
+};
+
+const CONCURRENCY_HOLD_KEY = "__tandoorRfAccessConcurrencyHold";
+
+function getConcurrencyHoldState(): ConcurrencyHoldState | null {
+  return (
+    ((globalThis as Record<string, unknown>)[CONCURRENCY_HOLD_KEY] as
+      | ConcurrencyHoldState
+      | undefined) ?? null
+  );
+}
+
+function setConcurrencyHoldState(state: ConcurrencyHoldState | null): void {
+  if (state === null) {
+    delete (globalThis as Record<string, unknown>)[CONCURRENCY_HOLD_KEY];
+    return;
+  }
+  (globalThis as Record<string, unknown>)[CONCURRENCY_HOLD_KEY] = state;
+}
 
 /** @internal test-only fault injection */
 export function setTestFaultAfterDelegationClients(enabled: boolean): void {
@@ -46,18 +66,40 @@ export function armConcurrencyHold(point: ConcurrencyHoldPoint): void {
   const wait = new Promise<void>((resolve) => {
     releaseFn = resolve;
   });
-  concurrencyHold = { point, release: releaseFn, wait };
+  let acquiredResolve!: () => void;
+  const acquiredPromise = new Promise<void>((resolve) => {
+    acquiredResolve = resolve;
+  });
+  setConcurrencyHoldState({
+    point,
+    release: releaseFn,
+    wait,
+    acquired: acquiredResolve,
+    acquiredPromise,
+  });
 }
 
 /** @internal test-only concurrency barrier */
 export function releaseConcurrencyHold(): void {
-  concurrencyHold?.release();
-  concurrencyHold = null;
+  getConcurrencyHoldState()?.release();
+  setConcurrencyHoldState(null);
+}
+
+/** @internal test-only: resolves once the armed hold point is reached inside a transaction lock */
+export function waitForConcurrencyHoldAcquired(): Promise<void> {
+  const hold = getConcurrencyHoldState();
+  if (!hold?.acquiredPromise) {
+    throw new Error("Concurrency hold is not armed.");
+  }
+  return hold.acquiredPromise;
 }
 
 async function maybeHoldConcurrencyAt(point: ConcurrencyHoldPoint): Promise<void> {
-  if (concurrencyHold?.point === point) {
-    await concurrencyHold.wait;
+  const hold = getConcurrencyHoldState();
+  if (hold?.point === point) {
+    hold.acquired?.();
+    hold.acquired = undefined;
+    await hold.wait;
   }
 }
 
@@ -1435,8 +1477,25 @@ export async function listClientsForDelegator(input: {
   }
 
   const { loadAccessContext } = await import("./context");
-  const context = await loadAccessContext(input.delegatorUserId);
-  return listDelegatorClientsPicker(context, {
+  const { appendUserDenials, buildClientScopeSql } = await import("./scope-sql");
+  const { intersectClientScopes } = await import("./combine-filters");
+  const delegatorContext = await loadAccessContext(input.delegatorUserId);
+  let effectiveScope = buildClientScopeSql(delegatorContext);
+  if (input.actorUserId !== input.delegatorUserId) {
+    const callerContext = await loadAccessContext(
+      input.actorUserId,
+      input.actorRole as import("../shared/user").UserRole,
+    );
+    if (callerContext.explicitlyDeniedAll) {
+      effectiveScope = { whereSql: "WHERE FALSE", params: [] };
+    } else if (input.actorRole === "coordinator") {
+      effectiveScope = appendUserDenials(effectiveScope, input.actorUserId);
+    } else {
+      const callerScope = buildClientScopeSql(callerContext);
+      effectiveScope = intersectClientScopes(effectiveScope, callerScope);
+    }
+  }
+  return listDelegatorClientsPicker(effectiveScope, {
     q: input.q ?? "",
     phone: "all",
     page: input.page,

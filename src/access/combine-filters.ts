@@ -1,6 +1,39 @@
 import type { SqlFilter } from "../clients/query";
 import type { ClientScopeSql } from "./types";
 
+export function intersectClientScopes(
+  primary: ClientScopeSql,
+  secondary: ClientScopeSql,
+): ClientScopeSql {
+  if (primary.whereSql === "WHERE FALSE" || secondary.whereSql === "WHERE FALSE") {
+    return { whereSql: "WHERE FALSE", params: [] };
+  }
+
+  const primaryClause = primary.whereSql ? primary.whereSql.replace(/^WHERE\s+/, "") : "TRUE";
+  const secondaryClause = secondary.whereSql ? secondary.whereSql.replace(/^WHERE\s+/, "") : "TRUE";
+
+  if (primaryClause === "TRUE" && secondaryClause === "TRUE") {
+    return { whereSql: "", params: [] };
+  }
+  if (primaryClause === "TRUE") {
+    return secondary;
+  }
+  if (secondaryClause === "TRUE") {
+    return primary;
+  }
+
+  const offset = primary.params.length;
+  const rebasedSecondary = secondaryClause.replace(
+    /\$(\d+)/g,
+    (_match, index) => `$${Number(index) + offset}`,
+  );
+
+  return {
+    whereSql: `WHERE (${primaryClause}) AND (${rebasedSecondary})`,
+    params: [...primary.params, ...secondary.params],
+  };
+}
+
 export function combineScopeAndFilter(
   scope: ClientScopeSql,
   filter: SqlFilter,

@@ -1,3 +1,4 @@
+import { query } from "../db/pool";
 import { loadAccessContext } from "./context";
 import { isClientInScope } from "./policy";
 
@@ -12,6 +13,24 @@ export type DelegationClientEntry = {
 export type DelegationClientsAccess =
   | { access: "visible"; clients: DelegationClientEntry[] }
   | { access: "restricted"; clients: null; message: string };
+
+async function isClientDeniedForUser(userId: string, guidClient: string): Promise<boolean> {
+  const denied = await query(
+    `
+      SELECT 1
+      FROM access_denials
+      WHERE user_id = $1::uuid
+        AND revoked_at IS NULL
+        AND (
+          scope_type = 'all_clients'
+          OR object_id = $2::uuid
+        )
+      LIMIT 1
+    `,
+    [userId, guidClient],
+  );
+  return denied.rows.length > 0;
+}
 
 export async function resolveDelegationClientsAccess(input: {
   actorUserId: string;
@@ -29,9 +48,24 @@ export async function resolveDelegationClientsAccess(input: {
 
   if (input.actorRole === "coordinator") {
     const delegatorContext = await loadAccessContext(input.delegatorUserId);
+    const actorContext = await loadAccessContext(input.actorUserId, "coordinator");
+    if (actorContext.explicitlyDeniedAll) {
+      return {
+        access: "restricted",
+        clients: null,
+        message: DELEGATION_CLIENTS_RESTRICTED_MESSAGE,
+      };
+    }
     for (const entry of input.entries) {
-      const allowed = await isClientInScope(delegatorContext, entry.guid);
-      if (!allowed) {
+      const inDelegatorScope = await isClientInScope(delegatorContext, entry.guid);
+      if (!inDelegatorScope) {
+        return {
+          access: "restricted",
+          clients: null,
+          message: DELEGATION_CLIENTS_RESTRICTED_MESSAGE,
+        };
+      }
+      if (await isClientDeniedForUser(input.actorUserId, entry.guid)) {
         return {
           access: "restricted",
           clients: null,

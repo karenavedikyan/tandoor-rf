@@ -1059,9 +1059,14 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
   });
 
   it("concurrent revoke before approve: approve rejected, final revoked", async () => {
-    const { armConcurrencyHold, releaseConcurrencyHold } = await import("../../src/access/service");
+    const {
+      armConcurrencyHold,
+      releaseConcurrencyHold,
+      waitForConcurrencyHoldAcquired,
+    } = await import("../../src/access/service");
     const managerCookie = await login("manager-a@example.com");
     const ropCookie = await login("rop@example.com");
+    const assistantCookie = await login("assistant@example.com");
     const startsAt = new Date(Date.now() - 60_000).toISOString();
     const endsAt = new Date(Date.now() + 3600_000).toISOString();
 
@@ -1082,15 +1087,17 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
 
     armConcurrencyHold("revoke");
     const app = await loadApp();
-    const revokePromise = request(app)
+    const revokeInflight = request(app)
       .post(`/api/access/delegations/${delegationId}/revoke`)
       .set(authHeaders(managerCookie))
       .send({ basis: "revoke first", reason: "race" });
-    await new Promise((r) => setTimeout(r, 50));
-    const approvePromise = request(await loadApp())
+    const revokePromise = revokeInflight.then((response) => response);
+    await waitForConcurrencyHoldAcquired();
+    const approveInflight = request(app)
       .post(`/api/access/delegations/${delegationId}/approve`)
       .set(authHeaders(ropCookie))
       .send({ basis: "late approve" });
+    const approvePromise = approveInflight.then((response) => response);
     releaseConcurrencyHold();
     const [revokeRes, approveRes] = await Promise.all([revokePromise, approvePromise]);
     assert.equal(revokeRes.status, 200);
@@ -1104,6 +1111,11 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     await pool.end();
     assert.equal(row.rows[0]?.status, "revoked");
     assert.equal(row.rows[0]?.revoked, true);
+
+    const blocked = await request(app)
+      .get(`/api/clients/${CLIENT_THREE}`)
+      .set(authHeaders(assistantCookie));
+    assert.equal(blocked.status, 404);
   });
 
   it("concurrent propose change supersedes stale approve-change attempt", async () => {
@@ -1412,6 +1424,207 @@ describe("access control integration (R1.3)", { concurrency: false }, () => {
     const detail = await request(await loadApp())
       .get(`/api/access/delegations/${delegationId}`)
       .set(authHeaders(managerCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(CLIENT_ONE));
+    assert.doesNotMatch(JSON.stringify(detail.body), /Gamma/);
+  });
+
+  it("ROP caller all_clients deny hides picker, detail, and overview composition", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "before rop caller deny",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: ropUserId,
+        scopeType: "all_clients",
+        reason: "rop global deny picker leak",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const picker = await request(await loadApp())
+      .get(`/api/access/delegators/${managerAUserId}/clients?page=1&pageSize=10`)
+      .set(authHeaders(ropCookie));
+    assert.equal(picker.status, 200);
+    assert.deepEqual(picker.body.items, []);
+    assert.equal(picker.body.total, 0);
+    assert.doesNotMatch(JSON.stringify(picker.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(picker.body), new RegExp(CLIENT_ONE));
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(ropCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(CLIENT_ONE));
+
+    const overview = await request(await loadApp())
+      .get("/api/access/overview")
+      .set(authHeaders(ropCookie));
+    assert.equal(overview.status, 200);
+    const row = overview.body.delegations.find((item: { id: string }) => item.id === delegationId);
+    assert.ok(row);
+    assert.equal(row.client_count, null);
+    assert.equal(row.clients_access, "restricted");
+
+    const revoke = await accessPost(
+      `/api/access/delegations/${delegationId}/revoke`,
+      { basis: "rop deny safe revoke", reason: "policy" },
+      managerCookie,
+    );
+    assert.equal(revoke.status, 200);
+  });
+
+  it("coordinator caller all_clients deny hides picker and delegation composition", async () => {
+    const coordinator = await createTestUser({
+      databaseUrl,
+      email: "coord-deny@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Coord Deny",
+      role: "coordinator",
+    });
+    const adminCookie = await login("admin@example.com");
+    await adminPost(
+      "/api/admin/access/coordinator-teams",
+      {
+        coordinatorUserId: coordinator.id,
+        ropUserId,
+        basis: "coord caller deny",
+      },
+      adminCookie,
+    );
+    const coordCookie = await login("coord-deny@example.com");
+    const managerCookie = await login("manager-a@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE, CLIENT_THREE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "coord caller deny composition",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: coordinator.id,
+        scopeType: "all_clients",
+        reason: "coord global deny",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const picker = await request(await loadApp())
+      .get(`/api/access/delegators/${managerAUserId}/clients?page=1&pageSize=10`)
+      .set(authHeaders(coordCookie));
+    assert.equal(picker.status, 200);
+    assert.deepEqual(picker.body.items, []);
+    assert.equal(picker.body.total, 0);
+    assert.doesNotMatch(JSON.stringify(picker.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(picker.body), /Gamma/);
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(coordCookie));
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.clients, null);
+    assert.equal(detail.body.delegation.clients_access, "restricted");
+    assert.doesNotMatch(JSON.stringify(detail.body), /Альфа/);
+    assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(CLIENT_ONE));
+    assert.doesNotMatch(JSON.stringify(detail.body), /Gamma/);
+
+    const overview = await request(await loadApp())
+      .get("/api/access/overview")
+      .set(authHeaders(coordCookie));
+    assert.equal(overview.status, 200);
+    const row = overview.body.delegations.find((item: { id: string }) => item.id === delegationId);
+    assert.ok(row);
+    assert.equal(row.client_count, null);
+    assert.equal(row.clients_access, "restricted");
+
+    const revoke = await accessPost(
+      `/api/access/delegations/${delegationId}/revoke`,
+      { basis: "coord deny safe revoke", reason: "policy" },
+      managerCookie,
+    );
+    assert.equal(revoke.status, 200);
+  });
+
+  it("ROP caller single client deny hides composition without leaking denied client", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const ropCookie = await login("rop@example.com");
+    const adminCookie = await login("admin@example.com");
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3600_000).toISOString();
+
+    const create = await accessPost(
+      "/api/access/delegations",
+      {
+        assistantUserId,
+        clientGuids: [CLIENT_ONE, CLIENT_THREE],
+        startsAt,
+        endsAt,
+        submit: true,
+        basis: "rop partial caller deny",
+      },
+      managerCookie,
+    );
+    assert.equal(create.status, 201);
+    const delegationId = create.body.id;
+
+    const denial = await adminPost(
+      "/api/admin/access/denials",
+      {
+        userId: ropUserId,
+        scopeType: "client",
+        objectId: CLIENT_ONE,
+        reason: "rop hide alpha",
+        basis: "test",
+      },
+      adminCookie,
+    );
+    assert.equal(denial.status, 201);
+
+    const detail = await request(await loadApp())
+      .get(`/api/access/delegations/${delegationId}`)
+      .set(authHeaders(ropCookie));
     assert.equal(detail.status, 200);
     assert.equal(detail.body.delegation.clients, null);
     assert.equal(detail.body.delegation.clients_access, "restricted");
