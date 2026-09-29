@@ -86,7 +86,7 @@
 | R1-I01 | import | 8-field JSON CLI | `src/onec-clients/*` | R0.1: 116 unit passed; R0.2: **126 unit passed** + fixtures; integration — **не проверено** | n/a | 5c2636c |
 | R1-I02 | R1.1 | Discount, Markups | `EXTRA_FIELDS`, не сохраняется | R0.2: `extra-unknown-fields.json` — observed types, warn + 8 ключей | ⏸ blocked Q4–Q6 (смысл) | код: cd276e6; пример: 8b95946 |
 | R1-I03 | R1.2 | Extended 1C structure | **нет** | — | ⏸ blocked Q8 | 5c2636c |
-| R1-I04 | R1.5 | Scheduled import | CLI only | — | ❌ missing | 5c2636c |
+| R1-I04 | R1.5 | Scheduled import | CLI + operator DB job + TW cron runbook | integration onec-import-jobs | 🟡 draft PR R1.5 | PR head |
 | R1-U01 | R1.4 | UI = прототип v2 | PR #7 interim | Chromium **не проверено**; unit legacy-shell — R0.1/R0.2 | ⏸ blocked | 5c2636c |
 
 ### R1.4-prep — подготовка UI «Клиенты» (ограниченный объём)
@@ -234,6 +234,20 @@
 | БД / миграции / импорт / права | **не менялись** |
 | `npm test` / integration | **не перезапускались** (docs-only PR) |
 | Сценарии ACC-* | спецификация; **автотесты не реализованы** |
+
+### R1.5 secure import + pilot prep (draft PR, branch `cursor/r15-secure-onec-import-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| SHA main (база) | `3927923` |
+| Operator import jobs | migration `006`, worker + CLI, no HTTP |
+| Runbook / pilot checklist | `import-runbook.md`, `pilot-checklist.md` |
+| Users / links / grants / teams | **не изменялись** |
+| Production import / cron / migrate | **не запускались** |
+| `npm test` | **153 passed**, 0 failed |
+| `npm run test:integration` | **108 passed**, 0 failed (6 onec-import-jobs) |
+| `npm run test:browser` | **20 passed**, 0 failed |
+| typecheck / build | pass |
 
 ### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
 

@@ -58,6 +58,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "003_access_control.sql",
       "004_access_control_fixes.sql",
       "005_onec_diagnostic_jobs.sql",
+      "006_onec_import_jobs.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);

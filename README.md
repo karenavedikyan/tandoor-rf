@@ -214,6 +214,8 @@ LIMIT 5;
 
 **План первого запуска на TW:** (1) `migrate`, (2) dry-run и сохранить `sha256`, (3) `--apply --expected-sha256 …`, (4) проверить `onec_client_import_runs` и `SELECT COUNT(*) FROM onec_clients`.
 
+**Регулярное обновление (R1.5):** см. [docs/delivery/import-runbook.md](./docs/delivery/import-runbook.md). Два безопасных пути: TW cron → CLI (`onec-clients-import`) или operator DB job → `onec-import-job-worker` / startup hook. Таблица `onec_import_jobs` не имеет HTTP API; apply требует `expected_sha256`. Production cron **не включается** автоматически.
+
 **Восстановление и откат (разные сценарии):**
 
 1. **Откат кода/deployment** — задеплоить предыдущий коммит и отключить импорт (`ONEC_FTP_ENABLED=false`). Данные в PostgreSQL **не меняются** автоматически.

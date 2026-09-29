@@ -17,6 +17,8 @@
     "onec-ftp-probe:local": "node --env-file=.env dist/cli/onec-ftp-probe.js",
     "onec-clients-import": "node dist/cli/onec-clients-import.js",
     "onec-clients-import:local": "node --env-file=.env dist/cli/onec-clients-import.js",
+    "onec-import-job-worker": "node dist/cli/onec-import-job-worker.js",
+    "onec-import-job-worker:local": "node --env-file=.env dist/cli/onec-import-job-worker.js",
     "test": "node --import tsx --test test/server.test.ts test/unit/**/*.test.ts",
     "test:browser": "node --import tsx --test --test-concurrency=1 test/browser/**/*.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",
