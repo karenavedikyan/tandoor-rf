@@ -4,7 +4,6 @@ import { defaultFtpReader, type FtpReader } from "../onec-clients/ftp-read";
 import { runClientsImport } from "../onec-clients/run-import";
 import type { ClientsImportResult } from "../onec-clients/types";
 import {
-  IMPORT_JOB_ADVISORY_LOCK_KEY,
   IMPORT_JOB_KIND,
   TRUSTED_ONEC_FTP_BASE_PATH,
   TRUSTED_ONEC_FTP_HOST,
@@ -42,6 +41,7 @@ function extractImportRunId(result: ClientsImportResult): string | null {
 /**
  * One attempt per invocation, no timer and no HTTP entry point.
  * Only an unexpired operator-created job can authorize FTP read / apply.
+ * Import mutual exclusion uses the shared clients import advisory lock inside apply.
  */
 export async function runOneImportJob(
   pool: Pool,
@@ -49,16 +49,8 @@ export async function runOneImportJob(
   reader: FtpReader = defaultFtpReader,
 ): Promise<"idle" | "success" | "failed"> {
   const db = await pool.connect();
-  let locked = false;
   let jobId: string | undefined;
   try {
-    locked =
-      (await db.query("SELECT pg_try_advisory_lock($1) AS locked", [IMPORT_JOB_ADVISORY_LOCK_KEY])).rows[0]
-        .locked === true;
-    if (!locked) {
-      return "idle";
-    }
-
     const claimed = await db.query<ImportJobRow>(`
       UPDATE onec_import_jobs
       SET status = 'running', started_at = NOW()
@@ -143,14 +135,6 @@ export async function runOneImportJob(
     }
     return "failed";
   } finally {
-    let releaseError: Error | undefined;
-    if (locked) {
-      try {
-        await db.query("SELECT pg_advisory_unlock($1)", [IMPORT_JOB_ADVISORY_LOCK_KEY]);
-      } catch {
-        releaseError = new Error("IMPORT_JOB_LOCK_RELEASE_FAILED");
-      }
-    }
-    db.release(releaseError);
+    db.release();
   }
 }

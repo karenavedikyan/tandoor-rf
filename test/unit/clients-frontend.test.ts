@@ -81,9 +81,12 @@ describe("clients frontend logic", () => {
   });
 
   it("labels sync status as LK import, not 1C file time", () => {
-    const formatted = logic.formatSyncStatusParts({ lastSuccessfulImportAtLabel: "28.09.2026, 09:00" });
-    assert.match(formatted.text, /Последний импорт в ЛК/);
-    assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С/i);
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      lastSuccessfulImportAtLabel: "28.09.2026, 09:00",
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК/);
+    assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С|FTP/i);
   });
 
   it("keeps applied UUID while editing draft search text", () => {

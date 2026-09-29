@@ -286,9 +286,6 @@ export function startServer(): ReturnType<express.Application["listen"]> {
       if (!pool) return;
       const diagnosticStatus = await runOneDiagnosticJob(pool);
       if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
-      const { runOneImportJob } = await import("./onec-import/worker");
-      const importStatus = await runOneImportJob(pool);
-      if (importStatus !== "idle") console.log(`1C import job: ${importStatus}`);
     }).catch(() => console.error("1C background workers unavailable"));
   });
 

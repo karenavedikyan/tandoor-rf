@@ -10,35 +10,51 @@
 - Источник — **только** согласованный plain FTP `gw.toopatch.ru`, базовый путь `/LC`, файл `clients/all_clients.json`.
 - Секреты — только в env TW; не в Git, не в SQL-заданиях, не в HTTP.
 - **Dry-run по умолчанию.** Apply требует `--expected-sha256` (CLI) или `expected_sha256` в задании БД.
-- Apply **не удаляет** отсутствующих клиентов; уменьшение числа записей блокируется (`RECORD_COUNT_DECREASED`).
+- Apply **не удаляет** отсутствующих клиентов; уменьшение числа записей блокируется (`RECORD_COUNT_DECREASED`); исчезновение ранее известных GUID при том же count — `GUID_SET_SHRINK`.
+- Scheduled exchange: два последовательных чтения с совпадающим SHA; apply использует **проверенные байты**, без третьего скачивания.
 - Параллельный apply — advisory lock (`IMPORT_LOCKED` / `STALE_RUNNING_IMPORT`).
 - Ночная синхронизация **не заменяет** отзыв доступа при увольнении — см. [access-rules.md](./access-rules.md).
 
 ---
 
-## 2. Два способа запуска
+## 2. Три способа запуска
 
-### A. TW Cloud Cron → CLI (рекомендуется для расписания)
+### A. TW Cloud Cron → scheduled exchange CLI (рекомендуется для расписания)
 
-1. One-off или cron-задача на TW вызывает контейнер/окружение приложения.
-2. **Шаг 1 — dry-run** (без записи в БД):
+1. One-off или cron-задача на TW вызывает **один цикл** без HTTP и без старта веб-сервера:
+   ```bash
+   npm run onec-scheduled-exchange
+   ```
+2. По умолчанию `ONEC_SCHEDULED_EXCHANGE_APPLY=false` — только двойное чтение FTP, проверка SHA и журнал `scheduled_check`.
+3. Первое автоматическое apply требует явно принятого baseline:
+   ```bash
+   ONEC_SCHEDULED_EXCHANGE_APPLY=true \
+   ONEC_SCHEDULED_EXCHANGE_ACCEPTED_BASELINE_SHA256=<64-char-hex> \
+   npm run onec-scheduled-exchange
+   ```
+4. Настройки цикла (env): `ONEC_SCHEDULED_EXCHANGE_STABILITY_DELAY_MS`, `ONEC_SCHEDULED_EXCHANGE_READ_RETRIES`, `ONEC_SCHEDULED_EXCHANGE_STALE_HOURS`. Частота cron — отдельно на TW.
+5. Импорт **не** запускается из health/readiness/startup приложения.
+
+### B. Ручной CLI (операторский dry-run → apply)
+
+1. **Dry-run** (без записи в БД):
    ```bash
    node dist/cli/onec-clients-import.js --dry-run
    ```
-3. Оператор сохраняет `sha256` из JSON-отчёта.
-4. **Шаг 2 — apply** (только после review):
+2. Оператор сохраняет `sha256` из JSON-отчёта.
+3. **Apply** (только после review и резервной копии):
    ```bash
    node dist/cli/onec-clients-import.js --apply --expected-sha256 <64-char-hex>
    ```
-5. Проверка журнала:
+4. Проверка журнала:
    ```sql
-   SELECT id, started_at, finished_at, status, mode, source_record_count, error_code
+   SELECT id, started_at, finished_at, status, mode, trigger_source, stage, source_record_count, error_code
    FROM onec_client_import_runs
    ORDER BY started_at DESC
    LIMIT 5;
    ```
 
-### B. Operator DB job → worker (разовое согласованное apply)
+### C. Operator DB job → worker (разовое согласованное apply)
 
 1. Применить миграцию `006_onec_import_jobs.sql` (только по согласованному плану деплоя).
 2. Оператор БД вставляет **одну** запись с `expires_at` ≤ 2 часов от `requested_at`:
@@ -55,9 +71,11 @@
    VALUES ('apply', '<64-char-sha256-from-dry-run>', NOW() + INTERVAL '1 hour');
    ```
 
-3. Запуск worker **один из**:
-   - перезапуск приложения (startup hook), или
-   - `npm run onec-import-job-worker` / TW cron на эту команду.
+3. Запуск worker **только** через CLI (не из startup приложения):
+   ```bash
+   npm run onec-import-job-worker
+   ```
+   или TW cron на эту команду.
 
 4. Результат — только из БД (`onec_import_jobs.result`, `import_run_id`). HTTP-доступа к таблице нет.
 

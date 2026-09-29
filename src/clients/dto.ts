@@ -62,11 +62,27 @@ export type ClientsOptionsResponse = {
   holdings: ClientOptionDto[];
 };
 
+export type ClientsSyncFreshnessState =
+  | "never"
+  | "current"
+  | "stale"
+  | "error"
+  | "updating"
+  | "unknown";
+
 export type ClientsSyncStatusResponse = {
+  freshnessState: ClientsSyncFreshnessState;
   lastSuccessfulImportAt: string | null;
   lastSuccessfulImportAtLabel: string | null;
+  lastCheckedAt: string | null;
+  lastCheckedAtLabel: string | null;
   runningImport: boolean;
   warning: string | null;
+  /** Admin-only detail; omitted for scoped roles. */
+  adminDetail?: {
+    lastErrorCode: string | null;
+    recordCount: number | null;
+  };
 };
 
 type ClientRow = {

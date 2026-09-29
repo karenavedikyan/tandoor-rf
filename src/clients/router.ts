@@ -4,7 +4,6 @@ import {
   requireClientReadAccess,
 } from "../access/middleware";
 import { requireAuth } from "../middleware/auth";
-import { requireAdmin } from "../middleware/require-admin";
 import { requireDatabaseReady } from "../middleware/database";
 import {
   clientOptionsHandler,
@@ -23,7 +22,7 @@ export function createClientsRouter(): express.Router {
     requireClientReadAccess,
   ] as const;
 
-  router.get("/sync-status", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
+  router.get("/sync-status", ...readChain, (req, res, next) => {
     void clientSyncStatusHandler(req, res).catch(next);
   });
 

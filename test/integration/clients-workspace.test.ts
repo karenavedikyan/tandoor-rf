@@ -243,8 +243,10 @@ describe("clients workspace integration", { concurrency: false }, () => {
       .set(authHeaders(adminCookie));
     assert.equal(initial.status, 200);
     assert.ok(initial.body.lastSuccessfulImportAt);
+    assert.equal(initial.body.freshnessState, "current");
     assert.equal(initial.body.runningImport, false);
     assert.equal(initial.body.warning, null);
+    assert.ok(initial.body.adminDetail);
 
     await insertFailedImportRun(databaseUrl);
     await resetPoolForTests();
@@ -285,7 +287,7 @@ describe("clients workspace integration", { concurrency: false }, () => {
     assert.equal(arrayQ.status, 400);
   });
 
-  it("denies roles without client-read policy and keeps sync-status admin-only", async () => {
+  it("denies roles without client-read policy on list and sync-status", async () => {
     const app = await loadApp();
     const deniedRoles = ["marketer", "analyst", "category_manager", "coordinator", "manager"];
 

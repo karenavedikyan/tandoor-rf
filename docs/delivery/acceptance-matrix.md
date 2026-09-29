@@ -240,12 +240,14 @@
 | Проверка | Результат |
 |----------|-----------|
 | SHA main (база) | `3927923` |
-| Operator import jobs | migration `006`, worker + CLI, no HTTP |
+| Scheduled exchange CLI | `onec-scheduled-exchange`, double SHA read, apply off by default |
+| Operator import jobs | migration `006`, worker CLI only, no HTTP/startup |
+| Exchange state | migration `007`, `GUID_SET_SHRINK`, freshness UI |
 | Runbook / pilot checklist | `import-runbook.md`, `pilot-checklist.md` |
 | Users / links / grants / teams | **не изменялись** |
 | Production import / cron / migrate | **не запускались** |
-| `npm test` | **153 passed**, 0 failed |
-| `npm run test:integration` | **108 passed**, 0 failed (6 onec-import-jobs) |
+| `npm test` | **155 passed**, 0 failed |
+| `npm run test:integration` | **113 passed**, 0 failed |
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 

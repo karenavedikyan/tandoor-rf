@@ -19,6 +19,7 @@ export type ApplyResult =
         | "IMPORT_LOCKED"
         | "STALE_RUNNING_IMPORT"
         | "RECORD_COUNT_DECREASED"
+        | "GUID_SET_SHRINK"
         | "DATABASE_ERROR"
         | "COMMIT_UNCERTAIN";
       message: string;
@@ -215,7 +216,7 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
 async function insertRejectedRunJournal(
   managed: ManagedClient,
   payload: ValidatedClientsPayload,
-  errorCode: "RECORD_COUNT_DECREASED",
+  errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK",
 ): Promise<string | undefined> {
   const runInsert = await queryManaged<{ id: string }>(
     managed,
@@ -390,6 +391,24 @@ export async function applyClientsImport(options: {
             runId: phase.runId,
           };
         } else {
+          const existing = await loadExistingClients(managed);
+          if (existing.size > 0) {
+            const incomingGuids = new Set(
+              options.payload.records.map((record) => record.guid_client),
+            );
+            const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
+            if (missingGuids.length > 0) {
+              phase.runId = await insertRejectedRunJournal(managed, options.payload, "GUID_SET_SHRINK");
+              outcome = {
+                ok: false,
+                code: "GUID_SET_SHRINK",
+                message: "Incoming snapshot is missing client IDs present in the last successful import.",
+                runId: phase.runId,
+              };
+            }
+          }
+
+          if (!outcome) {
           const runInsert = await queryManaged<{ id: string }>(
             managed,
             `
@@ -409,7 +428,6 @@ export async function applyClientsImport(options: {
 
           await queryManaged(managed, "BEGIN");
 
-          const existing = await loadExistingClients(managed);
           let newCount = 0;
           let changedCount = 0;
           let unchangedCount = 0;
@@ -525,6 +543,7 @@ export async function applyClientsImport(options: {
             counts: phase.counts,
             cleanupWarning: postCommitCleanupWarning,
           };
+          }
         }
       }
     }

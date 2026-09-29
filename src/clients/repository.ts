@@ -163,10 +163,14 @@ export async function getClientByGuid(
   return toClientDetail(row);
 }
 
-export async function getClientsSyncStatus(): Promise<ClientsSyncStatusResponse> {
-  const lastSuccess = await query<{ finished_at: Date | null }>(
+export async function getClientsSyncStatus(options: {
+  staleAfterHours?: number;
+  includeAdminDetail?: boolean;
+} = {}): Promise<ClientsSyncStatusResponse> {
+  const staleAfterHours = options.staleAfterHours ?? 72;
+  const lastSuccess = await query<{ finished_at: Date | null; source_record_count: number | null }>(
     `
-      SELECT finished_at
+      SELECT finished_at, source_record_count
       FROM onec_client_import_runs
       WHERE status = 'success' AND mode = 'apply'
       ORDER BY finished_at DESC NULLS LAST
@@ -188,29 +192,60 @@ export async function getClientsSyncStatus(): Promise<ClientsSyncStatusResponse>
       LIMIT 1
     `,
   );
+  const exchangeState = await query<{ last_checked_at: Date | null }>(
+    `
+      SELECT last_checked_at
+      FROM onec_exchange_state
+      WHERE id = 1
+    `,
+  );
 
   const lastSuccessfulImportAt = lastSuccess.rows[0]?.finished_at ?? null;
+  const lastCheckedAt = exchangeState.rows[0]?.last_checked_at ?? null;
   const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
   const latestRun = latest.rows[0];
 
   let warning: string | null = null;
-  if (
-    lastSuccessfulImportAt &&
+  let freshnessState: ClientsSyncStatusResponse["freshnessState"] = "unknown";
+
+  if (runningImport) {
+    freshnessState = "updating";
+  } else if (!lastSuccessfulImportAt) {
+    freshnessState = "never";
+  } else if (
     latestRun &&
     (latestRun.status === "failed" || latestRun.status === "validation_failed") &&
     latestRun.finished_at &&
-    latestRun.finished_at > lastSuccessfulImportAt
+    (!lastSuccessfulImportAt || latestRun.finished_at > lastSuccessfulImportAt)
   ) {
+    freshnessState = "error";
     warning =
-      "Последний импорт завершился с ошибкой; в базе остаются данные предыдущей успешной загрузки.";
+      "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
+  } else {
+    const staleMs = staleAfterHours * 60 * 60 * 1000;
+    const reference = lastCheckedAt ?? lastSuccessfulImportAt;
+    freshnessState =
+      reference && Date.now() - reference.getTime() > staleMs ? "stale" : "current";
   }
 
-  return {
+  const response: ClientsSyncStatusResponse = {
+    freshnessState,
     lastSuccessfulImportAt: lastSuccessfulImportAt?.toISOString() ?? null,
     lastSuccessfulImportAtLabel: lastSuccessfulImportAt
       ? formatMskDateTime(lastSuccessfulImportAt)
       : null,
+    lastCheckedAt: lastCheckedAt?.toISOString() ?? null,
+    lastCheckedAtLabel: lastCheckedAt ? formatMskDateTime(lastCheckedAt) : null,
     runningImport,
     warning,
   };
+
+  if (options.includeAdminDetail) {
+    response.adminDetail = {
+      lastErrorCode: latestRun?.error_code ?? null,
+      recordCount: lastSuccess.rows[0]?.source_record_count ?? null,
+    };
+  }
+
+  return response;
 }

@@ -177,7 +177,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await page.waitForSelector(".clients-table tbody tr");
     assert.match(await page.locator("#search-input").inputValue(), /Synthetic/);
     assert.match(await page.locator("#result-count").textContent(), /2/);
-    assert.match(await page.locator("#sync-status").textContent(), /Последний импорт в ЛК/);
+    assert.match(await page.locator("#sync-status").textContent(), /Данные загружены в ЛК/);
     assert.ok(await page.locator(".legacy-sidebar").isVisible());
     await closePage(page, context);
   });

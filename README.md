@@ -214,7 +214,7 @@ LIMIT 5;
 
 **План первого запуска на TW:** (1) `migrate`, (2) dry-run и сохранить `sha256`, (3) `--apply --expected-sha256 …`, (4) проверить `onec_client_import_runs` и `SELECT COUNT(*) FROM onec_clients`.
 
-**Регулярное обновление (R1.5):** см. [docs/delivery/import-runbook.md](./docs/delivery/import-runbook.md). Два безопасных пути: TW cron → CLI (`onec-clients-import`) или operator DB job → `onec-import-job-worker` / startup hook. Таблица `onec_import_jobs` не имеет HTTP API; apply требует `expected_sha256`. Production cron **не включается** автоматически.
+**Регулярное обновление (R1.5):** см. [docs/delivery/import-runbook.md](./docs/delivery/import-runbook.md). TW cron → `onec-scheduled-exchange` (двойное чтение SHA, apply выключен по умолчанию); ручной dry-run/apply → `onec-clients-import`; разовые operator jobs → `onec-import-job-worker`. Импорт **не** запускается из HTTP/startup. Production cron **не включается** автоматически.
 
 **Восстановление и откат (разные сценарии):**
 
