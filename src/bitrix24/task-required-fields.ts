@@ -1,0 +1,11 @@
+export const BITRIX24_TASK_REQUIRED_FIELD_KEYS = [
+  "ID",
+  "TITLE",
+  "RESPONSIBLE_ID",
+  "CREATED_BY",
+  "CHANGED_DATE",
+] as const;
+
+export const BITRIX24_TASK_STATUS_FIELD_KEYS = ["REAL_STATUS", "STATUS"] as const;
+
+export const BITRIX24_TASK_OPTIONAL_FIELD_KEYS = ["DEADLINE"] as const;

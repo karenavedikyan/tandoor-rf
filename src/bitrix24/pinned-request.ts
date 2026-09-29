@@ -1,4 +1,5 @@
 import https from "node:https";
+import type { ClientRequest, IncomingMessage } from "node:http";
 import type { ResolvedPortalAddress } from "./dns-resolve";
 
 export type PinnedRequestOptions = {
@@ -20,22 +21,64 @@ export type PinnedRequestResult = {
 
 export type PinnedRequestFn = (options: PinnedRequestOptions) => Promise<PinnedRequestResult>;
 
+export type HttpsRequestFn = typeof https.request;
+
+let httpsRequestImpl: HttpsRequestFn = https.request;
+
+export function setHttpsRequestImplForTests(impl: HttpsRequestFn | null): void {
+  httpsRequestImpl = impl ?? https.request;
+}
+
 export async function executePinnedHttpsRequest(
   options: PinnedRequestOptions,
 ): Promise<PinnedRequestResult> {
+  if (options.signal?.aborted) {
+    throw new Error("ABORTED");
+  }
+
   return new Promise((resolve, reject) => {
     let settled = false;
+    let req: ClientRequest | null = null;
+    let res: IncomingMessage | null = null;
+    let timer: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+
+    const destroyStreams = () => {
+      if (req && !req.destroyed) {
+        req.destroy();
+      }
+      if (res && !res.destroyed) {
+        res.destroy();
+      }
+    };
+
     const finish = (handler: () => void) => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
+      cleanup();
+      destroyStreams();
       handler();
     };
 
-    const req = https.request(
+    const onAbort = () => {
+      finish(() => reject(new Error("ABORTED")));
+    };
+    options.signal?.addEventListener("abort", onAbort);
+
+    timer = setTimeout(() => {
+      finish(() => reject(new Error("TIMEOUT")));
+    }, options.timeoutMs);
+
+    req = httpsRequestImpl(
       {
         host: options.pinned.address,
         port: options.url.port ? Number(options.url.port) : 443,
@@ -52,9 +95,10 @@ export async function executePinnedHttpsRequest(
           callback(null, options.pinned.address, options.pinned.family);
         },
       },
-      (res) => {
-        if (res.statusCode !== undefined && res.statusCode >= 300 && res.statusCode < 400) {
-          res.resume();
+      (response) => {
+        res = response;
+
+        if (response.statusCode !== undefined && response.statusCode >= 300 && response.statusCode < 400) {
           finish(() => reject(new Error("REDIRECT_BLOCKED")));
           return;
         }
@@ -62,43 +106,30 @@ export async function executePinnedHttpsRequest(
         const chunks: Buffer[] = [];
         let total = 0;
 
-        res.on("data", (chunk: Buffer) => {
+        response.on("data", (chunk: Buffer) => {
           total += chunk.length;
           if (total > options.maxResponseBytes) {
-            req.destroy();
-            res.destroy();
             finish(() => reject(new Error("RESPONSE_TOO_LARGE")));
             return;
           }
           chunks.push(chunk);
         });
 
-        res.on("error", (error) => {
+        response.on("error", (error) => {
           finish(() => reject(error));
         });
 
-        res.on("end", () => {
+        response.on("end", () => {
           finish(() =>
             resolve({
-              statusCode: res.statusCode ?? 0,
-              headers: res.headers,
+              statusCode: response.statusCode ?? 0,
+              headers: response.headers,
               body: Buffer.concat(chunks).toString("utf8"),
             }),
           );
         });
       },
     );
-
-    const timer = setTimeout(() => {
-      req.destroy();
-      finish(() => reject(new Error("TIMEOUT")));
-    }, options.timeoutMs);
-
-    const onAbort = () => {
-      req.destroy();
-      finish(() => reject(new Error("ABORTED")));
-    };
-    options.signal?.addEventListener("abort", onAbort);
 
     req.on("error", (error) => {
       finish(() => reject(error));

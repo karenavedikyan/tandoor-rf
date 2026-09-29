@@ -194,7 +194,10 @@ export async function runBitrix24Probe(
     checks.push("fields_checked");
   }
 
-  const status: Bitrix24ProbeStatus = tasksResult.data.complete ? "SUCCESS" : "PARTIAL";
+  const status: Bitrix24ProbeStatus =
+    tasksResult.data.complete && tasksResult.data.rejectedTaskCount === 0
+      ? "SUCCESS"
+      : "PARTIAL";
 
   return sanitizeProbeResult(
     {

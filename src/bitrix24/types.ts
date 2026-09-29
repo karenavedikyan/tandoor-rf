@@ -91,7 +91,8 @@ export type Bitrix24TaskListTruncationReason =
   | "INVALID_PAGE"
   | "EMPTY_PAGE_WITH_NEXT"
   | "INVALID_ENVELOPE"
-  | "INVALID_RECORDS";
+  | "INVALID_RECORDS"
+  | "TOTAL_MISMATCH";
 
 export type Bitrix24TaskListResult = {
   tasks: Bitrix24NormalizedTask[];

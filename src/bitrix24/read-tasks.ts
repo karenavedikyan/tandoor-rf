@@ -1,14 +1,13 @@
 import { dedupeBitrixTasks, normalizeBitrixTask } from "./normalize-task";
+import { parseBitrixUserId } from "./parse-id";
 import { SAFE_READ_MESSAGES } from "./safe-errors";
 import { callBitrix24Method, createOperationContext } from "./transport";
 import { validateTasksTransportPage } from "./validate-envelope";
 import type {
   Bitrix24OperationContext,
   Bitrix24TaskListResult,
-  Bitrix24TransportResult,
   Bitrix24WebhookConfig,
 } from "./types";
-import { parseBitrixUserId } from "./parse-id";
 
 const TASK_SELECT_FIELDS = [
   "ID",
@@ -23,13 +22,50 @@ const TASK_SELECT_FIELDS = [
 
 export type ReadBitrixTasksResult =
   | { ok: true; data: Bitrix24TaskListResult }
-  | { ok: false; code: string; message: string; transport?: Bitrix24TransportResult };
+  | { ok: false; code: string; message: string };
 
 export type ReadBitrixTasksOptions = {
   operation?: Bitrix24OperationContext;
   startedAtMs?: number;
   maxPages?: number;
 };
+
+function finalizeTaskListResult(input: {
+  tasks: ReturnType<typeof dedupeBitrixTasks>;
+  totalReported: number | null;
+  pagesFetched: number;
+  truncatedReason?: Bitrix24TaskListResult["truncatedReason"];
+  rejectedTaskCount: number;
+  paginationObserved: boolean;
+  fieldsValidatedOnSample: boolean;
+  lastNext: number | null;
+}): Bitrix24TaskListResult {
+  let truncatedReason = input.truncatedReason;
+
+  if (truncatedReason === undefined && input.rejectedTaskCount > 0) {
+    truncatedReason = "INVALID_RECORDS";
+  }
+
+  if (
+    truncatedReason === undefined &&
+    input.lastNext === null &&
+    input.totalReported !== null &&
+    input.totalReported !== input.tasks.length
+  ) {
+    truncatedReason = "TOTAL_MISMATCH";
+  }
+
+  return {
+    tasks: input.tasks,
+    totalReported: input.totalReported,
+    pagesFetched: input.pagesFetched,
+    complete: truncatedReason === undefined,
+    truncatedReason,
+    rejectedTaskCount: input.rejectedTaskCount,
+    paginationObserved: input.paginationObserved,
+    fieldsValidatedOnSample: input.fieldsValidatedOnSample,
+  };
+}
 
 export async function readBitrixTasksForUser(
   config: Bitrix24WebhookConfig,
@@ -89,7 +125,6 @@ export async function readBitrixTasksForUser(
         ok: false,
         code: transport.code,
         message: transport.message,
-        transport,
       };
     }
 
@@ -99,7 +134,6 @@ export async function readBitrixTasksForUser(
         ok: false,
         code: "INVALID_ENVELOPE",
         message: SAFE_READ_MESSAGES.INVALID_ENVELOPE,
-        transport,
       };
     }
 
@@ -156,20 +190,17 @@ export async function readBitrixTasksForUser(
     start = page.pagination.next;
   }
 
-  const deduped = dedupeBitrixTasks(tasks);
-  const complete = truncatedReason === undefined;
-
   return {
     ok: true,
-    data: {
-      tasks: deduped,
+    data: finalizeTaskListResult({
+      tasks: dedupeBitrixTasks(tasks),
       totalReported,
       pagesFetched,
-      complete,
       truncatedReason,
       rejectedTaskCount,
       paginationObserved,
       fieldsValidatedOnSample,
-    },
+      lastNext,
+    }),
   };
 }

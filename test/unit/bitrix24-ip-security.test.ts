@@ -3,24 +3,51 @@ import { describe, it } from "node:test";
 import { expandIpv4MappedAddress, isBlockedIpAddress } from "../../src/bitrix24/ip-security";
 
 describe("bitrix24 ip security", () => {
-  it("blocks unspecified and loopback IPv6", () => {
-    assert.equal(isBlockedIpAddress("::"), true);
-    assert.equal(isBlockedIpAddress("::1"), true);
-  });
+  const blocked = [
+    "::",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "0:0:0:0:0:0:0:0",
+    "0:0:0:0:0:ffff:7f00:1",
+    "0000:0000:0000:0000:0000:ffff:7f00:0001",
+    "fe90::1",
+    "fe80::1",
+    "224.0.0.1",
+    "127.0.0.1",
+    "10.0.0.5",
+    "192.168.1.1",
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+  ];
 
-  it("blocks IPv4-mapped loopback forms", () => {
-    assert.equal(isBlockedIpAddress("::ffff:127.0.0.1"), true);
-    assert.equal(isBlockedIpAddress("::ffff:7f00:1"), true);
-    assert.equal(expandIpv4MappedAddress("::ffff:7f00:1"), "127.0.0.1");
-  });
+  const allowed = [
+    "93.184.216.34",
+    "8.8.8.8",
+    "2606:2800:220:1:248:1893:25c8:1946",
+    "2606:4700:4700::1111",
+  ];
 
-  it("allows public IPv4 and IPv6", () => {
-    assert.equal(isBlockedIpAddress("93.184.216.34"), false);
-    assert.equal(isBlockedIpAddress("2001:db8::1"), false);
-  });
+  for (const address of blocked) {
+    it(`blocks ${address}`, () => {
+      assert.equal(isBlockedIpAddress(address), true);
+    });
+  }
 
-  it("blocks mixed private records when any address is private", () => {
-    assert.equal(isBlockedIpAddress("192.168.1.10"), true);
-    assert.equal(isBlockedIpAddress("10.0.0.5"), true);
+  for (const address of allowed) {
+    it(`allows ${address}`, () => {
+      assert.equal(isBlockedIpAddress(address), false);
+    });
+  }
+
+  it("treats equivalent IPv6 forms consistently", () => {
+    const forms = [
+      "0:0:0:0:0:ffff:7f00:1",
+      "0000:0000:0000:0000:0000:FFFF:7F00:0001",
+      "::ffff:127.0.0.1",
+    ];
+    for (const form of forms) {
+      assert.equal(isBlockedIpAddress(form), true, form);
+      assert.equal(expandIpv4MappedAddress(form), "127.0.0.1", form);
+    }
   });
 });

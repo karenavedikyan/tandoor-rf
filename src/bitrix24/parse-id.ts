@@ -3,7 +3,7 @@ export function parseCanonicalBitrixId(value: unknown): string | null {
     return null;
   }
   if (typeof value === "number") {
-    if (!Number.isInteger(value) || value <= 0) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
       return null;
     }
     return String(value);

@@ -263,18 +263,17 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review fixes) | `c012788` |
-| P1 DNS/SSRF pinned transport | все A/AAAA проверяются; connect на pinned IP + TLS SNI; port≠443 rejected; `bitrix24-ip-security.test.ts`, `bitrix24-dns-resolve.test.ts`, `bitrix24-transport.test.ts` |
-| P1 envelope completeness | invalid `{}` / `tasks:"bad"` / empty+next → error или partial; `bitrix24-read-tasks.test.ts` |
-| P1 safe errors / no PII | фиксированные сообщения; canary без ФИО/email/текста задачи — `bitrix24-probe.test.ts`, `bitrix24-transport.test.ts` |
-| P1 global deadline | единый `OperationDeadline` на probe; Retry-After укладывается в бюджет — `bitrix24-transport.test.ts` |
-| P2 IDs/status/dates | canonical ID `[1-9]\\d*`; REAL_STATUS>STATUS; invalid dates rejected — `bitrix24-read-tasks.test.ts` |
-| CLI диагностика | `checkedAt`; conditional `fields_checked`/`pagination_checked`; local vs server commands в runbook |
-| Disabled by default | `BITRIX24_ENABLED=false`; enabled env не вызывает transport из health/ready — `bitrix24-no-side-effects.test.ts` |
+| SHA PR head (review fixes) | см. PR #17 |
+| 1 completeness/required fields | rejected/total mismatch → PARTIAL; обязательные поля; probe.status — `bitrix24-read-tasks.test.ts` |
+| 2 full IP normalization | ipaddr.js; все формы IPv6; blocked+allowed — `bitrix24-ip-security.test.ts` |
+| 3 safe error payloads | без raw transport/result — `bitrix24-read-errors-canary.test.ts` |
+| 4 pinned cleanup | redirect destroy без resume — `bitrix24-pinned-request.test.ts`; DNS clearTimeout — `bitrix24-dns-resolve.test.ts` |
+| 5 Retry-After uncapped | полный 120s/90s в бюджете — `bitrix24-retry-after.test.ts` |
+| 6 input/regressions | parse-id/datetime tests; login+health side-effects — `bitrix24-no-side-effects.test.ts` |
 | Live portal check | **не выполнялась** |
 | UI / brand / 1C / access | **не менялись** |
-| `npm test` | **192 passed** |
-| `npm run test:integration` | **140 passed** |
+| `npm test` | **222 passed** |
+| `npm run test:integration` | **141 passed** |
 | `npm run test:browser` | **20 passed** |
 | typecheck / build | pass |
 

@@ -27,9 +27,9 @@ function buildMethodUrl(config: Bitrix24WebhookConfig, method: Bitrix24AllowedMe
   return new URL(`${config.webhookBaseUrl}${method}`);
 }
 
-function parseRetryAfterMs(
+export function parseRetryAfterMs(
   headers: Record<string, string | string[] | undefined>,
-  now: () => number,
+  nowMs: number,
 ): number | null {
   const raw = headers["retry-after"];
   const header = Array.isArray(raw) ? raw[0] : raw;
@@ -39,11 +39,11 @@ function parseRetryAfterMs(
   const trimmed = header.trim();
   const seconds = Number(trimmed);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(seconds * 1000, 60_000);
+    return seconds * 1000;
   }
   const dateMs = Date.parse(trimmed);
   if (Number.isFinite(dateMs)) {
-    return Math.max(0, Math.min(dateMs - now(), 60_000));
+    return Math.max(0, dateMs - nowMs);
   }
   return null;
 }
@@ -235,7 +235,7 @@ export async function callBitrix24Method(
       if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
         const failure = classifyHttpFailure(response.statusCode, response.body);
         if (failure.ok === false && failure.retryable && attempt < MAX_READ_RETRIES) {
-          const retryAfterMs = parseRetryAfterMs(response.headers, Date.now);
+          const retryAfterMs = parseRetryAfterMs(response.headers, Date.now());
           const waitMs = retryAfterMs ?? Math.min(1000 * attempt, 5000);
           if (waitMs > deadline.remainingMs()) {
             return failure;
@@ -251,7 +251,8 @@ export async function callBitrix24Method(
 
       const parsed = parseBitrixResponse(response.body);
       if (!parsed.ok && parsed.retryable && attempt < MAX_READ_RETRIES) {
-        const waitMs = Math.min(1000 * attempt, 5000);
+        const retryAfterMs = parseRetryAfterMs(response.headers, Date.now());
+        const waitMs = retryAfterMs ?? Math.min(1000 * attempt, 5000);
         if (waitMs > deadline.remainingMs()) {
           return parsed;
         }

@@ -6,6 +6,7 @@ import {
   createSafePortalResolver,
   sampleWebhookConfig,
 } from "../helpers/bitrix24-mock-fetch";
+import { sampleValidBitrixTask } from "../helpers/bitrix24-task-fixtures";
 
 describe("bitrix24 probe", () => {
   it("returns disabled without touching network", async () => {
@@ -51,13 +52,9 @@ describe("bitrix24 probe", () => {
         body: {
           result: {
             tasks: [
-              {
-                ID: "10",
+              sampleValidBitrixTask({
                 TITLE: "Secret task title",
-                REAL_STATUS: 5,
-                RESPONSIBLE_ID: "42",
-                CREATED_BY: "7",
-              },
+              }),
             ],
           },
           total: 1,

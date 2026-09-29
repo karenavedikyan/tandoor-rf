@@ -1,11 +1,21 @@
+export type SleepFn = (ms: number) => Promise<void>;
+
 export class OperationDeadline {
   constructor(
     private readonly expiresAtMs: number,
     private readonly now: () => number = Date.now,
+    private readonly sleepFn: SleepFn = (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
   ) {}
 
-  static fromDuration(maxTotalDurationMs: number, startedAtMs = Date.now()): OperationDeadline {
-    return new OperationDeadline(startedAtMs + maxTotalDurationMs);
+  static fromDuration(
+    maxTotalDurationMs: number,
+    startedAtMs = Date.now(),
+    sleepFn?: SleepFn,
+  ): OperationDeadline {
+    return new OperationDeadline(startedAtMs + maxTotalDurationMs, Date.now, sleepFn);
   }
 
   remainingMs(): number {
@@ -21,9 +31,7 @@ export class OperationDeadline {
     if (allowed <= 0) {
       return false;
     }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, allowed);
-    });
+    await this.sleepFn(allowed);
     return !this.expired();
   }
 }

@@ -6,7 +6,6 @@ import { validateUsersTransportPage } from "./validate-envelope";
 import type {
   Bitrix24NormalizedUser,
   Bitrix24OperationContext,
-  Bitrix24TransportResult,
   Bitrix24WebhookConfig,
 } from "./types";
 
@@ -14,7 +13,7 @@ export { parseBitrixUserId } from "./parse-id";
 
 export type ReadBitrixUserResult =
   | { ok: true; user: Bitrix24NormalizedUser }
-  | { ok: false; code: string; message: string; transport: Bitrix24TransportResult };
+  | { ok: false; code: string; message: string };
 
 export type ReadBitrixUserOptions = {
   operation?: Bitrix24OperationContext;
@@ -32,12 +31,6 @@ export async function readBitrixUserById(
       ok: false,
       code: "INVALID_USER_ID",
       message: SAFE_READ_MESSAGES.INVALID_USER_ID,
-      transport: {
-        ok: false,
-        code: "API_ERROR",
-        message: SAFE_READ_MESSAGES.INVALID_USER_ID,
-        retryable: false,
-      },
     };
   }
 
@@ -59,7 +52,6 @@ export async function readBitrixUserById(
       ok: false,
       code: transport.code,
       message: transport.message,
-      transport,
     };
   }
 
@@ -69,7 +61,6 @@ export async function readBitrixUserById(
       ok: false,
       code: "INVALID_ENVELOPE",
       message: SAFE_READ_MESSAGES.INVALID_ENVELOPE,
-      transport,
     };
   }
 
@@ -83,7 +74,6 @@ export async function readBitrixUserById(
       ok: false,
       code: "USER_NOT_FOUND",
       message: SAFE_READ_MESSAGES.USER_NOT_FOUND,
-      transport,
     };
   }
 

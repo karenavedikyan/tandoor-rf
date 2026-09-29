@@ -14,22 +14,21 @@ export type ResolvePortalAddressesFn = (
 
 async function resolveAllPortalAddresses(hostname: string): Promise<ResolvedPortalAddress[]> {
   const addresses: ResolvedPortalAddress[] = [];
-  const errors: unknown[] = [];
 
   try {
     for (const address of await dns.resolve4(hostname)) {
       addresses.push({ address, family: 4 });
     }
-  } catch (error) {
-    errors.push(error);
+  } catch {
+    // ignore and try IPv6
   }
 
   try {
     for (const address of await dns.resolve6(hostname)) {
       addresses.push({ address, family: 6 });
     }
-  } catch (error) {
-    errors.push(error);
+  } catch {
+    // ignore if IPv6 unavailable
   }
 
   if (addresses.length === 0) {
@@ -51,19 +50,26 @@ export async function resolvePortalAddressesSafely(
   }
 
   const remainingMs = deadline.remainingMs();
-  const addresses = await Promise.race([
-    resolveFn(hostname),
-    new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error("TIMEOUT")), remainingMs);
-      timer.unref?.();
-    }),
-  ]);
+  let timeoutId: NodeJS.Timeout | undefined;
 
-  for (const entry of addresses) {
-    if (isBlockedIpAddress(entry.address)) {
-      throw new Error("HOST_BLOCKED");
+  try {
+    const addresses = await Promise.race([
+      resolveFn(hostname),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("TIMEOUT")), remainingMs);
+      }),
+    ]);
+
+    for (const entry of addresses) {
+      if (isBlockedIpAddress(entry.address)) {
+        throw new Error("HOST_BLOCKED");
+      }
+    }
+
+    return addresses.find((entry) => entry.family === 4) ?? addresses[0]!;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
     }
   }
-
-  return addresses.find((entry) => entry.family === 4) ?? addresses[0]!;
 }

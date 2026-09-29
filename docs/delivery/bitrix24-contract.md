@@ -79,18 +79,21 @@ OAuth — **архитектурно отделён**, не реализован
 - Перед запросом разрешаются **все** A/AAAA; при любом private/service адресе запрос отклоняется.
 - Соединение выполняется на **проверенный pinned IP** с сохранением TLS SNI/hostname; повторный DNS lookup при connect не используется.
 - Redirect не следуются.
+- Политика IP: loopback, unspecified, private, link-local, unique-local, multicast, reserved, CGNAT и IPv4-mapped формы блокируются через `ipaddr.js` с нормализацией эквивалентных IPv6 записей.
 
 ## 6. Минимальная нормализация задачи
 
 | Поле Bitrix | Поле модуля | Примечание |
 |-------------|-------------|------------|
-| `ID` | `taskId` | dedupe key: `portalHost:taskId` |
-| `TITLE` | `title` | **не попадает** в CLI-отчёт диагностики |
-| `REAL_STATUS` / `STATUS` | `statusRaw`, `statusLabel` | неизвестный код → `unknown`, без угадывания |
-| `RESPONSIBLE_ID` | `responsibleId` | |
-| `CREATED_BY` | `createdById` | |
-| `DEADLINE` | `deadline` | сохраняется исходная строка с TZ |
-| `CHANGED_DATE` | `changedAt` | |
+| `ID` | `taskId` | **обязательно**; dedupe key: `portalHost:taskId` |
+| `TITLE` | `title` | **обязательно** (непустая строка); **не попадает** в CLI-отчёт диагностики |
+| `REAL_STATUS` / `STATUS` | `statusRaw`, `statusLabel` | **хотя бы одно поле обязательно**; неизвестный код → `unknown`, без угадывания |
+| `RESPONSIBLE_ID` | `responsibleId` | **обязательно** |
+| `CREATED_BY` | `createdById` | **обязательно** |
+| `DEADLINE` | `deadline` | **опционально**; сохраняется исходная строка с TZ, если указана |
+| `CHANGED_DATE` | `changedAt` | **обязательно**; ISO `YYYY-MM-DDTHH:mm:ss` с TZ или без; невозможные даты отклоняются |
+
+Запись без обязательных полей отклоняется (`rejectedTaskCount++`), не нормализуется пустыми значениями. `fields_checked` в probe означает проверку обязательных полей на **реальных** валидных строках выборки.
 
 ### Коды `REAL_STATUS` (официальная документация)
 
@@ -113,7 +116,8 @@ OAuth — **архитектурно отделён**, не реализован
 | `MAX_PAGES`, `MAX_DURATION`, duplicate/invalid cursor | `false` | `truncatedReason` обязателен |
 | Пустая страница при `next` | `false` | `EMPTY_PAGE_WITH_NEXT` |
 | Невалидная структура `result/tasks` | ошибка | не трактуется как пустой список |
-| Часть записей отклонена валидатором | `false` или partial | `rejectedTaskCount` > 0 |
+| Часть записей отклонена валидатором | `false` | `rejectedTaskCount` > 0; probe → `PARTIAL` |
+| `total` не совпадает с фактическим числом записей | `false` | `TOTAL_MISMATCH` |
 
 Успешное чтение выбранного сотрудника **не означает** полноту данных всего портала Bitrix24.
 
