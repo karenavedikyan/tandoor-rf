@@ -239,21 +239,23 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review round 2) | см. PR #16 |
+| SHA PR head (review round 3) | см. PR #16 |
 | Apply atomicity | clients + journal success + `onec_exchange_state` в одной транзакции до COMMIT |
 | COMMIT_UNCERTAIN recovery | единый recovery после COMMIT (включая TCP fault); fresh connection + advisory lock; auto-success при journal success |
-| TCP commit proxy tests | `onec-commit-tcp-proxy.test.ts` — drop response / drop before commit; scheduled + operator job |
+| Parent scheduled journal finalize | после подтверждённого child apply родительский `scheduled_check` завершается на исправном соединении (`finalizeCycleJournal`, `preferFresh`); faulted client удаляется из pool (`max=1`) |
+| Operator/CLI DATABASE_URL | `runClientsImport` читает `env.DATABASE_URL` (operator job и тесты прокси); recovery apply — прямой `getDatabaseUrl()` |
+| TCP commit proxy tests | `onec-commit-tcp-proxy.test.ts` — drop response / drop before commit; scheduled parent+child + second cycle без `STALE_RUNNING_IMPORT`; operator job через proxied env; stats `commitsObserved` / `commitsForwarded` / `commitResponsesDropped` |
 | Unified committed SHA | `getCommittedSnapshotSha` + bootstrap из journal под lock (`onec-exchange-bootstrap.test.ts`) |
 | CONFIG_ERROR journal | DB connect → journal при доступной БД (`onec-scheduled-exchange.test.ts`) |
-| Warnings journal | `warningCount` + `warnings_truncated` (migration `009`) |
+| Warnings journal | `prepareJournalWarnings` во всех apply/reject путях; `warningCount` + `warnings_truncated` (migration `009`); `onec-journal-warnings.test.ts` |
 | Freshness API/UI | `sourceFormationKnown` отдельно от даты загрузки в ЛК |
 | Manager change + sessions | `manager-change-import.test.ts` — один app instance, без reset после import |
 | Migrations | `006`–`009` |
 | Runbook / pilot checklist | COMMIT_UNCERTAIN, bootstrap, warnings truncation |
 | Users / links / grants / teams | **не изменялись** |
 | Production import / cron / migrate | **не запускались** |
-| `npm test` | **159 passed**, 0 failed |
-| `npm run test:integration` | **129 passed**, 0 failed |
+| `npm test` | **160 passed**, 0 failed |
+| `npm run test:integration` | **137 passed**, 0 failed |
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 

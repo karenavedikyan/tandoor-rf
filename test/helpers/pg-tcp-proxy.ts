@@ -4,8 +4,16 @@ export type PgTcpProxyMode = "drop_commit_response" | "drop_before_commit";
 
 const COMMIT_MARKER = Buffer.from("COMMIT");
 
+export type PgTcpProxyStats = {
+  commitsObserved: number;
+  commitsForwarded: number;
+  commitResponsesDropped: number;
+  commitsBlocked: number;
+};
+
 export type PgTcpProxy = {
   port: number;
+  stats: PgTcpProxyStats;
   close: () => Promise<void>;
 };
 
@@ -29,6 +37,12 @@ export async function startPgTcpProxy(
   mode: PgTcpProxyMode,
 ): Promise<PgTcpProxy> {
   const target = parseDatabaseEndpoint(databaseUrl);
+  const stats: PgTcpProxyStats = {
+    commitsObserved: 0,
+    commitsForwarded: 0,
+    commitResponsesDropped: 0,
+    commitsBlocked: 0,
+  };
 
   const server = net.createServer((clientSocket) => {
     const serverSocket = net.connect({ host: target.host, port: target.port });
@@ -42,6 +56,10 @@ export async function startPgTcpProxy(
     };
 
     clientSocket.on("data", (chunk) => {
+      if (chunk.includes(COMMIT_MARKER)) {
+        stats.commitsObserved += 1;
+      }
+
       if (mode === "drop_before_commit") {
         clientBuffer = Buffer.concat([clientBuffer, chunk]);
         const commitIndex = clientBuffer.indexOf(COMMIT_MARKER);
@@ -49,6 +67,7 @@ export async function startPgTcpProxy(
           serverSocket.write(chunk);
           return;
         }
+        stats.commitsBlocked += 1;
         const beforeCommit = clientBuffer.subarray(0, commitIndex);
         if (beforeCommit.length > 0) {
           serverSocket.write(beforeCommit);
@@ -60,12 +79,14 @@ export async function startPgTcpProxy(
       serverSocket.write(chunk);
       if (chunk.includes(COMMIT_MARKER)) {
         commitForwarded = true;
+        stats.commitsForwarded += 1;
       }
     });
 
     serverSocket.on("data", (chunk) => {
       if (mode === "drop_commit_response" && (commitForwarded || droppingCommitResponse)) {
         droppingCommitResponse = true;
+        stats.commitResponsesDropped += 1;
         clientSocket.destroy();
         return;
       }
@@ -90,6 +111,7 @@ export async function startPgTcpProxy(
 
   return {
     port: address.port,
+    stats,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {

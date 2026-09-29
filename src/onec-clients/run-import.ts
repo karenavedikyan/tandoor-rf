@@ -186,7 +186,7 @@ export async function runClientsImport(
     );
   }
 
-  const databaseUrl = getDatabaseUrl();
+  const databaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl();
   if (!databaseUrl) {
     return sanitizeImportResult(
       {

@@ -53,6 +53,7 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
   });
 
   beforeEach(async () => {
+    setIntegrationEnv(databaseUrl);
     if (proxy) {
       await proxy.close();
       proxy = undefined;
@@ -99,9 +100,9 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
     });
 
     assert.equal(result.ok, true, JSON.stringify(result));
-    if (result.ok) {
-      assert.ok(result.cleanupWarning);
-    }
+    assert.equal(proxy!.stats.commitsObserved >= 1, true);
+    assert.equal(proxy!.stats.commitsForwarded >= 1, true);
+    assert.equal(proxy!.stats.commitResponsesDropped >= 1, true);
 
     const journal = (
       await directPool.query<{ status: string; source_sha256: string }>(
@@ -140,6 +141,7 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
     if (!result.ok) {
       assert.equal(result.code, "COMMIT_UNCERTAIN");
     }
+    assert.equal(proxy!.stats.commitsBlocked >= 1, true);
 
     const clients = await directPool.query("SELECT COUNT(*)::int AS count FROM onec_clients");
     assert.equal(clients.rows[0]?.count, 0);
@@ -152,41 +154,107 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
     assert.equal(blocked?.apply_blocked, true);
   });
 
-  it("propagates TCP commit-response recovery through scheduled child apply", async () => {
+  it("finishes parent and child journals after scheduled apply COMMIT proxy drop", async () => {
     const proxiedUrl = await startProxy("drop_commit_response");
-    const bytes = buildClientsFileBytes([sampleClient({ name_client: "Scheduled TCP Success" })]);
-    const sha = buildClientsFileSha256(JSON.parse(bytes.toString("utf8")));
+    const bytesA = buildClientsFileBytes([sampleClient({ name_client: "Scheduled TCP A" })]);
+    const bytesB = buildClientsFileBytes([sampleClient({ name_client: "Scheduled TCP B" })]);
+    const shaA = buildClientsFileSha256(JSON.parse(bytesA.toString("utf8")));
+    const shaB = buildClientsFileSha256(JSON.parse(bytesB.toString("utf8")));
     let reads = 0;
-    const reader = async () => {
+    const readerA = async () => {
       reads += 1;
-      return { ok: true as const, bytes, remotePath: "/LC/clients/all_clients.json" };
+      return { ok: true as const, bytes: bytesA, remotePath: "/LC/clients/all_clients.json" };
     };
 
-    setIntegrationEnv(databaseUrl);
-    const result = await runScheduledExchangeCycle({
+    const first = await runScheduledExchangeCycle({
       env: {
         ...ftpEnvBase,
         DATABASE_URL: proxiedUrl,
-        ONEC_SCHEDULED_EXCHANGE_ACCEPTED_BASELINE_SHA256: sha,
+        ONEC_SCHEDULED_EXCHANGE_ACCEPTED_BASELINE_SHA256: shaA,
       },
-      ftpReader: reader,
+      ftpReader: readerA,
     });
 
-    assert.equal(result.status, "SUCCESS");
+    assert.equal(first.status, "SUCCESS", JSON.stringify(first));
     assert.equal(reads, 2);
-    assert.equal(
-      (await directPool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0]?.count,
-      1,
+    assert.equal(proxy!.stats.commitsObserved >= 1, true);
+    assert.equal(proxy!.stats.commitsForwarded >= 1, true);
+    assert.equal(proxy!.stats.commitResponsesDropped >= 1, true);
+
+    const applyRuns = await directPool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_client_import_runs WHERE mode = 'apply' AND status = 'success'",
     );
+    assert.equal(Number(applyRuns.rows[0]?.count ?? "0"), 1);
+
+    const parent = (
+      await directPool.query<{ status: string; stage: string }>(
+        `
+          SELECT status, stage
+          FROM onec_client_import_runs
+          WHERE mode = 'scheduled_check'
+          ORDER BY started_at DESC
+          LIMIT 1
+        `,
+      )
+    ).rows[0];
+    assert.equal(parent?.status, "success");
+    assert.equal(parent?.stage, "apply");
+
+    const child = (
+      await directPool.query<{ status: string; source_sha256: string; parent_run_id: string | null }>(
+        `
+          SELECT status, source_sha256, parent_run_id::text
+          FROM onec_client_import_runs
+          WHERE mode = 'apply'
+          ORDER BY started_at DESC
+          LIMIT 1
+        `,
+      )
+    ).rows[0];
+    assert.equal(child?.status, "success");
+    assert.equal(child?.source_sha256, shaA);
+    assert.equal(child?.parent_run_id, first.checkRunId);
+
+    const row = await directPool.query<{ name_client: string; source_sha256: string }>(
+      "SELECT name_client, source_sha256 FROM onec_clients LIMIT 1",
+    );
+    assert.equal(row.rows[0]?.name_client, "Scheduled TCP A");
+    assert.equal(row.rows[0]?.source_sha256, shaA);
+
+    await proxy.close();
+    proxy = undefined;
+
+    reads = 0;
+    const readerB = async () => {
+      reads += 1;
+      return { ok: true as const, bytes: bytesB, remotePath: "/LC/clients/all_clients.json" };
+    };
+
+    const second = await runScheduledExchangeCycle({
+      env: {
+        ...ftpEnvBase,
+        DATABASE_URL: databaseUrl,
+        ONEC_SCHEDULED_EXCHANGE_APPLY: "false",
+      },
+      ftpReader: readerB,
+    });
+
+    assert.notEqual(second.status, "STALE_RUNNING_IMPORT");
+    assert.equal(second.status, "PENDING_APPLY");
+    assert.equal(reads, 2);
+
+    const running = await directPool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_client_import_runs WHERE status = 'running'",
+    );
+    assert.equal(Number(running.rows[0]?.count ?? "0"), 0);
   });
 
-  it("propagates TCP commit-response recovery through operator apply job", async () => {
+  it("propagates TCP commit-response recovery through operator apply job via proxied env", async () => {
     const proxiedUrl = await startProxy("drop_commit_response");
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "Operator TCP Success" })]);
     const sha = buildClientsFileSha256(JSON.parse(bytes.toString("utf8")));
 
-    setIntegrationEnv(databaseUrl);
-    const jobPool = new Pool({ connectionString: proxiedUrl, max: 2 });
+    const jobPool = new Pool({ connectionString: proxiedUrl, max: 1 });
     try {
       await directPool.query(
         `
@@ -207,9 +275,21 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
         "success",
       );
 
+      assert.equal(proxy!.stats.commitsObserved >= 1, true);
+      assert.equal(proxy!.stats.commitsForwarded >= 1, true);
+      assert.equal(proxy!.stats.commitResponsesDropped >= 1, true);
+
       const job = (await directPool.query("SELECT status, result FROM onec_import_jobs")).rows[0];
       assert.equal(job?.status, "success", JSON.stringify(job?.result));
       assert.equal(job?.result?.status, "SUCCESS");
+
+      const applyRun = (
+        await directPool.query<{ status: string; source_sha256: string }>(
+          "SELECT status, source_sha256 FROM onec_client_import_runs WHERE mode = 'apply' ORDER BY started_at DESC LIMIT 1",
+        )
+      ).rows[0];
+      assert.equal(applyRun?.status, "success");
+      assert.equal(applyRun?.source_sha256, sha);
     } finally {
       await jobPool.end();
     }

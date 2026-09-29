@@ -207,6 +207,72 @@ function journalizePayloadWarnings(payload: ValidatedClientsPayload) {
   };
 }
 
+type CycleJournalInput = Parameters<typeof insertCycleJournal>[1];
+
+function resolveCycleDatabaseUrls(env: NodeJS.ProcessEnv): {
+  cycleDatabaseUrl: string | undefined;
+  recoveryDatabaseUrl: string | undefined;
+} {
+  const cycleDatabaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl();
+  const recoveryDatabaseUrl = getDatabaseUrl() ?? cycleDatabaseUrl;
+  return { cycleDatabaseUrl, recoveryDatabaseUrl };
+}
+
+async function insertCycleJournalFresh(
+  databaseUrl: string,
+  input: CycleJournalInput,
+): Promise<string> {
+  const pgOptions = createPgPoolOptions(databaseUrl);
+  const freshPool = new Pool({
+    connectionString: pgOptions.connectionString,
+    max: 1,
+    connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+    ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
+  });
+  const freshClient = await freshPool.connect();
+  try {
+    return await insertCycleJournal(freshClient, input);
+  } finally {
+    freshClient.release();
+    await freshPool.end();
+  }
+}
+
+async function finalizeCycleJournal(
+  primaryClient: PoolClient | undefined,
+  recoveryDatabaseUrl: string | undefined,
+  input: CycleJournalInput,
+  options: { preferFresh?: boolean } = {},
+): Promise<string> {
+  if (!options.preferFresh && primaryClient) {
+    try {
+      return await insertCycleJournal(primaryClient, input);
+    } catch {
+      // Fall back to a healthy connection when the cycle client faulted after apply.
+    }
+  }
+  if (!recoveryDatabaseUrl) {
+    throw new Error("Recovery database URL is required to finalize scheduled exchange journal.");
+  }
+  return insertCycleJournalFresh(recoveryDatabaseUrl, input);
+}
+
+async function releaseCycleClient(client: PoolClient, lockHeld: boolean): Promise<void> {
+  if (lockHeld) {
+    try {
+      await releaseImportLock(client);
+    } catch {
+      // ignore unlock failure on a faulted connection
+    }
+  }
+  try {
+    await client.query("SELECT 1");
+    client.release();
+  } catch {
+    client.release(new Error("Scheduled exchange connection fault."));
+  }
+}
+
 export async function runScheduledExchangeCycle(
   options: {
     env?: NodeJS.ProcessEnv;
@@ -218,8 +284,8 @@ export async function runScheduledExchangeCycle(
   const env = options.env ?? process.env;
   const config = options.config ?? loadScheduledExchangeConfig(env);
 
-  const databaseUrl = getDatabaseUrl();
-  if (!databaseUrl) {
+  const { cycleDatabaseUrl, recoveryDatabaseUrl } = resolveCycleDatabaseUrls(env);
+  if (!cycleDatabaseUrl) {
     return failureResult({
       status: "DATABASE_ERROR",
       stage: "config",
@@ -229,7 +295,7 @@ export async function runScheduledExchangeCycle(
     });
   }
 
-  const pgOptions = createPgPoolOptions(databaseUrl);
+  const pgOptions = createPgPoolOptions(cycleDatabaseUrl);
   const pool = new Pool({
     connectionString: pgOptions.connectionString,
     max: 1,
@@ -429,7 +495,7 @@ export async function runScheduledExchangeCycle(
     }
 
     const applied = await applyClientsImport({
-      databaseUrl,
+      databaseUrl: recoveryDatabaseUrl ?? cycleDatabaseUrl,
       client,
       payload,
       lockAlreadyHeld: true,
@@ -443,7 +509,7 @@ export async function runScheduledExchangeCycle(
     lockHeld = false;
 
     if (!applied.ok) {
-      await insertCycleJournal(client, {
+      await finalizeCycleJournal(client, recoveryDatabaseUrl, {
         id: cycleRunId,
         status: "failed",
         stage: "apply",
@@ -471,18 +537,23 @@ export async function runScheduledExchangeCycle(
       });
     }
 
-    await insertCycleJournal(client, {
-      id: cycleRunId,
-      status: "success",
-      stage: "apply",
-      sha256: payload.sha256,
-      byteSize: payload.byteSize,
-      recordCount: payload.recordCount,
-      warningCount: payloadWarnings.warningCount,
-      warningsJson: payloadWarnings.warningsJson,
-      warningsTruncated: payloadWarnings.warningsTruncated,
-      durationMs: Date.now() - startedAt,
-    });
+    await finalizeCycleJournal(
+      client,
+      recoveryDatabaseUrl,
+      {
+        id: cycleRunId,
+        status: "success",
+        stage: "apply",
+        sha256: payload.sha256,
+        byteSize: payload.byteSize,
+        recordCount: payload.recordCount,
+        warningCount: payloadWarnings.warningCount,
+        warningsJson: payloadWarnings.warningsJson,
+        warningsTruncated: payloadWarnings.warningsTruncated,
+        durationMs: Date.now() - startedAt,
+      },
+      { preferFresh: true },
+    );
 
     return failureResult({
       status: "SUCCESS",
@@ -496,9 +567,9 @@ export async function runScheduledExchangeCycle(
       message: "Scheduled exchange applied successfully.",
     });
   } catch {
-    if (client && cycleRunId) {
+    if (cycleRunId) {
       try {
-        await insertCycleJournal(client, {
+        await finalizeCycleJournal(client, recoveryDatabaseUrl, {
           id: cycleRunId,
           status: "failed",
           stage: "state_update",
@@ -519,14 +590,7 @@ export async function runScheduledExchangeCycle(
     });
   } finally {
     if (client) {
-      if (lockHeld) {
-        try {
-          await releaseImportLock(client);
-        } catch {
-          // ignore unlock failure
-        }
-      }
-      client.release();
+      await releaseCycleClient(client, lockHeld);
     }
     await pool.end();
   }
