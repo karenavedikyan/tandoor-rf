@@ -15,6 +15,18 @@ describe("prepareJournalWarnings", () => {
     assert.equal(JSON.parse(prepared.warningsJson).length, 20);
   });
 
+  it("uses totalWarningCount when detailed warnings are already capped upstream", () => {
+    const warnings = Array.from({ length: 20 }, (_, index) => ({
+      code: "WARN",
+      message: `warning-${index}`,
+      recordIndex: index,
+    }));
+    const prepared = prepareJournalWarnings(warnings, { totalWarningCount: 200 });
+    assert.equal(prepared.warningCount, 200);
+    assert.equal(prepared.warningsTruncated, true);
+    assert.equal(JSON.parse(prepared.warningsJson).length, 20);
+  });
+
   it("truncates oversized warning payloads by bytes", () => {
     const warnings = Array.from({ length: 10 }, () => ({
       code: "WARN",

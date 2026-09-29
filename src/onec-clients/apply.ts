@@ -2,7 +2,6 @@ import { Pool, type PoolClient } from "pg";
 import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import {
-  blockExchangeApplyFresh,
   ensureExchangeStateInitialized,
   getCommittedSnapshotSha,
   parseCommitUncertainRunId,
@@ -10,8 +9,9 @@ import {
   resolveCommitUncertainOutcome,
   updateExchangeStateAfterApplyInTxn,
 } from "../onec-exchange/state";
+import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
-import type { ParsedClientRecord, ValidatedClientsPayload, ValidationWarning } from "./types";
+import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
@@ -217,8 +217,79 @@ async function hasStaleRunningImport(
   return Number(result.rows[0]?.count ?? "0") > 0;
 }
 
-function serializeWarnings(warnings: ValidationWarning[]): string {
-  return JSON.stringify(warnings);
+function journalWarningsForPayload(payload: ValidatedClientsPayload) {
+  return prepareJournalWarnings(payload.warnings, { totalWarningCount: payload.warningCount });
+}
+
+async function recoverFromCommitUncertainty(
+  managed: ManagedClient | undefined,
+  phase: ApplyPhaseState,
+  resolvedDatabaseUrl: string | undefined,
+): Promise<ApplyResult> {
+  if (managed && !managed.faulted()) {
+    try {
+      await managed.client.query("ROLLBACK");
+    } catch {
+      // Rollback is best-effort when commit confirmation was lost.
+    }
+    if (phase.lockHeld) {
+      try {
+        await managed.client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+        phase.lockHeld = false;
+      } catch {
+        // Fresh recovery acquires the shared lock on a healthy connection.
+      }
+    }
+  }
+
+  if (!phase.runId) {
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
+      runId: phase.runId,
+    };
+  }
+
+  if (!resolvedDatabaseUrl) {
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message:
+        "Commit outcome is unknown; recovery database connection is unavailable and apply block was not persisted.",
+      runId: phase.runId,
+    };
+  }
+
+  try {
+    const resolution = await resolveCommitUncertainFresh(resolvedDatabaseUrl, phase.runId);
+    if (resolution === "committed" && phase.counts) {
+      return {
+        ok: true,
+        runId: phase.runId,
+        counts: phase.counts,
+        cleanupWarning:
+          "Import committed successfully but the database connection failed during commit confirmation; outcome was verified by runId.",
+      };
+    }
+    return {
+      ok: false,
+      code: resolution === "still_uncertain" ? "COMMIT_UNCERTAIN" : "DATABASE_ERROR",
+      message:
+        resolution === "still_uncertain"
+          ? "Commit outcome is unknown; inspect the import run journal by runId before retrying."
+          : "Database apply failed.",
+      runId: phase.runId,
+    };
+  } catch {
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message:
+        "Commit outcome is unknown; recovery on a fresh connection failed and apply block was not verified.",
+      runId: phase.runId,
+    };
+  }
 }
 
 async function loadExistingClients(managed: ManagedClient): Promise<Map<string, ExistingClientRow>> {
@@ -254,6 +325,7 @@ async function insertRejectedRunJournal(
   errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK",
   journal: ApplyJournalContext,
 ): Promise<string | undefined> {
+  const preparedWarnings = journalWarningsForPayload(payload);
   const runInsert = await queryManaged<{ id: string }>(
     managed,
     `
@@ -267,10 +339,11 @@ async function insertRejectedRunJournal(
         source_record_count,
         warning_count,
         warnings,
+        warnings_truncated,
         finished_at,
         error_code
       )
-      VALUES ('failed', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, NOW(), $8)
+      VALUES ('failed', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8, NOW(), $9)
       RETURNING id::text
     `,
     [
@@ -279,8 +352,9 @@ async function insertRejectedRunJournal(
       payload.sha256,
       payload.byteSize,
       payload.recordCount,
-      payload.warningCount,
-      serializeWarnings(payload.warnings),
+      preparedWarnings.warningCount,
+      preparedWarnings.warningsJson,
+      preparedWarnings.warningsTruncated,
       errorCode,
     ],
   );
@@ -402,7 +476,8 @@ export async function applyClientsImport(options: {
   let managed: ManagedClient | undefined;
   let ownsPool = false;
   let ownsClient = false;
-  const resolvedDatabaseUrl = options.databaseUrl ?? getDatabaseUrl() ?? undefined;
+  const applyDatabaseUrl = options.databaseUrl ?? getDatabaseUrl() ?? undefined;
+  const recoveryDatabaseUrl = getDatabaseUrl() ?? applyDatabaseUrl;
   const phase: ApplyPhaseState = {
     lockHeld: options.lockAlreadyHeld === true,
     commitAttempted: false,
@@ -419,11 +494,11 @@ export async function applyClientsImport(options: {
     managed = managePoolClient(options.client);
     options.testHooks?.onClientReady?.(managed.client);
   } else {
-    if (!resolvedDatabaseUrl) {
+    if (!applyDatabaseUrl) {
       return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
     }
     try {
-      pool = createImportPool(resolvedDatabaseUrl);
+      pool = createImportPool(applyDatabaseUrl);
       ownsPool = true;
     } catch {
       return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
@@ -552,6 +627,7 @@ export async function applyClientsImport(options: {
           }
 
           if (!outcome) {
+          const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
             managed,
             `
@@ -564,9 +640,10 @@ export async function applyClientsImport(options: {
                 source_byte_size,
                 source_record_count,
                 warning_count,
-                warnings
+                warnings,
+                warnings_truncated
               )
-              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb)
+              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8)
               RETURNING id::text
             `,
             [
@@ -575,8 +652,9 @@ export async function applyClientsImport(options: {
               options.payload.sha256,
               options.payload.byteSize,
               options.payload.recordCount,
-              options.payload.warningCount,
-              serializeWarnings(options.payload.warnings),
+              preparedWarnings.warningCount,
+              preparedWarnings.warningsJson,
+              preparedWarnings.warningsTruncated,
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
@@ -715,57 +793,10 @@ export async function applyClientsImport(options: {
       }
     }
   } catch (error) {
-    if (isConnectionFault(error, managed)) {
+    if (phase.commitAttempted && !phase.commitConfirmed) {
+      outcome = await recoverFromCommitUncertainty(managed, phase, recoveryDatabaseUrl);
+    } else if (isConnectionFault(error, managed)) {
       outcome = resolveConnectionFault(phase);
-    } else if (phase.commitAttempted && !phase.commitConfirmed) {
-      if (managed && !managed.faulted()) {
-        try {
-          await managed.client.query("ROLLBACK");
-        } catch {
-          // Rollback is best-effort when commit response was lost.
-        }
-      }
-
-      if (phase.runId && resolvedDatabaseUrl) {
-        try {
-          await blockExchangeApplyFresh(
-            resolvedDatabaseUrl,
-            `COMMIT_UNCERTAIN for run ${phase.runId}`,
-          );
-          const resolution = await resolveCommitUncertainFresh(resolvedDatabaseUrl, phase.runId);
-          if (resolution === "committed" && phase.counts) {
-            outcome = {
-              ok: true,
-              runId: phase.runId,
-              counts: phase.counts,
-            };
-          } else {
-            outcome = {
-              ok: false,
-              code: resolution === "still_uncertain" ? "COMMIT_UNCERTAIN" : "DATABASE_ERROR",
-              message:
-                resolution === "still_uncertain"
-                  ? "Commit outcome is unknown; inspect the import run journal by runId before retrying."
-                  : "Database apply failed.",
-              runId: phase.runId,
-            };
-          }
-        } catch {
-          outcome = {
-            ok: false,
-            code: "COMMIT_UNCERTAIN",
-            message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
-            runId: phase.runId,
-          };
-        }
-      } else {
-        outcome = {
-          ok: false,
-          code: "COMMIT_UNCERTAIN",
-          message: "Commit outcome is unknown; inspect the import run journal by runId before retrying.",
-          runId: phase.runId,
-        };
-      }
     } else {
       if (managed && !managed.faulted()) {
         try {

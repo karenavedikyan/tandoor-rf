@@ -9,11 +9,14 @@ export type PreparedJournalWarnings = {
   warningsTruncated: boolean;
 };
 
-export function prepareJournalWarnings(warnings: ValidationWarning[]): PreparedJournalWarnings {
-  const warningCount = warnings.length;
+export function prepareJournalWarnings(
+  warnings: ValidationWarning[],
+  options?: { totalWarningCount?: number },
+): PreparedJournalWarnings {
+  const warningCount = options?.totalWarningCount ?? warnings.length;
   let stored = warnings.slice(0, MAX_DETAILED_WARNINGS);
   let warningsJson = JSON.stringify(stored);
-  let warningsTruncated = warningCount > MAX_DETAILED_WARNINGS;
+  let warningsTruncated = warningCount > stored.length;
 
   while (Buffer.byteLength(warningsJson, "utf8") > MAX_WARNINGS_JSON_BYTES && stored.length > 0) {
     stored = stored.slice(0, stored.length - 1);

@@ -241,7 +241,8 @@
 |----------|-----------|
 | SHA PR head (review round 2) | см. PR #16 |
 | Apply atomicity | clients + journal success + `onec_exchange_state` в одной транзакции до COMMIT |
-| COMMIT_UNCERTAIN recovery | блокировка через fresh connection; разбор по runId; auto-resolve при success |
+| COMMIT_UNCERTAIN recovery | единый recovery после COMMIT (включая TCP fault); fresh connection + advisory lock; auto-success при journal success |
+| TCP commit proxy tests | `onec-commit-tcp-proxy.test.ts` — drop response / drop before commit; scheduled + operator job |
 | Unified committed SHA | `getCommittedSnapshotSha` + bootstrap из journal под lock (`onec-exchange-bootstrap.test.ts`) |
 | CONFIG_ERROR journal | DB connect → journal при доступной БД (`onec-scheduled-exchange.test.ts`) |
 | Warnings journal | `warningCount` + `warnings_truncated` (migration `009`) |

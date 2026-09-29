@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import { createPgPoolOptions } from "../config/pg-ssl";
+import { IMPORT_ADVISORY_LOCK_KEY } from "../onec-clients/constants";
 
 const FRESH_POOL_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -230,6 +231,70 @@ export function parseCommitUncertainRunId(reason: string | null | undefined): st
   return match?.[1] ?? null;
 }
 
+async function clearApplyBlockedForRun(client: PoolClient, runId: string): Promise<void> {
+  await client.query(
+    `
+      UPDATE onec_exchange_state
+      SET apply_blocked = false, apply_blocked_reason = NULL, updated_at = NOW()
+      WHERE id = 1
+        AND apply_blocked_reason LIKE $1
+    `,
+    [`%${runId}%`],
+  );
+}
+
+async function shouldSyncExchangeStateFromRun(
+  client: PoolClient,
+  runId: string,
+  sha256: string,
+): Promise<boolean> {
+  const state = await loadExchangeState(client);
+  if (!state.last_successful_apply_sha256 || state.last_successful_apply_sha256 === sha256) {
+    return true;
+  }
+
+  const ordering = await client.query<{
+    this_finished_at: Date | null;
+    newer_finished_at: Date | null;
+  }>(
+    `
+      SELECT
+        this_run.finished_at AS this_finished_at,
+        newer.finished_at AS newer_finished_at
+      FROM onec_client_import_runs this_run
+      LEFT JOIN onec_client_import_runs newer
+        ON newer.status = 'success'
+       AND newer.mode = 'apply'
+       AND newer.source_sha256 = $2
+       AND newer.id <> $1::uuid
+       AND newer.finished_at IS NOT NULL
+       AND (this_run.finished_at IS NULL OR newer.finished_at > this_run.finished_at)
+      WHERE this_run.id = $1::uuid
+      ORDER BY newer.finished_at DESC NULLS LAST
+      LIMIT 1
+    `,
+    [runId, state.last_successful_apply_sha256],
+  );
+
+  return ordering.rows[0]?.newer_finished_at == null;
+}
+
+async function finalizeCommittedRun(
+  client: PoolClient,
+  runId: string,
+  sha256: string,
+): Promise<void> {
+  const shouldSync = await shouldSyncExchangeStateFromRun(client, runId, sha256);
+  if (shouldSync) {
+    await markExchangeApplied(client, {
+      sha256,
+      acceptedBaselineSha256: sha256,
+    });
+  } else {
+    await clearApplyBlockedForRun(client, runId);
+  }
+}
+
 export async function resolveCommitUncertainOutcome(
   client: PoolClient,
   runId: string,
@@ -250,15 +315,16 @@ export async function resolveCommitUncertainOutcome(
   );
   const run = runResult.rows[0];
   if (!run) {
-    await blockExchangeApply(client, `COMMIT_UNCERTAIN for run ${runId}`);
+    try {
+      await blockExchangeApply(client, `COMMIT_UNCERTAIN for run ${runId}`);
+    } catch {
+      return "still_uncertain";
+    }
     return "still_uncertain";
   }
 
   if (run.status === "success" && run.source_sha256) {
-    await markExchangeApplied(client, {
-      sha256: run.source_sha256,
-      acceptedBaselineSha256: run.source_sha256,
-    });
+    await finalizeCommittedRun(client, runId, run.source_sha256);
     return "committed";
   }
 
@@ -289,24 +355,19 @@ export async function resolveCommitUncertainOutcome(
         `,
         [runId],
       );
-      await markExchangeApplied(client, {
-        sha256: run.source_sha256,
-        acceptedBaselineSha256: run.source_sha256,
-      });
+      await finalizeCommittedRun(client, runId, run.source_sha256);
       return "committed";
     }
 
-    await blockExchangeApply(client, `COMMIT_UNCERTAIN for run ${runId}`);
+    try {
+      await blockExchangeApply(client, `COMMIT_UNCERTAIN for run ${runId}`);
+    } catch {
+      return "still_uncertain";
+    }
     return "still_uncertain";
   }
 
-  await client.query(
-    `
-      UPDATE onec_exchange_state
-      SET apply_blocked = false, apply_blocked_reason = NULL, updated_at = NOW()
-      WHERE id = 1
-    `,
-  );
+  await clearApplyBlockedForRun(client, runId);
   return "not_committed";
 }
 
@@ -334,20 +395,27 @@ export async function withFreshPoolClient<T>(
   }
 }
 
-export async function blockExchangeApplyFresh(
-  databaseUrl: string,
-  reason: string,
-): Promise<void> {
-  await withFreshPoolClient(databaseUrl, async (client) => {
-    await blockExchangeApply(client, reason);
-  });
-}
-
 export async function resolveCommitUncertainFresh(
   databaseUrl: string,
   runId: string,
 ): Promise<CommitUncertainResolution> {
-  return withFreshPoolClient(databaseUrl, async (client) =>
-    resolveCommitUncertainOutcome(client, runId),
-  );
+  return withFreshPoolClient(databaseUrl, async (client) => {
+    const lock = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS locked",
+      [IMPORT_ADVISORY_LOCK_KEY],
+    );
+    if (!lock.rows[0]?.locked) {
+      try {
+        await blockExchangeApply(client, `COMMIT_UNCERTAIN for run ${runId}`);
+      } catch {
+        // Best-effort block when the import lock is still held elsewhere.
+      }
+      return "still_uncertain";
+    }
+    try {
+      return await resolveCommitUncertainOutcome(client, runId);
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+    }
+  });
 }

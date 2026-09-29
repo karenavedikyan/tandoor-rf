@@ -134,7 +134,7 @@
 
 1. **Остановить** TW cron / operator jobs (`006` inserts не создавать).
 2. **Диагностика:** `onec_client_import_runs`, `onec_exchange_state`, `onec_import_jobs`.
-3. **COMMIT_UNCERTAIN:** сверить `runId`, `onec_clients.source_sha256`, counts; блокировка ставится на исправном соединении; apply разблокируется только после `resolveCommitUncertainOutcome`.
+3. **COMMIT_UNCERTAIN:** сверить `runId`, `onec_clients.source_sha256`, counts; любой сбой после отправки COMMIT (включая обрыв TCP) проходит через `resolveCommitUncertainFresh` на **прямом** `DATABASE_URL`; при недоступной БД блокировка не заявляется; apply разблокируется только после подтверждённого recovery.
 4. **Bootstrap после migration `007`/`008`:** при пустом `onec_exchange_state` committed SHA берётся из последнего success apply в journal под advisory lock.
 5. **Warnings в journal:** сохраняются усечённо; полный `warning_count` и флаг `warnings_truncated` (migration `009`).
 4. **Зависший `running`:** закрыть запись в журнале только после подтверждения, что apply не завершился.

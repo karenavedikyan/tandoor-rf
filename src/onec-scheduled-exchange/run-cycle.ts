@@ -197,7 +197,9 @@ function failureResult(
 }
 
 function journalizePayloadWarnings(payload: ValidatedClientsPayload) {
-  const prepared = prepareJournalWarnings(payload.warnings);
+  const prepared = prepareJournalWarnings(payload.warnings, {
+    totalWarningCount: payload.warningCount,
+  });
   return {
     warningCount: prepared.warningCount,
     warningsJson: prepared.warningsJson,
