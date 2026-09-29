@@ -1,3 +1,4 @@
+import { SAFE_CONFIG_MESSAGE } from "./safe-errors";
 import { buildPortalId, parseWebhookUrl } from "./url-security";
 import type { Bitrix24ConfigLoadResult, Bitrix24WebhookConfig } from "./types";
 
@@ -124,8 +125,7 @@ export function loadBitrix24Config(env: NodeJS.ProcessEnv = process.env): Bitrix
     };
 
     return { ok: true, config };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid Bitrix24 configuration.";
-    return { ok: false, message };
+  } catch {
+    return { ok: false, message: SAFE_CONFIG_MESSAGE };
   }
 }

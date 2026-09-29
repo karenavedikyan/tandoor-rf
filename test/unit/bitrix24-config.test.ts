@@ -37,6 +37,14 @@ describe("bitrix24 config", () => {
     assert.equal(loaded.ok, false);
   });
 
+  it("rejects non-standard HTTPS ports", () => {
+    const loaded = loadBitrix24Config({
+      BITRIX24_ENABLED: "true",
+      BITRIX24_WEBHOOK_URL: "https://example.bitrix24.ru:8443/rest/1/token/",
+    });
+    assert.equal(loaded.ok, false);
+  });
+
   it("rejects mismatched portal host override", () => {
     const loaded = loadBitrix24Config({
       BITRIX24_ENABLED: "true",

@@ -1,3 +1,5 @@
+import { parseCanonicalBitrixId } from "./parse-id";
+import { parseOptionalBitrixDate } from "./validate-datetime";
 import type { Bitrix24NormalizedTask, Bitrix24TaskStatusLabel } from "./types";
 
 const STATUS_LABELS: Record<number, Bitrix24TaskStatusLabel> = {
@@ -25,28 +27,25 @@ function readField(record: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
-function readString(record: Record<string, unknown>, keys: string[]): string | null {
-  const value = readField(record, keys);
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return null;
+function readTitle(record: Record<string, unknown>): string {
+  const value = readField(record, ["TITLE", "title"]);
+  return typeof value === "string" ? value : "";
 }
 
 function readStatusRaw(record: Record<string, unknown>): string | number | null {
-  const value = readField(record, ["REAL_STATUS", "STATUS", "status", "realStatus"]);
-  if (value === null || value === undefined) {
+  const realStatus = readField(record, ["REAL_STATUS", "realStatus"]);
+  if (realStatus !== null && realStatus !== undefined) {
+    if (typeof realStatus === "number" || typeof realStatus === "string") {
+      return realStatus;
+    }
     return null;
   }
-  if (typeof value === "number" || typeof value === "string") {
-    return value;
+
+  const status = readField(record, ["STATUS", "status"]);
+  if (status !== null && status !== undefined) {
+    if (typeof status === "number" || typeof status === "string") {
+      return status;
+    }
   }
   return null;
 }
@@ -55,8 +54,11 @@ export function mapBitrixTaskStatus(statusRaw: string | number | null): Bitrix24
   if (statusRaw === null) {
     return "unknown";
   }
+  if (typeof statusRaw === "string" && !/^\d+$/.test(statusRaw.trim())) {
+    return "unknown";
+  }
   const numeric = typeof statusRaw === "number" ? statusRaw : Number(statusRaw);
-  if (!Number.isFinite(numeric)) {
+  if (!Number.isInteger(numeric)) {
     return "unknown";
   }
   return STATUS_LABELS[numeric] ?? "unknown";
@@ -70,8 +72,32 @@ export function normalizeBitrixTask(
     return null;
   }
   const record = raw as Record<string, unknown>;
-  const taskId = readString(record, ["ID", "id"]);
+  const taskId = parseCanonicalBitrixId(readField(record, ["ID", "id"]));
   if (!taskId) {
+    return null;
+  }
+
+  const responsibleRaw = readField(record, ["RESPONSIBLE_ID", "responsibleId"]);
+  const createdByRaw = readField(record, ["CREATED_BY", "createdBy"]);
+  const responsibleId =
+    responsibleRaw === null || responsibleRaw === undefined
+      ? null
+      : parseCanonicalBitrixId(responsibleRaw);
+  if (responsibleRaw !== null && responsibleRaw !== undefined && !responsibleId) {
+    return null;
+  }
+
+  const createdById =
+    createdByRaw === null || createdByRaw === undefined
+      ? null
+      : parseCanonicalBitrixId(createdByRaw);
+  if (createdByRaw !== null && createdByRaw !== undefined && !createdById) {
+    return null;
+  }
+
+  const deadlineParsed = parseOptionalBitrixDate(readField(record, ["DEADLINE", "deadline"]));
+  const changedParsed = parseOptionalBitrixDate(readField(record, ["CHANGED_DATE", "changedDate"]));
+  if (deadlineParsed.kind === "invalid" || changedParsed.kind === "invalid") {
     return null;
   }
 
@@ -80,13 +106,15 @@ export function normalizeBitrixTask(
   return {
     portalHost,
     taskId,
-    title: readString(record, ["TITLE", "title"]) ?? "",
+    title: readTitle(record),
     statusRaw,
     statusLabel: mapBitrixTaskStatus(statusRaw),
-    responsibleId: readString(record, ["RESPONSIBLE_ID", "responsibleId"]),
-    createdById: readString(record, ["CREATED_BY", "createdBy"]),
-    deadline: readString(record, ["DEADLINE", "deadline"]),
-    changedAt: readString(record, ["CHANGED_DATE", "changedDate"]),
+    responsibleId,
+    createdById,
+    deadline: deadlineParsed.kind === "valid" ? deadlineParsed.value : null,
+    deadlineInvalid: false,
+    changedAt: changedParsed.kind === "valid" ? changedParsed.value : null,
+    changedAtInvalid: false,
   };
 }
 

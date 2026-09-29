@@ -1,3 +1,7 @@
+import type { OperationDeadline } from "./deadline";
+import type { ResolvePortalAddressesFn } from "./dns-resolve";
+import type { PinnedRequestFn } from "./pinned-request";
+
 export const BITRIX24_ALLOWED_METHODS = ["user.get", "tasks.task.list"] as const;
 
 export type Bitrix24AllowedMethod = (typeof BITRIX24_ALLOWED_METHODS)[number];
@@ -32,7 +36,8 @@ export type Bitrix24TransportErrorCode =
   | "REDIRECT_BLOCKED"
   | "HOST_BLOCKED"
   | "METHOD_NOT_ALLOWED"
-  | "TOTAL_DURATION_EXCEEDED";
+  | "TOTAL_DURATION_EXCEEDED"
+  | "INVALID_ENVELOPE";
 
 export type Bitrix24TransportSuccess = {
   ok: true;
@@ -46,7 +51,6 @@ export type Bitrix24TransportFailure = {
   code: Bitrix24TransportErrorCode;
   message: string;
   httpStatus?: number;
-  apiError?: string;
   retryable: boolean;
 };
 
@@ -75,14 +79,19 @@ export type Bitrix24NormalizedTask = {
   responsibleId: string | null;
   createdById: string | null;
   deadline: string | null;
+  deadlineInvalid: boolean;
   changedAt: string | null;
+  changedAtInvalid: boolean;
 };
 
 export type Bitrix24TaskListTruncationReason =
   | "MAX_PAGES"
   | "MAX_DURATION"
   | "DUPLICATE_CURSOR"
-  | "INVALID_PAGE";
+  | "INVALID_PAGE"
+  | "EMPTY_PAGE_WITH_NEXT"
+  | "INVALID_ENVELOPE"
+  | "INVALID_RECORDS";
 
 export type Bitrix24TaskListResult = {
   tasks: Bitrix24NormalizedTask[];
@@ -90,6 +99,9 @@ export type Bitrix24TaskListResult = {
   pagesFetched: number;
   complete: boolean;
   truncatedReason?: Bitrix24TaskListTruncationReason;
+  rejectedTaskCount: number;
+  paginationObserved: boolean;
+  fieldsValidatedOnSample: boolean;
 };
 
 export type Bitrix24ProbeStatus =
@@ -110,6 +122,7 @@ export type Bitrix24ProbeStatus =
 export type Bitrix24ProbeResult = {
   status: Bitrix24ProbeStatus;
   durationMs: number;
+  checkedAt: string;
   message: string;
   portalId?: string;
   checks: string[];
@@ -117,15 +130,16 @@ export type Bitrix24ProbeResult = {
   usersChecked?: number;
   tasksFetched?: number;
   tasksComplete?: boolean;
+  rejectedTaskCount?: number;
   unavailableFeatures?: string[];
   errorCode?: string;
 };
 
-export type Bitrix24Fetch = (
-  input: string | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+export type Bitrix24OperationContext = {
+  deadline: OperationDeadline;
+  pinnedRequest?: PinnedRequestFn;
+  resolvePortalAddresses?: ResolvePortalAddressesFn;
+};
 
-export type Bitrix24DnsLookup = (
-  hostname: string,
-) => Promise<{ address: string; family: number }>;
+export type { PinnedRequestFn } from "./pinned-request";
+export type { ResolvePortalAddressesFn } from "./dns-resolve";

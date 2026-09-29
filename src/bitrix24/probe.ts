@@ -1,9 +1,12 @@
 import { isBitrix24Enabled, loadBitrix24Config } from "./config";
 import { readBitrixTasksForUser } from "./read-tasks";
 import { readBitrixUserById } from "./read-users";
+import { SAFE_READ_MESSAGES } from "./safe-errors";
 import { sanitizeProbeResult } from "./sanitize";
-import type { Bitrix24Fetch, Bitrix24ProbeResult, Bitrix24ProbeStatus } from "./types";
-import type { Bitrix24TransportOptions } from "./transport";
+import { createOperationContext } from "./transport";
+import type { Bitrix24ProbeResult, Bitrix24ProbeStatus } from "./types";
+import type { PinnedRequestFn } from "./pinned-request";
+import type { ResolvePortalAddressesFn } from "./dns-resolve";
 
 const UNAVAILABLE_FEATURES = [
   "checklists",
@@ -18,12 +21,19 @@ const UNAVAILABLE_FEATURES = [
   "client_task_binding_persistence",
 ] as const;
 
-export type RunBitrix24ProbeOptions = Bitrix24TransportOptions & {
+export type RunBitrix24ProbeOptions = {
   env?: NodeJS.ProcessEnv;
   live?: boolean;
   bitrixUserId?: string;
   probeMaxPages?: number;
+  pinnedRequest?: PinnedRequestFn;
+  resolvePortalAddresses?: ResolvePortalAddressesFn;
+  now?: () => Date;
 };
+
+function formatCheckedAt(now: Date): string {
+  return now.toISOString();
+}
 
 function mapTransportStatus(code: string): Bitrix24ProbeStatus {
   switch (code) {
@@ -34,6 +44,7 @@ function mapTransportStatus(code: string): Bitrix24ProbeStatus {
     case "RATE_LIMITED":
       return "RATE_LIMITED";
     case "TIMEOUT":
+    case "TOTAL_DURATION_EXCEEDED":
       return "TIMEOUT";
     case "NETWORK_ERROR":
     case "HOST_BLOCKED":
@@ -44,17 +55,26 @@ function mapTransportStatus(code: string): Bitrix24ProbeStatus {
   }
 }
 
+function mapReadMessage(code: string): string {
+  if (code in SAFE_READ_MESSAGES) {
+    return SAFE_READ_MESSAGES[code as keyof typeof SAFE_READ_MESSAGES];
+  }
+  return "Bitrix24 diagnostics failed.";
+}
+
 export async function runBitrix24Probe(
   options: RunBitrix24ProbeOptions = {},
 ): Promise<Bitrix24ProbeResult> {
-  const startedAt = Date.now();
+  const startedAtMs = Date.now();
+  const checkedAt = formatCheckedAt(options.now?.() ?? new Date());
   const env = options.env ?? process.env;
   const checks: string[] = [];
 
   if (!isBitrix24Enabled(env)) {
     return sanitizeProbeResult({
       status: "DISABLED",
-      durationMs: Date.now() - startedAt,
+      durationMs: Date.now() - startedAtMs,
+      checkedAt,
       message: "Bitrix24 integration is disabled (BITRIX24_ENABLED=false).",
       checks: ["integration_disabled"],
       unavailableFeatures: [...UNAVAILABLE_FEATURES],
@@ -65,7 +85,8 @@ export async function runBitrix24Probe(
   if (!loaded.ok) {
     return sanitizeProbeResult({
       status: "CONFIG_ERROR",
-      durationMs: Date.now() - startedAt,
+      durationMs: Date.now() - startedAtMs,
+      checkedAt,
       message: loaded.message,
       checks: ["config_invalid"],
       unavailableFeatures: [...UNAVAILABLE_FEATURES],
@@ -81,7 +102,8 @@ export async function runBitrix24Probe(
     return sanitizeProbeResult(
       {
         status: "LOCAL_OK",
-        durationMs: Date.now() - startedAt,
+        durationMs: Date.now() - startedAtMs,
+        checkedAt,
         message: "Bitrix24 configuration passed local validation. Live portal scan was not requested.",
         portalId: config.portalId,
         checks: [...checks, "local_validation_only"],
@@ -95,7 +117,8 @@ export async function runBitrix24Probe(
     return sanitizeProbeResult(
       {
         status: "LIVE_REQUIRES_USER",
-        durationMs: Date.now() - startedAt,
+        durationMs: Date.now() - startedAtMs,
+        checkedAt,
         message: "Live Bitrix24 diagnostics require --bitrix-user-id.",
         portalId: config.portalId,
         checks: [...checks, "live_requires_user"],
@@ -107,35 +130,26 @@ export async function runBitrix24Probe(
 
   checks.push("live_mode_requested");
 
+  const operation = createOperationContext(config, startedAtMs);
+  operation.pinnedRequest = options.pinnedRequest;
+  operation.resolvePortalAddresses = options.resolvePortalAddresses;
+
   const userResult = await readBitrixUserById(config, options.bitrixUserId, {
-    fetchImpl: options.fetchImpl,
-    lookup: options.lookup,
-    startedAt,
-    maxTotalDurationMs: config.maxTotalDurationMs,
+    operation,
+    startedAtMs,
   });
 
   if (!userResult.ok) {
-    if (userResult.code === "USER_NOT_FOUND" || userResult.code === "INVALID_USER_ID") {
-      return sanitizeProbeResult(
-        {
-          status: "INVALID_USER",
-          durationMs: Date.now() - startedAt,
-          message: userResult.message,
-          portalId: config.portalId,
-          checks: [...checks, "user_lookup_failed"],
-          bitrixUserId: options.bitrixUserId,
-          errorCode: userResult.code,
-          unavailableFeatures: [...UNAVAILABLE_FEATURES],
-        },
-        config,
-      );
-    }
-
+    const status =
+      userResult.code === "USER_NOT_FOUND" || userResult.code === "INVALID_USER_ID"
+        ? "INVALID_USER"
+        : mapTransportStatus(userResult.code);
     return sanitizeProbeResult(
       {
-        status: mapTransportStatus(userResult.code),
-        durationMs: Date.now() - startedAt,
-        message: userResult.message,
+        status,
+        durationMs: Date.now() - startedAtMs,
+        checkedAt,
+        message: mapReadMessage(userResult.code),
         portalId: config.portalId,
         checks: [...checks, "user_lookup_failed"],
         bitrixUserId: options.bitrixUserId,
@@ -149,9 +163,8 @@ export async function runBitrix24Probe(
   checks.push("user_lookup_ok");
 
   const tasksResult = await readBitrixTasksForUser(config, options.bitrixUserId, {
-    fetchImpl: options.fetchImpl,
-    lookup: options.lookup,
-    startedAt,
+    operation,
+    startedAtMs,
     maxPages: options.probeMaxPages ?? Math.min(config.maxPages, 3),
   });
 
@@ -159,8 +172,9 @@ export async function runBitrix24Probe(
     return sanitizeProbeResult(
       {
         status: mapTransportStatus(tasksResult.code),
-        durationMs: Date.now() - startedAt,
-        message: tasksResult.message,
+        durationMs: Date.now() - startedAtMs,
+        checkedAt,
+        message: mapReadMessage(tasksResult.code),
         portalId: config.portalId,
         checks: [...checks, "task_list_failed"],
         bitrixUserId: options.bitrixUserId,
@@ -173,15 +187,20 @@ export async function runBitrix24Probe(
   }
 
   checks.push("task_list_ok");
-  checks.push("pagination_checked");
-  checks.push("fields_checked");
+  if (tasksResult.data.paginationObserved || tasksResult.data.pagesFetched > 1) {
+    checks.push("pagination_checked");
+  }
+  if (tasksResult.data.fieldsValidatedOnSample) {
+    checks.push("fields_checked");
+  }
 
   const status: Bitrix24ProbeStatus = tasksResult.data.complete ? "SUCCESS" : "PARTIAL";
 
   return sanitizeProbeResult(
     {
       status,
-      durationMs: Date.now() - startedAt,
+      durationMs: Date.now() - startedAtMs,
+      checkedAt,
       message: tasksResult.data.complete
         ? "Bitrix24 live diagnostics completed with a complete limited task sample."
         : "Bitrix24 live diagnostics returned a partial task sample.",
@@ -191,6 +210,7 @@ export async function runBitrix24Probe(
       usersChecked: 1,
       tasksFetched: tasksResult.data.tasks.length,
       tasksComplete: tasksResult.data.complete,
+      rejectedTaskCount: tasksResult.data.rejectedTaskCount,
       unavailableFeatures: [...UNAVAILABLE_FEATURES],
       errorCode: tasksResult.data.truncatedReason,
     },
@@ -201,5 +221,3 @@ export async function runBitrix24Probe(
 export function getBitrix24ProbeExitCode(status: Bitrix24ProbeResult["status"]): number {
   return status === "SUCCESS" || status === "LOCAL_OK" || status === "DISABLED" ? 0 : 1;
 }
-
-export type { Bitrix24Fetch };

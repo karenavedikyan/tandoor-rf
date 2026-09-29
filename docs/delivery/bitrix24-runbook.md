@@ -11,7 +11,7 @@
 
 ## 2. Что нужно от администратора Bitrix24
 
-1. Создать **incoming webhook** с правами чтения задач (`task`) и пользователей (`user` / `user_brief`).
+1. Создать **incoming webhook** с scopes для [user.get](https://apidocs.bitrix24.com/api-reference/user/user-get.html) (`user` / `user_brief`) и [tasks.task.list](https://apidocs.bitrix24.com/api-reference/tasks/tasks-task-list.html) (`task`).
 2. Зафиксировать **Bitrix user ID** сотрудника, для которого выполняется диагностика (не ID владельца webhook по умолчанию).
 3. Передать webhook URL **только** через защищённое хранилище секретов или серверное окружение Timeweb — **не** в Git, PR, чат или `.env` в репозитории.
 
@@ -26,32 +26,44 @@ BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<webhook_token>
 # BITRIX24_PORTAL_HOST=<portal>.bitrix24.ru
 ```
 
-## 4. Локальная проверка конфигурации (без сети)
+## 4. Локальная разработка (файл `.env`)
 
 ```bash
 npm run build
 npm run bitrix24-probe:local
 ```
 
-Ожидаемый статус при корректном env: `LOCAL_OK` или `DISABLED`.
-
-## 5. Live-диагностика (явный Bitrix user ID)
+Live-диагностика локально:
 
 ```bash
 npm run bitrix24-probe:local -- --live --bitrix-user-id <BITRIX_USER_ID>
 ```
 
-Отчёт содержит: `portalId`, список проверок, число задач, полноту выборки, коды ошибок, недоступные возможности.
+Команды `*:local` читают `.env` через `--env-file`. Это **не** универсальная production-команда.
 
-**Не содержит:** тексты задач, ФИО, email, телефоны, webhook token.
+## 5. Серверное окружение Timeweb (env уже задан платформой)
 
-## 6. Отключение
+```bash
+npm run build
+node dist/cli/bitrix24-probe.js
+node dist/cli/bitrix24-probe.js --live --bitrix-user-id <BITRIX_USER_ID>
+```
+
+**Блокер:** интерактивная SSH/консоль на текущем размещении TW для операторского запуска **не подтверждена** этим PR. Фактически доступный способ one-off job / console уточняется у платформенного оператора. HTTP-endpoint или автозапуск при старте приложения **не добавляются** как обход.
+
+## 6. Отчёт CLI
+
+Содержит: `checkedAt` (ISO UTC), `portalId`, список проверок, число задач, полноту выборки, коды ошибок, недоступные возможности.
+
+**Не содержит:** тексты задач, ФИО, email, телефоны, webhook token, произвольные `error_description` портала.
+
+## 7. Отключение
 
 1. Установить `BITRIX24_ENABLED=false` или удалить `BITRIX24_WEBHOOK_URL` из env.
 2. При компрометации webhook — **отозвать** webhook в Bitrix24 и выпустить новый.
 3. Перезапуск приложения **не обязателен** для отключения CLI; web-приложение не использует Bitrix24 в R2.1.
 
-## 7. Интерпретация статусов
+## 8. Интерпретация статусов
 
 | Статус | Действие |
 |--------|----------|
@@ -63,9 +75,11 @@ npm run bitrix24-probe:local -- --live --bitrix-user-id <BITRIX_USER_ID>
 | `INVALID_USER` | Указанный Bitrix user ID не найден |
 | `RATE_LIMITED` | Повторить позже; проверить лимиты портала |
 
-## 8. Что runbook не делает
+## 9. Что runbook не делает
 
 - Не включает production-синхронизацию задач
 - Не создаёт соответствия сотрудников
 - Не привязывает задачи к клиентам
 - Не меняет импорт 1С и расписание
+
+**Проверка на реальном портале не выполнена** в рамках CI и автотестов этого PR.

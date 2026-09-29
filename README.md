@@ -194,10 +194,13 @@ npm run bitrix24-probe:local
 Live-диагностика требует явный Bitrix user ID (без fallback на владельца webhook):
 
 ```bash
+# локально (.env):
 npm run bitrix24-probe:local -- --live --bitrix-user-id <BITRIX_USER_ID>
+# серверное окружение (env уже задан TW):
+node dist/cli/bitrix24-probe.js --live --bitrix-user-id <BITRIX_USER_ID>
 ```
 
-Модуль не вызывается из web-сервера, login, health/readiness или расписания. Не сохраняет задачи в БД и не меняет права. См. [docs/delivery/bitrix24-runbook.md](./docs/delivery/bitrix24-runbook.md).
+Модуль не вызывается из web-сервера, login, health/readiness или расписания. Не сохраняет задачи в БД и не меняет права. См. [docs/delivery/bitrix24-runbook.md](./docs/delivery/bitrix24-runbook.md). **Проверка на реальном портале не выполнена** автотестами PR.
 
 ### Импорт клиентов 1С из FTP (только CLI)
 

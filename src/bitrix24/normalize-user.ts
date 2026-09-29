@@ -1,3 +1,4 @@
+import { parseCanonicalBitrixId } from "./parse-id";
 import type { Bitrix24NormalizedUser } from "./types";
 
 function readField(record: Record<string, unknown>, keys: string[]): unknown {
@@ -17,21 +18,6 @@ function readField(record: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
-function readString(record: Record<string, unknown>, keys: string[]): string | null {
-  const value = readField(record, keys);
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return null;
-}
-
 export function normalizeBitrixUser(
   portalHost: string,
   raw: unknown,
@@ -40,7 +26,7 @@ export function normalizeBitrixUser(
     return null;
   }
   const record = raw as Record<string, unknown>;
-  const bitrixUserId = readString(record, ["ID", "id"]);
+  const bitrixUserId = parseCanonicalBitrixId(readField(record, ["ID", "id"]));
   if (!bitrixUserId) {
     return null;
   }

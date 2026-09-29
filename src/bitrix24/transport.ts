@@ -1,131 +1,72 @@
-import dns from "node:dns/promises";
+import { OperationDeadline } from "./deadline";
+import { resolvePortalAddressesSafely } from "./dns-resolve";
+import { executePinnedHttpsRequest, type PinnedRequestFn } from "./pinned-request";
+import { assertAllowedPortalHostname } from "./portal-host";
+import { mapBitrixApiErrorCode, safeTransportFailure } from "./safe-errors";
 import { BITRIX24_ALLOWED_METHODS } from "./types";
-import { assertPortalHostResolvesSafely } from "./url-security";
 import type {
   Bitrix24AllowedMethod,
-  Bitrix24DnsLookup,
-  Bitrix24Fetch,
+  Bitrix24OperationContext,
   Bitrix24TransportFailure,
   Bitrix24TransportResult,
   Bitrix24WebhookConfig,
 } from "./types";
 
-const RETRYABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 const MAX_READ_RETRIES = 3;
 
 export type Bitrix24TransportOptions = {
-  fetchImpl?: Bitrix24Fetch;
-  lookup?: Bitrix24DnsLookup;
-  startedAt?: number;
-  maxTotalDurationMs?: number;
+  operation?: Bitrix24OperationContext;
+  pinnedRequest?: PinnedRequestFn;
 };
-
-function defaultLookup(hostname: string) {
-  return dns.lookup(hostname, { verbatim: true });
-}
 
 function isAllowedMethod(method: string): method is Bitrix24AllowedMethod {
   return (BITRIX24_ALLOWED_METHODS as readonly string[]).includes(method);
 }
 
-function buildMethodUrl(config: Bitrix24WebhookConfig, method: Bitrix24AllowedMethod): string {
-  return `${config.webhookBaseUrl}${method}`;
+function buildMethodUrl(config: Bitrix24WebhookConfig, method: Bitrix24AllowedMethod): URL {
+  return new URL(`${config.webhookBaseUrl}${method}`);
 }
 
-async function readLimitedBody(response: Response, maxBytes: number): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    return "";
-  }
-
-  const chunks: Buffer[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    if (!value) {
-      continue;
-    }
-    total += value.byteLength;
-    if (total > maxBytes) {
-      throw new Error("RESPONSE_TOO_LARGE");
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-function parseRetryAfterMs(response: Response): number | null {
-  const header = response.headers.get("retry-after")?.trim();
+function parseRetryAfterMs(
+  headers: Record<string, string | string[] | undefined>,
+  now: () => number,
+): number | null {
+  const raw = headers["retry-after"];
+  const header = Array.isArray(raw) ? raw[0] : raw;
   if (!header) {
     return null;
   }
-  const seconds = Number(header);
+  const trimmed = header.trim();
+  const seconds = Number(trimmed);
   if (Number.isFinite(seconds) && seconds >= 0) {
     return Math.min(seconds * 1000, 60_000);
   }
-  const dateMs = Date.parse(header);
+  const dateMs = Date.parse(trimmed);
   if (Number.isFinite(dateMs)) {
-    return Math.max(0, Math.min(dateMs - Date.now(), 60_000));
+    return Math.max(0, Math.min(dateMs - now(), 60_000));
   }
   return null;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function classifyHttpFailure(status: number, apiError?: string): Bitrix24TransportFailure {
-  if (status === 401) {
-    return {
-      ok: false,
-      code: "UNAUTHORIZED",
-      message: "Bitrix24 rejected webhook credentials.",
-      httpStatus: status,
-      apiError,
-      retryable: false,
-    };
+function mapThrownError(error: unknown): Bitrix24TransportFailure {
+  if (error instanceof Error) {
+    switch (error.message) {
+      case "TIMEOUT":
+      case "ABORTED":
+        return safeTransportFailure("TIMEOUT", { retryable: true });
+      case "RESPONSE_TOO_LARGE":
+        return safeTransportFailure("RESPONSE_TOO_LARGE");
+      case "REDIRECT_BLOCKED":
+        return safeTransportFailure("REDIRECT_BLOCKED");
+      case "HOST_BLOCKED":
+        return safeTransportFailure("HOST_BLOCKED");
+      case "TOTAL_DURATION_EXCEEDED":
+        return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+      default:
+        break;
+    }
   }
-  if (status === 403) {
-    return {
-      ok: false,
-      code: "FORBIDDEN",
-      message: "Bitrix24 denied access for the webhook scope or user.",
-      httpStatus: status,
-      apiError,
-      retryable: false,
-    };
-  }
-  if (status === 429) {
-    return {
-      ok: false,
-      code: "RATE_LIMITED",
-      message: "Bitrix24 rate limit exceeded.",
-      httpStatus: status,
-      apiError,
-      retryable: true,
-    };
-  }
-  if (status >= 500) {
-    return {
-      ok: false,
-      code: "HTTP_ERROR",
-      message: "Bitrix24 server error.",
-      httpStatus: status,
-      apiError,
-      retryable: true,
-    };
-  }
-  return {
-    ok: false,
-    code: "HTTP_ERROR",
-    message: "Bitrix24 HTTP request failed.",
-    httpStatus: status,
-    apiError,
-    retryable: false,
-  };
+  return safeTransportFailure("NETWORK_ERROR", { retryable: true });
 }
 
 function parseBitrixResponse(body: string): Bitrix24TransportResult {
@@ -133,75 +74,85 @@ function parseBitrixResponse(body: string): Bitrix24TransportResult {
   try {
     parsed = JSON.parse(body);
   } catch {
-    return {
-      ok: false,
-      code: "INVALID_JSON",
-      message: "Bitrix24 response is not valid JSON.",
-      retryable: false,
-    };
+    return safeTransportFailure("INVALID_JSON");
   }
 
   if (!parsed || typeof parsed !== "object") {
-    return {
-      ok: false,
-      code: "INVALID_JSON",
-      message: "Bitrix24 response JSON must be an object.",
-      retryable: false,
-    };
+    return safeTransportFailure("INVALID_JSON");
   }
 
   const payload = parsed as Record<string, unknown>;
   if (typeof payload.error === "string") {
-    const apiError = payload.error;
-    const description =
-      typeof payload.error_description === "string" ? payload.error_description : undefined;
-    const message = description ?? "Bitrix24 API returned an error.";
-    if (apiError === "INVALID_CREDENTIALS" || apiError === "NO_AUTH_FOUND") {
-      return {
-        ok: false,
-        code: "UNAUTHORIZED",
-        message,
-        apiError,
-        retryable: false,
-      };
-    }
-    if (apiError === "insufficient_scope") {
-      return {
-        ok: false,
-        code: "FORBIDDEN",
-        message,
-        apiError,
-        retryable: false,
-      };
-    }
-    if (apiError === "QUERY_LIMIT_EXCEEDED") {
-      return {
-        ok: false,
-        code: "RATE_LIMITED",
-        message,
-        apiError,
-        retryable: true,
-      };
-    }
-    return {
-      ok: false,
-      code: "API_ERROR",
-      message,
-      apiError,
-      retryable: false,
-    };
+    return mapBitrixApiErrorCode(payload.error);
   }
 
   const next =
-    typeof payload.next === "number" && Number.isFinite(payload.next) ? payload.next : null;
+    payload.next === undefined || payload.next === null
+      ? null
+      : typeof payload.next === "number" && Number.isInteger(payload.next) && payload.next >= 0
+        ? payload.next
+        : null;
+  if (payload.next !== undefined && payload.next !== null && next === null) {
+    return safeTransportFailure("INVALID_ENVELOPE");
+  }
+
   const total =
-    typeof payload.total === "number" && Number.isFinite(payload.total) ? payload.total : null;
+    payload.total === undefined || payload.total === null
+      ? null
+      : typeof payload.total === "number" && Number.isInteger(payload.total) && payload.total >= 0
+        ? payload.total
+        : null;
+  if (payload.total !== undefined && payload.total !== null && total === null) {
+    return safeTransportFailure("INVALID_ENVELOPE");
+  }
 
   return {
     ok: true,
     result: payload.result,
     next,
     total,
+  };
+}
+
+function classifyHttpFailure(status: number, body: string): Bitrix24TransportResult {
+  const parsed = parseBitrixResponse(body);
+  if (!parsed.ok) {
+    if (status === 401) {
+      return safeTransportFailure("UNAUTHORIZED");
+    }
+    if (status === 403) {
+      return safeTransportFailure("FORBIDDEN");
+    }
+    if (status === 429) {
+      return safeTransportFailure("RATE_LIMITED", { retryable: true });
+    }
+    if (status >= 500) {
+      return safeTransportFailure("HTTP_ERROR", { httpStatus: status, retryable: true });
+    }
+    return safeTransportFailure("HTTP_ERROR", { httpStatus: status });
+  }
+
+  if (status === 401) {
+    return safeTransportFailure("UNAUTHORIZED");
+  }
+  if (status === 403) {
+    return safeTransportFailure("FORBIDDEN");
+  }
+  if (status === 429) {
+    return safeTransportFailure("RATE_LIMITED", { retryable: true });
+  }
+  if (status >= 500) {
+    return safeTransportFailure("HTTP_ERROR", { httpStatus: status, retryable: true });
+  }
+  return safeTransportFailure("HTTP_ERROR", { httpStatus: status });
+}
+
+export function createOperationContext(
+  config: Bitrix24WebhookConfig,
+  startedAtMs?: number,
+): Bitrix24OperationContext {
+  return {
+    deadline: OperationDeadline.fromDuration(config.maxTotalDurationMs, startedAtMs),
   };
 }
 
@@ -212,28 +163,37 @@ export async function callBitrix24Method(
   options: Bitrix24TransportOptions = {},
 ): Promise<Bitrix24TransportResult> {
   if (!isAllowedMethod(method)) {
-    return {
-      ok: false,
-      code: "METHOD_NOT_ALLOWED",
-      message: "Requested Bitrix24 method is not allowed.",
-      retryable: false,
-    };
+    return safeTransportFailure("METHOD_NOT_ALLOWED");
   }
 
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const lookup = options.lookup ?? defaultLookup;
-  const startedAt = options.startedAt ?? Date.now();
-  const maxTotalDurationMs = options.maxTotalDurationMs ?? config.maxTotalDurationMs;
+  const operation =
+    options.operation ??
+    createOperationContext(config);
+  const deadline = operation.deadline;
+  const pinnedRequest = options.pinnedRequest ?? operation.pinnedRequest ?? executePinnedHttpsRequest;
+  const resolvePortalAddresses = operation.resolvePortalAddresses;
+
+  if (deadline.expired()) {
+    return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+  }
 
   try {
-    await assertPortalHostResolvesSafely(config.portalHost, lookup);
+    assertAllowedPortalHostname(config.portalHost);
+  } catch {
+    return safeTransportFailure("HOST_BLOCKED");
+  }
+
+  let pinned;
+  try {
+    pinned = await resolvePortalAddressesSafely(
+      config.portalHost,
+      deadline,
+      resolvePortalAddresses
+        ? (hostname) => resolvePortalAddresses(hostname, deadline)
+        : undefined,
+    );
   } catch (error) {
-    return {
-      ok: false,
-      code: "HOST_BLOCKED",
-      message: error instanceof Error ? error.message : "Bitrix24 portal host is blocked.",
-      retryable: false,
-    };
+    return mapThrownError(error);
   }
 
   const url = buildMethodUrl(config, method);
@@ -241,108 +201,85 @@ export async function callBitrix24Method(
 
   while (attempt < MAX_READ_RETRIES) {
     attempt += 1;
-    const elapsed = Date.now() - startedAt;
-    if (elapsed >= maxTotalDurationMs) {
-      return {
-        ok: false,
-        code: "TOTAL_DURATION_EXCEEDED",
-        message: "Bitrix24 request exceeded the configured total duration limit.",
-        retryable: false,
-      };
+    if (deadline.expired()) {
+      return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
     }
 
-    const timeoutMs = Math.min(config.requestTimeoutMs, maxTotalDurationMs - elapsed);
+    const timeoutMs = Math.min(config.requestTimeoutMs, deadline.remainingMs());
+    if (timeoutMs <= 0) {
+      return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+    }
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetchImpl(url, {
+      const response = await pinnedRequest({
+        url,
+        pinned,
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        redirect: "manual",
+        timeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
         signal: controller.signal,
       });
 
-      if (response.status >= 300 && response.status < 400) {
-        return {
-          ok: false,
-          code: "REDIRECT_BLOCKED",
-          message: "Bitrix24 redirect responses are not followed.",
-          httpStatus: response.status,
-          retryable: false,
-        };
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        return safeTransportFailure("REDIRECT_BLOCKED", { httpStatus: response.statusCode });
       }
 
-      let bodyText: string;
-      try {
-        bodyText = await readLimitedBody(response, config.maxResponseBytes);
-      } catch (error) {
-        if (error instanceof Error && error.message === "RESPONSE_TOO_LARGE") {
-          return {
-            ok: false,
-            code: "RESPONSE_TOO_LARGE",
-            message: "Bitrix24 response exceeds the configured size limit.",
-            retryable: false,
-          };
-        }
-        throw error;
-      }
-
-      if (!response.ok) {
-        const parsedFailure = parseBitrixResponse(bodyText);
-        const apiError = !parsedFailure.ok ? parsedFailure.apiError : undefined;
-        const failure = classifyHttpFailure(response.status, apiError);
-        if (failure.retryable && attempt < MAX_READ_RETRIES) {
-          const retryAfterMs = parseRetryAfterMs(response) ?? Math.min(1000 * attempt, 5000);
-          await sleep(retryAfterMs);
+      if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+        const failure = classifyHttpFailure(response.statusCode, response.body);
+        if (failure.ok === false && failure.retryable && attempt < MAX_READ_RETRIES) {
+          const retryAfterMs = parseRetryAfterMs(response.headers, Date.now);
+          const waitMs = retryAfterMs ?? Math.min(1000 * attempt, 5000);
+          if (waitMs > deadline.remainingMs()) {
+            return failure;
+          }
+          const slept = await deadline.sleep(waitMs);
+          if (!slept) {
+            return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+          }
           continue;
         }
         return failure;
       }
 
-      const parsed = parseBitrixResponse(bodyText);
+      const parsed = parseBitrixResponse(response.body);
       if (!parsed.ok && parsed.retryable && attempt < MAX_READ_RETRIES) {
-        await sleep(Math.min(1000 * attempt, 5000));
+        const waitMs = Math.min(1000 * attempt, 5000);
+        if (waitMs > deadline.remainingMs()) {
+          return parsed;
+        }
+        const slept = await deadline.sleep(waitMs);
+        if (!slept) {
+          return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+        }
         continue;
       }
       return parsed;
     } catch (error) {
-      const isAbort = error instanceof Error && error.name === "AbortError";
-      if (isAbort) {
-        return {
-          ok: false,
-          code: "TIMEOUT",
-          message: "Bitrix24 request timed out.",
-          retryable: attempt < MAX_READ_RETRIES,
-        };
-      }
-      if (attempt < MAX_READ_RETRIES) {
-        await sleep(Math.min(1000 * attempt, 5000));
+      const mapped = mapThrownError(error);
+      if (mapped.retryable && attempt < MAX_READ_RETRIES) {
+        const waitMs = Math.min(1000 * attempt, 5000);
+        if (waitMs > deadline.remainingMs()) {
+          return mapped;
+        }
+        const slept = await deadline.sleep(waitMs);
+        if (!slept) {
+          return safeTransportFailure("TOTAL_DURATION_EXCEEDED");
+        }
         continue;
       }
-      return {
-        ok: false,
-        code: "NETWORK_ERROR",
-        message: "Bitrix24 network request failed.",
-        retryable: false,
-      };
+      return mapped;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(abortTimer);
     }
   }
 
-  return {
-    ok: false,
-    code: "NETWORK_ERROR",
-    message: "Bitrix24 request failed after retries.",
-    retryable: false,
-  };
-}
-
-export function isRetryableTransportFailure(result: Bitrix24TransportFailure): boolean {
-  return result.retryable || RETRYABLE_HTTP_STATUSES.has(result.httpStatus ?? 0);
+  return safeTransportFailure("NETWORK_ERROR");
 }

@@ -1,3 +1,7 @@
+import type { PinnedRequestFn, PinnedRequestOptions } from "../../src/bitrix24/pinned-request";
+import type { ResolvedPortalAddress } from "../../src/bitrix24/dns-resolve";
+import type { ResolvePortalAddressesFn } from "../../src/bitrix24/dns-resolve";
+
 export type MockBitrixResponse = {
   status?: number;
   headers?: Record<string, string>;
@@ -6,33 +10,51 @@ export type MockBitrixResponse = {
   redirect?: boolean;
 };
 
-export function createBitrixMockFetch(handlers: Record<string, MockBitrixResponse | ((body: unknown) => MockBitrixResponse)>) {
-  const calls: Array<{ url: string; body: unknown }> = [];
+export function createBitrixMockPinnedRequest(
+  handlers: Record<string, MockBitrixResponse | ((body: unknown) => MockBitrixResponse)>,
+) {
+  const calls: Array<{
+    url: string;
+    body: unknown;
+    pinned: ResolvedPortalAddress;
+  }> = [];
 
-  const fetchImpl = async (input: string | URL, init?: RequestInit) => {
-    const url = String(input);
-    const requestBody = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ url, body: requestBody });
+  const pinnedRequest: PinnedRequestFn = async (options: PinnedRequestOptions) => {
+    const url = options.url.toString();
+    const requestBody = JSON.parse(options.body);
+    calls.push({ url, body: requestBody, pinned: options.pinned });
 
     const handler = handlers[url];
     const resolved =
-      typeof handler === "function" ? handler(requestBody) : handler ?? { status: 404, body: { error: "NOT_FOUND" } };
+      typeof handler === "function"
+        ? handler(requestBody)
+        : handler ?? { status: 404, body: { error: "NOT_FOUND" } };
 
     if (resolved.redirect) {
-      return new Response(null, { status: 302, headers: { location: "https://evil.example/rest/1/token/user.get" } });
+      return {
+        statusCode: 302,
+        headers: { location: "https://evil.example/rest/1/token/user.get" },
+        body: "",
+      };
     }
 
     const bodyText =
-      resolved.text ??
-      (resolved.body !== undefined ? JSON.stringify(resolved.body) : "{}");
+      resolved.text ?? (resolved.body !== undefined ? JSON.stringify(resolved.body) : "{}");
 
-    return new Response(bodyText, {
-      status: resolved.status ?? 200,
-      headers: resolved.headers,
-    });
+    return {
+      statusCode: resolved.status ?? 200,
+      headers: resolved.headers ?? {},
+      body: bodyText,
+    };
   };
 
-  return { fetchImpl, calls };
+  return { pinnedRequest, calls };
+}
+
+export function createSafePortalResolver(
+  address = "93.184.216.34",
+): ResolvePortalAddressesFn {
+  return async () => [{ address, family: 4 }];
 }
 
 export function sampleWebhookConfig() {

@@ -259,26 +259,23 @@
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 
-### R2.1 Bitrix24 read module (draft PR, branch `cursor/r21-bitrix24-module-9e11`)
+### R2.1 Bitrix24 read module (draft PR #17, branch `cursor/r21-bitrix24-module-9e11`)
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head | `58edcfd` |
-| Серверный модуль | `src/bitrix24/*` — webhook config, injectable transport, `user.get` + `tasks.task.list` only |
-| CLI диагностика | `bitrix24-probe` — local без сети; `--live --bitrix-user-id` для ограниченной live-выборки |
-| Disabled by default | `BITRIX24_ENABLED=false`; health/login/clients без Bitrix24 |
-| Контракт / runbook | [bitrix24-contract.md](./bitrix24-contract.md), [bitrix24-runbook.md](./bitrix24-runbook.md) |
-| Раздельные ID | ЛК user / 1C employee / Bitrix user — не взаимозаменяемы; автосвязь запрещена |
-| R2.2 scope only in docs | кэш, journal, UI «Моя работа» — **не реализованы** |
-| Live portal check | **не выполнялась** (нет production webhook в среде агента) |
-| UI / brand | **не менялись** |
-| 1C import / schedule / clients / access | **не менялись** |
-| Migrations / business tables | **не добавлялись** |
-| Unit tests | `bitrix24-*.test.ts` — config, transport, pagination, sanitize, probe |
-| Integration regression | `bitrix24-no-side-effects.test.ts` + existing auth/clients suites |
-| `npm test` | **182 passed**, 0 failed |
-| `npm run test:integration` | **139 passed**, 0 failed |
-| `npm run test:browser` | **20 passed**, 0 failed |
+| SHA PR head (review fixes) | см. PR #17 |
+| P1 DNS/SSRF pinned transport | все A/AAAA проверяются; connect на pinned IP + TLS SNI; port≠443 rejected; `bitrix24-ip-security.test.ts`, `bitrix24-dns-resolve.test.ts`, `bitrix24-transport.test.ts` |
+| P1 envelope completeness | invalid `{}` / `tasks:"bad"` / empty+next → error или partial; `bitrix24-read-tasks.test.ts` |
+| P1 safe errors / no PII | фиксированные сообщения; canary без ФИО/email/текста задачи — `bitrix24-probe.test.ts`, `bitrix24-transport.test.ts` |
+| P1 global deadline | единый `OperationDeadline` на probe; Retry-After укладывается в бюджет — `bitrix24-transport.test.ts` |
+| P2 IDs/status/dates | canonical ID `[1-9]\\d*`; REAL_STATUS>STATUS; invalid dates rejected — `bitrix24-read-tasks.test.ts` |
+| CLI диагностика | `checkedAt`; conditional `fields_checked`/`pagination_checked`; local vs server commands в runbook |
+| Disabled by default | `BITRIX24_ENABLED=false`; enabled env не вызывает transport из health/ready — `bitrix24-no-side-effects.test.ts` |
+| Live portal check | **не выполнялась** |
+| UI / brand / 1C / access | **не менялись** |
+| `npm test` | **192 passed** |
+| `npm run test:integration` | **140 passed** |
+| `npm run test:browser` | **20 passed** |
 | typecheck / build | pass |
 
 ### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)

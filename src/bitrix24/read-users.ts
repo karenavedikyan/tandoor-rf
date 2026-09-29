@@ -1,54 +1,48 @@
 import { normalizeBitrixUser } from "./normalize-user";
-import { callBitrix24Method, type Bitrix24TransportOptions } from "./transport";
-import type { Bitrix24NormalizedUser, Bitrix24TransportResult, Bitrix24WebhookConfig } from "./types";
+import { parseBitrixUserId } from "./parse-id";
+import { SAFE_READ_MESSAGES } from "./safe-errors";
+import { callBitrix24Method, createOperationContext } from "./transport";
+import { validateUsersTransportPage } from "./validate-envelope";
+import type {
+  Bitrix24NormalizedUser,
+  Bitrix24OperationContext,
+  Bitrix24TransportResult,
+  Bitrix24WebhookConfig,
+} from "./types";
 
-export function parseBitrixUserId(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    return null;
-  }
-  if (trimmed === "0") {
-    return null;
-  }
-  return trimmed;
-}
-
-function extractUserList(result: unknown): unknown[] {
-  if (Array.isArray(result)) {
-    return result;
-  }
-  if (result && typeof result === "object") {
-    const record = result as Record<string, unknown>;
-    if (Array.isArray(record.users)) {
-      return record.users;
-    }
-  }
-  return [];
-}
+export { parseBitrixUserId } from "./parse-id";
 
 export type ReadBitrixUserResult =
   | { ok: true; user: Bitrix24NormalizedUser }
   | { ok: false; code: string; message: string; transport: Bitrix24TransportResult };
 
+export type ReadBitrixUserOptions = {
+  operation?: Bitrix24OperationContext;
+  startedAtMs?: number;
+};
+
 export async function readBitrixUserById(
   config: Bitrix24WebhookConfig,
   bitrixUserId: string,
-  options: Bitrix24TransportOptions = {},
+  options: ReadBitrixUserOptions = {},
 ): Promise<ReadBitrixUserResult> {
   const parsedId = parseBitrixUserId(bitrixUserId);
   if (!parsedId) {
     return {
       ok: false,
       code: "INVALID_USER_ID",
-      message: "Bitrix24 user ID must be a positive integer.",
+      message: SAFE_READ_MESSAGES.INVALID_USER_ID,
       transport: {
         ok: false,
         code: "API_ERROR",
-        message: "Invalid Bitrix24 user ID.",
+        message: SAFE_READ_MESSAGES.INVALID_USER_ID,
         retryable: false,
       },
     };
   }
+
+  const operation =
+    options.operation ?? createOperationContext(config, options.startedAtMs);
 
   const transport = await callBitrix24Method(
     config,
@@ -57,7 +51,7 @@ export async function readBitrixUserById(
       filter: { ID: parsedId },
       select: ["ID", "ACTIVE"],
     },
-    options,
+    { operation },
   );
 
   if (!transport.ok) {
@@ -69,7 +63,17 @@ export async function readBitrixUserById(
     };
   }
 
-  const users = extractUserList(transport.result)
+  const page = validateUsersTransportPage(transport);
+  if (!page.ok) {
+    return {
+      ok: false,
+      code: "INVALID_ENVELOPE",
+      message: SAFE_READ_MESSAGES.INVALID_ENVELOPE,
+      transport,
+    };
+  }
+
+  const users = page.users
     .map((entry) => normalizeBitrixUser(config.portalHost, entry))
     .filter((entry): entry is Bitrix24NormalizedUser => entry !== null);
 
@@ -78,7 +82,7 @@ export async function readBitrixUserById(
     return {
       ok: false,
       code: "USER_NOT_FOUND",
-      message: "Bitrix24 user was not found for the requested ID.",
+      message: SAFE_READ_MESSAGES.USER_NOT_FOUND,
       transport,
     };
   }
