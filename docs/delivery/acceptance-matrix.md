@@ -239,7 +239,7 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review round 3) | см. PR #16 |
+| SHA PR head (review round 3) | `4d1dc41` |
 | Apply atomicity | clients + journal success + `onec_exchange_state` в одной транзакции до COMMIT |
 | COMMIT_UNCERTAIN recovery | единый recovery после COMMIT (включая TCP fault); fresh connection + advisory lock; auto-success при journal success |
 | Parent scheduled journal finalize | после подтверждённого child apply родительский `scheduled_check` завершается на исправном соединении (`finalizeCycleJournal`, `preferFresh`); faulted client удаляется из pool (`max=1`) |
