@@ -372,7 +372,7 @@ export async function getClientBitrix24TasksHandler(
       changedAt: formatDisplayDate(row.changedAt),
       responsibleBitrixUserId: row.responsibleBitrixUserId,
       boundObjectLabel: formatBoundObjectLabel(row.objectType),
-      portalUrl: buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, row.taskId),
+      portalUrl: buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, row.taskId, row.responsibleBitrixUserId),
     });
   }
 
@@ -445,7 +445,7 @@ export async function getClientBitrix24TasksHandler(
         }
       : null,
     portalConfigured: Boolean(
-      buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1"),
+      buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1", "1"),
     ),
     tasks: visible,
   });

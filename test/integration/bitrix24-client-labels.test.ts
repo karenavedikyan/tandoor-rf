@@ -317,6 +317,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       const res = await request(app).get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`).set(authHeaders(cookie));
       assert.equal(res.status, 200);
       assert.deepEqual(res.body.tasks.map((t: {taskId:string}) => t.taskId), ["9001"]);
+      assert.equal(res.body.tasks[0].portalUrl, "https://example.bitrix24.ru/company/personal/user/42/tasks/task/view/9001/");
     } finally {await pool.end();}
   });
 
