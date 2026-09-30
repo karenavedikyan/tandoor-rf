@@ -9,7 +9,7 @@ import {
 
 export type LabelIssueResult =
   | { ok: true; label: ObjectLabelRow; token: string; created: boolean }
-  | { ok: false; code: "OBJECT_NOT_CONFIRMED" | "UNSUPPORTED_OBJECT_TYPE"; message: string };
+  | { ok: false; code: "OBJECT_NOT_CONFIRMED"; message: string };
 
 export type LabelLookupResult =
   | { ok: true; label: ObjectLabelRow; token: string }
@@ -42,13 +42,6 @@ export async function issueClientLabel(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
 ): Promise<LabelIssueResult> {
-  if (objectType !== "holding") {
-    return {
-      ok: false,
-      code: "UNSUPPORTED_OBJECT_TYPE",
-      message: "Привязка ожидает подтверждения данных 1С.",
-    };
-  }
   const confirmed = await isObjectConfirmed(objectType, objectGuid);
   if (!confirmed) {
     return {
@@ -57,12 +50,22 @@ export async function issueClientLabel(
       message: "Привязка ожидает подтверждения данных 1С.",
     };
   }
-  const before = await findActiveLabel(objectType, objectGuid);
-  const label = await issueLabelInTransaction(objectType, objectGuid);
-  return {
-    ok: true,
-    label,
-    token: formatLabelToken(label.labelCode),
-    created: !before,
-  };
+  try {
+    const issued = await issueLabelInTransaction(objectType, objectGuid);
+    return {
+      ok: true,
+      label: issued,
+      token: formatLabelToken(issued.labelCode),
+      created: issued.created,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "OBJECT_NOT_CONFIRMED") {
+      return {
+        ok: false,
+        code: "OBJECT_NOT_CONFIRMED",
+        message: "Привязка ожидает подтверждения данных 1С.",
+      };
+    }
+    throw error;
+  }
 }

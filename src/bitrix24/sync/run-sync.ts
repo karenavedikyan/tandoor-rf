@@ -4,8 +4,8 @@ import { extractLabelsFromDescription } from "../labels/parser";
 import { findLabelByCode } from "../labels/repository";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
-import { loadBitrix24TasksRuntimeConfig } from "../tasks/config";
-import { upsertTaskBinding, upsertTaskCache } from "../tasks/repository";
+import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
+import { upsertTaskSnapshot } from "../tasks/repository";
 import { requirePool } from "../../db/pool";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
@@ -25,6 +25,7 @@ export type Bitrix24SyncResult = {
   tasksFetched: number;
   bindingsConfirmed: number;
   bindingsConflict: number;
+  bindingsInvalid: number;
   bindingsPending: number;
   cacheWrites: number;
   complete: boolean;
@@ -48,6 +49,7 @@ export async function runBitrix24TaskSync(
       tasksFetched: 0,
       bindingsConfirmed: 0,
       bindingsConflict: 0,
+      bindingsInvalid: 0,
       bindingsPending: 0,
       cacheWrites: 0,
       complete: false,
@@ -57,7 +59,7 @@ export async function runBitrix24TaskSync(
 
   const config = loaded.config;
   const runtime = loadBitrix24TasksRuntimeConfig(env);
-  const publishAllowed = runtime.cachePublishEnabled && runtime.cacheAccessTtlMs > 0;
+  const publishAllowed = isCachePublishAllowed(runtime);
   const operation = createOperationContext(config);
   operation.pinnedRequest = options.pinnedRequest;
   operation.resolvePortalAddresses = options.resolvePortalAddresses;
@@ -74,6 +76,7 @@ export async function runBitrix24TaskSync(
       tasksFetched: 0,
       bindingsConfirmed: 0,
       bindingsConflict: 0,
+      bindingsInvalid: 0,
       bindingsPending: 0,
       cacheWrites: 0,
       complete: false,
@@ -83,6 +86,7 @@ export async function runBitrix24TaskSync(
 
   let bindingsConfirmed = 0;
   let bindingsConflict = 0;
+  let bindingsInvalid = 0;
   let bindingsPending = 0;
   let cacheWrites = 0;
   const pool = requirePool();
@@ -103,9 +107,13 @@ export async function runBitrix24TaskSync(
       let linkedAt: string | null = null;
 
       if (!parsedLabels.ok) {
-        bindingStatus = "conflict";
+        bindingStatus = parsedLabels.reason === "invalid_token" ? "invalid_label" : "conflict";
         conflictReason = parsedLabels.reason;
-        bindingsConflict += 1;
+        if (parsedLabels.reason === "invalid_token") {
+          bindingsInvalid += 1;
+        } else {
+          bindingsConflict += 1;
+        }
       } else if (parsedLabels.labels.length === 0) {
         bindingStatus = "unresolved";
       } else {
@@ -125,7 +133,7 @@ export async function runBitrix24TaskSync(
       }
 
       if (options.apply && client) {
-        await upsertTaskCache(
+        const writeResult = await upsertTaskSnapshot(
           {
             portalId: config.portalId,
             taskId: task.taskId,
@@ -136,14 +144,6 @@ export async function runBitrix24TaskSync(
             changedAt: task.changedAt ?? "",
             descriptionHash: hashDescription(task.description),
             published: publishAllowed,
-          },
-          client,
-        );
-        cacheWrites += 1;
-        await upsertTaskBinding(
-          {
-            portalId: config.portalId,
-            taskId: task.taskId,
             objectType,
             objectGuid,
             labelCode,
@@ -153,6 +153,9 @@ export async function runBitrix24TaskSync(
           },
           client,
         );
+        if (writeResult.cacheUpdated) {
+          cacheWrites += 1;
+        }
       }
     }
 
@@ -162,12 +165,13 @@ export async function runBitrix24TaskSync(
          VALUES ($1, $2, NOW(), $3, $4::jsonb)`,
         [
           options.apply ? "apply" : "dry_run",
-          `bitrix_user_id=${options.bitrixUserId}`,
+          `portal_id=${config.portalId};bitrix_user_id=${options.bitrixUserId}`,
           readResult.data.complete ? "success" : "partial",
           JSON.stringify({
             tasksFetched: readResult.data.tasks.length,
             bindingsConfirmed,
             bindingsConflict,
+            bindingsInvalid,
             bindingsPending,
             cacheWrites,
           }),
@@ -190,6 +194,7 @@ export async function runBitrix24TaskSync(
     tasksFetched: readResult.data.tasks.length,
     bindingsConfirmed,
     bindingsConflict,
+    bindingsInvalid,
     bindingsPending,
     cacheWrites,
     complete: readResult.data.complete,

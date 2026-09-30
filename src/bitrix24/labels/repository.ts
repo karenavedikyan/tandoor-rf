@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { getPool, requirePool } from "../../db/pool";
+import { requirePool } from "../../db/pool";
 import type { Bitrix24ObjectType } from "./format";
 import { formatLabelCode } from "./format";
 
@@ -10,6 +10,8 @@ export type ObjectLabelRow = {
   labelCode: string;
   issuedAt: string;
 };
+
+export type LabelIssueTransactionResult = ObjectLabelRow & { created: boolean };
 
 export async function isObjectConfirmed(
   objectType: Bitrix24ObjectType,
@@ -38,6 +40,19 @@ export async function confirmObject(
      ON CONFLICT (object_type, object_guid) DO NOTHING`,
     [objectType, objectGuid, confirmedBy],
   );
+}
+
+export async function unconfirmObject(
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<boolean> {
+  const result = await client.query(
+    `DELETE FROM bitrix24_confirmed_objects
+     WHERE object_type = $1::bitrix24_object_type AND object_guid = $2::uuid`,
+    [objectType, objectGuid],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function findActiveLabel(
@@ -101,19 +116,60 @@ export async function findLabelByCode(
   };
 }
 
+export async function revokeActiveLabel(
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<ObjectLabelRow | null> {
+  const result = await client.query<{
+    id: string;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
+    label_code: string;
+    issued_at: Date;
+  }>(
+    `UPDATE bitrix24_object_labels
+     SET revoked_at = NOW()
+     WHERE object_type = $1::bitrix24_object_type
+       AND object_guid = $2::uuid
+       AND revoked_at IS NULL
+     RETURNING id, object_type, object_guid, label_code, issued_at`,
+    [objectType, objectGuid],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
+    labelCode: row.label_code,
+    issuedAt: row.issued_at.toISOString(),
+  };
+}
+
 export async function issueLabelInTransaction(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
-): Promise<ObjectLabelRow> {
+): Promise<LabelIssueTransactionResult> {
   const pool = requirePool();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
     const existing = await findActiveLabel(objectType, objectGuid, client);
     if (existing) {
       await client.query("COMMIT");
-      return existing;
+      return { ...existing, created: false };
     }
+
+    const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
+    if (!confirmed) {
+      await client.query("ROLLBACK");
+      throw new Error("OBJECT_NOT_CONFIRMED");
+    }
+
     const seq = await client.query<{ next_value: number }>(
       `SELECT next_value FROM bitrix24_label_sequences
        WHERE object_type = $1::bitrix24_object_type
@@ -125,15 +181,27 @@ export async function issueLabelInTransaction(
       throw new Error("LABEL_SEQUENCE_MISSING");
     }
     const labelCode = formatLabelCode(objectType, nextValue);
+
     const inserted = await client.query<{
       id: string;
       issued_at: Date;
     }>(
       `INSERT INTO bitrix24_object_labels (object_type, object_guid, label_code)
        VALUES ($1::bitrix24_object_type, $2::uuid, $3)
+       ON CONFLICT (object_type, object_guid) WHERE revoked_at IS NULL DO NOTHING
        RETURNING id, issued_at`,
       [objectType, objectGuid, labelCode],
     );
+
+    if ((inserted.rowCount ?? 0) === 0) {
+      const raced = await findActiveLabel(objectType, objectGuid, client);
+      if (!raced) {
+        throw new Error("LABEL_ISSUE_RACE");
+      }
+      await client.query("COMMIT");
+      return { ...raced, created: false };
+    }
+
     await client.query(
       `UPDATE bitrix24_label_sequences
        SET next_value = next_value + 1
@@ -148,9 +216,20 @@ export async function issueLabelInTransaction(
       objectGuid,
       labelCode,
       issuedAt: row.issued_at.toISOString(),
+      created: true,
     };
   } catch (error) {
     await client.query("ROLLBACK");
+    if (error instanceof Error && error.message === "OBJECT_NOT_CONFIRMED") {
+      throw error;
+    }
+    const pgError = error as { code?: string };
+    if (pgError.code === "23505") {
+      const raced = await findActiveLabel(objectType, objectGuid);
+      if (raced) {
+        return { ...raced, created: false };
+      }
+    }
     throw error;
   } finally {
     client.release();

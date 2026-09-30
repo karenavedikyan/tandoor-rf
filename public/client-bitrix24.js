@@ -3,6 +3,18 @@
 
   var api = window.TandoorRf;
 
+  var TASK_STATE_MESSAGES = {
+    not_configured: "Bitrix24 не настроен.",
+    cache_not_published: "Синхронизация задач ещё не опубликована.",
+    empty: "Задачи с меткой этого объекта пока не найдены.",
+    no_employee_link: "Связь с порталом Bitrix24 не подтверждена.",
+    access_expired: "Подтверждение доступа к Bitrix24 истекло.",
+    pilot_filtered: "Задачи вне разрешённого списка пилота не показываются.",
+    pilot_list_missing: "Список разрешённых задач пилота не настроен.",
+    audience_denied: "Задачи недоступны: ответственный не совпадает с вашим Bitrix ID.",
+    not_published: "Кэш задач не опубликован.",
+  };
+
   function esc(value) {
     return window.ClientDetailSections.escapeHtml(value || "");
   }
@@ -41,6 +53,13 @@
     );
   }
 
+  function tasksMessage(body) {
+    if (body.message) {
+      return body.message;
+    }
+    return TASK_STATE_MESSAGES[body.state] || TASK_STATE_MESSAGES.empty;
+  }
+
   function mountWorkTab(root, clientGuid) {
     var container = root.querySelector("#pc-bitrix24-work");
     if (!container) {
@@ -74,32 +93,60 @@
               "Привязка ожидает подтверждения данных 1С.",
             "pending",
           );
-        } else {
+        } else if (labelStatus === 404) {
           labelBlock =
             renderState("Метка ещё не выдана.", "info") +
-            '<button type="button" class="workspace-button workspace-button--primary" id="pc-issue-bitrix24-label">Скопировать метку для Битрикс24</button>' +
+            '<button type="button" class="workspace-button workspace-button--primary" id="pc-issue-bitrix24-label">Выдать метку</button>' +
             '<span class="workspace-status" id="pc-copy-bitrix24-label-status" role="status" aria-live="polite"></span>';
+        } else {
+          labelBlock = renderState("Не удалось загрузить метку.", "error");
         }
 
         var tasksBlock = "";
         if (tasksResult.response.status === 200 && tasksResult.data) {
           var body = tasksResult.data;
-          if (body.state === "not_configured") {
-            tasksBlock = renderState("Bitrix24 не настроен.", "info");
-          } else if (body.state === "cache_not_published") {
-            tasksBlock = renderState("Синхронизация задач ещё не опубликована.", "info");
-          } else if (!body.tasks || body.tasks.length === 0) {
-            tasksBlock = renderState("Задачи с меткой этого объекта пока не найдены.", "empty");
-          } else {
+          if (body.state === "ready" && body.tasks && body.tasks.length > 0) {
             tasksBlock =
               '<div class="pc-bitrix24-tasks">' +
               body.tasks.map(renderTaskRow).join("") +
               "</div>";
+          } else {
+            tasksBlock = renderState(tasksMessage(body), body.state === "empty" ? "empty" : "info");
           }
           if (body.scopeNote) {
             tasksBlock =
               '<p class="pc-label">' +
               esc(body.scopeNote) +
+              "</p>" +
+              tasksBlock;
+          }
+          if (body.visibility && body.visibility.filteredCount > 0) {
+            tasksBlock +=
+              '<p class="pc-label">' +
+              esc(
+                "Часть задач скрыта проверками доступа (" +
+                  body.visibility.filteredCount +
+                  ").",
+              ) +
+              "</p>" +
+              tasksBlock;
+          }
+          if (body.sync && body.sync.lastFinishedAt) {
+            tasksBlock =
+              '<p class="pc-label">' +
+              esc(
+                "Последняя синхронизация: " +
+                  body.sync.lastFinishedAt +
+                  " · " +
+                  body.sync.lastStatus,
+              ) +
+              "</p>" +
+              tasksBlock;
+          }
+          if (body.portalConfigured === false) {
+            tasksBlock =
+              '<p class="pc-label">' +
+              esc("Публичный URL портала Bitrix24 не настроен — ссылки будут недоступны.") +
               "</p>" +
               tasksBlock;
           }

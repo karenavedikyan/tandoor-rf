@@ -275,9 +275,14 @@
 | 1C import / Bitrix write | **не менялись** |
 | Rollback doc | `docs/delivery/r22-rollback.md` |
 | Регламент меток | `docs/delivery/bitrix24-labels-regulation.md` |
+| TTL + pilot allow-list enforcement | integration ACC-01/03/04 |
+| Atomic cache/binding + timestamptz | integration ATO-01/02, migration `011` |
+| Concurrent label issue | integration PAR-01 |
+| H/J/T + holding aggregation | integration HJT-01/03 |
+| Label/object revocation | integration ACC-06/07 |
 | Browser UI (mock API) | `clients-bitrix24-work-1440/390-light.png` |
-| `npm test` | **238 passed** |
-| `npm run test:integration` | **146 passed** |
+| `npm test` | **242 passed** |
+| `npm run test:integration` | **154 passed** |
 | `npm run test:browser` | **21 passed** |
 | typecheck / build | pass |
 

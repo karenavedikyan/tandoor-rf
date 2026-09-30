@@ -1,6 +1,8 @@
 import type { Pool, PoolClient } from "pg";
 import { requirePool } from "../../db/pool";
 import type { Bitrix24ObjectType } from "../labels/format";
+import { bitrixChangedAtToDate } from "../parse-changed-at";
+import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "./config";
 
 export type TaskCacheRow = {
   portalId: string;
@@ -28,17 +30,49 @@ export type TaskBindingRow = {
   updatedAt: string;
 };
 
-export async function upsertTaskCache(
-  row: Omit<TaskCacheRow, "syncedAt" | "cacheVersion" | "published"> & {
-    published?: boolean;
-  },
+export type TaskSnapshotInput = {
+  portalId: string;
+  taskId: string;
+  responsibleBitrixUserId: string | null;
+  title: string;
+  statusLabel: string;
+  deadline: string | null;
+  changedAt: string;
+  descriptionHash: string;
+  published: boolean;
+  objectType: Bitrix24ObjectType | null;
+  objectGuid: string | null;
+  labelCode: string | null;
+  bindingStatus: string;
+  conflictReason: string | null;
+  linkedAt: string | null;
+};
+
+function resolveAccessExpiresAt(explicit: string | null | undefined): string | null {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!isCachePublishAllowed(runtime)) {
+    return null;
+  }
+  return new Date(Date.now() + runtime.cacheAccessTtlMs).toISOString();
+}
+
+export async function upsertTaskSnapshot(
+  row: TaskSnapshotInput,
   client: Pool | PoolClient = requirePool(),
-): Promise<void> {
-  await client.query(
+): Promise<{ cacheUpdated: boolean }> {
+  const changedAtDate = bitrixChangedAtToDate(row.changedAt);
+  if (!changedAtDate) {
+    return { cacheUpdated: false };
+  }
+
+  const cacheResult = await client.query<{ task_id: string }>(
     `INSERT INTO bitrix24_task_cache (
        portal_id, task_id, responsible_bitrix_user_id, title, status_label,
        deadline, changed_at, description_hash, published
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, FALSE))
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8, $9)
      ON CONFLICT (portal_id, task_id) DO UPDATE SET
        responsible_bitrix_user_id = EXCLUDED.responsible_bitrix_user_id,
        title = EXCLUDED.title,
@@ -48,11 +82,9 @@ export async function upsertTaskCache(
        description_hash = EXCLUDED.description_hash,
        synced_at = NOW(),
        cache_version = bitrix24_task_cache.cache_version + 1,
-       published = CASE
-         WHEN EXCLUDED.published THEN EXCLUDED.published
-         ELSE bitrix24_task_cache.published
-       END
-     WHERE bitrix24_task_cache.changed_at <= EXCLUDED.changed_at`,
+       published = EXCLUDED.published
+     WHERE bitrix24_task_cache.changed_at <= EXCLUDED.changed_at
+     RETURNING task_id`,
     [
       row.portalId,
       row.taskId,
@@ -60,17 +92,16 @@ export async function upsertTaskCache(
       row.title,
       row.statusLabel,
       row.deadline,
-      row.changedAt,
+      changedAtDate.toISOString(),
       row.descriptionHash,
-      row.published ?? false,
+      row.published,
     ],
   );
-}
 
-export async function upsertTaskBinding(
-  row: Omit<TaskBindingRow, "updatedAt">,
-  client: Pool | PoolClient = requirePool(),
-): Promise<void> {
+  if ((cacheResult.rowCount ?? 0) === 0) {
+    return { cacheUpdated: false };
+  }
+
   await client.query(
     `INSERT INTO bitrix24_task_bindings (
        portal_id, task_id, object_type, object_guid, label_code,
@@ -95,6 +126,8 @@ export async function upsertTaskBinding(
       row.linkedAt,
     ],
   );
+
+  return { cacheUpdated: true };
 }
 
 export async function listPublishedTasksForObject(
@@ -127,10 +160,22 @@ export async function listPublishedTasksForObject(
      JOIN bitrix24_task_cache c
        ON c.portal_id = b.portal_id AND c.task_id = b.task_id
      WHERE b.portal_id = $1
-       AND b.object_type = $2::bitrix24_object_type
-       AND b.object_guid = $3::uuid
        AND b.binding_status = 'confirmed'
        AND c.published = TRUE
+       AND (
+         (b.object_type = $2::bitrix24_object_type AND b.object_guid = $3::uuid)
+         OR (
+           $2::text = 'holding'
+           AND EXISTS (
+             SELECT 1
+             FROM bitrix24_object_hierarchy h
+             WHERE h.parent_type = 'holding'
+               AND h.parent_guid = $3::uuid
+               AND h.child_type = b.object_type
+               AND h.child_guid = b.object_guid
+           )
+         )
+       )
      ORDER BY c.changed_at DESC`,
     [portalId, objectType, objectGuid],
   );
@@ -141,7 +186,7 @@ export async function listPublishedTasksForObject(
     title: row.title,
     statusLabel: row.status_label,
     deadline: row.deadline,
-    changedAt: row.changed_at,
+    changedAt: row.changed_at instanceof Date ? row.changed_at.toISOString() : String(row.changed_at),
     descriptionHash: row.description_hash,
     syncedAt: row.synced_at.toISOString(),
     cacheVersion: Number(row.cache_version),
@@ -165,6 +210,7 @@ export async function upsertEmployeePortalLink(
   },
   client: Pool | PoolClient = requirePool(),
 ): Promise<void> {
+  const accessExpiresAt = resolveAccessExpiresAt(input.accessExpiresAt);
   await client.query(
     `INSERT INTO bitrix24_employee_portal_links (user_id, portal_id, bitrix_user_id, access_expires_at)
      VALUES ($1::uuid, $2, $3, $4::timestamptz)
@@ -172,7 +218,7 @@ export async function upsertEmployeePortalLink(
        bitrix_user_id = EXCLUDED.bitrix_user_id,
        confirmed_at = NOW(),
        access_expires_at = EXCLUDED.access_expires_at`,
-    [input.userId, input.portalId, input.bitrixUserId, input.accessExpiresAt ?? null],
+    [input.userId, input.portalId, input.bitrixUserId, accessExpiresAt],
   );
 }
 
@@ -204,4 +250,85 @@ export async function findEmployeePortalLink(
     confirmedAt: row.confirmed_at.toISOString(),
     accessExpiresAt: row.access_expires_at ? row.access_expires_at.toISOString() : null,
   };
+}
+
+export async function findLatestSyncJournalEntry(
+  portalId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<{
+  finishedAt: string | null;
+  status: string;
+  runMode: string;
+} | null> {
+  const result = await client.query<{
+    finished_at: Date | null;
+    status: string;
+    run_mode: string;
+  }>(
+    `SELECT finished_at, status, run_mode
+     FROM bitrix24_sync_journal
+     WHERE scope_summary LIKE $1
+     ORDER BY finished_at DESC NULLS LAST, started_at DESC
+     LIMIT 1`,
+    [`%portal_id=${portalId}%`],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
+    status: row.status,
+    runMode: row.run_mode,
+  };
+}
+
+export async function invalidateBindingsForLabel(
+  portalId: string,
+  labelCode: string,
+  reason: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<void> {
+  await client.query(
+    `UPDATE bitrix24_task_bindings
+     SET binding_status = 'label_revoked',
+         conflict_reason = $3,
+         updated_at = NOW()
+     WHERE portal_id = $1 AND label_code = $2 AND binding_status = 'confirmed'`,
+    [portalId, labelCode, reason],
+  );
+}
+
+export async function invalidateBindingsForObject(
+  portalId: string,
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  reason: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<void> {
+  await client.query(
+    `UPDATE bitrix24_task_bindings
+     SET binding_status = 'object_unconfirmed',
+         conflict_reason = $4,
+         updated_at = NOW()
+     WHERE portal_id = $1
+       AND object_type = $2::bitrix24_object_type
+       AND object_guid = $3::uuid
+       AND binding_status = 'confirmed'`,
+    [portalId, objectType, objectGuid, reason],
+  );
+}
+
+export async function confirmObjectHierarchyLink(
+  parentGuid: string,
+  childType: Bitrix24ObjectType,
+  childGuid: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<void> {
+  await client.query(
+    `INSERT INTO bitrix24_object_hierarchy (parent_type, parent_guid, child_type, child_guid)
+     VALUES ('holding', $1::uuid, $2::bitrix24_object_type, $3::uuid)
+     ON CONFLICT (parent_type, parent_guid, child_type, child_guid) DO NOTHING`,
+    [parentGuid, childType, childGuid],
+  );
 }

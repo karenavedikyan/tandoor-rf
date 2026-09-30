@@ -414,6 +414,8 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
       bitrix24Tasks: {
         state: "ready",
         scopeNote: "Показаны задачи одного подтверждённого объекта.",
+        portalConfigured: true,
+        sync: { lastFinishedAt: "2026-09-30T09:00:00.000Z", lastStatus: "success", lastRunMode: "apply" },
         tasks: [
           {
             taskId: "9001",

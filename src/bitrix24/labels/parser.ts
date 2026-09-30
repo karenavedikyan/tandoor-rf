@@ -31,7 +31,7 @@ export function extractLabelsFromDescription(description: string | null | undefi
   const seenTokens = new Set<string>();
 
   for (const match of plain.matchAll(BITRIX24_LABEL_TOKEN_REGEX)) {
-    const token = match[0]!;
+    const token = match[0]!.toUpperCase();
     if (seenTokens.has(token)) {
       continue;
     }

@@ -12,7 +12,7 @@ const PREFIX_TYPE: Record<string, Bitrix24ObjectType> = {
   T: "outlet",
 };
 
-export const BITRIX24_LABEL_TOKEN_REGEX = /#LK_(H|J|T)_(\d{6})\b/g;
+export const BITRIX24_LABEL_TOKEN_REGEX = /#LK_(H|J|T)_(\d{6})\b/gi;
 
 export function formatLabelCode(objectType: Bitrix24ObjectType, sequence: number): string {
   if (!Number.isInteger(sequence) || sequence < 1 || sequence > 999999) {

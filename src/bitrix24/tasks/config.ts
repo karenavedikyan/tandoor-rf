@@ -2,8 +2,13 @@ export type Bitrix24TasksRuntimeConfig = {
   cachePublishEnabled: boolean;
   cacheAccessTtlMs: number;
   pilotTaskIds: Set<string>;
+  pilotAllowListRequired: boolean;
   portalPublicUrl: string | null;
 };
+
+export function isCachePublishAllowed(config: Bitrix24TasksRuntimeConfig): boolean {
+  return config.cachePublishEnabled && config.cacheAccessTtlMs > 0;
+}
 
 export function loadBitrix24TasksRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -20,10 +25,16 @@ export function loadBitrix24TasksRuntimeConfig(
       .filter(Boolean),
   );
   const portalPublicUrl = env.BITRIX24_PORTAL_PUBLIC_URL?.trim() || null;
+  const pilotRequiredRaw = env.BITRIX24_PILOT_ALLOWLIST_REQUIRED?.trim().toLowerCase();
+  const pilotAllowListRequired =
+    pilotRequiredRaw === undefined || pilotRequiredRaw === ""
+      ? true
+      : pilotRequiredRaw === "true" || pilotRequiredRaw === "1";
   return {
     cachePublishEnabled,
     cacheAccessTtlMs,
     pilotTaskIds,
+    pilotAllowListRequired,
     portalPublicUrl,
   };
 }

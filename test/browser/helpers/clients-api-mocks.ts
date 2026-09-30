@@ -235,6 +235,8 @@ export function resolveMockResponse(
       state: "not_configured",
       message: "Bitrix24 integration is not configured.",
       tasks: [],
+      sync: null,
+      portalConfigured: false,
     });
   }
 
