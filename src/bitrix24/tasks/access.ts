@@ -120,3 +120,33 @@ export async function canViewClientCard(
 ): Promise<boolean> {
   return canReadClientGuid(context, cardGuid);
 }
+
+export function isTaskAudienceMatch(
+  task: TaskCacheRow,
+  link: { bitrixUserId: string } | null,
+): boolean {
+  return Boolean(
+    link && task.responsibleBitrixUserId && task.responsibleBitrixUserId === link.bitrixUserId,
+  );
+}
+
+export async function evaluateUserBitrixTaskConfig(
+  context: AccessContext,
+  portalId: string,
+): Promise<TaskVisibilityDenyCode | null> {
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!isCachePublishAllowed(runtime)) {
+    return "NOT_PUBLISHED";
+  }
+  if (runtime.pilotAllowListRequired && runtime.pilotTaskIds.size === 0) {
+    return "PILOT_LIST_MISSING";
+  }
+  const link = await findEmployeePortalLink(context.userId, portalId);
+  if (!link) {
+    return "NO_EMPLOYEE_LINK";
+  }
+  if (!isLinkAccessValid(link, runtime)) {
+    return "ACCESS_EXPIRED";
+  }
+  return null;
+}

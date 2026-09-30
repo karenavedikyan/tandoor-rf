@@ -6,6 +6,7 @@ import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
 import {
+  buildSyncScopeSummary,
   insertSyncJournalEntry,
   isPortalBitrixUserConfirmed,
   recordBindingDiagnostic,
@@ -45,10 +46,6 @@ function hashDescription(description: string | null): string {
   return createHash("sha256").update(description ?? "").digest("hex");
 }
 
-function buildScopeSummary(portalId: string, bitrixUserId: string): string {
-  return `portal_id=${portalId};bitrix_user_id=${bitrixUserId}`;
-}
-
 export async function runBitrix24TaskSync(
   options: Bitrix24SyncOptions,
 ): Promise<Bitrix24SyncResult> {
@@ -76,7 +73,7 @@ export async function runBitrix24TaskSync(
   const config = loaded.config;
   const runtime = loadBitrix24TasksRuntimeConfig(env);
   const publishAllowed = isCachePublishAllowed(runtime);
-  const scopeSummary = buildScopeSummary(config.portalId, options.bitrixUserId);
+  const scopeSummary = buildSyncScopeSummary(config.portalId, options.bitrixUserId);
 
   const confirmed = await isPortalBitrixUserConfirmed(config.portalId, options.bitrixUserId);
   if (!confirmed) {

@@ -41,6 +41,33 @@ export async function isObjectLinkedToClientCard(
   return isChildObjectLinkedToHolding(holdingGuid, objectType, objectGuid);
 }
 
+async function hasExplicitBitrixObjectGrant(
+  context: AccessContext,
+  objectGuid: string,
+): Promise<boolean> {
+  if (context.role === "admin" || context.fullClientBase) {
+    return true;
+  }
+  const pool = requirePool();
+  const denied = await pool.query(
+    `SELECT 1 FROM access_denials
+     WHERE user_id = $1::uuid AND revoked_at IS NULL
+       AND (scope_type = 'all_clients' OR object_id = $2::uuid)
+     LIMIT 1`,
+    [context.userId, objectGuid],
+  );
+  if ((denied.rowCount ?? 0) > 0) {
+    return false;
+  }
+  const granted = await pool.query(
+    `SELECT 1 FROM access_grants
+     WHERE user_id = $1::uuid AND object_id = $2::uuid AND revoked_at IS NULL
+     LIMIT 1`,
+    [context.userId, objectGuid],
+  );
+  return (granted.rowCount ?? 0) > 0;
+}
+
 export async function canReadBoundBitrixObject(
   context: AccessContext,
   cardGuid: string,
@@ -50,7 +77,31 @@ export async function canReadBoundBitrixObject(
   if (!(await canReadClientGuid(context, cardGuid))) {
     return false;
   }
-  return isObjectLinkedToClientCard(cardGuid, objectType, objectGuid);
+  if (!(await isObjectLinkedToClientCard(cardGuid, objectType, objectGuid))) {
+    return false;
+  }
+  if (objectType === "holding") {
+    return true;
+  }
+  return hasExplicitBitrixObjectGrant(context, objectGuid);
+}
+
+export async function canRestoreBitrixObjectLabel(
+  context: AccessContext,
+  cardGuid: string,
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+): Promise<boolean> {
+  if (context.role === "assistant") {
+    return false;
+  }
+  if (context.role === "admin") {
+    return canReadBoundBitrixObject(context, cardGuid, objectType, objectGuid);
+  }
+  if (!["manager", "rop", "director", "regional_manager"].includes(context.role)) {
+    return false;
+  }
+  return canReadBoundBitrixObject(context, cardGuid, objectType, objectGuid);
 }
 
 export async function resolveCardHoldingForRead(

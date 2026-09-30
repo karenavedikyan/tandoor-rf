@@ -1,15 +1,36 @@
 -- R2.2 fixes: timestamptz changed_at, object hierarchy for holding aggregation
 
+CREATE OR REPLACE FUNCTION bitrix24_safe_timestamptz(raw_value TEXT)
+RETURNS TIMESTAMPTZ
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+BEGIN
+  IF raw_value IS NULL OR btrim(raw_value) = '' THEN
+    RETURN NULL;
+  END IF;
+  IF raw_value !~ '^\d{4}-\d{2}-\d{2}T' THEN
+    RETURN NULL;
+  END IF;
+  BEGIN
+    RETURN raw_value::timestamptz;
+  EXCEPTION
+    WHEN OTHERS THEN
+      RETURN NULL;
+  END;
+END;
+$$;
+
 ALTER TABLE bitrix24_task_cache
   ALTER COLUMN changed_at DROP NOT NULL;
 
 ALTER TABLE bitrix24_task_cache
   ALTER COLUMN changed_at TYPE TIMESTAMPTZ
-  USING CASE
-    WHEN changed_at IS NULL OR btrim(changed_at) = '' THEN NULL
-    WHEN changed_at ~ '^\d{4}-\d{2}-\d{2}T' THEN changed_at::timestamptz
-    ELSE NULL
-  END;
+  USING bitrix24_safe_timestamptz(changed_at::text);
+
+UPDATE bitrix24_task_cache
+SET published = FALSE
+WHERE changed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS bitrix24_object_hierarchy (
   parent_type bitrix24_object_type NOT NULL,
@@ -23,3 +44,5 @@ CREATE TABLE IF NOT EXISTS bitrix24_object_hierarchy (
 
 CREATE INDEX IF NOT EXISTS bitrix24_object_hierarchy_parent_idx
   ON bitrix24_object_hierarchy (parent_type, parent_guid);
+
+DROP FUNCTION IF EXISTS bitrix24_safe_timestamptz(TEXT);

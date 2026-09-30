@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import request from "supertest";
 import { formatLabelToken } from "../../src/bitrix24/labels/format";
@@ -12,7 +14,10 @@ import {
 import { runBitrix24TaskSync } from "../../src/bitrix24/sync/run-sync";
 import { resetPoolForTests } from "../../src/db/pool";
 import {
+  buildSyncScopeSummary,
   confirmObjectHierarchyLink,
+  findLatestSyncJournalEntry,
+  insertSyncJournalEntry,
   upsertEmployeePortalLink,
   upsertTaskSnapshot,
 } from "../../src/bitrix24/tasks/repository";
@@ -20,9 +25,15 @@ import {
   createTestUser,
   getIntegrationDatabaseUrl,
   prepareDatabase,
+  resetDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
-import { createDelegationRecord, linkUserToEmployee } from "../helpers/access-db-fixtures";
+import { resolveMigrationsDir } from "../../src/db/migrate-runner";
+import {
+  createDelegationRecord,
+  grantClientAccess,
+  linkUserToEmployee,
+} from "../helpers/access-db-fixtures";
 import { insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import {
   createBitrixMockPinnedRequest,
@@ -636,9 +647,14 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
     await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_FOREIGN);
     const foreignLabel = await issueLabelInTransaction("legal_entity", LEGAL_FOREIGN);
     const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: managerAUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
     await upsertTaskSnapshot({
       portalId: config.portalId,
-      taskId: "9013",
+      taskId: "9004",
       responsibleBitrixUserId: "42",
       title: "Foreign child task",
       statusLabel: "in_progress",
@@ -653,19 +669,21 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
-    await upsertEmployeePortalLink({
-      userId: managerAUser.id,
-      portalId: config.portalId,
-      bitrixUserId: "42",
-    });
 
     const app = await loadApp();
     const cookie = await login("manager-a@example.com");
     const tasksRes = await request(app)
       .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
       .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "empty");
     assert.equal(tasksRes.body.tasks.length, 0);
-    assert.equal(tasksRes.body.visibility, undefined);
+
+    const labelRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/label?objectType=legal_entity&objectGuid=${LEGAL_FOREIGN}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(labelRes.status, 404);
   });
 
   it("closes bitrix24 card and tasks when delegation ends (assistant HTTP)", async () => {
@@ -1074,6 +1092,284 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
     assert.equal(tasksRes.body.state, "ready");
     assert.equal(tasksRes.body.tasks.length, 1);
     assert.equal(tasksRes.body.tasks[0]?.boundObjectLabel, "Юрлицо");
+  });
+
+  it("updates publish and binding on unchanged source version", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    const changedAt = "2026-09-30T12:00:00+03:00";
+    const base = {
+      portalId: config.portalId,
+      taskId: "9030",
+      responsibleBitrixUserId: "42",
+      title: "Stable task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt,
+      descriptionHash: "stable-hash",
+      published: false,
+      objectType: "holding" as const,
+      objectGuid: HOLDING_ONE,
+      labelCode: null,
+      bindingStatus: "pending_confirmation",
+      conflictReason: null,
+      linkedAt: null,
+    };
+    await upsertTaskSnapshot(base);
+    const published = await upsertTaskSnapshot({
+      ...base,
+      published: true,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      linkedAt: new Date().toISOString(),
+    });
+    assert.equal(published.cacheUpdated, true);
+    assert.equal(published.versionConflict, undefined);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{ published: boolean; binding_status: string }>(
+      `SELECT c.published, b.binding_status
+       FROM bitrix24_task_cache c
+       JOIN bitrix24_task_bindings b ON b.portal_id = c.portal_id AND b.task_id = c.task_id
+       WHERE c.task_id = $1`,
+      ["9030"],
+    );
+    await pool.end();
+    assert.equal(row.rows[0]?.published, true);
+    assert.equal(row.rows[0]?.binding_status, "confirmed");
+  });
+
+  it("foreign audience-mismatch tasks never change API state", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId, "42");
+    const baseSnapshot = {
+      portalId: config.portalId,
+      taskId: "9031",
+      responsibleBitrixUserId: "999",
+      title: "Foreign audience task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding" as const,
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    };
+    await upsertTaskSnapshot(baseSnapshot);
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const fresh = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(fresh.body.state, "empty");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache SET synced_at = '2099-01-01T00:00:00Z' WHERE task_id = $1`,
+      ["9031"],
+    );
+    await pool.end();
+    const stale = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(stale.body.state, "empty");
+    assert.notEqual(stale.body.state, "future_task");
+
+    await upsertTaskSnapshot({
+      ...baseSnapshot,
+      taskId: "9032",
+      responsibleBitrixUserId: "999",
+      title: "Foreign out-of-pilot task",
+    });
+    const outOfPilot = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(outOfPilot.body.state, "empty");
+    assert.notEqual(outOfPilot.body.state, "pilot_filtered");
+  });
+
+  it("findLatestSyncJournalEntry matches bitrix user exactly", async () => {
+    const config = sampleWebhookConfig();
+    await insertSyncJournalEntry({
+      runMode: "apply",
+      scopeSummary: buildSyncScopeSummary(config.portalId, "420"),
+      status: "success",
+      summary: { marker: "user-420" },
+    });
+    await insertSyncJournalEntry({
+      runMode: "apply",
+      scopeSummary: buildSyncScopeSummary(config.portalId, "42"),
+      status: "partial",
+      summary: { marker: "user-42" },
+    });
+    const entry = await findLatestSyncJournalEntry(config.portalId, "42");
+    assert.ok(entry);
+    assert.equal(entry.summary.marker, "user-42");
+  });
+
+  it("denies label restore for assistant even with card access", async () => {
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    const assistantUser = await createTestUser({
+      databaseUrl,
+      email: "assistant@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Assistant User",
+      role: "assistant",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: managerAUser.id,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: assistantUser.id,
+      employeeId: ASSISTANT_EMP,
+      confirmedByUserId: managerAUser.id,
+    });
+    await createDelegationRecord({
+      databaseUrl,
+      delegatorUserId: managerAUser.id,
+      assistantUserId: assistantUser.id,
+      clientGuids: [CLIENT_ONE],
+      status: "active",
+      startsAt: new Date(Date.now() - 60_000).toISOString(),
+      endsAt: new Date(Date.now() + 3_600_000).toISOString(),
+      approvedByUserId: managerAUser.id,
+    });
+    await issueLabelInTransaction("holding", HOLDING_ONE);
+    await revokeActiveLabel("holding", HOLDING_ONE);
+
+    const app = await loadApp();
+    const cookie = await login("assistant@example.com");
+    const res = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(cookie))
+      .send({ restore: true });
+    assert.equal(res.status, 403);
+  });
+
+  it("allows child object access only with explicit grant (manager HTTP)", async () => {
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: managerAUser.id,
+    });
+    await confirmObject("legal_entity", LEGAL_ONE, null);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
+    await grantClientAccess({
+      databaseUrl,
+      userId: managerAUser.id,
+      objectId: LEGAL_ONE,
+      grantedByUserId: managerAUser.id,
+    });
+    const label = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: managerAUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9004",
+      responsibleBitrixUserId: "42",
+      title: "Granted child task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "legal_entity",
+      objectGuid: LEGAL_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("manager-a@example.com");
+    const tasksRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "ready");
+    assert.equal(tasksRes.body.tasks.length, 1);
+  });
+
+  it("migrates invalid changed_at safely without crashing or backdating", async () => {
+    await resetDatabase(databaseUrl);
+    const migrationsDir = resolveMigrationsDir();
+    const files = fs.readdirSync(migrationsDir).filter((name) => name.endsWith(".sql")).sort();
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    for (const filename of files) {
+      if (filename === "011_bitrix24_r22_fixes.sql") {
+        break;
+      }
+      const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
+      await pool.query(sql);
+      await pool.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [filename]);
+    }
+    await pool.query(
+      `INSERT INTO bitrix24_task_cache (
+         portal_id, task_id, title, status_label, changed_at, description_hash, published
+       ) VALUES
+         ('p', 'empty', 'Empty date', 'in_progress', '', 'abc', TRUE),
+         ('p', 'invalid', 'Invalid ISO', 'in_progress', '2026-02-30T12:00:00Z', 'def', TRUE),
+         ('p', 'valid', 'Valid TZ', 'in_progress', '2026-01-15T09:30:00+05:00', 'ghi', FALSE)`,
+    );
+    const migration011 = fs.readFileSync(
+      path.join(migrationsDir, "011_bitrix24_r22_fixes.sql"),
+      "utf8",
+    );
+    await pool.query(migration011);
+    await pool.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [
+      "011_bitrix24_r22_fixes.sql",
+    ]);
+    const rows = await pool.query<{
+      task_id: string;
+      changed_at: Date | null;
+      published: boolean;
+    }>(`SELECT task_id, changed_at, published FROM bitrix24_task_cache ORDER BY task_id`);
+    await pool.end();
+
+    const byId = Object.fromEntries(rows.rows.map((row) => [row.task_id, row]));
+    assert.equal(byId.empty?.changed_at, null);
+    assert.equal(byId.empty?.published, false);
+    assert.equal(byId.invalid?.changed_at, null);
+    assert.equal(byId.invalid?.published, false);
+    assert.ok(byId.valid?.changed_at instanceof Date);
+    assert.equal(byId.valid?.published, false);
+    assert.equal(byId.valid?.changed_at?.toISOString(), "2026-01-15T04:30:00.000Z");
   });
 
   it("returns 400 when card and holding IDs differ without mapping", async () => {

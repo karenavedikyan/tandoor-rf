@@ -4,9 +4,10 @@ import { extractLabelsFromDescription } from "../../src/bitrix24/labels/parser";
 import { formatLabelCode } from "../../src/bitrix24/labels/format";
 import { buildTaskPortalUrl } from "../../src/bitrix24/tasks/portal-url";
 import {
-  fingerprintBindingContent,
-  fingerprintCacheContent,
+  fingerprintSourceContent,
+  sourceContentFromSnapshot,
 } from "../../src/bitrix24/tasks/snapshot-content";
+import { buildSyncScopeSummary } from "../../src/bitrix24/tasks/repository";
 import {
   BITRIX24_SYNC_MAX_MAX_PAGES,
   parseBitrix24SyncCliArgs,
@@ -47,38 +48,49 @@ describe("bitrix24 round3", () => {
     assert.equal(url, null);
   });
 
-  it("detects cache fingerprint change when title differs", () => {
+  it("source fingerprint ignores published flag", () => {
+    const base = {
+      portalId: "p",
+      taskId: "1",
+      responsibleBitrixUserId: "42",
+      title: "A",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: false,
+      objectType: null,
+      objectGuid: null,
+      labelCode: null,
+      bindingStatus: "unresolved",
+      conflictReason: null,
+      linkedAt: null,
+    };
+    const unpublished = fingerprintSourceContent(sourceContentFromSnapshot(base));
+    const published = fingerprintSourceContent(
+      sourceContentFromSnapshot({ ...base, published: true }),
+    );
+    assert.equal(unpublished, published);
+  });
+
+  it("detects source fingerprint change when title differs", () => {
     const base = {
       responsibleBitrixUserId: "42",
       title: "A",
       statusLabel: "in_progress",
       deadline: null,
       descriptionHash: "hash",
-      published: true,
     };
-    const first = fingerprintCacheContent(base);
-    const second = fingerprintCacheContent({ ...base, title: "B" });
+    const first = fingerprintSourceContent(base);
+    const second = fingerprintSourceContent({ ...base, title: "B" });
     assert.notEqual(first, second);
   });
 
-  it("includes audience in binding fingerprint", () => {
-    const first = fingerprintBindingContent({
-      objectType: "holding",
-      objectGuid: "11111111-1111-4111-8111-111111111111",
-      labelCode: "LK_H_000001",
-      bindingStatus: "confirmed",
-      conflictReason: null,
-      responsibleBitrixUserId: "42",
-    });
-    const second = fingerprintBindingContent({
-      objectType: "holding",
-      objectGuid: "11111111-1111-4111-8111-111111111111",
-      labelCode: "LK_H_000001",
-      bindingStatus: "confirmed",
-      conflictReason: null,
-      responsibleBitrixUserId: "99",
-    });
-    assert.notEqual(first, second);
+  it("builds exact sync scope summary", () => {
+    assert.equal(
+      buildSyncScopeSummary("example.bitrix24.ru", "42"),
+      "portal_id=example.bitrix24.ru;bitrix_user_id=42",
+    );
   });
 
   it("allows label code 999999 at format layer", () => {

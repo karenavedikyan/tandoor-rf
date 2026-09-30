@@ -3,12 +3,11 @@ import { requirePool } from "../../db/pool";
 import type { Bitrix24ObjectType } from "../labels/format";
 import { bitrixChangedAtToDate } from "../parse-changed-at";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "./config";
-import {
-  bindingContentFromSnapshot,
-  cacheContentFromSnapshot,
-  fingerprintBindingContent,
-  fingerprintCacheContent,
-} from "./snapshot-content";
+import { fingerprintSourceContent, sourceContentFromSnapshot } from "./snapshot-content";
+
+export function buildSyncScopeSummary(portalId: string, bitrixUserId: string): string {
+  return `portal_id=${portalId};bitrix_user_id=${bitrixUserId}`;
+}
 
 export type TaskCacheRow = {
   portalId: string;
@@ -114,8 +113,7 @@ export async function upsertTaskSnapshot(
     return { cacheUpdated: false };
   }
 
-  const cacheFingerprint = fingerprintCacheContent(cacheContentFromSnapshot(row));
-  const bindingFingerprint = fingerprintBindingContent(bindingContentFromSnapshot(row));
+  const sourceFingerprint = fingerprintSourceContent(sourceContentFromSnapshot(row));
 
   return withSnapshotTransaction(client, async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, [
@@ -135,16 +133,7 @@ export async function upsertTaskSnapshot(
       [row.portalId, row.taskId],
     );
 
-    const existingBinding = await db.query<{ content_fingerprint: string | null }>(
-      `SELECT content_fingerprint
-       FROM bitrix24_task_bindings
-       WHERE portal_id = $1 AND task_id = $2
-       FOR UPDATE`,
-      [row.portalId, row.taskId],
-    );
-
     const prior = existing.rows[0];
-    const priorBinding = existingBinding.rows[0];
     const incomingChangedAt = changedAtDate.toISOString();
 
     if (prior?.changed_at) {
@@ -154,17 +143,39 @@ export async function upsertTaskSnapshot(
         return { cacheUpdated: false };
       }
       if (incomingMs === priorMs) {
-        const cacheMatches = prior.content_fingerprint === cacheFingerprint;
-        const bindingMatches =
-          (priorBinding?.content_fingerprint ?? null) === bindingFingerprint;
-        if (!cacheMatches || !bindingMatches) {
+        if (prior.content_fingerprint !== sourceFingerprint) {
           return { cacheUpdated: false, versionConflict: true };
         }
         await db.query(
           `UPDATE bitrix24_task_cache
-           SET synced_at = NOW()
+           SET published = $3,
+               synced_at = NOW()
            WHERE portal_id = $1 AND task_id = $2`,
-          [row.portalId, row.taskId],
+          [row.portalId, row.taskId, row.published],
+        );
+        await db.query(
+          `INSERT INTO bitrix24_task_bindings (
+             portal_id, task_id, object_type, object_guid, label_code,
+             binding_status, conflict_reason, linked_at
+           ) VALUES ($1, $2, $3::bitrix24_object_type, $4::uuid, $5, $6, $7, $8::timestamptz)
+           ON CONFLICT (portal_id, task_id) DO UPDATE SET
+             object_type = EXCLUDED.object_type,
+             object_guid = EXCLUDED.object_guid,
+             label_code = EXCLUDED.label_code,
+             binding_status = EXCLUDED.binding_status,
+             conflict_reason = EXCLUDED.conflict_reason,
+             linked_at = EXCLUDED.linked_at,
+             updated_at = NOW()`,
+          [
+            row.portalId,
+            row.taskId,
+            row.objectType,
+            row.objectGuid,
+            row.labelCode,
+            row.bindingStatus,
+            row.conflictReason,
+            row.linkedAt,
+          ],
         );
         return { cacheUpdated: true };
       }
@@ -199,7 +210,7 @@ export async function upsertTaskSnapshot(
         incomingChangedAt,
         row.descriptionHash,
         row.published,
-        cacheFingerprint,
+        sourceFingerprint,
       ],
     );
 
@@ -210,8 +221,8 @@ export async function upsertTaskSnapshot(
     await db.query(
       `INSERT INTO bitrix24_task_bindings (
          portal_id, task_id, object_type, object_guid, label_code,
-         binding_status, conflict_reason, linked_at, content_fingerprint
-       ) VALUES ($1, $2, $3::bitrix24_object_type, $4::uuid, $5, $6, $7, $8::timestamptz, $9)
+         binding_status, conflict_reason, linked_at
+       ) VALUES ($1, $2, $3::bitrix24_object_type, $4::uuid, $5, $6, $7, $8::timestamptz)
        ON CONFLICT (portal_id, task_id) DO UPDATE SET
          object_type = EXCLUDED.object_type,
          object_guid = EXCLUDED.object_guid,
@@ -219,8 +230,7 @@ export async function upsertTaskSnapshot(
          binding_status = EXCLUDED.binding_status,
          conflict_reason = EXCLUDED.conflict_reason,
          linked_at = EXCLUDED.linked_at,
-         updated_at = NOW(),
-         content_fingerprint = EXCLUDED.content_fingerprint`,
+         updated_at = NOW()`,
       [
         row.portalId,
         row.taskId,
@@ -230,7 +240,6 @@ export async function upsertTaskSnapshot(
         row.bindingStatus,
         row.conflictReason,
         row.linkedAt,
-        bindingFingerprint,
       ],
     );
 
@@ -451,9 +460,10 @@ export async function findLatestSyncJournalEntry(
   runMode: string;
   summary: Record<string, unknown>;
 } | null> {
-  const scopePattern = bitrixUserId
-    ? `%portal_id=${portalId};bitrix_user_id=${bitrixUserId}%`
-    : `%portal_id=${portalId};bitrix_user_id=%`;
+  if (!bitrixUserId) {
+    return null;
+  }
+  const scopeSummary = buildSyncScopeSummary(portalId, bitrixUserId);
   const result = await client.query<{
     finished_at: Date | null;
     status: string;
@@ -462,10 +472,10 @@ export async function findLatestSyncJournalEntry(
   }>(
     `SELECT finished_at, status, run_mode, summary
      FROM bitrix24_sync_journal
-     WHERE scope_summary LIKE $1
+     WHERE scope_summary = $1
      ORDER BY finished_at DESC NULLS LAST, started_at DESC
      LIMIT 1`,
-    [scopePattern],
+    [scopeSummary],
   );
   const row = result.rows[0];
   if (!row) {

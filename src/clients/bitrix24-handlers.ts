@@ -14,13 +14,17 @@ import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../bitrix
 import {
   canViewClientCard,
   canViewTaskForUser,
-  isAudienceOnlyDeny,
+  evaluateUserBitrixTaskConfig,
+  isTaskAudienceMatch,
 } from "../bitrix24/tasks/access";
 import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
 import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
 import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
 import { formatBoundObjectLabel } from "../bitrix24/tasks/object-type-labels";
-import { canReadBoundBitrixObject } from "../bitrix24/tasks/object-access";
+import {
+  canReadBoundBitrixObject,
+  canRestoreBitrixObjectLabel,
+} from "../bitrix24/tasks/object-access";
 import {
   findEmployeePortalLink,
   findLatestSyncJournalEntry,
@@ -231,6 +235,19 @@ export async function postClientBitrix24LabelHandler(
 
   const actorUserId = req.accessContext!.userId;
   const restoreRequested = req.body?.restore === true;
+  if (restoreRequested) {
+    const canRestore = await canRestoreBitrixObjectLabel(
+      req.accessContext!,
+      cardGuid,
+      target.objectType,
+      target.objectGuid,
+    );
+    if (!canRestore) {
+      setNoStore(res);
+      res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Insufficient rights to restore label."));
+      return;
+    }
+  }
   const result = restoreRequested
     ? await restoreClientLabel(target.objectType, target.objectGuid, actorUserId)
     : await issueClientLabel(target.objectType, target.objectGuid, actorUserId);
@@ -305,9 +322,10 @@ export async function getClientBitrix24TasksHandler(
   }
 
   const employeeLink = await findEmployeePortalLink(context.userId, loaded.config.portalId);
+  const userConfigDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
   const syncEntry = employeeLink
     ? await findLatestSyncJournalEntry(loaded.config.portalId, employeeLink.bitrixUserId)
-    : await findLatestSyncJournalEntry(loaded.config.portalId);
+    : null;
 
   const queryObjectType = target.objectType;
   const queryObjectGuid =
@@ -334,11 +352,14 @@ export async function getClientBitrix24TasksHandler(
       hadObjectHidden = true;
       continue;
     }
+    if (!isTaskAudienceMatch(row, employeeLink)) {
+      hadAudienceHidden = true;
+      continue;
+    }
+
     const visibility = await canViewTaskForUser(context, loaded.config.portalId, row);
     if (!visibility.ok) {
-      if (isAudienceOnlyDeny(visibility.code)) {
-        hadAudienceHidden = true;
-      } else if (!selfDeny) {
+      if (!selfDeny) {
         selfDeny = visibility.code;
       }
       continue;
@@ -358,7 +379,22 @@ export async function getClientBitrix24TasksHandler(
   let state = "ready";
   let message: string | null = null;
   if (visible.length === 0) {
-    if (rows.length === 0 || hadAudienceHidden || hadObjectHidden) {
+    if (userConfigDeny) {
+      state = mapDenyCodeToState(userConfigDeny);
+      switch (userConfigDeny) {
+        case "NO_EMPLOYEE_LINK":
+          message = "Связь сотрудника с порталом Bitrix24 не подтверждена.";
+          break;
+        case "ACCESS_EXPIRED":
+          message = "Данные задач устарели. Требуется повторная синхронизация.";
+          break;
+        case "PILOT_LIST_MISSING":
+          message = "Список разрешённых задач пилота не настроен.";
+          break;
+        default:
+          message = "Кэш задач не опубликован.";
+      }
+    } else if (rows.length === 0 || hadAudienceHidden || hadObjectHidden) {
       state = "empty";
       message = "Задачи с меткой этого объекта пока не найдены.";
     } else if (selfDeny) {
