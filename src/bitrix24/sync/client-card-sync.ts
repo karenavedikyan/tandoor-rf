@@ -2,6 +2,9 @@ import type { AccessContext } from "../../access/types";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
 import { formatMskDateTime } from "../../clients/dto";
+import { requirePool } from "../../db/pool";
+import { findTaskSnapshotById } from "../tasks/repository";
+import { isObjectLinkedToClientCard } from "../tasks/object-access";
 import {
   acquireManualSyncLocks,
   loadManualSyncMinIntervalMs,
@@ -11,6 +14,7 @@ import {
   mapManualSyncDenyMessage,
   resolveManualSyncScope,
   verifyManualSyncOutcome,
+  verifyManualSyncSource,
   type ManualSyncDenyCode,
 } from "./sync-access";
 
@@ -144,8 +148,10 @@ export async function runClientCardBitrix24Sync(
   }
 
   let aggregate: Bitrix24SyncResult | null = null;
+  let sourceDeny: ManualSyncDenyCode | null = null;
   try {
     for (const taskId of scope.taskIds) {
+      const prior = await findTaskSnapshotById(scope.portalId, taskId);
       const result = await runBitrix24TaskSync({
         bitrixUserId: scope.bitrixUserId,
         apply: true,
@@ -153,13 +159,36 @@ export async function runClientCardBitrix24Sync(
         pinnedRequest: options.pinnedRequest,
         resolvePortalAddresses: options.resolvePortalAddresses,
         env,
+        assertTaskScope: async (task) => {
+          const deny = await verifyManualSyncSource(
+            options.context.userId, scope.portalId, options.cardGuid, scope.bitrixUserId, task,
+          );
+          if (!deny) return;
+          sourceDeny = deny;
+          // A changed source binding must stop exposing the OLD card's snapshot.
+          // Do not publish foreign data or invalidate a newer concurrent generation.
+          if (
+            prior?.objectType && prior.objectGuid &&
+            ["BINDING_UNCONFIRMED", "TASK_NOT_ON_CARD", "SUMMARY_ONLY"].includes(deny) &&
+            await isObjectLinkedToClientCard(options.cardGuid, prior.objectType, prior.objectGuid)
+          ) {
+            await requirePool().query(
+              `UPDATE bitrix24_task_cache SET published = false, cache_version = cache_version + 1
+               WHERE portal_id = $1 AND task_id = $2 AND cache_version = $3`,
+              [scope.portalId, taskId, prior.cacheVersion],
+            );
+          }
+          throw new Error("MANUAL_SYNC_SCOPE_DENIED");
+        },
       });
       aggregate = aggregate ? mergeSyncResults(aggregate, result) : result;
+      if (sourceDeny) break;
     }
   } finally {
     await lock.release();
   }
 
+  if (sourceDeny) return denyResponse(403, sourceDeny);
   const result = aggregate!;
   const postDeny = await verifyManualSyncOutcome(
     options.context,

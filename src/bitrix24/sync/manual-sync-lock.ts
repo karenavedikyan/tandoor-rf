@@ -18,13 +18,18 @@ export function loadManualSyncMinIntervalMs(env: NodeJS.ProcessEnv = process.env
 }
 
 async function unlockHeldLocks(client: PoolClient, heldLocks: Array<[string, string]>): Promise<void> {
+  let failed = false;
   for (const [lockA, lockB] of heldLocks) {
     try {
-      await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+      const result = await client.query<{ unlocked: boolean }>(
+        `SELECT pg_advisory_unlock(hashtext($1), hashtext($2)) AS unlocked`, [lockA, lockB],
+      );
+      if (!result.rows[0]?.unlocked) failed = true;
     } catch {
-      // Best-effort unlock; connection may already be broken.
+      failed = true;
     }
   }
+  if (failed) throw new Error("MANUAL_SYNC_UNLOCK_FAILED");
 }
 
 async function checkAndRecordCooldown(
@@ -71,11 +76,11 @@ async function acquireLocksOnClient(
   portalId: string,
   taskIds: string[],
   minIntervalMs: number,
+  heldLocks: Array<[string, string]>,
 ): Promise<
   | { ok: true; heldLocks: Array<[string, string]> }
   | { ok: false; code: "SYNC_IN_PROGRESS" | "COOLDOWN"; retryAfterMs: number }
 > {
-  const heldLocks: Array<[string, string]> = [];
   for (const taskId of taskIds) {
     const [lockA, lockB] = manualSyncLockKey(portalId, taskId);
     const acquired = await client.query<{ locked: boolean }>(
@@ -89,7 +94,6 @@ async function acquireLocksOnClient(
 
     const cooldown = await checkAndRecordCooldown(client, portalId, taskId, minIntervalMs);
     if (!cooldown.ok) {
-      await unlockHeldLocks(client, heldLocks);
       return { ok: false, code: "COOLDOWN", retryAfterMs: cooldown.retryAfterMs };
     }
   }
@@ -107,33 +111,37 @@ export async function acquireManualSyncLocks(
 
   const pool = requirePool();
   const client = await pool.connect();
-  let heldLocks: Array<[string, string]> = [];
-  let broken = false;
+  const heldLocks: Array<[string, string]> = [];
+  let releasePromise: Promise<void> | undefined;
+  const release = (): Promise<void> => {
+    releasePromise ??= (async () => {
+      let broken = false;
+      try {
+        await unlockHeldLocks(client, heldLocks);
+      } catch {
+        // Never put a session with uncertain lock ownership back into the pool.
+        broken = true;
+      } finally {
+        client.release(broken);
+      }
+    })();
+    return releasePromise;
+  };
 
   try {
-    const result = await acquireLocksOnClient(client, portalId, taskIds, minIntervalMs);
+    const result = await acquireLocksOnClient(
+      client, portalId, [...new Set(taskIds)].sort(), minIntervalMs, heldLocks,
+    );
     if (!result.ok) {
-      client.release();
+      await release();
       return result;
     }
-    heldLocks = result.heldLocks;
-    const locksToRelease = heldLocks;
-    return {
-      ok: true,
-      release: async () => {
-        try {
-          await unlockHeldLocks(client, locksToRelease);
-        } finally {
-          client.release(broken);
-        }
-      },
-    };
+    return { ok: true, release };
   } catch (error) {
-    broken = true;
-    try {
-      await unlockHeldLocks(client, heldLocks);
-    } finally {
+    if (!releasePromise) {
+      // Connection/transaction state is unknown after an acquisition error.
       client.release(true);
+      releasePromise = Promise.resolve();
     }
     throw error;
   }

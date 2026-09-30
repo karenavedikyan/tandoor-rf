@@ -11,7 +11,7 @@ import {
 import { runClientCardBitrix24Sync } from "../../src/bitrix24/sync/client-card-sync";
 import { upsertChecklistSnapshot } from "../../src/bitrix24/tasks/checklist-repository";
 import { upsertEmployeePortalLink, upsertTaskSnapshot } from "../../src/bitrix24/tasks/repository";
-import { resetPoolForTests } from "../../src/db/pool";
+import { requirePool, resetPoolForTests } from "../../src/db/pool";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -25,7 +25,7 @@ import {
   createSafePortalResolver,
   sampleWebhookConfig,
 } from "../helpers/bitrix24-mock-fetch";
-import { HOLDING_ONE, linkCardToHolding } from "../helpers/bitrix24-card-fixtures";
+import { HOLDING_ONE, HOLDING_TWO, linkCardToHolding } from "../helpers/bitrix24-card-fixtures";
 import { sampleValidBitrixTask } from "../helpers/bitrix24-task-fixtures";
 import {
   sampleChecklistItem,
@@ -481,7 +481,7 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
     }
   });
 
-  it("returns 403 after sync when task binding stays unresolved", async () => {
+  it("returns 403 without publishing or fetching a checklist for an unresolved source", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "manager@example.com",
@@ -497,13 +497,7 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
     const config = sampleWebhookConfig();
     const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
     const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
-    const sync = await runClientCardBitrix24Sync({
-      context: accessContext(manager.id, "manager", MANAGER_A),
-      cardGuid: CLIENT_ONE,
-      objectType: "holding",
-      objectGuid: HOLDING_ONE,
-      holdingGuid: HOLDING_ONE,
-      pinnedRequest: createBitrixMockPinnedRequest({
+    const mock = createBitrixMockPinnedRequest({
         [tasksUrl]: {
           body: {
             result: {
@@ -521,13 +515,99 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
         [checklistUrl]: {
           body: { result: [sampleChecklistRootGroup()], total: 1 },
         },
-      }).pinnedRequest,
+      });
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      pinnedRequest: mock.pinnedRequest,
       resolvePortalAddresses: createSafePortalResolver(),
     });
     assert.equal(sync.httpStatus, 403);
     if (sync.httpStatus === 403) {
       assert.match(sync.body.message, /не подтверждена/i);
     }
+    assert.equal(mock.calls.filter(call => call.url === checklistUrl).length, 0);
+    const cached = await requirePool().query(
+      "SELECT title, published FROM bitrix24_task_cache WHERE task_id = '9001'",
+    );
+    assert.equal(cached.rows[0].title, "Pilot task");
+    assert.equal(cached.rows[0].published, false);
+  });
+
+  for (const seeded of [false, true]) {
+    it(`rejects a foreign source before writes/checklist HTTP (existing cache: ${seeded})`, async () => {
+      const manager = await createTestUser({
+        databaseUrl, email: "manager@example.com", password: TEST_PASSWORD,
+        fullName: "Manager User", role: "manager",
+      });
+      await linkManagerToEmployee(databaseUrl, manager.id, MANAGER_A);
+      const config = sampleWebhookConfig();
+      if (seeded) {
+        await seedResponsibleTask({ userId: manager.id, bitrixUserId: "42" });
+      } else {
+        await upsertEmployeePortalLink({
+          userId: manager.id, portalId: config.portalId, bitrixUserId: "42",
+        });
+      }
+      await linkCardToHolding(CLIENT_TWO, HOLDING_TWO);
+      const foreignLabel = await issueLabelInTransaction("holding", HOLDING_TWO);
+      const mock = createBitrixMockPinnedRequest({
+        [`${config.webhookBaseUrl}tasks.task.list`]: { body: {
+          result: { tasks: [sampleValidBitrixTask({
+            ID: "9001", TITLE: "Foreign private title",
+            DESCRIPTION: formatLabelToken(foreignLabel.labelCode),
+            CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+          })] }, total: 1,
+        } },
+      });
+      const sync = await runClientCardBitrix24Sync({
+        context: accessContext(manager.id, "manager", MANAGER_A),
+        cardGuid: CLIENT_ONE, objectType: "holding", objectGuid: HOLDING_ONE,
+        holdingGuid: HOLDING_ONE, pinnedRequest: mock.pinnedRequest,
+        resolvePortalAddresses: createSafePortalResolver(),
+      });
+      assert.equal(sync.httpStatus, 403);
+      assert.equal(mock.calls.length, 1);
+      const cached = await requirePool().query(
+        "SELECT title, published FROM bitrix24_task_cache WHERE task_id = '9001'",
+      );
+      assert.equal(cached.rows.length, seeded ? 1 : 0);
+      if (seeded) {
+        assert.equal(cached.rows[0].title, "Pilot task");
+        assert.equal(cached.rows[0].published, false);
+      }
+      const checklist = await requirePool().query("SELECT count(*)::int AS n FROM bitrix24_task_checklist_snapshots");
+      assert.equal(checklist.rows[0].n, 0);
+    });
+  }
+
+  it("rechecks user status after task HTTP and before publishing", async () => {
+    const manager = await createTestUser({
+      databaseUrl, email: "manager@example.com", password: TEST_PASSWORD,
+      fullName: "Manager User", role: "manager",
+    });
+    await linkManagerToEmployee(databaseUrl, manager.id, MANAGER_A);
+    const { config, label } = await seedResponsibleTask({ userId: manager.id, bitrixUserId: "42" });
+    const mock = createBitrixMockPinnedRequest({
+      [`${config.webhookBaseUrl}tasks.task.list`]: async () => {
+        await requirePool().query("UPDATE users SET status = 'disabled' WHERE id = $1", [manager.id]);
+        return { body: { result: { tasks: [sampleValidBitrixTask({
+          ID: "9001", TITLE: "Must not be saved", DESCRIPTION: formatLabelToken(label.labelCode),
+          CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+        })] }, total: 1 } };
+      },
+    });
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE, objectType: "holding", objectGuid: HOLDING_ONE, holdingGuid: HOLDING_ONE,
+      pinnedRequest: mock.pinnedRequest, resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 403);
+    assert.equal(mock.calls.length, 1);
+    assert.equal((await requirePool().query("SELECT title FROM bitrix24_task_cache")).rows[0].title, "Pilot task");
   });
 
   it("allows sync with stale cache for responsible employee on card", async () => {
@@ -621,6 +701,54 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
     }
     if (first.ok) {
       await first.release();
+    }
+  });
+
+  it("releases earlier locks when a later batch task is already locked", async () => {
+    const busy = await acquireManualSyncLock("portal.batch", "9402", 0);
+    assert.equal(busy.ok, true);
+    const independent = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const result = await acquireManualSyncLocks("portal.batch", ["9401", "9402"], 0);
+      assert.equal(result.ok, false);
+      const probe = await independent.query(
+        "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked",
+        ["portal.batch", "manual_sync:9401"],
+      );
+      assert.equal(probe.rows[0].locked, true);
+    } finally {
+      await independent.end();
+      if (busy.ok) await busy.release();
+      await resetPoolForTests();
+    }
+  });
+
+  it("destroys a connection on unlock error and makes release idempotent", async () => {
+    const pool = requirePool();
+    const client = await pool.connect();
+    const originalQuery = client.query.bind(client);
+    client.query = ((...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].includes("pg_advisory_unlock(")) {
+        return Promise.reject(new Error("simulated unlock transport failure"));
+      }
+      return (originalQuery as (...args: unknown[]) => unknown)(...args);
+    }) as typeof client.query;
+    client.release();
+    const held = await acquireManualSyncLock("portal.unlock", "9403", 0);
+    assert.equal(held.ok, true);
+    if (held.ok) {
+      await held.release();
+      await held.release();
+    }
+    const independent = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const probe = await independent.query(
+        "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked",
+        ["portal.unlock", "manual_sync:9403"],
+      );
+      assert.equal(probe.rows[0].locked, true);
+    } finally {
+      await independent.end();
     }
   });
 

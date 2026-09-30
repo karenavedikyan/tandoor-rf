@@ -452,10 +452,7 @@
             state.phase = "error";
             state.message = body.message || "Не удалось синхронизировать.";
           }
-          if (!syncSucceeded) {
-            paintSyncToolbars(root);
-            return;
-          }
+          // Partial/failure can have invalidated a previously ready cache snapshot.
           return reloadBitrix24Data(root, clientGuid, uiState).then(function (reloadResult) {
             if (reloadResult && !reloadResult.ok) {
               state.phase = "error";
@@ -470,7 +467,9 @@
         state.message =
           (result.data && (result.data.message || result.data.error?.message)) ||
           "Не удалось синхронизировать.";
-        paintSyncToolbars(root);
+        return reloadBitrix24Data(root, clientGuid, uiState).then(function () {
+          paintSyncToolbars(root);
+        });
       })
       .catch(function (err) {
         state.phase = "error";
@@ -478,7 +477,9 @@
           err && err.name === "AbortError"
             ? api.mapRequestError(err, Math.round(SYNC_REQUEST_TIMEOUT_MS / 1000))
             : "Ошибка сети.";
-        paintSyncToolbars(root);
+        return reloadBitrix24Data(root, clientGuid, uiState).then(function () {
+          paintSyncToolbars(root);
+        });
       });
   }
 
@@ -826,7 +827,9 @@
               });
           });
         }
-        return { ok: true };
+        return tasksResult.response.status === 200 && tasksResult.data
+          ? { ok: true }
+          : { ok: false, error: "Не удалось загрузить задачи." };
       })
       .catch(function () {
         if (root._bitrix24LoadId !== loadId || !root.isConnected) {

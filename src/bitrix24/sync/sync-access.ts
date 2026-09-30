@@ -1,4 +1,5 @@
 import type { AccessContext } from "../../access/types";
+import { loadAccessContext } from "../../access/context";
 import type { Bitrix24ObjectType } from "../labels/format";
 import { loadBitrix24Config } from "../config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
@@ -187,6 +188,8 @@ export async function verifyManualSyncOutcome(
   cardGuid: string,
   taskIds: string[],
 ): Promise<ManualSyncDenyCode | null> {
+  context = await loadAccessContext(context.userId);
+  if (context.status !== "active") return "NO_CLIENT_ACCESS";
   const link = await findEmployeePortalLink(context.userId, portalId);
   if (!link) {
     return "NO_EMPLOYEE_LINK";
@@ -219,6 +222,41 @@ export async function verifyManualSyncOutcome(
     if (!full) {
       return "SUMMARY_ONLY";
     }
+  }
+  return null;
+}
+
+/** Source metadata must be authorized before publishing, including a cache-less first run. */
+export async function verifyManualSyncSource(
+  userId: string,
+  portalId: string,
+  cardGuid: string,
+  bitrixUserId: string,
+  task: {
+    taskId: string;
+    responsibleBitrixUserId: string | null;
+    bindingStatus: string;
+    objectType: Bitrix24ObjectType | null;
+    objectGuid: string | null;
+  },
+): Promise<ManualSyncDenyCode | null> {
+  const context = await loadAccessContext(userId);
+  if (context.status !== "active") return "NO_CLIENT_ACCESS";
+  const configDeny = await evaluateUserBitrixTaskConfig(context, portalId);
+  if (configDeny) return configDeny;
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!runtime.pilotTaskIds.has(task.taskId)) return "PILOT_FILTER";
+  const link = await findEmployeePortalLink(userId, portalId);
+  if (!link || link.bitrixUserId !== bitrixUserId) return "NO_EMPLOYEE_LINK";
+  if (task.bindingStatus !== "confirmed" || !task.objectType || !task.objectGuid) {
+    return "BINDING_UNCONFIRMED";
+  }
+  if (!(await isObjectLinkedToClientCard(cardGuid, task.objectType, task.objectGuid))) {
+    return "TASK_NOT_ON_CARD";
+  }
+  if (task.responsibleBitrixUserId !== link.bitrixUserId) return "SUMMARY_ONLY";
+  if (!(await canReadBoundBitrixObject(context, cardGuid, task.objectType, task.objectGuid))) {
+    return "NO_CLIENT_ACCESS";
   }
   return null;
 }
