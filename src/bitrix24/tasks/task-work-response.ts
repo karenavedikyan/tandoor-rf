@@ -4,6 +4,7 @@ import type { Bitrix24ObjectType } from "../labels/format";
 import { buildTaskPortalUrl } from "./portal-url";
 import { formatBoundObjectLabel } from "./object-type-labels";
 import { formatTaskStatusLabel } from "./status-labels";
+import { buildTaskOverviewMetadata } from "./overview-metadata";
 import { resolveConfirmedResponsibleProfile } from "./responsible-profile";
 import type { TaskCacheRow, TaskBindingRow } from "./repository";
 import {
@@ -106,6 +107,7 @@ export async function buildFullTaskWorkDto(input: {
   return {
     taskId: input.task.taskId,
     accessLevel: "full",
+    ...buildTaskOverviewMetadata(input.task.statusLabel, input.task.deadline, true),
     title: input.task.title,
     statusLabel: formatTaskStatusLabel(input.task.statusLabel),
     deadline: formatDisplayDate(input.task.deadline),
@@ -157,6 +159,7 @@ export async function buildSummaryTaskWorkDto(input: {
   return {
     taskId: input.task.taskId,
     accessLevel: "summary",
+    ...buildTaskOverviewMetadata(input.task.statusLabel, null, false),
     briefText: publication.briefText,
     statusLabel: formatTaskStatusLabel(input.task.statusLabel),
     boundObjectLabel: formatBoundObjectLabel(input.task.objectType),
