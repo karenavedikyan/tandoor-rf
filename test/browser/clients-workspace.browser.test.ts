@@ -679,6 +679,99 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
+  it("keeps active tab when user leaves overview during sync wait", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        checklist: { state: "ready", progress: { completed: 1, total: 2 }, items: [] },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.route("**/bitrix24/sync", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "success",
+          complete: true,
+          message: "Данные задач и чек-листов обновлены.",
+          syncedAtLabel: "30.09.2026, 12:05",
+          tasksSynced: 1,
+          checklistsSynced: 1,
+        }),
+      });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector('[data-testid="bitrix24-sync-btn"]');
+    await page.locator("#pc-bitrix24-overview [data-testid='bitrix24-sync-btn']").click();
+    await page.click('[data-card-tab="work"]');
+    await page.locator("#pc-panel-work .pc-bitrix24-sync-status.workspace-status--success").waitFor({
+      state: "visible",
+    });
+    assert.equal(await page.locator('[data-card-tab="work"][aria-selected="true"]').count(), 1);
+    assert.equal(await page.locator('[data-card-tab="overview"][aria-selected="true"]').count(), 0);
+    await closePage(page, context);
+  });
+
+  it("preserves expanded checklist after manual sync reload", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        checklist: {
+          state: "ready",
+          progress: { completed: 1, total: 2 },
+          syncedAtLabel: "30.09.2026, 10:00",
+          items: [{ itemId: "1", title: "Шаг 1", isGroup: false, isComplete: true, children: [] }],
+        },
+        contactAction: { marked: true, canMark: true, canRevoke: true, markedAtLabel: "30.09.2026, 09:00", markedByDisplayName: "Тест" },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click('[data-card-tab="work"]');
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist-summary");
+    await page.locator("#pc-panel-work .pc-bitrix24-checklist-summary").click();
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist-item");
+    await page.locator("#pc-panel-work [data-testid='bitrix24-sync-btn']").click();
+    await page.locator("#pc-panel-work .pc-bitrix24-sync-status.workspace-status--success").waitFor({
+      state: "visible",
+    });
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist[open]");
+    assert.equal(await page.locator("#pc-panel-work .pc-bitrix24-contact-checkbox:checked").count(), 1);
+    await closePage(page, context);
+  });
+
+  it("shows cooldown status for repeated sync without calling webhook", async () => {
+    const { page, context } = await openPage({
+      bitrix24Sync: 429,
+      bitrix24Tasks: { state: "ready", tasks: [] },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.locator('[data-testid="bitrix24-sync-btn"]').first().click();
+    await page.waitForSelector(".pc-bitrix24-sync-status.workspace-status--error");
+    assert.match(await page.locator(".pc-bitrix24-sync-status").first().textContent(), /недоступен|выполняется/i);
+    await closePage(page, context);
+  });
+
   it("runs manual Bitrix24 sync from shared toolbar without calling webhook", async () => {
     const tasks = [
       {

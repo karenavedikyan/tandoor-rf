@@ -17,6 +17,16 @@ export function loadManualSyncMinIntervalMs(env: NodeJS.ProcessEnv = process.env
   return raw;
 }
 
+async function unlockHeldLocks(client: PoolClient, heldLocks: Array<[string, string]>): Promise<void> {
+  for (const [lockA, lockB] of heldLocks) {
+    try {
+      await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+    } catch {
+      // Best-effort unlock; connection may already be broken.
+    }
+  }
+}
+
 async function checkAndRecordCooldown(
   client: PoolClient,
   portalId: string,
@@ -56,44 +66,83 @@ async function checkAndRecordCooldown(
   }
 }
 
+async function acquireLocksOnClient(
+  client: PoolClient,
+  portalId: string,
+  taskIds: string[],
+  minIntervalMs: number,
+): Promise<
+  | { ok: true; heldLocks: Array<[string, string]> }
+  | { ok: false; code: "SYNC_IN_PROGRESS" | "COOLDOWN"; retryAfterMs: number }
+> {
+  const heldLocks: Array<[string, string]> = [];
+  for (const taskId of taskIds) {
+    const [lockA, lockB] = manualSyncLockKey(portalId, taskId);
+    const acquired = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+      [lockA, lockB],
+    );
+    if (!acquired.rows[0]?.locked) {
+      return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
+    }
+    heldLocks.push([lockA, lockB]);
+
+    const cooldown = await checkAndRecordCooldown(client, portalId, taskId, minIntervalMs);
+    if (!cooldown.ok) {
+      await unlockHeldLocks(client, heldLocks);
+      return { ok: false, code: "COOLDOWN", retryAfterMs: cooldown.retryAfterMs };
+    }
+  }
+  return { ok: true, heldLocks };
+}
+
+export async function acquireManualSyncLocks(
+  portalId: string,
+  taskIds: string[],
+  minIntervalMs = loadManualSyncMinIntervalMs(),
+): Promise<ManualSyncLockResult> {
+  if (taskIds.length === 0) {
+    return { ok: true, release: async () => {} };
+  }
+
+  const pool = requirePool();
+  const client = await pool.connect();
+  let heldLocks: Array<[string, string]> = [];
+  let broken = false;
+
+  try {
+    const result = await acquireLocksOnClient(client, portalId, taskIds, minIntervalMs);
+    if (!result.ok) {
+      client.release();
+      return result;
+    }
+    heldLocks = result.heldLocks;
+    const locksToRelease = heldLocks;
+    return {
+      ok: true,
+      release: async () => {
+        try {
+          await unlockHeldLocks(client, locksToRelease);
+        } finally {
+          client.release(broken);
+        }
+      },
+    };
+  } catch (error) {
+    broken = true;
+    try {
+      await unlockHeldLocks(client, heldLocks);
+    } finally {
+      client.release(true);
+    }
+    throw error;
+  }
+}
+
 export async function acquireManualSyncLock(
   portalId: string,
   taskId: string,
   minIntervalMs = loadManualSyncMinIntervalMs(),
 ): Promise<ManualSyncLockResult> {
-  const pool = requirePool();
-  const client = await pool.connect();
-  const [lockA, lockB] = manualSyncLockKey(portalId, taskId);
-  const acquired = await client.query<{ locked: boolean }>(
-    `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
-    [lockA, lockB],
-  );
-  if (!acquired.rows[0]?.locked) {
-    client.release();
-    return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
-  }
-
-  try {
-    const cooldown = await checkAndRecordCooldown(client, portalId, taskId, minIntervalMs);
-    if (!cooldown.ok) {
-      await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
-      client.release();
-      return { ok: false, code: "COOLDOWN", retryAfterMs: cooldown.retryAfterMs };
-    }
-  } catch (error) {
-    await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
-    client.release();
-    throw error;
-  }
-
-  return {
-    ok: true,
-    release: async () => {
-      try {
-        await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
-      } finally {
-        client.release();
-      }
-    },
-  };
+  return acquireManualSyncLocks(portalId, [taskId], minIntervalMs);
 }

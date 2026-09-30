@@ -33,9 +33,13 @@
 
   function apiRequest(path, options) {
     var controller = new AbortController();
+    var timeoutMs =
+      options && typeof options.timeoutMs === "number" && options.timeoutMs > 0
+        ? options.timeoutMs
+        : REQUEST_TIMEOUT_MS;
     var timeoutId = setTimeout(function () {
       controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+    }, timeoutMs);
 
     var headers = Object.assign(
       {

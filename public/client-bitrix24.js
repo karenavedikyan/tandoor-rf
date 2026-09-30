@@ -374,7 +374,9 @@
     if (!uiState) {
       return;
     }
-    if (uiState.tab) {
+    var currentTabEl = root.querySelector('.pc-tabs button[aria-selected="true"]');
+    var currentTab = currentTabEl ? currentTabEl.getAttribute("data-card-tab") : null;
+    if (uiState.tab && currentTab === uiState.tab) {
       var tabBtn = root.querySelector('[data-card-tab="' + uiState.tab + '"]');
       if (tabBtn && tabBtn.getAttribute("aria-selected") !== "true") {
         tabBtn.click();
@@ -412,19 +414,21 @@
     paintSyncToolbars(root);
   }
 
+  var SYNC_REQUEST_TIMEOUT_MS = 70000;
+
   function startManualSync(root, clientGuid) {
     var state = ensureSyncState(root);
     if (state.phase === "running" || state.phase === "cooldown") {
-      return;
+      return Promise.resolve();
     }
     var uiState = captureBitrix24UiState(root);
     state.phase = "running";
     state.message = "Синхронизация…";
     paintSyncToolbars(root);
-    api
+    return api
       .apiRequest(
         "/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/sync",
-        { method: "POST", body: {} },
+        { method: "POST", body: {}, timeoutMs: SYNC_REQUEST_TIMEOUT_MS },
       )
       .then(function (result) {
         if (result.response.status === 429) {
@@ -439,14 +443,28 @@
         }
         if (result.response.status === 200 && result.data) {
           var body = result.data;
-          if (body.status === "success" && body.complete) {
+          var syncSucceeded = body.status === "success" && body.complete;
+          if (syncSucceeded) {
             state.phase = "success";
             state.lastSuccessAtLabel = body.syncedAtLabel || null;
+            state.message = body.message || "";
           } else {
             state.phase = "error";
+            state.message = body.message || "Не удалось синхронизировать.";
           }
-          state.message = body.message || "";
-          return reloadBitrix24Data(root, clientGuid, uiState);
+          if (!syncSucceeded) {
+            paintSyncToolbars(root);
+            return;
+          }
+          return reloadBitrix24Data(root, clientGuid, uiState).then(function (reloadResult) {
+            if (reloadResult && !reloadResult.ok) {
+              state.phase = "error";
+              state.message =
+                reloadResult.error ||
+                "Синхронизация выполнена, но не удалось обновить карточку.";
+            }
+            paintSyncToolbars(root);
+          });
         }
         state.phase = "error";
         state.message =
@@ -454,9 +472,12 @@
           "Не удалось синхронизировать.";
         paintSyncToolbars(root);
       })
-      .catch(function () {
+      .catch(function (err) {
         state.phase = "error";
-        state.message = "Ошибка сети.";
+        state.message =
+          err && err.name === "AbortError"
+            ? api.mapRequestError(err, Math.round(SYNC_REQUEST_TIMEOUT_MS / 1000))
+            : "Ошибка сети.";
         paintSyncToolbars(root);
       });
   }
@@ -643,17 +664,21 @@
   }
 
   function reloadBitrix24Data(root, clientGuid, preservedUi) {
-    loadBitrix24Sections(root, clientGuid, preservedUi || captureBitrix24UiState(root));
+    return loadBitrix24Sections(
+      root,
+      clientGuid,
+      preservedUi || captureBitrix24UiState(root),
+    );
   }
 
   function mountWorkTab(root, clientGuid) {
-    loadBitrix24Sections(root, clientGuid, null);
+    return loadBitrix24Sections(root, clientGuid, null);
   }
 
   function loadBitrix24Sections(root, clientGuid, uiStateToRestore) {
     var container = root.querySelector("#pc-bitrix24-work");
     if (!container) {
-      return;
+      return Promise.resolve({ ok: true });
     }
     ensureSyncControls(root, clientGuid);
     var loadId = (root._bitrix24LoadId || 0) + 1;
@@ -662,12 +687,14 @@
     if (overview) overview.innerHTML = renderState("Загрузка задач…", "loading");
     container.innerHTML = renderState("Загрузка данных Битрикс24…", "loading");
 
-    Promise.all([
+    return Promise.all([
       api.apiRequest("/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/label"),
       api.apiRequest("/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/tasks"),
     ])
       .then(function (results) {
-        if (root._bitrix24LoadId !== loadId || !root.isConnected) return;
+        if (root._bitrix24LoadId !== loadId || !root.isConnected) {
+          return { ok: true };
+        }
         var labelResult = results[0];
         var tasksResult = results[1];
         var labelStatus = labelResult.response.status;
@@ -799,12 +826,16 @@
               });
           });
         }
+        return { ok: true };
       })
       .catch(function () {
-        if (root._bitrix24LoadId !== loadId || !root.isConnected) return;
+        if (root._bitrix24LoadId !== loadId || !root.isConnected) {
+          return { ok: true };
+        }
         container.innerHTML = renderState("Не удалось загрузить блок Битрикс24.", "error");
         renderOverview(root, clientGuid, null);
         paintSyncToolbars(root);
+        return { ok: false, error: "Не удалось загрузить блок Битрикс24." };
       });
   }
 

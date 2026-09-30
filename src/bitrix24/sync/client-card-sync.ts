@@ -3,7 +3,7 @@ import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
 import { formatMskDateTime } from "../../clients/dto";
 import {
-  acquireManualSyncLock,
+  acquireManualSyncLocks,
   loadManualSyncMinIntervalMs,
 } from "./manual-sync-lock";
 import { runBitrix24TaskSync, type Bitrix24SyncResult } from "./run-sync";
@@ -92,6 +92,30 @@ function denyResponse(
   };
 }
 
+function mergeSyncResults(
+  aggregate: Bitrix24SyncResult,
+  result: Bitrix24SyncResult,
+): Bitrix24SyncResult {
+  return {
+    ...aggregate,
+    ok: aggregate.ok && result.ok,
+    status:
+      aggregate.status === "failed" || result.status === "failed"
+        ? aggregate.status === "partial" || result.status === "partial"
+          ? "partial"
+          : "failed"
+        : aggregate.status === "partial" || result.status === "partial"
+          ? "partial"
+          : "success",
+    tasksFetched: aggregate.tasksFetched + result.tasksFetched,
+    cacheWrites: aggregate.cacheWrites + result.cacheWrites,
+    checklistsSynced: aggregate.checklistsSynced + result.checklistsSynced,
+    checklistsFailed: aggregate.checklistsFailed + result.checklistsFailed,
+    complete: aggregate.complete && result.complete,
+    message: result.complete ? aggregate.message : result.message,
+  };
+}
+
 export async function runClientCardBitrix24Sync(
   options: ClientCardSyncOptions,
 ): Promise<ClientCardSyncResponse> {
@@ -105,24 +129,20 @@ export async function runClientCardBitrix24Sync(
     const status =
       scope.code === "NOT_CONFIGURED"
         ? 503
-        : scope.code === "TASK_NOT_ON_CARD" || scope.code === "SUMMARY_ONLY"
+        : scope.code === "TASK_NOT_ON_CARD" ||
+            scope.code === "SUMMARY_ONLY" ||
+            scope.code === "BINDING_UNCONFIRMED"
           ? 403
           : 403;
     return denyResponse(status, scope.code);
   }
 
   const minIntervalMs = loadManualSyncMinIntervalMs(env);
-  const releases: Array<() => Promise<void>> = [];
-  for (const taskId of scope.taskIds) {
-    const lock = await acquireManualSyncLock(scope.portalId, taskId, minIntervalMs);
-    if (!lock.ok) {
-      await Promise.all(releases.map((release) => release()));
-      return denyResponse(429, lock.code, lock.retryAfterMs);
-    }
-    releases.push(lock.release);
+  const lock = await acquireManualSyncLocks(scope.portalId, scope.taskIds, minIntervalMs);
+  if (!lock.ok) {
+    return denyResponse(429, lock.code, lock.retryAfterMs);
   }
 
-  const syncedAt = new Date();
   let aggregate: Bitrix24SyncResult | null = null;
   try {
     for (const taskId of scope.taskIds) {
@@ -134,31 +154,10 @@ export async function runClientCardBitrix24Sync(
         resolvePortalAddresses: options.resolvePortalAddresses,
         env,
       });
-      if (!aggregate) {
-        aggregate = result;
-        continue;
-      }
-      aggregate = {
-        ...aggregate,
-        ok: aggregate.ok && result.ok,
-        status:
-          aggregate.status === "failed" || result.status === "failed"
-            ? aggregate.status === "partial" || result.status === "partial"
-              ? "partial"
-              : "failed"
-            : aggregate.status === "partial" || result.status === "partial"
-              ? "partial"
-              : "success",
-        tasksFetched: aggregate.tasksFetched + result.tasksFetched,
-        cacheWrites: aggregate.cacheWrites + result.cacheWrites,
-        checklistsSynced: aggregate.checklistsSynced + result.checklistsSynced,
-        checklistsFailed: aggregate.checklistsFailed + result.checklistsFailed,
-        complete: aggregate.complete && result.complete,
-        message: result.complete ? aggregate.message : result.message,
-      };
+      aggregate = aggregate ? mergeSyncResults(aggregate, result) : result;
     }
   } finally {
-    await Promise.all(releases.map((release) => release()));
+    await lock.release();
   }
 
   const result = aggregate!;
@@ -172,6 +171,8 @@ export async function runClientCardBitrix24Sync(
     return denyResponse(403, postDeny);
   }
 
+  const finishedAt = new Date();
+
   if (!result.ok && result.status === "failed" && result.tasksFetched === 0) {
     return {
       httpStatus: 200,
@@ -179,16 +180,15 @@ export async function runClientCardBitrix24Sync(
         status: "failed",
         complete: false,
         message: mapTransportFailure(result.message),
-        syncedAt: syncedAt.toISOString(),
-        syncedAtLabel: formatMskDateTime(syncedAt),
+        syncedAt: finishedAt.toISOString(),
+        syncedAtLabel: formatMskDateTime(finishedAt),
         tasksSynced: 0,
         checklistsSynced: 0,
       },
     };
   }
 
-  const responseStatus =
-    result.status === "skipped" ? "failed" : result.status;
+  const responseStatus = result.status === "skipped" ? "failed" : result.status;
 
   return {
     httpStatus: 200,
@@ -196,8 +196,8 @@ export async function runClientCardBitrix24Sync(
       status: responseStatus,
       complete: result.complete,
       message: mapSyncResultMessage(result),
-      syncedAt: syncedAt.toISOString(),
-      syncedAtLabel: formatMskDateTime(syncedAt),
+      syncedAt: finishedAt.toISOString(),
+      syncedAtLabel: formatMskDateTime(finishedAt),
       tasksSynced: result.cacheWrites,
       checklistsSynced: result.checklistsSynced,
     },

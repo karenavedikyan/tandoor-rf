@@ -233,7 +233,9 @@ export async function runBitrix24TaskSync(
 
   if (!readResult.ok || (options.taskId !== undefined && (!readResult.data.complete || readResult.data.tasks.length !== 1))) {
     const reason = readResult.ok ? "PILOT_TASK_NOT_COMPLETE" : readResult.code;
-    const message = readResult.ok ? "Pilot task is missing or incomplete; no cache writes." : readResult.message;
+    const message = readResult.ok
+      ? "Pilot task is missing or incomplete; no cache writes."
+      : readResult.code;
     const journalId = options.apply
       ? await insertSyncJournalEntry({
           runMode: "apply",

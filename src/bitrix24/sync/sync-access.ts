@@ -3,20 +3,26 @@ import type { Bitrix24ObjectType } from "../labels/format";
 import { loadBitrix24Config } from "../config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
 import {
+  canViewBitrixTaskSummaryForUser,
   canViewFullBitrixTaskForUser,
 } from "../tasks/work-access";
-import { isObjectLinkedToClientCard } from "../tasks/object-access";
+import { canReadBoundBitrixObject, isObjectLinkedToClientCard } from "../tasks/object-access";
 import {
   evaluateUserBitrixTaskConfig,
   type TaskVisibilityDenyCode,
 } from "../tasks/access";
-import { findEmployeePortalLink, findPublishedTaskById } from "../tasks/repository";
+import {
+  findEmployeePortalLink,
+  findPublishedTaskById,
+  findTaskSnapshotById,
+} from "../tasks/repository";
 
 export type ManualSyncDenyCode =
   | TaskVisibilityDenyCode
   | "NOT_CONFIGURED"
   | "CARD_NOT_LINKED"
   | "TASK_NOT_ON_CARD"
+  | "BINDING_UNCONFIRMED"
   | "SUMMARY_ONLY";
 
 export type ManualSyncScopeResult =
@@ -47,6 +53,8 @@ export function mapManualSyncDenyMessage(code: ManualSyncDenyCode): string {
       return "Задача не входит в разрешённый список пилота.";
     case "TASK_NOT_ON_CARD":
       return "Задача не относится к этой карточке клиента.";
+    case "BINDING_UNCONFIRMED":
+      return "Задача не подтверждена для объекта этой карточки.";
     case "SUMMARY_ONLY":
       return "Недостаточно прав для синхронизации полной задачи и чек-листа.";
     case "NOT_PUBLISHED":
@@ -56,16 +64,19 @@ export function mapManualSyncDenyMessage(code: ManualSyncDenyCode): string {
   }
 }
 
-async function isPilotTaskEligibleForCard(
+/** Pre-sync: allow trigger without fresh cache; deny summary-only and foreign-card tasks. */
+async function assessManualSyncPrecheck(
   context: AccessContext,
   portalId: string,
   cardGuid: string,
   taskId: string,
+  bitrixUserId: string,
 ): Promise<ManualSyncDenyCode | null> {
   const cached = await findPublishedTaskById(portalId, taskId);
   if (!cached?.objectType || !cached.objectGuid) {
     return null;
   }
+
   const linked = await isObjectLinkedToClientCard(
     cardGuid,
     cached.objectType,
@@ -74,10 +85,26 @@ async function isPilotTaskEligibleForCard(
   if (!linked) {
     return "TASK_NOT_ON_CARD";
   }
-  const full = await canViewFullBitrixTaskForUser(context, portalId, cached, cardGuid);
-  if (!full) {
-    return "SUMMARY_ONLY";
+
+  if (cached.responsibleBitrixUserId !== bitrixUserId) {
+    const summaryOnly = await canViewBitrixTaskSummaryForUser(
+      context,
+      portalId,
+      cached,
+      cardGuid,
+    );
+    if (summaryOnly) {
+      return "SUMMARY_ONLY";
+    }
+    return "TASK_NOT_ON_CARD";
   }
+
+  if (
+    !(await canReadBoundBitrixObject(context, cardGuid, cached.objectType, cached.objectGuid))
+  ) {
+    return "TASK_NOT_ON_CARD";
+  }
+
   return null;
 }
 
@@ -119,14 +146,17 @@ export async function resolveManualSyncScope(
   }
 
   const eligible: string[] = [];
+  let lastDeny: ManualSyncDenyCode | null = null;
   for (const taskId of pilotIds) {
-    const deny = await isPilotTaskEligibleForCard(
+    const deny = await assessManualSyncPrecheck(
       context,
       loaded.config.portalId,
       cardGuid,
       taskId,
+      link.bitrixUserId,
     );
     if (deny === "TASK_NOT_ON_CARD" || deny === "SUMMARY_ONLY") {
+      lastDeny = deny;
       continue;
     }
     if (deny) {
@@ -136,16 +166,7 @@ export async function resolveManualSyncScope(
   }
 
   if (eligible.length === 0) {
-    const firstDeny = await isPilotTaskEligibleForCard(
-      context,
-      loaded.config.portalId,
-      cardGuid,
-      pilotIds[0]!,
-    );
-    if (firstDeny) {
-      return { ok: false, code: firstDeny };
-    }
-    eligible.push(pilotIds[0]!);
+    return { ok: false, code: lastDeny ?? "TASK_NOT_ON_CARD" };
   }
 
   return {
@@ -159,16 +180,44 @@ export async function resolveManualSyncScope(
   };
 }
 
+/** Post-sync: require confirmed binding, card match, responsible, and fresh full-view rights. */
 export async function verifyManualSyncOutcome(
   context: AccessContext,
   portalId: string,
   cardGuid: string,
   taskIds: string[],
 ): Promise<ManualSyncDenyCode | null> {
+  const link = await findEmployeePortalLink(context.userId, portalId);
+  if (!link) {
+    return "NO_EMPLOYEE_LINK";
+  }
+
   for (const taskId of taskIds) {
-    const deny = await isPilotTaskEligibleForCard(context, portalId, cardGuid, taskId);
-    if (deny) {
-      return deny;
+    const snapshot = await findTaskSnapshotById(portalId, taskId);
+    if (!snapshot) {
+      return "BINDING_UNCONFIRMED";
+    }
+    if (
+      snapshot.bindingStatus !== "confirmed" ||
+      !snapshot.objectType ||
+      !snapshot.objectGuid
+    ) {
+      return "BINDING_UNCONFIRMED";
+    }
+    const linked = await isObjectLinkedToClientCard(
+      cardGuid,
+      snapshot.objectType,
+      snapshot.objectGuid,
+    );
+    if (!linked) {
+      return "TASK_NOT_ON_CARD";
+    }
+    if (snapshot.responsibleBitrixUserId !== link.bitrixUserId) {
+      return "TASK_NOT_ON_CARD";
+    }
+    const full = await canViewFullBitrixTaskForUser(context, portalId, snapshot, cardGuid);
+    if (!full) {
+      return "SUMMARY_ONLY";
     }
   }
   return null;

@@ -3,6 +3,11 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import request from "supertest";
 import { formatLabelToken } from "../../src/bitrix24/labels/format";
 import { issueLabelInTransaction } from "../../src/bitrix24/labels/repository";
+import {
+  acquireManualSyncLock,
+  acquireManualSyncLocks,
+  loadManualSyncMinIntervalMs,
+} from "../../src/bitrix24/sync/manual-sync-lock";
 import { runClientCardBitrix24Sync } from "../../src/bitrix24/sync/client-card-sync";
 import { upsertChecklistSnapshot } from "../../src/bitrix24/tasks/checklist-repository";
 import { upsertEmployeePortalLink, upsertTaskSnapshot } from "../../src/bitrix24/tasks/repository";
@@ -476,7 +481,168 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
     }
   });
 
-  it("reports partial result on transport timeout without claiming full rollback", async () => {
+  it("returns 403 after sync when task binding stays unresolved", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "manager@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager User",
+      role: "manager",
+    });
+    await linkManagerToEmployee(databaseUrl, manager.id, MANAGER_A);
+    await seedResponsibleTask({
+      userId: manager.id,
+      bitrixUserId: "42",
+    });
+    const config = sampleWebhookConfig();
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: {
+          body: {
+            result: {
+              tasks: [
+                sampleValidBitrixTask({
+                  ID: "9001",
+                  DESCRIPTION: "Task without client label",
+                  CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+                }),
+              ],
+            },
+            total: 1,
+          },
+        },
+        [checklistUrl]: {
+          body: { result: [sampleChecklistRootGroup()], total: 1 },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 403);
+    if (sync.httpStatus === 403) {
+      assert.match(sync.body.message, /не подтверждена/i);
+    }
+  });
+
+  it("allows sync with stale cache for responsible employee on card", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "manager@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager User",
+      role: "manager",
+    });
+    await linkManagerToEmployee(databaseUrl, manager.id, MANAGER_A);
+    const { label, config } = await seedResponsibleTask({
+      userId: manager.id,
+      bitrixUserId: "42",
+      changedAt: "2026-09-30T08:00:00+03:00",
+    });
+    process.env.BITRIX24_CACHE_ACCESS_TTL_MS = "1000";
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache
+       SET synced_at = NOW() - INTERVAL '2 hours'
+       WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9001"],
+    );
+    await pool.end();
+
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: {
+          body: {
+            result: {
+              tasks: [
+                sampleValidBitrixTask({
+                  ID: "9001",
+                  DESCRIPTION: formatLabelToken(label.labelCode),
+                  CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+                }),
+              ],
+            },
+            total: 1,
+          },
+        },
+        [checklistUrl]: {
+          body: { result: [sampleChecklistRootGroup()], total: 1 },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 200);
+    if (sync.httpStatus === 200) {
+      assert.equal(sync.body.complete, true);
+    }
+  });
+
+  it("releases advisory locks when batch acquire hits cooldown", async () => {
+    await resetPoolForTests();
+    process.env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS = "60000";
+    const first = await acquireManualSyncLock("portal.batch", "9301", 60000);
+    assert.equal(first.ok, true);
+    if (first.ok) {
+      await first.release();
+    }
+    const blocked = await acquireManualSyncLocks("portal.batch", ["9301", "9302"], 60000);
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) {
+      assert.equal(blocked.code, "COOLDOWN");
+    }
+    const parallel = await acquireManualSyncLock("portal.batch", "9302", 0);
+    assert.equal(parallel.ok, true);
+    if (parallel.ok) {
+      await parallel.release();
+    }
+    delete process.env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS;
+  });
+
+  it("blocks concurrent locks for the same portal task", async () => {
+    await resetPoolForTests();
+    const first = await acquireManualSyncLock("portal.example", "9201", 0);
+    assert.equal(first.ok, true);
+    const second = await acquireManualSyncLock("portal.example", "9201", 0);
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.code, "SYNC_IN_PROGRESS");
+    }
+    if (first.ok) {
+      await first.release();
+    }
+  });
+
+  it("enforces cooldown interval between runs", async () => {
+    await resetPoolForTests();
+    process.env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS = "60000";
+    assert.equal(loadManualSyncMinIntervalMs(), 60000);
+    const first = await acquireManualSyncLock("portal.example", "9202", 60000);
+    assert.equal(first.ok, true);
+    if (first.ok) {
+      await first.release();
+    }
+    const second = await acquireManualSyncLock("portal.example", "9202", 60000);
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.code, "COOLDOWN");
+      assert.ok(second.retryAfterMs > 0);
+    }
+    delete process.env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS;
+  });
+
+  it("reports partial result when Bitrix checklist returns 403", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "manager@example.com",
@@ -521,6 +687,49 @@ describe("bitrix24 manual card sync integration", { concurrency: false }, () => 
       assert.equal(sync.body.status, "partial");
       assert.equal(sync.body.complete, false);
       assert.match(sync.body.message, /частич/i);
+    }
+  });
+
+  it("returns failed transport result on Bitrix task read timeout", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "manager@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager User",
+      role: "manager",
+    });
+    await linkManagerToEmployee(databaseUrl, manager.id, MANAGER_A);
+    const { config } = await seedResponsibleTask({
+      userId: manager.id,
+      bitrixUserId: "42",
+    });
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      env: {
+        ...process.env,
+        BITRIX24_ENABLED: "true",
+        BITRIX24_WEBHOOK_URL: config.webhookBaseUrl,
+        BITRIX24_REQUEST_TIMEOUT_MS: "1000",
+        BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS: "0",
+      },
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          return { body: { result: { tasks: [] }, total: 0 } };
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 200);
+    if (sync.httpStatus === 200) {
+      assert.equal(sync.body.status, "failed");
+      assert.equal(sync.body.complete, false);
+      assert.match(sync.body.message, /ожидан/i);
     }
   });
 });
