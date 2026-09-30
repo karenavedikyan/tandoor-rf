@@ -19,8 +19,6 @@ import {
 } from "../bitrix24/tasks/access";
 import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
 import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
-import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
-import { formatBoundObjectLabel } from "../bitrix24/tasks/object-type-labels";
 import {
   canReadBoundBitrixObject,
   canRestoreBitrixObjectLabel,
@@ -28,8 +26,19 @@ import {
 import {
   findEmployeePortalLink,
   findLatestSyncJournalEntry,
+  findPublishedTaskById,
   listPublishedTasksForObject,
 } from "../bitrix24/tasks/repository";
+import {
+  buildFullTaskWorkDto,
+  buildSummaryTaskWorkDto,
+  parseContactActionBody,
+} from "../bitrix24/tasks/task-work-response";
+import {
+  revokeContactAction,
+  setContactActionMarked,
+} from "../bitrix24/tasks/work-repository";
+import { canMutateBitrixTaskContactAction } from "../bitrix24/tasks/work-access";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
 
@@ -336,44 +345,61 @@ export async function getClientBitrix24TasksHandler(
     queryObjectGuid,
   );
 
-  const visible = [];
+  const visible: Record<string, unknown>[] = [];
   let selfDeny: TaskVisibilityDenyCode | null = null;
   let hadAudienceHidden = false;
   let hadObjectHidden = false;
+  const actorDisplayName = req.authUser?.fullName ?? "Сотрудник";
 
   for (const row of rows) {
+    if (!row.objectType || !row.objectGuid) {
+      continue;
+    }
     const objectAllowed = await canReadBoundBitrixObject(
       context,
       cardGuid,
-      row.objectType!,
-      row.objectGuid!,
+      row.objectType,
+      row.objectGuid,
     );
     if (!objectAllowed) {
       hadObjectHidden = true;
       continue;
     }
-    if (!isTaskAudienceMatch(row, employeeLink)) {
-      hadAudienceHidden = true;
+
+    const fullDto = await buildFullTaskWorkDto({
+      context,
+      portalId: loaded.config.portalId,
+      cardGuid,
+      portalHost: loaded.config.portalHost,
+      portalPublicUrl: runtime.portalPublicUrl,
+      task: row,
+      actorDisplayName,
+    });
+    if (fullDto) {
+      visible.push(fullDto);
       continue;
     }
 
-    const visibility = await canViewTaskForUser(context, loaded.config.portalId, row);
-    if (!visibility.ok) {
-      if (!selfDeny) {
-        selfDeny = visibility.code;
-      }
+    const summaryDto = await buildSummaryTaskWorkDto({
+      context,
+      portalId: loaded.config.portalId,
+      cardGuid,
+      task: row,
+      actorDisplayName,
+    });
+    if (summaryDto) {
+      visible.push(summaryDto);
       continue;
     }
-    visible.push({
-      taskId: row.taskId,
-      title: row.title,
-      statusLabel: formatTaskStatusLabel(row.statusLabel),
-      deadline: formatDisplayDate(row.deadline),
-      changedAt: formatDisplayDate(row.changedAt),
-      responsibleBitrixUserId: row.responsibleBitrixUserId,
-      boundObjectLabel: formatBoundObjectLabel(row.objectType),
-      portalUrl: buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, row.taskId),
-    });
+
+    if (isTaskAudienceMatch(row, employeeLink)) {
+      const visibility = await canViewTaskForUser(context, loaded.config.portalId, row);
+      if (!visibility.ok && !selfDeny) {
+        selfDeny = visibility.code;
+      }
+    } else {
+      hadAudienceHidden = true;
+    }
   }
 
   let state = "ready";
@@ -445,8 +471,99 @@ export async function getClientBitrix24TasksHandler(
         }
       : null,
     portalConfigured: Boolean(
-      buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1"),
+      buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1", "1"),
     ),
     tasks: visible,
   });
+}
+
+export async function putClientBitrix24TaskContactHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  const taskId = String(req.params.taskId ?? "").trim();
+  if (!isValidUuidParam(cardGuid)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
+    return;
+  }
+  if (!taskId) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid task id."));
+    return;
+  }
+
+  const context = req.accessContext!;
+  const allowed = await canViewClientCard(context, cardGuid);
+  if (!allowed) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const parsedBody = parseContactActionBody(req.body);
+  if (!parsedBody.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, parsedBody.message));
+    return;
+  }
+
+  const loaded = loadBitrix24Config();
+  if (!loaded.ok) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Bitrix24 is not configured."));
+    return;
+  }
+
+  const task = await findPublishedTaskById(loaded.config.portalId, taskId);
+  if (!task?.objectType || !task.objectGuid) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Task not found."));
+    return;
+  }
+
+  const linked = await isObjectLinkedToClientCard(cardGuid, task.objectType, task.objectGuid);
+  if (!linked) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Task not found."));
+    return;
+  }
+
+  if (!(await canMutateBitrixTaskContactAction(context, loaded.config.portalId, task, cardGuid))) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Insufficient rights for this task."));
+    return;
+  }
+
+  const actorUserId = context.userId;
+  if (parsedBody.marked) {
+    const action = await setContactActionMarked({
+      portalId: loaded.config.portalId,
+      taskId: task.taskId,
+      objectType: task.objectType,
+      objectGuid: task.objectGuid,
+      actorUserId,
+      commentText: parsedBody.comment,
+    });
+    setNoStore(res);
+    res.status(200).json({
+      marked: true,
+      markedAt: action.markedAt,
+      markedAtLabel: formatDisplayDate(action.markedAt),
+      markedByDisplayName: req.authUser?.fullName ?? null,
+      comment: action.commentText,
+    });
+    return;
+  }
+
+  await revokeContactAction({
+    portalId: loaded.config.portalId,
+    taskId: task.taskId,
+    objectType: task.objectType,
+    objectGuid: task.objectGuid,
+    actorUserId,
+  });
+  setNoStore(res);
+  res.status(200).json({ marked: false });
 }

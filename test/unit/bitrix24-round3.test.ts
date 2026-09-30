@@ -35,6 +35,7 @@ describe("bitrix24 round3", () => {
       "example.bitrix24.ru",
       "https://example.bitrix24.ru:8443",
       "1",
+      "42",
     );
     assert.equal(url, null);
   });
@@ -44,6 +45,7 @@ describe("bitrix24 round3", () => {
       "example.bitrix24.ru",
       "https://example.bitrix24.ru/rest/1/token",
       "1",
+      "42",
     );
     assert.equal(url, null);
   });

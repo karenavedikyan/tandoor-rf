@@ -22,7 +22,7 @@ export function isAudienceOnlyDeny(code: TaskVisibilityDenyCode): boolean {
   return code === "NO_CLIENT_ACCESS";
 }
 
-function isLinkAccessValid(
+export function isLinkAccessValid(
   link: { accessExpiresAt: string | null; confirmedAt: string },
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
   nowMs = Date.now(),
@@ -80,7 +80,7 @@ function isTaskSnapshotCurrent(
   return { ok: true };
 }
 
-export async function canViewTaskForUser(
+export async function canViewPublishedTaskCacheForUser(
   context: AccessContext,
   portalId: string,
   task: TaskCacheRow,
@@ -104,11 +104,20 @@ export async function canViewTaskForUser(
   if (!isLinkAccessValid(link, runtime)) {
     return { ok: false, code: "ACCESS_EXPIRED" };
   }
-  const snapshot = isTaskSnapshotCurrent(task, link, runtime);
-  if (!snapshot.ok) {
-    return snapshot;
+  return isTaskSnapshotCurrent(task, link, runtime);
+}
+
+export async function canViewTaskForUser(
+  context: AccessContext,
+  portalId: string,
+  task: TaskCacheRow,
+): Promise<TaskVisibilityResult> {
+  const cache = await canViewPublishedTaskCacheForUser(context, portalId, task);
+  if (!cache.ok) {
+    return cache;
   }
-  if (!task.responsibleBitrixUserId || task.responsibleBitrixUserId !== link.bitrixUserId) {
+  const link = await findEmployeePortalLink(context.userId, portalId);
+  if (!task.responsibleBitrixUserId || task.responsibleBitrixUserId !== link?.bitrixUserId) {
     return { ok: false, code: "NO_CLIENT_ACCESS" };
   }
   return { ok: true };

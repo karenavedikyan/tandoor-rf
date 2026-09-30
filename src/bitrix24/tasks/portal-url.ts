@@ -1,3 +1,5 @@
+import { parseCanonicalBitrixId } from "../parse-id";
+
 const BLOCKED_PUBLIC_PATH_FRAGMENTS = ["/rest/", "/webhook/", "/oauth/"];
 
 function normalizeHttpsOrigin(hostOrUrl: string): URL | null {
@@ -25,8 +27,11 @@ export function buildTaskPortalUrl(
   portalHost: string,
   portalPublicUrl: string | null,
   taskId: string,
+  responsibleBitrixUserId?: string | null,
 ): string | null {
-  if (!portalPublicUrl) {
+  const userId = parseCanonicalBitrixId(responsibleBitrixUserId);
+  const parsedTaskId = parseCanonicalBitrixId(taskId);
+  if (!portalPublicUrl || !userId || !parsedTaskId) {
     return null;
   }
   const configured = normalizeHttpsOrigin(portalHost);
@@ -37,5 +42,5 @@ export function buildTaskPortalUrl(
   if (publicBase.origin !== configured.origin) {
     return null;
   }
-  return `${publicBase.origin}/company/personal/tasks/task/view/${encodeURIComponent(taskId)}/`;
+  return `${publicBase.origin}/company/personal/user/${userId}/tasks/task/view/${parsedTaskId}/`;
 }
