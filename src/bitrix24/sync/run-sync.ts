@@ -20,6 +20,7 @@ export type Bitrix24SyncOptions = {
   bitrixUserId: string;
   apply: boolean;
   maxPages?: number;
+  taskId?: string;
   pinnedRequest?: PinnedRequestFn;
   resolvePortalAddresses?: ResolvePortalAddressesFn;
   env?: NodeJS.ProcessEnv;
@@ -73,7 +74,8 @@ export async function runBitrix24TaskSync(
   const config = loaded.config;
   const runtime = loadBitrix24TasksRuntimeConfig(env);
   const publishAllowed = isCachePublishAllowed(runtime);
-  const scopeSummary = buildSyncScopeSummary(config.portalId, options.bitrixUserId);
+  const scopeSummary = buildSyncScopeSummary(config.portalId, options.bitrixUserId)
+    + (options.taskId ? `;task_id=${options.taskId}` : "");
 
   const confirmed = await isPortalBitrixUserConfirmed(config.portalId, options.bitrixUserId);
   if (!confirmed) {
@@ -109,17 +111,20 @@ export async function runBitrix24TaskSync(
   const readResult = await readBitrixTasksForUser(config, options.bitrixUserId, {
     operation,
     maxPages: options.maxPages ?? config.maxPages,
+    taskId: options.taskId,
   });
 
-  if (!readResult.ok) {
+  if (!readResult.ok || (options.taskId !== undefined && (!readResult.data.complete || readResult.data.tasks.length !== 1))) {
+    const reason = readResult.ok ? "PILOT_TASK_NOT_COMPLETE" : readResult.code;
+    const message = readResult.ok ? "Pilot task is missing or incomplete; no cache writes." : readResult.message;
     const journalId = options.apply
       ? await insertSyncJournalEntry({
           runMode: "apply",
           scopeSummary,
           status: "failed",
           summary: {
-            reason: readResult.code,
-            message: readResult.message,
+            reason,
+            message,
             bitrixUserId: options.bitrixUserId,
           },
         })
@@ -136,7 +141,7 @@ export async function runBitrix24TaskSync(
       cacheWrites: 0,
       versionConflicts: 0,
       complete: false,
-      message: readResult.message,
+      message,
       journalId,
     };
   }

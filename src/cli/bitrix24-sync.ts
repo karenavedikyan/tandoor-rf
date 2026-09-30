@@ -15,6 +15,7 @@ async function main(): Promise<void> {
     bitrixUserId: parsed.options.bitrixUserId,
     apply: parsed.options.apply,
     maxPages: parsed.options.maxPages,
+    taskId: parsed.options.taskId,
   });
 
   console.log(JSON.stringify(result, null, 2));

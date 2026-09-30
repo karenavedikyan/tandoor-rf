@@ -279,6 +279,47 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
     assert.ok(tasksRes.body.sync?.lastFinishedAt);
   });
 
+  it("single-task pilot writes only the exact task and refuses missing or mismatched scope", async () => {
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      for (const tasks of [
+        [],
+        [sampleValidBitrixTask({ ID: "9002" })],
+        [sampleValidBitrixTask({ ID: "9001", RESPONSIBLE_ID: "43" })],
+      ]) {
+        const { pinnedRequest } = createBitrixMockPinnedRequest({
+          [`${config.webhookBaseUrl}tasks.task.list`]: {body: {result: {tasks}, total: tasks.length}},
+        });
+        const result = await runBitrix24TaskSync({
+          bitrixUserId: "42", taskId: "9001", apply: true,
+          pinnedRequest, resolvePortalAddresses: createSafePortalResolver(),
+        });
+        assert.equal(result.status, "failed");
+        assert.equal(result.cacheWrites, 0);
+      }
+      const { pinnedRequest } = createBitrixMockPinnedRequest({
+        [`${config.webhookBaseUrl}tasks.task.list`]: {body: {
+          result: {tasks: [sampleValidBitrixTask({ID:"9001", DESCRIPTION: formatLabelToken(label.labelCode)})]},
+          total: 1,
+        }},
+      });
+      const result = await runBitrix24TaskSync({
+        bitrixUserId: "42", taskId: "9001", apply: true,
+        pinnedRequest, resolvePortalAddresses: createSafePortalResolver(),
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.cacheWrites, 1);
+      const app = await loadApp();
+      const cookie = await login("admin@example.com");
+      const res = await request(app).get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`).set(authHeaders(cookie));
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.tasks.map((t: {taskId:string}) => t.taskId), ["9001"]);
+    } finally {await pool.end();}
+  });
+
   it("reports conflict when task description contains different labels", async () => {
     const config = sampleWebhookConfig();
     const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
