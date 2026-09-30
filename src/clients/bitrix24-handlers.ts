@@ -39,6 +39,7 @@ import {
   setContactActionMarked,
 } from "../bitrix24/tasks/work-repository";
 import { canMutateBitrixTaskContactAction } from "../bitrix24/tasks/work-access";
+import { runClientCardBitrix24Sync } from "../bitrix24/sync/client-card-sync";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
 
@@ -475,6 +476,63 @@ export async function getClientBitrix24TasksHandler(
     ),
     tasks: visible,
   });
+}
+
+export async function postClientBitrix24SyncHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!isValidUuidParam(cardGuid)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
+    return;
+  }
+
+  const context = req.accessContext!;
+  const allowed = await canViewClientCard(context, cardGuid);
+  if (!allowed) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const target = await resolveTaskTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
+    return;
+  }
+
+  const result = await runClientCardBitrix24Sync({
+    context,
+    cardGuid,
+    objectType: target.objectType,
+    objectGuid: target.objectGuid,
+    holdingGuid: target.holdingGuid,
+  });
+
+  setNoStore(res);
+  if (result.httpStatus === 200) {
+    res.status(200).json(result.body);
+    return;
+  }
+  if (result.httpStatus === 429) {
+    if (result.body.retryAfterMs !== undefined) {
+      res.setHeader("Retry-After", String(Math.ceil(result.body.retryAfterMs / 1000)));
+    }
+    res.status(429).json({
+      code: ERROR_CODES.RATE_LIMITED,
+      message: result.body.message,
+      retryAfterMs: result.body.retryAfterMs,
+    });
+    return;
+  }
+  if (result.httpStatus === 503) {
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, result.body.message));
+    return;
+  }
+  res.status(result.httpStatus).json(apiError(ERROR_CODES.FORBIDDEN, result.body.message));
 }
 
 export async function putClientBitrix24TaskContactHandler(

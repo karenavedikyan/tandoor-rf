@@ -10,6 +10,41 @@ export type MockBitrixResponse = {
   redirect?: boolean;
 };
 
+async function withPinnedRequestDeadline<T>(
+  options: PinnedRequestOptions,
+  work: () => Promise<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+
+    const finish = (handler: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      options.signal?.removeEventListener("abort", onAbort);
+      handler();
+    };
+
+    const onAbort = () => {
+      finish(() => reject(new Error("ABORTED")));
+    };
+    options.signal?.addEventListener("abort", onAbort);
+    timer = setTimeout(() => {
+      finish(() => reject(new Error("TIMEOUT")));
+    }, options.timeoutMs);
+
+    work().then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
 export function createBitrixMockPinnedRequest(
   handlers: Record<
     string,
@@ -30,10 +65,11 @@ export function createBitrixMockPinnedRequest(
     calls.push({ url, body: requestBody, pinned: options.pinned });
 
     const handler = handlers[url];
-    const resolved =
+    const resolved = await withPinnedRequestDeadline(options, async () =>
       typeof handler === "function"
         ? await handler(requestBody)
-        : handler ?? { status: 404, body: { error: "NOT_FOUND" } };
+        : handler ?? { status: 404, body: { error: "NOT_FOUND" } },
+    );
 
     if (resolved.redirect) {
       return {

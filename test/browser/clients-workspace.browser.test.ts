@@ -55,7 +55,7 @@ function createMockController(page: Page, initial: MockOptions = {}) {
     installed = true;
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      const mock = resolveMockResponse(url, options, state);
+      const mock = resolveMockResponse(url, options, state, route.request().method());
       if (mock) {
         await route.fulfill(mock);
         return;
@@ -678,6 +678,188 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.equal(await overview.locator(".pc-bitrix24-summary-counts").count(), 0);
     await closePage(page, context);
   });
+
+  it("keeps active tab when user leaves overview during sync wait", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        checklist: { state: "ready", progress: { completed: 1, total: 2 }, items: [] },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.route("**/bitrix24/sync", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "success",
+          complete: true,
+          message: "Данные задач и чек-листов обновлены.",
+          syncedAtLabel: "30.09.2026, 12:05",
+          tasksSynced: 1,
+          checklistsSynced: 1,
+        }),
+      });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector('[data-testid="bitrix24-sync-btn"]');
+    await page.locator("#pc-bitrix24-overview [data-testid='bitrix24-sync-btn']").click();
+    await page.click('[data-card-tab="work"]');
+    await page.locator("#pc-panel-work .pc-bitrix24-sync-status.workspace-status--success").waitFor({
+      state: "visible",
+    });
+    assert.equal(await page.locator('[data-card-tab="work"][aria-selected="true"]').count(), 1);
+    assert.equal(await page.locator('[data-card-tab="overview"][aria-selected="true"]').count(), 0);
+    await closePage(page, context);
+  });
+
+  it("preserves expanded checklist after manual sync reload", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        checklist: {
+          state: "ready",
+          progress: { completed: 1, total: 2 },
+          syncedAtLabel: "30.09.2026, 10:00",
+          items: [{ itemId: "1", title: "Шаг 1", isGroup: false, isComplete: true, children: [] }],
+        },
+        contactAction: { marked: true, canMark: true, canRevoke: true, markedAtLabel: "30.09.2026, 09:00", markedByDisplayName: "Тест" },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click('[data-card-tab="work"]');
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist-summary");
+    await page.locator("#pc-panel-work .pc-bitrix24-checklist-summary").click();
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist-item");
+    await page.locator("#pc-panel-work [data-testid='bitrix24-sync-btn']").click();
+    await page.locator("#pc-panel-work .pc-bitrix24-sync-status.workspace-status--success").waitFor({
+      state: "visible",
+    });
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-checklist[open]");
+    assert.equal(await page.locator("#pc-panel-work .pc-bitrix24-contact-checkbox:checked").count(), 1);
+    await closePage(page, context);
+  });
+
+  it("shows cooldown status for repeated sync without calling webhook", async () => {
+    const { page, context } = await openPage({
+      bitrix24Sync: 429,
+      bitrix24Tasks: { state: "ready", tasks: [] },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.locator('[data-testid="bitrix24-sync-btn"]').first().click();
+    await page.waitForSelector(".pc-bitrix24-sync-status.workspace-status--error");
+    assert.match(await page.locator(".pc-bitrix24-sync-status").first().textContent(), /недоступен|выполняется/i);
+    await closePage(page, context);
+  });
+
+  it("runs manual Bitrix24 sync from shared toolbar without calling webhook", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        deadlineAt: "2030-10-01T10:00:00Z",
+        deadline: "1 окт. 2030 г.",
+        responsible: { state: "confirmed", displayName: "Иванов Иван", internalContactEmail: "ivanov@example.com" },
+        checklist: { state: "ready", progress: { completed: 1, total: 2 }, syncedAtLabel: "30.09.2026, 10:00", items: [] },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    const externalCalls: string[] = [];
+    page.on("request", (req) => {
+      if (/bitrix24\.ru\/rest\//.test(req.url())) {
+        externalCalls.push(req.url());
+      }
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector('[data-testid="bitrix24-sync-btn"]');
+    const syncButtons = page.locator('[data-testid="bitrix24-sync-btn"]');
+    assert.equal(await syncButtons.count(), 2);
+    await syncButtons.first().click();
+    await page.waitForSelector(".pc-bitrix24-sync-status.workspace-status--success");
+    assert.match(await page.locator(".pc-bitrix24-sync-status").first().textContent(), /Обновлено/);
+    assert.equal(externalCalls.length, 0);
+    await page.setViewportSize({ width: 375, height: 844 });
+    await page.waitForTimeout(100);
+    assert.equal(await syncButtons.count(), 2);
+    await closePage(page, context);
+  });
+
+  for (const syncStatus of ["partial", "failed", "forbidden", "reload-failed"]) {
+    it(`clears stale checklist progress after ${syncStatus} sync/reload`, async () => {
+      const task = {
+        taskId: "9001", title: "Документы", accessLevel: "full",
+        statusLabel: "В работе", isOpen: true,
+        responsible: { state: "confirmed", displayName: "Иванов Иван" },
+        checklist: { state: "ready", progress: { completed: 2, total: 3 }, items: [] },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      };
+      const { page, context } = await openPage({
+        bitrix24Tasks: { state: "ready", tasks: [task] },
+        bitrix24Label: { token: "#LK_H_000123" },
+      });
+      await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+      await page.waitForSelector(".pc-bitrix24-checklist-progress");
+      let taskReloads = 0;
+      await page.route("**/bitrix24/tasks", async route => {
+        taskReloads++;
+        await route.fulfill({
+          status: syncStatus === "reload-failed" ? 500 : syncStatus === "forbidden" ? 403 : 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            state: "ready", tasks: [{ ...task, checklist: { state: "error", items: [] } }],
+          }),
+        });
+      });
+      await page.route("**/bitrix24/sync", async route => {
+        await route.fulfill({
+          status: syncStatus === "forbidden" ? 403 : 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            status: syncStatus === "reload-failed" ? "success" : syncStatus,
+            complete: syncStatus === "reload-failed",
+            message: "Результат синхронизации",
+          }),
+        });
+      });
+      await page.locator("#pc-bitrix24-overview [data-testid='bitrix24-sync-btn']").click();
+      await page.waitForFunction(() =>
+        !document.querySelector(".pc-bitrix24-checklist-progress") &&
+        !!document.querySelector(".pc-bitrix24-sync-status.workspace-status--error"),
+      );
+      assert.ok(taskReloads >= 1);
+      assert.equal(await page.locator(".pc-bitrix24-sync-status.workspace-status--success").count(), 0);
+      assert.equal(await page.locator(".pc-bitrix24-checklist-progress").count(), 0);
+      await closePage(page, context);
+    });
+  }
 
   it("navigates prototype tabs without fabricating missing data", async () => {
     const { page, context } = await openPage();

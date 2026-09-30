@@ -367,6 +367,88 @@ export async function listPublishedTasksForObject(
   }));
 }
 
+function mapTaskSnapshotRow(row: {
+  portal_id: string;
+  task_id: string;
+  responsible_bitrix_user_id: string | null;
+  title: string;
+  status_label: string;
+  deadline: string | null;
+  changed_at: Date | string;
+  description_hash: string;
+  synced_at: Date;
+  cache_version: number | string;
+  published: boolean;
+  object_type: Bitrix24ObjectType | null;
+  object_guid: string | null;
+  label_code: string | null;
+  binding_status: string;
+  conflict_reason: string | null;
+  linked_at: Date | null;
+  updated_at: Date;
+}): TaskCacheRow & TaskBindingRow {
+  return {
+    portalId: row.portal_id,
+    taskId: row.task_id,
+    responsibleBitrixUserId: row.responsible_bitrix_user_id,
+    title: row.title,
+    statusLabel: row.status_label,
+    deadline: row.deadline,
+    changedAt: row.changed_at instanceof Date ? row.changed_at.toISOString() : String(row.changed_at),
+    descriptionHash: row.description_hash,
+    syncedAt: row.synced_at.toISOString(),
+    cacheVersion: Number(row.cache_version),
+    published: row.published,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
+    labelCode: row.label_code,
+    bindingStatus: row.binding_status,
+    conflictReason: row.conflict_reason,
+    linkedAt: row.linked_at ? row.linked_at.toISOString() : null,
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export async function findTaskSnapshotById(
+  portalId: string,
+  taskId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<(TaskCacheRow & TaskBindingRow) | null> {
+  const result = await client.query(
+    `SELECT
+       c.portal_id,
+       c.task_id,
+       c.responsible_bitrix_user_id,
+       c.title,
+       c.status_label,
+       c.deadline,
+       c.changed_at,
+       c.description_hash,
+       c.synced_at,
+       c.cache_version,
+       c.published,
+       b.object_type,
+       b.object_guid,
+       b.label_code,
+       b.binding_status,
+       b.conflict_reason,
+       b.linked_at,
+       b.updated_at
+     FROM bitrix24_task_cache c
+     JOIN bitrix24_task_bindings b
+       ON c.portal_id = b.portal_id AND c.task_id = b.task_id
+     WHERE c.portal_id = $1
+       AND c.task_id = $2
+     LIMIT 1`,
+    [portalId, taskId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return mapTaskSnapshotRow(row);
+}
+
 export async function findPublishedTaskById(
   portalId: string,
   taskId: string,
@@ -407,26 +489,7 @@ export async function findPublishedTaskById(
   if (!row) {
     return null;
   }
-  return {
-    portalId: row.portal_id,
-    taskId: row.task_id,
-    responsibleBitrixUserId: row.responsible_bitrix_user_id,
-    title: row.title,
-    statusLabel: row.status_label,
-    deadline: row.deadline,
-    changedAt: row.changed_at instanceof Date ? row.changed_at.toISOString() : String(row.changed_at),
-    descriptionHash: row.description_hash,
-    syncedAt: row.synced_at.toISOString(),
-    cacheVersion: Number(row.cache_version),
-    published: row.published,
-    objectType: row.object_type,
-    objectGuid: row.object_guid,
-    labelCode: row.label_code,
-    bindingStatus: row.binding_status,
-    conflictReason: row.conflict_reason,
-    linkedAt: row.linked_at ? row.linked_at.toISOString() : null,
-    updatedAt: row.updated_at.toISOString(),
-  };
+  return mapTaskSnapshotRow(row);
 }
 
 export async function upsertEmployeePortalLink(

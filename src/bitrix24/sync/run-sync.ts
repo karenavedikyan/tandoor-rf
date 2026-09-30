@@ -36,6 +36,8 @@ export type Bitrix24SyncOptions = {
   pinnedRequest?: PinnedRequestFn;
   resolvePortalAddresses?: ResolvePortalAddressesFn;
   env?: NodeJS.ProcessEnv;
+  /** Server-only card scope guard. Never supplied by a request body. */
+  assertTaskScope?: (task: PreparedTaskWrite) => Promise<void>;
   /** Integration-test fault injection only. */
   testHooks?: {
     failBeforeChecklistWrite?: boolean;
@@ -233,7 +235,9 @@ export async function runBitrix24TaskSync(
 
   if (!readResult.ok || (options.taskId !== undefined && (!readResult.data.complete || readResult.data.tasks.length !== 1))) {
     const reason = readResult.ok ? "PILOT_TASK_NOT_COMPLETE" : readResult.code;
-    const message = readResult.ok ? "Pilot task is missing or incomplete; no cache writes." : readResult.message;
+    const message = readResult.ok
+      ? "Pilot task is missing or incomplete; no cache writes."
+      : readResult.code;
     const journalId = options.apply
       ? await insertSyncJournalEntry({
           runMode: "apply",
@@ -335,6 +339,7 @@ export async function runBitrix24TaskSync(
       const acceptedWrites: AcceptedTaskWrite[] = [];
 
       for (const prepared of preparedWrites) {
+        await options.assertTaskScope?.(prepared);
         const taskClient = await pool.connect();
         try {
           await taskClient.query("BEGIN");
@@ -407,12 +412,14 @@ export async function runBitrix24TaskSync(
       }
 
       for (const accepted of acceptedWrites) {
+        await options.assertTaskScope?.(accepted);
         if (options.testHooks?.failBeforeChecklistWrite) {
           throw new Error("test failure after task commit");
         }
         const readChecklistResult = await readBitrixChecklistForTask(config, accepted.taskId, {
           operation,
         });
+        await options.assertTaskScope?.(accepted);
         const checklistClient = await pool.connect();
         try {
           await checklistClient.query("BEGIN");
