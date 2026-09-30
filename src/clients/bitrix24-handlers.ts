@@ -557,18 +557,13 @@ export async function putClientBitrix24TaskContactHandler(
     return;
   }
 
-  const revoked = await revokeContactAction({
+  await revokeContactAction({
     portalId: loaded.config.portalId,
     taskId: task.taskId,
     objectType: task.objectType,
     objectGuid: task.objectGuid,
     actorUserId,
   });
-  if (!revoked) {
-    setNoStore(res);
-    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Contact action not found."));
-    return;
-  }
   setNoStore(res);
   res.status(200).json({ marked: false });
 }

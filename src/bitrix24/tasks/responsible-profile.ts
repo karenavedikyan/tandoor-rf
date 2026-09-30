@@ -1,4 +1,6 @@
 import { requirePool } from "../../db/pool";
+import { isLinkAccessValid } from "./access";
+import { loadBitrix24TasksRuntimeConfig } from "./config";
 
 export type ResponsibleProfileState =
   | {
@@ -27,21 +29,25 @@ export async function resolveConfirmedResponsibleProfile(
     full_name: string;
     email: string;
     access_expires_at: Date | null;
+    confirmed_at: Date;
   }>(
-    `SELECT u.id::text AS user_id, u.full_name, u.email, l.access_expires_at
+    `SELECT u.id::text AS user_id, u.full_name, u.email, l.access_expires_at, l.confirmed_at
      FROM bitrix24_employee_portal_links l
      JOIN users u ON u.id = l.user_id
      WHERE l.portal_id = $1
        AND l.bitrix_user_id = $2
        AND u.status = 'active'
-     LIMIT 1`,
+     LIMIT 2`,
     [portalId, bitrixUserId],
   );
   const row = result.rows[0];
-  if (!row) {
+  if (!row || result.rows.length !== 1) {
     return { state: "unknown", displayName: null, lkUserId: null, email: null };
   }
-  if (row.access_expires_at && row.access_expires_at.getTime() < Date.now()) {
+  if (!isLinkAccessValid({
+    confirmedAt: row.confirmed_at.toISOString(),
+    accessExpiresAt: row.access_expires_at?.toISOString() ?? null,
+  }, loadBitrix24TasksRuntimeConfig())) {
     return { state: "unknown", displayName: null, lkUserId: null, email: null };
   }
   return {

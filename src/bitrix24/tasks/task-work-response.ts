@@ -141,7 +141,9 @@ export async function buildSummaryTaskWorkDto(input: {
   ) {
     return null;
   }
-  const publication = await findActiveSummaryPublication(input.portalId, input.task.taskId);
+  const publication = await findActiveSummaryPublication(
+    input.portalId, input.task.taskId, input.task.objectType, input.task.objectGuid,
+  );
   if (!publication) {
     return null;
   }
@@ -166,7 +168,7 @@ export async function buildSummaryTaskWorkDto(input: {
 export function parseContactActionBody(body: unknown): {
   ok: true;
   marked: boolean;
-  comment: string | null;
+  comment?: string | null;
 } | { ok: false; message: string } {
   if (!body || typeof body !== "object") {
     return { ok: false, message: "Request body is required." };
@@ -175,7 +177,10 @@ export function parseContactActionBody(body: unknown): {
   if (typeof record.marked !== "boolean") {
     return { ok: false, message: "marked must be a boolean." };
   }
-  if (record.comment === undefined || record.comment === null) {
+  if (record.comment === undefined) {
+    return { ok: true, marked: record.marked };
+  }
+  if (record.comment === null) {
     return { ok: true, marked: record.marked, comment: null };
   }
   if (typeof record.comment !== "string") {

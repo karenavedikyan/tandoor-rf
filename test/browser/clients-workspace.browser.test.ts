@@ -447,6 +447,70 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.match(await page.locator("#pc-panel-work").textContent(), /Поставка оборудования/);
     await captureScreenshot(page, "clients-bitrix24-work-1440-light.png", { width: 1440, height: 900 }, "light");
     await captureScreenshot(page, "clients-bitrix24-work-390-light.png", { width: 390, height: 844 }, "light");
+    // Exercise the real UI controls against a stateful API, not only static rendering.
+    const work = mocks.options.bitrix24Tasks as any;
+    const task = work.tasks[0];
+    const payloads: Array<{ marked: boolean; comment?: string }> = [];
+    let rejectMutation = true;
+    await page.route("**/bitrix24/tasks/9001/contact", async (route) => {
+      assert.equal(route.request().method(), "PUT");
+      const payload = route.request().postDataJSON();
+      payloads.push(payload);
+      if (rejectMutation) {
+        await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ message: "Доступ отозван" }) });
+        return;
+      }
+      task.contactAction = {
+        marked: payload.marked,
+        canMark: true,
+        canRevoke: payload.marked,
+        markedAtLabel: payload.marked ? "30.09.2026 22:45" : null,
+        markedByDisplayName: payload.marked ? "Тестовый сотрудник" : null,
+        comment: payload.marked ? (payload.comment ?? task.contactAction.comment ?? null) : null,
+      };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(task.contactAction) });
+    });
+    const checkbox = page.getByRole("checkbox", { name: "Связаться с ответственным" });
+    assert.equal(await page.locator(".pc-bitrix24-contact-comment-btn").count(), 0);
+    await checkbox.check();
+    await page.waitForSelector(".pc-bitrix24-contact-status.workspace-status--error");
+    assert.equal(await checkbox.isChecked(), false);
+    assert.match(await page.locator(".pc-bitrix24-contact-status").textContent(), /Доступ отозван/);
+    rejectMutation = false;
+    await checkbox.check();
+    await page.waitForSelector(".pc-bitrix24-contact-done");
+    assert.match(await page.locator(".pc-bitrix24-contact-done").textContent(), /Тестовый сотрудник/);
+    await page.locator(".pc-bitrix24-contact-comment-input").fill("Связался, ожидаем решение");
+    await page.getByRole("button", { name: "Сохранить комментарий" }).click();
+    await page.waitForSelector(".pc-bitrix24-contact-comment");
+    assert.match(await page.locator(".pc-bitrix24-contact-comment").textContent(), /ожидаем решение/);
+    await page.reload();
+    await page.waitForSelector("#pc-panel-overview");
+    await page.click('[data-card-tab="work"]');
+    await page.waitForSelector(".pc-bitrix24-contact-done");
+    assert.equal(await checkbox.isChecked(), true);
+    await captureScreenshot(page, "clients-bitrix24-contact-390-light.png", { width: 390, height: 844 }, "light");
+    await captureScreenshot(page, "clients-bitrix24-contact-1440-dark.png", { width: 1440, height: 900 }, "dark");
+    await page.getByRole("button", { name: "Отменить отметку" }).click();
+    await page.waitForFunction(() => !document.querySelector(".pc-bitrix24-contact-revoke-btn"));
+    assert.equal(await checkbox.isChecked(), false);
+    assert.equal(await page.locator(".pc-bitrix24-contact-comment-btn").count(), 0);
+    assert.deepEqual(payloads, [
+      { marked: true }, { marked: true },
+      { marked: true, comment: "Связался, ожидаем решение" }, { marked: false },
+    ]);
+    // A restricted summary never acquires a task title or a full-task link.
+    task.accessLevel = "summary";
+    task.briefText = "Уточнить срок у ответственного";
+    delete task.title;
+    delete task.portalUrl;
+    await page.reload();
+    await page.waitForSelector("#pc-panel-overview");
+    await page.click('[data-card-tab="work"]');
+    await page.waitForSelector(".pc-bitrix24-task--summary");
+    assert.equal(await page.locator(".pc-bitrix24-open-task").count(), 0);
+    assert.match(await page.locator("#pc-panel-work").textContent(), /Иванов Иван/);
+    assert.equal((await page.locator("#pc-panel-work").textContent())?.includes("Поставка оборудования"), false);
     await closePage(page, context);
   });
 

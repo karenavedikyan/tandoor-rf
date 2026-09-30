@@ -16,6 +16,8 @@ export type ContactActionRow = {
 export async function findActiveSummaryPublication(
   portalId: string,
   taskId: string,
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
   client: Pool | PoolClient = requirePool(),
 ): Promise<SummaryPublicationRow | null> {
   const result = await client.query<{
@@ -24,9 +26,11 @@ export async function findActiveSummaryPublication(
   }>(
     `SELECT brief_text, confirmed_at
      FROM bitrix24_task_summary_publications
-     WHERE portal_id = $1 AND task_id = $2 AND revoked_at IS NULL
+     WHERE portal_id = $1 AND task_id = $2
+       AND object_type = $3::bitrix24_object_type AND object_guid = $4::uuid
+       AND revoked_at IS NULL
      LIMIT 1`,
-    [portalId, taskId],
+    [portalId, taskId, objectType, objectGuid],
   );
   const row = result.rows[0];
   if (!row) {
@@ -74,7 +78,47 @@ export async function findActiveContactAction(
   };
 }
 
+type ContactActionKey = {
+  portalId: string;
+  taskId: string;
+  objectType: Bitrix24ObjectType;
+  objectGuid: string;
+  actorUserId: string;
+};
+
+// Serialize all state changes for this employee/action, including the first insert.
+// The state and its audit event must either both commit or both roll back.
+async function withContactTransaction<T>(
+  input: ContactActionKey,
+  work: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await requirePool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      JSON.stringify([
+        input.portalId, input.taskId, input.objectType, input.objectGuid.toLowerCase(),
+        input.actorUserId.toLowerCase(), "contact_responsible",
+      ]),
+    ]);
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function setContactActionMarked(
+  input: ContactActionKey & { commentText?: string | null },
+): Promise<ContactActionRow> {
+  return withContactTransaction(input, (client) => markInTransaction(input, client));
+}
+
+async function markInTransaction(
   input: {
     portalId: string;
     taskId: string;
@@ -83,7 +127,7 @@ export async function setContactActionMarked(
     actorUserId: string;
     commentText?: string | null;
   },
-  client: Pool | PoolClient = requirePool(),
+  client: PoolClient,
 ): Promise<ContactActionRow> {
   const existing = await findActiveContactAction(
     input.portalId,
@@ -146,6 +190,12 @@ export async function setContactActionMarked(
 }
 
 export async function revokeContactAction(
+  input: ContactActionKey,
+): Promise<boolean> {
+  return withContactTransaction(input, (client) => revokeInTransaction(input, client));
+}
+
+async function revokeInTransaction(
   input: {
     portalId: string;
     taskId: string;
@@ -153,7 +203,7 @@ export async function revokeContactAction(
     objectGuid: string;
     actorUserId: string;
   },
-  client: Pool | PoolClient = requirePool(),
+  client: PoolClient,
 ): Promise<boolean> {
   const existing = await findActiveContactAction(
     input.portalId,

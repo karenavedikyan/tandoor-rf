@@ -36,6 +36,9 @@ export async function canViewBitrixTaskSummaryForUser(
   task: TaskWorkRow,
   cardGuid: string,
 ): Promise<boolean> {
+  if (!task.objectType || !task.objectGuid) {
+    return false;
+  }
   if (await canViewFullBitrixTaskForUser(context, portalId, task, cardGuid)) {
     return false;
   }
@@ -61,13 +64,15 @@ export async function canViewBitrixTaskSummaryForUser(
     !(await canReadBoundBitrixObject(
       context,
       cardGuid,
-      task.objectType!,
-      task.objectGuid!,
+      task.objectType,
+      task.objectGuid,
     ))
   ) {
     return false;
   }
-  const publication = await findActiveSummaryPublication(portalId, task.taskId);
+  const publication = await findActiveSummaryPublication(
+    portalId, task.taskId, task.objectType, task.objectGuid,
+  );
   return publication !== null;
 }
 

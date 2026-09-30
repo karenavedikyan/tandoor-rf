@@ -82,11 +82,15 @@
       completed +
       commentBlock +
       '<div class="pc-bitrix24-contact-actions">' +
-      '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-comment-btn">Добавить комментарий</button>' +
       (action.marked
-        ? '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-revoke-btn">Отменить отметку</button>'
+        ? '<label class="pc-label">Комментарий к выполненному действию' +
+          '<textarea class="pc-bitrix24-contact-comment-input" maxlength="2000" rows="2">' +
+          esc(action.comment || "") + '</textarea></label>' +
+          '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-comment-btn">Сохранить комментарий</button>' +
+          '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-revoke-btn">Отменить отметку</button>'
         : "") +
       "</div>" +
+      '<div class="pc-label">Отметка сохраняется только для вас в ЛК. Задача в Битрикс24 не закрывается.</div>' +
       '<span class="workspace-status pc-bitrix24-contact-status" role="status" aria-live="polite"></span>' +
       "</div>"
     );
@@ -169,6 +173,12 @@
       var statusEl = block.querySelector(".pc-bitrix24-contact-status");
       var commentBtn = block.querySelector(".pc-bitrix24-contact-comment-btn");
       var revokeBtn = block.querySelector(".pc-bitrix24-contact-revoke-btn");
+      var commentInput = block.querySelector(".pc-bitrix24-contact-comment-input");
+      function setBusy(busy) {
+        block.querySelectorAll("input, button, textarea").forEach(function (control) {
+          control.disabled = busy;
+        });
+      }
 
       function setStatus(text, ok) {
         if (!statusEl) {
@@ -183,7 +193,7 @@
       if (checkbox) {
         checkbox.addEventListener("change", function () {
           var desired = checkbox.checked;
-          checkbox.disabled = true;
+          setBusy(true);
           saveContactAction(clientGuid, taskId, { marked: desired })
             .then(function (result) {
               if (result.response.status === 200) {
@@ -201,18 +211,18 @@
               setStatus("Ошибка сети", false);
             })
             .finally(function () {
-              checkbox.disabled = false;
+              setBusy(false);
             });
         });
       }
 
       if (commentBtn) {
         commentBtn.addEventListener("click", function () {
-          var value = window.prompt("Комментарий (необязательно):", "");
-          if (value === null) {
+          if (!checkbox || !checkbox.checked || !commentInput) {
             return;
           }
-          commentBtn.disabled = true;
+          var value = commentInput.value;
+          setBusy(true);
           saveContactAction(clientGuid, taskId, { marked: true, comment: value })
             .then(function (result) {
               if (result.response.status === 200) {
@@ -228,14 +238,14 @@
               setStatus("Ошибка сети", false);
             })
             .finally(function () {
-              commentBtn.disabled = false;
+              setBusy(false);
             });
         });
       }
 
       if (revokeBtn) {
         revokeBtn.addEventListener("click", function () {
-          revokeBtn.disabled = true;
+          setBusy(true);
           saveContactAction(clientGuid, taskId, { marked: false })
             .then(function (result) {
               if (result.response.status === 200) {
@@ -251,7 +261,7 @@
               setStatus("Ошибка сети", false);
             })
             .finally(function () {
-              revokeBtn.disabled = false;
+              setBusy(false);
             });
         });
       }

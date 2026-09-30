@@ -22,7 +22,7 @@ export function isAudienceOnlyDeny(code: TaskVisibilityDenyCode): boolean {
   return code === "NO_CLIENT_ACCESS";
 }
 
-function isLinkAccessValid(
+export function isLinkAccessValid(
   link: { accessExpiresAt: string | null; confirmedAt: string },
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
   nowMs = Date.now(),

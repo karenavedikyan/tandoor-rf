@@ -19,6 +19,8 @@ import { sampleWebhookConfig } from "../helpers/bitrix24-mock-fetch";
 import { HOLDING_ONE, linkCardToHolding } from "../helpers/bitrix24-card-fixtures";
 import { insertSummaryPublication } from "../helpers/bitrix24-work-fixtures";
 import { Pool } from "pg";
+import { setContactActionMarked, revokeContactAction } from "../../src/bitrix24/tasks/work-repository";
+import { resolveConfirmedResponsibleProfile } from "../../src/bitrix24/tasks/responsible-profile";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
@@ -237,6 +239,26 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
     assert.equal(res.body.tasks[0]?.title, undefined);
     assert.equal(res.body.tasks[0]?.portalUrl, undefined);
     assert.equal(res.body.tasks[0]?.responsible?.displayName, "Responsible User");
+    // A publication for a different object must never authorize this binding.
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await pool.query(
+        `UPDATE bitrix24_task_summary_publications SET object_guid = $1::uuid`,
+        [CLIENT_TWO],
+      );
+      const mismatched = await request(app)
+        .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+        .set(authHeaders(cookie));
+      assert.equal(mismatched.body.tasks.length, 0);
+      assert.equal(JSON.stringify(mismatched.body).includes("Краткое поручение"), false);
+      const mutation = await request(app)
+        .put(`/api/clients/${CLIENT_ONE}/bitrix24/tasks/9001/contact`)
+        .set(authHeaders(cookie))
+        .send({ marked: true });
+      assert.equal(mutation.status, 403);
+    } finally {
+      await pool.end();
+    }
   });
 
   it("hides unpublished summary from non-responsible viewer", async () => {
@@ -342,6 +364,13 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
       .set(authHeaders(cookieA))
       .send({ marked: true, comment: "Связался A" });
     assert.equal(repeat.status, 200);
+    const retryWithoutComment = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/bitrix24/tasks/9001/contact`)
+      .set(authHeaders(cookieA))
+      .send({ marked: true });
+    assert.equal(retryWithoutComment.status, 200);
+    assert.equal(retryWithoutComment.body.comment, "Связался A");
+    assert.equal(retryWithoutComment.body.markedAt, markA.body.markedAt);
 
     const tasksA = await request(app)
       .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
@@ -359,6 +388,23 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
       .send({ marked: false });
     assert.equal(revoke.status, 200);
     assert.equal(revoke.body.marked, false);
+    const repeatRevoke = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/bitrix24/tasks/9001/contact`)
+      .set(authHeaders(cookieA))
+      .send({ marked: false });
+    assert.equal(repeatRevoke.status, 200);
+    assert.equal(repeatRevoke.body.marked, false);
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const history = await pool.query(
+        `SELECT event_type FROM bitrix24_task_contact_action_history
+         WHERE actor_user_id = $1 ORDER BY recorded_at`,
+        [managerA.id],
+      );
+      assert.deepEqual(history.rows.map((r) => r.event_type), ["marked", "revoked"]);
+    } finally {
+      await pool.end();
+    }
   });
 
   it("rejects contact mutation for foreign client and after delegation ends", async () => {
@@ -501,6 +547,63 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
       .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
       .set(authHeaders(cookie));
     assert.equal(tasks.body.tasks[0]?.contactAction?.marked, true);
+  });
+
+  it("serializes concurrent marks and revokes without duplicate audit events", async () => {
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const admin = await pool.query("SELECT id FROM users WHERE email = 'admin@example.com'");
+      const input = {
+        portalId: sampleWebhookConfig().portalId, taskId: "9001",
+        objectType: "holding" as const, objectGuid: HOLDING_ONE,
+        actorUserId: admin.rows[0].id,
+      };
+      const marks = await Promise.all(Array.from({ length: 8 }, () => setContactActionMarked(input)));
+      assert.equal(new Set(marks.map((row) => row.id)).size, 1);
+      const revoked = await Promise.all(Array.from({ length: 8 }, () => revokeContactAction(input)));
+      assert.equal(revoked.filter(Boolean).length, 1);
+      const history = await pool.query("SELECT event_type FROM bitrix24_task_contact_action_history ORDER BY recorded_at");
+      assert.deepEqual(history.rows.map((row) => row.event_type), ["marked", "revoked"]);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("rolls back the mark when audit insertion fails", async () => {
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const admin = await pool.query("SELECT id FROM users WHERE email = 'admin@example.com'");
+      await pool.query(`CREATE FUNCTION reject_contact_history() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'test audit failure'; END $$;
+        CREATE TRIGGER reject_history BEFORE INSERT ON bitrix24_task_contact_action_history
+        FOR EACH ROW EXECUTE FUNCTION reject_contact_history();`);
+      await assert.rejects(setContactActionMarked({
+        portalId: sampleWebhookConfig().portalId, taskId: "9001",
+        objectType: "holding", objectGuid: HOLDING_ONE, actorUserId: admin.rows[0].id,
+      }), /test audit failure/);
+      const count = await pool.query("SELECT count(*)::int AS n FROM bitrix24_task_contact_actions");
+      assert.equal(count.rows[0].n, 0);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("does not guess an ambiguous or expired responsible identity", async () => {
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const admin = await pool.query("SELECT id FROM users WHERE email = 'admin@example.com'");
+      const portalId = sampleWebhookConfig().portalId;
+      await upsertEmployeePortalLink({ userId: admin.rows[0].id, portalId, bitrixUserId: "42" });
+      assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "confirmed");
+      await pool.query("UPDATE bitrix24_employee_portal_links SET confirmed_at = NOW() - interval '2 hours'");
+      assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "unknown");
+      await pool.query("UPDATE bitrix24_employee_portal_links SET confirmed_at = NOW()");
+      const other = await createTestUser({ databaseUrl, email: "other@example.com", password: TEST_PASSWORD, fullName: "Other", role: "manager" });
+      await upsertEmployeePortalLink({ userId: other.id, portalId, bitrixUserId: "42" });
+      assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "unknown");
+    } finally {
+      await pool.end();
+    }
   });
 });
 
