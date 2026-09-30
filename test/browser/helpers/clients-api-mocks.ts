@@ -227,6 +227,17 @@ export function resolveMockResponse(
     });
   }
 
+  if (path.includes("/bitrix24/tasks/") && path.endsWith("/contact")) {
+    if (method === "PUT") {
+      return jsonResponse(200, {
+        marked: true,
+        markedAtLabel: "30.09.2026 12:00",
+        markedByDisplayName: "Test User",
+        comment: null,
+      });
+    }
+  }
+
   if (path.endsWith("/bitrix24/tasks")) {
     if (options.bitrix24Tasks) {
       return jsonResponse(200, options.bitrix24Tasks);

@@ -10,6 +10,7 @@ import {
   getClientBitrix24LabelHandler,
   getClientBitrix24TasksHandler,
   postClientBitrix24LabelHandler,
+  putClientBitrix24TaskContactHandler,
 } from "./bitrix24-handlers";
 import {
   clientOptionsHandler,
@@ -50,6 +51,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/:guid/bitrix24/tasks", ...readChain, (req, res, next) => {
     void getClientBitrix24TasksHandler(req, res).catch(next);
+  });
+
+  router.put("/:guid/bitrix24/tasks/:taskId/contact", csrfProtection, ...readChain, (req, res, next) => {
+    void putClientBitrix24TaskContactHandler(req, res).catch(next);
   });
 
   router.get("/:guid", ...readChain, (req, res, next) => {

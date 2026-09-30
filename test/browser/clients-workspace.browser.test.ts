@@ -419,11 +419,22 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
         tasks: [
           {
             taskId: "9001",
+            accessLevel: "full",
             title: "Поставка оборудования",
             statusLabel: "in_progress",
             deadline: "2026-10-01T12:00:00+03:00",
             changedAt: "2026-09-29T10:00:00+03:00",
             portalUrl: "https://example.bitrix24.ru/company/personal/user/42/tasks/task/view/9001/",
+            responsible: {
+              state: "confirmed",
+              displayName: "Иванов Иван",
+              internalContactEmail: "ivanov@example.com",
+            },
+            contactAction: {
+              marked: false,
+              canMark: true,
+              canRevoke: false,
+            },
           },
         ],
       },

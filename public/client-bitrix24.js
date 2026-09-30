@@ -30,19 +30,94 @@
     );
   }
 
-  function renderTaskRow(task) {
-    var deadline = task.deadline ? esc(task.deadline) : "—";
-    var responsible = task.responsibleBitrixUserId
-      ? esc("Bitrix ID " + task.responsibleBitrixUserId)
-      : "—";
+  function renderResponsibleBlock(responsible) {
+    if (!responsible) {
+      return '<div class="pc-label">Ответственный: данные не подтверждены</div>';
+    }
+    if (responsible.state === "confirmed" && responsible.displayName) {
+      var contact =
+        responsible.internalContactEmail
+          ? ' · <a class="pc-link" href="mailto:' +
+            esc(responsible.internalContactEmail) +
+            '">Внутренние контакты</a>'
+          : "";
+      return (
+        '<div class="pc-label">Ответственный: ' +
+        esc(responsible.displayName) +
+        contact +
+        "</div>"
+      );
+    }
+    return '<div class="pc-label">Ответственный: имя не подтверждено</div>';
+  }
+
+  function renderContactAction(task, clientGuid) {
+    if (!task.contactAction || !task.contactAction.canMark) {
+      return "";
+    }
+    var action = task.contactAction;
+    var taskKey = esc(task.taskId);
+    var checked = action.marked ? " checked" : "";
+    var completed =
+      action.marked && action.markedAtLabel
+        ? '<div class="pc-bitrix24-contact-done">выполнил ' +
+          esc(action.markedByDisplayName || "") +
+          ", " +
+          esc(action.markedAtLabel) +
+          "</div>"
+        : "";
+    var commentBlock = action.comment
+      ? '<div class="pc-bitrix24-contact-comment">' + esc(action.comment) + "</div>"
+      : "";
+    return (
+      '<div class="pc-bitrix24-contact" data-task-id="' +
+      taskKey +
+      '">' +
+      '<label class="pc-bitrix24-contact-label">' +
+      '<input type="checkbox" class="pc-bitrix24-contact-checkbox"' +
+      checked +
+      ' aria-label="Связаться с ответственным" />' +
+      "<span>Связаться с ответственным</span>" +
+      "</label>" +
+      completed +
+      commentBlock +
+      '<div class="pc-bitrix24-contact-actions">' +
+      '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-comment-btn">Добавить комментарий</button>' +
+      (action.marked
+        ? '<button type="button" class="workspace-button workspace-button--secondary pc-bitrix24-contact-revoke-btn">Отменить отметку</button>'
+        : "") +
+      "</div>" +
+      '<span class="workspace-status pc-bitrix24-contact-status" role="status" aria-live="polite"></span>' +
+      "</div>"
+    );
+  }
+
+  function renderTaskRow(task, clientGuid) {
     var objectLabel = task.boundObjectLabel
       ? esc("Объект: " + task.boundObjectLabel)
       : "";
+    var contactHtml = renderContactAction(task, clientGuid);
+    if (task.accessLevel === "summary") {
+      return (
+        '<article class="pc-bitrix24-task pc-bitrix24-task--summary">' +
+        '<div class="pc-value">' +
+        esc(task.briefText || "Краткое поручение") +
+        "</div>" +
+        '<div class="pc-label">Статус: ' +
+        esc(task.statusLabel) +
+        "</div>" +
+        (objectLabel ? '<div class="pc-label">' + objectLabel + "</div>" : "") +
+        renderResponsibleBlock(task.responsible) +
+        contactHtml +
+        "</article>"
+      );
+    }
+    var deadline = task.deadline ? esc(task.deadline) : "—";
     var link = task.portalUrl
-      ? '<a class="pc-link" href="' +
+      ? '<a class="pc-link pc-bitrix24-open-task" href="' +
         esc(task.portalUrl) +
         '" target="_blank" rel="noopener noreferrer">Открыть в Битрикс24</a>'
-      : '<span class="pc-label">Ссылка на портал не настроена</span>';
+      : "";
     return (
       '<article class="pc-bitrix24-task">' +
       '<div class="pc-value">' +
@@ -55,13 +130,10 @@
       " · Обновлено: " +
       esc(task.changedAt || "—") +
       "</div>" +
-      (objectLabel
-        ? '<div class="pc-label">' + objectLabel + "</div>"
-        : "") +
-      '<div class="pc-label">Ответственный: ' +
-      responsible +
-      "</div>" +
+      (objectLabel ? '<div class="pc-label">' + objectLabel + "</div>" : "") +
+      renderResponsibleBlock(task.responsible) +
       link +
+      contactHtml +
       "</article>"
     );
   }
@@ -71,6 +143,119 @@
       return body.message;
     }
     return TASK_STATE_MESSAGES[body.state] || TASK_STATE_MESSAGES.empty;
+  }
+
+  function saveContactAction(clientGuid, taskId, payload) {
+    return api.apiRequest(
+      "/api/clients/" +
+        encodeURIComponent(clientGuid) +
+        "/bitrix24/tasks/" +
+        encodeURIComponent(taskId) +
+        "/contact",
+      {
+        method: "PUT",
+        body: payload,
+      },
+    );
+  }
+
+  function bindContactActions(container, clientGuid, root) {
+    container.querySelectorAll(".pc-bitrix24-contact").forEach(function (block) {
+      var taskId = block.getAttribute("data-task-id");
+      if (!taskId) {
+        return;
+      }
+      var checkbox = block.querySelector(".pc-bitrix24-contact-checkbox");
+      var statusEl = block.querySelector(".pc-bitrix24-contact-status");
+      var commentBtn = block.querySelector(".pc-bitrix24-contact-comment-btn");
+      var revokeBtn = block.querySelector(".pc-bitrix24-contact-revoke-btn");
+
+      function setStatus(text, ok) {
+        if (!statusEl) {
+          return;
+        }
+        statusEl.textContent = text;
+        statusEl.className =
+          "workspace-status pc-bitrix24-contact-status " +
+          (ok ? "workspace-status--success" : "workspace-status--error");
+      }
+
+      if (checkbox) {
+        checkbox.addEventListener("change", function () {
+          var desired = checkbox.checked;
+          checkbox.disabled = true;
+          saveContactAction(clientGuid, taskId, { marked: desired })
+            .then(function (result) {
+              if (result.response.status === 200) {
+                mountWorkTab(root, clientGuid);
+                return;
+              }
+              checkbox.checked = !desired;
+              setStatus(
+                (result.data && result.data.message) || "Не удалось сохранить отметку",
+                false,
+              );
+            })
+            .catch(function () {
+              checkbox.checked = !desired;
+              setStatus("Ошибка сети", false);
+            })
+            .finally(function () {
+              checkbox.disabled = false;
+            });
+        });
+      }
+
+      if (commentBtn) {
+        commentBtn.addEventListener("click", function () {
+          var value = window.prompt("Комментарий (необязательно):", "");
+          if (value === null) {
+            return;
+          }
+          commentBtn.disabled = true;
+          saveContactAction(clientGuid, taskId, { marked: true, comment: value })
+            .then(function (result) {
+              if (result.response.status === 200) {
+                mountWorkTab(root, clientGuid);
+                return;
+              }
+              setStatus(
+                (result.data && result.data.message) || "Не удалось сохранить комментарий",
+                false,
+              );
+            })
+            .catch(function () {
+              setStatus("Ошибка сети", false);
+            })
+            .finally(function () {
+              commentBtn.disabled = false;
+            });
+        });
+      }
+
+      if (revokeBtn) {
+        revokeBtn.addEventListener("click", function () {
+          revokeBtn.disabled = true;
+          saveContactAction(clientGuid, taskId, { marked: false })
+            .then(function (result) {
+              if (result.response.status === 200) {
+                mountWorkTab(root, clientGuid);
+                return;
+              }
+              setStatus(
+                (result.data && result.data.message) || "Не удалось отменить отметку",
+                false,
+              );
+            })
+            .catch(function () {
+              setStatus("Ошибка сети", false);
+            })
+            .finally(function () {
+              revokeBtn.disabled = false;
+            });
+        });
+      }
+    });
   }
 
   function mountWorkTab(root, clientGuid) {
@@ -149,7 +334,11 @@
           }
           if (body.state === "ready" && body.tasks && body.tasks.length > 0) {
             parts.push(
-              '<div class="pc-bitrix24-tasks">' + body.tasks.map(renderTaskRow).join("") + "</div>",
+              '<div class="pc-bitrix24-tasks">' +
+                body.tasks.map(function (task) {
+                  return renderTaskRow(task, clientGuid);
+                }).join("") +
+                "</div>",
             );
           } else {
             parts.push(renderState(tasksMessage(body), body.state === "empty" ? "empty" : "info"));
@@ -159,6 +348,8 @@
         }
 
         container.innerHTML = parts.join("");
+
+        bindContactActions(container, clientGuid, root);
 
         var copyBtn = container.querySelector("#pc-copy-bitrix24-label");
         var issueBtn = container.querySelector("#pc-issue-bitrix24-label");

@@ -331,6 +331,68 @@ export async function listPublishedTasksForObject(
   }));
 }
 
+export async function findPublishedTaskById(
+  portalId: string,
+  taskId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<(TaskCacheRow & TaskBindingRow) | null> {
+  const result = await client.query(
+    `SELECT
+       c.portal_id,
+       c.task_id,
+       c.responsible_bitrix_user_id,
+       c.title,
+       c.status_label,
+       c.deadline,
+       c.changed_at,
+       c.description_hash,
+       c.synced_at,
+       c.cache_version,
+       c.published,
+       b.object_type,
+       b.object_guid,
+       b.label_code,
+       b.binding_status,
+       b.conflict_reason,
+       b.linked_at,
+       b.updated_at
+     FROM bitrix24_task_bindings b
+     JOIN bitrix24_task_cache c
+       ON c.portal_id = b.portal_id AND c.task_id = b.task_id
+     WHERE b.portal_id = $1
+       AND b.task_id = $2
+       AND b.binding_status = 'confirmed'
+       AND c.published = TRUE
+       AND c.changed_at IS NOT NULL
+     LIMIT 1`,
+    [portalId, taskId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    portalId: row.portal_id,
+    taskId: row.task_id,
+    responsibleBitrixUserId: row.responsible_bitrix_user_id,
+    title: row.title,
+    statusLabel: row.status_label,
+    deadline: row.deadline,
+    changedAt: row.changed_at instanceof Date ? row.changed_at.toISOString() : String(row.changed_at),
+    descriptionHash: row.description_hash,
+    syncedAt: row.synced_at.toISOString(),
+    cacheVersion: Number(row.cache_version),
+    published: row.published,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
+    labelCode: row.label_code,
+    bindingStatus: row.binding_status,
+    conflictReason: row.conflict_reason,
+    linkedAt: row.linked_at ? row.linked_at.toISOString() : null,
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
 export async function upsertEmployeePortalLink(
   input: {
     userId: string;
