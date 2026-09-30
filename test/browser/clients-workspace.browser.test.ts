@@ -55,7 +55,7 @@ function createMockController(page: Page, initial: MockOptions = {}) {
     installed = true;
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      const mock = resolveMockResponse(url, options, state);
+      const mock = resolveMockResponse(url, options, state, route.request().method());
       if (mock) {
         await route.fulfill(mock);
         return;
@@ -676,6 +676,46 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await overview.getByRole("button", { name: "Обновить данные ЛК" }).click();
     await page.waitForFunction(() => document.querySelector("#pc-bitrix24-overview")?.textContent?.includes("Не удалось"));
     assert.equal(await overview.locator(".pc-bitrix24-summary-counts").count(), 0);
+    await closePage(page, context);
+  });
+
+  it("runs manual Bitrix24 sync from shared toolbar without calling webhook", async () => {
+    const tasks = [
+      {
+        taskId: "9001",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        deadlineAt: "2030-10-01T10:00:00Z",
+        deadline: "1 окт. 2030 г.",
+        responsible: { state: "confirmed", displayName: "Иванов Иван", internalContactEmail: "ivanov@example.com" },
+        checklist: { state: "ready", progress: { completed: 1, total: 2 }, syncedAtLabel: "30.09.2026, 10:00", items: [] },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    const externalCalls: string[] = [];
+    page.on("request", (req) => {
+      if (/bitrix24\.ru\/rest\//.test(req.url())) {
+        externalCalls.push(req.url());
+      }
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector('[data-testid="bitrix24-sync-btn"]');
+    const syncButtons = page.locator('[data-testid="bitrix24-sync-btn"]');
+    assert.equal(await syncButtons.count(), 2);
+    await syncButtons.first().click();
+    await page.waitForSelector(".pc-bitrix24-sync-status.workspace-status--success");
+    assert.match(await page.locator(".pc-bitrix24-sync-status").first().textContent(), /Обновлено/);
+    assert.equal(externalCalls.length, 0);
+    await page.setViewportSize({ width: 375, height: 844 });
+    await page.waitForTimeout(100);
+    assert.equal(await syncButtons.count(), 2);
     await closePage(page, context);
   });
 

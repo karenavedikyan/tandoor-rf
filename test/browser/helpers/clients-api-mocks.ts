@@ -156,6 +156,7 @@ export type MockOptions = {
   failListOnce?: boolean;
   bitrix24Label?: Record<string, unknown>;
   bitrix24Tasks?: Record<string, unknown>;
+  bitrix24Sync?: Record<string, unknown> | number;
 };
 
 export function jsonResponse(status: number, body: unknown): {
@@ -174,6 +175,7 @@ export function resolveMockResponse(
   url: URL,
   options: MockOptions,
   state: { listCalls: number },
+  method = "GET",
 ): { status: number; contentType: string; body: string } | null {
   const path = url.pathname;
 
@@ -234,6 +236,29 @@ export function resolveMockResponse(
         markedAtLabel: "30.09.2026 12:00",
         markedByDisplayName: "Test User",
         comment: null,
+      });
+    }
+  }
+
+  if (path.endsWith("/bitrix24/sync")) {
+    if (method === "POST") {
+      if (typeof options.bitrix24Sync === "number") {
+        return jsonResponse(options.bitrix24Sync, {
+          error: { code: "RATE_LIMITED", message: "Синхронизация уже выполняется." },
+          retryAfterMs: 30000,
+        });
+      }
+      if (options.bitrix24Sync) {
+        return jsonResponse(200, options.bitrix24Sync);
+      }
+      return jsonResponse(200, {
+        status: "success",
+        complete: true,
+        message: "Данные задач и чек-листов обновлены.",
+        syncedAt: "2026-09-30T12:00:00.000Z",
+        syncedAtLabel: "30.09.2026, 12:00",
+        tasksSynced: 1,
+        checklistsSynced: 1,
       });
     }
   }

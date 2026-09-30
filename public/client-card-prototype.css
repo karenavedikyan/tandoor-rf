@@ -73,6 +73,12 @@
 .pc-bitrix24-overview-task .pc-value {overflow-wrap:anywhere;}
 .pc-bitrix24-overview-task .pc-bitrix24-contact {margin-top:8px;padding-top:0;border-top:0;}
 #pc-bitrix24-overview > .pc-link {display:block;min-height:44px;text-align:left;margin-top:8px;}
+.pc-bitrix24-sync-block {margin-top:12px;padding-top:12px;border-top:1px solid var(--rf-border);}
+.pc-bitrix24-sync-toolbar {display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
+.pc-bitrix24-sync-status {font-size:13px;flex:1 1 12rem;min-width:0;}
+.pc-bitrix24-cache-note {margin:8px 0 4px;}
+.pc-bitrix24-sync-btn[disabled] {opacity:.65;cursor:not-allowed;}
+.pc-bitrix24-refresh-cache {margin-top:4px;}
 .pc-bitrix24-checklist-progress {margin-top:8px;font-size:14px;line-height:1.4;overflow-wrap:anywhere;}
 .pc-bitrix24-checklist {margin-top:10px;border-top:1px solid var(--rf-border);padding-top:10px;max-width:100%;overflow:hidden;}
 .pc-bitrix24-checklist-summary {cursor:pointer;font-size:14px;line-height:1.4;min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere;}
