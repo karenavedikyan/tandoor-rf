@@ -1,5 +1,5 @@
 import { dedupeBitrixTasks, normalizeBitrixTask } from "./normalize-task";
-import { parseBitrixUserId } from "./parse-id";
+import { parseBitrixUserId, parseCanonicalBitrixId } from "./parse-id";
 import { SAFE_READ_MESSAGES } from "./safe-errors";
 import { callBitrix24Method, createOperationContext } from "./transport";
 import { validateTasksTransportPage } from "./validate-envelope";
@@ -29,6 +29,7 @@ export type ReadBitrixTasksOptions = {
   operation?: Bitrix24OperationContext;
   startedAtMs?: number;
   maxPages?: number;
+  taskId?: string;
 };
 
 function finalizeTaskListResult(input: {
@@ -74,6 +75,10 @@ export async function readBitrixTasksForUser(
   options: ReadBitrixTasksOptions = {},
 ): Promise<ReadBitrixTasksResult> {
   const parsedId = parseBitrixUserId(bitrixUserId);
+  const taskId = options.taskId === undefined ? undefined : parseCanonicalBitrixId(options.taskId);
+  if (taskId === null) {
+    return { ok: false, code: "INVALID_TASK_ID", message: "Invalid pilot task ID." };
+  }
   if (!parsedId) {
     return {
       ok: false,
@@ -114,7 +119,7 @@ export async function readBitrixTasksForUser(
       "tasks.task.list",
       {
         order: { CHANGED_DATE: "desc" },
-        filter: { RESPONSIBLE_ID: parsedId },
+        filter: { RESPONSIBLE_ID: parsedId, ...(taskId ? { ID: taskId } : {}) },
         select: [...TASK_SELECT_FIELDS],
         start,
       },
@@ -138,6 +143,15 @@ export async function readBitrixTasksForUser(
       };
     }
 
+    // A scoped pilot must never fall back to caching the employee's task list.
+    if (taskId && (
+      page.tasks.length > 1 ||
+      page.pagination.next !== null ||
+      (page.pagination.total !== null && page.pagination.total !== undefined && page.pagination.total > 1)
+    )) {
+      return { ok: false, code: "PILOT_SCOPE_MISMATCH", message: "Pilot response exceeds the requested scope." };
+    }
+
     pagesFetched += 1;
     totalReported = page.pagination.total ?? totalReported;
     lastNext = page.pagination.next;
@@ -148,6 +162,9 @@ export async function readBitrixTasksForUser(
     let normalizedOnPage = 0;
     for (const rawTask of page.tasks) {
       const normalized = normalizeBitrixTask(config.portalHost, rawTask);
+      if (taskId && (!normalized || normalized.taskId !== taskId || normalized.responsibleId !== parsedId)) {
+        return { ok: false, code: "PILOT_SCOPE_MISMATCH", message: "Pilot response does not match the requested task and employee." };
+      }
       if (!normalized) {
         rejectedTaskCount += 1;
         continue;

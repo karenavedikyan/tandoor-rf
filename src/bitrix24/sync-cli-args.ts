@@ -1,3 +1,5 @@
+import { parseCanonicalBitrixId } from "./parse-id";
+
 export const BITRIX24_SYNC_ARGUMENT_ERROR_CODES = [
   "UNKNOWN_ARGUMENT",
   "UNEXPECTED_POSITIONAL",
@@ -7,6 +9,8 @@ export const BITRIX24_SYNC_ARGUMENT_ERROR_CODES = [
   "INVALID_BITRIX_USER_ID",
   "INVALID_MAX_PAGES",
   "MAX_PAGES_OUT_OF_RANGE",
+  "INVALID_TASK_ID",
+  "DUPLICATE_TASK_ID",
 ] as const;
 
 export type Bitrix24SyncArgumentErrorCode = (typeof BITRIX24_SYNC_ARGUMENT_ERROR_CODES)[number];
@@ -15,6 +19,7 @@ export type Bitrix24SyncCliOptions = {
   apply: boolean;
   bitrixUserId: string;
   maxPages?: number;
+  taskId?: string;
 };
 
 export type Bitrix24SyncCliParseResult =
@@ -33,6 +38,8 @@ export const BITRIX24_SYNC_ARGUMENT_ERROR_MESSAGES: Record<Bitrix24SyncArgumentE
   INVALID_BITRIX_USER_ID: "--bitrix-user-id must be a positive integer.",
   INVALID_MAX_PAGES: "--max-pages must be an integer.",
   MAX_PAGES_OUT_OF_RANGE: `--max-pages must be between ${BITRIX24_SYNC_MIN_MAX_PAGES} and ${BITRIX24_SYNC_MAX_MAX_PAGES}.`,
+  INVALID_TASK_ID: "--task-id requires a canonical positive integer.",
+  DUPLICATE_TASK_ID: "Duplicate --task-id argument.",
 };
 
 export function parseBitrix24SyncCliArgs(argv: string[]): Bitrix24SyncCliParseResult {
@@ -40,9 +47,18 @@ export function parseBitrix24SyncCliArgs(argv: string[]): Bitrix24SyncCliParseRe
   let bitrixUserId: string | undefined;
   let bitrixUserIdCount = 0;
   let maxPagesRaw: string | undefined;
+  let taskId: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--task-id") {
+      if (taskId !== undefined) return { ok: false, code: "DUPLICATE_TASK_ID" };
+      const value = parseCanonicalBitrixId(argv[index + 1]);
+      if (!value) return { ok: false, code: "INVALID_TASK_ID" };
+      taskId = value;
+      index += 1;
+      continue;
+    }
     if (arg === "--apply") {
       apply = true;
       continue;
@@ -100,6 +116,7 @@ export function parseBitrix24SyncCliArgs(argv: string[]): Bitrix24SyncCliParseRe
       apply,
       bitrixUserId,
       maxPages,
+      ...(taskId ? { taskId } : {}),
     },
   };
 }
