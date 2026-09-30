@@ -43,11 +43,21 @@ function parseSortIndex(value: unknown): number {
   return 0;
 }
 
-function parseParentId(value: unknown): string | null {
-  if (value === 0 || value === "0" || value === null || value === undefined) {
+function parseParentReference(value: unknown): { parentId: string | null; isRootGroup: true } | { parentId: string; isRootGroup: false } | null {
+  if (value === 0 || value === "0") {
+    return { parentId: null, isRootGroup: true };
+  }
+  if (value === null || value === undefined) {
     return null;
   }
-  return parseCanonicalBitrixId(String(value));
+  if (typeof value === "number" && value < 0) {
+    return null;
+  }
+  const parentId = parseCanonicalBitrixId(String(value));
+  if (!parentId) {
+    return null;
+  }
+  return { parentId, isRootGroup: false };
 }
 
 function parseIsComplete(value: unknown): boolean | null {
@@ -106,6 +116,9 @@ export function normalizeChecklistItem(
   if (!taskId) {
     return null;
   }
+  if (!("PARENT_ID" in record)) {
+    return null;
+  }
   const title = typeof record.TITLE === "string" ? record.TITLE.trim() : "";
   if (!title) {
     return null;
@@ -114,16 +127,19 @@ export function normalizeChecklistItem(
   if (isComplete === null) {
     return null;
   }
-  const parentId = parseParentId(record.PARENT_ID);
+  const parent = parseParentReference(record.PARENT_ID);
+  if (!parent) {
+    return null;
+  }
   return {
     itemId,
     taskId,
-    parentId,
+    parentId: parent.parentId,
     title,
     sortIndex: parseSortIndex(record.SORT_INDEX),
     isComplete,
     coExecutorBitrixIds: extractCoExecutorBitrixIds(record.MEMBERS),
-    isRootGroup: parentId === null,
+    isRootGroup: parent.isRootGroup,
   };
 }
 

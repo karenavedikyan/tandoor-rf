@@ -6,6 +6,8 @@ import { requirePool } from "../../db/pool";
 
 export type ChecklistLoadStatus = "loaded" | "empty" | "error" | "partial";
 
+export type ChecklistSnapshotWriteResult = "written" | "skipped";
+
 export type ChecklistSnapshotRow = {
   portalId: string;
   taskId: string;
@@ -72,13 +74,45 @@ function mapRow(row: {
 export async function upsertChecklistSnapshot(
   input: ChecklistSnapshotInput,
   client: PoolClient,
-): Promise<void> {
+): Promise<ChecklistSnapshotWriteResult> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, [
+    input.portalId,
+    input.taskId,
+  ]);
+
+  const gate = await client.query<{
+    cache_version: number;
+    synced_at: Date;
+    object_type: Bitrix24ObjectType | null;
+    object_guid: string | null;
+  }>(
+    `SELECT c.cache_version, c.synced_at, b.object_type, b.object_guid
+     FROM bitrix24_task_cache c
+     JOIN bitrix24_task_bindings b
+       ON b.portal_id = c.portal_id AND b.task_id = c.task_id
+     WHERE c.portal_id = $1
+       AND c.task_id = $2
+     FOR UPDATE`,
+    [input.portalId, input.taskId],
+  );
+
+  const current = gate.rows[0];
+  if (
+    !current ||
+    Number(current.cache_version) !== input.taskCacheVersion ||
+    current.synced_at.toISOString() !== input.taskSyncedAt ||
+    current.object_type !== input.objectType ||
+    String(current.object_guid) !== String(input.objectGuid)
+  ) {
+    return "skipped";
+  }
+
   const progress =
     input.loadStatus === "loaded" || input.loadStatus === "empty"
       ? computeChecklistProgress(input.items)
       : null;
 
-  await client.query(
+  const result = await client.query<{ portal_id: string }>(
     `INSERT INTO bitrix24_task_checklist_snapshots (
        portal_id, task_id, object_type, object_guid,
        load_status, sync_complete, error_code, items_json,
@@ -97,7 +131,8 @@ export async function upsertChecklistSnapshot(
        progress_total = EXCLUDED.progress_total,
        synced_at = NOW(),
        task_cache_version = EXCLUDED.task_cache_version,
-       task_synced_at = EXCLUDED.task_synced_at`,
+       task_synced_at = EXCLUDED.task_synced_at
+     RETURNING portal_id`,
     [
       input.portalId,
       input.taskId,
@@ -113,6 +148,8 @@ export async function upsertChecklistSnapshot(
       input.taskSyncedAt,
     ],
   );
+
+  return (result.rowCount ?? 0) > 0 ? "written" : "skipped";
 }
 
 export async function findChecklistSnapshot(

@@ -92,6 +92,30 @@ describe("bitrix24 checklist normalization", () => {
     assert.deepEqual(validateChecklistStructure(cyclic), { ok: false, code: "CYCLE" });
   });
 
+  it("rejects invalid or missing PARENT_ID instead of treating them as root headers", () => {
+    const base = sampleChecklistItem({ id: "501", parentId: "431", title: "Шаг" });
+    for (const parentId of ["broken", -1, null] as const) {
+      assert.equal(
+        normalizeChecklistItem({ ...base, PARENT_ID: parentId }, "9001"),
+        null,
+      );
+    }
+    const missingParent = { ...base };
+    delete (missingParent as { PARENT_ID?: unknown }).PARENT_ID;
+    assert.equal(normalizeChecklistItem(missingParent, "9001"), null);
+  });
+
+  it("accepts only explicit zero PARENT_ID as root header", () => {
+    for (const parentId of [0, "0"] as const) {
+      const item = normalizeChecklistItem(
+        { ...sampleChecklistRootGroup("431"), PARENT_ID: parentId },
+        "9001",
+      );
+      assert.equal(item?.isRootGroup, true);
+      assert.equal(item?.parentId, null);
+    }
+  });
+
   it("rejects malformed completion flags and foreign TASK_ID", () => {
     assert.equal(
       normalizeChecklistItem(
@@ -156,6 +180,63 @@ describe("bitrix24 checklist read transport", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.code, "FORBIDDEN");
+    }
+  });
+
+  it("marks invalid PARENT_ID responses as incomplete instead of empty checklist", async () => {
+    const config = sampleWebhookConfig();
+    const url = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const cases: Array<{ label: string; item: Record<string, unknown> }> = [
+      {
+        label: "broken",
+        item: {
+          ...sampleChecklistItem({ id: "901", parentId: "431", title: "Broken parent" }),
+          PARENT_ID: "broken",
+        },
+      },
+      {
+        label: "-1",
+        item: {
+          ...sampleChecklistItem({ id: "901", parentId: "431", title: "Broken parent" }),
+          PARENT_ID: -1,
+        },
+      },
+      {
+        label: "null",
+        item: {
+          ...sampleChecklistItem({ id: "901", parentId: "431", title: "Broken parent" }),
+          PARENT_ID: null,
+        },
+      },
+      {
+        label: "missing",
+        item: (() => {
+          const item = {
+            ...sampleChecklistItem({ id: "901", parentId: "431", title: "Broken parent" }),
+          };
+          delete (item as { PARENT_ID?: unknown }).PARENT_ID;
+          return item;
+        })(),
+      },
+    ];
+    for (const testCase of cases) {
+      const { pinnedRequest } = createBitrixMockPinnedRequest({
+        [url]: {
+          body: {
+            result: [testCase.item],
+            total: 1,
+          },
+        },
+      });
+      const result = await readBitrixChecklistForTask(config, "9001", {
+        operation: operation(config, pinnedRequest),
+      });
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.equal(result.data.items.length, 0, testCase.label);
+        assert.equal(result.data.complete, false, testCase.label);
+        assert.equal(result.data.truncatedReason, "INVALID_RECORDS", testCase.label);
+      }
     }
   });
 

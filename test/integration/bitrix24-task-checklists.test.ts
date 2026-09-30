@@ -570,6 +570,136 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
     assert.deepEqual(res.body.tasks[0]?.checklist?.progress, { completed: 1, total: 1 });
   });
 
+  it("does not let stale parallel sync overwrite newer checklist snapshot", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const taskV1 = sampleValidBitrixTask({
+      ID: "9001",
+      DESCRIPTION: formatLabelToken(label.labelCode),
+      CHANGED_DATE: "2026-09-30T11:00:00+03:00",
+    });
+    const taskV2 = {
+      ...taskV1,
+      CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+      TITLE: "Updated after parallel sync",
+    };
+
+    let releaseStaleChecklist!: () => void;
+    const staleChecklistGate = new Promise<void>((resolve) => {
+      releaseStaleChecklist = resolve;
+    });
+    let staleChecklistEntered = false;
+
+    const syncA = runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: { body: { result: { tasks: [taskV1] }, total: 1 } },
+        [checklistUrl]: async () => {
+          staleChecklistEntered = true;
+          await staleChecklistGate;
+          return { status: 403, body: { error: "ACCESS_DENIED" } };
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = Date.now();
+      const wait = setInterval(() => {
+        if (staleChecklistEntered) {
+          clearInterval(wait);
+          resolve();
+          return;
+        }
+        if (Date.now() - startedAt > 5000) {
+          clearInterval(wait);
+          reject(new Error("Stale sync did not reach checklist fetch."));
+        }
+      }, 10);
+    });
+
+    const syncB = await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: { body: { result: { tasks: [taskV2] }, total: 1 } },
+        [checklistUrl]: {
+          body: {
+            result: [
+              sampleChecklistRootGroup(),
+              sampleChecklistItem({ id: "433", parentId: "431", title: "Новый шаг", isComplete: "Y" }),
+              sampleChecklistItem({ id: "434", parentId: "431", title: "Шаг 2", isComplete: "N" }),
+            ],
+            total: 3,
+          },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+
+    releaseStaleChecklist();
+    const resultA = await syncA;
+
+    assert.equal(syncB.checklistsSynced, 1);
+    assert.equal(resultA.checklistsSynced, 0);
+    assert.equal(resultA.checklistsFailed, 0);
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(res.body.tasks[0]?.checklist?.state, "ready");
+    assert.deepEqual(res.body.tasks[0]?.checklist?.progress, { completed: 1, total: 2 });
+  });
+
+  it("reports partial apply when failure happens after first task commit", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const sync = await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      testHooks: { failBeforeChecklistWrite: true },
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: {
+          body: {
+            result: {
+              tasks: [
+                sampleValidBitrixTask({
+                  ID: "9001",
+                  DESCRIPTION: formatLabelToken(label.labelCode),
+                }),
+              ],
+            },
+            total: 1,
+          },
+        },
+        [checklistUrl]: {
+          body: {
+            result: [
+              sampleChecklistRootGroup(),
+              sampleChecklistItem({ id: "433", parentId: "431", title: "Шаг 1", isComplete: "Y" }),
+            ],
+            total: 2,
+          },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.cacheWrites, 1);
+    assert.equal(sync.status, "partial");
+    assert.equal(sync.complete, false);
+    assert.match(sync.message, /partially applied/i);
+    assert.doesNotMatch(sync.message, /rolled back/i);
+  });
+
   it("returns stale checklist when task generation moved forward", async () => {
     const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
@@ -615,7 +745,7 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
               isRootGroup: false,
             },
           ],
-          taskCacheVersion: generation.cacheVersion - 1,
+          taskCacheVersion: generation.cacheVersion,
           taskSyncedAt: generation.syncedAt,
         },
         client,

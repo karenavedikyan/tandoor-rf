@@ -2,12 +2,18 @@ import { createHash } from "node:crypto";
 import { loadBitrix24Config } from "../config";
 import { extractLabelsFromDescription } from "../labels/parser";
 import { findLabelByCode } from "../labels/repository";
-import { computeChecklistProgress } from "../normalize-checklist";
+import {
+  computeChecklistProgress,
+  type NormalizedChecklistItem,
+} from "../normalize-checklist";
 import { readBitrixChecklistForTask } from "../read-checklist";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
-import { upsertChecklistSnapshot } from "../tasks/checklist-repository";
+import {
+  type ChecklistLoadStatus,
+  upsertChecklistSnapshot,
+} from "../tasks/checklist-repository";
 import {
   buildSyncScopeSummary,
   insertSyncJournalEntry,
@@ -30,6 +36,10 @@ export type Bitrix24SyncOptions = {
   pinnedRequest?: PinnedRequestFn;
   resolvePortalAddresses?: ResolvePortalAddressesFn;
   env?: NodeJS.ProcessEnv;
+  /** Integration-test fault injection only. */
+  testHooks?: {
+    failBeforeChecklistWrite?: boolean;
+  };
 };
 
 export type Bitrix24SyncResult = {
@@ -82,62 +92,71 @@ async function writeChecklistSnapshotFromRead(
   config: Bitrix24WebhookConfig,
   accepted: AcceptedTaskWrite,
   readResult: Awaited<ReturnType<typeof readBitrixChecklistForTask>>,
-): Promise<"synced" | "failed"> {
+): Promise<"synced" | "failed" | "skipped"> {
+  let input: {
+    portalId: string;
+    taskId: string;
+    objectType: Bitrix24ObjectType | null;
+    objectGuid: string | null;
+    loadStatus: ChecklistLoadStatus;
+    syncComplete: boolean;
+    errorCode?: string | null;
+    items: NormalizedChecklistItem[];
+    taskCacheVersion: number;
+    taskSyncedAt: string;
+  };
   if (!readResult.ok) {
-    await upsertChecklistSnapshot(
-      {
+    input = {
+      portalId: config.portalId,
+      taskId: accepted.taskId,
+      objectType: accepted.objectType,
+      objectGuid: accepted.objectGuid,
+      loadStatus: "error" as const,
+      syncComplete: false,
+      errorCode: readResult.code,
+      items: [],
+      taskCacheVersion: accepted.cacheVersion,
+      taskSyncedAt: accepted.syncedAt,
+    };
+  } else {
+    const data = readResult.data;
+    if (!data.complete) {
+      input = {
         portalId: config.portalId,
         taskId: accepted.taskId,
         objectType: accepted.objectType,
         objectGuid: accepted.objectGuid,
-        loadStatus: "error",
-        syncComplete: false,
-        errorCode: readResult.code,
-        items: [],
-        taskCacheVersion: accepted.cacheVersion,
-        taskSyncedAt: accepted.syncedAt,
-      },
-      client,
-    );
-    return "failed";
-  }
-
-  const data = readResult.data;
-  if (!data.complete) {
-    await upsertChecklistSnapshot(
-      {
-        portalId: config.portalId,
-        taskId: accepted.taskId,
-        objectType: accepted.objectType,
-        objectGuid: accepted.objectGuid,
-        loadStatus: "partial",
+        loadStatus: "partial" as const,
         syncComplete: false,
         errorCode: data.truncatedReason ?? "INCOMPLETE",
         items: [],
         taskCacheVersion: accepted.cacheVersion,
         taskSyncedAt: accepted.syncedAt,
-      },
-      client,
-    );
-    return "failed";
+      };
+    } else {
+      const progress = computeChecklistProgress(data.items);
+      const loadStatus = progress.total === 0 ? "empty" : "loaded";
+      input = {
+        portalId: config.portalId,
+        taskId: accepted.taskId,
+        objectType: accepted.objectType,
+        objectGuid: accepted.objectGuid,
+        loadStatus,
+        syncComplete: true,
+        items: data.items,
+        taskCacheVersion: accepted.cacheVersion,
+        taskSyncedAt: accepted.syncedAt,
+      };
+    }
   }
 
-  const progress = computeChecklistProgress(data.items);
-  const loadStatus = progress.total === 0 ? "empty" : "loaded";
-  await upsertChecklistSnapshot(
-    {
-      portalId: config.portalId,
-      taskId: accepted.taskId,
-      objectType: accepted.objectType,
-      objectGuid: accepted.objectGuid,
-      loadStatus,
-      syncComplete: true,
-      items: data.items,
-      taskCacheVersion: accepted.cacheVersion,
-      taskSyncedAt: accepted.syncedAt,
-    },
-    client,
-  );
+  const writeResult = await upsertChecklistSnapshot(input, client);
+  if (writeResult === "skipped") {
+    return "skipped";
+  }
+  if (!readResult.ok || !readResult.data.complete) {
+    return "failed";
+  }
   return "synced";
 }
 
@@ -388,6 +407,9 @@ export async function runBitrix24TaskSync(
       }
 
       for (const accepted of acceptedWrites) {
+        if (options.testHooks?.failBeforeChecklistWrite) {
+          throw new Error("test failure after task commit");
+        }
         const readChecklistResult = await readBitrixChecklistForTask(config, accepted.taskId, {
           operation,
         });
@@ -403,7 +425,7 @@ export async function runBitrix24TaskSync(
           await checklistClient.query("COMMIT");
           if (checklistResult === "synced") {
             checklistsSynced += 1;
-          } else {
+          } else if (checklistResult === "failed") {
             checklistsFailed += 1;
           }
         } catch (error) {
@@ -436,19 +458,29 @@ export async function runBitrix24TaskSync(
       });
     }
   } catch (error) {
+    const partialApply = cacheWrites > 0 || checklistsSynced > 0 || checklistsFailed > 0;
     journalId = await insertSyncJournalEntry({
       runMode: mode,
       scopeSummary,
-      status: "failed",
+      status: partialApply ? "partial" : "failed",
       summary: {
-        reason: "APPLY_ROLLBACK",
+        reason: partialApply ? "APPLY_PARTIAL" : "APPLY_FAILED",
         message: error instanceof Error ? error.message : "sync_apply_failed",
         bitrixUserId: options.bitrixUserId,
+        tasksFetched: readResult.data.tasks.length,
+        bindingsConfirmed,
+        bindingsConflict,
+        bindingsInvalid,
+        bindingsPending,
+        cacheWrites,
+        versionConflicts,
+        checklistsSynced,
+        checklistsFailed,
       },
     });
     return {
       ok: false,
-      status: "failed",
+      status: partialApply ? "partial" : "failed",
       mode,
       tasksFetched: readResult.data.tasks.length,
       bindingsConfirmed,
@@ -460,7 +492,9 @@ export async function runBitrix24TaskSync(
       checklistsSynced,
       checklistsFailed,
       complete: false,
-      message: "Bitrix24 task sync apply failed and was rolled back.",
+      message: partialApply
+        ? "Bitrix24 task sync partially applied before failure."
+        : "Bitrix24 task sync apply failed.",
       journalId,
     };
   }
