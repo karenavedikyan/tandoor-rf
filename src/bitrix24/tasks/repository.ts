@@ -59,12 +59,29 @@ function resolveAccessExpiresAt(explicit: string | null | undefined): string | n
   return new Date(Date.now() + runtime.cacheAccessTtlMs).toISOString();
 }
 
+export async function recordBindingDiagnostic(
+  portalId: string,
+  taskId: string,
+  reason: string,
+  detail: string | null,
+  client: Pool | PoolClient = requirePool(),
+): Promise<void> {
+  await client.query(
+    `INSERT INTO bitrix24_binding_diagnostics (portal_id, task_id, reason, detail)
+     VALUES ($1, $2, $3, $4)`,
+    [portalId, taskId, reason, detail],
+  );
+}
+
 export async function upsertTaskSnapshot(
   row: TaskSnapshotInput,
   client: Pool | PoolClient = requirePool(),
 ): Promise<{ cacheUpdated: boolean }> {
   const changedAtDate = bitrixChangedAtToDate(row.changedAt);
   if (!changedAtDate) {
+    return { cacheUpdated: false };
+  }
+  if (changedAtDate.getTime() > Date.now()) {
     return { cacheUpdated: false };
   }
 
@@ -83,7 +100,12 @@ export async function upsertTaskSnapshot(
        synced_at = NOW(),
        cache_version = bitrix24_task_cache.cache_version + 1,
        published = EXCLUDED.published
-     WHERE bitrix24_task_cache.changed_at <= EXCLUDED.changed_at
+     WHERE bitrix24_task_cache.changed_at IS NULL
+        OR bitrix24_task_cache.changed_at < EXCLUDED.changed_at
+        OR (
+          bitrix24_task_cache.changed_at = EXCLUDED.changed_at
+          AND bitrix24_task_cache.description_hash = EXCLUDED.description_hash
+        )
      RETURNING task_id`,
     [
       row.portalId,
@@ -162,6 +184,19 @@ export async function listPublishedTasksForObject(
      WHERE b.portal_id = $1
        AND b.binding_status = 'confirmed'
        AND c.published = TRUE
+       AND c.changed_at IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM bitrix24_confirmed_objects co
+         WHERE co.object_type = b.object_type
+           AND co.object_guid = b.object_guid
+       )
+       AND (
+         b.label_code IS NULL
+         OR EXISTS (
+           SELECT 1 FROM bitrix24_object_labels ol
+           WHERE ol.label_code = b.label_code AND ol.revoked_at IS NULL
+         )
+       )
        AND (
          (b.object_type = $2::bitrix24_object_type AND b.object_guid = $3::uuid)
          OR (
@@ -259,13 +294,15 @@ export async function findLatestSyncJournalEntry(
   finishedAt: string | null;
   status: string;
   runMode: string;
+  summary: Record<string, unknown>;
 } | null> {
   const result = await client.query<{
     finished_at: Date | null;
     status: string;
     run_mode: string;
+    summary: Record<string, unknown>;
   }>(
-    `SELECT finished_at, status, run_mode
+    `SELECT finished_at, status, run_mode, summary
      FROM bitrix24_sync_journal
      WHERE scope_summary LIKE $1
      ORDER BY finished_at DESC NULLS LAST, started_at DESC
@@ -280,6 +317,7 @@ export async function findLatestSyncJournalEntry(
     finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
     status: row.status,
     runMode: row.run_mode,
+    summary: row.summary ?? {},
   };
 }
 
@@ -300,22 +338,35 @@ export async function invalidateBindingsForLabel(
 }
 
 export async function invalidateBindingsForObject(
-  portalId: string,
+  portalId: string | null,
   objectType: Bitrix24ObjectType,
   objectGuid: string,
   reason: string,
   client: Pool | PoolClient = requirePool(),
 ): Promise<void> {
+  if (portalId) {
+    await client.query(
+      `UPDATE bitrix24_task_bindings
+       SET binding_status = 'object_unconfirmed',
+           conflict_reason = $4,
+           updated_at = NOW()
+       WHERE portal_id = $1
+         AND object_type = $2::bitrix24_object_type
+         AND object_guid = $3::uuid
+         AND binding_status = 'confirmed'`,
+      [portalId, objectType, objectGuid, reason],
+    );
+    return;
+  }
   await client.query(
     `UPDATE bitrix24_task_bindings
      SET binding_status = 'object_unconfirmed',
-         conflict_reason = $4,
+         conflict_reason = $3,
          updated_at = NOW()
-     WHERE portal_id = $1
-       AND object_type = $2::bitrix24_object_type
-       AND object_guid = $3::uuid
+     WHERE object_type = $1::bitrix24_object_type
+       AND object_guid = $2::uuid
        AND binding_status = 'confirmed'`,
-    [portalId, objectType, objectGuid, reason],
+    [objectType, objectGuid, reason],
   );
 }
 

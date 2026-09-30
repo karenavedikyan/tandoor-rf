@@ -2,14 +2,19 @@ import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
+import { formatMskDateTime } from "./dto";
 import { isValidUuidParam } from "./uuid-param";
 import { canReadClientGuid } from "./repository";
 import { getExistingClientLabel, issueClientLabel } from "../bitrix24/labels/service";
 import type { Bitrix24ObjectType } from "../bitrix24/labels/format";
+import { isChildObjectLinkedToHolding } from "../bitrix24/tasks/object-access";
 import { loadBitrix24Config } from "../bitrix24/config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../bitrix24/tasks/config";
-import { canViewClientObjectTasks, canViewTaskForUser } from "../bitrix24/tasks/access";
+import { canViewClientCard, canViewTaskForUser } from "../bitrix24/tasks/access";
 import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
+import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
+import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
+import { canReadBoundBitrixObject } from "../bitrix24/tasks/object-access";
 import { findLatestSyncJournalEntry, listPublishedTasksForObject } from "../bitrix24/tasks/repository";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
@@ -22,23 +27,32 @@ function parseObjectType(raw: unknown): Bitrix24ObjectType | null {
   return null;
 }
 
-function resolveObjectType(req: AccessRequest): Bitrix24ObjectType {
-  return parseObjectType(req.query.objectType) ?? "holding";
-}
+type LabelTargetResult =
+  | { ok: true; objectType: Bitrix24ObjectType; objectGuid: string }
+  | { ok: false; message: string };
 
-function taskPortalUrl(portalPublicUrl: string | null, taskId: string): string | null {
-  if (!portalPublicUrl) {
-    return null;
+async function resolveLabelTarget(
+  req: AccessRequest,
+  cardGuid: string,
+): Promise<LabelTargetResult> {
+  const rawType = req.query.objectType ?? req.body?.objectType;
+  if (rawType !== undefined && rawType !== null && String(rawType).trim() !== "" && !parseObjectType(rawType)) {
+    return { ok: false, message: "Invalid objectType." };
   }
-  try {
-    const base = new URL(portalPublicUrl);
-    if (base.protocol !== "https:") {
-      return null;
-    }
-    return `${base.origin}/company/personal/tasks/task/view/${encodeURIComponent(taskId)}/`;
-  } catch {
-    return null;
+  const objectType = parseObjectType(rawType) ?? "holding";
+  if (objectType === "holding") {
+    return { ok: true, objectType, objectGuid: cardGuid };
   }
+  const objectGuidRaw = req.query.objectGuid ?? req.body?.objectGuid;
+  const objectGuid = typeof objectGuidRaw === "string" ? objectGuidRaw.trim() : "";
+  if (!isValidUuidParam(objectGuid)) {
+    return { ok: false, message: "objectGuid is required for legal_entity and outlet labels." };
+  }
+  const linked = await isChildObjectLinkedToHolding(cardGuid, objectType, objectGuid);
+  if (!linked) {
+    return { ok: false, message: "Object is not linked to this client card." };
+  }
+  return { ok: true, objectType, objectGuid };
 }
 
 function mapDenyCodeToState(code: TaskVisibilityDenyCode): string {
@@ -53,36 +67,70 @@ function mapDenyCodeToState(code: TaskVisibilityDenyCode): string {
       return "pilot_list_missing";
     case "NO_CLIENT_ACCESS":
       return "audience_denied";
+    case "STALE_SNAPSHOT":
+      return "stale_snapshot";
+    case "FUTURE_TASK":
+      return "future_task";
     default:
       return "not_published";
   }
+}
+
+function formatDisplayDate(iso: string | null | undefined): string | null {
+  if (!iso) {
+    return null;
+  }
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+  return formatMskDateTime(date);
 }
 
 export async function getClientBitrix24LabelHandler(
   req: AccessRequest,
   res: Response,
 ): Promise<void> {
-  const guid = String(req.params.guid ?? "");
-  const objectType = resolveObjectType(req);
-  if (!isValidUuidParam(guid)) {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!isValidUuidParam(cardGuid)) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
     return;
   }
-  const allowed = await canReadClientGuid(req.accessContext!, guid);
+  const allowed = await canReadClientGuid(req.accessContext!, cardGuid);
   if (!allowed) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
     return;
   }
 
-  const result = await getExistingClientLabel(objectType, guid);
+  const target = await resolveLabelTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
+    return;
+  }
+
+  const objectAccess = await canReadBoundBitrixObject(
+    req.accessContext!,
+    cardGuid,
+    target.objectType,
+    target.objectGuid,
+  );
+  if (!objectAccess) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const result = await getExistingClientLabel(target.objectType, target.objectGuid);
   setNoStore(res);
   if (!result.ok) {
     res.status(result.code === "NOT_ISSUED" ? 404 : 409).json({
       code: result.code,
       message: result.message,
-      objectType,
+      objectType: target.objectType,
+      objectGuid: target.objectGuid,
     });
     return;
   }
@@ -99,24 +147,47 @@ export async function postClientBitrix24LabelHandler(
   req: AccessRequest,
   res: Response,
 ): Promise<void> {
-  const guid = String(req.params.guid ?? "");
-  const objectType = parseObjectType(req.body?.objectType) ?? resolveObjectType(req);
-  if (!isValidUuidParam(guid)) {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!isValidUuidParam(cardGuid)) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
     return;
   }
-  const allowed = await canReadClientGuid(req.accessContext!, guid);
+  const allowed = await canReadClientGuid(req.accessContext!, cardGuid);
   if (!allowed) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
     return;
   }
 
-  const result = await issueClientLabel(objectType, guid);
+  const target = await resolveLabelTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
+    return;
+  }
+
+  const objectAccess = await canReadBoundBitrixObject(
+    req.accessContext!,
+    cardGuid,
+    target.objectType,
+    target.objectGuid,
+  );
+  if (!objectAccess) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const result = await issueClientLabel(target.objectType, target.objectGuid);
   setNoStore(res);
   if (!result.ok) {
-    res.status(409).json({ code: result.code, message: result.message, objectType });
+    res.status(409).json({
+      code: result.code,
+      message: result.message,
+      objectType: target.objectType,
+      objectGuid: target.objectGuid,
+    });
     return;
   }
   res.status(result.created ? 201 : 200).json({
@@ -133,15 +204,21 @@ export async function getClientBitrix24TasksHandler(
   req: AccessRequest,
   res: Response,
 ): Promise<void> {
-  const guid = String(req.params.guid ?? "");
-  const objectType = resolveObjectType(req);
-  if (!isValidUuidParam(guid)) {
+  const cardGuid = String(req.params.guid ?? "");
+  const rawType = req.query.objectType;
+  if (rawType !== undefined && rawType !== null && String(rawType).trim() !== "" && !parseObjectType(rawType)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid objectType."));
+    return;
+  }
+  const objectType = parseObjectType(rawType) ?? "holding";
+  if (!isValidUuidParam(cardGuid)) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
     return;
   }
   const context = req.accessContext!;
-  const allowed = await canViewClientObjectTasks(context, guid);
+  const allowed = await canViewClientCard(context, cardGuid);
   if (!allowed) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
@@ -173,45 +250,53 @@ export async function getClientBitrix24TasksHandler(
   }
 
   const syncEntry = await findLatestSyncJournalEntry(loaded.config.portalId);
-  const rows = await listPublishedTasksForObject(loaded.config.portalId, objectType, guid);
+  const rows = await listPublishedTasksForObject(loaded.config.portalId, objectType, cardGuid);
 
   const visible = [];
-  const denyCounts: Partial<Record<TaskVisibilityDenyCode, number>> = {};
+  let selfDeny: TaskVisibilityDenyCode | null = null;
   for (const row of rows) {
+    const objectAllowed = await canReadBoundBitrixObject(
+      context,
+      cardGuid,
+      row.objectType!,
+      row.objectGuid!,
+    );
+    if (!objectAllowed) {
+      continue;
+    }
     const visibility = await canViewTaskForUser(context, loaded.config.portalId, row);
     if (!visibility.ok) {
-      denyCounts[visibility.code] = (denyCounts[visibility.code] ?? 0) + 1;
+      if (!selfDeny) {
+        selfDeny = visibility.code;
+      }
       continue;
     }
     visible.push({
       taskId: row.taskId,
       title: row.title,
-      statusLabel: row.statusLabel,
-      deadline: row.deadline,
-      changedAt: row.changedAt,
+      statusLabel: formatTaskStatusLabel(row.statusLabel),
+      deadline: formatDisplayDate(row.deadline),
+      changedAt: formatDisplayDate(row.changedAt),
       responsibleBitrixUserId: row.responsibleBitrixUserId,
-      portalUrl: taskPortalUrl(runtime.portalPublicUrl, row.taskId),
-      boundObjectType: row.objectType,
+      portalUrl: buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, row.taskId),
     });
   }
 
   let state = "ready";
   let message: string | null = null;
   if (visible.length === 0) {
-    const dominantDeny = Object.entries(denyCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as
-      | TaskVisibilityDenyCode
-      | undefined;
     if (rows.length === 0) {
       state = "empty";
       message = "Задачи с меткой этого объекта пока не найдены.";
-    } else if (dominantDeny) {
-      state = mapDenyCodeToState(dominantDeny);
-      switch (dominantDeny) {
+    } else if (selfDeny) {
+      state = mapDenyCodeToState(selfDeny);
+      switch (selfDeny) {
         case "NO_EMPLOYEE_LINK":
           message = "Связь сотрудника с порталом Bitrix24 не подтверждена.";
           break;
         case "ACCESS_EXPIRED":
-          message = "Подтверждение доступа к Bitrix24 истекло.";
+        case "STALE_SNAPSHOT":
+          message = "Данные задач устарели. Требуется повторная синхронизация.";
           break;
         case "PILOT_FILTER":
           message = "Задача не входит в разрешённый список пилота.";
@@ -221,6 +306,9 @@ export async function getClientBitrix24TasksHandler(
           break;
         case "NO_CLIENT_ACCESS":
           message = "Задача недоступна: ответственный не совпадает с вашим Bitrix ID.";
+          break;
+        case "FUTURE_TASK":
+          message = "Задача содержит некорректную дату обновления.";
           break;
         default:
           message = "Кэш задач не опубликован.";
@@ -240,20 +328,18 @@ export async function getClientBitrix24TasksHandler(
       objectType === "holding"
         ? "Показаны задачи подтверждённого холдинга и связанных объектов; это не полный список задач портала."
         : "Показаны задачи одного подтверждённого объекта; это не полный список задач портала.",
-    visibility: {
-      totalBound: rows.length,
-      visibleCount: visible.length,
-      filteredCount: rows.length - visible.length,
-      denyCounts,
-    },
     sync: syncEntry
       ? {
           lastFinishedAt: syncEntry.finishedAt,
+          lastFinishedAtLabel: formatDisplayDate(syncEntry.finishedAt),
           lastStatus: syncEntry.status,
           lastRunMode: syncEntry.runMode,
+          partial: syncEntry.status === "partial",
         }
       : null,
-    portalConfigured: Boolean(runtime.portalPublicUrl),
+    portalConfigured: Boolean(
+      buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1"),
+    ),
     tasks: visible,
   });
 }

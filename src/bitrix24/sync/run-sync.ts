@@ -5,7 +5,7 @@ import { findLabelByCode } from "../labels/repository";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
-import { upsertTaskSnapshot } from "../tasks/repository";
+import { recordBindingDiagnostic, upsertTaskSnapshot } from "../tasks/repository";
 import { requirePool } from "../../db/pool";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
@@ -130,6 +130,16 @@ export async function runBitrix24TaskSync(
           linkedAt = new Date().toISOString();
           bindingsConfirmed += 1;
         }
+      }
+
+      if (options.apply && client && bindingStatus !== "confirmed" && bindingStatus !== "unresolved") {
+        await recordBindingDiagnostic(
+          config.portalId,
+          task.taskId,
+          bindingStatus,
+          conflictReason,
+          client,
+        );
       }
 
       if (options.apply && client) {

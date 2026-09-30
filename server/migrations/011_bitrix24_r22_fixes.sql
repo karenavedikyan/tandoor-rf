@@ -3,9 +3,9 @@
 ALTER TABLE bitrix24_task_cache
   ALTER COLUMN changed_at TYPE TIMESTAMPTZ
   USING CASE
-    WHEN changed_at IS NULL OR btrim(changed_at) = '' THEN NOW()
+    WHEN changed_at IS NULL OR btrim(changed_at) = '' THEN NULL
     WHEN changed_at ~ '^\d{4}-\d{2}-\d{2}T' THEN changed_at::timestamptz
-    ELSE NOW()
+    ELSE NULL
   END;
 
 CREATE TABLE IF NOT EXISTS bitrix24_object_hierarchy (

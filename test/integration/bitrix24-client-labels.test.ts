@@ -12,7 +12,6 @@ import { runBitrix24TaskSync } from "../../src/bitrix24/sync/run-sync";
 import { resetPoolForTests } from "../../src/db/pool";
 import {
   confirmObjectHierarchyLink,
-  invalidateBindingsForLabel,
   upsertEmployeePortalLink,
   upsertTaskSnapshot,
 } from "../../src/bitrix24/tasks/repository";
@@ -22,6 +21,7 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+import { createDelegationRecord, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import {
   createBitrixMockPinnedRequest,
@@ -34,7 +34,12 @@ import { Pool } from "pg";
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
 const CLIENT_ONE = "11111111-1111-4111-8111-111111111111";
+const CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 const LEGAL_ONE = "55555555-5555-4555-8555-555555555555";
+const LEGAL_FOREIGN = "66666666-6666-4666-8666-666666666666";
+const MANAGER_A = "22222222-2222-4222-8222-222222222222";
+const MANAGER_B = "55555555-5555-4555-8555-555555555555";
+const ASSISTANT_EMP = "99999999-9999-4999-8999-999999999999";
 
 function authHeaders(cookie?: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -219,6 +224,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       },
     });
 
+    await seedAdminLink(databaseUrl, config.portalId);
+
     const dryRun = await runBitrix24TaskSync({
       bitrixUserId: "42",
       apply: false,
@@ -237,8 +244,6 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       env: process.env,
     });
     assert.equal(applied.cacheWrites, 1);
-
-    await seedAdminLink(databaseUrl, config.portalId);
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -414,28 +419,40 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       {
         guid_client: LEGAL_ONE,
         name_client: "Legal Entity One",
-        guid_manager: "22222222-2222-4222-8222-222222222222",
+        guid_manager: MANAGER_A,
         name_manager: "Manager A",
       },
     ]);
     await confirmObject("legal_entity", LEGAL_ONE, null);
+    await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_ONE);
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
     const res = await request(app)
-      .post(`/api/clients/${LEGAL_ONE}/bitrix24/label?objectType=legal_entity`)
+      .post(
+        `/api/clients/${CLIENT_ONE}/bitrix24/label?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
       .set(authHeaders(cookie))
-      .send({ objectType: "legal_entity" });
+      .send({ objectType: "legal_entity", objectGuid: LEGAL_ONE });
     assert.equal(res.status, 201);
     assert.match(res.body.labelCode, /^LK_J_\d{6}$/);
     assert.match(res.body.token, /^#LK_J_\d{6}$/);
   });
 
   it("aggregates child legal entity tasks on holding card (HJT-03)", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: LEGAL_ONE,
+        name_client: "Legal Entity One",
+        guid_manager: MANAGER_A,
+        name_manager: "Manager A",
+      },
+    ]);
     await confirmObject("legal_entity", LEGAL_ONE, null);
     await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_ONE);
     const label = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
     const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
     await upsertTaskSnapshot({
       portalId: config.portalId,
       taskId: "9004",
@@ -453,7 +470,6 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
-    await seedAdminLink(databaseUrl, config.portalId);
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -462,7 +478,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       .set(authHeaders(cookie));
     assert.equal(tasksRes.body.state, "ready");
     assert.equal(tasksRes.body.tasks.length, 1);
-    assert.equal(tasksRes.body.tasks[0]?.boundObjectType, "legal_entity");
+    assert.equal(tasksRes.body.tasks[0]?.title, "Child entity task");
+    assert.equal(tasksRes.body.visibility, undefined);
   });
 
   it("invalidates bindings when label is revoked (ACC-06)", async () => {
@@ -485,17 +502,17 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
-    const revoked = await revokeActiveLabel("holding", CLIENT_ONE);
-    assert.ok(revoked);
-    await invalidateBindingsForLabel(config.portalId, revoked!.labelCode, "label_revoked");
+    await seedAdminLink(databaseUrl, config.portalId);
+    await revokeActiveLabel("holding", CLIENT_ONE);
 
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const binding = await pool.query<{ binding_status: string }>(
-      "SELECT binding_status FROM bitrix24_task_bindings WHERE task_id = $1",
-      ["9011"],
-    );
-    await pool.end();
-    assert.equal(binding.rows[0]?.binding_status, "label_revoked");
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "empty");
+    assert.equal(tasksRes.body.tasks.length, 0);
+    assert.equal(tasksRes.body.visibility, undefined);
   });
 
   it("blocks label issue after object unconfirmed (ACC-07)", async () => {
@@ -508,5 +525,269 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       .send({});
     assert.equal(res.status, 409);
     assert.equal(res.body.code, "OBJECT_NOT_CONFIRMED");
+  });
+
+  it("rejects invalid objectType with 400", async () => {
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=invalid`)
+      .set(authHeaders(cookie));
+    assert.equal(res.status, 400);
+  });
+
+  it("hides tasks after employee link is renewed without re-sync (STALE_SNAPSHOT)", async () => {
+    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9003",
+      responsibleBitrixUserId: "42",
+      title: "Before link refresh",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: CLIENT_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    const adminId = await seedAdminLink(databaseUrl, config.portalId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await upsertEmployeePortalLink({
+      userId: adminId,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "stale_snapshot");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("returns 404 for foreign client card and tasks (manager HTTP)", async () => {
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    const managerBUser = await createTestUser({
+      databaseUrl,
+      email: "manager-b@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager B",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: managerAUser.id,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerBUser.id,
+      employeeId: MANAGER_B,
+      confirmedByUserId: managerBUser.id,
+    });
+
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: CLIENT_TWO,
+        name_client: "Client Two",
+        guid_manager: MANAGER_B,
+        name_manager: "Manager B",
+      },
+    ]);
+
+    const app = await loadApp();
+    const cookie = await login("manager-a@example.com");
+    const labelRes = await request(app)
+      .get(`/api/clients/${CLIENT_TWO}/bitrix24/label`)
+      .set(authHeaders(cookie));
+    assert.equal(labelRes.status, 404);
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_TWO}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.status, 404);
+  });
+
+  it("does not aggregate foreign child object tasks (manager HTTP)", async () => {
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: managerAUser.id,
+    });
+
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: LEGAL_FOREIGN,
+        name_client: "Foreign Legal",
+        guid_manager: MANAGER_B,
+        name_manager: "Manager B",
+      },
+    ]);
+    await confirmObject("legal_entity", LEGAL_FOREIGN, null);
+    await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_FOREIGN);
+    const foreignLabel = await issueLabelInTransaction("legal_entity", LEGAL_FOREIGN);
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9013",
+      responsibleBitrixUserId: "42",
+      title: "Foreign child task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "legal_entity",
+      objectGuid: LEGAL_FOREIGN,
+      labelCode: foreignLabel.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    await upsertEmployeePortalLink({
+      userId: managerAUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+
+    const app = await loadApp();
+    const cookie = await login("manager-a@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.tasks.length, 0);
+    assert.equal(tasksRes.body.visibility, undefined);
+  });
+
+  it("closes bitrix24 card and tasks when delegation ends (assistant HTTP)", async () => {
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    const assistantUser = await createTestUser({
+      databaseUrl,
+      email: "assistant@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Assistant User",
+      role: "assistant",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: managerAUser.id,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: assistantUser.id,
+      employeeId: ASSISTANT_EMP,
+      confirmedByUserId: managerAUser.id,
+    });
+
+    const startsAt = new Date(Date.now() - 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 3_600_000).toISOString();
+    await createDelegationRecord({
+      databaseUrl,
+      delegatorUserId: managerAUser.id,
+      assistantUserId: assistantUser.id,
+      clientGuids: [CLIENT_ONE],
+      status: "active",
+      startsAt,
+      endsAt,
+      approvedByUserId: managerAUser.id,
+    });
+
+    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: assistantUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9001",
+      responsibleBitrixUserId: "42",
+      title: "Delegated client task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: CLIENT_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const activeCookie = await login("assistant@example.com");
+    const activeTasks = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(activeCookie));
+    assert.equal(activeTasks.status, 200);
+    assert.equal(activeTasks.body.state, "ready");
+    assert.equal(activeTasks.body.tasks.length, 1);
+
+    const revokePool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await revokePool.query(
+      `UPDATE delegations SET status = 'revoked', revoked_at = NOW() WHERE assistant_user_id = $1::uuid`,
+      [assistantUser.id],
+    );
+    await revokePool.end();
+
+    const revokedCookie = await login("assistant@example.com");
+    const labelRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(revokedCookie));
+    assert.equal(labelRes.status, 404);
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(revokedCookie));
+    assert.equal(tasksRes.status, 404);
+
+    await createDelegationRecord({
+      databaseUrl,
+      delegatorUserId: managerAUser.id,
+      assistantUserId: assistantUser.id,
+      clientGuids: [CLIENT_ONE],
+      status: "expired",
+      startsAt: new Date(Date.now() - 7_200_000).toISOString(),
+      endsAt: new Date(Date.now() - 3_600_000).toISOString(),
+      approvedByUserId: managerAUser.id,
+    });
+
+    const expiredCookie = await login("assistant@example.com");
+    const expiredTasks = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(expiredCookie));
+    assert.equal(expiredTasks.status, 404);
   });
 });

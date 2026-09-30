@@ -9,6 +9,8 @@
     empty: "Задачи с меткой этого объекта пока не найдены.",
     no_employee_link: "Связь с порталом Bitrix24 не подтверждена.",
     access_expired: "Подтверждение доступа к Bitrix24 истекло.",
+    stale_snapshot: "Данные задач устарели. Требуется повторная синхронизация.",
+    future_task: "Задача содержит некорректную дату обновления.",
     pilot_filtered: "Задачи вне разрешённого списка пилота не показываются.",
     pilot_list_missing: "Список разрешённых задач пилота не настроен.",
     audience_denied: "Задачи недоступны: ответственный не совпадает с вашим Bitrix ID.",
@@ -31,6 +33,9 @@
 
   function renderTaskRow(task) {
     var deadline = task.deadline ? esc(task.deadline) : "—";
+    var responsible = task.responsibleBitrixUserId
+      ? esc("Bitrix ID " + task.responsibleBitrixUserId)
+      : "—";
     var link = task.portalUrl
       ? '<a class="pc-link" href="' +
         esc(task.portalUrl) +
@@ -46,7 +51,10 @@
       " · Срок: " +
       deadline +
       " · Обновлено: " +
-      esc(task.changedAt) +
+      esc(task.changedAt || "—") +
+      "</div>" +
+      '<div class="pc-label">Ответственный: ' +
+      responsible +
       "</div>" +
       link +
       "</article>"
@@ -76,85 +84,76 @@
         var tasksResult = results[1];
         var labelStatus = labelResult.response.status;
         var labelBody = labelResult.data;
-        var labelBlock = "";
+        var parts = [];
+
         if (labelStatus === 200 && labelBody && labelBody.token) {
-          labelBlock =
+          parts.push(
             '<div class="pc-bitrix24-label">' +
-            '<div class="pc-label">Метка для описания задачи</div>' +
-            '<code class="pc-bitrix24-token">' +
-            esc(labelBody.token) +
-            "</code>" +
-            '<button type="button" class="workspace-button workspace-button--secondary" id="pc-copy-bitrix24-label">Скопировать метку для Битрикс24</button>' +
-            '<span class="workspace-status" id="pc-copy-bitrix24-label-status" role="status" aria-live="polite"></span>' +
-            "</div>";
+              '<div class="pc-label">Метка для описания задачи (отдельной строкой в описании)</div>' +
+              '<code class="pc-bitrix24-token">' +
+              esc(labelBody.token) +
+              "</code>" +
+              '<button type="button" class="workspace-button workspace-button--secondary" id="pc-copy-bitrix24-label">Скопировать метку для Битрикс24</button>' +
+              '<span class="workspace-status" id="pc-copy-bitrix24-label-status" role="status" aria-live="polite"></span>' +
+              "</div>",
+          );
         } else if (labelStatus === 409) {
-          labelBlock = renderState(
-            (labelBody && labelBody.message) ||
-              "Привязка ожидает подтверждения данных 1С.",
-            "pending",
+          parts.push(
+            renderState(
+              (labelBody && labelBody.message) ||
+                "Привязка ожидает подтверждения данных 1С.",
+              "pending",
+            ),
           );
         } else if (labelStatus === 404) {
-          labelBlock =
+          parts.push(
             renderState("Метка ещё не выдана.", "info") +
-            '<button type="button" class="workspace-button workspace-button--primary" id="pc-issue-bitrix24-label">Выдать метку</button>' +
-            '<span class="workspace-status" id="pc-copy-bitrix24-label-status" role="status" aria-live="polite"></span>';
+              '<button type="button" class="workspace-button workspace-button--primary" id="pc-issue-bitrix24-label">Выдать метку</button>' +
+              '<span class="workspace-status" id="pc-copy-bitrix24-label-status" role="status" aria-live="polite"></span>',
+          );
         } else {
-          labelBlock = renderState("Не удалось загрузить метку.", "error");
+          parts.push(renderState("Не удалось загрузить метку.", "error"));
         }
 
-        var tasksBlock = "";
         if (tasksResult.response.status === 200 && tasksResult.data) {
           var body = tasksResult.data;
-          if (body.state === "ready" && body.tasks && body.tasks.length > 0) {
-            tasksBlock =
-              '<div class="pc-bitrix24-tasks">' +
-              body.tasks.map(renderTaskRow).join("") +
-              "</div>";
-          } else {
-            tasksBlock = renderState(tasksMessage(body), body.state === "empty" ? "empty" : "info");
-          }
+          var meta = [];
           if (body.scopeNote) {
-            tasksBlock =
-              '<p class="pc-label">' +
-              esc(body.scopeNote) +
-              "</p>" +
-              tasksBlock;
+            meta.push('<p class="pc-label">' + esc(body.scopeNote) + "</p>");
           }
-          if (body.visibility && body.visibility.filteredCount > 0) {
-            tasksBlock +=
+          if (body.sync && body.sync.lastFinishedAtLabel) {
+            meta.push(
               '<p class="pc-label">' +
-              esc(
-                "Часть задач скрыта проверками доступа (" +
-                  body.visibility.filteredCount +
-                  ").",
-              ) +
-              "</p>" +
-              tasksBlock;
-          }
-          if (body.sync && body.sync.lastFinishedAt) {
-            tasksBlock =
-              '<p class="pc-label">' +
-              esc(
-                "Последняя синхронизация: " +
-                  body.sync.lastFinishedAt +
-                  " · " +
-                  body.sync.lastStatus,
-              ) +
-              "</p>" +
-              tasksBlock;
+                esc(
+                  "Последняя синхронизация: " +
+                    body.sync.lastFinishedAtLabel +
+                    (body.sync.partial ? " (неполная выборка)" : ""),
+                ) +
+                "</p>",
+            );
           }
           if (body.portalConfigured === false) {
-            tasksBlock =
+            meta.push(
               '<p class="pc-label">' +
-              esc("Публичный URL портала Bitrix24 не настроен — ссылки будут недоступны.") +
-              "</p>" +
-              tasksBlock;
+                esc("Публичный URL портала Bitrix24 не настроен — ссылки будут недоступны.") +
+                "</p>",
+            );
+          }
+          if (meta.length > 0) {
+            parts.push('<div class="pc-bitrix24-meta">' + meta.join("") + "</div>");
+          }
+          if (body.state === "ready" && body.tasks && body.tasks.length > 0) {
+            parts.push(
+              '<div class="pc-bitrix24-tasks">' + body.tasks.map(renderTaskRow).join("") + "</div>",
+            );
+          } else {
+            parts.push(renderState(tasksMessage(body), body.state === "empty" ? "empty" : "info"));
           }
         } else {
-          tasksBlock = renderState("Не удалось загрузить задачи.", "error");
+          parts.push(renderState("Не удалось загрузить задачи.", "error"));
         }
 
-        container.innerHTML = labelBlock + tasksBlock;
+        container.innerHTML = parts.join("");
 
         var copyBtn = container.querySelector("#pc-copy-bitrix24-label");
         var issueBtn = container.querySelector("#pc-issue-bitrix24-label");

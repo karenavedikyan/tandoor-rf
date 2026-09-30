@@ -1,4 +1,4 @@
-import { BITRIX24_LABEL_TOKEN_REGEX, parseLabelToken } from "./format";
+import { parseLabelToken } from "./format";
 import type { Bitrix24ObjectType } from "./format";
 
 export type ParsedDescriptionLabels =
@@ -13,11 +13,12 @@ export type ParsedDescriptionLabels =
       labels: Array<{ objectType: Bitrix24ObjectType; labelCode: string; token: string }>;
     };
 
-function stripMarkup(description: string): string {
-  return description
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\[(\/)?(b|i|u|s|code|url|video|img|list|table|tr|td|th|quote)(=[^\]]*)?\]/gi, " ")
-    .replace(/\s+/g, " ")
+const LINE_LABEL_REGEX = /^#LK_(H|J|T)_(\d{6})$/;
+
+function stripMarkup(line: string): string {
+  return line
+    .replace(/<[^>]*>/g, "")
+    .replace(/\[(\/)?(b|i|u|s|code|url|video|img|list|table|tr|td|th|quote)(=[^\]]*)?\]/gi, "")
     .trim();
 }
 
@@ -26,21 +27,30 @@ export function extractLabelsFromDescription(description: string | null | undefi
     return { ok: true, labels: [], uniqueObjectKeys: [] };
   }
 
-  const plain = stripMarkup(description);
   const labels: Array<{ objectType: Bitrix24ObjectType; labelCode: string; token: string }> = [];
   const seenTokens = new Set<string>();
+  const lines = description.replace(/\r\n/g, "\n").split("\n");
 
-  for (const match of plain.matchAll(BITRIX24_LABEL_TOKEN_REGEX)) {
-    const token = match[0]!.toUpperCase();
-    if (seenTokens.has(token)) {
+  for (const rawLine of lines) {
+    const line = stripMarkup(rawLine);
+    if (!line) {
       continue;
     }
-    seenTokens.add(token);
-    const parsed = parseLabelToken(token);
-    if (!parsed) {
+    if (LINE_LABEL_REGEX.test(line)) {
+      if (seenTokens.has(line)) {
+        continue;
+      }
+      seenTokens.add(line);
+      const parsed = parseLabelToken(line);
+      if (!parsed) {
+        return { ok: false, reason: "invalid_token", labels };
+      }
+      labels.push({ ...parsed, token: line });
+    } else if (/^#LK_/i.test(line)) {
+      return { ok: false, reason: "invalid_token", labels };
+    } else if (/(?:^|\s)#LK_(?:H|J|T)_\d{6}\s*$/.test(line)) {
       return { ok: false, reason: "invalid_token", labels };
     }
-    labels.push({ ...parsed, token });
   }
 
   const uniqueLabelCodes = new Set(labels.map((entry) => entry.labelCode));

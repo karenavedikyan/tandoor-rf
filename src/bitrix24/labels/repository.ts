@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import { requirePool } from "../../db/pool";
 import type { Bitrix24ObjectType } from "./format";
 import { formatLabelCode } from "./format";
+import { invalidateBindingsForLabel, invalidateBindingsForObject } from "../tasks/repository";
 
 export type ObjectLabelRow = {
   id: string;
@@ -12,6 +13,21 @@ export type ObjectLabelRow = {
 };
 
 export type LabelIssueTransactionResult = ObjectLabelRow & { created: boolean };
+
+async function recordLabelAudit(
+  action: string,
+  objectType: Bitrix24ObjectType | null,
+  objectGuid: string | null,
+  labelCode: string | null,
+  detail: string | null,
+  client: Pool | PoolClient,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO bitrix24_label_audit (action, object_type, object_guid, label_code, detail)
+     VALUES ($1, $2::bitrix24_object_type, $3::uuid, $4, $5)`,
+    [action, objectType, objectGuid, labelCode, detail],
+  );
+}
 
 export async function isObjectConfirmed(
   objectType: Bitrix24ObjectType,
@@ -52,7 +68,12 @@ export async function unconfirmObject(
      WHERE object_type = $1::bitrix24_object_type AND object_guid = $2::uuid`,
     [objectType, objectGuid],
   );
-  return (result.rowCount ?? 0) > 0;
+  const removed = (result.rowCount ?? 0) > 0;
+  if (removed) {
+    await invalidateBindingsForObject(null, objectType, objectGuid, "object_unconfirmed", client);
+    await recordLabelAudit("unconfirm", objectType, objectGuid, null, null, client);
+  }
+  return removed;
 }
 
 export async function findActiveLabel(
@@ -98,9 +119,11 @@ export async function findLabelByCode(
     label_code: string;
     issued_at: Date;
   }>(
-    `SELECT id, object_type, object_guid, label_code, issued_at
-     FROM bitrix24_object_labels
-     WHERE label_code = $1 AND revoked_at IS NULL`,
+    `SELECT ol.id, ol.object_type, ol.object_guid, ol.label_code, ol.issued_at
+     FROM bitrix24_object_labels ol
+     JOIN bitrix24_confirmed_objects co
+       ON co.object_type = ol.object_type AND co.object_guid = ol.object_guid
+     WHERE ol.label_code = $1 AND ol.revoked_at IS NULL`,
     [labelCode],
   );
   const row = result.rows[0];
@@ -140,6 +163,8 @@ export async function revokeActiveLabel(
   if (!row) {
     return null;
   }
+  await invalidateBindingsForObject(null, objectType, objectGuid, "label_revoked", client);
+  await recordLabelAudit("revoke", objectType, objectGuid, row.label_code, null, client);
   return {
     id: row.id,
     objectType: row.object_type,
@@ -177,8 +202,8 @@ export async function issueLabelInTransaction(
       [objectType],
     );
     const nextValue = seq.rows[0]?.next_value;
-    if (!nextValue) {
-      throw new Error("LABEL_SEQUENCE_MISSING");
+    if (!nextValue || nextValue > 999999) {
+      throw new Error("LABEL_SEQUENCE_EXHAUSTED");
     }
     const labelCode = formatLabelCode(objectType, nextValue);
 
@@ -208,6 +233,7 @@ export async function issueLabelInTransaction(
        WHERE object_type = $1::bitrix24_object_type`,
       [objectType],
     );
+    await recordLabelAudit("issue", objectType, objectGuid, labelCode, null, client);
     await client.query("COMMIT");
     const row = inserted.rows[0]!;
     return {
