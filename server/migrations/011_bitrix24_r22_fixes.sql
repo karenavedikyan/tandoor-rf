@@ -1,6 +1,9 @@
 -- R2.2 fixes: timestamptz changed_at, object hierarchy for holding aggregation
 
 ALTER TABLE bitrix24_task_cache
+  ALTER COLUMN changed_at DROP NOT NULL;
+
+ALTER TABLE bitrix24_task_cache
   ALTER COLUMN changed_at TYPE TIMESTAMPTZ
   USING CASE
     WHEN changed_at IS NULL OR btrim(changed_at) = '' THEN NULL

@@ -5,17 +5,27 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { formatMskDateTime } from "./dto";
 import { isValidUuidParam } from "./uuid-param";
 import { canReadClientGuid } from "./repository";
-import { getExistingClientLabel, issueClientLabel } from "../bitrix24/labels/service";
+import { getExistingClientLabel, issueClientLabel, restoreClientLabel } from "../bitrix24/labels/service";
 import type { Bitrix24ObjectType } from "../bitrix24/labels/format";
-import { isChildObjectLinkedToHolding } from "../bitrix24/tasks/object-access";
+import { findCardObjectMapping } from "../bitrix24/tasks/card-objects";
+import { isObjectLinkedToClientCard } from "../bitrix24/tasks/object-access";
 import { loadBitrix24Config } from "../bitrix24/config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../bitrix24/tasks/config";
-import { canViewClientCard, canViewTaskForUser } from "../bitrix24/tasks/access";
+import {
+  canViewClientCard,
+  canViewTaskForUser,
+  isAudienceOnlyDeny,
+} from "../bitrix24/tasks/access";
 import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
 import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
 import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
+import { formatBoundObjectLabel } from "../bitrix24/tasks/object-type-labels";
 import { canReadBoundBitrixObject } from "../bitrix24/tasks/object-access";
-import { findLatestSyncJournalEntry, listPublishedTasksForObject } from "../bitrix24/tasks/repository";
+import {
+  findEmployeePortalLink,
+  findLatestSyncJournalEntry,
+  listPublishedTasksForObject,
+} from "../bitrix24/tasks/repository";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
 
@@ -31,6 +41,10 @@ type LabelTargetResult =
   | { ok: true; objectType: Bitrix24ObjectType; objectGuid: string }
   | { ok: false; message: string };
 
+type TaskTargetResult =
+  | { ok: true; objectType: Bitrix24ObjectType; objectGuid: string; holdingGuid: string }
+  | { ok: false; message: string };
+
 async function resolveLabelTarget(
   req: AccessRequest,
   cardGuid: string,
@@ -40,19 +54,57 @@ async function resolveLabelTarget(
     return { ok: false, message: "Invalid objectType." };
   }
   const objectType = parseObjectType(rawType) ?? "holding";
-  if (objectType === "holding") {
-    return { ok: true, objectType, objectGuid: cardGuid };
+  const cardMapping = await findCardObjectMapping(cardGuid);
+  if (!cardMapping || cardMapping.objectType !== "holding") {
+    return { ok: false, message: "Client card is not linked to a confirmed holding." };
   }
+  const holdingGuid = cardMapping.objectGuid;
+
+  if (objectType === "holding") {
+    return { ok: true, objectType, objectGuid: holdingGuid };
+  }
+
   const objectGuidRaw = req.query.objectGuid ?? req.body?.objectGuid;
   const objectGuid = typeof objectGuidRaw === "string" ? objectGuidRaw.trim() : "";
   if (!isValidUuidParam(objectGuid)) {
     return { ok: false, message: "objectGuid is required for legal_entity and outlet labels." };
   }
-  const linked = await isChildObjectLinkedToHolding(cardGuid, objectType, objectGuid);
+  const linked = await isObjectLinkedToClientCard(cardGuid, objectType, objectGuid);
   if (!linked) {
     return { ok: false, message: "Object is not linked to this client card." };
   }
   return { ok: true, objectType, objectGuid };
+}
+
+async function resolveTaskTarget(
+  req: AccessRequest,
+  cardGuid: string,
+): Promise<TaskTargetResult> {
+  const rawType = req.query.objectType;
+  if (rawType !== undefined && rawType !== null && String(rawType).trim() !== "" && !parseObjectType(rawType)) {
+    return { ok: false, message: "Invalid objectType." };
+  }
+  const objectType = parseObjectType(rawType) ?? "holding";
+  const cardMapping = await findCardObjectMapping(cardGuid);
+  if (!cardMapping || cardMapping.objectType !== "holding") {
+    return { ok: false, message: "Client card is not linked to a confirmed holding." };
+  }
+  const holdingGuid = cardMapping.objectGuid;
+
+  if (objectType === "holding") {
+    return { ok: true, objectType, objectGuid: holdingGuid, holdingGuid };
+  }
+
+  const objectGuidRaw = req.query.objectGuid;
+  const objectGuid = typeof objectGuidRaw === "string" ? objectGuidRaw.trim() : "";
+  if (!isValidUuidParam(objectGuid)) {
+    return { ok: false, message: "objectGuid is required for legal_entity and outlet tasks." };
+  }
+  const linked = await isObjectLinkedToClientCard(cardGuid, objectType, objectGuid);
+  if (!linked) {
+    return { ok: false, message: "Object is not linked to this client card." };
+  }
+  return { ok: true, objectType, objectGuid, holdingGuid };
 }
 
 function mapDenyCodeToState(code: TaskVisibilityDenyCode): string {
@@ -65,8 +117,6 @@ function mapDenyCodeToState(code: TaskVisibilityDenyCode): string {
       return "pilot_filtered";
     case "PILOT_LIST_MISSING":
       return "pilot_list_missing";
-    case "NO_CLIENT_ACCESS":
-      return "audience_denied";
     case "STALE_SNAPSHOT":
       return "stale_snapshot";
     case "FUTURE_TASK":
@@ -179,7 +229,11 @@ export async function postClientBitrix24LabelHandler(
     return;
   }
 
-  const result = await issueClientLabel(target.objectType, target.objectGuid);
+  const actorUserId = req.accessContext!.userId;
+  const restoreRequested = req.body?.restore === true;
+  const result = restoreRequested
+    ? await restoreClientLabel(target.objectType, target.objectGuid, actorUserId)
+    : await issueClientLabel(target.objectType, target.objectGuid, actorUserId);
   setNoStore(res);
   if (!result.ok) {
     res.status(409).json({
@@ -197,6 +251,7 @@ export async function postClientBitrix24LabelHandler(
     token: result.token,
     issuedAt: result.label.issuedAt,
     created: result.created,
+    restored: result.restored ?? false,
   });
 }
 
@@ -205,13 +260,6 @@ export async function getClientBitrix24TasksHandler(
   res: Response,
 ): Promise<void> {
   const cardGuid = String(req.params.guid ?? "");
-  const rawType = req.query.objectType;
-  if (rawType !== undefined && rawType !== null && String(rawType).trim() !== "" && !parseObjectType(rawType)) {
-    setNoStore(res);
-    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid objectType."));
-    return;
-  }
-  const objectType = parseObjectType(rawType) ?? "holding";
   if (!isValidUuidParam(cardGuid)) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
@@ -222,6 +270,13 @@ export async function getClientBitrix24TasksHandler(
   if (!allowed) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const target = await resolveTaskTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
     return;
   }
 
@@ -249,11 +304,25 @@ export async function getClientBitrix24TasksHandler(
     return;
   }
 
-  const syncEntry = await findLatestSyncJournalEntry(loaded.config.portalId);
-  const rows = await listPublishedTasksForObject(loaded.config.portalId, objectType, cardGuid);
+  const employeeLink = await findEmployeePortalLink(context.userId, loaded.config.portalId);
+  const syncEntry = employeeLink
+    ? await findLatestSyncJournalEntry(loaded.config.portalId, employeeLink.bitrixUserId)
+    : await findLatestSyncJournalEntry(loaded.config.portalId);
+
+  const queryObjectType = target.objectType;
+  const queryObjectGuid =
+    queryObjectType === "holding" ? target.holdingGuid : target.objectGuid;
+  const rows = await listPublishedTasksForObject(
+    loaded.config.portalId,
+    queryObjectType,
+    queryObjectGuid,
+  );
 
   const visible = [];
   let selfDeny: TaskVisibilityDenyCode | null = null;
+  let hadAudienceHidden = false;
+  let hadObjectHidden = false;
+
   for (const row of rows) {
     const objectAllowed = await canReadBoundBitrixObject(
       context,
@@ -262,11 +331,14 @@ export async function getClientBitrix24TasksHandler(
       row.objectGuid!,
     );
     if (!objectAllowed) {
+      hadObjectHidden = true;
       continue;
     }
     const visibility = await canViewTaskForUser(context, loaded.config.portalId, row);
     if (!visibility.ok) {
-      if (!selfDeny) {
+      if (isAudienceOnlyDeny(visibility.code)) {
+        hadAudienceHidden = true;
+      } else if (!selfDeny) {
         selfDeny = visibility.code;
       }
       continue;
@@ -278,6 +350,7 @@ export async function getClientBitrix24TasksHandler(
       deadline: formatDisplayDate(row.deadline),
       changedAt: formatDisplayDate(row.changedAt),
       responsibleBitrixUserId: row.responsibleBitrixUserId,
+      boundObjectLabel: formatBoundObjectLabel(row.objectType),
       portalUrl: buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, row.taskId),
     });
   }
@@ -285,7 +358,7 @@ export async function getClientBitrix24TasksHandler(
   let state = "ready";
   let message: string | null = null;
   if (visible.length === 0) {
-    if (rows.length === 0) {
+    if (rows.length === 0 || hadAudienceHidden || hadObjectHidden) {
       state = "empty";
       message = "Задачи с меткой этого объекта пока не найдены.";
     } else if (selfDeny) {
@@ -304,9 +377,6 @@ export async function getClientBitrix24TasksHandler(
         case "PILOT_LIST_MISSING":
           message = "Список разрешённых задач пилота не настроен.";
           break;
-        case "NO_CLIENT_ACCESS":
-          message = "Задача недоступна: ответственный не совпадает с вашим Bitrix ID.";
-          break;
         case "FUTURE_TASK":
           message = "Задача содержит некорректную дату обновления.";
           break;
@@ -323,9 +393,10 @@ export async function getClientBitrix24TasksHandler(
   res.status(200).json({
     state,
     message,
-    objectType,
+    objectType: target.objectType,
+    objectGuid: target.objectType === "holding" ? undefined : target.objectGuid,
     scopeNote:
-      objectType === "holding"
+      queryObjectType === "holding"
         ? "Показаны задачи подтверждённого холдинга и связанных объектов; это не полный список задач портала."
         : "Показаны задачи одного подтверждённого объекта; это не полный список задач портала.",
     sync: syncEntry

@@ -15,6 +15,15 @@ export type ParsedDescriptionLabels =
 
 const LINE_LABEL_REGEX = /^#LK_(H|J|T)_(\d{6})$/;
 
+function splitDescriptionLines(description: string): string[] {
+  const normalized = description
+    .replace(/\r\n/g, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>\s*<p[^>]*>/gi, "\n")
+    .replace(/<\/?p[^>]*>/gi, "\n");
+  return normalized.split("\n");
+}
+
 function stripMarkup(line: string): string {
   return line
     .replace(/<[^>]*>/g, "")
@@ -29,7 +38,7 @@ export function extractLabelsFromDescription(description: string | null | undefi
 
   const labels: Array<{ objectType: Bitrix24ObjectType; labelCode: string; token: string }> = [];
   const seenTokens = new Set<string>();
-  const lines = description.replace(/\r\n/g, "\n").split("\n");
+  const lines = splitDescriptionLines(description);
 
   for (const rawLine of lines) {
     const line = stripMarkup(rawLine);

@@ -5,6 +5,7 @@ import { formatLabelToken } from "../../src/bitrix24/labels/format";
 import {
   confirmObject,
   issueLabelInTransaction,
+  LabelRepositoryError,
   revokeActiveLabel,
   unconfirmObject,
 } from "../../src/bitrix24/labels/repository";
@@ -29,6 +30,13 @@ import {
   sampleWebhookConfig,
 } from "../helpers/bitrix24-mock-fetch";
 import { sampleValidBitrixTask } from "../helpers/bitrix24-task-fixtures";
+import {
+  HOLDING_ONE,
+  HOLDING_TWO,
+  linkCardToHolding,
+  linkChildToHolding,
+} from "../helpers/bitrix24-card-fixtures";
+import { restoreRevokedLabel } from "../../src/bitrix24/labels/repository";
 import { Pool } from "pg";
 
 const ORIGIN = "http://127.0.0.1:3000";
@@ -121,7 +129,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
         name_manager: "Manager A",
       },
     ]);
-    await confirmObject("holding", CLIENT_ONE, null);
+    await linkCardToHolding(CLIENT_ONE, HOLDING_ONE);
   });
 
   after(() => {
@@ -170,8 +178,9 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
 
   it("denies tasks when pilot allow-list is empty (ACC-04)", async () => {
     process.env.BITRIX24_PILOT_TASK_IDS = "";
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
     const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
     const { pinnedRequest } = createBitrixMockPinnedRequest({
       [tasksUrl]: {
@@ -205,7 +214,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("syncs labeled task into client card cache", async () => {
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
     const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
     const { pinnedRequest } = createBitrixMockPinnedRequest({
@@ -276,6 +285,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       },
     });
 
+    await seedAdminLink(databaseUrl, config.portalId);
     const result = await runBitrix24TaskSync({
       bitrixUserId: "42",
       apply: true,
@@ -297,27 +307,28 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
         name_manager: "Manager A",
       },
     ]);
-    await confirmObject("holding", CLIENT_TWO, null);
+    await linkCardToHolding(CLIENT_TWO, HOLDING_TWO);
 
     const [first, second] = await Promise.all([
-      issueLabelInTransaction("holding", CLIENT_ONE),
-      issueLabelInTransaction("holding", CLIENT_TWO),
+      issueLabelInTransaction("holding", HOLDING_ONE),
+      issueLabelInTransaction("holding", HOLDING_TWO),
     ]);
     assert.notEqual(first.labelCode, second.labelCode);
   });
 
   it("returns same label on concurrent issue for one object (PAR-01)", async () => {
     const [first, second] = await Promise.all([
-      issueLabelInTransaction("holding", CLIENT_ONE),
-      issueLabelInTransaction("holding", CLIENT_ONE),
+      issueLabelInTransaction("holding", HOLDING_ONE),
+      issueLabelInTransaction("holding", HOLDING_ONE),
     ]);
     assert.equal(first.labelCode, second.labelCode);
     assert.equal([first.created, second.created].filter(Boolean).length, 1);
   });
 
   it("hides tasks when employee portal link access expired (ACC-03)", async () => {
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
     const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
     const { pinnedRequest } = createBitrixMockPinnedRequest({
       [tasksUrl]: {
@@ -365,7 +376,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("does not apply stale sync over newer cache (ATO-01/02)", async () => {
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
     const newer = await upsertTaskSnapshot({
       portalId: config.portalId,
@@ -378,7 +389,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       descriptionHash: "abc",
       published: true,
       objectType: "holding",
-      objectGuid: CLIENT_ONE,
+      objectGuid: HOLDING_ONE,
       labelCode: label.labelCode,
       bindingStatus: "confirmed",
       conflictReason: null,
@@ -397,7 +408,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       descriptionHash: "def",
       published: true,
       objectType: "holding",
-      objectGuid: CLIENT_ONE,
+      objectGuid: HOLDING_ONE,
       labelCode: label.labelCode,
       bindingStatus: "confirmed",
       conflictReason: null,
@@ -415,16 +426,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("issues legal entity label when object confirmed (HJT-01)", async () => {
-    await insertSyntheticClients(databaseUrl, [
-      {
-        guid_client: LEGAL_ONE,
-        name_client: "Legal Entity One",
-        guid_manager: MANAGER_A,
-        name_manager: "Manager A",
-      },
-    ]);
     await confirmObject("legal_entity", LEGAL_ONE, null);
-    await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_ONE);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -440,16 +443,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("aggregates child legal entity tasks on holding card (HJT-03)", async () => {
-    await insertSyntheticClients(databaseUrl, [
-      {
-        guid_client: LEGAL_ONE,
-        name_client: "Legal Entity One",
-        guid_manager: MANAGER_A,
-        name_manager: "Manager A",
-      },
-    ]);
     await confirmObject("legal_entity", LEGAL_ONE, null);
-    await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_ONE);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
     const label = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
     const config = sampleWebhookConfig();
     await seedAdminLink(databaseUrl, config.portalId);
@@ -483,7 +478,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("invalidates bindings when label is revoked (ACC-06)", async () => {
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
     await upsertTaskSnapshot({
       portalId: config.portalId,
@@ -496,14 +491,14 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       descriptionHash: "hash",
       published: true,
       objectType: "holding",
-      objectGuid: CLIENT_ONE,
+      objectGuid: HOLDING_ONE,
       labelCode: label.labelCode,
       bindingStatus: "confirmed",
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
     await seedAdminLink(databaseUrl, config.portalId);
-    await revokeActiveLabel("holding", CLIENT_ONE);
+    await revokeActiveLabel("holding", HOLDING_ONE);
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -516,7 +511,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("blocks label issue after object unconfirmed (ACC-07)", async () => {
-    await unconfirmObject("holding", CLIENT_ONE);
+    await unconfirmObject("holding", HOLDING_ONE);
     const app = await loadApp();
     const cookie = await login("admin@example.com");
     const res = await request(app)
@@ -537,7 +532,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
   });
 
   it("hides tasks after employee link is renewed without re-sync (STALE_SNAPSHOT)", async () => {
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
     await upsertTaskSnapshot({
       portalId: config.portalId,
@@ -550,7 +545,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       descriptionHash: "hash",
       published: true,
       objectType: "holding",
-      objectGuid: CLIENT_ONE,
+      objectGuid: HOLDING_ONE,
       labelCode: label.labelCode,
       bindingStatus: "confirmed",
       conflictReason: null,
@@ -637,16 +632,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       confirmedByUserId: managerAUser.id,
     });
 
-    await insertSyntheticClients(databaseUrl, [
-      {
-        guid_client: LEGAL_FOREIGN,
-        name_client: "Foreign Legal",
-        guid_manager: MANAGER_B,
-        name_manager: "Manager B",
-      },
-    ]);
     await confirmObject("legal_entity", LEGAL_FOREIGN, null);
-    await confirmObjectHierarchyLink(CLIENT_ONE, "legal_entity", LEGAL_FOREIGN);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_FOREIGN);
     const foreignLabel = await issueLabelInTransaction("legal_entity", LEGAL_FOREIGN);
     const config = sampleWebhookConfig();
     await upsertTaskSnapshot({
@@ -722,7 +709,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       approvedByUserId: managerAUser.id,
     });
 
-    const label = await issueLabelInTransaction("holding", CLIENT_ONE);
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
     await upsertEmployeePortalLink({
       userId: assistantUser.id,
@@ -740,7 +727,7 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       descriptionHash: "hash",
       published: true,
       objectType: "holding",
-      objectGuid: CLIENT_ONE,
+      objectGuid: HOLDING_ONE,
       labelCode: label.labelCode,
       bindingStatus: "confirmed",
       conflictReason: null,
@@ -789,5 +776,321 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
       .set(authHeaders(expiredCookie));
     assert.equal(expiredTasks.status, 404);
+  });
+
+  it("rejects same changed_at with different title (version conflict)", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    const changedAt = "2026-09-30T12:00:00+03:00";
+    const base = {
+      portalId: config.portalId,
+      taskId: "9020",
+      responsibleBitrixUserId: "42",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt,
+      descriptionHash: "same-hash",
+      published: true,
+      objectType: "holding" as const,
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    };
+    await upsertTaskSnapshot({ ...base, title: "Original title" });
+    const conflict = await upsertTaskSnapshot({ ...base, title: "Different title" });
+    assert.equal(conflict.cacheUpdated, false);
+    assert.equal(conflict.versionConflict, true);
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{ title: string }>(
+      "SELECT title FROM bitrix24_task_cache WHERE task_id = $1",
+      ["9020"],
+    );
+    await pool.end();
+    assert.equal(row.rows[0]?.title, "Original title");
+  });
+
+  it("refreshes synced_at for identical snapshot at same changed_at", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    const changedAt = "2026-09-30T12:00:00+03:00";
+    const snapshot = {
+      portalId: config.portalId,
+      taskId: "9021",
+      responsibleBitrixUserId: "42",
+      title: "Same title",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt,
+      descriptionHash: "hash-1",
+      published: true,
+      objectType: "holding" as const,
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    };
+    await upsertTaskSnapshot(snapshot);
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const before = await pool.query<{ synced_at: Date }>(
+      "SELECT synced_at FROM bitrix24_task_cache WHERE task_id = $1",
+      ["9021"],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await upsertTaskSnapshot(snapshot);
+    const after = await pool.query<{ synced_at: Date }>(
+      "SELECT synced_at FROM bitrix24_task_cache WHERE task_id = $1",
+      ["9021"],
+    );
+    await pool.end();
+    assert.ok(after.rows[0]!.synced_at >= before.rows[0]!.synced_at);
+  });
+
+  it("hides tasks with future synced_at via HTTP", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9001",
+      responsibleBitrixUserId: "42",
+      title: "Future synced task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache SET synced_at = '2099-01-01T00:00:00Z' WHERE task_id = $1`,
+      ["9001"],
+    );
+    await pool.end();
+    await seedAdminLink(databaseUrl, config.portalId, "42");
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "future_task");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("hides tasks when employee link confirmed_at is in the future (HTTP)", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9002",
+      responsibleBitrixUserId: "42",
+      title: "Future link task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    const adminId = await seedAdminLink(databaseUrl, config.portalId, "42");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_employee_portal_links
+       SET confirmed_at = '2099-01-01T00:00:00Z'
+       WHERE user_id = $1::uuid AND portal_id = $2`,
+      [adminId, config.portalId],
+    );
+    await pool.end();
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "access_expired");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("does not leak audience_denied when hidden tasks exist (HTTP)", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId, "42");
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9003",
+      responsibleBitrixUserId: "999",
+      title: "Other responsible task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "empty");
+    assert.notEqual(tasksRes.body.state, "audience_denied");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("blocks re-issue after revoke and restores same label explicitly", async () => {
+    const issued = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await revokeActiveLabel("holding", HOLDING_ONE);
+    await assert.rejects(
+      () => issueLabelInTransaction("holding", HOLDING_ONE),
+      (error: unknown) => error instanceof LabelRepositoryError && error.code === "LABEL_REVOKED",
+    );
+    const restored = await restoreRevokedLabel("holding", HOLDING_ONE, null);
+    assert.equal(restored.labelCode, issued.labelCode);
+    assert.equal(restored.restored, true);
+  });
+
+  it("returns domain error when label sequence exhausted at 999999", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_label_sequences SET next_value = 999999, exhausted = FALSE WHERE object_type = 'holding'`,
+    );
+    await pool.end();
+    const issued = await issueLabelInTransaction("holding", HOLDING_ONE);
+    assert.equal(issued.labelCode, "LK_H_999999");
+    await confirmObject("holding", HOLDING_TWO, null);
+    await assert.rejects(
+      () => issueLabelInTransaction("holding", HOLDING_TWO),
+      (error: unknown) =>
+        error instanceof LabelRepositoryError && error.code === "LABEL_SEQUENCE_EXHAUSTED",
+    );
+  });
+
+  it("rejects sync for unconfirmed bitrix user before transport", async () => {
+    const config = sampleWebhookConfig();
+    const { pinnedRequest, calls } = createBitrixMockPinnedRequest({
+      [`${config.webhookBaseUrl}tasks.task.list`]: {
+        body: { result: { tasks: [] }, total: 0 },
+      },
+    });
+    const result = await runBitrix24TaskSync({
+      bitrixUserId: "99999",
+      apply: true,
+      pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+      env: process.env,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "failed");
+    assert.equal(calls.length, 0);
+    assert.ok(result.journalId);
+  });
+
+  it("returns partial status and writes journal for truncated sync", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const { pinnedRequest } = createBitrixMockPinnedRequest({
+      [tasksUrl]: {
+        body: {
+          result: {
+            tasks: [
+              sampleValidBitrixTask({
+                ID: "9001",
+                DESCRIPTION: formatLabelToken(label.labelCode),
+              }),
+            ],
+          },
+          total: 99,
+          next: 50,
+        },
+      },
+    });
+    const result = await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      maxPages: 1,
+      pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+      env: process.env,
+    });
+    assert.equal(result.status, "partial");
+    assert.equal(result.ok, false);
+    assert.equal(result.complete, false);
+    assert.ok(result.journalId);
+  });
+
+  it("serves J/T tasks by objectGuid without onec_clients row (HTTP)", async () => {
+    await confirmObject("legal_entity", LEGAL_ONE, null);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
+    const label = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9004",
+      responsibleBitrixUserId: "42",
+      title: "Legal entity direct task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "legal_entity",
+      objectGuid: LEGAL_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const tasksRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.status, 200);
+    assert.equal(tasksRes.body.state, "ready");
+    assert.equal(tasksRes.body.tasks.length, 1);
+    assert.equal(tasksRes.body.tasks[0]?.boundObjectLabel, "Юрлицо");
+  });
+
+  it("returns 400 when card and holding IDs differ without mapping", async () => {
+    const UNMAPPED_CARD = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: UNMAPPED_CARD,
+        name_client: "Unmapped card",
+        guid_manager: MANAGER_A,
+        name_manager: "Manager A",
+      },
+    ]);
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${UNMAPPED_CARD}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(res.status, 400);
   });
 });

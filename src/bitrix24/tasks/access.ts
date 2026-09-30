@@ -3,6 +3,7 @@ import { canReadClientGuid } from "../../clients/repository";
 import { bitrixChangedAtToDate } from "../parse-changed-at";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "./config";
 import { findEmployeePortalLink, type TaskCacheRow } from "./repository";
+import { guardPastTimestamp } from "./timestamp-guard";
 
 export type TaskVisibilityDenyCode =
   | "NOT_PUBLISHED"
@@ -16,23 +17,32 @@ export type TaskVisibilityDenyCode =
 
 export type TaskVisibilityResult = { ok: true } | { ok: false; code: TaskVisibilityDenyCode };
 
+/** Audience-only denials must not leak hidden task existence to card readers. */
+export function isAudienceOnlyDeny(code: TaskVisibilityDenyCode): boolean {
+  return code === "NO_CLIENT_ACCESS";
+}
+
 function isLinkAccessValid(
   link: { accessExpiresAt: string | null; confirmedAt: string },
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
+  nowMs = Date.now(),
 ): boolean {
   if (!isCachePublishAllowed(runtime)) {
     return false;
   }
-  const now = Date.now();
-  if (link.accessExpiresAt && Date.parse(link.accessExpiresAt) < now) {
+  const confirmedGuard = guardPastTimestamp(link.confirmedAt, nowMs);
+  if (!confirmedGuard.ok) {
     return false;
+  }
+  if (link.accessExpiresAt) {
+    const expiresMs = Date.parse(link.accessExpiresAt);
+    if (!Number.isFinite(expiresMs) || expiresMs < nowMs) {
+      return false;
+    }
   }
   if (runtime.cacheAccessTtlMs > 0) {
     const confirmedAtMs = Date.parse(link.confirmedAt);
-    if (!Number.isFinite(confirmedAtMs)) {
-      return false;
-    }
-    if (confirmedAtMs + runtime.cacheAccessTtlMs < now) {
+    if (confirmedAtMs + runtime.cacheAccessTtlMs < nowMs) {
       return false;
     }
   }
@@ -43,23 +53,28 @@ function isTaskSnapshotCurrent(
   task: TaskCacheRow,
   link: { confirmedAt: string },
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
+  nowMs = Date.now(),
 ): TaskVisibilityResult {
+  const syncedGuard = guardPastTimestamp(task.syncedAt, nowMs);
+  if (!syncedGuard.ok) {
+    return { ok: false, code: syncedGuard.reason === "future" ? "FUTURE_TASK" : "STALE_SNAPSHOT" };
+  }
   const syncedAtMs = Date.parse(task.syncedAt);
   const linkConfirmedMs = Date.parse(link.confirmedAt);
-  if (!Number.isFinite(syncedAtMs) || !Number.isFinite(linkConfirmedMs)) {
+  if (!Number.isFinite(linkConfirmedMs)) {
     return { ok: false, code: "STALE_SNAPSHOT" };
   }
   if (syncedAtMs < linkConfirmedMs) {
     return { ok: false, code: "STALE_SNAPSHOT" };
   }
-  if (runtime.cacheAccessTtlMs > 0 && syncedAtMs + runtime.cacheAccessTtlMs < Date.now()) {
+  if (runtime.cacheAccessTtlMs > 0 && syncedAtMs + runtime.cacheAccessTtlMs < nowMs) {
     return { ok: false, code: "ACCESS_EXPIRED" };
   }
   const changedAt = bitrixChangedAtToDate(task.changedAt);
   if (!changedAt) {
     return { ok: false, code: "STALE_SNAPSHOT" };
   }
-  if (changedAt.getTime() > Date.now()) {
+  if (changedAt.getTime() > nowMs) {
     return { ok: false, code: "FUTURE_TASK" };
   }
   return { ok: true };

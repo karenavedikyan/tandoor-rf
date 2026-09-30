@@ -5,7 +5,12 @@ import { findLabelByCode } from "../labels/repository";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
-import { recordBindingDiagnostic, upsertTaskSnapshot } from "../tasks/repository";
+import {
+  insertSyncJournalEntry,
+  isPortalBitrixUserConfirmed,
+  recordBindingDiagnostic,
+  upsertTaskSnapshot,
+} from "../tasks/repository";
 import { requirePool } from "../../db/pool";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
@@ -21,6 +26,7 @@ export type Bitrix24SyncOptions = {
 
 export type Bitrix24SyncResult = {
   ok: boolean;
+  status: "success" | "partial" | "failed" | "skipped";
   mode: "dry_run" | "apply";
   tasksFetched: number;
   bindingsConfirmed: number;
@@ -28,13 +34,19 @@ export type Bitrix24SyncResult = {
   bindingsInvalid: number;
   bindingsPending: number;
   cacheWrites: number;
+  versionConflicts: number;
   complete: boolean;
   truncatedReason?: string;
   message: string;
+  journalId?: string;
 };
 
 function hashDescription(description: string | null): string {
   return createHash("sha256").update(description ?? "").digest("hex");
+}
+
+function buildScopeSummary(portalId: string, bitrixUserId: string): string {
+  return `portal_id=${portalId};bitrix_user_id=${bitrixUserId}`;
 }
 
 export async function runBitrix24TaskSync(
@@ -42,16 +54,20 @@ export async function runBitrix24TaskSync(
 ): Promise<Bitrix24SyncResult> {
   const env = options.env ?? process.env;
   const loaded = loadBitrix24Config(env);
+  const mode = options.apply ? "apply" : "dry_run";
+
   if (!loaded.ok) {
     return {
       ok: false,
-      mode: options.apply ? "apply" : "dry_run",
+      status: "failed",
+      mode,
       tasksFetched: 0,
       bindingsConfirmed: 0,
       bindingsConflict: 0,
       bindingsInvalid: 0,
       bindingsPending: 0,
       cacheWrites: 0,
+      versionConflicts: 0,
       complete: false,
       message: "Bitrix24 is not configured.",
     };
@@ -60,6 +76,35 @@ export async function runBitrix24TaskSync(
   const config = loaded.config;
   const runtime = loadBitrix24TasksRuntimeConfig(env);
   const publishAllowed = isCachePublishAllowed(runtime);
+  const scopeSummary = buildScopeSummary(config.portalId, options.bitrixUserId);
+
+  const confirmed = await isPortalBitrixUserConfirmed(config.portalId, options.bitrixUserId);
+  if (!confirmed) {
+    const journalId = options.apply
+      ? await insertSyncJournalEntry({
+          runMode: "apply",
+          scopeSummary,
+          status: "failed",
+          summary: { reason: "UNCONFIRMED_BITRIX_USER", bitrixUserId: options.bitrixUserId },
+        })
+      : undefined;
+    return {
+      ok: false,
+      status: "failed",
+      mode,
+      tasksFetched: 0,
+      bindingsConfirmed: 0,
+      bindingsConflict: 0,
+      bindingsInvalid: 0,
+      bindingsPending: 0,
+      cacheWrites: 0,
+      versionConflicts: 0,
+      complete: false,
+      message: "Bitrix user is not linked to this portal.",
+      journalId,
+    };
+  }
+
   const operation = createOperationContext(config);
   operation.pinnedRequest = options.pinnedRequest;
   operation.resolvePortalAddresses = options.resolvePortalAddresses;
@@ -70,17 +115,32 @@ export async function runBitrix24TaskSync(
   });
 
   if (!readResult.ok) {
+    const journalId = options.apply
+      ? await insertSyncJournalEntry({
+          runMode: "apply",
+          scopeSummary,
+          status: "failed",
+          summary: {
+            reason: readResult.code,
+            message: readResult.message,
+            bitrixUserId: options.bitrixUserId,
+          },
+        })
+      : undefined;
     return {
       ok: false,
-      mode: options.apply ? "apply" : "dry_run",
+      status: "failed",
+      mode,
       tasksFetched: 0,
       bindingsConfirmed: 0,
       bindingsConflict: 0,
       bindingsInvalid: 0,
       bindingsPending: 0,
       cacheWrites: 0,
+      versionConflicts: 0,
       complete: false,
       message: readResult.message,
+      journalId,
     };
   }
 
@@ -89,8 +149,10 @@ export async function runBitrix24TaskSync(
   let bindingsInvalid = 0;
   let bindingsPending = 0;
   let cacheWrites = 0;
+  let versionConflicts = 0;
   const pool = requirePool();
   const client = options.apply ? await pool.connect() : null;
+  let journalId: string | undefined;
 
   try {
     if (client) {
@@ -166,51 +228,96 @@ export async function runBitrix24TaskSync(
         if (writeResult.cacheUpdated) {
           cacheWrites += 1;
         }
+        if (writeResult.versionConflict) {
+          versionConflicts += 1;
+          await recordBindingDiagnostic(
+            config.portalId,
+            task.taskId,
+            "version_conflict",
+            "same_changed_at_different_content",
+            client,
+          );
+        }
       }
     }
 
+    const runStatus = readResult.data.complete ? "success" : "partial";
+
     if (client) {
-      await client.query(
-        `INSERT INTO bitrix24_sync_journal (run_mode, scope_summary, finished_at, status, summary)
-         VALUES ($1, $2, NOW(), $3, $4::jsonb)`,
-        [
-          options.apply ? "apply" : "dry_run",
-          `portal_id=${config.portalId};bitrix_user_id=${options.bitrixUserId}`,
-          readResult.data.complete ? "success" : "partial",
-          JSON.stringify({
+      journalId = await insertSyncJournalEntry(
+        {
+          runMode: mode,
+          scopeSummary,
+          status: runStatus,
+          summary: {
             tasksFetched: readResult.data.tasks.length,
             bindingsConfirmed,
             bindingsConflict,
             bindingsInvalid,
             bindingsPending,
             cacheWrites,
-          }),
-        ],
+            versionConflicts,
+            truncatedReason: readResult.data.truncatedReason ?? null,
+          },
+        },
+        client,
       );
       await client.query("COMMIT");
     }
   } catch (error) {
     if (client) {
       await client.query("ROLLBACK");
+      journalId = await insertSyncJournalEntry({
+        runMode: mode,
+        scopeSummary,
+        status: "failed",
+        summary: {
+          reason: "APPLY_ROLLBACK",
+          message: error instanceof Error ? error.message : "sync_apply_failed",
+          bitrixUserId: options.bitrixUserId,
+        },
+      });
     }
-    throw error;
+    return {
+      ok: false,
+      status: "failed",
+      mode,
+      tasksFetched: readResult.data.tasks.length,
+      bindingsConfirmed,
+      bindingsConflict,
+      bindingsInvalid,
+      bindingsPending,
+      cacheWrites,
+      versionConflicts,
+      complete: false,
+      message: "Bitrix24 task sync apply failed and was rolled back.",
+      journalId,
+    };
   } finally {
     client?.release();
   }
 
+  const complete = readResult.data.complete;
+  const status = complete ? "success" : "partial";
+
   return {
-    ok: true,
-    mode: options.apply ? "apply" : "dry_run",
+    ok: complete,
+    status,
+    mode,
     tasksFetched: readResult.data.tasks.length,
     bindingsConfirmed,
     bindingsConflict,
     bindingsInvalid,
     bindingsPending,
     cacheWrites,
-    complete: readResult.data.complete,
+    versionConflicts,
+    complete,
     truncatedReason: readResult.data.truncatedReason,
-    message: options.apply
-      ? "Bitrix24 task sync applied to local cache."
-      : "Bitrix24 task sync dry-run completed.",
+    message: complete
+      ? options.apply
+        ? "Bitrix24 task sync applied to local cache."
+        : "Bitrix24 task sync dry-run completed."
+      : "Bitrix24 task sync completed with partial result.",
+    journalId,
   };
 }

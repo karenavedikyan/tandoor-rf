@@ -1,7 +1,4 @@
--- R2.2 round 2: binding diagnostics, label audit, nullable changed_at for invalid legacy rows
-
-ALTER TABLE bitrix24_task_cache
-  ALTER COLUMN changed_at DROP NOT NULL;
+-- R2.2 round 2: binding diagnostics, label audit
 
 CREATE TABLE IF NOT EXISTS bitrix24_label_audit (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

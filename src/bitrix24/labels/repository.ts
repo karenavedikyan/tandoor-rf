@@ -12,20 +12,31 @@ export type ObjectLabelRow = {
   issuedAt: string;
 };
 
-export type LabelIssueTransactionResult = ObjectLabelRow & { created: boolean };
+export type LabelIssueTransactionResult = ObjectLabelRow & { created: boolean; restored?: boolean };
+
+export class LabelRepositoryError extends Error {
+  constructor(
+    message: string,
+    readonly code: "OBJECT_NOT_CONFIRMED" | "LABEL_REVOKED" | "LABEL_SEQUENCE_EXHAUSTED" | "LABEL_ISSUE_RACE",
+  ) {
+    super(message);
+    this.name = "LabelRepositoryError";
+  }
+}
 
 async function recordLabelAudit(
   action: string,
   objectType: Bitrix24ObjectType | null,
   objectGuid: string | null,
   labelCode: string | null,
+  actorUserId: string | null,
   detail: string | null,
   client: Pool | PoolClient,
 ): Promise<void> {
   await client.query(
-    `INSERT INTO bitrix24_label_audit (action, object_type, object_guid, label_code, detail)
-     VALUES ($1, $2::bitrix24_object_type, $3::uuid, $4, $5)`,
-    [action, objectType, objectGuid, labelCode, detail],
+    `INSERT INTO bitrix24_label_audit (action, object_type, object_guid, label_code, actor_user_id, detail)
+     VALUES ($1, $2::bitrix24_object_type, $3::uuid, $4, $5::uuid, $6)`,
+    [action, objectType, objectGuid, labelCode, actorUserId, detail],
   );
 }
 
@@ -61,6 +72,7 @@ export async function confirmObject(
 export async function unconfirmObject(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
+  actorUserId: string | null = null,
   client: Pool | PoolClient = requirePool(),
 ): Promise<boolean> {
   const result = await client.query(
@@ -71,7 +83,7 @@ export async function unconfirmObject(
   const removed = (result.rowCount ?? 0) > 0;
   if (removed) {
     await invalidateBindingsForObject(null, objectType, objectGuid, "object_unconfirmed", client);
-    await recordLabelAudit("unconfirm", objectType, objectGuid, null, null, client);
+    await recordLabelAudit("unconfirm", objectType, objectGuid, null, actorUserId, null, client);
   }
   return removed;
 }
@@ -93,6 +105,40 @@ export async function findActiveLabel(
      WHERE object_type = $1::bitrix24_object_type
        AND object_guid = $2::uuid
        AND revoked_at IS NULL`,
+    [objectType, objectGuid],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
+    labelCode: row.label_code,
+    issuedAt: row.issued_at.toISOString(),
+  };
+}
+
+export async function findLatestRevokedLabel(
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<ObjectLabelRow | null> {
+  const result = await client.query<{
+    id: string;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
+    label_code: string;
+    issued_at: Date;
+  }>(
+    `SELECT id, object_type, object_guid, label_code, issued_at
+     FROM bitrix24_object_labels
+     WHERE object_type = $1::bitrix24_object_type
+       AND object_guid = $2::uuid
+       AND revoked_at IS NOT NULL
+     ORDER BY revoked_at DESC
+     LIMIT 1`,
     [objectType, objectGuid],
   );
   const row = result.rows[0];
@@ -142,6 +188,7 @@ export async function findLabelByCode(
 export async function revokeActiveLabel(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
+  actorUserId: string | null = null,
   client: Pool | PoolClient = requirePool(),
 ): Promise<ObjectLabelRow | null> {
   const result = await client.query<{
@@ -164,7 +211,7 @@ export async function revokeActiveLabel(
     return null;
   }
   await invalidateBindingsForObject(null, objectType, objectGuid, "label_revoked", client);
-  await recordLabelAudit("revoke", objectType, objectGuid, row.label_code, null, client);
+  await recordLabelAudit("revoke", objectType, objectGuid, row.label_code, actorUserId, null, client);
   return {
     id: row.id,
     objectType: row.object_type,
@@ -174,9 +221,55 @@ export async function revokeActiveLabel(
   };
 }
 
+export async function restoreRevokedLabel(
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  actorUserId: string | null = null,
+): Promise<LabelIssueTransactionResult> {
+  const pool = requirePool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
+    if (!confirmed) {
+      throw new LabelRepositoryError("OBJECT_NOT_CONFIRMED", "OBJECT_NOT_CONFIRMED");
+    }
+    const active = await findActiveLabel(objectType, objectGuid, client);
+    if (active) {
+      await client.query("COMMIT");
+      return { ...active, created: false, restored: false };
+    }
+    const revoked = await findLatestRevokedLabel(objectType, objectGuid, client);
+    if (!revoked) {
+      throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
+    }
+    const restored = await client.query<{ issued_at: Date }>(
+      `UPDATE bitrix24_object_labels
+       SET revoked_at = NULL, issued_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING issued_at`,
+      [revoked.id],
+    );
+    await recordLabelAudit("restore", objectType, objectGuid, revoked.labelCode, actorUserId, null, client);
+    await client.query("COMMIT");
+    return {
+      ...revoked,
+      issuedAt: restored.rows[0]!.issued_at.toISOString(),
+      created: false,
+      restored: true,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function issueLabelInTransaction(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
+  actorUserId: string | null = null,
 ): Promise<LabelIssueTransactionResult> {
   const pool = requirePool();
   const client = await pool.connect();
@@ -189,21 +282,26 @@ export async function issueLabelInTransaction(
       return { ...existing, created: false };
     }
 
-    const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
-    if (!confirmed) {
-      await client.query("ROLLBACK");
-      throw new Error("OBJECT_NOT_CONFIRMED");
+    const revoked = await findLatestRevokedLabel(objectType, objectGuid, client);
+    if (revoked) {
+      throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
     }
 
-    const seq = await client.query<{ next_value: number }>(
-      `SELECT next_value FROM bitrix24_label_sequences
+    const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
+    if (!confirmed) {
+      throw new LabelRepositoryError("OBJECT_NOT_CONFIRMED", "OBJECT_NOT_CONFIRMED");
+    }
+
+    const seq = await client.query<{ next_value: number; exhausted: boolean }>(
+      `SELECT next_value, exhausted FROM bitrix24_label_sequences
        WHERE object_type = $1::bitrix24_object_type
        FOR UPDATE`,
       [objectType],
     );
     const nextValue = seq.rows[0]?.next_value;
-    if (!nextValue || nextValue > 999999) {
-      throw new Error("LABEL_SEQUENCE_EXHAUSTED");
+    const exhausted = seq.rows[0]?.exhausted ?? false;
+    if (!nextValue || exhausted || nextValue > 999999) {
+      throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
     }
     const labelCode = formatLabelCode(objectType, nextValue);
 
@@ -221,19 +319,28 @@ export async function issueLabelInTransaction(
     if ((inserted.rowCount ?? 0) === 0) {
       const raced = await findActiveLabel(objectType, objectGuid, client);
       if (!raced) {
-        throw new Error("LABEL_ISSUE_RACE");
+        throw new LabelRepositoryError("LABEL_ISSUE_RACE", "LABEL_ISSUE_RACE");
       }
       await client.query("COMMIT");
       return { ...raced, created: false };
     }
 
-    await client.query(
-      `UPDATE bitrix24_label_sequences
-       SET next_value = next_value + 1
-       WHERE object_type = $1::bitrix24_object_type`,
-      [objectType],
-    );
-    await recordLabelAudit("issue", objectType, objectGuid, labelCode, null, client);
+    if (nextValue === 999999) {
+      await client.query(
+        `UPDATE bitrix24_label_sequences
+         SET exhausted = TRUE
+         WHERE object_type = $1::bitrix24_object_type`,
+        [objectType],
+      );
+    } else {
+      await client.query(
+        `UPDATE bitrix24_label_sequences
+         SET next_value = next_value + 1
+         WHERE object_type = $1::bitrix24_object_type`,
+        [objectType],
+      );
+    }
+    await recordLabelAudit("issue", objectType, objectGuid, labelCode, actorUserId, null, client);
     await client.query("COMMIT");
     const row = inserted.rows[0]!;
     return {
@@ -246,7 +353,7 @@ export async function issueLabelInTransaction(
     };
   } catch (error) {
     await client.query("ROLLBACK");
-    if (error instanceof Error && error.message === "OBJECT_NOT_CONFIRMED") {
+    if (error instanceof LabelRepositoryError) {
       throw error;
     }
     const pgError = error as { code?: string };
@@ -255,6 +362,9 @@ export async function issueLabelInTransaction(
       if (raced) {
         return { ...raced, created: false };
       }
+    }
+    if (pgError.code === "23514") {
+      throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
     }
     throw error;
   } finally {

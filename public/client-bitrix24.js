@@ -13,7 +13,6 @@
     future_task: "Задача содержит некорректную дату обновления.",
     pilot_filtered: "Задачи вне разрешённого списка пилота не показываются.",
     pilot_list_missing: "Список разрешённых задач пилота не настроен.",
-    audience_denied: "Задачи недоступны: ответственный не совпадает с вашим Bitrix ID.",
     not_published: "Кэш задач не опубликован.",
   };
 
@@ -36,6 +35,9 @@
     var responsible = task.responsibleBitrixUserId
       ? esc("Bitrix ID " + task.responsibleBitrixUserId)
       : "—";
+    var objectLabel = task.boundObjectLabel
+      ? esc("Объект: " + task.boundObjectLabel)
+      : "";
     var link = task.portalUrl
       ? '<a class="pc-link" href="' +
         esc(task.portalUrl) +
@@ -53,6 +55,9 @@
       " · Обновлено: " +
       esc(task.changedAt || "—") +
       "</div>" +
+      (objectLabel
+        ? '<div class="pc-label">' + objectLabel + "</div>"
+        : "") +
       '<div class="pc-label">Ответственный: ' +
       responsible +
       "</div>" +

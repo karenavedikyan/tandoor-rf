@@ -65,7 +65,8 @@ describe("bitrix24 labels", () => {
     assert.equal(isCachePublishAllowed(blocked), false);
   });
 
-  it("rejects sequence 999999 issuance at format layer", () => {
+  it("rejects sequence above 999999 at format layer", () => {
     assert.throws(() => formatLabelCode("holding", 1_000_000), /INVALID_LABEL_SEQUENCE/);
+    assert.equal(formatLabelCode("holding", 999999), "LK_H_999999");
   });
 });
