@@ -62,6 +62,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "007_onec_exchange_state.sql",
       "008_onec_exchange_journal_links.sql",
       "009_onec_journal_warnings_truncated.sql",
+      "010_bitrix24_client_labels.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);

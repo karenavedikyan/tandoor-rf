@@ -82,6 +82,7 @@ export type Bitrix24NormalizedTask = {
   deadlineInvalid: boolean;
   changedAt: string | null;
   changedAtInvalid: boolean;
+  description: string | null;
 };
 
 export type Bitrix24TaskListTruncationReason =

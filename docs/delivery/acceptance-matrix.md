@@ -259,6 +259,28 @@
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 
+### R2.2 Bitrix24 client labels (draft PR, branch `cursor/r22-client-labels-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| Формат меток `#LK_H/J/T_NNNNNN` | unit: `bitrix24-labels.test.ts` |
+| GET не создаёт метки; POST с CSRF | integration: `bitrix24-client-labels.test.ts` |
+| Парсер: conflict, dedupe, HTML/BBCode | unit |
+| Конкурентная выдача кодов | integration (Promise.all, разные объекты) |
+| Sync dry-run/apply, mock Bitrix | integration |
+| Истёкший portal link → задачи скрыты | integration |
+| Кэш publish disabled по умолчанию | `.env.example`, handlers |
+| Live portal check | **не выполнялась** |
+| Production migrate / cache fill | **не выполнялись** |
+| 1C import / Bitrix write | **не менялись** |
+| Rollback doc | `docs/delivery/r22-rollback.md` |
+| Регламент меток | `docs/delivery/bitrix24-labels-regulation.md` |
+| Browser UI (mock API) | `clients-bitrix24-work-1440/390-light.png` |
+| `npm test` | **238 passed** |
+| `npm run test:integration` | **146 passed** |
+| `npm run test:browser` | **21 passed** |
+| typecheck / build | pass |
+
 ### R2.1 Bitrix24 read module (draft PR #17, branch `cursor/r21-bitrix24-module-9e11`)
 
 | Проверка | Результат |

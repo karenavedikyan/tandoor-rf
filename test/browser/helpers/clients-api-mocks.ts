@@ -154,6 +154,8 @@ export type MockOptions = {
   detailStatus?: number;
   detailBody?: unknown;
   failListOnce?: boolean;
+  bitrix24Label?: Record<string, unknown>;
+  bitrix24Tasks?: Record<string, unknown>;
 };
 
 export function jsonResponse(status: number, body: unknown): {
@@ -213,6 +215,27 @@ export function resolveMockResponse(
       return jsonResponse(options.detailStatus, options.detailBody ?? { error: { message: "Error" } });
     }
     return jsonResponse(200, options.detailBody ?? syntheticDetailPayload());
+  }
+
+  if (path.endsWith("/bitrix24/label")) {
+    if (options.bitrix24Label) {
+      return jsonResponse(200, options.bitrix24Label);
+    }
+    return jsonResponse(404, {
+      code: "NOT_ISSUED",
+      message: "Метка для объекта ещё не выдана.",
+    });
+  }
+
+  if (path.endsWith("/bitrix24/tasks")) {
+    if (options.bitrix24Tasks) {
+      return jsonResponse(200, options.bitrix24Tasks);
+    }
+    return jsonResponse(200, {
+      state: "not_configured",
+      message: "Bitrix24 integration is not configured.",
+      tasks: [],
+    });
   }
 
   return null;

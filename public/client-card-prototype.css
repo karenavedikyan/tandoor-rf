@@ -55,6 +55,10 @@
 .pc-workspace .legacy-field-row__value {margin-top:5px;}
 .pc-workspace .client-detail-copy-row {margin:8px 0;}
 .pc-workspace .client-detail-value {overflow-wrap:anywhere;}
+.pc-bitrix24-token {display:block;font-size:16px;font-weight:600;margin:8px 0 12px;padding:10px 12px;border-radius:6px;background:var(--rf-surface-muted);border:1px solid var(--rf-border);}
+.pc-bitrix24-task {padding:12px 0;border-top:1px solid var(--rf-border);}
+.pc-bitrix24-task:first-child {border-top:0;padding-top:0;}
+.pc-bitrix24-label {margin-bottom:16px;}
 @media(max-width:1100px){.pc-three{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:700px){
   .client-card-page .legacy-content{padding:20px 16px;}

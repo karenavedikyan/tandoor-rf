@@ -148,6 +148,12 @@ export function normalizeBitrixTask(
     return null;
   }
 
+  const descriptionRaw = readField(record, ["DESCRIPTION", "description"]);
+  const description =
+    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0
+      ? descriptionRaw
+      : null;
+
   return {
     portalHost,
     taskId,
@@ -160,6 +166,7 @@ export function normalizeBitrixTask(
     deadlineInvalid: false,
     changedAt: changedParsed.value,
     changedAtInvalid: false,
+    description,
   };
 }
 

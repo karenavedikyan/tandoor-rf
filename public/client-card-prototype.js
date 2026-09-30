@@ -69,6 +69,11 @@
       '</div><div id="pc-data-existing" class="pc-grid pc-equal pc-space"></div></section>' +
       tabs.slice(2).map(function (t) {
         var sources = {work:"Битрикс24",showcase:"Осмотры и каталог 1С",orders:"1С",finance:"1С",documents:"Битрикс24",claims:"Разрешённая сводка Битрикс24",plan:"Планы / факт отгрузок 1С"};
+        if (t[0] === "work") {
+          return '<section id="pc-panel-work" role="tabpanel" aria-labelledby="pc-tab-work" hidden>' +
+            card("Работа", '<div class="pc-pad" id="pc-bitrix24-work" data-bitrix24-root></div>', sources.work) +
+            '</section>';
+        }
         return '<section id="pc-panel-' + t[0] + '" role="tabpanel" aria-labelledby="pc-tab-' + t[0] + '" hidden>' +
           card(t[1], pending("Раздел ещё не подключён. После интеграции здесь появятся данные по этому клиенту; сейчас их наличие и количество неизвестны."), sources[t[0]]) +
           '</section>';
@@ -121,6 +126,9 @@
     wrapper.querySelectorAll("[data-card-open]").forEach(function (btn) {
       btn.addEventListener("click", function () { select(btn.dataset.cardOpen, true); });
     });
+    if (window.ClientBitrix24 && client.guid) {
+      window.ClientBitrix24.mountWorkTab(wrapper, client.guid);
+    }
   }
   window.ClientCardPrototype = {mount:mount};
 })();

@@ -164,6 +164,14 @@ export async function getClientByGuid(
   return toClientDetail(row);
 }
 
+export async function canReadClientGuid(
+  context: AccessContext,
+  guid: string,
+): Promise<boolean> {
+  const client = await getClientByGuid(context, guid);
+  return client !== null;
+}
+
 type ExchangeStateQueryRow = {
   last_attempt_at: Date | null;
   last_verified_at: Date | null;

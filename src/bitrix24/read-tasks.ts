@@ -18,6 +18,7 @@ const TASK_SELECT_FIELDS = [
   "CREATED_BY",
   "DEADLINE",
   "CHANGED_DATE",
+  "DESCRIPTION",
 ] as const;
 
 export type ReadBitrixTasksResult =
