@@ -2,11 +2,12 @@ import { parseCanonicalBitrixId } from "./parse-id";
 
 export type NormalizedChecklistItem = {
   itemId: string;
+  taskId: string;
   parentId: string | null;
   title: string;
   sortIndex: number;
   isComplete: boolean;
-  memberBitrixIds: string[];
+  coExecutorBitrixIds: string[];
   isRootGroup: boolean;
 };
 
@@ -22,6 +23,11 @@ export type ChecklistTreeNode = {
   isComplete: boolean | null;
   sortIndex: number;
   children: ChecklistTreeNode[];
+};
+
+export type ChecklistDedupeResult = {
+  items: NormalizedChecklistItem[];
+  duplicateConflict: boolean;
 };
 
 function parseSortIndex(value: unknown): number {
@@ -54,7 +60,8 @@ function parseIsComplete(value: unknown): boolean | null {
   return null;
 }
 
-function extractMemberBitrixIds(raw: unknown): string[] {
+/** TYPE A = co-executor; TYPE U = observer (not shown as assignee). */
+function extractCoExecutorBitrixIds(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -64,7 +71,7 @@ function extractMemberBitrixIds(raw: unknown): string[] {
       continue;
     }
     const record = entry as Record<string, unknown>;
-    if (record.TYPE !== "U") {
+    if (record.TYPE !== "A") {
       continue;
     }
     const id = parseCanonicalBitrixId(record.ID);
@@ -75,13 +82,28 @@ function extractMemberBitrixIds(raw: unknown): string[] {
   return ids;
 }
 
-export function normalizeChecklistItem(raw: unknown): NormalizedChecklistItem | null {
+function parseTaskId(value: unknown, expectedTaskId: string): string | null {
+  const parsed = parseCanonicalBitrixId(value);
+  if (!parsed || parsed !== expectedTaskId) {
+    return null;
+  }
+  return parsed;
+}
+
+export function normalizeChecklistItem(
+  raw: unknown,
+  expectedTaskId: string,
+): NormalizedChecklistItem | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
   const record = raw as Record<string, unknown>;
   const itemId = parseCanonicalBitrixId(record.ID);
   if (!itemId) {
+    return null;
+  }
+  const taskId = parseTaskId(record.TASK_ID, expectedTaskId);
+  if (!taskId) {
     return null;
   }
   const title = typeof record.TITLE === "string" ? record.TITLE.trim() : "";
@@ -95,54 +117,51 @@ export function normalizeChecklistItem(raw: unknown): NormalizedChecklistItem | 
   const parentId = parseParentId(record.PARENT_ID);
   return {
     itemId,
+    taskId,
     parentId,
     title,
     sortIndex: parseSortIndex(record.SORT_INDEX),
     isComplete,
-    memberBitrixIds: extractMemberBitrixIds(record.MEMBERS),
+    coExecutorBitrixIds: extractCoExecutorBitrixIds(record.MEMBERS),
     isRootGroup: parentId === null,
   };
 }
 
-export function dedupeChecklistItems(items: NormalizedChecklistItem[]): NormalizedChecklistItem[] {
-  const seen = new Set<string>();
-  const result: NormalizedChecklistItem[] = [];
+function itemSignature(item: NormalizedChecklistItem): string {
+  return [
+    item.taskId,
+    item.parentId ?? "",
+    item.title,
+    item.sortIndex,
+    item.isComplete,
+    item.coExecutorBitrixIds.join(","),
+  ].join("|");
+}
+
+export function dedupeChecklistItems(items: NormalizedChecklistItem[]): ChecklistDedupeResult {
+  const byId = new Map<string, NormalizedChecklistItem>();
   for (const item of items) {
-    if (seen.has(item.itemId)) {
+    const prior = byId.get(item.itemId);
+    if (prior) {
+      if (itemSignature(prior) !== itemSignature(item)) {
+        return { items: [], duplicateConflict: true };
+      }
       continue;
     }
-    seen.add(item.itemId);
-    result.push(item);
+    byId.set(item.itemId, item);
   }
-  return result;
+  return { items: [...byId.values()], duplicateConflict: false };
 }
 
-function childIdSet(items: NormalizedChecklistItem[]): Set<string> {
-  const ids = new Set<string>();
-  for (const item of items) {
-    if (item.parentId) {
-      ids.add(item.parentId);
-    }
-  }
-  return ids;
-}
-
-export function isActionableChecklistItem(
-  item: NormalizedChecklistItem,
-  parentsWithChildren: Set<string>,
-): boolean {
-  if (item.isRootGroup) {
-    return false;
-  }
-  return !parentsWithChildren.has(item.itemId);
+export function isProgressChecklistItem(item: NormalizedChecklistItem): boolean {
+  return !item.isRootGroup;
 }
 
 export function computeChecklistProgress(items: NormalizedChecklistItem[]): ChecklistProgress {
-  const parentsWithChildren = childIdSet(items);
   let completed = 0;
   let total = 0;
   for (const item of items) {
-    if (!isActionableChecklistItem(item, parentsWithChildren)) {
+    if (!isProgressChecklistItem(item)) {
       continue;
     }
     total += 1;
@@ -151,6 +170,38 @@ export function computeChecklistProgress(items: NormalizedChecklistItem[]): Chec
     }
   }
   return { completed, total };
+}
+
+export type ChecklistStructureValidation =
+  | { ok: true }
+  | { ok: false; code: "TASK_ID_MISMATCH" | "MISSING_PARENT" | "CYCLE" | "DUPLICATE_CONFLICT" };
+
+export function validateChecklistStructure(items: NormalizedChecklistItem[]): ChecklistStructureValidation {
+  const byId = new Map(items.map((item) => [item.itemId, item]));
+
+  for (const item of items) {
+    if (item.parentId && !byId.has(item.parentId)) {
+      return { ok: false, code: "MISSING_PARENT" };
+    }
+  }
+
+  for (const item of items) {
+    let current = item.parentId;
+    const visited = new Set<string>([item.itemId]);
+    while (current) {
+      if (visited.has(current)) {
+        return { ok: false, code: "CYCLE" };
+      }
+      visited.add(current);
+      const parent = byId.get(current);
+      if (!parent) {
+        return { ok: false, code: "MISSING_PARENT" };
+      }
+      current = parent.parentId;
+    }
+  }
+
+  return { ok: true };
 }
 
 function sortNodes(nodes: ChecklistTreeNode[]): ChecklistTreeNode[] {
@@ -163,15 +214,13 @@ function sortNodes(nodes: ChecklistTreeNode[]): ChecklistTreeNode[] {
 }
 
 export function buildChecklistTree(items: NormalizedChecklistItem[]): ChecklistTreeNode[] {
-  const parentsWithChildren = childIdSet(items);
   const nodes = new Map<string, ChecklistTreeNode>();
   for (const item of items) {
-    const actionable = isActionableChecklistItem(item, parentsWithChildren);
     nodes.set(item.itemId, {
       id: item.itemId,
       title: item.title,
-      isGroup: !actionable,
-      isComplete: actionable ? item.isComplete : null,
+      isGroup: item.isRootGroup,
+      isComplete: item.isRootGroup ? null : item.isComplete,
       sortIndex: item.sortIndex,
       children: [],
     });
@@ -191,7 +240,7 @@ export function buildChecklistTree(items: NormalizedChecklistItem[]): ChecklistT
     if (parent) {
       parent.children.push(node);
     } else {
-      roots.push(node);
+      return [];
     }
   }
 

@@ -1,10 +1,13 @@
 import { formatMskDateTime } from "../../clients/dto";
 import { buildChecklistTree, type NormalizedChecklistItem } from "../normalize-checklist";
 import type { Bitrix24ObjectType } from "../labels/format";
+import { loadBitrix24TasksRuntimeConfig } from "./config";
 import { resolveConfirmedResponsibleProfile } from "./responsible-profile";
+import { guardPastTimestamp } from "./timestamp-guard";
 import {
   findChecklistSnapshot,
   isChecklistBindingMatch,
+  isChecklistGenerationMatch,
   type ChecklistSnapshotRow,
 } from "./checklist-repository";
 
@@ -13,6 +16,7 @@ export type ChecklistPublicState =
   | { state: "empty"; syncedAtLabel: string }
   | { state: "error"; syncedAtLabel: string | null }
   | { state: "partial"; syncedAtLabel: string | null }
+  | { state: "stale"; syncedAtLabel: string | null }
   | {
       state: "ready";
       syncedAtLabel: string;
@@ -26,7 +30,7 @@ export type ChecklistItemPublicNode = {
   isGroup: boolean;
   isComplete: boolean | null;
   sortIndex: number;
-  responsibleName: string | null;
+  coExecutorNames: string[];
   children: ChecklistItemPublicNode[];
 };
 
@@ -41,17 +45,18 @@ function formatDisplayDate(iso: string | null | undefined): string | null {
   return formatMskDateTime(date);
 }
 
-async function resolveItemResponsibleName(
+async function resolveCoExecutorNames(
   portalId: string,
-  items: NormalizedChecklistItem[],
-  itemId: string,
-): Promise<string | null> {
-  const item = items.find((entry) => entry.itemId === itemId);
-  if (!item || item.memberBitrixIds.length !== 1) {
-    return null;
+  bitrixUserIds: string[],
+): Promise<string[]> {
+  const names: string[] = [];
+  for (const bitrixUserId of bitrixUserIds) {
+    const profile = await resolveConfirmedResponsibleProfile(portalId, bitrixUserId);
+    if (profile.state === "confirmed" && !names.includes(profile.displayName)) {
+      names.push(profile.displayName);
+    }
   }
-  const profile = await resolveConfirmedResponsibleProfile(portalId, item.memberBitrixIds[0]);
-  return profile.state === "confirmed" ? profile.displayName : null;
+  return names;
 }
 
 async function buildPublicTree(
@@ -60,6 +65,7 @@ async function buildPublicTree(
 ): Promise<ChecklistItemPublicNode[]> {
   const tree = buildChecklistTree(items);
   async function mapNode(node: ReturnType<typeof buildChecklistTree>[number]): Promise<ChecklistItemPublicNode> {
+    const source = items.find((entry) => entry.itemId === node.id);
     const children = await Promise.all(node.children.map((child) => mapNode(child)));
     return {
       id: node.id,
@@ -67,19 +73,53 @@ async function buildPublicTree(
       isGroup: node.isGroup,
       isComplete: node.isComplete,
       sortIndex: node.sortIndex,
-      responsibleName: node.isGroup ? null : await resolveItemResponsibleName(portalId, items, node.id),
+      coExecutorNames: node.isGroup || !source
+        ? []
+        : await resolveCoExecutorNames(portalId, source.coExecutorBitrixIds),
       children,
     };
   }
   return Promise.all(tree.map((node) => mapNode(node)));
 }
 
+function evaluateSnapshotFreshness(
+  snapshot: ChecklistSnapshotRow,
+  taskCacheVersion: number,
+  taskSyncedAt: string,
+  nowMs = Date.now(),
+): "ready" | "stale" | "future" | "invalid" {
+  if (!isChecklistGenerationMatch(snapshot, taskCacheVersion, taskSyncedAt)) {
+    return "stale";
+  }
+  const syncedGuard = guardPastTimestamp(snapshot.syncedAt, nowMs);
+  if (!syncedGuard.ok) {
+    return syncedGuard.reason === "future" ? "future" : "stale";
+  }
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  const syncedAtMs = Date.parse(snapshot.syncedAt);
+  const taskSyncedAtMs = Date.parse(taskSyncedAt);
+  if (!Number.isFinite(taskSyncedAtMs) || syncedAtMs < taskSyncedAtMs) {
+    return "stale";
+  }
+  if (runtime.cacheAccessTtlMs > 0 && syncedAtMs + runtime.cacheAccessTtlMs < nowMs) {
+    return "stale";
+  }
+  return "ready";
+}
+
 function mapSnapshotToPublic(
   snapshot: ChecklistSnapshotRow,
-  items: NormalizedChecklistItem[],
   publicTree: ChecklistItemPublicNode[],
+  freshness: "ready" | "stale" | "future" | "invalid",
 ): ChecklistPublicState {
   const syncedAtLabel = formatDisplayDate(snapshot.syncedAt);
+  if (freshness === "stale") {
+    return { state: "stale", syncedAtLabel };
+  }
+  if (freshness === "future" || freshness === "invalid") {
+    return { state: "error", syncedAtLabel };
+  }
+
   switch (snapshot.loadStatus) {
     case "empty":
       return syncedAtLabel
@@ -118,6 +158,8 @@ export async function buildChecklistPublicDto(input: {
   taskId: string;
   objectType: Bitrix24ObjectType | null;
   objectGuid: string | null;
+  taskCacheVersion: number;
+  taskSyncedAt: string;
 }): Promise<ChecklistPublicState> {
   const snapshot = await findChecklistSnapshot(input.portalId, input.taskId);
   if (!snapshot) {
@@ -126,6 +168,13 @@ export async function buildChecklistPublicDto(input: {
   if (!isChecklistBindingMatch(snapshot, input.objectType, input.objectGuid)) {
     return { state: "not_loaded" };
   }
-  const publicTree = await buildPublicTree(input.portalId, snapshot.itemsJson);
-  return mapSnapshotToPublic(snapshot, snapshot.itemsJson, publicTree);
+  const freshness = evaluateSnapshotFreshness(
+    snapshot,
+    input.taskCacheVersion,
+    input.taskSyncedAt,
+  );
+  const publicTree = freshness === "ready"
+    ? await buildPublicTree(input.portalId, snapshot.itemsJson)
+    : [];
+  return mapSnapshotToPublic(snapshot, publicTree, freshness);
 }

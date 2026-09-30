@@ -104,10 +104,39 @@ async function withSnapshotTransaction<T>(
   }
 }
 
+export type TaskSnapshotWriteResult = {
+  cacheUpdated: boolean;
+  versionConflict?: boolean;
+  staleRejected?: boolean;
+  cacheVersion?: number;
+  syncedAt?: string;
+};
+
+async function readTaskCacheMeta(
+  db: PoolClient,
+  portalId: string,
+  taskId: string,
+): Promise<{ cacheVersion: number; syncedAt: string } | null> {
+  const result = await db.query<{ cache_version: number; synced_at: Date }>(
+    `SELECT cache_version, synced_at
+     FROM bitrix24_task_cache
+     WHERE portal_id = $1 AND task_id = $2`,
+    [portalId, taskId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    cacheVersion: Number(row.cache_version),
+    syncedAt: row.synced_at.toISOString(),
+  };
+}
+
 export async function upsertTaskSnapshot(
   row: TaskSnapshotInput,
   client: Pool | PoolClient = requirePool(),
-): Promise<{ cacheUpdated: boolean; versionConflict?: boolean }> {
+): Promise<TaskSnapshotWriteResult> {
   const changedAtDate = bitrixChangedAtToDate(row.changedAt);
   if (!changedAtDate || changedAtDate.getTime() > Date.now()) {
     return { cacheUpdated: false };
@@ -140,7 +169,7 @@ export async function upsertTaskSnapshot(
       const priorMs = prior.changed_at.getTime();
       const incomingMs = changedAtDate.getTime();
       if (incomingMs < priorMs) {
-        return { cacheUpdated: false };
+        return { cacheUpdated: false, staleRejected: true };
       }
       if (incomingMs === priorMs) {
         if (prior.content_fingerprint !== sourceFingerprint) {
@@ -149,7 +178,8 @@ export async function upsertTaskSnapshot(
         await db.query(
           `UPDATE bitrix24_task_cache
            SET published = $3,
-               synced_at = NOW()
+               synced_at = NOW(),
+               cache_version = bitrix24_task_cache.cache_version + 1
            WHERE portal_id = $1 AND task_id = $2`,
           [row.portalId, row.taskId, row.published],
         );
@@ -177,7 +207,10 @@ export async function upsertTaskSnapshot(
             row.linkedAt,
           ],
         );
-        return { cacheUpdated: true };
+        const meta = await readTaskCacheMeta(db, row.portalId, row.taskId);
+        return meta
+          ? { cacheUpdated: true, cacheVersion: meta.cacheVersion, syncedAt: meta.syncedAt }
+          : { cacheUpdated: true };
       }
     }
 
@@ -243,7 +276,10 @@ export async function upsertTaskSnapshot(
       ],
     );
 
-    return { cacheUpdated: true };
+    const meta = await readTaskCacheMeta(db, row.portalId, row.taskId);
+    return meta
+      ? { cacheUpdated: true, cacheVersion: meta.cacheVersion, syncedAt: meta.syncedAt }
+      : { cacheUpdated: true };
   });
 }
 

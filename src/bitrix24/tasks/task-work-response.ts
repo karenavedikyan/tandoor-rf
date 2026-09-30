@@ -110,6 +110,8 @@ export async function buildFullTaskWorkDto(input: {
     taskId: input.task.taskId,
     objectType: input.task.objectType ?? null,
     objectGuid: input.task.objectGuid ?? null,
+    taskCacheVersion: input.task.cacheVersion,
+    taskSyncedAt: input.task.syncedAt,
   });
   return {
     taskId: input.task.taskId,

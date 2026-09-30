@@ -1,6 +1,7 @@
 import {
   dedupeChecklistItems,
   normalizeChecklistItem,
+  validateChecklistStructure,
   type NormalizedChecklistItem,
 } from "./normalize-checklist";
 import { parseCanonicalBitrixId } from "./parse-id";
@@ -13,7 +14,18 @@ export type Bitrix24ChecklistListResult = {
   items: NormalizedChecklistItem[];
   pagesFetched: number;
   complete: boolean;
-  truncatedReason?: "MAX_PAGES" | "MAX_DURATION" | "INVALID_RECORDS" | "EMPTY_PAGE_WITH_NEXT" | "INVALID_PAGE" | "DUPLICATE_CURSOR" | "TOTAL_MISMATCH";
+  truncatedReason?:
+    | "MAX_PAGES"
+    | "MAX_DURATION"
+    | "INVALID_RECORDS"
+    | "EMPTY_PAGE_WITH_NEXT"
+    | "INVALID_PAGE"
+    | "DUPLICATE_CURSOR"
+    | "TOTAL_MISMATCH"
+    | "TASK_ID_MISMATCH"
+    | "MISSING_PARENT"
+    | "CYCLE"
+    | "DUPLICATE_CONFLICT";
   rejectedItemCount: number;
   paginationObserved: boolean;
 };
@@ -132,7 +144,7 @@ export async function readBitrixChecklistForTask(
 
     let normalizedOnPage = 0;
     for (const rawItem of page.items) {
-      const normalized = normalizeChecklistItem(rawItem);
+      const normalized = normalizeChecklistItem(rawItem, parsedTaskId);
       if (!normalized) {
         rejectedItemCount += 1;
         continue;
@@ -172,10 +184,42 @@ export async function readBitrixChecklistForTask(
     start = page.pagination.next;
   }
 
+  const deduped = dedupeChecklistItems(items);
+  if (deduped.duplicateConflict) {
+    return {
+      ok: true,
+      data: finalizeChecklistResult({
+        items: [],
+        pagesFetched,
+        truncatedReason: "DUPLICATE_CONFLICT",
+        rejectedItemCount,
+        paginationObserved,
+        totalReported,
+        lastNext,
+      }),
+    };
+  }
+
+  const structure = validateChecklistStructure(deduped.items);
+  if (!structure.ok) {
+    return {
+      ok: true,
+      data: finalizeChecklistResult({
+        items: [],
+        pagesFetched,
+        truncatedReason: structure.code,
+        rejectedItemCount,
+        paginationObserved,
+        totalReported,
+        lastNext,
+      }),
+    };
+  }
+
   return {
     ok: true,
     data: finalizeChecklistResult({
-      items: dedupeChecklistItems(items),
+      items: deduped.items,
       pagesFetched,
       truncatedReason,
       rejectedItemCount,

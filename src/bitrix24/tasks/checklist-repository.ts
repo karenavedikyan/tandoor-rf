@@ -18,6 +18,8 @@ export type ChecklistSnapshotRow = {
   progressCompleted: number | null;
   progressTotal: number | null;
   syncedAt: string;
+  taskCacheVersion: number | null;
+  taskSyncedAt: string | null;
 };
 
 export type ChecklistSnapshotInput = {
@@ -29,6 +31,8 @@ export type ChecklistSnapshotInput = {
   syncComplete: boolean;
   errorCode?: string | null;
   items: NormalizedChecklistItem[];
+  taskCacheVersion: number;
+  taskSyncedAt: string;
 };
 
 function mapRow(row: {
@@ -43,6 +47,8 @@ function mapRow(row: {
   progress_completed: number | null;
   progress_total: number | null;
   synced_at: Date;
+  task_cache_version: number | null;
+  task_synced_at: Date | null;
 }): ChecklistSnapshotRow {
   return {
     portalId: row.portal_id,
@@ -58,6 +64,8 @@ function mapRow(row: {
     progressCompleted: row.progress_completed,
     progressTotal: row.progress_total,
     syncedAt: row.synced_at.toISOString(),
+    taskCacheVersion: row.task_cache_version,
+    taskSyncedAt: row.task_synced_at?.toISOString() ?? null,
   };
 }
 
@@ -74,9 +82,10 @@ export async function upsertChecklistSnapshot(
     `INSERT INTO bitrix24_task_checklist_snapshots (
        portal_id, task_id, object_type, object_guid,
        load_status, sync_complete, error_code, items_json,
-       progress_completed, progress_total, synced_at
+       progress_completed, progress_total, synced_at,
+       task_cache_version, task_synced_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, NOW(), $11, $12::timestamptz)
      ON CONFLICT (portal_id, task_id) DO UPDATE SET
        object_type = EXCLUDED.object_type,
        object_guid = EXCLUDED.object_guid,
@@ -86,7 +95,9 @@ export async function upsertChecklistSnapshot(
        items_json = EXCLUDED.items_json,
        progress_completed = EXCLUDED.progress_completed,
        progress_total = EXCLUDED.progress_total,
-       synced_at = NOW()`,
+       synced_at = NOW(),
+       task_cache_version = EXCLUDED.task_cache_version,
+       task_synced_at = EXCLUDED.task_synced_at`,
     [
       input.portalId,
       input.taskId,
@@ -98,6 +109,8 @@ export async function upsertChecklistSnapshot(
       JSON.stringify(input.items),
       progress?.completed ?? null,
       progress?.total ?? null,
+      input.taskCacheVersion,
+      input.taskSyncedAt,
     ],
   );
 }
@@ -119,9 +132,12 @@ export async function findChecklistSnapshot(
     progress_completed: number | null;
     progress_total: number | null;
     synced_at: Date;
+    task_cache_version: number | null;
+    task_synced_at: Date | null;
   }>(
     `SELECT portal_id, task_id, object_type, object_guid, load_status, sync_complete,
-            error_code, items_json, progress_completed, progress_total, synced_at
+            error_code, items_json, progress_completed, progress_total, synced_at,
+            task_cache_version, task_synced_at
      FROM bitrix24_task_checklist_snapshots
      WHERE portal_id = $1 AND task_id = $2`,
     [portalId, taskId],
@@ -139,4 +155,16 @@ export function isChecklistBindingMatch(
     return false;
   }
   return snapshot.objectType === objectType && snapshot.objectGuid === objectGuid;
+}
+
+export function isChecklistGenerationMatch(
+  snapshot: ChecklistSnapshotRow,
+  taskCacheVersion: number,
+  taskSyncedAt: string,
+): boolean {
+  if (snapshot.taskCacheVersion === null || snapshot.taskSyncedAt === null) {
+    return false;
+  }
+  return snapshot.taskCacheVersion === taskCacheVersion
+    && snapshot.taskSyncedAt === taskSyncedAt;
 }

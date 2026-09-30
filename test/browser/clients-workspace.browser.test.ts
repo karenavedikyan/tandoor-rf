@@ -530,7 +530,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
           isGroup: true,
           isComplete: null,
           sortIndex: 0,
-          responsibleName: null,
+          coExecutorNames: [],
           children: [
             {
               id: "433",
@@ -538,7 +538,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
               isGroup: false,
               isComplete: true,
               sortIndex: 0,
-              responsibleName: null,
+              coExecutorNames: [],
               children: [],
             },
             {
@@ -547,7 +547,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
               isGroup: true,
               isComplete: null,
               sortIndex: 1,
-              responsibleName: null,
+              coExecutorNames: [],
               children: [
                 {
                   id: "471",
@@ -555,7 +555,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
                   isGroup: false,
                   isComplete: false,
                   sortIndex: 1,
-                  responsibleName: null,
+                  coExecutorNames: [],
                   children: [],
                 },
               ],

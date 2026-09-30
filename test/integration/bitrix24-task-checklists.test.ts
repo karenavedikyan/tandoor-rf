@@ -64,6 +64,74 @@ async function login(email: string): Promise<string> {
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 }
 
+async function readTaskCacheGeneration(
+  databaseUrl: string,
+  portalId: string,
+  taskId: string,
+): Promise<{ cacheVersion: number; syncedAt: string }> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const result = await pool.query<{ cache_version: number; synced_at: Date }>(
+    `SELECT cache_version, synced_at
+     FROM bitrix24_task_cache
+     WHERE portal_id = $1 AND task_id = $2`,
+    [portalId, taskId],
+  );
+  await pool.end();
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Task cache row is missing.");
+  }
+  return {
+    cacheVersion: Number(row.cache_version),
+    syncedAt: row.synced_at.toISOString(),
+  };
+}
+
+async function seedLinkedChecklistSnapshot(
+  databaseUrl: string,
+  input: {
+    portalId: string;
+    taskId: string;
+    objectType: "holding" | "legal_entity" | "outlet";
+    objectGuid: string;
+    loadStatus: "loaded" | "empty" | "error" | "partial";
+    items: Array<{
+      itemId: string;
+      taskId: string;
+      parentId: string | null;
+      title: string;
+      sortIndex: number;
+      isComplete: boolean;
+      coExecutorBitrixIds: string[];
+      isRootGroup: boolean;
+    }>;
+    syncComplete?: boolean;
+  },
+): Promise<void> {
+  const generation = await readTaskCacheGeneration(databaseUrl, input.portalId, input.taskId);
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const client = await pool.connect();
+  try {
+    await upsertChecklistSnapshot(
+      {
+        portalId: input.portalId,
+        taskId: input.taskId,
+        objectType: input.objectType,
+        objectGuid: input.objectGuid,
+        loadStatus: input.loadStatus,
+        syncComplete: input.syncComplete ?? true,
+        items: input.items,
+        taskCacheVersion: generation.cacheVersion,
+        taskSyncedAt: generation.syncedAt,
+      },
+      client,
+    );
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
 async function seedAdminLink(databaseUrl: string, portalId: string, bitrixUserId = "42") {
   const admin = await createTestUser({
     databaseUrl,
@@ -168,7 +236,7 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
     const task = res.body.tasks[0];
     assert.equal(task.accessLevel, "full");
     assert.equal(task.checklist.state, "ready");
-    assert.deepEqual(task.checklist.progress, { completed: 2, total: 3 });
+    assert.deepEqual(task.checklist.progress, { completed: 2, total: 4 });
     assert.ok(task.checklist.syncedAtLabel);
     assert.equal(task.checklist.items.length, 1);
   });
@@ -234,35 +302,25 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
       briefText: "Краткое поручение",
       publishedByUserId: admin.id,
     });
-    const checklistPool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const checklistClient = await checklistPool.connect();
-    try {
-      await upsertChecklistSnapshot(
+    await seedLinkedChecklistSnapshot(databaseUrl, {
+      portalId: config.portalId,
+      taskId: "9001",
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      loadStatus: "loaded",
+      items: [
         {
-          portalId: config.portalId,
+          itemId: "433",
           taskId: "9001",
-          objectType: "holding",
-          objectGuid: HOLDING_ONE,
-          loadStatus: "loaded",
-          syncComplete: true,
-          items: [
-            {
-              itemId: "433",
-              parentId: "431",
-              title: "Hidden item",
-              sortIndex: 0,
-              isComplete: false,
-              memberBitrixIds: [],
-              isRootGroup: false,
-            },
-          ],
+          parentId: "431",
+          title: "Hidden item",
+          sortIndex: 0,
+          isComplete: false,
+          coExecutorBitrixIds: [],
+          isRootGroup: false,
         },
-        checklistClient,
-      );
-    } finally {
-      checklistClient.release();
-      await checklistPool.end();
-    }
+      ],
+    });
 
     const app = await loadApp();
     const cookie = await login("viewer@example.com");
@@ -294,35 +352,25 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const client = await pool.connect();
-    try {
-      await upsertChecklistSnapshot(
+    await seedLinkedChecklistSnapshot(databaseUrl, {
+      portalId: config.portalId,
+      taskId: "9001",
+      objectType: "holding",
+      objectGuid: CLIENT_TWO,
+      loadStatus: "loaded",
+      items: [
         {
-          portalId: config.portalId,
+          itemId: "433",
           taskId: "9001",
-          objectType: "holding",
-          objectGuid: CLIENT_TWO,
-          loadStatus: "loaded",
-          syncComplete: true,
-          items: [
-            {
-              itemId: "433",
-              parentId: "431",
-              title: "Чужой чек-лист",
-              sortIndex: 0,
-              isComplete: true,
-              memberBitrixIds: [],
-              isRootGroup: false,
-            },
-          ],
+          parentId: "431",
+          title: "Чужой чек-лист",
+          sortIndex: 0,
+          isComplete: true,
+          coExecutorBitrixIds: [],
+          isRootGroup: false,
         },
-        client,
-      );
-    } finally {
-      client.release();
-      await pool.end();
-    }
+      ],
+    });
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -407,22 +455,14 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
       conflictReason: null,
       linkedAt: new Date().toISOString(),
     });
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const client = await pool.connect();
-    await upsertChecklistSnapshot(
-      {
-        portalId: config.portalId,
-        taskId: "9001",
-        objectType: "holding",
-        objectGuid: HOLDING_ONE,
-        loadStatus: "empty",
-        syncComplete: true,
-        items: [],
-      },
-      client,
-    );
-    client.release();
-    await pool.end();
+    await seedLinkedChecklistSnapshot(databaseUrl, {
+      portalId: config.portalId,
+      taskId: "9001",
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      loadStatus: "empty",
+      items: [],
+    });
 
     const app = await loadApp();
     const cookie = await login("admin@example.com");
@@ -433,6 +473,171 @@ describe("bitrix24 task checklists integration", { concurrency: false }, () => {
       .set(authHeaders(cookie));
     assert.equal(res.body.tasks[0]?.checklist?.state, "empty");
     assert.equal(calls.length, 0);
+  });
+
+  it("reports partial sync when checklist fetch fails after task cache write", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const sync = await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: {
+          body: {
+            result: {
+              tasks: [
+                sampleValidBitrixTask({
+                  ID: "9001",
+                  DESCRIPTION: formatLabelToken(label.labelCode),
+                }),
+              ],
+            },
+            total: 1,
+          },
+        },
+        [checklistUrl]: { status: 403, body: { error: "ACCESS_DENIED" } },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.cacheWrites, 1);
+    assert.equal(sync.checklistsFailed, 1);
+    assert.equal(sync.status, "partial");
+    assert.equal(sync.complete, false);
+  });
+
+  it("does not overwrite checklist when task version is rejected", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const baseTask = sampleValidBitrixTask({
+      ID: "9001",
+      DESCRIPTION: formatLabelToken(label.labelCode),
+      CHANGED_DATE: "2026-09-30T11:00:00+03:00",
+    });
+    await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: { body: { result: { tasks: [baseTask] }, total: 1 } },
+        [checklistUrl]: {
+          body: {
+            result: [
+              sampleChecklistRootGroup(),
+              sampleChecklistItem({ id: "433", parentId: "431", title: "Шаг 1", isComplete: "Y" }),
+            ],
+            total: 2,
+          },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+
+    const conflictSync = await runBitrix24TaskSync({
+      bitrixUserId: "42",
+      apply: true,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [tasksUrl]: {
+          body: {
+            result: {
+              tasks: [{ ...baseTask, TITLE: "Conflicting title" }],
+            },
+            total: 1,
+          },
+        },
+        [checklistUrl]: {
+          body: {
+            result: [sampleChecklistItem({ id: "999", parentId: "431", title: "New only item" })],
+            total: 1,
+          },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(conflictSync.versionConflicts, 1);
+    assert.equal(conflictSync.checklistsSynced, 0);
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(res.body.tasks[0]?.checklist?.state, "ready");
+    assert.deepEqual(res.body.tasks[0]?.checklist?.progress, { completed: 1, total: 1 });
+  });
+
+  it("returns stale checklist when task generation moved forward", async () => {
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await seedAdminLink(databaseUrl, config.portalId);
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9001",
+      responsibleBitrixUserId: "42",
+      title: "Cached task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    const generation = await readTaskCacheGeneration(databaseUrl, config.portalId, "9001");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const client = await pool.connect();
+    try {
+      await upsertChecklistSnapshot(
+        {
+          portalId: config.portalId,
+          taskId: "9001",
+          objectType: "holding",
+          objectGuid: HOLDING_ONE,
+          loadStatus: "loaded",
+          syncComplete: true,
+          items: [
+            {
+              itemId: "433",
+              taskId: "9001",
+              parentId: "431",
+              title: "Old generation",
+              sortIndex: 0,
+              isComplete: true,
+              coExecutorBitrixIds: [],
+              isRootGroup: false,
+            },
+          ],
+          taskCacheVersion: generation.cacheVersion - 1,
+          taskSyncedAt: generation.syncedAt,
+        },
+        client,
+      );
+      await client.query(
+        `UPDATE bitrix24_task_cache
+         SET cache_version = cache_version + 1, synced_at = NOW()
+         WHERE portal_id = $1 AND task_id = $2`,
+        [config.portalId, "9001"],
+      );
+    } finally {
+      client.release();
+      await pool.end();
+    }
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(res.body.tasks[0]?.checklist?.state, "stale");
+    assert.equal(res.body.tasks[0]?.checklist?.progress, undefined);
   });
 });
 

@@ -74,6 +74,13 @@
         "</div>"
       );
     }
+    if (checklist.state === "stale") {
+      return (
+        '<div class="pc-label">Чек-лист устарел' +
+        (checklist.syncedAtLabel ? " · " + esc(checklist.syncedAtLabel) : "") +
+        "</div>"
+      );
+    }
     return "";
   }
 
@@ -83,11 +90,12 @@
       : item.isComplete
         ? '<span class="pc-bitrix24-checklist-state pc-bitrix24-checklist-state--done" aria-label="выполнено">✓</span>'
         : '<span class="pc-bitrix24-checklist-state pc-bitrix24-checklist-state--open" aria-label="не выполнено">○</span>';
-    var responsible = item.responsibleName
-      ? '<span class="pc-bitrix24-checklist-responsible"> · ' +
-        esc(item.responsibleName) +
-        "</span>"
-      : "";
+    var coExecutors =
+      item.coExecutorNames && item.coExecutorNames.length
+        ? '<span class="pc-bitrix24-checklist-coexecutors"> · соисполнители: ' +
+          esc(item.coExecutorNames.join(", ")) +
+          "</span>"
+        : "";
     var children =
       item.children && item.children.length
         ? '<ul class="pc-bitrix24-checklist-list">' +
@@ -107,7 +115,7 @@
       stateText +
       '<span class="pc-bitrix24-checklist-title">' +
       esc(item.title) +
-      responsible +
+      coExecutors +
       "</span>" +
       children +
       "</li>"

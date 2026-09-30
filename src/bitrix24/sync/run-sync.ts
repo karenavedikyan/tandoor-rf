@@ -51,32 +51,51 @@ export type Bitrix24SyncResult = {
   journalId?: string;
 };
 
+type PreparedTaskWrite = {
+  taskId: string;
+  responsibleBitrixUserId: string | null;
+  title: string;
+  statusLabel: string;
+  deadline: string | null;
+  changedAt: string;
+  descriptionHash: string;
+  published: boolean;
+  objectType: Bitrix24ObjectType | null;
+  objectGuid: string | null;
+  labelCode: string | null;
+  bindingStatus: string;
+  conflictReason: string | null;
+  linkedAt: string | null;
+};
+
+type AcceptedTaskWrite = PreparedTaskWrite & {
+  cacheVersion: number;
+  syncedAt: string;
+};
+
 function hashDescription(description: string | null): string {
   return createHash("sha256").update(description ?? "").digest("hex");
 }
 
-async function syncTaskChecklistSnapshot(
-  config: Bitrix24WebhookConfig,
-  operation: Bitrix24OperationContext,
+async function writeChecklistSnapshotFromRead(
   client: PoolClient,
-  input: {
-    taskId: string;
-    objectType: Bitrix24ObjectType | null;
-    objectGuid: string | null;
-  },
+  config: Bitrix24WebhookConfig,
+  accepted: AcceptedTaskWrite,
+  readResult: Awaited<ReturnType<typeof readBitrixChecklistForTask>>,
 ): Promise<"synced" | "failed"> {
-  const readResult = await readBitrixChecklistForTask(config, input.taskId, { operation });
   if (!readResult.ok) {
     await upsertChecklistSnapshot(
       {
         portalId: config.portalId,
-        taskId: input.taskId,
-        objectType: input.objectType,
-        objectGuid: input.objectGuid,
+        taskId: accepted.taskId,
+        objectType: accepted.objectType,
+        objectGuid: accepted.objectGuid,
         loadStatus: "error",
         syncComplete: false,
         errorCode: readResult.code,
         items: [],
+        taskCacheVersion: accepted.cacheVersion,
+        taskSyncedAt: accepted.syncedAt,
       },
       client,
     );
@@ -88,13 +107,15 @@ async function syncTaskChecklistSnapshot(
     await upsertChecklistSnapshot(
       {
         portalId: config.portalId,
-        taskId: input.taskId,
-        objectType: input.objectType,
-        objectGuid: input.objectGuid,
+        taskId: accepted.taskId,
+        objectType: accepted.objectType,
+        objectGuid: accepted.objectGuid,
         loadStatus: "partial",
         syncComplete: false,
         errorCode: data.truncatedReason ?? "INCOMPLETE",
         items: [],
+        taskCacheVersion: accepted.cacheVersion,
+        taskSyncedAt: accepted.syncedAt,
       },
       client,
     );
@@ -106,12 +127,14 @@ async function syncTaskChecklistSnapshot(
   await upsertChecklistSnapshot(
     {
       portalId: config.portalId,
-      taskId: input.taskId,
-      objectType: input.objectType,
-      objectGuid: input.objectGuid,
+      taskId: accepted.taskId,
+      objectType: accepted.objectType,
+      objectGuid: accepted.objectGuid,
       loadStatus,
       syncComplete: true,
       items: data.items,
+      taskCacheVersion: accepted.cacheVersion,
+      taskSyncedAt: accepted.syncedAt,
     },
     client,
   );
@@ -231,147 +254,198 @@ export async function runBitrix24TaskSync(
   let versionConflicts = 0;
   let checklistsSynced = 0;
   let checklistsFailed = 0;
-  const pool = requirePool();
-  const client = options.apply ? await pool.connect() : null;
   let journalId: string | undefined;
+  const pool = requirePool();
+  const preparedWrites: PreparedTaskWrite[] = [];
+
+  for (const task of readResult.data.tasks) {
+    const parsedLabels = extractLabelsFromDescription(task.description);
+    let bindingStatus = "unresolved";
+    let conflictReason: string | null = null;
+    let objectType = null;
+    let objectGuid = null;
+    let labelCode = null;
+    let linkedAt: string | null = null;
+
+    if (!parsedLabels.ok) {
+      bindingStatus = parsedLabels.reason === "invalid_token" ? "invalid_label" : "conflict";
+      conflictReason = parsedLabels.reason;
+      if (parsedLabels.reason === "invalid_token") {
+        bindingsInvalid += 1;
+      } else {
+        bindingsConflict += 1;
+      }
+    } else if (parsedLabels.labels.length === 0) {
+      bindingStatus = "unresolved";
+    } else {
+      const token = parsedLabels.labels[0]!;
+      labelCode = token.labelCode;
+      const registry = await findLabelByCode(labelCode);
+      if (!registry) {
+        bindingStatus = "pending_confirmation";
+        bindingsPending += 1;
+      } else {
+        bindingStatus = "confirmed";
+        objectType = registry.objectType;
+        objectGuid = registry.objectGuid;
+        linkedAt = new Date().toISOString();
+        bindingsConfirmed += 1;
+      }
+    }
+
+    preparedWrites.push({
+      taskId: task.taskId,
+      responsibleBitrixUserId: task.responsibleId,
+      title: task.title,
+      statusLabel: task.statusLabel,
+      deadline: task.deadline,
+      changedAt: task.changedAt ?? "",
+      descriptionHash: hashDescription(task.description),
+      published: publishAllowed,
+      objectType,
+      objectGuid,
+      labelCode,
+      bindingStatus,
+      conflictReason,
+      linkedAt,
+    });
+  }
 
   try {
-    if (client) {
-      await client.query("BEGIN");
-    }
+    if (options.apply) {
+      const acceptedWrites: AcceptedTaskWrite[] = [];
 
-    for (const task of readResult.data.tasks) {
-      const parsedLabels = extractLabelsFromDescription(task.description);
-      let bindingStatus = "unresolved";
-      let conflictReason: string | null = null;
-      let objectType = null;
-      let objectGuid = null;
-      let labelCode = null;
-      let linkedAt: string | null = null;
+      for (const prepared of preparedWrites) {
+        const taskClient = await pool.connect();
+        try {
+          await taskClient.query("BEGIN");
 
-      if (!parsedLabels.ok) {
-        bindingStatus = parsedLabels.reason === "invalid_token" ? "invalid_label" : "conflict";
-        conflictReason = parsedLabels.reason;
-        if (parsedLabels.reason === "invalid_token") {
-          bindingsInvalid += 1;
-        } else {
-          bindingsConflict += 1;
-        }
-      } else if (parsedLabels.labels.length === 0) {
-        bindingStatus = "unresolved";
-      } else {
-        const token = parsedLabels.labels[0]!;
-        labelCode = token.labelCode;
-        const registry = await findLabelByCode(labelCode, client ?? undefined);
-        if (!registry) {
-          bindingStatus = "pending_confirmation";
-          bindingsPending += 1;
-        } else {
-          bindingStatus = "confirmed";
-          objectType = registry.objectType;
-          objectGuid = registry.objectGuid;
-          linkedAt = new Date().toISOString();
-          bindingsConfirmed += 1;
-        }
-      }
+          if (prepared.bindingStatus !== "confirmed" && prepared.bindingStatus !== "unresolved") {
+            await recordBindingDiagnostic(
+              config.portalId,
+              prepared.taskId,
+              prepared.bindingStatus,
+              prepared.conflictReason,
+              taskClient,
+            );
+          }
 
-      if (options.apply && client && bindingStatus !== "confirmed" && bindingStatus !== "unresolved") {
-        await recordBindingDiagnostic(
-          config.portalId,
-          task.taskId,
-          bindingStatus,
-          conflictReason,
-          client,
-        );
-      }
-
-      if (options.apply && client) {
-        const writeResult = await upsertTaskSnapshot(
-          {
-            portalId: config.portalId,
-            taskId: task.taskId,
-            responsibleBitrixUserId: task.responsibleId,
-            title: task.title,
-            statusLabel: task.statusLabel,
-            deadline: task.deadline,
-            changedAt: task.changedAt ?? "",
-            descriptionHash: hashDescription(task.description),
-            published: publishAllowed,
-            objectType,
-            objectGuid,
-            labelCode,
-            bindingStatus,
-            conflictReason,
-            linkedAt,
-          },
-          client,
-        );
-        if (writeResult.cacheUpdated) {
-          cacheWrites += 1;
-        }
-        if (writeResult.versionConflict) {
-          versionConflicts += 1;
-          await recordBindingDiagnostic(
-            config.portalId,
-            task.taskId,
-            "version_conflict",
-            "same_changed_at_different_content",
-            client,
+          const writeResult = await upsertTaskSnapshot(
+            {
+              portalId: config.portalId,
+              taskId: prepared.taskId,
+              responsibleBitrixUserId: prepared.responsibleBitrixUserId,
+              title: prepared.title,
+              statusLabel: prepared.statusLabel,
+              deadline: prepared.deadline,
+              changedAt: prepared.changedAt,
+              descriptionHash: prepared.descriptionHash,
+              published: prepared.published,
+              objectType: prepared.objectType,
+              objectGuid: prepared.objectGuid,
+              labelCode: prepared.labelCode,
+              bindingStatus: prepared.bindingStatus,
+              conflictReason: prepared.conflictReason,
+              linkedAt: prepared.linkedAt,
+            },
+            taskClient,
           );
-        }
 
-        const checklistResult = await syncTaskChecklistSnapshot(config, operation, client, {
-          taskId: task.taskId,
-          objectType,
-          objectGuid,
-        });
-        if (checklistResult === "synced") {
-          checklistsSynced += 1;
-        } else {
-          checklistsFailed += 1;
+          if (writeResult.cacheUpdated) {
+            cacheWrites += 1;
+          }
+          if (writeResult.versionConflict) {
+            versionConflicts += 1;
+            await recordBindingDiagnostic(
+              config.portalId,
+              prepared.taskId,
+              "version_conflict",
+              "same_changed_at_different_content",
+              taskClient,
+            );
+          }
+
+          if (
+            writeResult.cacheUpdated &&
+            !writeResult.versionConflict &&
+            writeResult.cacheVersion !== undefined &&
+            writeResult.syncedAt
+          ) {
+            acceptedWrites.push({
+              ...prepared,
+              cacheVersion: writeResult.cacheVersion,
+              syncedAt: writeResult.syncedAt,
+            });
+          }
+
+          await taskClient.query("COMMIT");
+        } catch (error) {
+          await taskClient.query("ROLLBACK");
+          throw error;
+        } finally {
+          taskClient.release();
         }
       }
-    }
 
-    const runStatus = readResult.data.complete ? "success" : "partial";
+      for (const accepted of acceptedWrites) {
+        const readChecklistResult = await readBitrixChecklistForTask(config, accepted.taskId, {
+          operation,
+        });
+        const checklistClient = await pool.connect();
+        try {
+          await checklistClient.query("BEGIN");
+          const checklistResult = await writeChecklistSnapshotFromRead(
+            checklistClient,
+            config,
+            accepted,
+            readChecklistResult,
+          );
+          await checklistClient.query("COMMIT");
+          if (checklistResult === "synced") {
+            checklistsSynced += 1;
+          } else {
+            checklistsFailed += 1;
+          }
+        } catch (error) {
+          await checklistClient.query("ROLLBACK");
+          throw error;
+        } finally {
+          checklistClient.release();
+        }
+      }
 
-    if (client) {
-      journalId = await insertSyncJournalEntry(
-        {
-          runMode: mode,
-          scopeSummary,
-          status: runStatus,
-          summary: {
-            tasksFetched: readResult.data.tasks.length,
-            bindingsConfirmed,
-            bindingsConflict,
-            bindingsInvalid,
-            bindingsPending,
-            cacheWrites,
-            versionConflicts,
-            checklistsSynced,
-            checklistsFailed,
-            truncatedReason: readResult.data.truncatedReason ?? null,
-          },
-        },
-        client,
-      );
-      await client.query("COMMIT");
-    }
-  } catch (error) {
-    if (client) {
-      await client.query("ROLLBACK");
+      const tasksComplete = readResult.data.complete;
+      const checklistsComplete = checklistsFailed === 0;
+      const runStatus = tasksComplete && checklistsComplete ? "success" : "partial";
       journalId = await insertSyncJournalEntry({
         runMode: mode,
         scopeSummary,
-        status: "failed",
+        status: runStatus,
         summary: {
-          reason: "APPLY_ROLLBACK",
-          message: error instanceof Error ? error.message : "sync_apply_failed",
-          bitrixUserId: options.bitrixUserId,
+          tasksFetched: readResult.data.tasks.length,
+          bindingsConfirmed,
+          bindingsConflict,
+          bindingsInvalid,
+          bindingsPending,
+          cacheWrites,
+          versionConflicts,
+          checklistsSynced,
+          checklistsFailed,
+          truncatedReason: readResult.data.truncatedReason ?? null,
         },
       });
     }
+  } catch (error) {
+    journalId = await insertSyncJournalEntry({
+      runMode: mode,
+      scopeSummary,
+      status: "failed",
+      summary: {
+        reason: "APPLY_ROLLBACK",
+        message: error instanceof Error ? error.message : "sync_apply_failed",
+        bitrixUserId: options.bitrixUserId,
+      },
+    });
     return {
       ok: false,
       status: "failed",
@@ -389,11 +463,11 @@ export async function runBitrix24TaskSync(
       message: "Bitrix24 task sync apply failed and was rolled back.",
       journalId,
     };
-  } finally {
-    client?.release();
   }
 
-  const complete = readResult.data.complete;
+  const tasksComplete = readResult.data.complete;
+  const checklistsComplete = checklistsFailed === 0;
+  const complete = tasksComplete && checklistsComplete;
   const status = complete ? "success" : "partial";
 
   return {
@@ -415,7 +489,9 @@ export async function runBitrix24TaskSync(
       ? options.apply
         ? "Bitrix24 task sync applied to local cache."
         : "Bitrix24 task sync dry-run completed."
-      : "Bitrix24 task sync completed with partial result.",
+      : checklistsFailed > 0
+        ? "Bitrix24 task sync completed with checklist failures."
+        : "Bitrix24 task sync completed with partial result.",
     journalId,
   };
 }
