@@ -27,6 +27,65 @@ function readField(record: Record<string, unknown>, keys: string[]): unknown {
   return undefined;
 }
 
+function statusKeyPresent(record: Record<string, unknown>, keys: string[]): boolean {
+  for (const key of keys) {
+    if (key in record) {
+      return true;
+    }
+    const lower = key.toLowerCase();
+    if (lower in record) {
+      return true;
+    }
+    const upper = key.toUpperCase();
+    if (upper in record) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseStatusScalar(
+  value: unknown,
+): { kind: "absent" } | { kind: "valid"; value: string | number } | { kind: "invalid" } {
+  if (value === null || value === undefined) {
+    return { kind: "absent" };
+  }
+  if (typeof value === "number" || typeof value === "string") {
+    return { kind: "valid", value };
+  }
+  return { kind: "invalid" };
+}
+
+function readStatusRaw(record: Record<string, unknown>): string | number | "reject" {
+  const realPresent = statusKeyPresent(record, ["REAL_STATUS", "realStatus"]);
+  const realValue = readField(record, ["REAL_STATUS", "realStatus"]);
+
+  if (realPresent) {
+    const realParsed = parseStatusScalar(realValue);
+    if (realParsed.kind === "invalid") {
+      return "reject";
+    }
+    if (realParsed.kind === "valid") {
+      return realParsed.value;
+    }
+  }
+
+  const statusPresent = statusKeyPresent(record, ["STATUS", "status"]);
+  const statusValue = readField(record, ["STATUS", "status"]);
+
+  if (statusPresent) {
+    const statusParsed = parseStatusScalar(statusValue);
+    if (statusParsed.kind === "invalid") {
+      return "reject";
+    }
+    if (statusParsed.kind === "valid") {
+      return statusParsed.value;
+    }
+  }
+
+  return "reject";
+}
+
 function readRequiredTitle(record: Record<string, unknown>): string | null {
   const value = readField(record, ["TITLE", "title"]);
   if (typeof value !== "string") {
@@ -34,31 +93,6 @@ function readRequiredTitle(record: Record<string, unknown>): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function hasStatusField(record: Record<string, unknown>): boolean {
-  return (
-    readField(record, ["REAL_STATUS", "realStatus"]) !== undefined ||
-    readField(record, ["STATUS", "status"]) !== undefined
-  );
-}
-
-function readStatusRaw(record: Record<string, unknown>): string | number | null {
-  const realStatus = readField(record, ["REAL_STATUS", "realStatus"]);
-  if (realStatus !== null && realStatus !== undefined) {
-    if (typeof realStatus === "number" || typeof realStatus === "string") {
-      return realStatus;
-    }
-    return null;
-  }
-
-  const status = readField(record, ["STATUS", "status"]);
-  if (status !== null && status !== undefined) {
-    if (typeof status === "number" || typeof status === "string") {
-      return status;
-    }
-  }
-  return null;
 }
 
 export function mapBitrixTaskStatus(statusRaw: string | number | null): Bitrix24TaskStatusLabel {
@@ -93,7 +127,8 @@ export function normalizeBitrixTask(
     return null;
   }
 
-  if (!hasStatusField(record)) {
+  const statusRaw = readStatusRaw(record);
+  if (statusRaw === "reject") {
     return null;
   }
 
@@ -112,8 +147,6 @@ export function normalizeBitrixTask(
   if (deadlineParsed.kind === "invalid" || changedParsed.kind !== "valid") {
     return null;
   }
-
-  const statusRaw = readStatusRaw(record);
 
   return {
     portalHost,

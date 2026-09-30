@@ -30,9 +30,38 @@ function isValidCalendarParts(
   );
 }
 
+export function isValidTimezoneOffset(offset: string): boolean {
+  if (offset === "Z") {
+    return true;
+  }
+  const match = offset.match(/^([+-])(\d{2}):(\d{2})$/);
+  if (!match) {
+    return false;
+  }
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+    return false;
+  }
+  if (minutes < 0 || minutes > 59) {
+    return false;
+  }
+  if (hours < 0 || hours > 14) {
+    return false;
+  }
+  if (hours === 14 && minutes !== 0) {
+    return false;
+  }
+  return true;
+}
+
 function parseBitrixDateTime(trimmed: string): ParsedOptionalDate {
   const withTz = trimmed.match(BITRIX_DATETIME_WITH_TZ);
   if (withTz) {
+    const timezone = withTz[8]!;
+    if (!isValidTimezoneOffset(timezone)) {
+      return { kind: "invalid" };
+    }
     const year = Number(withTz[1]);
     const month = Number(withTz[2]);
     const day = Number(withTz[3]);

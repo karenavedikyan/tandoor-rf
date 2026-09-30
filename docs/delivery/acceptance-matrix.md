@@ -263,7 +263,9 @@
 
 | Проверка | Результат |
 |----------|-----------|
-| SHA PR head (review fixes) | `1e522bc` |
+| SHA PR head (review fixes) | см. PR #17 |
+| timezone offset validation | `+99:99`/`+03:99` rejected; boundary ±14:00 ok — `bitrix24-validate-datetime.test.ts` |
+| status type validation | boolean/object/array rejected; null REAL_STATUS fallback; corrupted REAL_STATUS no mask — `bitrix24-normalize-task-status.test.ts` |
 | 1 completeness/required fields | rejected/total mismatch → PARTIAL; обязательные поля; probe.status — `bitrix24-read-tasks.test.ts` |
 | 2 full IP normalization | ipaddr.js; все формы IPv6; blocked+allowed — `bitrix24-ip-security.test.ts` |
 | 3 safe error payloads | без raw transport/result — `bitrix24-read-errors-canary.test.ts` |

@@ -87,11 +87,11 @@ OAuth — **архитектурно отделён**, не реализован
 |-------------|-------------|------------|
 | `ID` | `taskId` | **обязательно**; dedupe key: `portalHost:taskId` |
 | `TITLE` | `title` | **обязательно** (непустая строка); **не попадает** в CLI-отчёт диагностики |
-| `REAL_STATUS` / `STATUS` | `statusRaw`, `statusLabel` | **хотя бы одно поле обязательно**; неизвестный код → `unknown`, без угадывания |
+| `REAL_STATUS` / `STATUS` | `statusRaw`, `statusLabel` | **хотя бы одно поле с допустимым типом** (`string`/`number`); `REAL_STATUS`/`realStatus` приоритетнее `STATUS`/`status`; `null` в приоритетном поле → fallback; boolean/object/array → запись отклоняется; повреждённый `REAL_STATUS` не маскируется валидным `STATUS`; неизвестный код → `unknown` |
 | `RESPONSIBLE_ID` | `responsibleId` | **обязательно** |
 | `CREATED_BY` | `createdById` | **обязательно** |
 | `DEADLINE` | `deadline` | **опционально**; сохраняется исходная строка с TZ, если указана |
-| `CHANGED_DATE` | `changedAt` | **обязательно**; ISO `YYYY-MM-DDTHH:mm:ss` с TZ или без; невозможные даты отклоняются |
+| `CHANGED_DATE` | `changedAt` | **обязательно**; ISO `YYYY-MM-DDTHH:mm:ss` с TZ (`Z` или `±HH:MM`, часы 00–14, минуты 00–59) или без TZ; невозможные даты и смещения вроде `+99:99` отклоняются |
 
 Запись без обязательных полей отклоняется (`rejectedTaskCount++`), не нормализуется пустыми значениями. `fields_checked` в probe означает проверку обязательных полей на **реальных** валидных строках выборки.
 
