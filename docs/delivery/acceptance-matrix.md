@@ -259,6 +259,26 @@
 | `npm run test:browser` | **20 passed**, 0 failed |
 | typecheck / build | pass |
 
+### R2.1 Bitrix24 read module (draft PR #17, branch `cursor/r21-bitrix24-module-9e11`)
+
+| Проверка | Результат |
+|----------|-----------|
+| SHA PR head (review fixes) | `c634de4` |
+| timezone offset validation | `+99:99`/`+03:99` rejected; boundary ±14:00 ok — `bitrix24-validate-datetime.test.ts` |
+| status type validation | boolean/object/array rejected; null REAL_STATUS fallback; corrupted REAL_STATUS no mask — `bitrix24-normalize-task-status.test.ts` |
+| 1 completeness/required fields | rejected/total mismatch → PARTIAL; обязательные поля; probe.status — `bitrix24-read-tasks.test.ts` |
+| 2 full IP normalization | ipaddr.js; все формы IPv6; blocked+allowed — `bitrix24-ip-security.test.ts` |
+| 3 safe error payloads | без raw transport/result — `bitrix24-read-errors-canary.test.ts` |
+| 4 pinned cleanup | redirect destroy без resume — `bitrix24-pinned-request.test.ts`; DNS clearTimeout — `bitrix24-dns-resolve.test.ts` |
+| 5 Retry-After uncapped | полный 120s/90s в бюджете — `bitrix24-retry-after.test.ts` |
+| 6 input/regressions | parse-id/datetime tests; login+health side-effects — `bitrix24-no-side-effects.test.ts` |
+| Live portal check | **не выполнялась** |
+| UI / brand / 1C / access | **не менялись** |
+| `npm test` | **222 passed** |
+| `npm run test:integration` | **141 passed** |
+| `npm run test:browser` | **20 passed** |
+| typecheck / build | pass |
+
 ### R1.3 fixes round 4 (2026-09-28, Draft PR #14, branch `cursor/r13-access-control-9e11`)
 
 | Проверка | Результат |

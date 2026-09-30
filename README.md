@@ -139,6 +139,13 @@ docker run --rm -p 3000:3000 \
 | `ONEC_FTP_PASSWORD` | при enabled | Пароль; задавать **только** в env TW, не в GitHub/Cursor/аргументах CLI |
 | `ONEC_FTP_BASE_PATH` | при enabled | Базовый каталог FTP, напр. `/LC` (файл клиентов: `<base>/clients/all_clients.json`) |
 | `ONEC_FTP_TIMEOUT_MS` | нет (`15000`) | Единый deadline всей проверки (connect → list), мс |
+| `BITRIX24_ENABLED` | нет (`false`) | Включает серверный модуль чтения Bitrix24 |
+| `BITRIX24_WEBHOOK_URL` | при enabled | Incoming webhook `https://<portal>/rest/<user_id>/<token>/` — только секреты TW |
+| `BITRIX24_PORTAL_HOST` | нет | Опциональная фиксация портала; должна совпадать с URL |
+| `BITRIX24_REQUEST_TIMEOUT_MS` | нет (`15000`) | Таймаут одного REST-запроса, мс |
+| `BITRIX24_MAX_RESPONSE_BYTES` | нет (`1048576`) | Предел размера ответа Bitrix24 |
+| `BITRIX24_MAX_PAGES` | нет (`20`) | Предел страниц пагинации задач |
+| `BITRIX24_MAX_TOTAL_DURATION_MS` | нет (`60000`) | Общий предел длительности чтения |
 
 В **production** запрещены `PGSSLMODE=disable` и `sslmode=disable|no-verify` в URL.
 
@@ -173,6 +180,27 @@ npm run onec-ftp-probe:local
 Включать `ONEC_FTP_ENABLED=true` только после review PR и отдельного согласования deployment/env в TW. Откат: вернуть `ONEC_FTP_ENABLED=false` (или удалить FTP env) и перезапустить приложение — основной ЛК продолжит работать.
 
 Пример: `.env.example`
+
+### Bitrix24 read-only module (R2.1, только CLI)
+
+Интеграция **выключена по умолчанию** (`BITRIX24_ENABLED=false`). Webhook URL хранится **только** в серверных секретах; в `.env.example` — пустые placeholders.
+
+Локальная проверка конфигурации без сети:
+
+```bash
+npm run bitrix24-probe:local
+```
+
+Live-диагностика требует явный Bitrix user ID (без fallback на владельца webhook):
+
+```bash
+# локально (.env):
+npm run bitrix24-probe:local -- --live --bitrix-user-id <BITRIX_USER_ID>
+# серверное окружение (env уже задан TW):
+node dist/cli/bitrix24-probe.js --live --bitrix-user-id <BITRIX_USER_ID>
+```
+
+Модуль не вызывается из web-сервера, login, health/readiness или расписания. Не сохраняет задачи в БД и не меняет права. См. [docs/delivery/bitrix24-runbook.md](./docs/delivery/bitrix24-runbook.md). **Проверка на реальном портале не выполнена** автотестами PR.
 
 ### Импорт клиентов 1С из FTP (только CLI)
 
