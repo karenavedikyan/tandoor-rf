@@ -102,6 +102,15 @@ npm run bitrix24-sync:local -- --bitrix-user-id <BITRIX_USER_ID> --apply
 
 Область: задачи **одного ответственного**, не весь портал.
 
+### 9.3.1. Диагностика кэша и привязок
+
+```bash
+npm run build
+npm run bitrix24-diagnostics:local -- --bitrix-user-id <BITRIX_USER_ID>
+```
+
+Параметр `--bitrix-user-id` **обязателен**: журнал синхронизации ищется только по точной области `portal_id + bitrix_user_id`, общий журнал портала не возвращается.
+
 ### 9.4. Публикация кэша в UI (только после согласования)
 
 ```bash

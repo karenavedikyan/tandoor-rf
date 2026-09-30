@@ -41,13 +41,10 @@ export async function isObjectLinkedToClientCard(
   return isChildObjectLinkedToHolding(holdingGuid, objectType, objectGuid);
 }
 
-async function hasExplicitBitrixObjectGrant(
+async function isObjectExplicitlyDenied(
   context: AccessContext,
   objectGuid: string,
 ): Promise<boolean> {
-  if (context.role === "admin" || context.fullClientBase) {
-    return true;
-  }
   const pool = requirePool();
   const denied = await pool.query(
     `SELECT 1 FROM access_denials
@@ -56,9 +53,20 @@ async function hasExplicitBitrixObjectGrant(
      LIMIT 1`,
     [context.userId, objectGuid],
   );
-  if ((denied.rowCount ?? 0) > 0) {
+  return (denied.rowCount ?? 0) > 0;
+}
+
+async function hasExplicitBitrixObjectGrant(
+  context: AccessContext,
+  objectGuid: string,
+): Promise<boolean> {
+  if (await isObjectExplicitlyDenied(context, objectGuid)) {
     return false;
   }
+  if (context.role === "admin" || context.fullClientBase) {
+    return true;
+  }
+  const pool = requirePool();
   const granted = await pool.query(
     `SELECT 1 FROM access_grants
      WHERE user_id = $1::uuid AND object_id = $2::uuid AND revoked_at IS NULL
@@ -80,6 +88,9 @@ export async function canReadBoundBitrixObject(
   if (!(await isObjectLinkedToClientCard(cardGuid, objectType, objectGuid))) {
     return false;
   }
+  if (await isObjectExplicitlyDenied(context, objectGuid)) {
+    return false;
+  }
   if (objectType === "holding") {
     return true;
   }
@@ -92,13 +103,7 @@ export async function canRestoreBitrixObjectLabel(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
 ): Promise<boolean> {
-  if (context.role === "assistant") {
-    return false;
-  }
-  if (context.role === "admin") {
-    return canReadBoundBitrixObject(context, cardGuid, objectType, objectGuid);
-  }
-  if (!["manager", "rop", "director", "regional_manager"].includes(context.role)) {
+  if (context.role !== "admin") {
     return false;
   }
   return canReadBoundBitrixObject(context, cardGuid, objectType, objectGuid);

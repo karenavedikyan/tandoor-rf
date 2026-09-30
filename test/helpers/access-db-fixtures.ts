@@ -44,6 +44,34 @@ export async function grantClientAccess(input: {
   await pool.end();
 }
 
+export async function denyClientAccess(input: {
+  databaseUrl: string;
+  userId: string;
+  scopeType: "client" | "all_clients";
+  objectId?: string | null;
+  deniedByUserId: string;
+  basis?: string;
+  reason?: string;
+}): Promise<void> {
+  assertTestDatabaseUrl(input.databaseUrl, "denyClientAccess");
+  const pool = new Pool({ connectionString: input.databaseUrl, max: 1 });
+  await pool.query(
+    `
+      INSERT INTO access_denials (user_id, scope_type, object_id, reason, basis, created_by_user_id)
+      VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6::uuid)
+    `,
+    [
+      input.userId,
+      input.scopeType,
+      input.scopeType === "client" ? input.objectId : null,
+      input.reason ?? "integration test denial",
+      input.basis ?? "integration test",
+      input.deniedByUserId,
+    ],
+  );
+  await pool.end();
+}
+
 export async function addRopTeamMember(input: {
   databaseUrl: string;
   ropUserId: string;

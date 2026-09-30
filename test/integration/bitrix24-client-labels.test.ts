@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -31,6 +32,7 @@ import {
 import { resolveMigrationsDir } from "../../src/db/migrate-runner";
 import {
   createDelegationRecord,
+  denyClientAccess,
   grantClientAccess,
   linkUserToEmployee,
 } from "../helpers/access-db-fixtures";
@@ -1370,6 +1372,268 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
     assert.ok(byId.valid?.changed_at instanceof Date);
     assert.equal(byId.valid?.published, false);
     assert.equal(byId.valid?.changed_at?.toISOString(), "2026-01-15T04:30:00.000Z");
+  });
+
+  it("denies director child object access when explicit denial exists", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminRow = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email = $1",
+      ["admin@example.com"],
+    );
+    await pool.end();
+    const adminUserId = adminRow.rows[0]?.id;
+    assert.ok(adminUserId);
+    const directorUser = await createTestUser({
+      databaseUrl,
+      email: "director@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Director User",
+      role: "director",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: directorUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: adminUserId,
+    });
+    await confirmObject("legal_entity", LEGAL_ONE, null);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
+    const childLabel = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
+    await denyClientAccess({
+      databaseUrl,
+      userId: directorUser.id,
+      scopeType: "client",
+      objectId: LEGAL_ONE,
+      deniedByUserId: adminUserId,
+    });
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: directorUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9004",
+      responsibleBitrixUserId: "42",
+      title: "Denied child task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "legal_entity",
+      objectGuid: LEGAL_ONE,
+      labelCode: childLabel.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("director@example.com");
+    const labelRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/label?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(labelRes.status, 404);
+    const tasksRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "empty");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("denies holding access when holding GUID differs from card and is explicitly denied", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminRow = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email = $1",
+      ["admin@example.com"],
+    );
+    await pool.end();
+    const adminUserId = adminRow.rows[0]?.id;
+    assert.ok(adminUserId);
+    const directorUser = await createTestUser({
+      databaseUrl,
+      email: "director@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Director User",
+      role: "director",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: directorUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: adminUserId,
+    });
+    const holdingLabel = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await denyClientAccess({
+      databaseUrl,
+      userId: directorUser.id,
+      scopeType: "client",
+      objectId: HOLDING_ONE,
+      deniedByUserId: adminUserId,
+    });
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: directorUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9001",
+      responsibleBitrixUserId: "42",
+      title: "Denied holding task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: holdingLabel.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("director@example.com");
+    const labelRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(cookie));
+    assert.equal(labelRes.status, 404);
+    const tasksRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(tasksRes.body.state, "empty");
+    assert.equal(tasksRes.body.tasks.length, 0);
+  });
+
+  it("denies label restore for manager and regional manager with read access only", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminRow = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email = $1",
+      ["admin@example.com"],
+    );
+    await pool.end();
+    const adminUserId = adminRow.rows[0]?.id;
+    assert.ok(adminUserId);
+    const managerAUser = await createTestUser({
+      databaseUrl,
+      email: "manager-a@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager A",
+      role: "manager",
+    });
+    const regionalUser = await createTestUser({
+      databaseUrl,
+      email: "regional@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Regional User",
+      role: "regional_manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerAUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: adminUserId,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: regionalUser.id,
+      employeeId: MANAGER_B,
+      confirmedByUserId: adminUserId,
+    });
+    await grantClientAccess({
+      databaseUrl,
+      userId: regionalUser.id,
+      objectId: CLIENT_ONE,
+      grantedByUserId: adminUserId,
+    });
+    await issueLabelInTransaction("holding", HOLDING_ONE);
+    await revokeActiveLabel("holding", HOLDING_ONE);
+
+    const app = await loadApp();
+    const managerCookie = await login("manager-a@example.com");
+    const managerRes = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(managerCookie))
+      .send({ restore: true });
+    assert.equal(managerRes.status, 403);
+
+    const regionalCookie = await login("regional@example.com");
+    const regionalRes = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(regionalCookie))
+      .send({ restore: true });
+    assert.equal(regionalRes.status, 403);
+  });
+
+  it("allows admin restore with same label code and audit entry", async () => {
+    const issued = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await revokeActiveLabel("holding", HOLDING_ONE);
+
+    const app = await loadApp();
+    const cookie = await login("admin@example.com");
+    const res = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(cookie))
+      .send({ restore: true });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.labelCode, issued.labelCode);
+    assert.equal(res.body.restored, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const audit = await pool.query<{ action: string }>(
+      `SELECT action FROM bitrix24_label_audit
+       WHERE action = 'restore' AND label_code = $1`,
+      [issued.labelCode],
+    );
+    await pool.end();
+    assert.equal(audit.rowCount, 1);
+  });
+
+  it("diagnostics CLI returns journal for selected bitrix user only", async () => {
+    const config = sampleWebhookConfig();
+    await insertSyncJournalEntry({
+      runMode: "apply",
+      scopeSummary: buildSyncScopeSummary(config.portalId, "420"),
+      status: "success",
+      summary: { marker: "user-420" },
+    });
+    await insertSyncJournalEntry({
+      runMode: "apply",
+      scopeSummary: buildSyncScopeSummary(config.portalId, "42"),
+      status: "partial",
+      summary: { marker: "user-42" },
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      ["dist/cli/bitrix24-diagnostics.js", "--bitrix-user-id", "42"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: databaseUrl,
+          PGSSLMODE: "disable",
+          BITRIX24_ENABLED: "true",
+          BITRIX24_WEBHOOK_URL: config.webhookBaseUrl,
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(result.stdout) as {
+      latestSync: { summary: { marker: string } } | null;
+      bitrixUserId: string;
+    };
+    assert.equal(payload.bitrixUserId, "42");
+    assert.equal(payload.latestSync?.summary.marker, "user-42");
   });
 
   it("returns 400 when card and holding IDs differ without mapping", async () => {
