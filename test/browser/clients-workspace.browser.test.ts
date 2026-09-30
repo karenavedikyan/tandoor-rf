@@ -421,6 +421,9 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
             taskId: "9001",
             accessLevel: "full",
             title: "Поставка оборудования",
+            isOpen: true,
+            isOverdue: false,
+            deadlineAt: "2030-10-01T09:00:00Z",
             statusLabel: "in_progress",
             deadline: "2026-10-01T12:00:00+03:00",
             changedAt: "2026-09-29T10:00:00+03:00",
@@ -472,22 +475,23 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     });
     const checkbox = page.getByRole("checkbox", { name: "Связаться с ответственным" });
     assert.equal(await page.locator(".pc-bitrix24-contact-comment-btn").count(), 0);
-    await checkbox.check();
+    // This request is intentionally denied and immediately rolls the control back.
+    await checkbox.click();
     await page.waitForSelector(".pc-bitrix24-contact-status.workspace-status--error");
     assert.equal(await checkbox.isChecked(), false);
-    assert.match(await page.locator(".pc-bitrix24-contact-status").textContent(), /Доступ отозван/);
+    assert.match(await page.locator("#pc-panel-work .pc-bitrix24-contact-status").textContent(), /Доступ отозван/);
     rejectMutation = false;
     await checkbox.check();
-    await page.waitForSelector(".pc-bitrix24-contact-done");
-    assert.match(await page.locator(".pc-bitrix24-contact-done").textContent(), /Тестовый сотрудник/);
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-contact-done");
+    assert.match(await page.locator("#pc-panel-work .pc-bitrix24-contact-done").textContent(), /Тестовый сотрудник/);
     await page.locator(".pc-bitrix24-contact-comment-input").fill("Связался, ожидаем решение");
     await page.getByRole("button", { name: "Сохранить комментарий" }).click();
-    await page.waitForSelector(".pc-bitrix24-contact-comment");
-    assert.match(await page.locator(".pc-bitrix24-contact-comment").textContent(), /ожидаем решение/);
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-contact-comment");
+    assert.match(await page.locator("#pc-panel-work .pc-bitrix24-contact-comment").textContent(), /ожидаем решение/);
     await page.reload();
     await page.waitForSelector("#pc-panel-overview");
     await page.click('[data-card-tab="work"]');
-    await page.waitForSelector(".pc-bitrix24-contact-done");
+    await page.waitForSelector("#pc-panel-work .pc-bitrix24-contact-done");
     assert.equal(await checkbox.isChecked(), true);
     await captureScreenshot(page, "clients-bitrix24-contact-390-light.png", { width: 390, height: 844 }, "light");
     await captureScreenshot(page, "clients-bitrix24-contact-1440-dark.png", { width: 1440, height: 900 }, "dark");
@@ -511,6 +515,72 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.equal(await page.locator(".pc-bitrix24-open-task").count(), 0);
     assert.match(await page.locator("#pc-panel-work").textContent(), /Иванов Иван/);
     assert.equal((await page.locator("#pc-panel-work").textContent())?.includes("Поставка оборудования"), false);
+    await closePage(page, context);
+  });
+
+  it("shares authorized tasks and personal marks between overview and work", async () => {
+    const task = (id: string, title: string, deadline: string | null, overrides = {}) => ({
+      taskId: id, title, accessLevel: "full", statusLabel: "В работе",
+      isOpen: true, isOverdue: false, deadlineAt: deadline, deadline: deadline ? "1 окт. 2030 г." : null,
+      responsible: { state: "confirmed", displayName: "Иванов Иван", internalContactEmail: "ivanov@example.com" },
+      contactAction: { marked: false, canMark: true, canRevoke: false },
+      ...overrides,
+    });
+    const tasks = [
+      task("9001", "Завершённая задача", null, { isOpen: false, statusLabel: "Завершена" }),
+      task("9003", "Согласовать поставку", "2030-10-02T10:00:00Z"),
+      task("9002", "Получить документы", "2030-10-01T10:00:00Z"),
+      task("9004", "Уточнить просроченную поставку", "2020-01-01T10:00:00Z", { isOverdue: true, deadline: "1 янв. 2020 г." }),
+      task("9005", undefined as any, null, { accessLevel: "summary", briefText: "Разрешённое поручение", isOverdue: null }),
+    ];
+    const { page, context, mocks } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks }, bitrix24Label: { token: "#LK_H_000123" },
+    });
+    let taskReads = 0;
+    page.on("request", (req) => { if (req.url().endsWith("/bitrix24/tasks")) taskReads++; });
+    await page.route("**/bitrix24/tasks/9004/contact", async (route) => {
+      const body = route.request().postDataJSON();
+      assert.equal(route.request().method(), "PUT");
+      tasks[3].contactAction = { marked: body.marked, canMark: true, canRevoke: body.marked };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(tasks[3].contactAction) });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    const overview = page.locator("#pc-bitrix24-overview");
+    await page.waitForSelector(".pc-bitrix24-overview-task");
+    assert.equal(taskReads, 1, "no second task fetch for the overview");
+    assert.deepEqual(await overview.locator("[data-overview-task-id]").evaluateAll(nodes => nodes.map(n => n.getAttribute("data-overview-task-id"))), ["9004", "9002", "9003"]);
+    assert.match(await overview.locator(".pc-bitrix24-summary-counts").textContent(), /Открыто: 4.*Просрочено: не менее 1/);
+    assert.equal((await overview.textContent())?.includes("Завершённая задача"), false);
+    const overviewMark = overview.locator('[data-task-id="9004"] input[type="checkbox"]');
+    await overviewMark.check();
+    await page.waitForFunction(() => (document.querySelector('#pc-panel-work [data-task-id="9004"] input') as HTMLInputElement)?.checked === true);
+    assert.equal(await overviewMark.isChecked(), true);
+    await overview.getByRole("button", { name: "Все доступные задачи (5) →" }).click();
+    assert.ok(await page.locator("#pc-panel-work").isVisible());
+    assert.equal(await page.locator("#pc-panel-work .pc-bitrix24-task").count(), 5);
+    const workMark = page.locator('#pc-panel-work [data-task-id="9004"] input');
+    assert.equal(await workMark.isChecked(), true);
+    await workMark.uncheck();
+    await page.waitForFunction(() => (document.querySelector('#pc-bitrix24-overview [data-task-id="9004"] input') as HTMLInputElement)?.checked === false);
+    await page.getByRole("tab", { name: "Обзор", exact: true }).click();
+    assert.equal(await overviewMark.isChecked(), false);
+    await captureScreenshot(page, "clients-bitrix24-overview-1440-light.png", { width: 1440, height: 900 }, "light");
+    await captureScreenshot(page, "clients-bitrix24-overview-375-light.png", { width: 375, height: 844 }, "light");
+    await captureScreenshot(page, "clients-bitrix24-overview-1440-dark.png", { width: 1440, height: 900 }, "dark");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    mocks.set({ bitrix24Tasks: { state: "access_expired", tasks: [] } });
+    await overview.getByRole("button", { name: "Обновить данные ЛК" }).click();
+    await page.waitForFunction(() => document.querySelector("#pc-bitrix24-overview")?.textContent?.includes("истекло"));
+    assert.equal(await overview.locator(".pc-bitrix24-overview-task").count(), 0);
+    assert.equal(await overview.locator(".pc-bitrix24-summary-counts").count(), 0);
+    assert.equal(await page.locator("#pc-panel-work .pc-bitrix24-task").count(), 0);
+    // An error is not an empty queue or zero overdue tasks.
+    await page.route("**/bitrix24/tasks", async (route) => {
+      await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    });
+    await overview.getByRole("button", { name: "Обновить данные ЛК" }).click();
+    await page.waitForFunction(() => document.querySelector("#pc-bitrix24-overview")?.textContent?.includes("Не удалось"));
+    assert.equal(await overview.locator(".pc-bitrix24-summary-counts").count(), 0);
     await closePage(page, context);
   });
 

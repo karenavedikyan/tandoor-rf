@@ -39,7 +39,7 @@
       meta + '<div class="pc-notice"><strong>Карточка подключается поэтапно</strong>' +
       '<p>Контакты и менеджер доступны из 1С. Отсутствие показателя не означает нулевое значение.</p></div>' +
       stats + '<div class="pc-grid pc-two">' +
-      card("Следующие действия", pending("Задачи и чек-листы Битрикс24 ещё не подключены. Наличие открытых задач пока неизвестно."), "Битрикс24") +
+      card("Следующие действия", '<div class="pc-pad" id="pc-bitrix24-overview" aria-live="polite"></div>', "Битрикс24") +
       card("Точки и контакты", '<div class="pc-pad">' +
         field("Торговые точки", "Структура торговых точек не передана") +
         field("Адрес из 1С", client.address && client.address.trim(), !!(client.address && client.address.trim())) +

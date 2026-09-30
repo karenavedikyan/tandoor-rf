@@ -190,6 +190,9 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
       .set(authHeaders(cookie));
     assert.equal(res.body.state, "ready");
     assert.equal(res.body.tasks[0]?.accessLevel, "full");
+    assert.equal(res.body.tasks[0]?.isOpen, true);
+    assert.equal(res.body.tasks[0]?.isOverdue, false);
+    assert.equal(res.body.tasks[0]?.deadlineAt, null);
     assert.equal(
       res.body.tasks[0]?.portalUrl,
       "https://example.bitrix24.ru/company/personal/user/42/tasks/task/view/9001/",
@@ -238,6 +241,9 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
     assert.equal(res.body.tasks[0]?.briefText, "Краткое поручение для команды");
     assert.equal(res.body.tasks[0]?.title, undefined);
     assert.equal(res.body.tasks[0]?.portalUrl, undefined);
+    assert.equal(res.body.tasks[0]?.isOpen, true);
+    assert.equal(res.body.tasks[0]?.isOverdue, null);
+    assert.equal(res.body.tasks[0]?.deadlineAt, null);
     assert.equal(res.body.tasks[0]?.responsible?.displayName, "Responsible User");
     // A publication for a different object must never authorize this binding.
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });

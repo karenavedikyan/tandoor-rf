@@ -51,7 +51,7 @@
     return '<div class="pc-label">Ответственный: имя не подтверждено</div>';
   }
 
-  function renderContactAction(task, clientGuid) {
+  function renderContactAction(task, clientGuid, compact) {
     if (!task.contactAction || !task.contactAction.canMark) {
       return "";
     }
@@ -69,6 +69,14 @@
     var commentBlock = action.comment
       ? '<div class="pc-bitrix24-contact-comment">' + esc(action.comment) + "</div>"
       : "";
+    if (compact) {
+      return '<div class="pc-bitrix24-contact" data-task-id="' + taskKey + '">' +
+        '<label class="pc-bitrix24-contact-label">' +
+        '<input type="checkbox" class="pc-bitrix24-contact-checkbox"' + checked +
+        ' aria-label="Связаться с ответственным" /><span>Связаться с ответственным</span></label>' +
+        completed +
+        '<span class="workspace-status pc-bitrix24-contact-status" role="status" aria-live="polite"></span></div>';
+    }
     return (
       '<div class="pc-bitrix24-contact" data-task-id="' +
       taskKey +
@@ -82,7 +90,7 @@
       completed +
       commentBlock +
       '<div class="pc-bitrix24-contact-actions">' +
-      (action.marked
+      (action.marked && !compact
         ? '<label class="pc-label">Комментарий к выполненному действию' +
           '<textarea class="pc-bitrix24-contact-comment-input" maxlength="2000" rows="2">' +
           esc(action.comment || "") + '</textarea></label>' +
@@ -137,6 +145,7 @@
       (objectLabel ? '<div class="pc-label">' + objectLabel + "</div>" : "") +
       renderResponsibleBlock(task.responsible) +
       link +
+      '<p class="pc-label">Чек-лист Битрикс24 пока не загружается. Его можно посмотреть в самой задаче.</p>' +
       contactHtml +
       "</article>"
     );
@@ -147,6 +156,69 @@
       return body.message;
     }
     return TASK_STATE_MESSAGES[body.state] || TASK_STATE_MESSAGES.empty;
+  }
+
+  function partialCount(count, unknown) {
+    return unknown ? (count ? "не менее " + count : "нет данных") : String(count);
+  }
+
+  function renderOverviewTask(task, clientGuid) {
+    var title = task.accessLevel === "summary" ? task.briefText : task.title;
+    return '<article class="pc-bitrix24-task pc-bitrix24-overview-task" data-overview-task-id="' +
+      esc(task.taskId) + '">' +
+      '<div class="pc-value">' + esc(title || "Поручение") + '</div>' +
+      '<div class="pc-label">' + esc(task.statusLabel) +
+      (task.isOverdue === true ? ' · <strong class="pc-bitrix24-overdue">Просрочена</strong>' : '') +
+      (task.accessLevel === "full" && task.deadline ? ' · До: ' + esc(task.deadline) : '') +
+      '</div>' + renderResponsibleBlock(task.responsible) +
+      renderContactAction(task, clientGuid, true) + '</article>';
+  }
+
+  function renderOverview(root, clientGuid, result) {
+    var container = root.querySelector("#pc-bitrix24-overview");
+    if (!container) return;
+    var body = result && result.response.status === 200 ? result.data : null;
+    var tasks = body && body.state === "ready" && Array.isArray(body.tasks) ? body.tasks : [];
+    var html = '<p class="pc-label">Только доступные вам задачи. Это не весь список задач клиента или портала.</p>';
+    if (tasks.length) {
+      var open = tasks.filter(function (t) { return t.isOpen === true; }).length;
+      var overdue = tasks.filter(function (t) { return t.isOverdue === true; }).length;
+      var unknownOpen = tasks.some(function (t) { return typeof t.isOpen !== "boolean"; });
+      var unknownDue = tasks.some(function (t) { return typeof t.isOverdue !== "boolean"; });
+      html += '<div class="pc-bitrix24-summary-counts" data-testid="bitrix24-overview-counts">' +
+        '<span>Открыто: <strong>' + partialCount(open, unknownOpen) + '</strong></span>' +
+        '<span>Просрочено: <strong>' + partialCount(overdue, unknownDue) + '</strong></span></div>';
+      if (unknownOpen || unknownDue) {
+        html += '<p class="pc-label">Часть статусов или сроков недоступна.</p>';
+      }
+      var next = tasks.filter(function (t) { return t.isOpen !== false; }).sort(function (a, b) {
+        var priority = Number(b.isOverdue === true) - Number(a.isOverdue === true);
+        if (priority) return priority;
+        var aDue = a.deadlineAt ? Date.parse(a.deadlineAt) : Infinity;
+        var bDue = b.deadlineAt ? Date.parse(b.deadlineAt) : Infinity;
+        if (!Number.isFinite(aDue)) aDue = Infinity;
+        if (!Number.isFinite(bDue)) bDue = Infinity;
+        if (aDue !== bDue) return aDue < bDue ? -1 : 1;
+        return String(a.taskId).localeCompare(String(b.taskId));
+      }).slice(0, 3);
+      html += next.length ? next.map(function (t) { return renderOverviewTask(t, clientGuid); }).join("") :
+        '<p class="pc-label">Среди доступных задач открытых нет.</p>';
+      if (next.length) html += '<p class="pc-label">Галочки личные: отмечают связь с ответственным, а не закрытие задач в Битрикс24.</p>';
+      html += '<button type="button" class="pc-link pc-bitrix24-show-work" data-testid="open-all-bitrix24-tasks">Все доступные задачи (' + tasks.length + ') →</button>';
+    } else {
+      html += renderState(body ? tasksMessage(body) : "Не удалось загрузить задачи.", body && body.state === "empty" ? "empty" : "info");
+      html += '<button type="button" class="pc-link pc-bitrix24-show-work">Перейти в «Работу» →</button>';
+    }
+    html += '<button type="button" class="pc-link pc-bitrix24-refresh" data-testid="refresh-bitrix24-overview">Обновить данные ЛК</button>';
+    container.innerHTML = html;
+    bindContactActions(container, clientGuid, root);
+    container.querySelector(".pc-bitrix24-show-work").addEventListener("click", function () {
+      root.querySelector('[data-card-tab="work"]').click();
+      root.querySelector('[data-card-tab="work"]').focus();
+    });
+    container.querySelector(".pc-bitrix24-refresh").addEventListener("click", function () {
+      mountWorkTab(root, clientGuid);
+    });
   }
 
   function saveContactAction(clientGuid, taskId, payload) {
@@ -175,8 +247,11 @@
       var revokeBtn = block.querySelector(".pc-bitrix24-contact-revoke-btn");
       var commentInput = block.querySelector(".pc-bitrix24-contact-comment-input");
       function setBusy(busy) {
-        block.querySelectorAll("input, button, textarea").forEach(function (control) {
-          control.disabled = busy;
+        root.querySelectorAll(".pc-bitrix24-contact").forEach(function (peer) {
+          if (peer.getAttribute("data-task-id") !== taskId) return;
+          peer.querySelectorAll("input, button, textarea").forEach(function (control) {
+            control.disabled = busy;
+          });
         });
       }
 
@@ -273,6 +348,10 @@
     if (!container) {
       return;
     }
+    var loadId = (root._bitrix24LoadId || 0) + 1;
+    root._bitrix24LoadId = loadId;
+    var overview = root.querySelector("#pc-bitrix24-overview");
+    if (overview) overview.innerHTML = renderState("Загрузка задач…", "loading");
     container.innerHTML = renderState("Загрузка данных Битрикс24…", "loading");
 
     Promise.all([
@@ -280,6 +359,7 @@
       api.apiRequest("/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/tasks"),
     ])
       .then(function (results) {
+        if (root._bitrix24LoadId !== loadId || !root.isConnected) return;
         var labelResult = results[0];
         var tasksResult = results[1];
         var labelStatus = labelResult.response.status;
@@ -360,6 +440,7 @@
         container.innerHTML = parts.join("");
 
         bindContactActions(container, clientGuid, root);
+        renderOverview(root, clientGuid, tasksResult);
 
         var copyBtn = container.querySelector("#pc-copy-bitrix24-label");
         var issueBtn = container.querySelector("#pc-issue-bitrix24-label");
@@ -410,7 +491,9 @@
         }
       })
       .catch(function () {
+        if (root._bitrix24LoadId !== loadId || !root.isConnected) return;
         container.innerHTML = renderState("Не удалось загрузить блок Битрикс24.", "error");
+        renderOverview(root, clientGuid, null);
       });
   }
 
