@@ -3,8 +3,14 @@ import {
   attachAccessContext,
   requireClientReadAccess,
 } from "../access/middleware";
+import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
 import { requireDatabaseReady } from "../middleware/database";
+import {
+  getClientBitrix24LabelHandler,
+  getClientBitrix24TasksHandler,
+  postClientBitrix24LabelHandler,
+} from "./bitrix24-handlers";
 import {
   clientOptionsHandler,
   clientSyncStatusHandler,
@@ -32,6 +38,18 @@ export function createClientsRouter(): express.Router {
 
   router.get("/", ...readChain, (req, res, next) => {
     void listClientsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/bitrix24/label", ...readChain, (req, res, next) => {
+    void getClientBitrix24LabelHandler(req, res).catch(next);
+  });
+
+  router.post("/:guid/bitrix24/label", csrfProtection, ...readChain, (req, res, next) => {
+    void postClientBitrix24LabelHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/bitrix24/tasks", ...readChain, (req, res, next) => {
+    void getClientBitrix24TasksHandler(req, res).catch(next);
   });
 
   router.get("/:guid", ...readChain, (req, res, next) => {

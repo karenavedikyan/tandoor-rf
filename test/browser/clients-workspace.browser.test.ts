@@ -403,6 +403,42 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
+  it("shows Bitrix24 work tab with label and tasks when mocked", async () => {
+    const { page, context, mocks } = await openPage();
+    await mocks.set({
+      bitrix24Label: {
+        token: "#LK_H_000123",
+        labelCode: "LK_H_000123",
+        objectType: "holding",
+      },
+      bitrix24Tasks: {
+        state: "ready",
+        scopeNote: "Показаны задачи одного подтверждённого объекта.",
+        portalConfigured: true,
+        sync: { lastFinishedAt: "2026-09-30T09:00:00.000Z", lastStatus: "success", lastRunMode: "apply" },
+        tasks: [
+          {
+            taskId: "9001",
+            title: "Поставка оборудования",
+            statusLabel: "in_progress",
+            deadline: "2026-10-01T12:00:00+03:00",
+            changedAt: "2026-09-29T10:00:00+03:00",
+            portalUrl: "https://example.bitrix24.ru/company/personal/tasks/task/view/9001/",
+          },
+        ],
+      },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#pc-panel-overview");
+    await page.click('[data-card-tab="work"]');
+    await page.waitForSelector(".pc-bitrix24-token");
+    assert.match(await page.locator(".pc-bitrix24-token").textContent(), /#LK_H_000123/);
+    assert.match(await page.locator("#pc-panel-work").textContent(), /Поставка оборудования/);
+    await captureScreenshot(page, "clients-bitrix24-work-1440-light.png", { width: 1440, height: 900 }, "light");
+    await captureScreenshot(page, "clients-bitrix24-work-390-light.png", { width: 390, height: 844 }, "light");
+    await closePage(page, context);
+  });
+
   it("navigates prototype tabs without fabricating missing data", async () => {
     const { page, context } = await openPage();
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
@@ -413,7 +449,10 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.ok(await page.locator("#pc-panel-data").isVisible());
     await page.keyboard.press("ArrowRight");
     assert.ok(await page.locator("#pc-panel-work").isVisible());
-    assert.match(await page.locator("#pc-panel-work").textContent(), /ещё не подключён/);
+    assert.match(
+      await page.locator("#pc-panel-work").textContent(),
+      /Метка ещё не выдана|Bitrix24 не настроен/,
+    );
     await page.keyboard.press("Home");
     assert.ok(await page.locator("#pc-panel-overview").isVisible());
     await page.setViewportSize({width:390,height:844});

@@ -4,6 +4,14 @@ import { getDatabaseUrl } from "../config";
 
 let pool: Pool | null | undefined;
 
+export function requirePool(): Pool {
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error("DATABASE_UNAVAILABLE");
+  }
+  return activePool;
+}
+
 export function getPool(): Pool | null {
   if (pool !== undefined) {
     return pool;
