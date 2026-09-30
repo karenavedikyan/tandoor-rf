@@ -73,8 +73,22 @@
 .pc-bitrix24-overview-task .pc-value {overflow-wrap:anywhere;}
 .pc-bitrix24-overview-task .pc-bitrix24-contact {margin-top:8px;padding-top:0;border-top:0;}
 #pc-bitrix24-overview > .pc-link {display:block;min-height:44px;text-align:left;margin-top:8px;}
+.pc-bitrix24-checklist-progress {margin-top:8px;font-size:14px;line-height:1.4;overflow-wrap:anywhere;}
+.pc-bitrix24-checklist {margin-top:10px;border-top:1px solid var(--rf-border);padding-top:10px;max-width:100%;overflow:hidden;}
+.pc-bitrix24-checklist-summary {cursor:pointer;font-size:14px;line-height:1.4;min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere;}
+.pc-bitrix24-checklist-list {list-style:none;margin:8px 0 0;padding:0;max-width:100%;}
+.pc-bitrix24-checklist-list--root {margin-top:4px;}
+.pc-bitrix24-checklist-item {display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px;box-sizing:border-box;max-width:100%;padding:6px 0 6px calc(var(--checklist-depth, 0) * 16px);font-size:14px;line-height:1.45;}
+.pc-bitrix24-checklist-item--group .pc-bitrix24-checklist-title {font-weight:600;}
+.pc-bitrix24-checklist-title {flex:1 1 12rem;min-width:0;overflow-wrap:anywhere;}
+.pc-bitrix24-checklist-state {flex:0 0 auto;width:1.1rem;text-align:center;font-weight:700;}
+.pc-bitrix24-checklist-state--done {color:var(--rf-success-text, #1a7f37);}
+.pc-bitrix24-checklist-state--open {color:var(--rf-text-muted);}
+.pc-bitrix24-checklist-coexecutors {color:var(--rf-text-muted);}
+.pc-bitrix24-checklist-item > .pc-bitrix24-checklist-list {flex:1 0 100%;margin-left:0;padding-left:0;}
 @media(max-width:1100px){.pc-three{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:700px){
+  .pc-bitrix24-checklist-item{padding-left:calc(var(--checklist-depth, 0) * 12px);}
   .client-card-page .legacy-content{padding:20px 16px;}
   .pc-three,.pc-two,.pc-equal{grid-template-columns:minmax(0,1fr);}
   .pc-stats{grid-template-columns:repeat(2,minmax(0,1fr));}

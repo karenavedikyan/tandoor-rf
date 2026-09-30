@@ -11,7 +11,12 @@ export type MockBitrixResponse = {
 };
 
 export function createBitrixMockPinnedRequest(
-  handlers: Record<string, MockBitrixResponse | ((body: unknown) => MockBitrixResponse)>,
+  handlers: Record<
+    string,
+    | MockBitrixResponse
+    | ((body: unknown) => MockBitrixResponse)
+    | ((body: unknown) => Promise<MockBitrixResponse>)
+  >,
 ) {
   const calls: Array<{
     url: string;
@@ -27,7 +32,7 @@ export function createBitrixMockPinnedRequest(
     const handler = handlers[url];
     const resolved =
       typeof handler === "function"
-        ? handler(requestBody)
+        ? await handler(requestBody)
         : handler ?? { status: 404, body: { error: "NOT_FOUND" } };
 
     if (resolved.redirect) {

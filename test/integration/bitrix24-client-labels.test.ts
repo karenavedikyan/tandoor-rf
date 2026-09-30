@@ -305,6 +305,9 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
           result: {tasks: [sampleValidBitrixTask({ID:"9001", DESCRIPTION: formatLabelToken(label.labelCode)})]},
           total: 1,
         }},
+        [`${config.webhookBaseUrl}task.checklistitem.getlist`]: {
+          body: { result: [], total: 0 },
+        },
       });
       const result = await runBitrix24TaskSync({
         bitrixUserId: "42", taskId: "9001", apply: true,
@@ -312,6 +315,8 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
       });
       assert.equal(result.ok, true);
       assert.equal(result.cacheWrites, 1);
+      assert.equal(result.checklistsSynced, 1);
+      assert.equal(result.checklistsFailed, 0);
       const app = await loadApp();
       const cookie = await login("admin@example.com");
       const res = await request(app).get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`).set(authHeaders(cookie));
