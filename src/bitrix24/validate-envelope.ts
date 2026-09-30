@@ -91,6 +91,33 @@ export function validateTasksTransportPage(
   return { ok: true, tasks, pagination };
 }
 
+export function extractChecklistItemsArray(result: unknown): unknown[] | null {
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return null;
+}
+
+export function validateChecklistTransportPage(
+  transport: Bitrix24TransportSuccess,
+): { ok: true; items: unknown[]; pagination: ValidatedPagination } | { ok: false } {
+  if (transport.result === undefined) {
+    return { ok: false };
+  }
+
+  const items = extractChecklistItemsArray(transport.result);
+  if (items === null) {
+    return { ok: false };
+  }
+
+  const pagination = validatePaginationFields(transport.next, transport.total);
+  if (!pagination) {
+    return { ok: false };
+  }
+
+  return { ok: true, items, pagination };
+}
+
 export function validateUsersTransportPage(
   transport: Bitrix24TransportSuccess,
 ): { ok: true; users: unknown[]; pagination: ValidatedPagination } | { ok: false } {

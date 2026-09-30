@@ -12,6 +12,7 @@ import {
   canViewBitrixTaskSummaryForUser,
   canViewFullBitrixTaskForUser,
 } from "./work-access";
+import { buildChecklistPublicDto } from "./checklist-dto";
 import {
   findActiveContactAction,
   findActiveSummaryPublication,
@@ -104,6 +105,12 @@ export async function buildFullTaskWorkDto(input: {
     input.cardGuid,
     input.actorDisplayName,
   );
+  const checklist = await buildChecklistPublicDto({
+    portalId: input.portalId,
+    taskId: input.task.taskId,
+    objectType: input.task.objectType ?? null,
+    objectGuid: input.task.objectGuid ?? null,
+  });
   return {
     taskId: input.task.taskId,
     accessLevel: "full",
@@ -120,6 +127,7 @@ export async function buildFullTaskWorkDto(input: {
       input.task.responsibleBitrixUserId,
     ),
     responsible: await buildResponsibleDto(input.portalId, input.task.responsibleBitrixUserId),
+    checklist,
     contactAction,
   };
 }

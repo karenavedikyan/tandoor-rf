@@ -30,6 +30,114 @@
     );
   }
 
+  function renderChecklistProgress(checklist) {
+    if (!checklist || checklist.state === "not_loaded") {
+      return "";
+    }
+    if (checklist.state === "ready") {
+      return (
+        '<div class="pc-bitrix24-checklist-progress">' +
+        esc(
+          "Чек-лист: выполнено " +
+            checklist.progress.completed +
+            " из " +
+            checklist.progress.total,
+        ) +
+        (checklist.syncedAtLabel
+          ? " · обновлено " + esc(checklist.syncedAtLabel)
+          : "") +
+        "</div>"
+      );
+    }
+    if (checklist.state === "empty") {
+      return (
+        '<div class="pc-label">Чек-лист пуст' +
+        (checklist.syncedAtLabel
+          ? " · загружен " + esc(checklist.syncedAtLabel)
+          : "") +
+        "</div>"
+      );
+    }
+    if (checklist.state === "error") {
+      return (
+        '<div class="pc-label">Чек-лист временно недоступен' +
+        (checklist.syncedAtLabel
+          ? " · попытка " + esc(checklist.syncedAtLabel)
+          : "") +
+        "</div>"
+      );
+    }
+    if (checklist.state === "partial") {
+      return (
+        '<div class="pc-label">Чек-лист загружен не полностью' +
+        (checklist.syncedAtLabel ? " · " + esc(checklist.syncedAtLabel) : "") +
+        "</div>"
+      );
+    }
+    return "";
+  }
+
+  function renderChecklistItemNode(item, depth) {
+    var stateText = item.isGroup
+      ? ""
+      : item.isComplete
+        ? '<span class="pc-bitrix24-checklist-state pc-bitrix24-checklist-state--done" aria-label="выполнено">✓</span>'
+        : '<span class="pc-bitrix24-checklist-state pc-bitrix24-checklist-state--open" aria-label="не выполнено">○</span>';
+    var responsible = item.responsibleName
+      ? '<span class="pc-bitrix24-checklist-responsible"> · ' +
+        esc(item.responsibleName) +
+        "</span>"
+      : "";
+    var children =
+      item.children && item.children.length
+        ? '<ul class="pc-bitrix24-checklist-list">' +
+          item.children
+            .map(function (child) {
+              return renderChecklistItemNode(child, depth + 1);
+            })
+            .join("") +
+          "</ul>"
+        : "";
+    return (
+      '<li class="pc-bitrix24-checklist-item' +
+      (item.isGroup ? " pc-bitrix24-checklist-item--group" : "") +
+      '" style="--checklist-depth:' +
+      depth +
+      '">' +
+      stateText +
+      '<span class="pc-bitrix24-checklist-title">' +
+      esc(item.title) +
+      responsible +
+      "</span>" +
+      children +
+      "</li>"
+    );
+  }
+
+  function renderChecklistDetails(checklist) {
+    var progress = renderChecklistProgress(checklist);
+    if (
+      !checklist ||
+      checklist.state !== "ready" ||
+      !checklist.items ||
+      !checklist.items.length
+    ) {
+      return progress;
+    }
+    return (
+      progress +
+      '<details class="pc-bitrix24-checklist">' +
+      '<summary class="pc-bitrix24-checklist-summary">Пункты чек-листа</summary>' +
+      '<ul class="pc-bitrix24-checklist-list pc-bitrix24-checklist-list--root">' +
+      checklist.items
+        .map(function (item) {
+          return renderChecklistItemNode(item, 0);
+        })
+        .join("") +
+      "</ul></details>"
+    );
+  }
+
   function renderResponsibleBlock(responsible) {
     if (!responsible) {
       return '<div class="pc-label">Ответственный: данные не подтверждены</div>';
@@ -145,7 +253,7 @@
       (objectLabel ? '<div class="pc-label">' + objectLabel + "</div>" : "") +
       renderResponsibleBlock(task.responsible) +
       link +
-      '<p class="pc-label">Чек-лист Битрикс24 пока не загружается. Его можно посмотреть в самой задаче.</p>' +
+      renderChecklistDetails(task.checklist) +
       contactHtml +
       "</article>"
     );
@@ -170,7 +278,9 @@
       '<div class="pc-label">' + esc(task.statusLabel) +
       (task.isOverdue === true ? ' · <strong class="pc-bitrix24-overdue">Просрочена</strong>' : '') +
       (task.accessLevel === "full" && task.deadline ? ' · До: ' + esc(task.deadline) : '') +
-      '</div>' + renderResponsibleBlock(task.responsible) +
+      '</div>' +
+      renderChecklistProgress(task.checklist) +
+      renderResponsibleBlock(task.responsible) +
       renderContactAction(task, clientGuid, true) + '</article>';
   }
 

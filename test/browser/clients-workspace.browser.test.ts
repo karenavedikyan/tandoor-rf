@@ -518,6 +518,101 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
+  it("shows matching checklist progress in overview and collapsible work details", async () => {
+    const checklist = {
+      state: "ready",
+      syncedAtLabel: "30.09.2026 12:00",
+      progress: { completed: 2, total: 3 },
+      items: [
+        {
+          id: "431",
+          title: "Чек-лист 1",
+          isGroup: true,
+          isComplete: null,
+          sortIndex: 0,
+          responsibleName: null,
+          children: [
+            {
+              id: "433",
+              title: "Найти документы",
+              isGroup: false,
+              isComplete: true,
+              sortIndex: 0,
+              responsibleName: null,
+              children: [],
+            },
+            {
+              id: "447",
+              title: "Согласовать детали",
+              isGroup: true,
+              isComplete: null,
+              sortIndex: 1,
+              responsibleName: null,
+              children: [
+                {
+                  id: "471",
+                  title: "Подготовить решение",
+                  isGroup: false,
+                  isComplete: false,
+                  sortIndex: 1,
+                  responsibleName: null,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const tasks = [
+      {
+        taskId: "9002",
+        title: "Получить документы",
+        accessLevel: "full",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: false,
+        deadlineAt: "2030-10-01T10:00:00Z",
+        deadline: "1 окт. 2030 г.",
+        responsible: { state: "confirmed", displayName: "Иванов Иван", internalContactEmail: "ivanov@example.com" },
+        checklist,
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+      {
+        taskId: "9005",
+        accessLevel: "summary",
+        briefText: "Разрешённое поручение",
+        statusLabel: "В работе",
+        isOpen: true,
+        isOverdue: null,
+        responsible: { state: "confirmed", displayName: "Иванов Иван", internalContactEmail: "ivanov@example.com" },
+        contactAction: { marked: false, canMark: true, canRevoke: false },
+      },
+    ];
+    const { page, context } = await openPage({
+      bitrix24Tasks: { state: "ready", tasks },
+      bitrix24Label: { token: "#LK_H_000123" },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    const overview = page.locator("#pc-bitrix24-overview");
+    await page.waitForSelector(".pc-bitrix24-checklist-progress");
+    const fullOverview = overview.locator('[data-overview-task-id="9002"]');
+    assert.match(await fullOverview.textContent(), /Чек-лист: выполнено 2 из 3/);
+    assert.equal(await overview.locator('[data-overview-task-id="9005"] .pc-bitrix24-checklist-progress').count(), 0);
+    await overview.getByRole("button", { name: "Все доступные задачи (2) →" }).click();
+    const workTask = page.locator("#pc-panel-work .pc-bitrix24-task").first();
+    assert.match(await workTask.textContent(), /Чек-лист: выполнено 2 из 3/);
+    assert.equal(await workTask.locator(".pc-bitrix24-contact-checkbox").count(), 1);
+    await workTask.locator(".pc-bitrix24-checklist-summary").click();
+    await page.waitForSelector(".pc-bitrix24-checklist-item");
+    assert.match(await workTask.textContent(), /Подготовить решение/);
+    assert.equal(await workTask.locator(".pc-bitrix24-checklist-state--done").count(), 1);
+    await page.setViewportSize({ width: 375, height: 844 });
+    await page.waitForTimeout(150);
+    assert.match(await workTask.textContent(), /Найти документы/);
+    await closePage(page, context);
+  });
+
   it("shares authorized tasks and personal marks between overview and work", async () => {
     const task = (id: string, title: string, deadline: string | null, overrides = {}) => ({
       taskId: id, title, accessLevel: "full", statusLabel: "В работе",

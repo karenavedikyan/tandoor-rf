@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import { loadBitrix24Config } from "../config";
 import { extractLabelsFromDescription } from "../labels/parser";
 import { findLabelByCode } from "../labels/repository";
+import { computeChecklistProgress } from "../normalize-checklist";
+import { readBitrixChecklistForTask } from "../read-checklist";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { createOperationContext } from "../transport";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
+import { upsertChecklistSnapshot } from "../tasks/checklist-repository";
 import {
   buildSyncScopeSummary,
   insertSyncJournalEntry,
@@ -13,8 +16,11 @@ import {
   upsertTaskSnapshot,
 } from "../tasks/repository";
 import { requirePool } from "../../db/pool";
+import type { Bitrix24ObjectType } from "../labels/format";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
+import type { PoolClient } from "pg";
+import type { Bitrix24OperationContext, Bitrix24WebhookConfig } from "../types";
 
 export type Bitrix24SyncOptions = {
   bitrixUserId: string;
@@ -37,6 +43,8 @@ export type Bitrix24SyncResult = {
   bindingsPending: number;
   cacheWrites: number;
   versionConflicts: number;
+  checklistsSynced: number;
+  checklistsFailed: number;
   complete: boolean;
   truncatedReason?: string;
   message: string;
@@ -45,6 +53,69 @@ export type Bitrix24SyncResult = {
 
 function hashDescription(description: string | null): string {
   return createHash("sha256").update(description ?? "").digest("hex");
+}
+
+async function syncTaskChecklistSnapshot(
+  config: Bitrix24WebhookConfig,
+  operation: Bitrix24OperationContext,
+  client: PoolClient,
+  input: {
+    taskId: string;
+    objectType: Bitrix24ObjectType | null;
+    objectGuid: string | null;
+  },
+): Promise<"synced" | "failed"> {
+  const readResult = await readBitrixChecklistForTask(config, input.taskId, { operation });
+  if (!readResult.ok) {
+    await upsertChecklistSnapshot(
+      {
+        portalId: config.portalId,
+        taskId: input.taskId,
+        objectType: input.objectType,
+        objectGuid: input.objectGuid,
+        loadStatus: "error",
+        syncComplete: false,
+        errorCode: readResult.code,
+        items: [],
+      },
+      client,
+    );
+    return "failed";
+  }
+
+  const data = readResult.data;
+  if (!data.complete) {
+    await upsertChecklistSnapshot(
+      {
+        portalId: config.portalId,
+        taskId: input.taskId,
+        objectType: input.objectType,
+        objectGuid: input.objectGuid,
+        loadStatus: "partial",
+        syncComplete: false,
+        errorCode: data.truncatedReason ?? "INCOMPLETE",
+        items: [],
+      },
+      client,
+    );
+    return "failed";
+  }
+
+  const progress = computeChecklistProgress(data.items);
+  const loadStatus = progress.total === 0 ? "empty" : "loaded";
+  await upsertChecklistSnapshot(
+    {
+      portalId: config.portalId,
+      taskId: input.taskId,
+      objectType: input.objectType,
+      objectGuid: input.objectGuid,
+      loadStatus,
+      syncComplete: true,
+      items: data.items,
+    },
+    client,
+  );
+  return "synced";
 }
 
 export async function runBitrix24TaskSync(
@@ -66,6 +137,8 @@ export async function runBitrix24TaskSync(
       bindingsPending: 0,
       cacheWrites: 0,
       versionConflicts: 0,
+      checklistsSynced: 0,
+      checklistsFailed: 0,
       complete: false,
       message: "Bitrix24 is not configured.",
     };
@@ -98,6 +171,8 @@ export async function runBitrix24TaskSync(
       bindingsPending: 0,
       cacheWrites: 0,
       versionConflicts: 0,
+      checklistsSynced: 0,
+      checklistsFailed: 0,
       complete: false,
       message: "Bitrix user is not linked to this portal.",
       journalId,
@@ -140,6 +215,8 @@ export async function runBitrix24TaskSync(
       bindingsPending: 0,
       cacheWrites: 0,
       versionConflicts: 0,
+      checklistsSynced: 0,
+      checklistsFailed: 0,
       complete: false,
       message,
       journalId,
@@ -152,6 +229,8 @@ export async function runBitrix24TaskSync(
   let bindingsPending = 0;
   let cacheWrites = 0;
   let versionConflicts = 0;
+  let checklistsSynced = 0;
+  let checklistsFailed = 0;
   const pool = requirePool();
   const client = options.apply ? await pool.connect() : null;
   let journalId: string | undefined;
@@ -240,6 +319,17 @@ export async function runBitrix24TaskSync(
             client,
           );
         }
+
+        const checklistResult = await syncTaskChecklistSnapshot(config, operation, client, {
+          taskId: task.taskId,
+          objectType,
+          objectGuid,
+        });
+        if (checklistResult === "synced") {
+          checklistsSynced += 1;
+        } else {
+          checklistsFailed += 1;
+        }
       }
     }
 
@@ -259,6 +349,8 @@ export async function runBitrix24TaskSync(
             bindingsPending,
             cacheWrites,
             versionConflicts,
+            checklistsSynced,
+            checklistsFailed,
             truncatedReason: readResult.data.truncatedReason ?? null,
           },
         },
@@ -291,6 +383,8 @@ export async function runBitrix24TaskSync(
       bindingsPending,
       cacheWrites,
       versionConflicts,
+      checklistsSynced,
+      checklistsFailed,
       complete: false,
       message: "Bitrix24 task sync apply failed and was rolled back.",
       journalId,
@@ -313,6 +407,8 @@ export async function runBitrix24TaskSync(
     bindingsPending,
     cacheWrites,
     versionConflicts,
+    checklistsSynced,
+    checklistsFailed,
     complete,
     truncatedReason: readResult.data.truncatedReason,
     message: complete

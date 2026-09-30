@@ -2,7 +2,11 @@ import type { OperationDeadline } from "./deadline";
 import type { ResolvePortalAddressesFn } from "./dns-resolve";
 import type { PinnedRequestFn } from "./pinned-request";
 
-export const BITRIX24_ALLOWED_METHODS = ["user.get", "tasks.task.list"] as const;
+export const BITRIX24_ALLOWED_METHODS = [
+  "user.get",
+  "tasks.task.list",
+  "task.checklistitem.getlist",
+] as const;
 
 export type Bitrix24AllowedMethod = (typeof BITRIX24_ALLOWED_METHODS)[number];
 
