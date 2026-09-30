@@ -1514,6 +1514,123 @@ describe("bitrix24 client labels integration", { concurrency: false }, () => {
     assert.equal(tasksRes.body.tasks.length, 0);
   });
 
+  it("denies child access when holding is denied even with child grant (director HTTP)", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminRow = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email = $1",
+      ["admin@example.com"],
+    );
+    await pool.end();
+    const adminUserId = adminRow.rows[0]?.id;
+    assert.ok(adminUserId);
+    const directorUser = await createTestUser({
+      databaseUrl,
+      email: "director@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Director User",
+      role: "director",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: directorUser.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: adminUserId,
+    });
+    await confirmObject("legal_entity", LEGAL_ONE, null);
+    await linkChildToHolding(HOLDING_ONE, "legal_entity", LEGAL_ONE);
+    await grantClientAccess({
+      databaseUrl,
+      userId: directorUser.id,
+      objectId: LEGAL_ONE,
+      grantedByUserId: adminUserId,
+    });
+    const childLabel = await issueLabelInTransaction("legal_entity", LEGAL_ONE);
+    await denyClientAccess({
+      databaseUrl,
+      userId: directorUser.id,
+      scopeType: "client",
+      objectId: HOLDING_ONE,
+      deniedByUserId: adminUserId,
+    });
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: directorUser.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9004",
+      responsibleBitrixUserId: "42",
+      title: "Child under denied holding",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "legal_entity",
+      objectGuid: LEGAL_ONE,
+      labelCode: childLabel.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+
+    const app = await loadApp();
+    const cookie = await login("director@example.com");
+    const aggregateRes = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(aggregateRes.body.state, "empty");
+    assert.equal(aggregateRes.body.tasks.length, 0);
+
+    const directTasksRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(directTasksRes.body.state, "empty");
+    assert.equal(directTasksRes.body.tasks.length, 0);
+
+    const labelRes = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/label?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(labelRes.status, 404);
+
+    const issueRes = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/bitrix24/label`)
+      .set(authHeaders(cookie))
+      .send({ objectType: "legal_entity", objectGuid: LEGAL_ONE });
+    assert.equal(issueRes.status, 404);
+
+    const revokePool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await revokePool.query(
+      `UPDATE access_denials
+       SET revoked_at = NOW(), revoked_by_user_id = $1::uuid
+       WHERE user_id = $2::uuid AND object_id = $3::uuid AND revoked_at IS NULL`,
+      [adminUserId, directorUser.id, HOLDING_ONE],
+    );
+    await revokePool.end();
+
+    const labelAfterRevoke = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/label?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(labelAfterRevoke.status, 200);
+    assert.equal(labelAfterRevoke.body.labelCode, childLabel.labelCode);
+
+    const tasksAfterRevoke = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=legal_entity&objectGuid=${LEGAL_ONE}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(tasksAfterRevoke.body.state, "ready");
+    assert.equal(tasksAfterRevoke.body.tasks.length, 1);
+  });
+
   it("denies label restore for manager and regional manager with read access only", async () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const adminRow = await pool.query<{ id: string }>(

@@ -76,6 +76,24 @@ async function hasExplicitBitrixObjectGrant(
   return (granted.rowCount ?? 0) > 0;
 }
 
+async function isBoundObjectHierarchyDenied(
+  context: AccessContext,
+  cardGuid: string,
+  holdingGuid: string,
+  objectGuid: string,
+): Promise<boolean> {
+  if (await isObjectExplicitlyDenied(context, cardGuid)) {
+    return true;
+  }
+  if (await isObjectExplicitlyDenied(context, holdingGuid)) {
+    return true;
+  }
+  if (objectGuid !== holdingGuid && (await isObjectExplicitlyDenied(context, objectGuid))) {
+    return true;
+  }
+  return false;
+}
+
 export async function canReadBoundBitrixObject(
   context: AccessContext,
   cardGuid: string,
@@ -88,7 +106,11 @@ export async function canReadBoundBitrixObject(
   if (!(await isObjectLinkedToClientCard(cardGuid, objectType, objectGuid))) {
     return false;
   }
-  if (await isObjectExplicitlyDenied(context, objectGuid)) {
+  const holdingGuid = await requireCardHoldingGuid(cardGuid);
+  if (!holdingGuid) {
+    return false;
+  }
+  if (await isBoundObjectHierarchyDenied(context, cardGuid, holdingGuid, objectGuid)) {
     return false;
   }
   if (objectType === "holding") {
