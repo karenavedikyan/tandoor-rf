@@ -1,9 +1,30 @@
 import { Pool, type PoolClient } from "pg";
 import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
-import { parseCatalogDecimal } from "./decimal";
-import { parseExpectedDate } from "./dates";
-import { QUARANTINE_REASON } from "./constants";
+import {
+  insertCatalogPricesStagingBatch,
+  insertCatalogProductImagesBatch,
+  insertCatalogProductPropertiesBatch,
+  insertCatalogProductSectionsBatch,
+  insertCatalogStockExpectedStagingBatch,
+  insertCatalogStockStagingBatch,
+} from "./batch-write";
+import {
+  blockCatalogApply,
+  clearCatalogApplyBlock,
+  loadCatalogState,
+  parseCommitUncertainRunId,
+  resolveCatalogCommitUncertainFresh,
+  resolveCatalogCommitUncertainOutcome,
+} from "./catalog-state";
+import { classifyCommercialData } from "./commercial-classify";
+import {
+  DB_APPLY_OPERATION_TIMEOUT_MS,
+  DB_CONNECT_TIMEOUT_MS,
+  DB_STATEMENT_TIMEOUT_MS,
+  IMPORT_ADVISORY_LOCK_KEY,
+} from "./constants";
+import { markExpectedCalendarExpiry, parseExpectedCalendar } from "./dates";
 import { releaseCatalogImportLock, tryAcquireCatalogImportLock } from "./import-lock";
 import type { ParsedCatalogSet, QuarantineEntry } from "./types";
 
@@ -18,6 +39,7 @@ export type CatalogApplyResult =
       newProducts: number;
       changedProducts: number;
       missingFromSnapshot: number;
+      cleanupWarning?: string;
     }
   | {
       ok: false;
@@ -27,153 +49,376 @@ export type CatalogApplyResult =
         | "RECORD_COUNT_DECREASED"
         | "PRODUCT_CODE_LOSS"
         | "DATABASE_ERROR"
-        | "COMMIT_UNCERTAIN";
+        | "COMMIT_UNCERTAIN"
+        | "APPLY_BLOCKED";
       message: string;
       runId?: string;
     };
 
-function classifyPriceRow(
-  data: ParsedCatalogSet,
-  row: ParsedCatalogSet["prices"][number],
-): { quarantined: boolean; reason: string | null; numeric: string | null } {
-  const productCodes = new Set(data.products.map((p) => p.code));
-  const priceTypeCodes = new Set(data.priceTypes.map((p) => p.priceTypeCode));
-  if (!priceTypeCodes.has(row.priceTypeCode)) {
-    return { quarantined: true, reason: QUARANTINE_REASON.UNKNOWN_PRICE_TYPE, numeric: null };
+export type CatalogApplyTestHooks = {
+  failCommit?: boolean;
+  failJournalUpdate?: boolean;
+  failRelease?: boolean;
+  onClientReady?: (client: PoolClient) => void;
+};
+
+export type CatalogApplyOptions = {
+  triggerSource?: "manual" | "operator_job";
+  readAt?: string;
+  testHooks?: CatalogApplyTestHooks;
+};
+
+type PreviousProductSnapshot = {
+  name: string;
+  group_code: string | null;
+  activity: string;
+  properties: Map<string, { name: string; value: string }>;
+  images: string[];
+  sections: string[];
+};
+
+class CatalogConnectionFault extends Error {
+  constructor() {
+    super("Catalog connection fault.");
+    this.name = "CatalogConnectionFault";
   }
-  if (!productCodes.has(row.productCode)) {
-    return { quarantined: true, reason: QUARANTINE_REASON.MISSING_PRODUCT, numeric: null };
-  }
-  const parsed = parseCatalogDecimal(row.priceRaw);
-  if (!parsed.ok) {
-    return { quarantined: true, reason: QUARANTINE_REASON.INVALID_DECIMAL, numeric: null };
-  }
-  return { quarantined: false, reason: null, numeric: parsed.numeric };
 }
 
-function classifyStockRow(
-  data: ParsedCatalogSet,
-  row: ParsedCatalogSet["stock"][number],
-): { quarantined: boolean; reason: string | null; numeric: string | null } {
-  const productCodes = new Set(data.products.map((p) => p.code));
-  const storageCodes = new Set(data.storages.map((p) => p.code));
-  if (!productCodes.has(row.productCode)) {
-    return { quarantined: true, reason: QUARANTINE_REASON.MISSING_PRODUCT, numeric: null };
-  }
-  if (!storageCodes.has(row.storageCode)) {
-    return { quarantined: true, reason: QUARANTINE_REASON.MISSING_STORAGE, numeric: null };
-  }
-  if (row.quantityRaw.trim() === "") {
-    return { quarantined: false, reason: null, numeric: null };
-  }
-  const parsed = parseCatalogDecimal(row.quantityRaw);
-  if (!parsed.ok) {
-    return { quarantined: true, reason: QUARANTINE_REASON.INVALID_DECIMAL, numeric: null };
-  }
-  return { quarantined: false, reason: null, numeric: parsed.numeric };
-}
+type ManagedClient = {
+  client: PoolClient;
+  readonly faulted: () => boolean;
+  removeErrorListener: () => void;
+};
 
-function classifyStockExpectedRow(
-  data: ParsedCatalogSet,
-  row: ParsedCatalogSet["stockExpected"][number],
-  now: Date,
-): {
-  quarantined: boolean;
-  reason: string | null;
-  numeric: string | null;
-  expectedAt: string | null;
-  expectedExpired: boolean;
-} {
-  const productCodes = new Set(data.products.map((p) => p.code));
-  const storageCodes = new Set(data.storages.map((p) => p.code));
-  if (!productCodes.has(row.productCode)) {
-    return {
-      quarantined: true,
-      reason: QUARANTINE_REASON.MISSING_PRODUCT,
-      numeric: null,
-      expectedAt: null,
-      expectedExpired: false,
-    };
-  }
-  if (!storageCodes.has(row.storageCode)) {
-    return {
-      quarantined: true,
-      reason: QUARANTINE_REASON.MISSING_STORAGE,
-      numeric: null,
-      expectedAt: null,
-      expectedExpired: false,
-    };
-  }
-  let expectedAt: string | null = null;
-  let expectedExpired = false;
-  if (row.expectedDateRaw) {
-    const parsedDate = parseExpectedDate(row.expectedDateRaw, now);
-    if (!parsedDate.ok) {
-      return {
-        quarantined: true,
-        reason: QUARANTINE_REASON.INVALID_DATE,
-        numeric: null,
-        expectedAt: null,
-        expectedExpired: false,
-      };
-    }
-    expectedAt = parsedDate.iso;
-    expectedExpired = parsedDate.expired;
-  }
-  if (row.quantityRaw.trim() === "") {
-    return { quarantined: false, reason: null, numeric: null, expectedAt, expectedExpired };
-  }
-  const parsed = parseCatalogDecimal(row.quantityRaw);
-  if (!parsed.ok) {
-    return {
-      quarantined: true,
-      reason: QUARANTINE_REASON.INVALID_DECIMAL,
-      numeric: null,
-      expectedAt,
-      expectedExpired,
-    };
-  }
+type ApplyPhaseState = {
+  lockHeld: boolean;
+  runId?: string;
+  commitAttempted: boolean;
+  commitConfirmed: boolean;
+  versionId?: string;
+  outcome?: CatalogApplyResult;
+};
+
+function managePoolClient(client: PoolClient): ManagedClient {
+  let faulted = false;
+  const onError = () => {
+    faulted = true;
+  };
+  client.on("error", onError);
   return {
-    quarantined: false,
-    reason: null,
-    numeric: parsed.numeric,
-    expectedAt,
-    expectedExpired,
+    client,
+    faulted: () => faulted,
+    removeErrorListener: () => {
+      client.removeListener("error", onError);
+    },
   };
 }
 
-async function getActiveProductCodes(client: PoolClient): Promise<Set<string>> {
-  const active = await client.query<{ active_version_id: string | null }>(
-    "SELECT active_version_id FROM onec_catalog_state WHERE id = 1",
-  );
-  const versionId = active.rows[0]?.active_version_id;
-  if (!versionId) return new Set();
-  const rows = await client.query<{ code: string }>(
-    "SELECT code FROM onec_catalog_products WHERE version_id = $1::uuid",
+function assertClientUsable(managed: ManagedClient): void {
+  if (managed.faulted()) {
+    throw new CatalogConnectionFault();
+  }
+}
+
+async function queryManaged<T extends Record<string, unknown>>(
+  managed: ManagedClient,
+  text: string,
+  params: unknown[] = [],
+): Promise<{ rows: T[] }> {
+  assertClientUsable(managed);
+  const result = await managed.client.query<T>(text, params);
+  assertClientUsable(managed);
+  return result;
+}
+
+function createImportPool(databaseUrl: string): Pool {
+  const pgOptions = createPgPoolOptions(databaseUrl);
+  return new Pool({
+    connectionString: pgOptions.connectionString,
+    max: 1,
+    connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+    ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
+  });
+}
+
+async function configureSession(managed: ManagedClient): Promise<void> {
+  await queryManaged(managed, `SET statement_timeout = ${DB_STATEMENT_TIMEOUT_MS}`);
+  await queryManaged(managed, `SET lock_timeout = ${DB_CONNECT_TIMEOUT_MS}`);
+}
+
+function buildManifestReport(data: ParsedCatalogSet, readAt?: string) {
+  return {
+    manifestSha256: data.manifest.manifestSha256,
+    totalByteSize: data.manifest.totalByteSize,
+    readAt: readAt ?? null,
+    files: data.manifest.files.map((file) => ({
+      relativePath: file.relativePath,
+      byteSize: file.byteSize,
+      sha256: file.sha256,
+    })),
+  };
+}
+
+function propertiesEqual(
+  left: Map<string, { name: string; value: string }>,
+  right: ParsedCatalogSet["products"][number]["properties"],
+): boolean {
+  if (left.size !== right.length) return false;
+  for (const prop of right) {
+    const existing = left.get(prop.code);
+    if (!existing || existing.name !== prop.name || existing.value !== prop.value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function productChanged(
+  previous: PreviousProductSnapshot | undefined,
+  product: ParsedCatalogSet["products"][number],
+): boolean {
+  if (!previous) return false;
+  if (
+    previous.name !== product.name ||
+    (previous.group_code ?? null) !== product.groupCode ||
+    previous.activity !== product.activity
+  ) {
+    return true;
+  }
+  if (!propertiesEqual(previous.properties, product.properties)) return true;
+  if (!arraysEqual(previous.images, product.images)) return true;
+  if (!arraysEqual(previous.sections, product.sectionCodes)) return true;
+  return false;
+}
+
+async function loadPreviousProductSnapshots(
+  managed: ManagedClient,
+  versionId: string | null,
+): Promise<Map<string, PreviousProductSnapshot>> {
+  const map = new Map<string, PreviousProductSnapshot>();
+  if (!versionId) return map;
+
+  const products = await queryManaged<{
+    code: string;
+    name: string;
+    group_code: string | null;
+    activity: string;
+  }>(
+    managed,
+    `SELECT code, name, group_code, activity FROM onec_catalog_products WHERE version_id = $1::uuid`,
     [versionId],
   );
-  return new Set(rows.rows.map((row) => row.code));
+  for (const row of products.rows) {
+    map.set(row.code, {
+      name: row.name,
+      group_code: row.group_code,
+      activity: row.activity,
+      properties: new Map(),
+      images: [],
+      sections: [],
+    });
+  }
+
+  const properties = await queryManaged<{
+    product_code: string;
+    property_code: string;
+    property_name: string;
+    property_value: string;
+  }>(
+    managed,
+    `SELECT product_code, property_code, property_name, property_value
+     FROM onec_catalog_product_properties WHERE version_id = $1::uuid`,
+    [versionId],
+  );
+  for (const row of properties.rows) {
+    const product = map.get(row.product_code);
+    if (!product) continue;
+    product.properties.set(row.property_code, {
+      name: row.property_name,
+      value: row.property_value,
+    });
+  }
+
+  const images = await queryManaged<{ product_code: string; image_path: string; sort_order: number }>(
+    managed,
+    `SELECT product_code, image_path, sort_order
+     FROM onec_catalog_product_images WHERE version_id = $1::uuid
+     ORDER BY product_code, sort_order`,
+    [versionId],
+  );
+  for (const row of images.rows) {
+    map.get(row.product_code)?.images.push(row.image_path);
+  }
+
+  const sections = await queryManaged<{ product_code: string; section_code: string }>(
+    managed,
+    `SELECT product_code, section_code FROM onec_catalog_product_sections WHERE version_id = $1::uuid`,
+    [versionId],
+  );
+  for (const row of sections.rows) {
+    map.get(row.product_code)?.sections.push(row.section_code);
+  }
+
+  return map;
+}
+
+async function insertRejectedRunJournal(
+  managed: ManagedClient,
+  data: ParsedCatalogSet,
+  errorCode: string,
+  triggerSource: "manual" | "operator_job",
+  readAt?: string,
+): Promise<string | undefined> {
+  const report = {
+    rejected: true,
+    errorCode,
+    manifest: buildManifestReport(data, readAt),
+  };
+  const runInsert = await queryManaged<{ id: string }>(
+    managed,
+    `
+      INSERT INTO onec_catalog_import_runs
+        (status, mode, trigger_source, manifest_sha256, source_byte_size, finished_at, error_code, report)
+      VALUES ('failed', 'apply', $1, $2, $3, NOW(), $4, $5::jsonb)
+      RETURNING id
+    `,
+    [triggerSource, data.manifest.manifestSha256, data.manifest.totalByteSize, errorCode, JSON.stringify(report)],
+  );
+  return runInsert.rows[0]?.id;
+}
+
+async function recoverFromCommitUncertainty(
+  managed: ManagedClient | undefined,
+  phase: ApplyPhaseState,
+  databaseUrl: string,
+  successPayload?: Omit<Extract<CatalogApplyResult, { ok: true }>, "ok">,
+): Promise<CatalogApplyResult> {
+  if (managed && !managed.faulted()) {
+    try {
+      await managed.client.query("ROLLBACK");
+    } catch {
+      // Best-effort rollback when commit confirmation was lost.
+    }
+    if (phase.lockHeld) {
+      try {
+        await managed.client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+        phase.lockHeld = false;
+      } catch {
+        // Fresh recovery acquires the shared lock on a healthy connection.
+      }
+    }
+  }
+
+  if (!phase.runId) {
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message: "Catalog apply commit outcome is unknown; inspect the import run journal by runId.",
+      runId: phase.runId,
+    };
+  }
+
+  try {
+    const resolution = await resolveCatalogCommitUncertainFresh(databaseUrl, phase.runId);
+    if (resolution === "committed" && successPayload) {
+      return { ok: true, ...successPayload };
+    }
+    return {
+      ok: false,
+      code: resolution === "still_uncertain" ? "COMMIT_UNCERTAIN" : "DATABASE_ERROR",
+      message:
+        resolution === "still_uncertain"
+          ? "Catalog apply commit outcome is unknown; further apply is blocked until resolved."
+          : "Catalog apply failed.",
+      runId: phase.runId,
+    };
+  } catch {
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message:
+        "Catalog apply commit outcome is unknown; recovery on a fresh connection failed.",
+      runId: phase.runId,
+    };
+  }
 }
 
 export async function applyCatalogImport(
   databaseUrl: string,
   data: ParsedCatalogSet,
-  triggerSource: "manual" | "operator_job" = "manual",
+  options: CatalogApplyOptions = {},
 ): Promise<CatalogApplyResult> {
-  const pool = new Pool({ ...createPgPoolOptions(databaseUrl), connectionString: databaseUrl, max: 1 });
-  const client = await pool.connect();
-  let lockHeld = false;
-  let runId: string | undefined;
-  let commitAttempted = false;
+  const triggerSource = options.triggerSource ?? "manual";
+  const phase: ApplyPhaseState = { lockHeld: false, commitAttempted: false, commitConfirmed: false };
+  let pool: Pool | undefined;
+  let managed: ManagedClient | undefined;
+  let ownsPool = false;
+  let ownsClient = false;
 
   try {
-    const locked = await tryAcquireCatalogImportLock(client);
+    pool = createImportPool(databaseUrl);
+    ownsPool = true;
+    const connected = await pool.connect();
+    managed = managePoolClient(connected);
+    ownsClient = true;
+    options.testHooks?.onClientReady?.(managed.client);
+    await configureSession(managed);
+
+    const locked = await tryAcquireCatalogImportLock(managed.client);
     if (!locked) {
       return { ok: false, code: "IMPORT_LOCKED", message: "Another catalog import is in progress." };
     }
-    lockHeld = true;
+    phase.lockHeld = true;
 
-    const existing = await client.query<{ id: string }>(
+    const state = await loadCatalogState(managed.client);
+    if (state.apply_blocked) {
+      const uncertainRunId = parseCommitUncertainRunId(state.apply_blocked_reason);
+      if (uncertainRunId) {
+        const resolution = await resolveCatalogCommitUncertainOutcome(managed.client, uncertainRunId);
+        if (resolution === "still_uncertain") {
+          phase.runId = await insertRejectedRunJournal(
+            managed,
+            data,
+            "APPLY_BLOCKED",
+            triggerSource,
+            options.readAt,
+          );
+          return {
+            ok: false,
+            code: "APPLY_BLOCKED",
+            message:
+              state.apply_blocked_reason ??
+              "Catalog apply is blocked until the previous uncertain outcome is resolved.",
+            runId: phase.runId,
+          };
+        }
+      } else {
+        phase.runId = await insertRejectedRunJournal(
+          managed,
+          data,
+          "APPLY_BLOCKED",
+          triggerSource,
+          options.readAt,
+        );
+        return {
+          ok: false,
+          code: "APPLY_BLOCKED",
+          message:
+            state.apply_blocked_reason ?? "Catalog apply is blocked until an operator clears the block.",
+          runId: phase.runId,
+        };
+      }
+    }
+
+    const existing = await queryManaged<{ id: string }>(
+      managed,
       "SELECT id FROM onec_catalog_versions WHERE manifest_sha256 = $1 LIMIT 1",
       [data.manifest.manifestSha256],
     );
@@ -185,124 +430,127 @@ export async function applyCatalogImport(
       };
     }
 
-    const activeState = await client.query<{ active_version_id: string | null }>(
-      "SELECT active_version_id FROM onec_catalog_state WHERE id = 1",
-    );
-    const previousVersionId = activeState.rows[0]?.active_version_id ?? null;
-    const previousCodes = await getActiveProductCodes(client);
-    let previousProductMap = new Map<
-      string,
-      { name: string; group_code: string | null; activity: string }
-    >();
-    if (previousVersionId) {
-      const previousDetails = await client.query<{
-        code: string;
-        name: string;
-        group_code: string | null;
-        activity: string;
-      }>(
-        `SELECT code, name, group_code, activity
-         FROM onec_catalog_products
-         WHERE version_id = $1::uuid`,
-        [previousVersionId],
-      );
-      previousProductMap = new Map(previousDetails.rows.map((row) => [row.code, row]));
-    }
+    const previousVersionId = state.active_version_id;
+    const previousSnapshots = await loadPreviousProductSnapshots(managed, previousVersionId);
+    const previousCodes = new Set(previousSnapshots.keys());
     const incomingCodes = new Set(data.products.map((row) => row.code));
+
     if (previousCodes.size > 0) {
       if (data.products.length < previousCodes.size) {
+        phase.runId = await insertRejectedRunJournal(
+          managed,
+          data,
+          "RECORD_COUNT_DECREASED",
+          triggerSource,
+          options.readAt,
+        );
         return {
           ok: false,
           code: "RECORD_COUNT_DECREASED",
           message: "Product count decreased compared to active catalog version.",
+          runId: phase.runId,
         };
       }
       for (const code of previousCodes) {
         if (!incomingCodes.has(code)) {
+          phase.runId = await insertRejectedRunJournal(
+            managed,
+            data,
+            "PRODUCT_CODE_LOSS",
+            triggerSource,
+            options.readAt,
+          );
           return {
             ok: false,
             code: "PRODUCT_CODE_LOSS",
             message: `Previously known product code missing from snapshot: ${code}.`,
+            runId: phase.runId,
           };
         }
       }
     }
 
-    const runInsert = await client.query<{ id: string }>(
-      `INSERT INTO onec_catalog_import_runs (status, mode, trigger_source, manifest_sha256, source_byte_size)
-       VALUES ('running', 'apply', $1, $2, $3)
-       RETURNING id`,
+    const commercial = classifyCommercialData(data, options.readAt ? new Date(options.readAt) : new Date());
+    const quarantineCount = commercial.quarantineRowCount;
+    const quarantineRows: QuarantineEntry[] = commercial.quarantineEntries;
+
+    const runInsert = await queryManaged<{ id: string }>(
+      managed,
+      `
+        INSERT INTO onec_catalog_import_runs (status, mode, trigger_source, manifest_sha256, source_byte_size)
+        VALUES ('running', 'apply', $1, $2, $3)
+        RETURNING id
+      `,
       [triggerSource, data.manifest.manifestSha256, data.manifest.totalByteSize],
     );
-    runId = runInsert.rows[0]!.id;
+    phase.runId = runInsert.rows[0]!.id;
 
-    await client.query("BEGIN");
+    await queryManaged(managed, "BEGIN");
+    await queryManaged(managed, `SET LOCAL statement_timeout = ${DB_APPLY_OPERATION_TIMEOUT_MS}`);
 
-    const versionInsert = await client.query<{ id: string }>(
-      `INSERT INTO onec_catalog_versions (manifest_sha256, product_count, is_active)
-       VALUES ($1, $2, FALSE)
-       RETURNING id`,
+    const versionInsert = await queryManaged<{ id: string }>(
+      managed,
+      `
+        INSERT INTO onec_catalog_versions (manifest_sha256, product_count, is_active)
+        VALUES ($1, $2, FALSE)
+        RETURNING id
+      `,
       [data.manifest.manifestSha256, data.products.length],
     );
     const versionId = versionInsert.rows[0]!.id;
+    phase.versionId = versionId;
 
     for (const group of data.groups) {
-      await client.query(
-        `INSERT INTO onec_catalog_groups (version_id, code, parent_code)
-         VALUES ($1::uuid, $2, $3)`,
+      await queryManaged(
+        managed,
+        `INSERT INTO onec_catalog_groups (version_id, code, parent_code) VALUES ($1::uuid, $2, $3)`,
         [versionId, group.code, group.parentCode],
       );
     }
     for (const section of data.sections) {
-      await client.query(
-        `INSERT INTO onec_catalog_sections (version_id, code, name, parent_code)
-         VALUES ($1::uuid, $2, $3, $4)`,
+      await queryManaged(
+        managed,
+        `INSERT INTO onec_catalog_sections (version_id, code, name, parent_code) VALUES ($1::uuid, $2, $3, $4)`,
         [versionId, section.code, section.name, section.parentCode],
       );
     }
     for (const storage of data.storages) {
-      await client.query(
+      await queryManaged(
+        managed,
         `INSERT INTO onec_catalog_storages (version_id, code, name, address, email, phone)
          VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
         [versionId, storage.code, storage.name, storage.address, storage.email, storage.phone],
       );
     }
     for (const priceType of data.priceTypes) {
-      await client.query(
-        `INSERT INTO onec_catalog_price_types (version_id, price_type_code, name)
-         VALUES ($1::uuid, $2, $3)`,
+      await queryManaged(
+        managed,
+        `INSERT INTO onec_catalog_price_types (version_id, price_type_code, name) VALUES ($1::uuid, $2, $3)`,
         [versionId, priceType.priceTypeCode, priceType.name],
       );
     }
+
+    const propertyRows: Array<[string, string, string, string]> = [];
+    const imageRows: Array<[string, string, number]> = [];
+    const sectionRows: Array<[string, string]> = [];
     for (const product of data.products) {
-      await client.query(
+      await queryManaged(
+        managed,
         `INSERT INTO onec_catalog_products (version_id, code, group_code, activity, name, present_in_snapshot)
          VALUES ($1::uuid, $2, $3, $4, $5, TRUE)`,
         [versionId, product.code, product.groupCode, product.activity, product.name],
       );
       for (const [index, imagePath] of product.images.entries()) {
-        await client.query(
-          `INSERT INTO onec_catalog_product_images (version_id, product_code, image_path, sort_order)
-           VALUES ($1::uuid, $2, $3, $4)`,
-          [versionId, product.code, imagePath, index],
-        );
+        imageRows.push([product.code, imagePath, index]);
       }
       for (const property of product.properties) {
-        await client.query(
-          `INSERT INTO onec_catalog_product_properties
-             (version_id, product_code, property_code, property_name, property_value)
-           VALUES ($1::uuid, $2, $3, $4, $5)`,
-          [versionId, product.code, property.code, property.name, property.value],
-        );
+        propertyRows.push([product.code, property.code, property.name, property.value]);
       }
       for (const sectionCode of product.sectionCodes) {
-        await client.query(
-          `INSERT INTO onec_catalog_product_sections (version_id, product_code, section_code)
-           VALUES ($1::uuid, $2, $3)`,
-          [versionId, product.code, sectionCode],
-        );
+        sectionRows.push([product.code, sectionCode]);
       }
-      await client.query(
+      await queryManaged(
+        managed,
         `INSERT INTO onec_catalog_product_presence (version_id, product_code, present_in_snapshot)
          VALUES ($1::uuid, $2, TRUE)
          ON CONFLICT (version_id, product_code) DO UPDATE SET present_in_snapshot = EXCLUDED.present_in_snapshot`,
@@ -310,132 +558,132 @@ export async function applyCatalogImport(
       );
     }
 
-    const now = new Date();
-    let quarantineCount = 0;
-    const quarantineRows: QuarantineEntry[] = [...data.quarantine];
+    await insertCatalogProductPropertiesBatch(managed.client, versionId, propertyRows);
+    await insertCatalogProductImagesBatch(managed.client, versionId, imageRows);
+    await insertCatalogProductSectionsBatch(managed.client, versionId, sectionRows);
 
-    for (const price of data.prices) {
-      const classified = classifyPriceRow(data, price);
-      if (classified.quarantined) quarantineCount += 1;
-      await client.query(
-        `INSERT INTO onec_catalog_prices_staging
-           (version_id, price_type_code, product_code, price_raw, price_numeric, quarantined, quarantine_reason)
-         VALUES ($1::uuid, $2, $3, $4, $5::numeric, $6, $7)`,
-        [
-          versionId,
-          price.priceTypeCode,
-          price.productCode,
-          price.priceRaw,
-          classified.numeric,
-          classified.quarantined,
-          classified.reason,
-        ],
-      );
-    }
-    for (const line of data.stock) {
-      const classified = classifyStockRow(data, line);
-      if (classified.quarantined) quarantineCount += 1;
-      await client.query(
-        `INSERT INTO onec_catalog_stock_staging
-           (version_id, product_code, storage_code, quantity_raw, quantity_numeric, quarantined, quarantine_reason)
-         VALUES ($1::uuid, $2, $3, $4, $5::numeric, $6, $7)`,
-        [
-          versionId,
-          line.productCode,
-          line.storageCode,
-          line.quantityRaw,
-          classified.numeric,
-          classified.quarantined,
-          classified.reason,
-        ],
-      );
-    }
-    for (const line of data.stockExpected) {
-      const classified = classifyStockExpectedRow(data, line, now);
-      if (classified.quarantined) quarantineCount += 1;
-      await client.query(
-        `INSERT INTO onec_catalog_stock_expected_staging
-           (version_id, product_code, storage_code, quantity_raw, quantity_numeric,
-            expected_date_raw, expected_at, expected_expired, available_raw, quarantined, quarantine_reason)
-         VALUES ($1::uuid, $2, $3, $4, $5::numeric, $6, $7::timestamptz, $8, $9, $10, $11)`,
-        [
-          versionId,
-          line.productCode,
-          line.storageCode,
-          line.quantityRaw,
-          classified.numeric,
-          line.expectedDateRaw,
-          classified.expectedAt,
-          classified.expectedExpired,
-          line.availableRaw,
-          classified.quarantined,
-          classified.reason,
-        ],
-      );
-    }
+    const priceRows = data.prices.map((row, index) => {
+      const classified = commercial.prices[index]!;
+      return [
+        row.priceTypeCode,
+        row.productCode,
+        row.priceRaw,
+        classified.numeric,
+        classified.quarantined,
+        classified.reason,
+      ] as [string, string, string, string | null, boolean, string | null];
+    });
+    await insertCatalogPricesStagingBatch(managed.client, versionId, priceRows);
+
+    const stockRows = data.stock.map((row, index) => {
+      const classified = commercial.stock[index]!;
+      return [
+        row.productCode,
+        row.storageCode,
+        row.quantityRaw,
+        classified.numeric,
+        classified.quarantined,
+        classified.reason,
+      ] as [string, string, string, string | null, boolean, string | null];
+    });
+    await insertCatalogStockStagingBatch(managed.client, versionId, stockRows);
+
+    const stockExpectedRows = data.stockExpected.map((row, index) => {
+      const classified = commercial.stockExpected[index]!;
+      let expectedExpired = classified.expectedExpired;
+      if (row.expectedDateRaw) {
+        const parsedDate = parseExpectedCalendar(row.expectedDateRaw);
+        if (parsedDate.ok) {
+          expectedExpired = markExpectedCalendarExpiry(
+            parsedDate,
+            options.readAt ? new Date(options.readAt) : new Date(),
+          ).expired;
+        }
+      }
+      return [
+        row.productCode,
+        row.storageCode,
+        row.quantityRaw,
+        classified.numeric,
+        row.expectedDateRaw,
+        null,
+        expectedExpired,
+        row.availableRaw,
+        classified.quarantined,
+        classified.reason,
+      ] as [string, string, string, string | null, string | null, string | null, boolean, string | null, boolean, string | null];
+    });
+    await insertCatalogStockExpectedStagingBatch(managed.client, versionId, stockExpectedRows);
 
     for (const entry of quarantineRows) {
-      await client.query(
+      await queryManaged(
+        managed,
         `INSERT INTO onec_catalog_quarantine (version_id, layer, reason_code, source_identifiers)
          VALUES ($1::uuid, $2, $3, $4::jsonb)`,
         [versionId, entry.layer, entry.reasonCode, JSON.stringify(entry.sourceIdentifiers)],
       );
     }
 
-    await client.query(
-      "UPDATE onec_catalog_versions SET is_active = FALSE WHERE is_active = TRUE",
-    );
-    await client.query(
-      "UPDATE onec_catalog_versions SET is_active = TRUE WHERE id = $1::uuid",
-      [versionId],
-    );
-    await client.query(
-      `UPDATE onec_catalog_state
-       SET active_version_id = $1::uuid,
-           last_successful_manifest_sha256 = $2,
-           updated_at = NOW()
-       WHERE id = 1`,
+    await queryManaged(managed, "UPDATE onec_catalog_versions SET is_active = FALSE WHERE is_active = TRUE");
+    await queryManaged(managed, "UPDATE onec_catalog_versions SET is_active = TRUE WHERE id = $1::uuid", [
+      versionId,
+    ]);
+    await queryManaged(
+      managed,
+      `
+        UPDATE onec_catalog_state
+        SET active_version_id = $1::uuid,
+            last_successful_manifest_sha256 = $2,
+            apply_blocked = FALSE,
+            apply_blocked_reason = NULL,
+            updated_at = NOW()
+        WHERE id = 1
+      `,
       [versionId, data.manifest.manifestSha256],
     );
 
     let newProducts = 0;
     let changedProducts = 0;
     for (const product of data.products) {
-      const prev = previousProductMap.get(product.code);
-      if (!prev) {
+      const previous = previousSnapshots.get(product.code);
+      if (!previous) {
         newProducts += 1;
         continue;
       }
-      if (
-        prev.name !== product.name ||
-        (prev.group_code ?? null) !== product.groupCode ||
-        prev.activity !== product.activity
-      ) {
+      if (productChanged(previous, product)) {
         changedProducts += 1;
       }
     }
 
     const report = {
-      manifestSha256: data.manifest.manifestSha256,
+      manifest: buildManifestReport(data, options.readAt),
       counts: data.counts,
       quarantineCount,
+      quarantineReasonCounts: data.counts.quarantineReasonCounts ?? {},
       commercialReady: false,
       coreApplied: true,
     };
 
-    await client.query(
-      `UPDATE onec_catalog_import_runs
-       SET finished_at = NOW(),
-           status = $2,
-           core_applied = TRUE,
-           commercial_ready = FALSE,
-           applied_version_id = $3::uuid,
-           product_count = $4,
-           quarantine_count = $5,
-           report = $6::jsonb
-       WHERE id = $1::uuid`,
+    if (options.testHooks?.failJournalUpdate) {
+      throw new CatalogConnectionFault();
+    }
+
+    await queryManaged(
+      managed,
+      `
+        UPDATE onec_catalog_import_runs
+        SET finished_at = NOW(),
+            status = $2,
+            core_applied = TRUE,
+            commercial_ready = FALSE,
+            applied_version_id = $3::uuid,
+            product_count = $4,
+            quarantine_count = $5,
+            report = $6::jsonb
+        WHERE id = $1::uuid
+      `,
       [
-        runId,
+        phase.runId,
         quarantineCount > 0 ? "partial" : "success",
         versionId,
         data.products.length,
@@ -444,12 +692,16 @@ export async function applyCatalogImport(
       ],
     );
 
-    commitAttempted = true;
-    await client.query("COMMIT");
+    phase.commitAttempted = true;
+    if (options.testHooks?.failCommit) {
+      throw new CatalogConnectionFault();
+    }
+    await queryManaged(managed, "COMMIT");
+    phase.commitConfirmed = true;
 
     return {
       ok: true,
-      runId,
+      runId: phase.runId!,
       versionId,
       coreApplied: true,
       commercialReady: false,
@@ -459,34 +711,90 @@ export async function applyCatalogImport(
       missingFromSnapshot: 0,
     };
   } catch {
-    if (commitAttempted) {
-      return { ok: false, code: "COMMIT_UNCERTAIN", message: "Catalog apply commit outcome uncertain.", runId };
+    if (phase.commitConfirmed && phase.runId && phase.versionId) {
+      return {
+        ok: true,
+        runId: phase.runId,
+        versionId: phase.versionId,
+        coreApplied: true,
+        commercialReady: false,
+        quarantineCount: data.counts.quarantine,
+        newProducts: 0,
+        changedProducts: 0,
+        missingFromSnapshot: 0,
+        cleanupWarning:
+          "Catalog import committed successfully but cleanup failed afterward; verify the import run journal.",
+      };
     }
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore rollback failure
-    }
-    if (runId) {
-      await client.query(
-        `UPDATE onec_catalog_import_runs
-         SET finished_at = NOW(), status = 'failed', error_code = 'DATABASE_ERROR'
-         WHERE id = $1::uuid`,
-        [runId],
-      );
-    }
-    return { ok: false, code: "DATABASE_ERROR", message: "Catalog apply failed." };
-  } finally {
-    if (lockHeld) {
+    if (phase.commitAttempted && !phase.commitConfirmed && phase.runId) {
       try {
-        await releaseCatalogImportLock(client);
-        client.release();
+        await blockCatalogApply(
+          managed!.client,
+          `COMMIT_UNCERTAIN for run ${phase.runId}`,
+        );
       } catch {
-        client.release(true);
+        // Fresh recovery will attempt to persist the block.
       }
-    } else {
-      client.release();
+      return recoverFromCommitUncertainty(managed, phase, databaseUrl);
     }
+
+    if (managed && !managed.faulted()) {
+      try {
+        await managed.client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failure
+      }
+      if (phase.runId) {
+        try {
+          await managed.client.query(
+            `
+              UPDATE onec_catalog_import_runs
+              SET finished_at = NOW(), status = 'failed', error_code = 'DATABASE_ERROR'
+              WHERE id = $1::uuid AND status = 'running'
+            `,
+            [phase.runId],
+          );
+        } catch {
+          // ignore journal failure
+        }
+      }
+    }
+
+    return { ok: false, code: "DATABASE_ERROR", message: "Catalog apply failed.", runId: phase.runId };
+  } finally {
+    if (phase.lockHeld && managed) {
+      try {
+        if (options.testHooks?.failRelease) {
+          throw new Error("Simulated lock release failure.");
+        }
+        await releaseCatalogImportLock(managed.client);
+      } catch {
+        // Lock cleanup is best-effort.
+      }
+    }
+    if (managed) {
+      managed.removeErrorListener();
+      if (ownsClient) {
+        try {
+          managed.client.release(phase.lockHeld === false && managed.faulted());
+        } catch {
+          managed.client.release(true);
+        }
+      }
+    }
+    if (ownsPool && pool) {
+      await pool.end().catch(() => undefined);
+    }
+  }
+}
+
+export async function clearCatalogApplyBlockForOperator(databaseUrl: string): Promise<void> {
+  const pool = createImportPool(databaseUrl);
+  const client = await pool.connect();
+  try {
+    await clearCatalogApplyBlock(client);
+  } finally {
+    client.release();
     await pool.end();
   }
 }

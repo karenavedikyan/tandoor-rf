@@ -84,6 +84,11 @@ export type ParsedCatalogSet = {
   stockExpected: ParsedCatalogStockExpectedLine[];
   warnings: SchemaDriftWarning[];
   quarantine: QuarantineEntry[];
+  productCodes?: Set<string>;
+  groupCodes?: Set<string>;
+  sectionCodes?: Set<string>;
+  storageCodes?: Set<string>;
+  priceTypeCodes?: Set<string>;
   counts: {
     groups: number;
     sections: number;
@@ -94,6 +99,7 @@ export type ParsedCatalogSet = {
     stockLines: number;
     stockExpectedLines: number;
     quarantine: number;
+    quarantineReasonCounts?: Record<string, number>;
   };
 };
 
@@ -113,7 +119,8 @@ export type CatalogImportStatus =
   | "READ_FAILED"
   | "TIMEOUT"
   | "DATABASE_ERROR"
-  | "COMMIT_UNCERTAIN";
+  | "COMMIT_UNCERTAIN"
+  | "APPLY_BLOCKED";
 
 export type CatalogImportResult = {
   status: CatalogImportStatus;

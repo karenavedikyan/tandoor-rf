@@ -85,6 +85,18 @@ describe("onec catalog import integration", { concurrency: false }, () => {
     assert.equal(versions.rows[0]?.count, 0);
   });
 
+  it("parses price and stock quantities from XML attributes", async () => {
+    const entries = catalogEntriesFromXmlSet(buildMinimalCatalogXmlSet());
+    const parsed = await parseCatalogSet(
+      entries.map((file) => ({ relativePath: file.relativePath, bytes: file.bytes })),
+    );
+    assert.equal(parsed.ok, true);
+    const price = parsed.data!.prices.find((row) => row.priceTypeCode === "pt1" && row.productCode === "p1");
+    assert.equal(price?.priceRaw, "347,39");
+    const stock = parsed.data!.stock.find((row) => row.productCode === "p1" && row.storageCode === "wh1");
+    assert.equal(stock?.quantityRaw, "10,5");
+  });
+
   it("apply is idempotent for the same manifest", async () => {
     const xmlSet = buildMinimalCatalogXmlSet();
     const manifestSha = manifestFromXmlSet(xmlSet);

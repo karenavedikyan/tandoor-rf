@@ -38,7 +38,8 @@
 - 5 строк `prices` → отсутствующий товар.
 - 262 блока `stock_expected` → отсутствующий товар.
 - Десятичная **запятая** в ценах/количествах — допустимый формат источника.
-- `ОжидаемаяДата`: `ДД.ММ.ГГГГ Ч:ММ:СС`; прошедшие даты помечаются `expected_expired`, не «обещанием поставки».
+- **Цена** — атрибут `Цена` у `ЦенаТовара`; **Количество** — атрибут `Количество` у `Склад`. Текст допустим только без атрибута.
+- `ОжидаемаяДата`: `ДД.ММ.ГГГГ Ч:ММ:СС` без часового пояса; `expected_at` не заполняется; просрочка — календарное сравнение с `readAt`.
 
 ---
 
@@ -51,8 +52,10 @@
 | Manifest | Канонический порядок 8 файлов: `path + size + sha256`; `manifestSha256` = SHA канонической строки |
 | Стабильность | Двойное чтение FTP (apply); локальный режим — без повторного скачивания после проверки |
 | Лимиты XML | 64 MiB/файл, 128 MiB/набор; sax; DOCTYPE запрещён; depth/elements/time limits |
-| Базовый каталог | groups, sections, storages, price types, products (+ properties/images/sections) |
-| Коммерция | prices/stock/stock_expected → **staging**; битые ссылки → **quarantine** |
+| Базовый каталог | groups, sections, storages, price types, products (+ properties/images/sections); **пустой `<Товары/>` → VALIDATION_FAILED** |
+| Строгость | Обязательные коды/имена; конфликтующие повторы `Свойство`/`Раздел` → ошибка до apply; идентичные повторы свойств дедуплицируются (last wins) |
+| Коммерция | prices/stock/stock_expected → **staging**; битые ссылки / NUMERIC(18,4) overflow → **quarantine** |
+| Apply block | `onec_catalog_state.apply_blocked`; COMMIT uncertain → блок до проверки runId / снятия оператором |
 | `commercialReady` | **всегда false** в R3.1 (семантика не утверждена) |
 | Исчезновение SKU | Не удаляет старые версии; **блокирует apply** при падении count / потере известных кодов |
 | Повтор manifest | Идемпотентен (`SKIPPED_UNCHANGED`) |

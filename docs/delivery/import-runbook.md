@@ -194,9 +194,13 @@ FROM onec_catalog_import_runs
 ORDER BY started_at DESC
 LIMIT 5;
 
-SELECT active_version_id, last_successful_manifest_sha256
+SELECT active_version_id, last_successful_manifest_sha256, apply_blocked, apply_blocked_reason
 FROM onec_catalog_state WHERE id = 1;
 ```
+
+При `apply_blocked=true` apply возвращает `APPLY_BLOCKED` и **не** переключает активную версию. После `COMMIT_UNCERTAIN` проверьте journal по `runId`; снимите блок только после подтверждения исхода (или явного rollback).
+
+Report apply (`onec_catalog_import_runs.report`) содержит manifest (8 файлов: path, size, sha256), `readAt`, counts и `quarantineReasonCounts`.
 
 ### Откат активной версии (без отката клиентов)
 

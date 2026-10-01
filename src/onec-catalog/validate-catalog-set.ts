@@ -1,11 +1,5 @@
-import { parseCatalogDecimal } from "./decimal";
-import { parseExpectedDate } from "./dates";
-import { QUARANTINE_REASON } from "./constants";
-import type {
-  ParsedCatalogSet,
-  QuarantineEntry,
-  ValidationIssue,
-} from "./types";
+import { classifyCommercialData } from "./commercial-classify";
+import type { ParsedCatalogSet, ValidationIssue } from "./types";
 
 function detectCycle(
   nodes: Map<string, string | null>,
@@ -40,11 +34,18 @@ export function validateCatalogSet(
   now = new Date(),
 ): { ok: true; data: ParsedCatalogSet } | { ok: false; issues: ValidationIssue[] } {
   const issues: ValidationIssue[] = [];
+
+  if (data.products.length === 0) {
+    issues.push({
+      code: "EMPTY_CATALOG",
+      message: "Base catalog must contain at least one product.",
+      file: "catalog/products/data.xml",
+    });
+  }
+
   const productCodes = new Set(data.products.map((row) => row.code));
   const groupCodes = new Set(data.groups.map((row) => row.code));
   const sectionCodes = new Set(data.sections.map((row) => row.code));
-  const storageCodes = new Set(data.storages.map((row) => row.code));
-  const priceTypeCodes = new Set(data.priceTypes.map((row) => row.priceTypeCode));
 
   const groupParents = new Map(data.groups.map((row) => [row.code, row.parentCode]));
   const sectionParents = new Map(data.sections.map((row) => [row.code, row.parentCode]));
@@ -81,145 +82,14 @@ export function validateCatalogSet(
     }
   }
 
-  const quarantine: QuarantineEntry[] = [];
-
-  for (const price of data.prices) {
-    if (!priceTypeCodes.has(price.priceTypeCode)) {
-      quarantine.push({
-        layer: "prices",
-        reasonCode: QUARANTINE_REASON.UNKNOWN_PRICE_TYPE,
-        sourceIdentifiers: {
-          priceTypeCode: price.priceTypeCode,
-          productCode: price.productCode,
-          priceRaw: price.priceRaw,
-        },
-      });
-      continue;
-    }
-    if (!productCodes.has(price.productCode)) {
-      quarantine.push({
-        layer: "prices",
-        reasonCode: QUARANTINE_REASON.MISSING_PRODUCT,
-        sourceIdentifiers: {
-          priceTypeCode: price.priceTypeCode,
-          productCode: price.productCode,
-          priceRaw: price.priceRaw,
-        },
-      });
-      continue;
-    }
-    const parsed = parseCatalogDecimal(price.priceRaw);
-    if (!parsed.ok) {
-      quarantine.push({
-        layer: "prices",
-        reasonCode: QUARANTINE_REASON.INVALID_DECIMAL,
-        sourceIdentifiers: {
-          priceTypeCode: price.priceTypeCode,
-          productCode: price.productCode,
-          priceRaw: price.priceRaw,
-        },
-      });
-    }
-  }
-
-  for (const line of data.stock) {
-    if (!productCodes.has(line.productCode)) {
-      quarantine.push({
-        layer: "stock",
-        reasonCode: QUARANTINE_REASON.MISSING_PRODUCT,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-        },
-      });
-      continue;
-    }
-    if (!storageCodes.has(line.storageCode)) {
-      quarantine.push({
-        layer: "stock",
-        reasonCode: QUARANTINE_REASON.MISSING_STORAGE,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-        },
-      });
-      continue;
-    }
-    const parsed = parseCatalogDecimal(line.quantityRaw);
-    if (!parsed.ok && line.quantityRaw.trim() !== "") {
-      quarantine.push({
-        layer: "stock",
-        reasonCode: QUARANTINE_REASON.INVALID_DECIMAL,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-        },
-      });
-    }
-  }
-
-  for (const line of data.stockExpected) {
-    if (!productCodes.has(line.productCode)) {
-      quarantine.push({
-        layer: "stock_expected",
-        reasonCode: QUARANTINE_REASON.MISSING_PRODUCT,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-          expectedDateRaw: line.expectedDateRaw ?? "",
-        },
-      });
-      continue;
-    }
-    if (!storageCodes.has(line.storageCode)) {
-      quarantine.push({
-        layer: "stock_expected",
-        reasonCode: QUARANTINE_REASON.MISSING_STORAGE,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-        },
-      });
-      continue;
-    }
-    if (line.expectedDateRaw) {
-      const parsedDate = parseExpectedDate(line.expectedDateRaw, now);
-      if (!parsedDate.ok) {
-        quarantine.push({
-          layer: "stock_expected",
-          reasonCode: QUARANTINE_REASON.INVALID_DATE,
-          sourceIdentifiers: {
-            productCode: line.productCode,
-            storageCode: line.storageCode,
-            expectedDateRaw: line.expectedDateRaw,
-          },
-        });
-      }
-    }
-    const parsedQty = parseCatalogDecimal(line.quantityRaw);
-    if (!parsedQty.ok && line.quantityRaw.trim() !== "") {
-      quarantine.push({
-        layer: "stock_expected",
-        reasonCode: QUARANTINE_REASON.INVALID_DECIMAL,
-        sourceIdentifiers: {
-          productCode: line.productCode,
-          storageCode: line.storageCode,
-          quantityRaw: line.quantityRaw,
-        },
-      });
-    }
-  }
-
-  data.quarantine = quarantine;
-  data.counts.quarantine = quarantine.length;
-
   if (issues.length > 0) {
     return { ok: false, issues };
   }
+
+  const commercial = classifyCommercialData(data, now);
+  data.quarantine = commercial.quarantineEntries;
+  data.counts.quarantine = commercial.quarantineRowCount;
+  data.counts.quarantineReasonCounts = commercial.quarantineReasonCounts;
+
   return { ok: true, data };
 }

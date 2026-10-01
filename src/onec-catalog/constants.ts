@@ -45,10 +45,15 @@ export const IMPORT_ADVISORY_LOCK_KEY = 902_451_003;
 /** Accepted parent-code representations for hierarchy roots (observed + empty). */
 export const ROOT_PARENT_CODES = new Set(["", "0"]);
 
+export const DB_CONNECT_TIMEOUT_MS = 5_000;
+export const DB_STATEMENT_TIMEOUT_MS = 120_000;
+export const DB_APPLY_OPERATION_TIMEOUT_MS = 300_000;
+
 export const QUARANTINE_REASON = {
   UNKNOWN_PRICE_TYPE: "UNKNOWN_PRICE_TYPE",
   MISSING_PRODUCT: "MISSING_PRODUCT",
   MISSING_STORAGE: "MISSING_STORAGE",
   INVALID_DECIMAL: "INVALID_DECIMAL",
   INVALID_DATE: "INVALID_DATE",
+  NUMERIC_OUT_OF_RANGE: "NUMERIC_OUT_OF_RANGE",
 } as const;

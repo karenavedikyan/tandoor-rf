@@ -2,6 +2,7 @@ import type { CatalogRelativeFile } from "./constants";
 import { CATALOG_FILE_ROOTS, ROOT_PARENT_CODES } from "./constants";
 import { parseXmlBufferSafely, ensureNonEmptyFile } from "./safe-xml";
 import { buildManifest, buildFileEntries } from "./manifest";
+import { readXmlScalar } from "./xml-field";
 import type {
   CatalogFileEntry,
   ParsedCatalogGroup,
@@ -43,6 +44,27 @@ const KNOWN_ELEMENTS: Partial<Record<CatalogRelativeFile, Set<string>>> = {
   ]),
 };
 
+const KNOWN_ATTRIBUTES: Partial<Record<CatalogRelativeFile, Record<string, Set<string>>>> = {
+  "catalog/groups/data.xml": { Группа: new Set(["Код", "Родитель"]) },
+  "catalog/section/data.xml": { Раздел: new Set(["Код", "Название", "КодРодителя"]) },
+  "catalog/storage/data.xml": { Склад: new Set(["Код", "Название", "Адрес", "Email", "Телефон"]) },
+  "catalog/types_prices/data.xml": { ТипЦены: new Set(["КодЦены", "Название"]) },
+  "catalog/products/data.xml": {
+    Товар: new Set(["Код", "Группа", "Активность", "Название"]),
+    Свойство: new Set(["Код", "Название", "Значение"]),
+    Раздел: new Set(["Код"]),
+  },
+  "catalog/prices/data.xml": { ЦенаТовара: new Set(["КодЦены", "КодТовара", "Цена"]) },
+  "catalog/stock/data.xml": {
+    Остаток: new Set(["Код"]),
+    Склад: new Set(["СкладID", "Количество"]),
+  },
+  "catalog/stock_expected/data.xml": {
+    Остаток: new Set(["Код"]),
+    Склад: new Set(["СкладID", "Количество", "ОжидаемаяДата", "Доступно"]),
+  },
+};
+
 function normalizeParentCode(raw: string | undefined): string | null {
   if (raw === undefined) {
     return null;
@@ -67,6 +89,26 @@ function trackDrift(
   });
 }
 
+function trackUnknownAttributes(
+  warnings: SchemaDriftWarning[],
+  file: CatalogRelativeFile,
+  element: string,
+  attrs: Record<string, string>,
+): void {
+  const known = KNOWN_ATTRIBUTES[file]?.[element];
+  if (!known) return;
+  for (const key of Object.keys(attrs)) {
+    if (!known.has(key)) {
+      warnings.push({
+        code: "SCHEMA_DRIFT",
+        message: `Unknown attribute ${key} on <${element}>; not mapped automatically.`,
+        file,
+        element: `${element}@${key}`,
+      });
+    }
+  }
+}
+
 async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promise<{
   rows: ParsedCatalogGroup[];
   issue?: ValidationIssue;
@@ -83,8 +125,11 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
           return;
         }
         if (name !== "Группа") return;
+        trackUnknownAttributes(warnings, "catalog/groups/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
-        if (!code) return;
+        if (!code) {
+          throw new Error("INVALID_RECORD:group:missing_code");
+        }
         if (seen.has(code)) {
           throw new Error(`DUPLICATE_KEY:group:${code}`);
         }
@@ -122,9 +167,15 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           return;
         }
         if (name !== "Раздел") return;
+        trackUnknownAttributes(warnings, "catalog/section/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         const title = attrs["Название"]?.trim() ?? "";
-        if (!code) return;
+        if (!code) {
+          throw new Error("INVALID_RECORD:section:missing_code");
+        }
+        if (!title) {
+          throw new Error("INVALID_RECORD:section:missing_name");
+        }
         if (seen.has(code)) {
           throw new Error(`DUPLICATE_KEY:section:${code}`);
         }
@@ -163,8 +214,11 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           return;
         }
         if (name !== "Склад") return;
+        trackUnknownAttributes(warnings, "catalog/storage/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
-        if (!code) return;
+        if (!code) {
+          throw new Error("INVALID_RECORD:storage:missing_code");
+        }
         if (seen.has(code)) {
           throw new Error(`DUPLICATE_KEY:storage:${code}`);
         }
@@ -209,8 +263,11 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
           return;
         }
         if (name !== "ТипЦены") return;
+        trackUnknownAttributes(warnings, "catalog/types_prices/data.xml", name, attrs);
         const code = attrs["КодЦены"]?.trim();
-        if (!code) return;
+        if (!code) {
+          throw new Error("INVALID_RECORD:price_type:missing_code");
+        }
         if (seen.has(code)) {
           throw new Error(`DUPLICATE_KEY:price_type:${code}`);
         }
@@ -239,6 +296,7 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
   let inProperties = false;
   let inImages = false;
   let inSections = false;
+  const propertyIndex = new Map<string, { code: string; name: string; value: string }>();
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/products/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/products/data.xml"] },
     {
@@ -248,17 +306,25 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           return;
         }
         if (name === "Товар") {
+          trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
           const code = attrs["Код"]?.trim();
-          if (!code) return;
+          if (!code) {
+            throw new Error("INVALID_PRODUCT:missing_code");
+          }
+          const productName = attrs["Название"]?.trim() ?? "";
+          if (!productName) {
+            throw new Error(`INVALID_PRODUCT:missing_name:${code}`);
+          }
           if (seen.has(code)) {
             throw new Error(`DUPLICATE_KEY:product:${code}`);
           }
           seen.add(code);
+          propertyIndex.clear();
           current = {
             code,
             groupCode: attrs["Группа"]?.trim() || null,
             activity: attrs["Активность"]?.trim() ?? "",
-            name: attrs["Название"]?.trim() ?? "",
+            name: productName,
             properties: [],
             images: [],
             sectionCodes: [],
@@ -273,16 +339,36 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
         if (name === "Картинки") inImages = true;
         if (name === "Разделы") inSections = true;
         if (name === "Свойство" && inProperties) {
-          const value = attrs["Значение"]?.trim() ?? "";
-          current.properties.push({
-            code: attrs["Код"]?.trim() ?? "",
+          trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
+          const propCode = attrs["Код"]?.trim() ?? "";
+          if (!propCode) {
+            throw new Error(`INVALID_PROPERTY:missing_code:${current.code}`);
+          }
+          const prop = {
+            code: propCode,
             name: attrs["Название"]?.trim() ?? "",
-            value,
-          });
+            value: attrs["Значение"]?.trim() ?? "",
+          };
+          const existing = propertyIndex.get(propCode);
+          if (existing) {
+            if (existing.name === prop.name && existing.value === prop.value) {
+              return;
+            }
+            throw new Error(`CONFLICTING_PROPERTY:product:${current.code}:${propCode}`);
+          }
+          propertyIndex.set(propCode, prop);
+          current.properties.push(prop);
         }
         if (name === "Раздел" && inSections) {
+          trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
           const sectionCode = attrs["Код"]?.trim();
-          if (sectionCode) current.sectionCodes.push(sectionCode);
+          if (!sectionCode) {
+            throw new Error(`INVALID_SECTION_REF:product:${current.code}`);
+          }
+          if (current.sectionCodes.includes(sectionCode)) {
+            return;
+          }
+          current.sectionCodes.push(sectionCode);
         }
       },
       onText: (text) => {
@@ -306,12 +392,14 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
   return { rows };
 }
 
+type MutablePriceRow = ParsedCatalogPrice & { _attrs: Record<string, string>; _text: string };
+
 async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promise<{
   rows: ParsedCatalogPrice[];
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogPrice[] = [];
-  let current: ParsedCatalogPrice | null = null;
+  let current: MutablePriceRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/prices/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/prices/data.xml"] },
     {
@@ -321,18 +409,29 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
           return;
         }
         if (name !== "ЦенаТовара") return;
+        trackUnknownAttributes(warnings, "catalog/prices/data.xml", name, attrs);
         current = {
           priceTypeCode: attrs["КодЦены"]?.trim() ?? "",
           productCode: attrs["КодТовара"]?.trim() ?? "",
           priceRaw: "",
+          _attrs: attrs,
+          _text: "",
         };
       },
       onText: (text) => {
-        if (current && text) current.priceRaw = text;
+        if (current && text) current._text += text;
       },
       onCloseTag: (name) => {
         if (name === "ЦенаТовара" && current) {
-          rows.push(current);
+          const scalar = readXmlScalar("Цена", current._attrs, current._text);
+          if (scalar.kind === "ambiguous") {
+            throw new Error(`AMBIGUOUS_SCALAR:price:${current.productCode}`);
+          }
+          rows.push({
+            priceTypeCode: current.priceTypeCode,
+            productCode: current.productCode,
+            priceRaw: scalar.kind === "value" ? scalar.raw : "",
+          });
           current = null;
         }
       },
@@ -342,13 +441,15 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
   return { rows };
 }
 
+type MutableStockRow = ParsedCatalogStockLine & { _attrs: Record<string, string>; _text: string };
+
 async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promise<{
   rows: ParsedCatalogStockLine[];
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockLine[] = [];
   let productCode = "";
-  let currentStorage: ParsedCatalogStockLine | null = null;
+  let currentStorage: MutableStockRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/stock/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/stock/data.xml"] },
     {
@@ -358,23 +459,39 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
           return;
         }
         if (name === "Остаток") {
-          productCode = attrs["Код"]?.trim() ?? "";
+          trackUnknownAttributes(warnings, "catalog/stock/data.xml", name, attrs);
+          const code = attrs["Код"]?.trim() ?? "";
+          if (!code) {
+            throw new Error("INVALID_RECORD:stock:missing_product_code");
+          }
+          productCode = code;
           return;
         }
         if (name === "Склад" && productCode) {
+          trackUnknownAttributes(warnings, "catalog/stock/data.xml", name, attrs);
           currentStorage = {
             productCode,
             storageCode: attrs["СкладID"]?.trim() ?? "",
             quantityRaw: "",
+            _attrs: attrs,
+            _text: "",
           };
         }
       },
       onText: (text) => {
-        if (currentStorage && text) currentStorage.quantityRaw = text;
+        if (currentStorage && text) currentStorage._text += text;
       },
       onCloseTag: (name) => {
         if (name === "Склад" && currentStorage) {
-          rows.push(currentStorage);
+          const scalar = readXmlScalar("Количество", currentStorage._attrs, currentStorage._text);
+          if (scalar.kind === "ambiguous") {
+            throw new Error(`AMBIGUOUS_SCALAR:stock:${currentStorage.productCode}:${currentStorage.storageCode}`);
+          }
+          rows.push({
+            productCode: currentStorage.productCode,
+            storageCode: currentStorage.storageCode,
+            quantityRaw: scalar.kind === "value" ? scalar.raw : "",
+          });
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
@@ -385,13 +502,18 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
   return { rows };
 }
 
+type MutableStockExpectedRow = ParsedCatalogStockExpectedLine & {
+  _attrs: Record<string, string>;
+  _text: string;
+};
+
 async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[]): Promise<{
   rows: ParsedCatalogStockExpectedLine[];
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockExpectedLine[] = [];
   let productCode = "";
-  let currentStorage: ParsedCatalogStockExpectedLine | null = null;
+  let currentStorage: MutableStockExpectedRow | null = null;
   const parsed = await parseXmlBufferSafely(
     {
       bytes,
@@ -408,25 +530,45 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
           return;
         }
         if (name === "Остаток") {
-          productCode = attrs["Код"]?.trim() ?? "";
+          trackUnknownAttributes(warnings, "catalog/stock_expected/data.xml", name, attrs);
+          const code = attrs["Код"]?.trim() ?? "";
+          if (!code) {
+            throw new Error("INVALID_RECORD:stock_expected:missing_product_code");
+          }
+          productCode = code;
           return;
         }
         if (name === "Склад" && productCode) {
+          trackUnknownAttributes(warnings, "catalog/stock_expected/data.xml", name, attrs);
           currentStorage = {
             productCode,
             storageCode: attrs["СкладID"]?.trim() ?? "",
             quantityRaw: "",
-            expectedDateRaw: attrs["ОжидаемаяДата"]?.trim() ?? null,
-            availableRaw: attrs["Доступно"]?.trim() ?? null,
+            expectedDateRaw: attrs["ОжидаемаяДата"]?.trim() || null,
+            availableRaw: attrs["Доступно"]?.trim() || null,
+            _attrs: attrs,
+            _text: "",
           };
         }
       },
       onText: (text) => {
-        if (currentStorage && text) currentStorage.quantityRaw = text;
+        if (currentStorage && text) currentStorage._text += text;
       },
       onCloseTag: (name) => {
         if (name === "Склад" && currentStorage) {
-          rows.push(currentStorage);
+          const scalar = readXmlScalar("Количество", currentStorage._attrs, currentStorage._text);
+          if (scalar.kind === "ambiguous") {
+            throw new Error(
+              `AMBIGUOUS_SCALAR:stock_expected:${currentStorage.productCode}:${currentStorage.storageCode}`,
+            );
+          }
+          rows.push({
+            productCode: currentStorage.productCode,
+            storageCode: currentStorage.storageCode,
+            quantityRaw: scalar.kind === "value" ? scalar.raw : "",
+            expectedDateRaw: currentStorage.expectedDateRaw,
+            availableRaw: currentStorage.availableRaw,
+          });
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
@@ -442,7 +584,25 @@ function mapThrownIssue(error: unknown, file: CatalogRelativeFile): ValidationIs
   if (message.startsWith("DUPLICATE_KEY:")) {
     return { code: "DUPLICATE_KEY", message: `Duplicate key in ${file}.`, file };
   }
-  return { code: "PARSE_ERROR", message, file };
+  if (message.startsWith("CONFLICTING_PROPERTY:")) {
+    return { code: "CONFLICTING_PROPERTY", message: "Conflicting duplicate product property codes.", file };
+  }
+  if (message.startsWith("AMBIGUOUS_SCALAR:")) {
+    return {
+      code: "AMBIGUOUS_SCALAR",
+      message: "Ambiguous attribute and text values for the same scalar field.",
+      file,
+    };
+  }
+  if (
+    message.startsWith("INVALID_PRODUCT:") ||
+    message.startsWith("INVALID_RECORD:") ||
+    message.startsWith("INVALID_PROPERTY:") ||
+    message.startsWith("INVALID_SECTION_REF:")
+  ) {
+    return { code: "INVALID_BASE_RECORD", message: "Invalid base catalog record.", file };
+  }
+  return { code: "PARSE_ERROR", message: "Catalog XML parse failed.", file };
 }
 
 export async function parseCatalogSet(

@@ -229,20 +229,22 @@ export async function runCatalogImport(
     });
   }
 
-  const applied = await applyCatalogImport(databaseUrl, data);
+  const applied = await applyCatalogImport(databaseUrl, data, { readAt: readResult.readAt });
   if (!applied.ok) {
     const status =
       applied.code === "SKIPPED_UNCHANGED"
         ? "SKIPPED_UNCHANGED"
         : applied.code === "IMPORT_LOCKED"
           ? "IMPORT_LOCKED"
-          : applied.code === "RECORD_COUNT_DECREASED"
-            ? "RECORD_COUNT_DECREASED"
-            : applied.code === "PRODUCT_CODE_LOSS"
-              ? "PRODUCT_CODE_LOSS"
-              : applied.code === "COMMIT_UNCERTAIN"
-                ? "COMMIT_UNCERTAIN"
-                : "DATABASE_ERROR";
+          : applied.code === "APPLY_BLOCKED"
+            ? "APPLY_BLOCKED"
+            : applied.code === "RECORD_COUNT_DECREASED"
+              ? "RECORD_COUNT_DECREASED"
+              : applied.code === "PRODUCT_CODE_LOSS"
+                ? "PRODUCT_CODE_LOSS"
+                : applied.code === "COMMIT_UNCERTAIN"
+                  ? "COMMIT_UNCERTAIN"
+                  : "DATABASE_ERROR";
     return sanitizeCatalogImportResult({
       status,
       mode: "apply",
