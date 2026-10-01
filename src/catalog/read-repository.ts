@@ -9,6 +9,10 @@ import type {
 } from "./types";
 import type { ParsedCatalogSearchQuery } from "./query-params";
 
+export function escapeIlikeLiteral(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 type ActiveVersionRow = {
   version_id: string;
   imported_at: Date;
@@ -127,9 +131,11 @@ export async function searchCatalogProducts(
   const filters: string[] = ["p.version_id = $1::uuid"];
 
   if (query.q) {
-    params.push(`%${query.q}%`);
+    params.push(`%${escapeIlikeLiteral(query.q)}%`);
     const qIndex = params.length;
-    filters.push(`(p.name ILIKE $${qIndex} OR p.code ILIKE $${qIndex})`);
+    filters.push(
+      `(p.name ILIKE $${qIndex} ESCAPE '\\' OR p.code ILIKE $${qIndex} ESCAPE '\\')`,
+    );
   }
 
   if (query.sectionCode) {

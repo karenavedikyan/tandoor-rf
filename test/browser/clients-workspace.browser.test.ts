@@ -40,7 +40,7 @@ const CLIPBOARD_REJECT_INIT = () => {
 type MockState = { listCalls: number };
 
 function createMockState(): MockState {
-  return { listCalls: 0 };
+  return { listCalls: 0, catalogProductsCalls: 0 };
 }
 
 function createMockController(page: Page, initial: MockOptions = {}) {

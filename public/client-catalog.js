@@ -2,6 +2,7 @@
   "use strict";
 
   var api = window.TandoorRf;
+  var MAX_QUERY_LENGTH = 200;
 
   function esc(value) {
     return window.ClientDetailSections.escapeHtml(value || "");
@@ -30,6 +31,13 @@
       esc(label || "Изображение недоступно") +
       "</span></div>"
     );
+  }
+
+  function listImagePlaceholder(item) {
+    if (!item.primaryImagePath) {
+      return renderImagePlaceholder("Изображение не передано");
+    }
+    return renderImagePlaceholder("Просмотр изображения пока недоступен");
   }
 
   function formatImportedAt(value) {
@@ -61,6 +69,8 @@
 
     var state = {
       loadId: 0,
+      clientGuid: clientGuid,
+      meta: null,
       versionId: null,
       query: "",
       sectionCode: "",
@@ -68,10 +78,77 @@
       pageSize: 20,
       selectedCode: null,
       view: "list",
+      refreshing: false,
     };
 
     function setHtml(html) {
       container.innerHTML = html;
+    }
+
+    function readFormIntoState() {
+      var form = container.querySelector("[data-catalog-search-form]");
+      if (!form) return;
+      var qInput = form.querySelector('[name="q"]');
+      var sectionSelect = form.querySelector('[name="section"]');
+      if (qInput) state.query = qInput.value.trim().slice(0, MAX_QUERY_LENGTH);
+      if (sectionSelect) state.sectionCode = sectionSelect.value.trim();
+    }
+
+    function normalizeSectionAfterMeta(meta) {
+      if (!state.sectionCode || !meta || !meta.sections) return;
+      var exists = meta.sections.some(function (section) {
+        return section.code === state.sectionCode;
+      });
+      if (!exists) state.sectionCode = "";
+    }
+
+    function applyMeta(meta) {
+      state.meta = meta;
+      if (meta && meta.versionId) state.versionId = meta.versionId;
+      normalizeSectionAfterMeta(meta);
+    }
+
+    function clearProtectedState() {
+      state.meta = null;
+      state.versionId = null;
+      state.selectedCode = null;
+    }
+
+    function renderActionButtons(actions) {
+      return (
+        '<div class="pc-catalog-actions">' +
+        actions
+          .map(function (action) {
+            return (
+              '<button type="button" class="pc-catalog-btn' +
+              (action.ghost ? " pc-catalog-btn--ghost" : "") +
+              '" data-catalog-action="' +
+              esc(action.id) +
+              '">' +
+              esc(action.label) +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>"
+      );
+    }
+
+    function bindActionButtons() {
+      container.querySelectorAll("[data-catalog-action]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var action = button.getAttribute("data-catalog-action");
+          if (action === "retry-meta") loadMeta(true);
+          if (action === "retry-list") loadList();
+          if (action === "retry-detail" && state.selectedCode) loadDetail(state.selectedCode);
+          if (action === "refresh") refreshCatalog();
+          if (action === "back") goBackToList();
+          if (action === "first-page") {
+            state.page = 1;
+            loadList();
+          }
+        });
+      });
     }
 
     function bindSearchForm() {
@@ -79,8 +156,7 @@
       if (!form) return;
       form.addEventListener("submit", function (event) {
         event.preventDefault();
-        state.query = form.querySelector('[name="q"]').value.trim();
-        state.sectionCode = form.querySelector('[name="section"]').value.trim();
+        readFormIntoState();
         state.page = 1;
         state.selectedCode = null;
         state.view = "list";
@@ -89,8 +165,10 @@
       var sectionSelect = form.querySelector('[name="section"]');
       if (sectionSelect) {
         sectionSelect.addEventListener("change", function () {
-          state.sectionCode = sectionSelect.value;
+          readFormIntoState();
           state.page = 1;
+          state.selectedCode = null;
+          state.view = "list";
           loadList();
         });
       }
@@ -129,27 +207,31 @@
 
     function bindDetailActions() {
       var back = container.querySelector("[data-catalog-back]");
-      if (back) {
-        back.addEventListener("click", function () {
-          state.view = "list";
-          state.selectedCode = null;
-          renderListShell();
-          loadList();
-        });
-      }
+      if (back) back.addEventListener("click", goBackToList);
       var refresh = container.querySelector("[data-catalog-refresh]");
-      if (refresh) {
-        refresh.addEventListener("click", function () {
-          state.view = "list";
-          state.selectedCode = null;
-          state.page = 1;
-          loadMeta(true);
-        });
-      }
+      if (refresh) refresh.addEventListener("click", refreshCatalog);
+      bindActionButtons();
+    }
+
+    function goBackToList() {
+      state.view = "list";
+      state.selectedCode = null;
+      renderListShell(state.meta);
+      loadList();
+    }
+
+    function refreshCatalog() {
+      if (state.refreshing) return;
+      state.refreshing = true;
+      state.selectedCode = null;
+      state.view = "list";
+      Promise.resolve(loadMeta(true)).finally(function () {
+        state.refreshing = false;
+      });
     }
 
     function renderToolbar(meta) {
-      var sections = (meta.sections || [])
+      var sections = ((meta && meta.sections) || [])
         .map(function (section) {
           var selected = state.sectionCode === section.code ? " selected" : "";
           return (
@@ -168,7 +250,9 @@
         '<label class="pc-catalog-field"><span class="pc-label">Поиск по названию или коду</span>' +
         '<input class="pc-catalog-input" type="search" name="q" value="' +
         esc(state.query) +
-        '" placeholder="Например, раковина или код 1С" autocomplete="off" /></label>' +
+        '" placeholder="Название товара или код 1С" maxlength="' +
+        MAX_QUERY_LENGTH +
+        '" autocomplete="off" /></label>' +
         '<label class="pc-catalog-field"><span class="pc-label">Раздел</span>' +
         '<select class="pc-catalog-input" name="section"><option value="">Все разделы</option>' +
         sections +
@@ -200,15 +284,41 @@
       );
     }
 
-    function renderListShell(meta) {
+    function renderDetailSnapshotLine(meta) {
+      if (!meta || meta.state !== "ready") return "";
+      return (
+        '<div class="pc-catalog-meta pc-catalog-meta--compact">' +
+        '<p class="pc-label">Снимок каталога · обновлён ' +
+        esc(formatImportedAt(meta.importedAt)) +
+        "</p></div>"
+      );
+    }
+
+    function renderListShell(meta, resultsHtml) {
       setHtml(
         renderMetaBanner(meta) +
-          renderToolbar(meta || { sections: [] }) +
+          renderToolbar(meta) +
           '<div class="pc-catalog-results" data-catalog-results aria-live="polite">' +
-          renderState("Загрузка каталога…", "loading") +
+          (resultsHtml || renderState("Загрузка каталога…", "loading")) +
           "</div>",
       );
       bindSearchForm();
+    }
+
+    function setResultsHtml(html) {
+      var results = container.querySelector("[data-catalog-results]");
+      if (results) {
+        results.innerHTML = html;
+        return true;
+      }
+      return false;
+    }
+
+    function showListMessage(message, tone, actions) {
+      var html =
+        renderState(message, tone) + (actions ? renderActionButtons(actions) : "");
+      if (!setResultsHtml(html)) renderListShell(state.meta, html);
+      bindActionButtons();
     }
 
     function renderProductCard(item) {
@@ -219,7 +329,7 @@
           : "";
       return (
         '<article class="pc-catalog-card">' +
-        renderImagePlaceholder("Путь изображения сохранён; публичный просмотр пока недоступен") +
+        listImagePlaceholder(item) +
         '<div class="pc-catalog-card__body">' +
         '<div class="pc-catalog-card__title">' +
         esc(item.name) +
@@ -236,34 +346,58 @@
     }
 
     function renderListResult(body) {
-      var results = container.querySelector("[data-catalog-results]");
-      if (!results) return;
       if (body.state === "empty") {
-        results.innerHTML = renderState(body.message || "Каталог пуст.", "empty");
+        showListMessage(body.message || "Каталог пуст.", "empty");
         return;
       }
       if (!body.items || !body.items.length) {
-        results.innerHTML = renderState("По запросу ничего не найдено.", "empty");
+        var maxPage = Math.max(1, Math.ceil((body.total || 0) / body.pageSize));
+        if (body.total > 0 && body.page > maxPage) {
+          showListMessage(
+            "Запрошенная страница выходит за пределы выдачи.",
+            "empty",
+            [
+              { id: "first-page", label: "На первую страницу", ghost: true },
+              { id: "retry-list", label: "Обновить список", ghost: false },
+            ],
+          );
+          return;
+        }
+        showListMessage("По запросу ничего не найдено.", "empty");
         return;
       }
       var maxPage = Math.max(1, Math.ceil(body.total / body.pageSize));
-      results.innerHTML =
+      setResultsHtml(
         '<div class="pc-catalog-grid">' +
-        body.items.map(renderProductCard).join("") +
-        "</div>" +
-        '<div class="pc-catalog-pagination">' +
-        '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="prev">Назад</button>' +
-        '<span class="pc-label">Страница ' +
-        esc(String(body.page)) +
-        " из " +
-        esc(String(maxPage)) +
-        " · " +
-        esc(String(body.total)) +
-        " товаров</span>" +
-        '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="next">Вперёд</button>' +
-        "</div>";
+          body.items.map(renderProductCard).join("") +
+          "</div>" +
+          '<div class="pc-catalog-pagination">' +
+          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="prev">Назад</button>' +
+          '<span class="pc-label">Страница ' +
+          esc(String(body.page)) +
+          " из " +
+          esc(String(maxPage)) +
+          " · " +
+          esc(String(body.total)) +
+          " товаров</span>" +
+          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="next">Вперёд</button>' +
+          "</div>",
+      );
       bindProductCards();
       bindPagination(body.total);
+    }
+
+    function renderDetailShell(contentHtml) {
+      setHtml(
+        '<div class="pc-catalog-detail">' +
+          '<div class="pc-catalog-detail__actions">' +
+          '<button type="button" class="pc-link" data-catalog-back>← К списку</button>' +
+          '<button type="button" class="pc-link" data-catalog-refresh>Обновить каталог</button></div>' +
+          renderDetailSnapshotLine(state.meta) +
+          contentHtml +
+          "</div>",
+      );
+      bindDetailActions();
     }
 
     function renderDetail(product, metaNote) {
@@ -288,18 +422,13 @@
       var images =
         product.imagePaths && product.imagePaths.length
           ? product.imagePaths
-              .map(function (_path, index) {
-                return renderImagePlaceholder("Изображение " + (index + 1));
+              .map(function () {
+                return renderImagePlaceholder("Просмотр изображения пока недоступен");
               })
               .join("")
           : renderImagePlaceholder("Изображения не переданы");
-      setHtml(
-        '<div class="pc-catalog-detail">' +
-          '<div class="pc-catalog-detail__actions">' +
-          '<button type="button" class="pc-link" data-catalog-back>← К списку</button>' +
-          '<button type="button" class="pc-link" data-catalog-refresh>Обновить каталог</button></div>' +
-          renderMetaBanner({ state: "ready", importedAt: product.snapshotImportedAt, productCount: "—", classificationIncomplete: false, message: metaNote }) +
-          '<div class="pc-grid pc-two">' +
+      renderDetailShell(
+        '<div class="pc-grid pc-two">' +
           '<section class="pc-card"><div class="pc-cardhead"><h2>' +
           esc(product.name) +
           '</h2><span class="pc-source">Код ' +
@@ -324,70 +453,118 @@
           '<section class="pc-card pc-space"><div class="pc-cardhead"><h2>Характеристики</h2></div><div class="pc-pad">' +
           properties +
           '</div></section><div class="pc-catalog-future">' +
-          '<p class="pc-label">Сохранение факта установки или плана установки будет доступно после подключения подтверждённой торговой точки (R3.3). Сейчас выбор товара используется только для просмотра.</p>' +
-          "</div></div>",
+          '<p class="pc-label">' +
+          esc(
+            metaNote ||
+              "Сохранение факта установки или плана установки будет доступно после подключения подтверждённой торговой точки (R3.3). Сейчас выбор товара используется только для просмотра.",
+          ) +
+          "</p></div>",
       );
-      bindDetailActions();
+    }
+
+    function handleAccessDenied() {
+      clearProtectedState();
+      setHtml(
+        renderState("Каталог недоступен для этой карточки.", "error") +
+          renderActionButtons([{ id: "retry-meta", label: "Повторить", ghost: false }]),
+      );
+      bindActionButtons();
+    }
+
+    function handleVersionConflict(message) {
+      showListMessage(message || "Каталог обновился. Обновите данные.", "error", [
+        { id: "refresh", label: "Обновить каталог", ghost: false },
+      ]);
     }
 
     function loadList() {
       var loadId = ++state.loadId;
-      var results = container.querySelector("[data-catalog-results]");
-      if (results) results.innerHTML = renderState("Загрузка…", "loading");
+      if (state.meta && state.meta.state === "ready") {
+        setResultsHtml(renderState("Загрузка…", "loading"));
+      } else {
+        renderListShell(state.meta, renderState("Загрузка…", "loading"));
+      }
       return api
         .apiRequest(
-          buildApiUrl(clientGuid, "products", {
+          buildApiUrl(state.clientGuid, "products", {
             q: state.query,
             section: state.sectionCode,
             page: state.page,
             pageSize: state.pageSize,
+            versionId: state.versionId,
           }),
         )
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (loadId !== state.loadId || !root.isConnected || state.clientGuid !== clientGuid) return;
           if (result.response.status === 403 || result.response.status === 404) {
-            setHtml(renderState("Каталог недоступен для этой карточки.", "error"));
+            handleAccessDenied();
+            return;
+          }
+          if (result.response.status === 409 && result.data) {
+            handleVersionConflict(result.data.message);
             return;
           }
           if (result.response.status !== 200 || !result.data) {
-            setHtml(renderState("Не удалось загрузить каталог.", "error"));
+            showListMessage("Не удалось загрузить каталог.", "error", [
+              { id: "retry-list", label: "Повторить", ghost: false },
+              { id: "refresh", label: "Обновить каталог", ghost: true },
+            ]);
             return;
           }
-          if (result.data.versionId) state.versionId = result.data.versionId;
+          if (result.data.versionId && state.meta) {
+            state.versionId = result.data.versionId;
+            state.meta.versionId = result.data.versionId;
+          }
           renderListResult(result.data);
         })
         .catch(function () {
           if (loadId !== state.loadId || !root.isConnected) return;
-          setHtml(renderState("Ошибка сети при загрузке каталога.", "error"));
+          showListMessage("Ошибка сети при загрузке каталога.", "error", [
+            { id: "retry-list", label: "Повторить", ghost: false },
+          ]);
         });
     }
 
     function loadDetail(code) {
       var loadId = ++state.loadId;
-      setHtml(renderState("Загрузка товара…", "loading"));
+      renderDetailShell(renderState("Загрузка товара…", "loading"));
       return api
         .apiRequest(
-          buildApiUrl(clientGuid, "products/" + encodeURIComponent(code), {
+          buildApiUrl(state.clientGuid, "products/" + encodeURIComponent(code), {
             versionId: state.versionId,
           }),
         )
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
-          if (result.response.status === 409 && result.data) {
-            setHtml(
-              renderState(result.data.message || "Каталог обновился.", "error") +
-                '<div class="pc-pad"><button type="button" class="pc-catalog-btn" data-catalog-refresh>Обновить каталог</button></div>',
-            );
-            bindDetailActions();
+          if (loadId !== state.loadId || !root.isConnected || state.clientGuid !== clientGuid) return;
+          if (result.response.status === 403 || result.response.status === 404) {
+            if (result.response.status === 404 && state.meta) {
+              renderDetailShell(
+                renderState("Товар не найден в текущем снимке.", "empty") +
+                  renderActionButtons([
+                    { id: "back", label: "← К списку", ghost: true },
+                    { id: "refresh", label: "Обновить каталог", ghost: false },
+                  ]),
+              );
+              return;
+            }
+            handleAccessDenied();
             return;
           }
-          if (result.response.status === 404) {
-            setHtml(renderState("Товар не найден в текущем снимке.", "empty"));
-            bindDetailActions();
+          if (result.response.status === 409 && result.data) {
+            renderDetailShell(
+              renderState(result.data.message || "Каталог обновился.", "error") +
+                renderActionButtons([{ id: "refresh", label: "Обновить каталог", ghost: false }]),
+            );
             return;
           }
           if (result.response.status !== 200 || !result.data || !result.data.product) {
-            setHtml(renderState("Не удалось загрузить товар.", "error"));
+            renderDetailShell(
+              renderState("Не удалось загрузить товар.", "error") +
+                renderActionButtons([
+                  { id: "retry-detail", label: "Повторить", ghost: false },
+                  { id: "back", label: "← К списку", ghost: true },
+                ]),
+            );
             return;
           }
           state.versionId = result.data.product.versionId;
@@ -395,37 +572,54 @@
         })
         .catch(function () {
           if (loadId !== state.loadId || !root.isConnected) return;
-          setHtml(renderState("Ошибка сети при загрузке товара.", "error"));
+          renderDetailShell(
+            renderState("Ошибка сети при загрузке товара.", "error") +
+              renderActionButtons([
+                { id: "retry-detail", label: "Повторить", ghost: false },
+                { id: "back", label: "← К списку", ghost: true },
+              ]),
+          );
         });
     }
 
     function loadMeta(reloadList) {
       var loadId = ++state.loadId;
-      setHtml(renderState("Загрузка каталога…", "loading"));
+      if (!state.meta) {
+        setHtml(renderState("Загрузка каталога…", "loading"));
+      } else if (state.meta.state === "ready") {
+        renderListShell(state.meta, renderState("Загрузка каталога…", "loading"));
+      }
       return api
-        .apiRequest(buildApiUrl(clientGuid, "meta"))
+        .apiRequest(buildApiUrl(state.clientGuid, "meta"))
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (loadId !== state.loadId || !root.isConnected || state.clientGuid !== clientGuid) return;
           if (result.response.status === 403 || result.response.status === 404) {
-            setHtml(renderState("Каталог недоступен для этой карточки.", "error"));
+            handleAccessDenied();
             return;
           }
           if (result.response.status !== 200 || !result.data) {
-            setHtml(renderState("Не удалось загрузить каталог.", "error"));
+            setHtml(
+              renderState("Не удалось загрузить каталог.", "error") +
+                renderActionButtons([{ id: "retry-meta", label: "Повторить", ghost: false }]),
+            );
+            bindActionButtons();
             return;
           }
-          var meta = result.data;
-          if (meta.versionId) state.versionId = meta.versionId;
-          if (meta.state !== "ready") {
-            setHtml(renderMetaBanner(meta));
+          applyMeta(result.data);
+          if (result.data.state !== "ready") {
+            setHtml(renderMetaBanner(result.data));
             return;
           }
-          renderListShell(meta);
+          renderListShell(state.meta);
           if (reloadList !== false) return loadList();
         })
         .catch(function () {
           if (loadId !== state.loadId || !root.isConnected) return;
-          setHtml(renderState("Ошибка сети при загрузке каталога.", "error"));
+          setHtml(
+            renderState("Ошибка сети при загрузке каталога.", "error") +
+              renderActionButtons([{ id: "retry-meta", label: "Повторить", ghost: false }]),
+          );
+          bindActionButtons();
         });
     }
 

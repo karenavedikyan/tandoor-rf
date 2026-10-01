@@ -6,7 +6,11 @@ import {
   listCatalogSections,
   searchCatalogProducts,
 } from "../catalog/read-repository";
-import { parseCatalogProductCode, parseCatalogSearchQuery } from "../catalog/query-params";
+import {
+  parseCatalogProductCode,
+  parseCatalogSearchQuery,
+  parseCatalogVersionId,
+} from "../catalog/query-params";
 import { setNoStore } from "../http/no-store";
 import { getPool } from "../db/pool";
 import { apiError, ERROR_CODES } from "../shared/errors";
@@ -30,6 +34,20 @@ async function assertClientCatalogAccess(
     return false;
   }
   return true;
+}
+
+function respondCatalogVersionChanged(
+  res: Response,
+  currentVersionId: string,
+  importedAt: string | null,
+): void {
+  setNoStore(res);
+  res.status(409).json({
+    code: "CATALOG_VERSION_CHANGED",
+    message: "Каталог обновился после открытия списка. Обновите данные и повторите выбор.",
+    currentVersionId,
+    importedAt,
+  });
 }
 
 export async function getClientCatalogMetaHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -68,16 +86,24 @@ export async function getClientCatalogProductsHandler(
   if (!(await assertClientCatalogAccess(req, res, cardGuid))) return;
 
   const parsed = parseCatalogSearchQuery({
-    q: typeof req.query.q === "string" ? req.query.q : undefined,
-    section: typeof req.query.section === "string" ? req.query.section : undefined,
-    page: typeof req.query.page === "string" ? req.query.page : undefined,
-    pageSize: typeof req.query.pageSize === "string" ? req.query.pageSize : undefined,
+    q: req.query.q,
+    section: req.query.section,
+    page: req.query.page,
+    pageSize: req.query.pageSize,
   });
   if (!parsed.ok) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, parsed.message));
     return;
   }
+
+  const versionParsed = parseCatalogVersionId(req.query.versionId);
+  if (!versionParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, versionParsed.message));
+    return;
+  }
+  const expectedVersionId = versionParsed.value;
 
   const pool = getPool();
   if (!pool) {
@@ -104,6 +130,11 @@ export async function getClientCatalogProductsHandler(
       return;
     }
 
+    if (expectedVersionId && expectedVersionId !== meta.versionId) {
+      respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
+      return;
+    }
+
     const result = await searchCatalogProducts(client, meta.versionId, parsed.value);
     setNoStore(res);
     res.status(200).json({
@@ -126,10 +157,13 @@ export async function getClientCatalogProductHandler(req: AccessRequest, res: Re
     return;
   }
 
-  const expectedVersionId =
-    typeof req.query.versionId === "string" && isValidUuidParam(req.query.versionId)
-      ? req.query.versionId
-      : null;
+  const versionParsed = parseCatalogVersionId(req.query.versionId);
+  if (!versionParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, versionParsed.message));
+    return;
+  }
+  const expectedVersionId = versionParsed.value;
 
   const pool = getPool();
   if (!pool) {
@@ -147,13 +181,7 @@ export async function getClientCatalogProductHandler(req: AccessRequest, res: Re
     }
 
     if (expectedVersionId && expectedVersionId !== meta.versionId) {
-      setNoStore(res);
-      res.status(409).json({
-        code: "CATALOG_VERSION_CHANGED",
-        message: "Каталог обновился после открытия списка. Обновите данные и повторите выбор.",
-        currentVersionId: meta.versionId,
-        importedAt: meta.importedAt,
-      });
+      respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
       return;
     }
 

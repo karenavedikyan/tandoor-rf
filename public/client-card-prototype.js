@@ -142,9 +142,17 @@
       window.ClientBitrix24.mountWorkTab(wrapper, client.guid);
       window.ClientBitrix24.mountClaimsTab(wrapper, client.guid);
     }
-    if (window.ClientCatalog && client.guid) {
+    var catalogMounted = false;
+    function mountCatalogIfNeeded() {
+      if (catalogMounted || !window.ClientCatalog || !client.guid) return;
+      catalogMounted = true;
       window.ClientCatalog.mountShowcaseTab(wrapper, client.guid);
     }
+    var originalSelect = select;
+    select = function (id, focus) {
+      originalSelect(id, focus);
+      if (id === "showcase") mountCatalogIfNeeded();
+    };
   }
   window.ClientCardPrototype = {mount:mount};
 })();

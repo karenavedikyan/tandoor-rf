@@ -8,6 +8,8 @@ import { createApp } from "../../src/server";
 import {
   SYNTHETIC_CLIENT_GUID,
   resolveMockResponse,
+  syntheticCatalogMetaPayload,
+  syntheticCatalogProductsPayload,
   syntheticDetailPayload,
   type MockOptions,
 } from "./helpers/clients-api-mocks";
@@ -18,6 +20,7 @@ const SCREENSHOT_DIR =
 
 function createMockController(page: Page, initial: MockOptions = {}) {
   const options: MockOptions = { role: "admin", ...initial };
+  const state = { listCalls: 0, catalogProductsCalls: 0 };
   let installed = false;
 
   async function install(): Promise<void> {
@@ -25,7 +28,7 @@ function createMockController(page: Page, initial: MockOptions = {}) {
     installed = true;
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      const mock = resolveMockResponse(url, options, { listCalls: 0 }, route.request().method());
+      const mock = resolveMockResponse(url, options, state, route.request().method());
       if (mock) {
         await route.fulfill(mock);
         return;
@@ -39,6 +42,7 @@ function createMockController(page: Page, initial: MockOptions = {}) {
   }
 
   return {
+    state,
     options,
     install,
     set(next: MockOptions) {
@@ -138,6 +142,10 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
     await page.waitForSelector(".pc-catalog-card");
     assert.match(await page.locator(".pc-catalog-note").textContent(), /Группа не найдена в выгрузке/);
     assert.match(await page.locator(".pc-catalog-card__title").textContent(), /Product one/);
+    assert.match(
+      await page.locator(".pc-catalog-image--placeholder").first().textContent(),
+      /Просмотр изображения пока недоступен/,
+    );
 
     await captureScreenshot(page, "clients-catalog-showcase-1440-light.png", { width: 1440, height: 900 }, "light");
     await captureScreenshot(page, "clients-catalog-showcase-390-light.png", { width: 390, height: 844 }, "light");
@@ -145,6 +153,7 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
     await page.locator('[data-catalog-open="p1"]').click();
     await page.waitForSelector(".pc-catalog-detail");
     assert.match(await page.locator(".pc-catalog-detail h2").first().textContent(), /Product one/);
+    assert.doesNotMatch(await page.locator(".pc-catalog-detail").textContent(), /товаров —/);
     assert.match(await page.locator(".pc-catalog-detail .pc-value").first().textContent(), /ghost-group/);
     assert.match(
       await page.locator(".pc-catalog-future").textContent(),
@@ -157,7 +166,105 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
 
     await page.locator("[data-catalog-back]").click();
     await page.waitForSelector(".pc-catalog-grid");
+    assert.match(await page.locator("#pc-catalog-showcase .pc-catalog-meta").textContent(), /Снимок каталога/);
+    assert.doesNotMatch(await page.locator("#pc-catalog-showcase").textContent(), /Каталог не импортирован/);
 
+    await closePage(page, context);
+  });
+
+  it("preserves search, section filter and meta after returning from detail", async () => {
+    const { page, context } = await openPage({ detailBody: syntheticDetailPayload() });
+    await openShowcaseTab(page);
+    await page.fill('[name="q"]', "Product");
+    await page.selectOption('[name="section"]', "s1");
+    await page.click('button[type="submit"].pc-catalog-btn');
+    await page.waitForSelector(".pc-catalog-card");
+    await page.locator('[data-catalog-open="p1"]').click();
+    await page.waitForSelector(".pc-catalog-detail");
+    await page.locator("[data-catalog-back]").click();
+    await page.waitForSelector(".pc-catalog-grid");
+    assert.equal(await page.inputValue('[name="q"]'), "Product");
+    assert.equal(await page.inputValue('[name="section"]'), "s1");
+    assert.match(await page.locator("#pc-catalog-showcase .pc-catalog-meta").textContent(), /Снимок каталога/);
+    assert.ok((await page.locator('select[name="section"] option').count()) >= 2);
+    await closePage(page, context);
+  });
+
+  it("shows version conflict and recovers after refresh", async () => {
+    const metaV1 = {
+      ...syntheticCatalogMetaPayload(),
+      versionId: "11111111-1111-4111-8111-111111111111",
+    };
+    const { page, context, mocks } = await openPage({
+      detailBody: syntheticDetailPayload(),
+      catalogMeta: metaV1,
+      catalogActiveVersionId: "22222222-2222-4222-8222-222222222222",
+    });
+    await openShowcaseTab(page);
+    await page.waitForSelector('.pc-catalog-state--error');
+    assert.match(await page.locator("#pc-catalog-showcase").textContent(), /Каталог обновился/);
+    mocks.set({
+      catalogMeta: {
+        ...metaV1,
+        versionId: "22222222-2222-4222-8222-222222222222",
+        importedAt: "2026-10-01T13:00:00.000Z",
+      },
+      catalogActiveVersionId: "22222222-2222-4222-8222-222222222222",
+    });
+    await page.locator('[data-catalog-action="refresh"]').click();
+    await page.waitForSelector(".pc-catalog-grid");
+    assert.match(await page.locator("#pc-catalog-showcase .pc-catalog-meta").textContent(), /13:00:00/);
+    await closePage(page, context);
+  });
+
+  it("retries list after transient network failure", async () => {
+    const { page, context } = await openPage({
+      detailBody: syntheticDetailPayload(),
+      catalogFailProductsOnce: true,
+    });
+    await openShowcaseTab(page);
+    await page.waitForSelector('.pc-catalog-state--error');
+    assert.match(await page.locator("#pc-catalog-showcase").textContent(), /Не удалось загрузить каталог/);
+    await page.locator('[data-catalog-action="retry-list"]').click();
+    await page.waitForSelector(".pc-catalog-grid");
+    await closePage(page, context);
+  });
+
+  it("ignores stale catalog response after a newer search", async () => {
+    const { page, context } = await openPage({ detailBody: syntheticDetailPayload() });
+    let resolveSlow: ((value: unknown) => void) | null = null;
+    await page.route("**/catalog/products?q=Slow**", async (route) => {
+      await new Promise((resolve) => {
+        resolveSlow = resolve;
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...syntheticCatalogProductsPayload(),
+          query: "Slow",
+          items: [
+            {
+              code: "stale",
+              name: "Stale product must not appear",
+              groupStatus: "found",
+              sectionNames: [],
+              activity: "Y",
+            },
+          ],
+        }),
+      });
+    });
+    await openShowcaseTab(page);
+    await page.fill('[name="q"]', "Slow");
+    await page.click('button[type="submit"].pc-catalog-btn');
+    await page.fill('[name="q"]', "Product");
+    await page.click('button[type="submit"].pc-catalog-btn');
+    await page.waitForSelector(".pc-catalog-card");
+    assert.doesNotMatch(await page.locator(".pc-catalog-grid").textContent(), /Stale product/);
+    resolveSlow?.(null);
+    await page.waitForTimeout(300);
+    assert.doesNotMatch(await page.locator(".pc-catalog-grid").textContent(), /Stale product/);
     await closePage(page, context);
   });
 
@@ -175,7 +282,6 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
       await page.locator("#pc-catalog-showcase").textContent(),
       /Активный снимок каталога не найден/,
     );
-
     await closePage(page, context);
   });
 

@@ -107,6 +107,8 @@
 .pc-catalog-note{color:var(--rf-text-muted);font-size:12px;}
 .pc-catalog-image{display:flex;align-items:center;justify-content:center;min-height:120px;background:var(--rf-surface-muted);border-bottom:1px solid var(--rf-border);color:var(--rf-text-muted);font-size:12px;text-align:center;padding:12px;}
 .pc-catalog-images{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;}
+.pc-catalog-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+.pc-catalog-meta--compact{margin-bottom:12px;}
 .pc-catalog-pagination{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;}
 .pc-catalog-detail__actions{display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:12px;}
 .pc-catalog-future{margin-top:16px;padding:14px 18px;border:1px dashed var(--rf-border);border-radius:7px;background:var(--rf-surface-muted);}

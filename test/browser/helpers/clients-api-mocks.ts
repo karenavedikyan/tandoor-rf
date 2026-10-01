@@ -161,6 +161,9 @@ export type MockOptions = {
   catalogMeta?: Record<string, unknown>;
   catalogProducts?: Record<string, unknown>;
   catalogProductDetail?: Record<string, unknown>;
+  catalogActiveVersionId?: string;
+  catalogProductsStatus?: number;
+  catalogFailProductsOnce?: boolean;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -176,7 +179,10 @@ export function syntheticCatalogMetaPayload() {
     imagePathCount: 1,
     classificationIncomplete: true,
     message: "Часть товаров ссылается на группы, отсутствующие в выгрузке; исходные коды групп сохранены.",
-    sections: [{ code: "s1", name: "Section one" }],
+    sections: [
+      { code: "s1", name: "Section one" },
+      { code: "s2", name: "Section two" },
+    ],
     outletConfirmed: false,
     futureActionsBlockedReason:
       "Подтверждённая торговая точка ещё не подключена: сохранение факта установки и плана будет доступно на этапе R3.3.",
@@ -243,7 +249,7 @@ export function jsonResponse(status: number, body: unknown): {
 export function resolveMockResponse(
   url: URL,
   options: MockOptions,
-  state: { listCalls: number },
+  state: { listCalls: number; catalogProductsCalls: number },
   method = "GET",
 ): { status: number; contentType: string; body: string } | null {
   const path = url.pathname;
@@ -362,12 +368,64 @@ export function resolveMockResponse(
     return jsonResponse(200, options.catalogMeta ?? syntheticCatalogMetaPayload());
   }
 
-  if (path.endsWith("/catalog/products")) {
-    return jsonResponse(200, options.catalogProducts ?? syntheticCatalogProductsPayload());
+  if (path.endsWith("/catalog/products") && !path.match(/\/catalog\/products\/[^/]+$/)) {
+    state.catalogProductsCalls += 1;
+    if (options.catalogFailProductsOnce && state.catalogProductsCalls === 1) {
+      return jsonResponse(503, { error: { code: "SERVICE_UNAVAILABLE", message: "Temporary" } });
+    }
+    if (options.catalogProductsStatus && options.catalogProductsStatus !== 200) {
+      return jsonResponse(
+        options.catalogProductsStatus,
+        options.catalogProducts ?? { error: { message: "Error" } },
+      );
+    }
+    const activeVersionId =
+      options.catalogActiveVersionId ??
+      (options.catalogMeta as { versionId?: string } | undefined)?.versionId ??
+      syntheticCatalogMetaPayload().versionId;
+    const requestedVersionId = url.searchParams.get("versionId");
+    if (requestedVersionId && requestedVersionId !== activeVersionId) {
+      return jsonResponse(409, {
+        code: "CATALOG_VERSION_CHANGED",
+        message: "Каталог обновился после открытия списка. Обновите данные и повторите выбор.",
+        currentVersionId: activeVersionId,
+        importedAt: "2026-10-01T13:00:00.000Z",
+      });
+    }
+    const section = url.searchParams.get("section");
+    const base = structuredClone(options.catalogProducts ?? syntheticCatalogProductsPayload()) as {
+      items: Array<Record<string, unknown>>;
+      total: number;
+      versionId: string;
+      sectionCode: string | null;
+      query: string;
+      page: number;
+    };
+    base.versionId = activeVersionId;
+    base.query = url.searchParams.get("q") ?? "";
+    base.sectionCode = section;
+    base.page = Number(url.searchParams.get("page") ?? "1");
+    if (section === "s2") {
+      base.total = 0;
+      base.items = [];
+    }
+    return jsonResponse(200, base);
   }
 
   const productDetailMatch = path.match(/\/catalog\/products\/([^/]+)$/);
   if (productDetailMatch) {
+    const activeVersionId =
+      options.catalogActiveVersionId ??
+      (options.catalogMeta as { versionId?: string } | undefined)?.versionId ??
+      syntheticCatalogMetaPayload().versionId;
+    const requestedVersionId = url.searchParams.get("versionId");
+    if (requestedVersionId && requestedVersionId !== activeVersionId) {
+      return jsonResponse(409, {
+        code: "CATALOG_VERSION_CHANGED",
+        message: "Каталог обновился после открытия списка. Обновите данные и повторите выбор.",
+        currentVersionId: activeVersionId,
+      });
+    }
     return jsonResponse(200, options.catalogProductDetail ?? syntheticCatalogProductDetailPayload());
   }
 
