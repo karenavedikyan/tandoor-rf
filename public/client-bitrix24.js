@@ -843,5 +843,13 @@
       });
   }
 
-  window.ClientBitrix24 = { mountWorkTab: mountWorkTab, reloadBitrix24Data: reloadBitrix24Data };
+  window.ClientBitrix24 = {
+    mountWorkTab: mountWorkTab,
+    reloadBitrix24Data: reloadBitrix24Data,
+    renderChecklistProgress: renderChecklistProgress,
+    renderResponsibleBlock: renderResponsibleBlock,
+    renderContactAction: renderContactAction,
+    bindContactActions: bindContactActions,
+    esc: esc,
+  };
 })();

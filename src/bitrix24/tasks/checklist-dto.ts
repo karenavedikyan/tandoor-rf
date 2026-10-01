@@ -160,6 +160,8 @@ export async function buildChecklistPublicDto(input: {
   objectGuid: string | null;
   taskCacheVersion: number;
   taskSyncedAt: string;
+  /** Skip building item tree — list views only need progress/state. */
+  listMode?: boolean;
 }): Promise<ChecklistPublicState> {
   const snapshot = await findChecklistSnapshot(input.portalId, input.taskId);
   if (!snapshot) {
@@ -173,8 +175,9 @@ export async function buildChecklistPublicDto(input: {
     input.taskCacheVersion,
     input.taskSyncedAt,
   );
-  const publicTree = freshness === "ready"
-    ? await buildPublicTree(input.portalId, snapshot.itemsJson)
-    : [];
+  const publicTree =
+    freshness === "ready" && !input.listMode
+      ? await buildPublicTree(input.portalId, snapshot.itemsJson)
+      : [];
   return mapSnapshotToPublic(snapshot, publicTree, freshness);
 }

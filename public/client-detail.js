@@ -239,6 +239,28 @@
     window.ClientCardPrototype.mount(detailRoot, client);
     sections.initCollapsibles(detailRoot);
     detailEl.classList.remove("clients-hidden");
+    applyWorkDeepLink(detailRoot);
+  }
+
+  function applyWorkDeepLink(root) {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("tab") !== "work") {
+      return;
+    }
+    var tabBtn = root.querySelector('[data-card-tab="work"]');
+    if (tabBtn && tabBtn.getAttribute("aria-selected") !== "true") {
+      tabBtn.click();
+    }
+    var taskId = params.get("task");
+    if (!taskId) {
+      return;
+    }
+    window.setTimeout(function () {
+      var row = root.querySelector('.pc-bitrix24-task[data-task-id="' + taskId + '"]');
+      if (row) {
+        row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }, 600);
   }
 
   function showState(title, text, onRetry) {

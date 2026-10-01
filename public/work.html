@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Моя работа — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
+    <link rel="stylesheet" href="/brand/legacy-shell.css" />
+    <link rel="stylesheet" href="/clients.css" />
+    <link rel="stylesheet" href="/client-card-prototype.css" />
+    <link rel="stylesheet" href="/work.css" />
+  </head>
+  <body class="legacy-body">
+    <div class="legacy-app">
+      <div id="workspace-sidebar"></div>
+      <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
+      <div class="legacy-frame">
+        <div id="workspace-topbar"></div>
+        <main class="legacy-content">
+          <header class="clients-page-header work-page-header">
+            <h1 class="clients-page-title">Моя работа</h1>
+            <p class="clients-subtitle">
+              Единая очередь поручений по доступным клиентам. Данные из кэша ЛК; для обновления из Bitrix24 откройте карточку клиента.
+            </p>
+          </header>
+
+          <div id="access-panel" class="clients-hidden" role="alert"></div>
+          <div id="init-panel" class="clients-hidden" role="alert"></div>
+          <div id="state-panel" class="clients-hidden" role="alert"></div>
+
+          <div id="work-app" class="clients-hidden">
+            <div class="work-meta" id="work-meta" aria-live="polite"></div>
+
+            <div class="work-group-chips" id="work-group-chips" role="toolbar" aria-label="Группы сроков"></div>
+
+            <div class="clients-toolbar work-toolbar">
+              <label class="clients-field">
+                <span class="clients-field__label">Поиск</span>
+                <input
+                  id="work-search"
+                  class="clients-field__input"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Название задачи или клиента"
+                />
+              </label>
+              <div class="clients-toolbar__row clients-toolbar__row--filters">
+                <label class="clients-field">
+                  <span class="clients-field__label">Клиент</span>
+                  <select id="work-client-filter" class="clients-field__select">
+                    <option value="">Все клиенты</option>
+                  </select>
+                </label>
+                <label class="clients-field">
+                  <span class="clients-field__label">Ответственный</span>
+                  <select id="work-responsible-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <label class="clients-field">
+                  <span class="clients-field__label">Статус</span>
+                  <select id="work-status-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <button type="button" class="workspace-button workspace-button--secondary" id="work-reset-filters">
+                  Сбросить
+                </button>
+              </div>
+            </div>
+
+            <div class="work-toolbar-secondary">
+              <button type="button" class="pc-link" id="work-refresh-cache" data-testid="work-refresh-cache">
+                Обновить данные ЛК
+              </button>
+              <span class="workspace-status" id="work-refresh-status" role="status" aria-live="polite"></span>
+            </div>
+
+            <div id="work-list" class="work-list" aria-live="polite"></div>
+            <nav id="work-pagination" class="clients-pagination" aria-label="Страницы списка"></nav>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script src="/common.js" defer></script>
+    <script src="/client-detail-sections.js" defer></script>
+    <script src="/brand/shell-icons.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
+    <script src="/client-bitrix24.js" defer></script>
+    <script src="/work.js" defer></script>
+  </body>
+</html>
