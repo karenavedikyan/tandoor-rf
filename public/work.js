@@ -216,7 +216,7 @@
     if (current && !hasCurrent) {
       var key = pinnedFilterKey(select.id);
       var pinned = key ? state.pinnedFilters[key] : null;
-      var label = pinned && pinned.id === current ? pinned.name : "Выбранный фильтр";
+      var label = "Выбранный фильтр (нет доступных результатов)";
       html +=
         '<option value="' +
         esc(current) +
@@ -356,6 +356,7 @@
   }
 
   function clearAuthorizedQueueState() {
+    activeLoadSeq = ++loadSeq;
     state.lastBody = null;
     state.pinnedFilters = {
       clientGuid: null,
@@ -366,6 +367,12 @@
     chipsEl.innerHTML = "";
     paginationEl.innerHTML = "";
     listEl.innerHTML = "";
+    clientFilter.innerHTML = '<option value="">Все клиенты</option>';
+    responsibleFilter.innerHTML = '<option value="">Все</option>';
+    statusFilter.innerHTML = '<option value="">Все</option>';
+    state.clientGuid = "";
+    state.responsibleBitrixUserId = "";
+    state.statusLabel = "";
   }
 
   function isAccessDeniedPayload(data) {
@@ -384,12 +391,16 @@
           clearAuthorizedQueueState();
           showAccess("forbidden");
         },
+        onAccessChanged: function () {
+          clearAuthorizedQueueState();
+          return loadQueue();
+        },
       });
     }
     if (bitrix && bitrix.bindContactActions) {
       bitrix.bindContactActions(listEl, null, appEl, {
         onSaved: function () {
-          loadQueue();
+          return loadQueue();
         },
       });
     }
@@ -476,6 +487,7 @@
           return { ok: true, stale: true };
         }
         if (result.response.status === 401) {
+          clearAuthorizedQueueState();
           window.location.replace("/login");
           return { ok: false, status: 401 };
         }

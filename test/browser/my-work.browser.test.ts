@@ -316,6 +316,14 @@ describe("my work browser", { concurrency: false }, () => {
         path: path.join(SCREENSHOT_DIR, `my-work-interactive-${width}.png`),
         fullPage: true,
       });
+      assert.equal(await page.evaluate(() =>
+        document.documentElement.scrollWidth <= window.innerWidth), true);
+      await page.locator("[data-theme-toggle]").click();
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `my-work-dark-${width}.png`),
+        fullPage: true,
+      });
       await context.close();
     }
   });
@@ -364,6 +372,8 @@ describe("my work browser", { concurrency: false }, () => {
     await page.waitForSelector("#access-panel:not(.clients-hidden)");
     assert.equal(await page.locator(".work-row").count(), 0);
     assert.equal(await page.locator(".work-chip").count(), 0);
+    assert.equal(await page.locator("#work-client-filter option").count(), 1);
+    assert.equal(await page.locator("#work-responsible-filter option").count(), 1);
 
     state.denyAccess = false;
     state.emptyResponsibleOptions = false;
@@ -383,5 +393,42 @@ describe("my work browser", { concurrency: false }, () => {
     assert.equal(await page.locator(".pc-bitrix24-checklist-block").count(), 0);
 
     await context.close();
+  });
+
+  it("does not restore a removed or downgraded task after lazy access changes and failed reload", async () => {
+    for (const mode of ["missing", "summary", "404"] as const) {
+      const state: MockState = {
+        deadlineGroup: "", page: 1, contactMarked: true, contactComment: "Private note",
+        checklistExpanded: true, checklistMode: "ready", delayedMs: 0,
+        failRefresh: false, denyAccess: false, emptyResponsibleOptions: false,
+        contactSaveDelayMs: 0, contactSaveCount: 0,
+      };
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: baseUrl });
+      const page = await context.newPage();
+      await installWorkMocks(page, state);
+      await page.goto("/work");
+      await page.waitForSelector(".work-row");
+      await page.route(`**/api/clients/${CLIENT_ONE}/bitrix24/tasks`, async (route) => {
+        state.failRefresh = true;
+        await route.fulfill({
+          status: mode === "404" ? 404 : 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            state: "ready",
+            tasks: mode === "summary"
+              ? [{ taskId: "91001", accessLevel: "summary", briefText: "Allowed brief" }]
+              : [],
+          }),
+        });
+      });
+      await page.locator(".pc-bitrix24-checklist--lazy summary").click();
+      await page.waitForSelector("#state-panel:not(.clients-hidden)");
+      assert.equal(await page.locator(".work-row").count(), 0);
+      assert.equal(await page.locator(".pc-bitrix24-contact").count(), 0);
+      assert.equal(await page.locator(".pc-bitrix24-checklist-block").count(), 0);
+      assert.doesNotMatch(await page.locator("#work-list").innerText(), /Подготовить отгрузку|Private note/);
+      assert.equal(await page.locator("#work-client-filter option").count(), 1);
+      await context.close();
+    }
   });
 });

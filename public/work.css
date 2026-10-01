@@ -136,6 +136,23 @@
   margin-top: 0.5rem;
 }
 
+.work-page .clients-pagination__btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  color: var(--rf-text);
+  cursor: pointer;
+}
+
+.work-page .clients-pagination__btn.is-active {
+  border-color: var(--rf-primary-hover);
+  color: var(--rf-primary-hover);
+  font-weight: 600;
+}
+
 @media (max-width: 767px) {
   .work-page .legacy-content {
     padding: 20px 16px;

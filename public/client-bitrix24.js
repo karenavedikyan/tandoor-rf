@@ -223,19 +223,7 @@
     var actions = row.querySelector(".work-row__actions");
     var block = row.querySelector(".pc-bitrix24-checklist-block");
     if (!task) {
-      if (block) {
-        block.remove();
-      }
-      if (actions) {
-        actions.querySelectorAll('a[href*="bitrix24"], a.pc-link[target="_blank"]').forEach(function (link) {
-          if (/Bitrix24/i.test(link.textContent || "")) {
-            link.remove();
-          }
-        });
-      }
-      if (metaDeadline) {
-        metaDeadline.textContent = "Срок: недоступен";
-      }
+      row.remove();
       return;
     }
     if (task.accessLevel === "summary") {
@@ -248,6 +236,10 @@
       if (block) {
         block.remove();
       }
+      row.classList.remove("work-row--overdue");
+      row.querySelectorAll(".pc-bitrix24-overdue, .pc-bitrix24-contact").forEach(function (node) {
+        node.remove();
+      });
       if (actions) {
         actions.querySelectorAll('a[href*="bitrix24"], a.pc-link[target="_blank"]').forEach(function (link) {
           if (/Bitrix24/i.test(link.textContent || "")) {
@@ -300,6 +292,9 @@
         });
       }
       function loadChecklistItems() {
+        if (details.classList.contains("pc-bitrix24-checklist--pending")) {
+          return;
+        }
         var clientGuid = block.getAttribute("data-client-guid");
         var taskId = block.getAttribute("data-task-id");
         if (!clientGuid || !taskId || !api) {
@@ -317,12 +312,22 @@
             "/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/tasks",
           )
           .then(function (result) {
-            if (Number(block.dataset.loadSeq) !== seq) {
+            if (!block.isConnected || Number(block.dataset.loadSeq) !== seq) {
               return;
             }
             var row = block.closest(".work-row");
             if (result.response.status === 401) {
+              if (typeof options.onAccessDenied === "function") {
+                options.onAccessDenied();
+              }
               window.location.replace("/login");
+              return;
+            }
+            if (result.response.status === 404) {
+              syncWorkRowTaskAccess(row, null);
+              if (typeof options.onAccessChanged === "function") {
+                options.onAccessChanged();
+              }
               return;
             }
             if (result.response.status === 403) {
@@ -343,16 +348,22 @@
             });
             if (!task) {
               syncWorkRowTaskAccess(row, null);
+              if (typeof options.onAccessChanged === "function") {
+                options.onAccessChanged();
+              }
               return;
             }
             if (task.accessLevel !== "full") {
               syncWorkRowTaskAccess(row, task);
+              if (typeof options.onAccessChanged === "function") {
+                options.onAccessChanged();
+              }
               return;
             }
             applyChecklistBlockState(block, task.checklist || null);
           })
           .catch(function () {
-            if (Number(block.dataset.loadSeq) !== seq) {
+            if (!block.isConnected || Number(block.dataset.loadSeq) !== seq) {
               return;
             }
             applyChecklistBlockState(block, null, {
@@ -804,7 +815,7 @@
       typeof options.onSaved === "function"
         ? options.onSaved
         : function () {
-            reloadBitrix24Data(root, clientGuid);
+            return reloadBitrix24Data(root, clientGuid);
           };
     container.querySelectorAll(".pc-bitrix24-contact").forEach(function (block) {
       var taskId = block.getAttribute("data-task-id");
