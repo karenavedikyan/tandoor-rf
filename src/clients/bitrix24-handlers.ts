@@ -30,6 +30,7 @@ import {
   listPublishedTasksForObject,
 } from "../bitrix24/tasks/repository";
 import {
+  buildClaimTaskWorkDto,
   buildFullTaskWorkDto,
   buildSummaryTaskWorkDto,
   parseContactActionBody,
@@ -478,6 +479,132 @@ export async function getClientBitrix24TasksHandler(
       buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1", "1"),
     ),
     tasks: visible,
+  });
+}
+
+export async function getClientBitrix24ClaimsHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!isValidUuidParam(cardGuid)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
+    return;
+  }
+  const context = req.accessContext!;
+  const allowed = await canViewClientCard(context, cardGuid);
+  if (!allowed) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const target = await resolveTaskTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
+    return;
+  }
+
+  const loaded = loadBitrix24Config();
+  if (!loaded.ok) {
+    setNoStore(res);
+    res.status(200).json({
+      state: "not_configured",
+      message: "Bitrix24 integration is not configured.",
+      claims: [],
+      count: 0,
+      sync: null,
+    });
+    return;
+  }
+
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!isCachePublishAllowed(runtime)) {
+    setNoStore(res);
+    res.status(200).json({
+      state: "cache_not_published",
+      message: "Кэш задач Битрикс24 не опубликован.",
+      claims: [],
+      count: 0,
+      sync: null,
+    });
+    return;
+  }
+
+  const employeeLink = await findEmployeePortalLink(context.userId, loaded.config.portalId);
+  const userConfigDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
+  const syncEntry = employeeLink
+    ? await findLatestSyncJournalEntry(loaded.config.portalId, employeeLink.bitrixUserId)
+    : null;
+
+  const queryObjectType = target.objectType;
+  const queryObjectGuid =
+    queryObjectType === "holding" ? target.holdingGuid : target.objectGuid;
+  const rows = await listPublishedTasksForObject(
+    loaded.config.portalId,
+    queryObjectType,
+    queryObjectGuid,
+  );
+
+  const claims: Record<string, unknown>[] = [];
+  const actorDisplayName = req.authUser?.fullName ?? "Сотрудник";
+
+  for (const row of rows) {
+    if (!row.objectType || !row.objectGuid) {
+      continue;
+    }
+    const objectAllowed = await canReadBoundBitrixObject(
+      context,
+      cardGuid,
+      row.objectType,
+      row.objectGuid,
+    );
+    if (!objectAllowed) {
+      continue;
+    }
+    const claimDto = await buildClaimTaskWorkDto({
+      context,
+      portalId: loaded.config.portalId,
+      cardGuid,
+      task: row,
+      actorDisplayName,
+    });
+    if (claimDto) {
+      claims.push(claimDto);
+    }
+  }
+
+  let state = "ready";
+  let message: string | null = null;
+  if (claims.length === 0) {
+    if (userConfigDeny) {
+      state = mapDenyCodeToState(userConfigDeny);
+      message =
+        userConfigDeny === "ACCESS_EXPIRED" || userConfigDeny === "LINK_UNVERIFIED"
+          ? "Данные рекламаций устарели. Требуется повторная синхронизация."
+          : "Доступ к рекламациям недоступен.";
+    } else {
+      state = "empty";
+      message = "Опубликованные рекламации по этому клиенту не найдены.";
+    }
+  }
+
+  setNoStore(res);
+  res.status(200).json({
+    state,
+    message,
+    count: claims.length,
+    sync: syncEntry
+      ? {
+          lastFinishedAt: syncEntry.finishedAt,
+          lastFinishedAtLabel: formatDisplayDate(syncEntry.finishedAt),
+          lastStatus: syncEntry.status,
+          partial: syncEntry.status === "partial",
+        }
+      : null,
+    claims,
   });
 }
 

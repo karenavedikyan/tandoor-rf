@@ -518,6 +518,49 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
+  it("shows claims tab with published summary at 375px", async () => {
+    const { page, context, mocks } = await openPage();
+    await page.setViewportSize({ width: 375, height: 844 });
+    await mocks.set({
+      bitrix24Label: { token: "#LK_H_000123" },
+      bitrix24Tasks: { state: "ready", tasks: [] },
+      bitrix24Claims: {
+        state: "ready",
+        count: 1,
+        sync: { lastFinishedAtLabel: "30.09.2026, 12:00", lastStatus: "success", partial: false },
+        claims: [
+          {
+            taskId: "9001",
+            accessLevel: "summary",
+            briefText: "Рекламация принята. Ожидаем поставку 15 октября.",
+            publishedAtLabel: "30.09.2026, 11:00",
+            cacheSyncedAtLabel: "30.09.2026, 12:00",
+            responsible: { state: "confirmed", displayName: "Иванов Иван" },
+            contactAction: { canMark: true, canRevoke: false, marked: false },
+          },
+        ],
+      },
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.waitForSelector("#pc-panel-overview");
+    await page.click('[data-card-tab="claims"]');
+    await page.waitForSelector("#pc-panel-claims .pc-bitrix24-claim");
+    assert.match(
+      await page.locator("#pc-panel-claims .pc-bitrix24-claim__text").textContent(),
+      /Рекламация принята/,
+    );
+    assert.equal(
+      (await page.locator('[data-stat-claims]').textContent())?.trim(),
+      "1",
+    );
+    assert.equal(
+      (await page.locator("#pc-panel-claims").textContent())?.includes("Поставка оборудования"),
+      false,
+    );
+    await captureScreenshot(page, "clients-claims-375-light.png", { width: 375, height: 844 }, "light");
+    await closePage(page, context);
+  });
+
   it("shows matching checklist progress in overview and collapsible work details", async () => {
     const checklist = {
       state: "ready",
@@ -866,7 +909,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.waitForSelector("#pc-panel-overview");
     assert.equal(await page.locator('[role="tab"]').count(), 9);
-    assert.equal(await page.locator(".pc-number").allTextContents().then(x => x.join("")), "————");
+    assert.equal(await page.locator(".pc-number").allTextContents().then(x => x.join("")), "———0");
     await page.click('[data-card-open="data"]');
     assert.ok(await page.locator("#pc-panel-data").isVisible());
     await page.keyboard.press("ArrowRight");

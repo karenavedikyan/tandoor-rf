@@ -357,6 +357,7 @@ async function syncTaskBatch(
           resolvePortalAddresses: options.resolvePortalAddresses,
           env,
           operation,
+          syncExecutorUserId: options.context.userId,
           assertTaskScope: async (task) => {
             const deny = await verifyManualSyncSource(
               options.context.userId,

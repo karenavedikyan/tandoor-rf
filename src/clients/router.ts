@@ -7,6 +7,7 @@ import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
 import { requireDatabaseReady } from "../middleware/database";
 import {
+  getClientBitrix24ClaimsHandler,
   getClientBitrix24LabelHandler,
   getClientBitrix24TasksHandler,
   postClientBitrix24LabelHandler,
@@ -52,6 +53,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/:guid/bitrix24/tasks", ...readChain, (req, res, next) => {
     void getClientBitrix24TasksHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/bitrix24/claims", ...readChain, (req, res, next) => {
+    void getClientBitrix24ClaimsHandler(req, res).catch(next);
   });
 
   router.post("/:guid/bitrix24/sync", csrfProtection, ...readChain, (req, res, next) => {

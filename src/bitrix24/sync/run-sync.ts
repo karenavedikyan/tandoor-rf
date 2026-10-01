@@ -27,6 +27,7 @@ import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
 import type { PoolClient } from "pg";
 import type { Bitrix24OperationContext, Bitrix24WebhookConfig } from "../types";
+import { syncOrkPublicationFromDescription } from "../claims/ork-publication-sync";
 
 export type Bitrix24SyncOptions = {
   bitrixUserId: string;
@@ -43,6 +44,8 @@ export type Bitrix24SyncOptions = {
   testHooks?: {
     failBeforeChecklistWrite?: boolean;
   };
+  /** LK user executing sync; used as technical executor for #орк publications. */
+  syncExecutorUserId?: string;
 };
 
 export type Bitrix24SyncResult = {
@@ -71,6 +74,7 @@ type PreparedTaskWrite = {
   statusLabel: string;
   deadline: string | null;
   changedAt: string;
+  description: string | null;
   descriptionHash: string;
   published: boolean;
   objectType: Bitrix24ObjectType | null;
@@ -325,6 +329,7 @@ export async function runBitrix24TaskSync(
       statusLabel: task.statusLabel,
       deadline: task.deadline,
       changedAt: task.changedAt ?? "",
+      description: task.description ?? null,
       descriptionHash: hashDescription(task.description),
       published: publishAllowed,
       objectType,
@@ -391,17 +396,50 @@ export async function runBitrix24TaskSync(
             );
           }
 
-          if (
-            writeResult.cacheUpdated &&
-            !writeResult.versionConflict &&
-            writeResult.cacheVersion !== undefined &&
-            writeResult.syncedAt
-          ) {
-            acceptedWrites.push({
-              ...prepared,
-              cacheVersion: writeResult.cacheVersion,
-              syncedAt: writeResult.syncedAt,
-            });
+          if (writeResult.cacheUpdated && !writeResult.versionConflict) {
+            let cacheVersion = writeResult.cacheVersion;
+            let syncedAt = writeResult.syncedAt;
+            if (cacheVersion === undefined || syncedAt === undefined) {
+              const metaRow = await taskClient.query<{
+                cache_version: number;
+                synced_at: Date;
+              }>(
+                `SELECT cache_version, synced_at
+                 FROM bitrix24_task_cache
+                 WHERE portal_id = $1 AND task_id = $2`,
+                [config.portalId, prepared.taskId],
+              );
+              const meta = metaRow.rows[0];
+              if (meta) {
+                cacheVersion = Number(meta.cache_version);
+                syncedAt = meta.synced_at.toISOString();
+              }
+            }
+            if (options.syncExecutorUserId && cacheVersion !== undefined && syncedAt) {
+              await syncOrkPublicationFromDescription(
+                {
+                  portalId: config.portalId,
+                  taskId: prepared.taskId,
+                  objectType: prepared.objectType,
+                  objectGuid: prepared.objectGuid,
+                  bindingStatus: prepared.bindingStatus,
+                  description:
+                    readResult.data.tasks.find((entry) => entry.taskId === prepared.taskId)
+                      ?.description ?? prepared.description,
+                  taskCacheVersion: cacheVersion,
+                  syncExecutorUserId: options.syncExecutorUserId,
+                  publishAllowed,
+                },
+                taskClient,
+              );
+            }
+            if (cacheVersion !== undefined && syncedAt) {
+              acceptedWrites.push({
+                ...prepared,
+                cacheVersion,
+                syncedAt,
+              });
+            }
           }
 
           await taskClient.query("COMMIT");
