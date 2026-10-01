@@ -299,11 +299,19 @@ async function insertRejectedRunJournal(
     managed,
     `
       INSERT INTO onec_catalog_import_runs
-        (status, mode, trigger_source, manifest_sha256, source_byte_size, finished_at, error_code, report)
-      VALUES ('failed', 'apply', $1, $2, $3, NOW(), $4, $5::jsonb)
+        (status, mode, trigger_source, manifest_sha256, source_byte_size, import_profile,
+         distribution_ready, finished_at, error_code, report)
+      VALUES ('failed', 'apply', $1, $2, $3, $4, FALSE, NOW(), $5, $6::jsonb)
       RETURNING id
     `,
-    [triggerSource, data.manifest.manifestSha256, data.manifest.totalByteSize, errorCode, JSON.stringify(report)],
+    [
+      triggerSource,
+      data.manifest.manifestSha256,
+      data.manifest.totalByteSize,
+      data.profile,
+      errorCode,
+      JSON.stringify(report),
+    ],
   );
   return runInsert.rows[0]?.id;
 }

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
+import { applyCatalogImport } from "../../src/onec-catalog/apply";
+import { parseCatalogSet } from "../../src/onec-catalog/parse-catalog-set";
 import { runCatalogImport } from "../../src/onec-catalog/run-import";
+import { validateCatalogSet } from "../../src/onec-catalog/validate-catalog-set";
 import { resetPoolForTests } from "../../src/db/pool";
 import {
   buildMinimalCatalogXmlSet,
@@ -11,6 +14,20 @@ import {
   manifestFromXmlSet,
 } from "../helpers/onec-catalog-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
+
+async function validatedDistributionCatalogFromXmlSet(
+  xmlSet: ReturnType<typeof buildMinimalDistributionXmlSet>,
+) {
+  const entries = catalogDistributionEntriesFromXmlSet(xmlSet);
+  const parsed = await parseCatalogSet(
+    entries.map((file) => ({ relativePath: file.relativePath, bytes: file.bytes })),
+    "distribution",
+  );
+  assert.equal(parsed.ok, true);
+  const validated = validateCatalogSet(parsed.data!, { profile: "distribution" });
+  assert.equal(validated.ok, true);
+  return validated.data!;
+}
 
 describe("onec catalog distribution profile integration", { concurrency: false }, () => {
   let databaseUrl = "";
@@ -150,6 +167,65 @@ describe("onec catalog distribution profile integration", { concurrency: false }
     });
     assert.equal(dryRun.status, "VALIDATION_FAILED");
     assert.ok(dryRun.errors?.some((issue) => issue.code === "MISSING_GROUP"));
+  });
+
+  it("records import_profile on rejected distribution apply without changing catalog", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const initial = await validatedDistributionCatalogFromXmlSet(buildMinimalDistributionXmlSet());
+    const first = await applyCatalogImport(databaseUrl, initial);
+    assert.equal(first.ok, true);
+
+    const activeBefore = await pool.query<{ active_version_id: string | null }>(
+      "SELECT active_version_id FROM onec_catalog_state WHERE id = 1",
+    );
+    const productsBefore = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_catalog_products",
+    );
+
+    await pool.query(
+      `UPDATE onec_catalog_state
+       SET apply_blocked = TRUE, apply_blocked_reason = 'operator hold'
+       WHERE id = 1`,
+    );
+
+    const xmlSet = buildMinimalDistributionXmlSet();
+    xmlSet["catalog/products/data.xml"] = xmlSet["catalog/products/data.xml"].replace(
+      "Product one",
+      "Product one updated",
+    );
+    const changed = await validatedDistributionCatalogFromXmlSet(xmlSet);
+    const blocked = await applyCatalogImport(databaseUrl, changed);
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) {
+      assert.equal(blocked.code, "APPLY_BLOCKED");
+      assert.ok(blocked.runId);
+    }
+
+    const rejected = await pool.query<{
+      import_profile: string;
+      distribution_ready: boolean;
+      error_code: string;
+      status: string;
+    }>(
+      `SELECT import_profile, distribution_ready, error_code, status
+       FROM onec_catalog_import_runs
+       WHERE id = $1::uuid`,
+      [blocked.ok ? null : blocked.runId],
+    );
+    assert.equal(rejected.rows[0]?.status, "failed");
+    assert.equal(rejected.rows[0]?.import_profile, "distribution");
+    assert.equal(rejected.rows[0]?.distribution_ready, false);
+    assert.equal(rejected.rows[0]?.error_code, "APPLY_BLOCKED");
+
+    const activeAfter = await pool.query<{ active_version_id: string | null }>(
+      "SELECT active_version_id FROM onec_catalog_state WHERE id = 1",
+    );
+    const productsAfter = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_catalog_products",
+    );
+    assert.equal(activeAfter.rows[0]?.active_version_id, activeBefore.rows[0]?.active_version_id);
+    assert.equal(productsAfter.rows[0]?.count, productsBefore.rows[0]?.count);
+    await pool.end();
   });
 
   it("distribution and full manifests for overlapping files are not interchangeable", async () => {

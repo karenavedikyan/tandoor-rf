@@ -131,6 +131,22 @@ describe("onec catalog apply safety", { concurrency: false }, () => {
     assert.equal(blocked.ok, false);
     if (!blocked.ok) {
       assert.equal(blocked.code, "APPLY_BLOCKED");
+      assert.ok(blocked.runId);
+      const rejected = await pool.query<{
+        import_profile: string;
+        distribution_ready: boolean;
+        error_code: string;
+        status: string;
+      }>(
+        `SELECT import_profile, distribution_ready, error_code, status
+         FROM onec_catalog_import_runs
+         WHERE id = $1::uuid`,
+        [blocked.runId],
+      );
+      assert.equal(rejected.rows[0]?.status, "failed");
+      assert.equal(rejected.rows[0]?.import_profile, "full");
+      assert.equal(rejected.rows[0]?.distribution_ready, false);
+      assert.equal(rejected.rows[0]?.error_code, "APPLY_BLOCKED");
     }
 
     const activeAfter = await pool.query<{ active_version_id: string | null }>(
