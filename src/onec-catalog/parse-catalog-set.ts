@@ -89,6 +89,16 @@ function trackDrift(
   });
 }
 
+function assertDirectParent(
+  parent: string | undefined,
+  allowedParents: string[],
+  errorCode: string,
+): void {
+  if (!parent || !allowedParents.includes(parent)) {
+    throw new Error(`INVALID_STRUCTURE:${errorCode}:${parent ?? "none"}`);
+  }
+}
+
 function trackUnknownAttributes(
   warnings: SchemaDriftWarning[],
   file: CatalogRelativeFile,
@@ -115,6 +125,7 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
 }> {
   const rows: ParsedCatalogGroup[] = [];
   const seen = new Set<string>();
+  const elementStack: string[] = [];
   let current: ParsedCatalogGroup | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/groups/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/groups/data.xml"] },
@@ -122,10 +133,12 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
       onOpenTag: (name, attrs) => {
         if (!KNOWN_ELEMENTS["catalog/groups/data.xml"]!.has(name) && name !== "Группы") {
           trackDrift(warnings, "catalog/groups/data.xml", name);
+          elementStack.push(name);
           return;
         }
-        if (name !== "Группа") return;
-        trackUnknownAttributes(warnings, "catalog/groups/data.xml", name, attrs);
+        if (name === "Группа") {
+          assertDirectParent(elementStack[elementStack.length - 1], ["Группы"], "nested_group");
+          trackUnknownAttributes(warnings, "catalog/groups/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         if (!code) {
           throw new Error("INVALID_RECORD:group:missing_code");
@@ -134,16 +147,19 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
           throw new Error(`DUPLICATE_KEY:group:${code}`);
         }
         seen.add(code);
-        current = {
-          code,
-          parentCode: normalizeParentCode(attrs["Родитель"]),
-        };
+          current = {
+            code,
+            parentCode: normalizeParentCode(attrs["Родитель"]),
+          };
+        }
+        elementStack.push(name);
       },
       onCloseTag: (name) => {
         if (name === "Группа" && current) {
           rows.push(current);
           current = null;
         }
+        elementStack.pop();
       },
     },
   );
@@ -157,6 +173,7 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogSection[] = [];
   const seen = new Set<string>();
+  const elementStack: string[] = [];
   let current: ParsedCatalogSection | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/section/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/section/data.xml"] },
@@ -164,10 +181,12 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
       onOpenTag: (name, attrs) => {
         if (!KNOWN_ELEMENTS["catalog/section/data.xml"]!.has(name) && name !== "Разделы") {
           trackDrift(warnings, "catalog/section/data.xml", name);
+          elementStack.push(name);
           return;
         }
-        if (name !== "Раздел") return;
-        trackUnknownAttributes(warnings, "catalog/section/data.xml", name, attrs);
+        if (name === "Раздел") {
+          assertDirectParent(elementStack[elementStack.length - 1], ["Разделы"], "nested_section");
+          trackUnknownAttributes(warnings, "catalog/section/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         const title = attrs["Название"]?.trim() ?? "";
         if (!code) {
@@ -180,17 +199,20 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           throw new Error(`DUPLICATE_KEY:section:${code}`);
         }
         seen.add(code);
-        current = {
-          code,
-          name: title,
-          parentCode: normalizeParentCode(attrs["КодРодителя"]),
-        };
+          current = {
+            code,
+            name: title,
+            parentCode: normalizeParentCode(attrs["КодРодителя"]),
+          };
+        }
+        elementStack.push(name);
       },
       onCloseTag: (name) => {
         if (name === "Раздел" && current) {
           rows.push(current);
           current = null;
         }
+        elementStack.pop();
       },
     },
   );
@@ -204,6 +226,7 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogStorage[] = [];
   const seen = new Set<string>();
+  const elementStack: string[] = [];
   let current: ParsedCatalogStorage | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/storage/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/storage/data.xml"] },
@@ -211,10 +234,12 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
       onOpenTag: (name, attrs) => {
         if (!KNOWN_ELEMENTS["catalog/storage/data.xml"]!.has(name) && name !== "Склады") {
           trackDrift(warnings, "catalog/storage/data.xml", name);
+          elementStack.push(name);
           return;
         }
-        if (name !== "Склад") return;
-        trackUnknownAttributes(warnings, "catalog/storage/data.xml", name, attrs);
+        if (name === "Склад") {
+          assertDirectParent(elementStack[elementStack.length - 1], ["Склады"], "nested_storage");
+          trackUnknownAttributes(warnings, "catalog/storage/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         if (!code) {
           throw new Error("INVALID_RECORD:storage:missing_code");
@@ -223,19 +248,22 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           throw new Error(`DUPLICATE_KEY:storage:${code}`);
         }
         seen.add(code);
-        current = {
-          code,
-          name: attrs["Название"]?.trim() ?? "",
-          address: attrs["Адрес"]?.trim() ?? "",
-          email: attrs["Email"]?.trim() ?? "",
-          phone: attrs["Телефон"]?.trim() ?? "",
-        };
+          current = {
+            code,
+            name: attrs["Название"]?.trim() ?? "",
+            address: attrs["Адрес"]?.trim() ?? "",
+            email: attrs["Email"]?.trim() ?? "",
+            phone: attrs["Телефон"]?.trim() ?? "",
+          };
+        }
+        elementStack.push(name);
       },
       onCloseTag: (name) => {
         if (name === "Склад" && current) {
           rows.push(current);
           current = null;
         }
+        elementStack.pop();
       },
     },
   );
@@ -249,6 +277,7 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
 }> {
   const rows: ParsedCatalogPriceType[] = [];
   const seen = new Set<string>();
+  const elementStack: string[] = [];
   let current: ParsedCatalogPriceType | null = null;
   const parsed = await parseXmlBufferSafely(
     {
@@ -260,10 +289,12 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
       onOpenTag: (name, attrs) => {
         if (!KNOWN_ELEMENTS["catalog/types_prices/data.xml"]!.has(name) && name !== "ТипыЦен") {
           trackDrift(warnings, "catalog/types_prices/data.xml", name);
+          elementStack.push(name);
           return;
         }
-        if (name !== "ТипЦены") return;
-        trackUnknownAttributes(warnings, "catalog/types_prices/data.xml", name, attrs);
+        if (name === "ТипЦены") {
+          assertDirectParent(elementStack[elementStack.length - 1], ["ТипыЦен"], "nested_price_type");
+          trackUnknownAttributes(warnings, "catalog/types_prices/data.xml", name, attrs);
         const code = attrs["КодЦены"]?.trim();
         if (!code) {
           throw new Error("INVALID_RECORD:price_type:missing_code");
@@ -272,13 +303,16 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
           throw new Error(`DUPLICATE_KEY:price_type:${code}`);
         }
         seen.add(code);
-        current = { priceTypeCode: code, name: attrs["Название"]?.trim() ?? "" };
+          current = { priceTypeCode: code, name: attrs["Название"]?.trim() ?? "" };
+        }
+        elementStack.push(name);
       },
       onCloseTag: (name) => {
         if (name === "ТипЦены" && current) {
           rows.push(current);
           current = null;
         }
+        elementStack.pop();
       },
     },
   );
@@ -292,6 +326,7 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogProduct[] = [];
   const seen = new Set<string>();
+  const elementStack: string[] = [];
   let current: ParsedCatalogProduct | null = null;
   let inProperties = false;
   let inImages = false;
@@ -301,11 +336,14 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
     { bytes, file: "catalog/products/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/products/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
+        const parent = elementStack[elementStack.length - 1];
         if (!KNOWN_ELEMENTS["catalog/products/data.xml"]!.has(name) && name !== "Товары") {
           trackDrift(warnings, "catalog/products/data.xml", name);
+          elementStack.push(name);
           return;
         }
         if (name === "Товар") {
+          assertDirectParent(parent, ["Товары"], "nested_product");
           trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
           const code = attrs["Код"]?.trim();
           if (!code) {
@@ -332,15 +370,25 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           inProperties = false;
           inImages = false;
           inSections = false;
-          return;
-        }
-        if (!current) return;
-        if (name === "Свойства") inProperties = true;
-        if (name === "Картинки") inImages = true;
-        if (name === "Разделы") inSections = true;
-        if (name === "Свойство" && inProperties) {
+        } else if (name === "Свойства") {
+          assertDirectParent(parent, ["Товар"], "properties_parent");
+          inProperties = true;
+        } else if (name === "Картинки") {
+          assertDirectParent(parent, ["Товар"], "images_parent");
+          inImages = true;
+        } else if (name === "Разделы") {
+          assertDirectParent(parent, ["Товар"], "sections_parent");
+          inSections = true;
+        } else if (name === "Свойство") {
+          if (!inProperties) {
+            throw new Error("INVALID_STRUCTURE:property_outside_properties");
+          }
+          assertDirectParent(parent, ["Свойства"], "property_parent");
           trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
           const propCode = attrs["Код"]?.trim() ?? "";
+          if (!current) {
+            throw new Error("INVALID_STRUCTURE:property_without_product");
+          }
           if (!propCode) {
             throw new Error(`INVALID_PROPERTY:missing_code:${current.code}`);
           }
@@ -352,24 +400,35 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           const existing = propertyIndex.get(propCode);
           if (existing) {
             if (existing.name === prop.name && existing.value === prop.value) {
+              elementStack.push(name);
               return;
             }
-            throw new Error(`CONFLICTING_PROPERTY:product:${current.code}:${propCode}`);
+            throw new Error(`CONFLICTING_PROPERTY:product:${current!.code}:${propCode}`);
           }
           propertyIndex.set(propCode, prop);
-          current.properties.push(prop);
-        }
-        if (name === "Раздел" && inSections) {
+          current!.properties.push(prop);
+        } else if (name === "Раздел") {
+          if (!inSections) {
+            throw new Error("INVALID_STRUCTURE:section_outside_sections");
+          }
+          if (!current) {
+            throw new Error("INVALID_STRUCTURE:section_without_product");
+          }
+          assertDirectParent(parent, ["Разделы"], "product_section_parent");
           trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
           const sectionCode = attrs["Код"]?.trim();
           if (!sectionCode) {
             throw new Error(`INVALID_SECTION_REF:product:${current.code}`);
           }
-          if (current.sectionCodes.includes(sectionCode)) {
+          if (current!.sectionCodes.includes(sectionCode)) {
+            elementStack.push(name);
             return;
           }
-          current.sectionCodes.push(sectionCode);
+          current!.sectionCodes.push(sectionCode);
+        } else if (name === "Картинка") {
+          assertDirectParent(parent, ["Картинки"], "image_parent");
         }
+        elementStack.push(name);
       },
       onText: (text) => {
         if (!current) return;
@@ -385,6 +444,7 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
         if (name === "Свойства") inProperties = false;
         if (name === "Картинки") inImages = false;
         if (name === "Разделы") inSections = false;
+        elementStack.pop();
       },
     },
   );
@@ -399,24 +459,30 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogPrice[] = [];
+  const elementStack: string[] = [];
   let current: MutablePriceRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/prices/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/prices/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
+        const parent = elementStack[elementStack.length - 1];
         if (!KNOWN_ELEMENTS["catalog/prices/data.xml"]!.has(name) && name !== "Цены") {
           trackDrift(warnings, "catalog/prices/data.xml", name);
+          elementStack.push(name);
           return;
         }
-        if (name !== "ЦенаТовара") return;
-        trackUnknownAttributes(warnings, "catalog/prices/data.xml", name, attrs);
-        current = {
+        if (name === "ЦенаТовара") {
+          assertDirectParent(parent, ["Цены"], "price_row_parent");
+          trackUnknownAttributes(warnings, "catalog/prices/data.xml", name, attrs);
+          current = {
           priceTypeCode: attrs["КодЦены"]?.trim() ?? "",
           productCode: attrs["КодТовара"]?.trim() ?? "",
           priceRaw: "",
-          _attrs: attrs,
-          _text: "",
-        };
+            _attrs: attrs,
+            _text: "",
+          };
+        }
+        elementStack.push(name);
       },
       onText: (text) => {
         if (current && text) current._text += text;
@@ -434,6 +500,7 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
           });
           current = null;
         }
+        elementStack.pop();
       },
     },
   );
@@ -448,26 +515,31 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockLine[] = [];
+  const elementStack: string[] = [];
   let productCode = "";
   let currentStorage: MutableStockRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/stock/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/stock/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
+        const parent = elementStack[elementStack.length - 1];
         if (!KNOWN_ELEMENTS["catalog/stock/data.xml"]!.has(name) && name !== "ОстаткиСклада") {
           trackDrift(warnings, "catalog/stock/data.xml", name);
+          elementStack.push(name);
           return;
         }
         if (name === "Остаток") {
+          assertDirectParent(parent, ["ОстаткиСклада"], "stock_product_parent");
           trackUnknownAttributes(warnings, "catalog/stock/data.xml", name, attrs);
           const code = attrs["Код"]?.trim() ?? "";
           if (!code) {
             throw new Error("INVALID_RECORD:stock:missing_product_code");
           }
           productCode = code;
-          return;
-        }
-        if (name === "Склад" && productCode) {
+        } else if (name === "Склады") {
+          assertDirectParent(parent, ["Остаток"], "stock_storages_parent");
+        } else if (name === "Склад") {
+          assertDirectParent(parent, ["Склады"], "stock_storage_parent");
           trackUnknownAttributes(warnings, "catalog/stock/data.xml", name, attrs);
           currentStorage = {
             productCode,
@@ -477,6 +549,7 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
             _text: "",
           };
         }
+        elementStack.push(name);
       },
       onText: (text) => {
         if (currentStorage && text) currentStorage._text += text;
@@ -495,6 +568,7 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
+        elementStack.pop();
       },
     },
   );
@@ -512,6 +586,7 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockExpectedLine[] = [];
+  const elementStack: string[] = [];
   let productCode = "";
   let currentStorage: MutableStockExpectedRow | null = null;
   const parsed = await parseXmlBufferSafely(
@@ -522,23 +597,27 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
     },
     {
       onOpenTag: (name, attrs) => {
+        const parent = elementStack[elementStack.length - 1];
         if (
           !KNOWN_ELEMENTS["catalog/stock_expected/data.xml"]!.has(name) &&
           name !== "ОжидаемыеОстаткиСклада"
         ) {
           trackDrift(warnings, "catalog/stock_expected/data.xml", name);
+          elementStack.push(name);
           return;
         }
         if (name === "Остаток") {
+          assertDirectParent(parent, ["ОжидаемыеОстаткиСклада"], "stock_expected_product_parent");
           trackUnknownAttributes(warnings, "catalog/stock_expected/data.xml", name, attrs);
           const code = attrs["Код"]?.trim() ?? "";
           if (!code) {
             throw new Error("INVALID_RECORD:stock_expected:missing_product_code");
           }
           productCode = code;
-          return;
-        }
-        if (name === "Склад" && productCode) {
+        } else if (name === "Склады") {
+          assertDirectParent(parent, ["Остаток"], "stock_expected_storages_parent");
+        } else if (name === "Склад") {
+          assertDirectParent(parent, ["Склады"], "stock_expected_storage_parent");
           trackUnknownAttributes(warnings, "catalog/stock_expected/data.xml", name, attrs);
           currentStorage = {
             productCode,
@@ -550,6 +629,7 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
             _text: "",
           };
         }
+        elementStack.push(name);
       },
       onText: (text) => {
         if (currentStorage && text) currentStorage._text += text;
@@ -572,6 +652,7 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
+        elementStack.pop();
       },
     },
   );
@@ -593,6 +674,9 @@ function mapThrownIssue(error: unknown, file: CatalogRelativeFile): ValidationIs
       message: "Ambiguous attribute and text values for the same scalar field.",
       file,
     };
+  }
+  if (message.startsWith("INVALID_STRUCTURE:")) {
+    return { code: "INVALID_STRUCTURE", message: "Invalid XML nesting for catalog elements.", file };
   }
   if (
     message.startsWith("INVALID_PRODUCT:") ||

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
 import { applyCatalogImport, clearCatalogApplyBlockForOperator } from "../../src/onec-catalog/apply";
+import { IMPORT_ADVISORY_LOCK_KEY } from "../../src/onec-catalog/constants";
 import { parseCatalogSet } from "../../src/onec-catalog/parse-catalog-set";
 import { validateCatalogSet } from "../../src/onec-catalog/validate-catalog-set";
 import { resetPoolForTests } from "../../src/db/pool";
 import {
+  buildHighPropertyCountProductsXml,
   buildMinimalCatalogXmlSet,
   catalogEntriesFromXmlSet,
   manifestFromXmlSet,
@@ -137,7 +139,7 @@ describe("onec catalog apply safety", { concurrency: false }, () => {
     assert.equal(activeAfter.rows[0]?.active_version_id, activeBefore.rows[0]?.active_version_id);
   });
 
-  it("blocks further apply after commit response loss until operator clears block", async () => {
+  it("blocks further apply after commit response loss before COMMIT is sent", async () => {
     const dataA = await validatedCatalogFromXmlSet(buildMinimalCatalogXmlSet());
     await applyCatalogImport(databaseUrl, dataA);
 
@@ -180,6 +182,95 @@ describe("onec catalog apply safety", { concurrency: false }, () => {
     assert.equal(recovered.ok, true);
   });
 
+  it("returns success after COMMIT when the response is lost", async () => {
+    const dataA = await validatedCatalogFromXmlSet(buildMinimalCatalogXmlSet());
+    const first = await applyCatalogImport(databaseUrl, dataA);
+    assert.equal(first.ok, true);
+
+    const xmlSetB = buildMinimalCatalogXmlSet();
+    xmlSetB["catalog/products/data.xml"] = xmlSetB["catalog/products/data.xml"].replace(
+      "Product two",
+      "Product two revised",
+    );
+    const dataB = await validatedCatalogFromXmlSet(xmlSetB);
+
+    const result = await applyCatalogImport(databaseUrl, dataB, {
+      testHooks: { failAfterCommit: true },
+    });
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.ok(result.runId);
+      assert.ok(result.versionId);
+      assert.equal(result.newProducts, 0);
+      assert.equal(result.changedProducts, 1);
+      assert.ok(result.cleanupWarning);
+    }
+
+    const journal = await pool.query<{ core_applied: boolean; status: string }>(
+      `SELECT core_applied, status FROM onec_catalog_import_runs WHERE id = $1::uuid`,
+      [result.ok ? result.runId : null],
+    );
+    assert.equal(journal.rows[0]?.core_applied, true);
+    assert.ok(journal.rows[0]?.status === "success" || journal.rows[0]?.status === "partial");
+
+    const active = await pool.query<{ manifest_sha256: string; is_active: boolean }>(
+      `SELECT manifest_sha256, is_active FROM onec_catalog_versions WHERE id = $1::uuid`,
+      [result.ok ? result.versionId : null],
+    );
+    assert.equal(active.rows[0]?.is_active, true);
+    assert.equal(active.rows[0]?.manifest_sha256, dataB.manifest.manifestSha256);
+  });
+
+  it("blocks the next apply when a previous run is still running and recovery is unavailable", async () => {
+    const data = await validatedCatalogFromXmlSet(buildMinimalCatalogXmlSet());
+    await applyCatalogImport(databaseUrl, data);
+
+    const xmlSetB = buildMinimalCatalogXmlSet();
+    xmlSetB["catalog/products/data.xml"] = xmlSetB["catalog/products/data.xml"].replace(
+      "Product one",
+      "Product one changed",
+    );
+    const dataB = await validatedCatalogFromXmlSet(xmlSetB);
+
+    await applyCatalogImport(databaseUrl, dataB, {
+      testHooks: { failCommit: true, failRecovery: true },
+    });
+
+    await pool.query(
+      `UPDATE onec_catalog_state SET apply_blocked = FALSE, apply_blocked_reason = NULL WHERE id = 1`,
+    );
+
+    const running = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM onec_catalog_import_runs WHERE status = 'running'`,
+    );
+    assert.ok(Number(running.rows[0]?.count) >= 1);
+
+    const blocked = await applyCatalogImport(databaseUrl, dataB);
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) {
+      assert.equal(blocked.code, "APPLY_BLOCKED");
+    }
+  });
+
+  it("returns IMPORT_LOCKED for concurrent apply attempts", async () => {
+    const data = await validatedCatalogFromXmlSet(buildMinimalCatalogXmlSet());
+    const locker = await pool.connect();
+    try {
+      await locker.query("SELECT pg_advisory_lock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+      const blocked = await applyCatalogImport(databaseUrl, data);
+      assert.equal(blocked.ok, false);
+      if (!blocked.ok) {
+        assert.equal(blocked.code, "IMPORT_LOCKED");
+      }
+    } finally {
+      await locker.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
+      locker.release();
+    }
+
+    const applied = await applyCatalogImport(databaseUrl, data);
+    assert.equal(applied.ok, true);
+  });
+
   it("detects conflicting duplicate product properties before apply", async () => {
     const xmlSet = buildMinimalCatalogXmlSet();
     xmlSet["catalog/products/data.xml"] = xmlSet["catalog/products/data.xml"].replace(
@@ -196,4 +287,47 @@ describe("onec catalog apply safety", { concurrency: false }, () => {
       assert.ok(parsed.issues.some((issue) => issue.code === "CONFLICTING_PROPERTY"));
     }
   });
+
+  it("rejects nested product XML instead of silently dropping the outer product", async () => {
+    const xmlSet = buildMinimalCatalogXmlSet();
+    xmlSet["catalog/products/data.xml"] = `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="outer">
+    <Товар Код="p2" Группа="g1" Активность="Y" Название="inner"/>
+  </Товар>
+</Товары>`;
+    const entries = catalogEntriesFromXmlSet(xmlSet);
+    const parsed = await parseCatalogSet(
+      entries.map((file) => ({ relativePath: file.relativePath, bytes: file.bytes })),
+    );
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) {
+      assert.ok(parsed.issues.some((issue) => issue.code === "INVALID_STRUCTURE"));
+    }
+  });
+
+  it(
+    "applies a catalog with on the order of 107k product properties via batch insert",
+    { timeout: 600_000 },
+    async () => {
+      const xmlSet = buildMinimalCatalogXmlSet();
+      xmlSet["catalog/products/data.xml"] = buildHighPropertyCountProductsXml(1079, 100);
+      const startedAt = Date.now();
+      const data = await validatedCatalogFromXmlSet(xmlSet);
+      assert.equal(data.products.length, 1079);
+      const propertyCount = data.products.reduce((sum, product) => sum + product.properties.length, 0);
+      assert.equal(propertyCount, 107_900);
+
+      const applied = await applyCatalogImport(databaseUrl, data);
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(applied.ok, true);
+
+      const stored = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM onec_catalog_product_properties`,
+      );
+      assert.equal(stored.rows[0]?.count, "107900");
+
+      assert.ok(elapsedMs < 600_000, `apply took ${elapsedMs}ms`);
+    },
+  );
 });

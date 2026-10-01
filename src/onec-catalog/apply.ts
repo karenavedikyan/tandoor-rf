@@ -12,8 +12,13 @@ import {
 import {
   blockCatalogApply,
   clearCatalogApplyBlock,
+  ensureCatalogApplyBlockedFresh,
+  findUnresolvedRunningCatalogImport,
   loadCatalogState,
+  loadRecoveredApplySuccessFresh,
+  markUnresolvedRunningImportFailed,
   parseCommitUncertainRunId,
+  parseUnresolvedRunId,
   resolveCatalogCommitUncertainFresh,
   resolveCatalogCommitUncertainOutcome,
 } from "./catalog-state";
@@ -56,9 +61,14 @@ export type CatalogApplyResult =
     };
 
 export type CatalogApplyTestHooks = {
+  /** Simulates connection loss before COMMIT is sent. */
   failCommit?: boolean;
+  /** Simulates connection loss after COMMIT succeeded. */
+  failAfterCommit?: boolean;
   failJournalUpdate?: boolean;
   failRelease?: boolean;
+  /** Forces fresh-connection recovery to fail (fail-closed must still block via journal). */
+  failRecovery?: boolean;
   onClientReady?: (client: PoolClient) => void;
 };
 
@@ -90,13 +100,15 @@ type ManagedClient = {
   removeErrorListener: () => void;
 };
 
+type ApplySuccessPayload = Omit<Extract<CatalogApplyResult, { ok: true }>, "ok">;
+
 type ApplyPhaseState = {
   lockHeld: boolean;
   runId?: string;
   commitAttempted: boolean;
   commitConfirmed: boolean;
   versionId?: string;
-  outcome?: CatalogApplyResult;
+  successPayload?: ApplySuccessPayload;
 };
 
 function managePoolClient(client: PoolClient): ManagedClient {
@@ -294,28 +306,18 @@ async function insertRejectedRunJournal(
   return runInsert.rows[0]?.id;
 }
 
+function successFromPayload(
+  payload: ApplySuccessPayload,
+  cleanupWarning?: string,
+): Extract<CatalogApplyResult, { ok: true }> {
+  return { ok: true, ...payload, cleanupWarning };
+}
+
 async function recoverFromCommitUncertainty(
-  managed: ManagedClient | undefined,
   phase: ApplyPhaseState,
   databaseUrl: string,
-  successPayload?: Omit<Extract<CatalogApplyResult, { ok: true }>, "ok">,
+  options: CatalogApplyOptions,
 ): Promise<CatalogApplyResult> {
-  if (managed && !managed.faulted()) {
-    try {
-      await managed.client.query("ROLLBACK");
-    } catch {
-      // Best-effort rollback when commit confirmation was lost.
-    }
-    if (phase.lockHeld) {
-      try {
-        await managed.client.query("SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
-        phase.lockHeld = false;
-      } catch {
-        // Fresh recovery acquires the shared lock on a healthy connection.
-      }
-    }
-  }
-
   if (!phase.runId) {
     return {
       ok: false,
@@ -325,21 +327,59 @@ async function recoverFromCommitUncertainty(
     };
   }
 
+  const blockReason = `COMMIT_UNCERTAIN for run ${phase.runId}`;
+  if (options.testHooks?.failRecovery) {
+    await ensureCatalogApplyBlockedFresh(databaseUrl, blockReason);
+    return {
+      ok: false,
+      code: "COMMIT_UNCERTAIN",
+      message:
+        "Catalog apply commit outcome is unknown; recovery is unavailable and further apply is blocked.",
+      runId: phase.runId,
+    };
+  }
+
   try {
     const resolution = await resolveCatalogCommitUncertainFresh(databaseUrl, phase.runId);
-    if (resolution === "committed" && successPayload) {
-      return { ok: true, ...successPayload };
+    if (resolution === "committed") {
+      if (phase.successPayload) {
+        return successFromPayload(
+          phase.successPayload,
+          "Catalog import committed successfully but the connection failed during confirmation; outcome was verified by runId.",
+        );
+      }
+      const recovered = await loadRecoveredApplySuccessFresh(databaseUrl, phase.runId);
+      if (recovered) {
+        return successFromPayload({
+          runId: recovered.runId,
+          versionId: recovered.versionId,
+          coreApplied: true,
+          commercialReady: false,
+          quarantineCount: recovered.quarantineCount,
+          newProducts: recovered.newProducts,
+          changedProducts: recovered.changedProducts,
+          missingFromSnapshot: 0,
+        });
+      }
+    }
+    if (resolution === "still_uncertain") {
+      await ensureCatalogApplyBlockedFresh(databaseUrl, blockReason);
+      return {
+        ok: false,
+        code: "COMMIT_UNCERTAIN",
+        message:
+          "Catalog apply commit outcome is unknown; further apply is blocked until resolved.",
+        runId: phase.runId,
+      };
     }
     return {
       ok: false,
-      code: resolution === "still_uncertain" ? "COMMIT_UNCERTAIN" : "DATABASE_ERROR",
-      message:
-        resolution === "still_uncertain"
-          ? "Catalog apply commit outcome is unknown; further apply is blocked until resolved."
-          : "Catalog apply failed.",
+      code: "DATABASE_ERROR",
+      message: "Catalog apply failed.",
       runId: phase.runId,
     };
   } catch {
+    await ensureCatalogApplyBlockedFresh(databaseUrl, blockReason);
     return {
       ok: false,
       code: "COMMIT_UNCERTAIN",
@@ -348,6 +388,46 @@ async function recoverFromCommitUncertainty(
       runId: phase.runId,
     };
   }
+}
+
+async function gateUnresolvedRunningImport(
+  managed: ManagedClient,
+  databaseUrl: string,
+  data: ParsedCatalogSet,
+  triggerSource: "manual" | "operator_job",
+  readAt: string | undefined,
+): Promise<CatalogApplyResult | null> {
+  let runningRunId = await findUnresolvedRunningCatalogImport(managed.client);
+  if (!runningRunId) return null;
+
+  const resolution = await resolveCatalogCommitUncertainOutcome(managed.client, runningRunId);
+  if (resolution === "not_committed") {
+    await markUnresolvedRunningImportFailed(managed.client, runningRunId, "DATABASE_ERROR");
+    runningRunId = await findUnresolvedRunningCatalogImport(managed.client);
+    if (!runningRunId) return null;
+  } else if (resolution === "committed") {
+    runningRunId = await findUnresolvedRunningCatalogImport(managed.client);
+    if (!runningRunId) return null;
+  }
+
+  const blockReason = `UNRESOLVED_RUN for run ${runningRunId}`;
+  await blockCatalogApply(managed.client, blockReason).catch(async () => {
+    await ensureCatalogApplyBlockedFresh(databaseUrl, blockReason);
+  });
+
+  const rejectRunId = await insertRejectedRunJournal(
+    managed,
+    data,
+    "STALE_RUNNING_IMPORT",
+    triggerSource,
+    readAt,
+  );
+  return {
+    ok: false,
+    code: "APPLY_BLOCKED",
+    message: `Catalog apply blocked: unresolved import run ${runningRunId} must be verified or cleared first.`,
+    runId: rejectRunId,
+  };
 }
 
 export async function applyCatalogImport(
@@ -377,9 +457,20 @@ export async function applyCatalogImport(
     }
     phase.lockHeld = true;
 
+    const staleRun = await gateUnresolvedRunningImport(
+      managed,
+      databaseUrl,
+      data,
+      triggerSource,
+      options.readAt,
+    );
+    if (staleRun) return staleRun;
+
     const state = await loadCatalogState(managed.client);
     if (state.apply_blocked) {
-      const uncertainRunId = parseCommitUncertainRunId(state.apply_blocked_reason);
+      const uncertainRunId =
+        parseCommitUncertainRunId(state.apply_blocked_reason) ??
+        parseUnresolvedRunId(state.apply_blocked_reason);
       if (uncertainRunId) {
         const resolution = await resolveCatalogCommitUncertainOutcome(managed.client, uncertainRunId);
         if (resolution === "still_uncertain") {
@@ -660,8 +751,21 @@ export async function applyCatalogImport(
       counts: data.counts,
       quarantineCount,
       quarantineReasonCounts: data.counts.quarantineReasonCounts ?? {},
+      newProducts,
+      changedProducts,
       commercialReady: false,
       coreApplied: true,
+    };
+
+    phase.successPayload = {
+      runId: phase.runId!,
+      versionId,
+      coreApplied: true,
+      commercialReady: false,
+      quarantineCount,
+      newProducts,
+      changedProducts,
+      missingFromSnapshot: 0,
     };
 
     if (options.testHooks?.failJournalUpdate) {
@@ -698,44 +802,27 @@ export async function applyCatalogImport(
     }
     await queryManaged(managed, "COMMIT");
     phase.commitConfirmed = true;
+    if (options.testHooks?.failAfterCommit) {
+      throw new CatalogConnectionFault();
+    }
 
-    return {
-      ok: true,
-      runId: phase.runId!,
-      versionId,
-      coreApplied: true,
-      commercialReady: false,
-      quarantineCount,
-      newProducts,
-      changedProducts,
-      missingFromSnapshot: 0,
-    };
+    return successFromPayload(phase.successPayload!);
   } catch {
-    if (phase.commitConfirmed && phase.runId && phase.versionId) {
-      return {
-        ok: true,
-        runId: phase.runId,
-        versionId: phase.versionId,
-        coreApplied: true,
-        commercialReady: false,
-        quarantineCount: data.counts.quarantine,
-        newProducts: 0,
-        changedProducts: 0,
-        missingFromSnapshot: 0,
-        cleanupWarning:
-          "Catalog import committed successfully but cleanup failed afterward; verify the import run journal.",
-      };
+    if (phase.commitConfirmed && phase.successPayload) {
+      return successFromPayload(
+        phase.successPayload,
+        "Catalog import committed successfully but cleanup failed afterward; verify the import run journal.",
+      );
     }
     if (phase.commitAttempted && !phase.commitConfirmed && phase.runId) {
-      try {
-        await blockCatalogApply(
-          managed!.client,
-          `COMMIT_UNCERTAIN for run ${phase.runId}`,
-        );
-      } catch {
-        // Fresh recovery will attempt to persist the block.
+      if (managed && !managed.faulted()) {
+        try {
+          await managed.client.query("ROLLBACK");
+        } catch {
+          // Rollback is best-effort when commit confirmation was lost.
+        }
       }
-      return recoverFromCommitUncertainty(managed, phase, databaseUrl);
+      return recoverFromCommitUncertainty(phase, databaseUrl, options);
     }
 
     if (managed && !managed.faulted()) {
@@ -762,7 +849,9 @@ export async function applyCatalogImport(
 
     return { ok: false, code: "DATABASE_ERROR", message: "Catalog apply failed.", runId: phase.runId };
   } finally {
-    if (phase.lockHeld && managed) {
+    const lockHeld = phase.lockHeld;
+    phase.lockHeld = false;
+    if (lockHeld && managed && !managed.faulted()) {
       try {
         if (options.testHooks?.failRelease) {
           throw new Error("Simulated lock release failure.");
@@ -776,14 +865,16 @@ export async function applyCatalogImport(
       managed.removeErrorListener();
       if (ownsClient) {
         try {
-          managed.client.release(phase.lockHeld === false && managed.faulted());
+          managed.client.release(managed.faulted());
         } catch {
-          managed.client.release(true);
+          // Connection already destroyed.
         }
       }
     }
+    managed = undefined;
     if (ownsPool && pool) {
       await pool.end().catch(() => undefined);
+      pool = undefined;
     }
   }
 }

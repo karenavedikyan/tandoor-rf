@@ -73,6 +73,27 @@ export function catalogEntriesFromXmlSet(
   );
 }
 
+/** ~107k properties across many products for apply batch-write regression. */
+export function buildHighPropertyCountProductsXml(
+  productCount = 1079,
+  propertiesPerProduct = 100,
+): string {
+  const chunks: string[] = [`<?xml version="1.0" encoding="UTF-8"?><Товары>`];
+  for (let productIndex = 0; productIndex < productCount; productIndex += 1) {
+    chunks.push(
+      `<Товар Код="bulk-p${productIndex}" Группа="g1" Активность="Y" Название="Bulk product ${productIndex}"><Свойства>`,
+    );
+    for (let propertyIndex = 0; propertyIndex < propertiesPerProduct; propertyIndex += 1) {
+      chunks.push(
+        `<Свойство Код="prop-${propertyIndex}" Название="Property ${propertyIndex}" Значение="V${productIndex}-${propertyIndex}"/>`,
+      );
+    }
+    chunks.push(`</Свойства></Товар>`);
+  }
+  chunks.push(`</Товары>`);
+  return chunks.join("");
+}
+
 export function buildLargeProductsXml(targetBytes: number): string {
   const header = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><Товары>`, "utf8");
   const footer = Buffer.from(`</Товары>`, "utf8");
