@@ -1,5 +1,5 @@
 import type { AccessContext } from "../../access/types";
-import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "./config";
+import { isCachePublishAllowed, isPilotTaskFilterActive, loadBitrix24TasksRuntimeConfig } from "./config";
 import { findEmployeePortalLink, type TaskBindingRow, type TaskCacheRow } from "./repository";
 
 type TaskWorkRow = TaskCacheRow & Partial<TaskBindingRow>;
@@ -46,10 +46,10 @@ export async function canViewBitrixTaskSummaryForUser(
   if (!isCachePublishAllowed(runtime) || !task.published) {
     return false;
   }
-  if (runtime.pilotAllowListRequired && runtime.pilotTaskIds.size === 0) {
+  if (isPilotTaskFilterActive(runtime) && runtime.pilotTaskIds.size === 0) {
     return false;
   }
-  if (runtime.pilotTaskIds.size > 0 && !runtime.pilotTaskIds.has(task.taskId)) {
+  if (isPilotTaskFilterActive(runtime) && !runtime.pilotTaskIds.has(task.taskId)) {
     return false;
   }
   const cache = await canViewPublishedTaskCacheForUser(context, portalId, task);

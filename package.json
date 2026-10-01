@@ -27,6 +27,8 @@
     "bitrix24-sync:local": "node --env-file=.env dist/cli/bitrix24-sync.js",
     "bitrix24-diagnostics": "node dist/cli/bitrix24-diagnostics.js",
     "bitrix24-diagnostics:local": "node --env-file=.env dist/cli/bitrix24-diagnostics.js",
+    "bitrix24-labels-bootstrap": "node dist/cli/bitrix24-labels-bootstrap.js",
+    "bitrix24-labels-bootstrap:local": "node --env-file=.env dist/cli/bitrix24-labels-bootstrap.js",
     "test": "node --import tsx --test test/server.test.ts test/unit/**/*.test.ts",
     "test:browser": "node --import tsx --test --test-concurrency=1 test/browser/**/*.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",

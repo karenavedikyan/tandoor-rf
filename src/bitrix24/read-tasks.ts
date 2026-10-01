@@ -114,12 +114,16 @@ export async function readBitrixTasksForUser(
       break;
     }
 
+    const filter: Record<string, unknown> = { RESPONSIBLE_ID: parsedId };
+    if (taskId) {
+      filter.ID = taskId;
+    }
     const transport = await callBitrix24Method(
       config,
       "tasks.task.list",
       {
         order: { CHANGED_DATE: "desc" },
-        filter: { RESPONSIBLE_ID: parsedId, ...(taskId ? { ID: taskId } : {}) },
+        filter,
         select: [...TASK_SELECT_FIELDS],
         start,
       },
@@ -166,6 +170,10 @@ export async function readBitrixTasksForUser(
         return { ok: false, code: "PILOT_SCOPE_MISMATCH", message: "Pilot response does not match the requested task and employee." };
       }
       if (!normalized) {
+        rejectedTaskCount += 1;
+        continue;
+      }
+      if (!taskId && normalized.responsibleId !== parsedId) {
         rejectedTaskCount += 1;
         continue;
       }

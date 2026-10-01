@@ -266,6 +266,86 @@ export async function restoreRevokedLabel(
   }
 }
 
+export async function issueLabelOnClient(
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  actorUserId: string | null,
+  client: PoolClient,
+): Promise<LabelIssueTransactionResult> {
+  const existing = await findActiveLabel(objectType, objectGuid, client);
+  if (existing) {
+    return { ...existing, created: false };
+  }
+
+  const revoked = await findLatestRevokedLabel(objectType, objectGuid, client);
+  if (revoked) {
+    throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
+  }
+
+  const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
+  if (!confirmed) {
+    throw new LabelRepositoryError("OBJECT_NOT_CONFIRMED", "OBJECT_NOT_CONFIRMED");
+  }
+
+  const seq = await client.query<{ next_value: number; exhausted: boolean }>(
+    `SELECT next_value, exhausted FROM bitrix24_label_sequences
+     WHERE object_type = $1::bitrix24_object_type
+     FOR UPDATE`,
+    [objectType],
+  );
+  const nextValue = seq.rows[0]?.next_value;
+  const exhausted = seq.rows[0]?.exhausted ?? false;
+  if (!nextValue || exhausted || nextValue > 999999) {
+    throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
+  }
+  const labelCode = formatLabelCode(objectType, nextValue);
+
+  const inserted = await client.query<{
+    id: string;
+    issued_at: Date;
+  }>(
+    `INSERT INTO bitrix24_object_labels (object_type, object_guid, label_code)
+     VALUES ($1::bitrix24_object_type, $2::uuid, $3)
+     ON CONFLICT (object_type, object_guid) WHERE revoked_at IS NULL DO NOTHING
+     RETURNING id, issued_at`,
+    [objectType, objectGuid, labelCode],
+  );
+
+  if ((inserted.rowCount ?? 0) === 0) {
+    const raced = await findActiveLabel(objectType, objectGuid, client);
+    if (!raced) {
+      throw new LabelRepositoryError("LABEL_ISSUE_RACE", "LABEL_ISSUE_RACE");
+    }
+    return { ...raced, created: false };
+  }
+
+  if (nextValue === 999999) {
+    await client.query(
+      `UPDATE bitrix24_label_sequences
+       SET exhausted = TRUE
+       WHERE object_type = $1::bitrix24_object_type`,
+      [objectType],
+    );
+  } else {
+    await client.query(
+      `UPDATE bitrix24_label_sequences
+       SET next_value = next_value + 1
+       WHERE object_type = $1::bitrix24_object_type`,
+      [objectType],
+    );
+  }
+  await recordLabelAudit("issue", objectType, objectGuid, labelCode, actorUserId, null, client);
+  const row = inserted.rows[0]!;
+  return {
+    id: row.id,
+    objectType,
+    objectGuid,
+    labelCode,
+    issuedAt: row.issued_at.toISOString(),
+    created: true,
+  };
+}
+
 export async function issueLabelInTransaction(
   objectType: Bitrix24ObjectType,
   objectGuid: string,
@@ -275,82 +355,9 @@ export async function issueLabelInTransaction(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-
-    const existing = await findActiveLabel(objectType, objectGuid, client);
-    if (existing) {
-      await client.query("COMMIT");
-      return { ...existing, created: false };
-    }
-
-    const revoked = await findLatestRevokedLabel(objectType, objectGuid, client);
-    if (revoked) {
-      throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
-    }
-
-    const confirmed = await isObjectConfirmed(objectType, objectGuid, client);
-    if (!confirmed) {
-      throw new LabelRepositoryError("OBJECT_NOT_CONFIRMED", "OBJECT_NOT_CONFIRMED");
-    }
-
-    const seq = await client.query<{ next_value: number; exhausted: boolean }>(
-      `SELECT next_value, exhausted FROM bitrix24_label_sequences
-       WHERE object_type = $1::bitrix24_object_type
-       FOR UPDATE`,
-      [objectType],
-    );
-    const nextValue = seq.rows[0]?.next_value;
-    const exhausted = seq.rows[0]?.exhausted ?? false;
-    if (!nextValue || exhausted || nextValue > 999999) {
-      throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
-    }
-    const labelCode = formatLabelCode(objectType, nextValue);
-
-    const inserted = await client.query<{
-      id: string;
-      issued_at: Date;
-    }>(
-      `INSERT INTO bitrix24_object_labels (object_type, object_guid, label_code)
-       VALUES ($1::bitrix24_object_type, $2::uuid, $3)
-       ON CONFLICT (object_type, object_guid) WHERE revoked_at IS NULL DO NOTHING
-       RETURNING id, issued_at`,
-      [objectType, objectGuid, labelCode],
-    );
-
-    if ((inserted.rowCount ?? 0) === 0) {
-      const raced = await findActiveLabel(objectType, objectGuid, client);
-      if (!raced) {
-        throw new LabelRepositoryError("LABEL_ISSUE_RACE", "LABEL_ISSUE_RACE");
-      }
-      await client.query("COMMIT");
-      return { ...raced, created: false };
-    }
-
-    if (nextValue === 999999) {
-      await client.query(
-        `UPDATE bitrix24_label_sequences
-         SET exhausted = TRUE
-         WHERE object_type = $1::bitrix24_object_type`,
-        [objectType],
-      );
-    } else {
-      await client.query(
-        `UPDATE bitrix24_label_sequences
-         SET next_value = next_value + 1
-         WHERE object_type = $1::bitrix24_object_type`,
-        [objectType],
-      );
-    }
-    await recordLabelAudit("issue", objectType, objectGuid, labelCode, actorUserId, null, client);
+    const issued = await issueLabelOnClient(objectType, objectGuid, actorUserId, client);
     await client.query("COMMIT");
-    const row = inserted.rows[0]!;
-    return {
-      id: row.id,
-      objectType,
-      objectGuid,
-      labelCode,
-      issuedAt: row.issued_at.toISOString(),
-      created: true,
-    };
+    return issued;
   } catch (error) {
     await client.query("ROLLBACK");
     if (error instanceof LabelRepositoryError) {

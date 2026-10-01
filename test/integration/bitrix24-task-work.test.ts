@@ -601,9 +601,9 @@ describe("bitrix24 task work integration", { concurrency: false }, () => {
       const portalId = sampleWebhookConfig().portalId;
       await upsertEmployeePortalLink({ userId: admin.rows[0].id, portalId, bitrixUserId: "42" });
       assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "confirmed");
-      await pool.query("UPDATE bitrix24_employee_portal_links SET confirmed_at = NOW() - interval '2 hours'");
+      await pool.query("UPDATE bitrix24_employee_portal_links SET last_verified_at = NOW() - interval '2 hours'");
       assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "unknown");
-      await pool.query("UPDATE bitrix24_employee_portal_links SET confirmed_at = NOW()");
+      await pool.query("UPDATE bitrix24_employee_portal_links SET last_verified_at = NOW()");
       const other = await createTestUser({ databaseUrl, email: "other@example.com", password: TEST_PASSWORD, fullName: "Other", role: "manager" });
       await upsertEmployeePortalLink({ userId: other.id, portalId, bitrixUserId: "42" });
       assert.equal((await resolveConfirmedResponsibleProfile(portalId, "42")).state, "unknown");
