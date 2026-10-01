@@ -247,20 +247,66 @@
     if (params.get("tab") !== "work") {
       return;
     }
+    var desiredTab = "work";
+    var rawTaskId = params.get("task");
+    var taskId = null;
+    if (rawTaskId && /^\d+$/.test(String(rawTaskId).trim())) {
+      taskId = String(rawTaskId).trim();
+    }
+
+    function isWorkTabSelected() {
+      var selected = root.querySelector('.pc-tabs button[aria-selected="true"]');
+      return selected && selected.getAttribute("data-card-tab") === desiredTab;
+    }
+
+    function scrollToTaskRow() {
+      if (!taskId || !isWorkTabSelected()) {
+        return false;
+      }
+      var selector = '.pc-bitrix24-task[data-task-id="' + CSS.escape(taskId) + '"]';
+      var row = root.querySelector(selector);
+      if (!row) {
+        return false;
+      }
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return true;
+    }
+
     var tabBtn = root.querySelector('[data-card-tab="work"]');
     if (tabBtn && tabBtn.getAttribute("aria-selected") !== "true") {
       tabBtn.click();
     }
-    var taskId = params.get("task");
+
     if (!taskId) {
       return;
     }
-    window.setTimeout(function () {
-      var row = root.querySelector('.pc-bitrix24-task[data-task-id="' + taskId + '"]');
-      if (row) {
-        row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+    var loadPromise = root._bitrix24WorkLoadPromise;
+    function waitForTask() {
+      if (!isWorkTabSelected()) {
+        return;
       }
-    }, 600);
+      if (scrollToTaskRow()) {
+        return;
+      }
+      var attempts = 0;
+      var timer = window.setInterval(function () {
+        attempts += 1;
+        if (!isWorkTabSelected() || attempts > 120) {
+          window.clearInterval(timer);
+          return;
+        }
+        if (scrollToTaskRow()) {
+          window.clearInterval(timer);
+        }
+      }, 50);
+    }
+
+    if (loadPromise && typeof loadPromise.then === "function") {
+      loadPromise.then(waitForTask).catch(waitForTask);
+    } else {
+      waitForTask();
+    }
   }
 
   function showState(title, text, onRetry) {

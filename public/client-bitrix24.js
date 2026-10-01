@@ -146,6 +146,105 @@
     );
   }
 
+  function renderChecklistExpandable(task, clientGuid) {
+    if (!task || task.accessLevel === "summary") {
+      return "";
+    }
+    var progress = renderChecklistProgress(task.checklist);
+    if (!task.checklist || task.checklist.state !== "ready") {
+      return progress;
+    }
+    return (
+      progress +
+      '<details class="pc-bitrix24-checklist pc-bitrix24-checklist--lazy" data-task-id="' +
+      esc(task.taskId) +
+      '" data-client-guid="' +
+      esc(clientGuid) +
+      '">' +
+      '<summary class="pc-bitrix24-checklist-summary">Пункты чек-листа</summary>' +
+      '<div class="pc-bitrix24-checklist-lazy-host pc-label">Раскройте для загрузки пунктов из кэша ЛК.</div>' +
+      "</details>"
+    );
+  }
+
+  function renderChecklistItemsHtml(checklist) {
+    if (
+      !checklist ||
+      checklist.state !== "ready" ||
+      !checklist.items ||
+      !checklist.items.length
+    ) {
+      return renderChecklistProgress(checklist);
+    }
+    return (
+      '<ul class="pc-bitrix24-checklist-list pc-bitrix24-checklist-list--root">' +
+      checklist.items
+        .map(function (item) {
+          return renderChecklistItemNode(item, 0);
+        })
+        .join("") +
+      "</ul>"
+    );
+  }
+
+  function bindChecklistLazyLoad(container) {
+    container.querySelectorAll(".pc-bitrix24-checklist--lazy").forEach(function (details) {
+      if (details.dataset.lazyBound === "1") {
+        return;
+      }
+      details.dataset.lazyBound = "1";
+      details.addEventListener("toggle", function () {
+        if (!details.open || details.dataset.loaded === "1") {
+          return;
+        }
+        var clientGuid = details.getAttribute("data-client-guid");
+        var taskId = details.getAttribute("data-task-id");
+        var host = details.querySelector(".pc-bitrix24-checklist-lazy-host");
+        if (!clientGuid || !taskId || !host || !api) {
+          return;
+        }
+        host.textContent = "Загрузка пунктов…";
+        api
+          .apiRequest(
+            "/api/clients/" +
+              encodeURIComponent(clientGuid) +
+              "/bitrix24/tasks",
+          )
+          .then(function (result) {
+            if (details.dataset.loaded === "1") {
+              return;
+            }
+            if (result.response.status !== 200 || !result.data || !result.data.tasks) {
+              host.textContent = "Не удалось загрузить пункты чек-листа.";
+              return;
+            }
+            var task = result.data.tasks.find(function (entry) {
+              return String(entry.taskId) === String(taskId);
+            });
+            if (!task || task.accessLevel !== "full") {
+              host.textContent = "Пункты чек-листа недоступны.";
+              return;
+            }
+            if (
+              !task.checklist ||
+              task.checklist.state === "stale" ||
+              task.checklist.state === "error" ||
+              task.checklist.state === "partial"
+            ) {
+              host.innerHTML = renderChecklistProgress(task.checklist);
+              details.dataset.loaded = "1";
+              return;
+            }
+            host.innerHTML = renderChecklistItemsHtml(task.checklist);
+            details.dataset.loaded = "1";
+          })
+          .catch(function () {
+            host.textContent = "Ошибка сети при загрузке пунктов.";
+          });
+      });
+    });
+  }
+
   function renderResponsibleBlock(responsible) {
     if (!responsible) {
       return '<div class="pc-label">Ответственный: данные не подтверждены</div>';
@@ -185,8 +284,11 @@
     var commentBlock = action.comment
       ? '<div class="pc-bitrix24-contact-comment">' + esc(action.comment) + "</div>"
       : "";
+    var clientAttr = clientGuid
+      ? ' data-client-guid="' + esc(clientGuid) + '"'
+      : "";
     if (compact) {
-      return '<div class="pc-bitrix24-contact" data-task-id="' + taskKey + '">' +
+      return '<div class="pc-bitrix24-contact" data-task-id="' + taskKey + '"' + clientAttr + '">' +
         '<label class="pc-bitrix24-contact-label">' +
         '<input type="checkbox" class="pc-bitrix24-contact-checkbox"' + checked +
         ' aria-label="Связаться с ответственным" /><span>Связаться с ответственным</span></label>' +
@@ -196,7 +298,9 @@
     return (
       '<div class="pc-bitrix24-contact" data-task-id="' +
       taskKey +
-      '">' +
+      '"' +
+      clientAttr +
+      ">" +
       '<label class="pc-bitrix24-contact-label">' +
       '<input type="checkbox" class="pc-bitrix24-contact-checkbox"' +
       checked +
@@ -556,19 +660,32 @@
     );
   }
 
-  function bindContactActions(container, clientGuid, root) {
+  function bindContactActions(container, clientGuid, root, options) {
+    options = options || {};
+    var onSaved =
+      typeof options.onSaved === "function"
+        ? options.onSaved
+        : function () {
+            reloadBitrix24Data(root, clientGuid);
+          };
     container.querySelectorAll(".pc-bitrix24-contact").forEach(function (block) {
       var taskId = block.getAttribute("data-task-id");
       if (!taskId) {
         return;
       }
+      var rowClientGuid =
+        block.getAttribute("data-client-guid") || clientGuid || "";
       var checkbox = block.querySelector(".pc-bitrix24-contact-checkbox");
       var statusEl = block.querySelector(".pc-bitrix24-contact-status");
       var commentBtn = block.querySelector(".pc-bitrix24-contact-comment-btn");
       var revokeBtn = block.querySelector(".pc-bitrix24-contact-revoke-btn");
       var commentInput = block.querySelector(".pc-bitrix24-contact-comment-input");
+      if (block.dataset.contactBound === "1") {
+        return;
+      }
+      block.dataset.contactBound = "1";
       function setBusy(busy) {
-        root.querySelectorAll(".pc-bitrix24-contact").forEach(function (peer) {
+        container.querySelectorAll(".pc-bitrix24-contact").forEach(function (peer) {
           if (peer.getAttribute("data-task-id") !== taskId) return;
           peer.querySelectorAll("input, button, textarea").forEach(function (control) {
             control.disabled = busy;
@@ -588,15 +705,26 @@
 
       if (checkbox) {
         checkbox.addEventListener("change", function () {
+          if (checkbox.disabled) {
+            return;
+          }
           var desired = checkbox.checked;
+          var previousComment = commentInput ? commentInput.value : null;
           setBusy(true);
-          saveContactAction(clientGuid, taskId, { marked: desired })
+          var payload = { marked: desired };
+          if (desired && commentInput) {
+            payload.comment = commentInput.value;
+          }
+          saveContactAction(rowClientGuid, taskId, payload)
             .then(function (result) {
               if (result.response.status === 200) {
-                reloadBitrix24Data(root, clientGuid);
+                onSaved();
                 return;
               }
               checkbox.checked = !desired;
+              if (commentInput && previousComment !== null) {
+                commentInput.value = previousComment;
+              }
               setStatus(
                 (result.data && result.data.message) || "Не удалось сохранить отметку",
                 false,
@@ -604,6 +732,9 @@
             })
             .catch(function () {
               checkbox.checked = !desired;
+              if (commentInput && previousComment !== null) {
+                commentInput.value = previousComment;
+              }
               setStatus("Ошибка сети", false);
             })
             .finally(function () {
@@ -614,15 +745,16 @@
 
       if (commentBtn) {
         commentBtn.addEventListener("click", function () {
-          if (!checkbox || !checkbox.checked || !commentInput) {
+          if (!checkbox || !checkbox.checked || !commentInput || commentBtn.disabled) {
             return;
           }
           var value = commentInput.value;
           setBusy(true);
-          saveContactAction(clientGuid, taskId, { marked: true, comment: value })
+          saveContactAction(rowClientGuid, taskId, { marked: true, comment: value })
             .then(function (result) {
               if (result.response.status === 200) {
-                reloadBitrix24Data(root, clientGuid);
+                onSaved();
+                setStatus("Комментарий сохранён", true);
                 return;
               }
               setStatus(
@@ -641,11 +773,14 @@
 
       if (revokeBtn) {
         revokeBtn.addEventListener("click", function () {
+          if (revokeBtn.disabled) {
+            return;
+          }
           setBusy(true);
-          saveContactAction(clientGuid, taskId, { marked: false })
+          saveContactAction(rowClientGuid, taskId, { marked: false })
             .then(function (result) {
               if (result.response.status === 200) {
-                reloadBitrix24Data(root, clientGuid);
+                onSaved();
                 return;
               }
               setStatus(
@@ -673,7 +808,9 @@
   }
 
   function mountWorkTab(root, clientGuid) {
-    return loadBitrix24Sections(root, clientGuid, null);
+    var promise = loadBitrix24Sections(root, clientGuid, null);
+    root._bitrix24WorkLoadPromise = promise;
+    return promise;
   }
 
   function loadBitrix24Sections(root, clientGuid, uiStateToRestore) {
@@ -847,6 +984,8 @@
     mountWorkTab: mountWorkTab,
     reloadBitrix24Data: reloadBitrix24Data,
     renderChecklistProgress: renderChecklistProgress,
+    renderChecklistExpandable: renderChecklistExpandable,
+    bindChecklistLazyLoad: bindChecklistLazyLoad,
     renderResponsibleBlock: renderResponsibleBlock,
     renderContactAction: renderContactAction,
     bindContactActions: bindContactActions,

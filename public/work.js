@@ -38,11 +38,12 @@
     clientGuid: "",
     responsibleBitrixUserId: "",
     statusLabel: "",
-    loading: false,
     lastBody: null,
   };
 
   var searchTimer = null;
+  var loadSeq = 0;
+  var activeLoadSeq = 0;
 
   function esc(value) {
     return shell.escapeHtml(value || "");
@@ -209,10 +210,32 @@
     return task.title || "Задача";
   }
 
+  function renderClientLinks(task) {
+    var clients = Array.isArray(task.clients) && task.clients.length ? task.clients : [
+      { clientGuid: task.clientGuid, clientName: task.clientName },
+    ];
+    return clients
+      .map(function (client) {
+        var link =
+          "/clients/" +
+          encodeURIComponent(client.clientGuid) +
+          "?tab=work&task=" +
+          encodeURIComponent(task.taskId);
+        return (
+          '<a class="work-row__client pc-link" href="' +
+          esc(link) +
+          '">' +
+          esc(client.clientName) +
+          "</a>"
+        );
+      })
+      .join("");
+  }
+
   function renderRow(task) {
     var overdue = task.isOverdue === true ? " work-row--overdue" : "";
     var clientLink =
-      '/clients/' +
+      "/clients/" +
       encodeURIComponent(task.clientGuid) +
       "?tab=work&task=" +
       encodeURIComponent(task.taskId);
@@ -222,15 +245,19 @@
         : task.accessLevel === "summary"
           ? "—"
           : esc(task.deadline || "—");
-    var checklist = bitrix && bitrix.renderChecklistProgress
-      ? bitrix.renderChecklistProgress(task.checklist)
-      : "";
+    var checklist =
+      bitrix && bitrix.renderChecklistExpandable
+        ? bitrix.renderChecklistExpandable(task, task.clientGuid)
+        : bitrix && bitrix.renderChecklistProgress
+          ? bitrix.renderChecklistProgress(task.checklist)
+          : "";
     var responsible = bitrix && bitrix.renderResponsibleBlock
       ? bitrix.renderResponsibleBlock(task.responsible)
       : "";
-    var contact = bitrix && bitrix.renderContactAction
-      ? bitrix.renderContactAction(task, task.clientGuid, true)
-      : "";
+    var contact =
+      bitrix && bitrix.renderContactAction
+        ? bitrix.renderContactAction(task, task.clientGuid, false)
+        : "";
     var portal =
       task.accessLevel === "full" && task.portalUrl
         ? '<a class="pc-link" href="' +
@@ -244,11 +271,7 @@
       esc(task.taskId) +
       '">' +
       '<div class="work-row__head">' +
-      '<a class="work-row__client pc-link" href="' +
-      esc(clientLink) +
-      '">' +
-      esc(task.clientName) +
-      "</a>" +
+      renderClientLinks(task) +
       (task.isOverdue === true ? '<strong class="pc-bitrix24-overdue">Просрочено</strong>' : "") +
       "</div>" +
       '<div class="work-row__title">' +
@@ -275,6 +298,19 @@
     );
   }
 
+  function bindListInteractions(body) {
+    if (bitrix && bitrix.bindChecklistLazyLoad) {
+      bitrix.bindChecklistLazyLoad(listEl);
+    }
+    if (bitrix && bitrix.bindContactActions) {
+      bitrix.bindContactActions(listEl, null, appEl, {
+        onSaved: function () {
+          loadQueue();
+        },
+      });
+    }
+  }
+
   function renderList(body) {
     if (!body) {
       listEl.innerHTML = "";
@@ -295,44 +331,7 @@
       return;
     }
     listEl.innerHTML = body.items.map(renderRow).join("");
-    listEl.querySelectorAll(".pc-bitrix24-contact").forEach(function (block) {
-      var taskId = block.getAttribute("data-task-id");
-      var task = body.items.find(function (entry) {
-        return entry.taskId === taskId;
-      });
-      if (task) {
-        block.setAttribute("data-client-guid", task.clientGuid);
-      }
-    });
-    listEl.querySelectorAll(".pc-bitrix24-contact-checkbox").forEach(function (checkbox) {
-      checkbox.addEventListener("change", function () {
-        var block = checkbox.closest(".pc-bitrix24-contact");
-        var taskId = block && block.getAttribute("data-task-id");
-        var clientGuid = block && block.getAttribute("data-client-guid");
-        if (!taskId || !clientGuid || !api) {
-          return;
-        }
-        api
-          .apiRequest(
-            "/api/clients/" +
-              encodeURIComponent(clientGuid) +
-              "/bitrix24/tasks/" +
-              encodeURIComponent(taskId) +
-              "/contact",
-            { method: "PUT", body: { marked: checkbox.checked } },
-          )
-          .then(function (result) {
-            if (result.response.status === 200) {
-              loadQueue();
-              return;
-            }
-            checkbox.checked = !checkbox.checked;
-          })
-          .catch(function () {
-            checkbox.checked = !checkbox.checked;
-          });
-      });
-    });
+    bindListInteractions(body);
   }
 
   function renderPagination(body) {
@@ -360,49 +359,85 @@
     });
   }
 
-  function loadQueue() {
-    if (!api || state.loading) {
-      return Promise.resolve();
+  function applyQueueBody(body, seq) {
+    if (seq !== activeLoadSeq) {
+      return;
     }
-    state.loading = true;
-    if (refreshStatus) {
-      refreshStatus.textContent = "";
+    state.lastBody = body;
+    hidePanels();
+    appEl.classList.remove("clients-hidden");
+    renderMeta(body);
+    renderChips(body);
+    renderOptions(body);
+    renderList(body);
+    renderPagination(body);
+  }
+
+  function loadQueue(options) {
+    options = options || {};
+    if (!api) {
+      return Promise.resolve({ ok: false });
     }
-    listEl.innerHTML =
-      '<div class="clients-empty"><p class="clients-empty__title">Загрузка очереди…</p></div>';
+    loadSeq += 1;
+    var seq = loadSeq;
+    activeLoadSeq = seq;
+    if (!options.preserveOnError || !state.lastBody) {
+      listEl.innerHTML =
+        '<div class="clients-empty"><p class="clients-empty__title">Загрузка очереди…</p></div>';
+    }
     return api
       .apiRequest("/api/work/tasks?" + buildQueryString())
       .then(function (result) {
-        state.loading = false;
+        if (seq !== activeLoadSeq) {
+          return { ok: true, stale: true };
+        }
         if (result.response.status === 401) {
           window.location.replace("/login");
-          return;
+          return { ok: false, status: 401 };
         }
         if (result.response.status === 403) {
+          if (options.preserveOnError && state.lastBody) {
+            applyQueueBody(state.lastBody, seq);
+            return { ok: false, status: 403 };
+          }
           showAccess("forbidden");
-          return;
+          return { ok: false, status: 403 };
         }
         if (result.response.status !== 200 || !result.data) {
+          if (options.preserveOnError && state.lastBody) {
+            applyQueueBody(state.lastBody, seq);
+            return { ok: false, status: result.response.status };
+          }
           showState("Не удалось загрузить очередь", "Повторите попытку позже.", "retry-work");
-          return;
+          return { ok: false, status: result.response.status };
         }
-        state.lastBody = result.data;
-        hidePanels();
-        appEl.classList.remove("clients-hidden");
-        renderMeta(result.data);
-        renderChips(result.data);
-        renderOptions(result.data);
-        renderList(result.data);
-        renderPagination(result.data);
+        applyQueueBody(result.data, seq);
+        return { ok: true, status: 200, data: result.data };
       })
       .catch(function (err) {
-        state.loading = false;
+        if (seq !== activeLoadSeq) {
+          return { ok: true, stale: true };
+        }
+        if (options.preserveOnError && state.lastBody) {
+          applyQueueBody(state.lastBody, seq);
+          return { ok: false, error: err };
+        }
         showState(
           "Ошибка сети",
           api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
           "retry-work",
         );
+        return { ok: false, error: err };
       });
+  }
+
+  function setRefreshStatus(text, ok) {
+    if (!refreshStatus) {
+      return;
+    }
+    refreshStatus.textContent = text;
+    refreshStatus.className =
+      "workspace-status " + (ok ? "workspace-status--success" : "workspace-status--error");
   }
 
   function bindFilters() {
@@ -440,16 +475,16 @@
       loadQueue();
     });
     refreshBtn.addEventListener("click", function () {
-      if (refreshStatus) {
-        refreshStatus.textContent = "Обновление…";
-      }
-      loadQueue().then(function () {
-        if (refreshStatus) {
-          refreshStatus.textContent = state.lastBody && state.lastBody.loadedAtLabel
-            ? "Обновлено " + state.lastBody.loadedAtLabel
-            : "Обновлено";
-          refreshStatus.className = "workspace-status workspace-status--success";
+      setRefreshStatus("Обновление…", true);
+      loadQueue({ preserveOnError: true }).then(function (result) {
+        if (!result || result.stale) {
+          return;
         }
+        if (result.ok && result.status === 200 && result.data && result.data.loadedAtLabel) {
+          setRefreshStatus("Обновлено " + result.data.loadedAtLabel, true);
+          return;
+        }
+        setRefreshStatus("Не удалось обновить данные ЛК", false);
       });
     });
   }

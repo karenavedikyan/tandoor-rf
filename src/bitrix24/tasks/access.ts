@@ -88,7 +88,7 @@ export function isLinkVerificationFresh(
   return isLinkAccessValid(link, runtime, nowMs);
 }
 
-function isTaskSnapshotCurrent(
+export function isTaskSnapshotCurrent(
   task: TaskCacheRow,
   link: EmployeePortalLinkRow,
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,

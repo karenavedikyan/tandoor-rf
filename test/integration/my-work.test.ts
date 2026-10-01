@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import request from "supertest";
 import { Pool } from "pg";
+import type { Pool as PgPool } from "pg";
 import { issueLabelInTransaction } from "../../src/bitrix24/labels/repository";
 import { resetPoolForTests } from "../../src/db/pool";
 import { upsertEmployeePortalLink, upsertTaskSnapshot } from "../../src/bitrix24/tasks/repository";
@@ -20,6 +21,7 @@ import { insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import { sampleWebhookConfig } from "../helpers/bitrix24-mock-fetch";
 import { HOLDING_ONE, linkCardToHolding } from "../helpers/bitrix24-card-fixtures";
 import { insertSummaryPublication } from "../helpers/bitrix24-work-fixtures";
+import { upsertChecklistSnapshot } from "../../src/bitrix24/tasks/checklist-repository";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
@@ -43,6 +45,26 @@ async function loadApp() {
   return createApp();
 }
 
+async function readTaskCacheGeneration(
+  dbUrl: string,
+  portalId: string,
+  taskId: string,
+): Promise<{ cacheVersion: number; syncedAt: string }> {
+  const pool = new Pool({ connectionString: dbUrl, max: 1 });
+  const row = await pool.query<{ cache_version: number; synced_at: Date }>(
+    `SELECT cache_version, synced_at FROM bitrix24_task_cache
+     WHERE portal_id = $1 AND task_id = $2`,
+    [portalId, taskId],
+  );
+  await pool.end();
+  const found = row.rows[0];
+  assert.ok(found);
+  return {
+    cacheVersion: Number(found.cache_version),
+    syncedAt: found.synced_at.toISOString(),
+  };
+}
+
 async function login(email: string): Promise<string> {
   const app = await loadApp();
   const res = await request(app)
@@ -51,6 +73,23 @@ async function login(email: string): Promise<string> {
     .send({ email, password: TEST_PASSWORD });
   assert.equal(res.status, 200);
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+}
+
+function wrapQueryCounter(): { getCount: () => number; restore: () => void } {
+  const { getPool } = require("../../src/db/pool") as { getPool: () => PgPool };
+  const pool = getPool();
+  let count = 0;
+  const original = pool.query.bind(pool);
+  pool.query = (async (...args: Parameters<PgPool["query"]>) => {
+    count += 1;
+    return original(...args);
+  }) as PgPool["query"];
+  return {
+    getCount: () => count,
+    restore: () => {
+      pool.query = original;
+    },
+  };
 }
 
 describe("my work queue integration", { concurrency: false }, () => {
@@ -122,6 +161,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     statusLabel?: string;
     deadline?: string | null;
     briefText?: string;
+    checklist?: boolean;
   }) {
     const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
@@ -163,6 +203,41 @@ describe("my work queue integration", { concurrency: false }, () => {
         publishedByUserId: admin.rows[0]!.id,
       });
     }
+    if (input.checklist) {
+      const generation = await readTaskCacheGeneration(databaseUrl, config.portalId, input.taskId);
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const client = await pool.connect();
+      try {
+        await upsertChecklistSnapshot(
+          {
+            portalId: config.portalId,
+            taskId: input.taskId,
+            objectType: "holding",
+            objectGuid: HOLDING_ONE,
+            loadStatus: "loaded",
+            syncComplete: true,
+            items: [
+              {
+                itemId: "1",
+                taskId: input.taskId,
+                title: "Step one",
+                parentId: null,
+                sortIndex: 1,
+                isComplete: true,
+                coExecutorBitrixIds: [],
+                isRootGroup: false,
+              },
+            ],
+            taskCacheVersion: generation.cacheVersion,
+            taskSyncedAt: generation.syncedAt,
+          },
+          client,
+        );
+      } finally {
+        client.release();
+        await pool.end();
+      }
+    }
     return config;
   }
 
@@ -192,6 +267,37 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.total, 1);
     assert.equal(res.body.items[0]?.taskId, "91001");
+    assert.equal(res.body.items[0]?.clients?.length, 2);
+  });
+
+  it("finds holding task by second accessible card filter", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-hold@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Hold",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    await seedTask({
+      taskId: "91011",
+      title: "Holding via Beta",
+      responsibleBitrixUserId: "42",
+      responsibleUserId: manager.id,
+    });
+    const app = await loadApp();
+    const cookie = await login("mgr-hold@example.com");
+    const filtered = await request(app)
+      .get("/api/work/tasks?clientGuid=" + CLIENT_TWO)
+      .set(authHeaders(cookie));
+    assert.equal(filtered.body.total, 1);
+    assert.equal(filtered.body.items[0]?.taskId, "91011");
+    assert.ok(filtered.body.items[0]?.clients.some((c: { clientGuid: string }) => c.clientGuid === CLIENT_TWO));
   });
 
   it("does not leak foreign task title via search or counts", async () => {
@@ -245,6 +351,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.equal(list.body.total, 1);
     assert.equal(list.body.items[0]?.accessLevel, "summary");
     assert.equal(list.body.items[0]?.briefText, "Visible brief ABC");
+    assert.equal(list.body.items[0]?.checklist, undefined);
     const searchSecret = await request(app)
       .get("/api/work/tasks?q=Secret+full+title")
       .set(authHeaders(cookie));
@@ -256,7 +363,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.equal(searchBrief.body.counts.no_deadline, 1);
   });
 
-  it("keeps deadline group counters when another chip is selected", async () => {
+  it("keeps all five deadline counters with open list and completed chip", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "mgr-counts@example.com",
@@ -290,15 +397,34 @@ describe("my work queue integration", { concurrency: false }, () => {
       responsibleUserId: manager.id,
       deadline: `${todayKey}T18:00:00+03:00`,
     });
+    await seedTask({
+      taskId: "91004b",
+      title: "Completed task",
+      responsibleBitrixUserId: "42",
+      responsibleUserId: manager.id,
+      statusLabel: "completed",
+      deadline: "2000-01-01T10:00:00+03:00",
+    });
     const app = await loadApp();
     const cookie = await login("mgr-counts@example.com");
-    const filtered = await request(app)
-      .get("/api/work/tasks?deadlineGroup=overdue")
+
+    const openList = await request(app).get("/api/work/tasks?status=open").set(authHeaders(cookie));
+    assert.equal(openList.body.counts.overdue, 1);
+    assert.equal(openList.body.counts.today, 1);
+    assert.equal(openList.body.counts.completed, 1);
+    assert.equal(openList.body.total, 2);
+
+    const completedChip = await request(app)
+      .get("/api/work/tasks?deadlineGroup=completed&status=all")
       .set(authHeaders(cookie));
-    assert.equal(filtered.body.total, 1);
-    assert.equal(filtered.body.items[0]?.taskId, "91003");
-    assert.equal(filtered.body.counts.overdue, 1);
-    assert.equal(filtered.body.counts.today, 1);
+    assert.equal(completedChip.body.total, 1);
+    assert.equal(completedChip.body.counts.overdue, 1);
+    assert.equal(completedChip.body.counts.today, 1);
+    assert.equal(completedChip.body.counts.completed, 1);
+
+    const backOpen = await request(app).get("/api/work/tasks?status=open").set(authHeaders(cookie));
+    assert.equal(backOpen.body.counts.completed, 1);
+    assert.equal(backOpen.body.total, 2);
   });
 
   it("paginates with stable ordering", async () => {
@@ -338,6 +464,64 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.notEqual(page1.body.items[0]?.taskId, page2.body.items[0]?.taskId);
   });
 
+  it("uses bounded SQL regardless of candidate count", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-sql@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager SQL",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      await seedTask({
+        taskId: "930" + i,
+        title: "SQL task " + i,
+        responsibleBitrixUserId: "42",
+        responsibleUserId: manager.id,
+      });
+    }
+    const app = await loadApp();
+    const cookie = await login("mgr-sql@example.com");
+    const smallCounter = wrapQueryCounter();
+    let smallCount = 0;
+    try {
+      await request(app).get("/api/work/tasks?page=1&pageSize=5").set(authHeaders(cookie));
+      smallCount = smallCounter.getCount();
+    } finally {
+      smallCounter.restore();
+    }
+
+    for (let i = 3; i < 15; i += 1) {
+      await seedTask({
+        taskId: "930" + i,
+        title: "SQL task " + i,
+        responsibleBitrixUserId: "42",
+        responsibleUserId: manager.id,
+      });
+    }
+    const largeCounter = wrapQueryCounter();
+    try {
+      const res = await request(app)
+        .get("/api/work/tasks?page=1&pageSize=5")
+        .set(authHeaders(cookie));
+      assert.equal(res.status, 200);
+      assert.equal(res.body.total, 15);
+      const largeCount = largeCounter.getCount();
+      assert.ok(
+        largeCount <= smallCount + 4,
+        `expected sublinear SQL (${smallCount} -> ${largeCount})`,
+      );
+    } finally {
+      largeCounter.restore();
+    }
+  });
+
   it("denies queue when employee portal verification is cleared", async () => {
     const manager = await createTestUser({
       databaseUrl,
@@ -372,7 +556,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.equal(res.body.items.length, 0);
   });
 
-  it("hides tasks when active delegation expires", async () => {
+  it("allows assistant delegation before expiry and hides after", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "mgr-del@example.com",
@@ -399,6 +583,11 @@ describe("my work queue integration", { concurrency: false }, () => {
       employeeId: ASSISTANT_EMP,
       confirmedByUserId: manager.id,
     });
+    await upsertEmployeePortalLink({
+      userId: assistant.id,
+      portalId: sampleWebhookConfig().portalId,
+      bitrixUserId: "42",
+    });
     await seedTask({
       taskId: "91006",
       title: "Delegated task",
@@ -412,13 +601,22 @@ describe("my work queue integration", { concurrency: false }, () => {
       clientGuids: [CLIENT_ONE],
       status: "active",
       startsAt: new Date(Date.now() - 86_400_000).toISOString(),
-      endsAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endsAt: new Date(Date.now() + 86_400_000).toISOString(),
       approvedByUserId: manager.id,
     });
     const app = await loadApp();
     const cookie = await login("asst@example.com");
-    const res = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
-    assert.equal(res.body.total, 0);
+    const active = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    assert.equal(active.body.total, 1);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE delegations SET ends_at = NOW() - INTERVAL '1 hour' WHERE assistant_user_id = $1::uuid`,
+      [assistant.id],
+    );
+    await pool.end();
+    const expired = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    assert.equal(expired.body.total, 0);
   });
 
   it("shares contact mark with card API binding", async () => {
@@ -450,5 +648,44 @@ describe("my work queue integration", { concurrency: false }, () => {
     const work = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
     assert.equal(work.body.items[0]?.contactAction?.marked, true);
     assert.equal(work.body.items[0]?.contactAction?.comment, "Написал");
+    await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/bitrix24/tasks/91007/contact`)
+      .set({ ...authHeaders(cookie), "Content-Type": "application/json" })
+      .send({ marked: false });
+    const cleared = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    assert.equal(cleared.body.items[0]?.contactAction?.marked, false);
+  });
+
+  it("returns checklist progress without items tree in list API", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-cl@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager CL",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    await seedTask({
+      taskId: "91008",
+      title: "Checklist task",
+      responsibleBitrixUserId: "42",
+      responsibleUserId: manager.id,
+      checklist: true,
+    });
+    const app = await loadApp();
+    const cookie = await login("mgr-cl@example.com");
+    const work = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    assert.equal(work.body.items[0]?.checklist?.state, "ready");
+    assert.equal(work.body.items[0]?.checklist?.progress?.total, 1);
+    assert.equal(work.body.items[0]?.checklist?.items, undefined);
+    const card = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(card.body.tasks[0]?.checklist?.items?.length, 1);
   });
 });

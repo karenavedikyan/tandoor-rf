@@ -62,6 +62,7 @@ function mapCandidateRow(row: CandidateRow): CandidateWorkTaskRow {
 
 export async function listCandidateWorkTasksForScope(
   context: AccessContext,
+  portalId: string,
   client: Pool | PoolClient = requirePool(),
 ): Promise<CandidateWorkTaskRow[]> {
   const scope = combineScopeAndFilter(buildClientScopeSql(context), {
@@ -83,7 +84,7 @@ export async function listCandidateWorkTasksForScope(
 
   const result = await client.query<CandidateRow>(
     `
-      SELECT DISTINCT ON (c.portal_id, c.task_id)
+      SELECT
         c.portal_id,
         c.task_id,
         c.responsible_bitrix_user_id,
@@ -109,6 +110,7 @@ export async function listCandidateWorkTasksForScope(
         ON cco.card_guid = oc.guid_client
       JOIN bitrix24_task_bindings b
         ON b.binding_status = 'confirmed'
+       AND b.portal_id = $2
        AND EXISTS (
          SELECT 1 FROM bitrix24_confirmed_objects co
          WHERE co.object_type = b.object_type
@@ -140,10 +142,11 @@ export async function listCandidateWorkTasksForScope(
        AND c.task_id = b.task_id
        AND c.published = TRUE
        AND c.changed_at IS NOT NULL
+       AND c.portal_id = $2
       WHERE oc.guid_client = ANY($1::uuid[])
       ORDER BY c.portal_id ASC, c.task_id ASC, oc.guid_client ASC
     `,
-    [cardGuids],
+    [cardGuids, portalId],
   );
 
   return result.rows.map(mapCandidateRow);
