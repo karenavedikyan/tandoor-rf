@@ -164,6 +164,7 @@ export type MockOptions = {
   catalogActiveVersionId?: string;
   catalogProductsStatus?: number;
   catalogFailProductsOnce?: boolean;
+  catalogAccessRevoked?: boolean;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -365,6 +366,9 @@ export function resolveMockResponse(
   }
 
   if (path.endsWith("/catalog/meta")) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
+    }
     return jsonResponse(200, options.catalogMeta ?? syntheticCatalogMetaPayload());
   }
 
@@ -414,6 +418,9 @@ export function resolveMockResponse(
 
   const productDetailMatch = path.match(/\/catalog\/products\/([^/]+)$/);
   if (productDetailMatch) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
+    }
     const activeVersionId =
       options.catalogActiveVersionId ??
       (options.catalogMeta as { versionId?: string } | undefined)?.versionId ??

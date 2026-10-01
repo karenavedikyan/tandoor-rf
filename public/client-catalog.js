@@ -471,6 +471,32 @@
       bindActionButtons();
     }
 
+    function confirmCatalogAccess(loadId) {
+      return api.apiRequest(buildApiUrl(state.clientGuid, "meta")).then(function (metaResult) {
+        if (loadId !== state.loadId || !root.isConnected || state.clientGuid !== clientGuid) {
+          return { kind: "stale" };
+        }
+        if (metaResult.response.status === 403 || metaResult.response.status === 404) {
+          return { kind: "denied" };
+        }
+        if (metaResult.response.status === 200 && metaResult.data) {
+          applyMeta(metaResult.data);
+          return { kind: "allowed" };
+        }
+        return { kind: "denied" };
+      });
+    }
+
+    function showDetailNotFound() {
+      renderDetailShell(
+        renderState("Товар не найден в текущем снимке.", "empty") +
+          renderActionButtons([
+            { id: "back", label: "← К списку", ghost: true },
+            { id: "refresh", label: "Обновить каталог", ghost: false },
+          ]),
+      );
+    }
+
     function handleVersionConflict(message) {
       showListMessage(message || "Каталог обновился. Обновите данные.", "error", [
         { id: "refresh", label: "Обновить каталог", ghost: false },
@@ -536,19 +562,24 @@
         )
         .then(function (result) {
           if (loadId !== state.loadId || !root.isConnected || state.clientGuid !== clientGuid) return;
-          if (result.response.status === 403 || result.response.status === 404) {
-            if (result.response.status === 404 && state.meta) {
-              renderDetailShell(
-                renderState("Товар не найден в текущем снимке.", "empty") +
-                  renderActionButtons([
-                    { id: "back", label: "← К списку", ghost: true },
-                    { id: "refresh", label: "Обновить каталог", ghost: false },
-                  ]),
-              );
-              return;
-            }
+          if (result.response.status === 403) {
             handleAccessDenied();
             return;
+          }
+          if (result.response.status === 404) {
+            return confirmCatalogAccess(loadId)
+              .then(function (access) {
+                if (access.kind === "stale") return;
+                if (access.kind === "denied") {
+                  handleAccessDenied();
+                  return;
+                }
+                showDetailNotFound();
+              })
+              .catch(function () {
+                if (loadId !== state.loadId || !root.isConnected) return;
+                handleAccessDenied();
+              });
           }
           if (result.response.status === 409 && result.data) {
             renderDetailShell(

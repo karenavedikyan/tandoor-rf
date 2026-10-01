@@ -285,6 +285,20 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
     await closePage(page, context);
   });
 
+  it("clears catalog metadata when detail 404 follows access revocation", async () => {
+    const { page, context, mocks } = await openPage({ detailBody: syntheticDetailPayload() });
+    await openShowcaseTab(page);
+    await page.waitForSelector(".pc-catalog-card");
+    mocks.set({ catalogAccessRevoked: true });
+    await page.locator('[data-catalog-open="p1"]').click();
+    await page.waitForSelector('.pc-catalog-state--error');
+    assert.match(await page.locator("#pc-catalog-showcase").textContent(), /Каталог недоступен для этой карточки/);
+    assert.doesNotMatch(await page.locator("#pc-catalog-showcase").textContent(), /Товар не найден/);
+    assert.equal(await page.locator(".pc-catalog-meta").count(), 0);
+    assert.equal(await page.locator(".pc-catalog-detail").count(), 0);
+    await closePage(page, context);
+  });
+
   it("redirects anonymous session away from client card", async () => {
     const { page, context } = await openPage({ role: "anonymous" });
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);

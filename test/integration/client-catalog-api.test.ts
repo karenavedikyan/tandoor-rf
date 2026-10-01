@@ -276,7 +276,7 @@ describe("client catalog API integration", { concurrency: false }, () => {
     }
   });
 
-  it("denies manager after employee link is revoked", async () => {
+  it("denies manager after employee link is revoked on all catalog endpoints", async () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
       `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid`,
@@ -286,15 +286,19 @@ describe("client catalog API integration", { concurrency: false }, () => {
 
     const cookie = await login("manager@example.com");
     const app = await loadApp();
-    const res = await request(app)
-      .get(`/api/clients/${CLIENT_ONE}/catalog/meta`)
-      .set({ Origin: ORIGIN, Cookie: cookie });
-    assert.equal(res.status, 403);
-    assert.equal(res.headers["cache-control"], "no-store");
-    assert.ok(!res.body.versionId);
+    for (const suffix of ["meta", "products", "products/p1"]) {
+      const res = await request(app)
+        .get(`/api/clients/${CLIENT_ONE}/catalog/${suffix}`)
+        .set({ Origin: ORIGIN, Cookie: cookie });
+      assert.equal(res.status, 403, suffix);
+      assert.equal(res.headers["cache-control"], "no-store");
+      assert.ok(!res.body.versionId);
+      assert.ok(!res.body.product);
+      assert.ok(!res.body.items);
+    }
   });
 
-  it("denies assistant after delegation expires", async () => {
+  it("denies assistant after delegation expires on all catalog endpoints", async () => {
     const assistantUserId = (
       await createTestUser({
         databaseUrl,
@@ -317,12 +321,38 @@ describe("client catalog API integration", { concurrency: false }, () => {
 
     const cookie = await login("assistant@example.com");
     const app = await loadApp();
-    const res = await request(app)
+    for (const suffix of ["meta", "products", "products/p1"]) {
+      const res = await request(app)
+        .get(`/api/clients/${CLIENT_ONE}/catalog/${suffix}`)
+        .set({ Origin: ORIGIN, Cookie: cookie });
+      assert.equal(res.status, 403, suffix);
+      assert.equal(res.headers["cache-control"], "no-store");
+      assert.ok(!res.body.versionId);
+      assert.ok(!res.body.product);
+      assert.ok(!res.body.items);
+    }
+  });
+
+  it("returns 404 for missing product while client access remains", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const meta = await request(app)
       .get(`/api/clients/${CLIENT_ONE}/catalog/meta`)
       .set({ Origin: ORIGIN, Cookie: cookie });
-    assert.equal(res.status, 403);
-    assert.equal(res.headers["cache-control"], "no-store");
-    assert.ok(!res.body.versionId);
+    assert.equal(meta.status, 200);
+
+    const missing = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/catalog/products/missing-product-code`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers["cache-control"], "no-store");
+    assert.equal(missing.body.error?.code, "NOT_FOUND");
+
+    const metaAfter = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/catalog/meta`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(metaAfter.status, 200);
+    assert.ok(metaAfter.body.versionId);
   });
 
   it("returns 409 when list versionId does not match active catalog", async () => {
