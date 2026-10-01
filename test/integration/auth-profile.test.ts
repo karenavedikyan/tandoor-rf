@@ -71,6 +71,9 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "016_bitrix24_checklist_task_generation.sql",
       "017_bitrix24_manual_sync_cooldown.sql",
       "018_bitrix24_working_mode.sql",
+      "019_bitrix24_ork_publications.sql",
+      "020_onec_catalog.sql",
+      "021_onec_catalog_import_profile.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);

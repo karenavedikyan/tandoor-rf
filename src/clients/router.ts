@@ -7,6 +7,11 @@ import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
 import { requireDatabaseReady } from "../middleware/database";
 import {
+  getClientCatalogMetaHandler,
+  getClientCatalogProductHandler,
+  getClientCatalogProductsHandler,
+} from "./catalog-handlers";
+import {
   getClientBitrix24ClaimsHandler,
   getClientBitrix24LabelHandler,
   getClientBitrix24TasksHandler,
@@ -41,6 +46,18 @@ export function createClientsRouter(): express.Router {
 
   router.get("/", ...readChain, (req, res, next) => {
     void listClientsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/meta", ...readChain, (req, res, next) => {
+    void getClientCatalogMetaHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/products", ...readChain, (req, res, next) => {
+    void getClientCatalogProductsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/products/:productCode", ...readChain, (req, res, next) => {
+    void getClientCatalogProductHandler(req, res).catch(next);
   });
 
   router.get("/:guid/bitrix24/label", ...readChain, (req, res, next) => {
