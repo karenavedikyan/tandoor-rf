@@ -21,6 +21,8 @@
     "onec-import-job-worker:local": "node --env-file=.env dist/cli/onec-import-job-worker.js",
     "onec-scheduled-exchange": "node dist/cli/onec-scheduled-exchange.js",
     "onec-scheduled-exchange:local": "node --env-file=.env dist/cli/onec-scheduled-exchange.js",
+    "onec-catalog-import": "node dist/cli/onec-catalog-import.js",
+    "onec-catalog-import:local": "node --env-file=.env dist/cli/onec-catalog-import.js",
     "bitrix24-probe": "node dist/cli/bitrix24-probe.js",
     "bitrix24-probe:local": "node --env-file=.env dist/cli/bitrix24-probe.js",
     "bitrix24-sync": "node dist/cli/bitrix24-sync.js",
@@ -42,7 +44,8 @@
     "bcryptjs": "^2.4.3",
     "express": "^4.21.2",
     "ipaddr.js": "^2.2.0",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "sax": "^1.6.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -50,6 +53,7 @@
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
+    "@types/sax": "^1.2.7",
     "@types/supertest": "^6.0.2",
     "jsdom": "^29.1.1",
     "node-pty": "^1.1.0",

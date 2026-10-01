@@ -1,7 +1,7 @@
-# Catalog fixtures (R0.2)
+# Catalog fixtures (R3.1)
 
-**Статус:** обезличённый образец XML из `/LC/catalog/` **не получен** в репозитории (R0.2).
+**Статус:** синтетический минимальный набор 8× `data.xml` генерируется в тестах (`test/helpers/onec-catalog-fixtures.ts`).
 
-Синтетические XML-файлы **не создавались** — без подтверждённой структуры обмена они не могут расширить контракт.
+Живая выгрузка `/LC/catalog/` **не** включена в репозиторий. Перед production apply требуется отдельная приёмка полного FTP-снимка.
 
-Спецификация ожидаемого поведения (без парсера): [docs/delivery/catalog-contract-spec.md](../../docs/delivery/catalog-contract-spec.md).
+Спецификация: [docs/delivery/catalog-contract-spec.md](../../docs/delivery/catalog-contract-spec.md) · runbook: [docs/delivery/import-runbook.md](../../docs/delivery/import-runbook.md#9-каталог-1с-r31).

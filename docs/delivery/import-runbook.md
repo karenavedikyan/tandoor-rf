@@ -155,3 +155,78 @@
 - Не создаёт и не меняет `users`, `user_onec_employee_links`, `access_grants`, `rop_team_members`.
 - Не включает production-расписание сам по себе — cron/TW настраивает оператор после приёмки PR.
 - Не объявляет пилот или весь R1 завершёнными — см. [pilot-checklist.md](./pilot-checklist.md).
+
+---
+
+## 9. Каталог 1С (R3.1)
+
+**Назначение:** безопасный импорт 8 XML `/LC/catalog/*/data.xml` в PostgreSQL **без UI** и **без** изменения клиентского snapshot.
+
+### Принципы
+
+- Источник: только согласованный plain FTP `{ONEC_FTP_BASE_PATH}/catalog/...` или локальная папка с тем же деревом (`--local-dir`).
+- **Dry-run по умолчанию.** Apply: `--apply --expected-manifest-sha256=<sha-from-dry-run>`.
+- Manifest SHA покрывает **весь набор** (8 файлов); не путать с SHA отдельного файла.
+- Коммерческие цены/остатки сохраняются в staging; `commercialReady=false` до отдельного согласования семантики.
+- История прогонов: `onec_catalog_import_runs` (отдельно от `onec_client_import_runs`).
+
+### Команды
+
+1. **Dry-run (FTP):**
+   ```bash
+   npm run onec-catalog-import -- --dry-run
+   ```
+2. **Dry-run (локальная папка с 8 файлами):**
+   ```bash
+   npm run onec-catalog-import -- --dry-run --local-dir /path/to/LC
+   ```
+3. **Apply** (после backup и review manifest):
+   ```bash
+   npm run onec-catalog-import -- --apply --expected-manifest-sha256 <64-char-hex>
+   ```
+
+### Проверка результата
+
+```sql
+SELECT id, started_at, finished_at, status, mode, manifest_sha256,
+       core_applied, commercial_ready, product_count, quarantine_count
+FROM onec_catalog_import_runs
+ORDER BY started_at DESC
+LIMIT 5;
+
+SELECT active_version_id, last_successful_manifest_sha256
+FROM onec_catalog_state WHERE id = 1;
+```
+
+### Откат активной версии (без отката клиентов)
+
+```sql
+-- пример: вернуть предыдущую версию, если новая уже переключена
+UPDATE onec_catalog_versions SET is_active = FALSE WHERE is_active = TRUE;
+UPDATE onec_catalog_versions SET is_active = TRUE WHERE id = '<previous-version-uuid>';
+UPDATE onec_catalog_state
+SET active_version_id = '<previous-version-uuid>',
+    last_successful_manifest_sha256 = '<previous-manifest-sha>',
+    updated_at = NOW()
+WHERE id = 1;
+```
+
+Данные версий в БД **не удаляются** автоматически; откат — смена указателя `active_version_id`.
+
+### Live-приёмка (обязательна до production apply)
+
+1. Резервная копия PostgreSQL.
+2. Миграция `020_onec_catalog.sql` по согласованному плану деплоя.
+3. Dry-run на live FTP → сохранить `manifestSha256`, counts, quarantine.
+4. Сверка с наблюдениями 01.10.2026 (не как жёсткие константы).
+5. Apply с тем же manifest SHA **без** повторного незащищённого скачивания (CLI выполняет stability read на FTP).
+
+### Разрешение владельца 01.10.2026
+
+Владелец разрешил проверять текущий обмен и **обновлять клиентов**; это **не** разрешает автоматический catalog apply, расписание или миграции production из Cursor.
+
+### Что R3.1 runbook не делает
+
+- Не меняет `onec_clients`, права, Bitrix24, UI карточки клиента.
+- Не включает cron/расписание catalog import.
+- Не объявляет каталог, витрины или пригодность цен/остатков к продажам завершёнными.
