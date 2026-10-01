@@ -54,8 +54,12 @@ export function isLinkAccessValid(
   }
   if (runtime.linkVerificationTtlMs > 0) {
     const verifiedAt = link.lastVerifiedAt ?? link.confirmedAt;
+    const verifiedGuard = guardPastTimestamp(verifiedAt, nowMs);
+    if (!verifiedGuard.ok) {
+      return false;
+    }
     const verifiedMs = Date.parse(verifiedAt);
-    if (!Number.isFinite(verifiedMs) || verifiedMs + runtime.linkVerificationTtlMs < nowMs) {
+    if (verifiedMs + runtime.linkVerificationTtlMs < nowMs) {
       return false;
     }
   }

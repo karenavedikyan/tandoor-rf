@@ -1,5 +1,9 @@
 export type Bitrix24TasksMode = "pilot" | "working";
 
+const MAX_WORKING_TASKS_PER_SYNC = 100;
+const MAX_WORKING_DISCOVERY_PAGES = 50;
+const MAX_WORKING_DISCOVERY_PAGES_TOTAL = 100;
+
 export type Bitrix24TasksRuntimeConfig = {
   tasksMode: Bitrix24TasksMode;
   cachePublishEnabled: boolean;
@@ -10,6 +14,7 @@ export type Bitrix24TasksRuntimeConfig = {
   portalPublicUrl: string | null;
   workingMaxTasksPerSync: number;
   workingMaxDiscoveryPages: number;
+  workingMaxDiscoveryPagesTotal: number;
 };
 
 export function isCachePublishAllowed(config: Bitrix24TasksRuntimeConfig): boolean {
@@ -30,6 +35,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
     return fallback;
   }
   return value;
+}
+
+function parseBoundedPositiveInt(
+  raw: string | undefined,
+  fallback: number,
+  max: number,
+): number {
+  return Math.min(parsePositiveInt(raw, fallback), max);
 }
 
 /** Working mode requires explicit cache publish policy; incomplete config stays on pilot rules. */
@@ -76,7 +89,20 @@ export function loadBitrix24TasksRuntimeConfig(
     pilotTaskIds,
     pilotAllowListRequired,
     portalPublicUrl,
-    workingMaxTasksPerSync: parsePositiveInt(env.BITRIX24_WORKING_MAX_TASKS_PER_SYNC, 20),
-    workingMaxDiscoveryPages: parsePositiveInt(env.BITRIX24_WORKING_MAX_DISCOVERY_PAGES, 5),
+    workingMaxTasksPerSync: parseBoundedPositiveInt(
+      env.BITRIX24_WORKING_MAX_TASKS_PER_SYNC,
+      20,
+      MAX_WORKING_TASKS_PER_SYNC,
+    ),
+    workingMaxDiscoveryPages: parseBoundedPositiveInt(
+      env.BITRIX24_WORKING_MAX_DISCOVERY_PAGES,
+      5,
+      MAX_WORKING_DISCOVERY_PAGES,
+    ),
+    workingMaxDiscoveryPagesTotal: parseBoundedPositiveInt(
+      env.BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL,
+      25,
+      MAX_WORKING_DISCOVERY_PAGES_TOTAL,
+    ),
   };
 }

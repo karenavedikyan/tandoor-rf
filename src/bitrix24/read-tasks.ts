@@ -30,7 +30,7 @@ export type ReadBitrixTasksOptions = {
   startedAtMs?: number;
   maxPages?: number;
   taskId?: string;
-  /** Substring filter for DESCRIPTION (%DESCRIPTION in Bitrix REST). */
+  /** Label token substring; server filter is best-effort, results are always re-checked client-side. */
   descriptionContains?: string;
 };
 
@@ -217,10 +217,18 @@ export async function readBitrixTasksForUser(
     start = page.pagination.next;
   }
 
+  let normalizedTasks = dedupeBitrixTasks(tasks);
+  if (options.descriptionContains) {
+    const needle = options.descriptionContains;
+    normalizedTasks = normalizedTasks.filter(
+      (task) => typeof task.description === "string" && task.description.includes(needle),
+    );
+  }
+
   return {
     ok: true,
     data: finalizeTaskListResult({
-      tasks: dedupeBitrixTasks(tasks),
+      tasks: normalizedTasks,
       totalReported,
       pagesFetched,
       truncatedReason,

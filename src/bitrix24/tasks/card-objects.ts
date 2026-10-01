@@ -50,6 +50,33 @@ export async function confirmCardObjectLink(
   );
 }
 
+export type CardObjectLinkInsertResult = "created" | "unchanged" | "conflict";
+
+export async function insertCardObjectLinkIfAbsent(
+  cardGuid: string,
+  objectType: Bitrix24ObjectType,
+  objectGuid: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<CardObjectLinkInsertResult> {
+  const existing = await findCardObjectMapping(cardGuid, client);
+  if (existing) {
+    if (existing.objectType === objectType && existing.objectGuid === objectGuid) {
+      return "unchanged";
+    }
+    return "conflict";
+  }
+  const inserted = await client.query(
+    `INSERT INTO bitrix24_client_card_objects (card_guid, object_type, object_guid)
+     VALUES ($1::uuid, $2::bitrix24_object_type, $3::uuid)
+     ON CONFLICT (card_guid) DO NOTHING`,
+    [cardGuid, objectType, objectGuid],
+  );
+  if ((inserted.rowCount ?? 0) === 0) {
+    return "conflict";
+  }
+  return "created";
+}
+
 export async function requireCardHoldingGuid(
   cardGuid: string,
   client: Pool | PoolClient = requirePool(),

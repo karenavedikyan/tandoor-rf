@@ -155,17 +155,21 @@ BITRIX24_CACHE_ACCESS_TTL_MS=3600000
 BITRIX24_LINK_VERIFICATION_TTL_MS=86400000
 BITRIX24_WORKING_MAX_TASKS_PER_SYNC=20
 BITRIX24_WORKING_MAX_DISCOVERY_PAGES=5
+BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL=25
 ```
 
-- Discovery ищет задачи ответственного по подтверждённым меткам объектов карточки (`%DESCRIPTION` в REST), без allowlist ID.
+- Discovery ищет задачи ответственного (`RESPONSIBLE_ID`) по подтверждённым меткам карточки. Официальный REST [`tasks.task.list`](https://apidocs.bitrix24.ru/api-reference/tasks/tasks-task-list.html) документирует шаблонный поиск только для `TITLE`, не для `DESCRIPTION`; фильтр `%DESCRIPTION` отправляется best-effort, но совпадение метки всегда перепроверяется на стороне сервера по полю `DESCRIPTION` в ответе. Mock в CI не подтверждает поведение реального портала.
+- Общий бюджет страниц discovery — `BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL` на всю операцию (не N×maxPages на метку).
 - Перед sync выполняется `user.get` для обновления `last_verified_at`; `confirmed_at` не истекает по TTL кэша.
 - Cooldown/lock: сотрудник+карточка (`018`) и task-locks (`017`).
 - Массовая регистрация меток из снимка 1С (dry-run по умолчанию):
 
 ```bash
-npm run bitrix24-labels-bootstrap:local          # dry-run
-npm run bitrix24-labels-bootstrap:local -- --apply  # только после проверки счётчиков
+npm run bitrix24-labels-bootstrap:local          # dry-run (по умолчанию)
+npm run bitrix24-labels-bootstrap:local -- --apply --actor=<user-uuid>  # только после проверки плана
 ```
+
+При конфликте привязки карточки apply не выполняет изменений; audit фиксирует `conflict`.
 
 **Откат:** `BITRIX24_TASKS_MODE=pilot` и прежний `BITRIX24_PILOT_TASK_IDS`.
 

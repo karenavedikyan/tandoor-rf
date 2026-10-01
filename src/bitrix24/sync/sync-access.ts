@@ -250,7 +250,7 @@ export async function resolveManualSyncScope(
   }
 
   const configDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
-  if (configDeny && configDeny !== "ACCESS_EXPIRED") {
+  if (configDeny) {
     return { ok: false, code: configDeny };
   }
 
@@ -269,10 +269,6 @@ export async function resolveManualSyncScope(
     );
   }
 
-  if (configDeny === "ACCESS_EXPIRED") {
-    return { ok: false, code: configDeny };
-  }
-
   return resolvePilotManualSyncScope(
     context,
     loaded.config.portalId,
@@ -288,11 +284,12 @@ export async function verifyManualSyncOutcome(
   cardGuid: string,
   taskIds: string[],
 ): Promise<ManualSyncDenyCode | null> {
-  if (taskIds.length === 0) {
-    return null;
-  }
   context = await loadAccessContext(context.userId);
   if (context.status !== "active") return "NO_CLIENT_ACCESS";
+  const configDeny = await evaluateUserBitrixTaskConfig(context, portalId);
+  if (configDeny) {
+    return configDeny;
+  }
   const link = await findEmployeePortalLink(context.userId, portalId);
   if (!link) {
     return "NO_EMPLOYEE_LINK";
@@ -345,7 +342,7 @@ export async function verifyManualSyncSource(
   const context = await loadAccessContext(userId);
   if (context.status !== "active") return "NO_CLIENT_ACCESS";
   const configDeny = await evaluateUserBitrixTaskConfig(context, portalId);
-  if (configDeny && configDeny !== "ACCESS_EXPIRED") return configDeny;
+  if (configDeny) return configDeny;
 
   const runtime = loadBitrix24TasksRuntimeConfig();
   if (isPilotTaskFilterActive(runtime) && !runtime.pilotTaskIds.has(task.taskId)) {

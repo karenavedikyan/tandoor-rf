@@ -1,7 +1,11 @@
 import type { Bitrix24WebhookConfig } from "../types";
 import type { Bitrix24OperationContext } from "../types";
 import { readBitrixUserById } from "../read-users";
-import { findEmployeePortalLink, recordEmployeePortalVerification } from "./repository";
+import {
+  clearEmployeePortalVerification,
+  findEmployeePortalLink,
+  recordEmployeePortalVerification,
+} from "./repository";
 import { isLinkAccessValid, type TaskVisibilityDenyCode } from "./access";
 import { loadBitrix24TasksRuntimeConfig } from "./config";
 
@@ -38,14 +42,31 @@ export async function ensureEmployeePortalLinkVerified(
     return { ok: true, refreshed: false };
   }
 
-  const userResult = await readBitrixUserById(config, link.bitrixUserId, { operation });
+  const expectedBitrixUserId = link.bitrixUserId;
+  const expectedConfirmedAtMs = Date.parse(link.confirmedAt);
+
+  const userResult = await readBitrixUserById(config, expectedBitrixUserId, { operation });
   if (!userResult.ok) {
     return { ok: false, code: "VERIFICATION_FAILED" };
   }
-  if (userResult.user.active === false) {
+  if (userResult.user.active !== true) {
+    await clearEmployeePortalVerification(userId, portalId);
     return { ok: false, code: "BITRIX_USER_INACTIVE" };
   }
 
-  await recordEmployeePortalVerification(userId, portalId);
+  const freshLink = await findEmployeePortalLink(userId, portalId);
+  if (
+    !freshLink ||
+    freshLink.bitrixUserId !== expectedBitrixUserId ||
+    !Number.isFinite(expectedConfirmedAtMs) ||
+    Math.abs(Date.parse(freshLink.confirmedAt) - expectedConfirmedAtMs) > 1
+  ) {
+    return { ok: false, code: "VERIFICATION_FAILED" };
+  }
+
+  const refreshed = await recordEmployeePortalVerification(userId, portalId, expectedBitrixUserId);
+  if (!refreshed) {
+    return { ok: false, code: "VERIFICATION_FAILED" };
+  }
   return { ok: true, refreshed: true };
 }

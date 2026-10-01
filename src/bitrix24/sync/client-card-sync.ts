@@ -7,18 +7,18 @@ import { formatMskDateTime } from "../../clients/dto";
 import { requirePool } from "../../db/pool";
 import {
   findTaskSnapshotById,
+  listPublishedTaskIdsForResponsibleScope,
   unpublishResponsibleTasksNotInSet,
 } from "../tasks/repository";
 import { isObjectLinkedToClientCard } from "../tasks/object-access";
 import { ensureEmployeePortalLinkVerified } from "../tasks/employee-verification";
 import {
-  acquireManualSyncCardLock,
-  acquireManualSyncLocks,
+  beginManualSyncCardSession,
   loadManualSyncMinIntervalMs,
   type ManualSyncLockResult,
 } from "./manual-sync-lock";
 import { runBitrix24TaskSync, type Bitrix24SyncResult } from "./run-sync";
-import { discoverResponsibleTasksForCard } from "./task-discovery";
+import { discoverResponsibleTasksForCard, type TaskDiscoveryResult } from "./task-discovery";
 import {
   mapManualSyncDenyMessage,
   resolveManualSyncScope,
@@ -65,10 +65,10 @@ type SyncBatchResult = {
   aggregate: Bitrix24SyncResult;
   sourceDeny: ManualSyncDenyCode | null;
   lockDeny: ManualSyncLockResult | null;
-  syncedTaskIds: string[];
+  writtenTaskIds: string[];
 };
 
-function emptySyncResult(): Bitrix24SyncResult {
+function baseSyncResult(): Bitrix24SyncResult {
   return {
     ok: true,
     status: "success",
@@ -87,7 +87,30 @@ function emptySyncResult(): Bitrix24SyncResult {
   };
 }
 
+function discoveryFailureResult(code: string): Bitrix24SyncResult {
+  return {
+    ...baseSyncResult(),
+    ok: false,
+    status: "failed",
+    complete: false,
+    message: code,
+  };
+}
+
+function emptyWorkingDiscoveryResult(): Bitrix24SyncResult {
+  return {
+    ...baseSyncResult(),
+    ok: true,
+    status: "success",
+    complete: true,
+    message: "NO_TASKS_FOUND",
+  };
+}
+
 function mapSyncResultMessage(result: Bitrix24SyncResult): string {
+  if (result.message === "NO_TASKS_FOUND") {
+    return "Подходящие задачи не найдены.";
+  }
   if (result.status === "success" && result.complete) {
     return "Данные задач и чек-листов обновлены.";
   }
@@ -136,17 +159,18 @@ function mergeSyncResults(
   aggregate: Bitrix24SyncResult,
   result: Bitrix24SyncResult,
 ): Bitrix24SyncResult {
+  const mergedStatus =
+    aggregate.status === "failed" || result.status === "failed"
+      ? aggregate.status === "partial" || result.status === "partial" || aggregate.cacheWrites > 0 || result.cacheWrites > 0
+        ? "partial"
+        : "failed"
+      : aggregate.status === "partial" || result.status === "partial"
+        ? "partial"
+        : "success";
   return {
     ...aggregate,
-    ok: aggregate.ok && result.ok,
-    status:
-      aggregate.status === "failed" || result.status === "failed"
-        ? aggregate.status === "partial" || result.status === "partial"
-          ? "partial"
-          : "failed"
-        : aggregate.status === "partial" || result.status === "partial"
-          ? "partial"
-          : "success",
+    ok: mergedStatus !== "failed",
+    status: mergedStatus,
     tasksFetched: aggregate.tasksFetched + result.tasksFetched,
     cacheWrites: aggregate.cacheWrites + result.cacheWrites,
     checklistsSynced: aggregate.checklistsSynced + result.checklistsSynced,
@@ -154,6 +178,26 @@ function mergeSyncResults(
     complete: aggregate.complete && result.complete,
     message: result.complete ? aggregate.message : result.message,
   };
+}
+
+function applyDiscoveryState(
+  aggregate: Bitrix24SyncResult,
+  discovery: TaskDiscoveryResult,
+): Bitrix24SyncResult {
+  if (discovery.fatalError && aggregate.cacheWrites === 0) {
+    return discoveryFailureResult(discovery.fatalError);
+  }
+  if (!discovery.complete) {
+    return {
+      ...aggregate,
+      ok: aggregate.cacheWrites > 0 ? aggregate.ok : false,
+      status: aggregate.cacheWrites > 0 ? "partial" : "failed",
+      complete: false,
+      truncatedReason: discovery.truncatedReason ?? discovery.fatalError,
+      message: discovery.truncatedReason ?? discovery.fatalError ?? aggregate.message,
+    };
+  }
+  return aggregate;
 }
 
 async function syncTaskBatch(
@@ -164,10 +208,26 @@ async function syncTaskBatch(
   const loaded = loadBitrix24Config(env);
   if (!loaded.ok) {
     return {
-      aggregate: { ...emptySyncResult(), ok: false, status: "failed", complete: false, message: "NOT_CONFIGURED" },
+      aggregate: { ...baseSyncResult(), ok: false, status: "failed", complete: false, message: "NOT_CONFIGURED" },
       sourceDeny: "NOT_CONFIGURED",
       lockDeny: null,
-      syncedTaskIds: [],
+      writtenTaskIds: [],
+    };
+  }
+
+  const minIntervalMs = loadManualSyncMinIntervalMs(env);
+  const session = await beginManualSyncCardSession(
+    scope.portalId,
+    options.cardGuid,
+    options.context.userId,
+    minIntervalMs,
+  );
+  if (!session.ok) {
+    return {
+      aggregate: baseSyncResult(),
+      sourceDeny: null,
+      lockDeny: session,
+      writtenTaskIds: [],
     };
   }
 
@@ -175,139 +235,170 @@ async function syncTaskBatch(
   operation.pinnedRequest = options.pinnedRequest;
   operation.resolvePortalAddresses = options.resolvePortalAddresses;
 
-  const verification = await ensureEmployeePortalLinkVerified(
-    options.context.userId,
-    scope.portalId,
-    loaded.config,
-    operation,
-    { force: scope.mode === "working" },
-  );
-  if (!verification.ok) {
-    return {
-      aggregate: emptySyncResult(),
-      sourceDeny: verification.code as ManualSyncDenyCode,
-      lockDeny: null,
-      syncedTaskIds: [],
-    };
-  }
-
-  let taskIdsToSync = [...scope.taskIds];
-  let discoveryComplete = true;
-  if (scope.mode === "working") {
-    const discovery = await discoverResponsibleTasksForCard({
-      config: loaded.config,
-      bitrixUserId: scope.bitrixUserId,
-      cardGuid: options.cardGuid,
-      holdingGuid: scope.holdingGuid,
-      operation,
-    });
-    taskIdsToSync = discovery.taskIds;
-    discoveryComplete = discovery.complete;
-  }
-
-  const minIntervalMs = loadManualSyncMinIntervalMs(env);
-  const cardLock = await acquireManualSyncCardLock(
-    scope.portalId,
-    options.cardGuid,
-    options.context.userId,
-    minIntervalMs,
-  );
-  if (!cardLock.ok) {
-    return {
-      aggregate: emptySyncResult(),
-      sourceDeny: null,
-      lockDeny: cardLock,
-      syncedTaskIds: [],
-    };
-  }
-
-  const taskLock =
-    taskIdsToSync.length > 0
-      ? await acquireManualSyncLocks(scope.portalId, taskIdsToSync, minIntervalMs)
-      : { ok: true as const, release: async () => {} };
-  if (!taskLock.ok) {
-    await cardLock.release();
-    return {
-      aggregate: emptySyncResult(),
-      sourceDeny: null,
-      lockDeny: taskLock,
-      syncedTaskIds: [],
-    };
-  }
-
-  let aggregate: Bitrix24SyncResult | null = taskIdsToSync.length === 0 ? emptySyncResult() : null;
+  let aggregate: Bitrix24SyncResult | null = null;
   let sourceDeny: ManualSyncDenyCode | null = null;
+  let writtenTaskIds: string[] = [];
+  let discovery: TaskDiscoveryResult | null = null;
+  let publishedSnapshot: string[] = [];
+
   try {
-    for (const taskId of taskIdsToSync) {
-      if (operation.deadline.expired()) {
-        aggregate = aggregate
-          ? { ...aggregate, status: "partial", complete: false }
-          : { ...emptySyncResult(), status: "partial", complete: false };
-        discoveryComplete = false;
-        break;
-      }
-      const prior = await findTaskSnapshotById(scope.portalId, taskId);
-      const result = await runBitrix24TaskSync({
-        bitrixUserId: scope.bitrixUserId,
-        apply: true,
-        taskId,
-        pinnedRequest: options.pinnedRequest,
-        resolvePortalAddresses: options.resolvePortalAddresses,
-        env,
-        operation,
-        assertTaskScope: async (task) => {
-          const deny = await verifyManualSyncSource(
-            options.context.userId,
-            scope.portalId,
-            options.cardGuid,
-            scope.bitrixUserId,
-            task,
-          );
-          if (!deny) return;
-          sourceDeny = deny;
-          if (
-            prior?.objectType &&
-            prior.objectGuid &&
-            ["BINDING_UNCONFIRMED", "TASK_NOT_ON_CARD", "SUMMARY_ONLY"].includes(deny) &&
-            (await isObjectLinkedToClientCard(
-              options.cardGuid,
-              prior.objectType,
-              prior.objectGuid,
-            ))
-          ) {
-            await requirePool().query(
-              `UPDATE bitrix24_task_cache SET published = false, cache_version = cache_version + 1
-               WHERE portal_id = $1 AND task_id = $2 AND cache_version = $3`,
-              [scope.portalId, taskId, prior.cacheVersion],
-            );
-          }
-          throw new Error("MANUAL_SYNC_SCOPE_DENIED");
-        },
-      });
-      aggregate = aggregate ? mergeSyncResults(aggregate, result) : result;
-      if (sourceDeny) break;
+    const verification = await ensureEmployeePortalLinkVerified(
+      options.context.userId,
+      scope.portalId,
+      loaded.config,
+      operation,
+      { force: scope.mode === "working" },
+    );
+    if (!verification.ok) {
+      return {
+        aggregate: baseSyncResult(),
+        sourceDeny: verification.code as ManualSyncDenyCode,
+        lockDeny: null,
+        writtenTaskIds: [],
+      };
     }
 
-    if (scope.mode === "working" && discoveryComplete && !sourceDeny) {
-      await unpublishResponsibleTasksNotInSet({
+    let taskIdsToSync = [...scope.taskIds];
+    if (scope.mode === "working") {
+      publishedSnapshot = await listPublishedTaskIdsForResponsibleScope({
         portalId: scope.portalId,
         bitrixUserId: scope.bitrixUserId,
         objectType: scope.objectType,
         objectGuid: scope.objectGuid,
         holdingGuid: scope.holdingGuid,
-        keepTaskIds: taskIdsToSync,
       });
+      discovery = await discoverResponsibleTasksForCard({
+        config: loaded.config,
+        bitrixUserId: scope.bitrixUserId,
+        cardGuid: options.cardGuid,
+        holdingGuid: scope.holdingGuid,
+        operation,
+      });
+      if (discovery.fatalError && discovery.taskIds.length === 0) {
+        return {
+          aggregate: discoveryFailureResult(discovery.fatalError),
+          sourceDeny: null,
+          lockDeny: null,
+          writtenTaskIds: [],
+        };
+      }
+      taskIdsToSync = discovery.taskIds;
+    }
+
+    if (taskIdsToSync.length > 0) {
+      const taskLock = await session.acquireTaskLocks(taskIdsToSync);
+      if (!taskLock.ok) {
+        return {
+          aggregate: baseSyncResult(),
+          sourceDeny: null,
+          lockDeny: taskLock,
+          writtenTaskIds: [],
+        };
+      }
+    }
+
+    if (taskIdsToSync.length === 0) {
+      aggregate =
+        scope.mode === "working" && discovery && discovery.complete && !discovery.fatalError
+          ? emptyWorkingDiscoveryResult()
+          : discovery && !discovery.complete
+            ? applyDiscoveryState(baseSyncResult(), discovery)
+            : baseSyncResult();
+    } else {
+      for (const taskId of taskIdsToSync) {
+        if (operation.deadline.expired()) {
+          aggregate = aggregate
+            ? { ...aggregate, status: "partial", complete: false, ok: aggregate.cacheWrites > 0 }
+            : { ...baseSyncResult(), status: "partial", complete: false, ok: false };
+          break;
+        }
+        const prior = await findTaskSnapshotById(scope.portalId, taskId);
+        const result = await runBitrix24TaskSync({
+          bitrixUserId: scope.bitrixUserId,
+          apply: true,
+          taskId,
+          pinnedRequest: options.pinnedRequest,
+          resolvePortalAddresses: options.resolvePortalAddresses,
+          env,
+          operation,
+          assertTaskScope: async (task) => {
+            const deny = await verifyManualSyncSource(
+              options.context.userId,
+              scope.portalId,
+              options.cardGuid,
+              scope.bitrixUserId,
+              task,
+            );
+            if (!deny) return;
+            sourceDeny = deny;
+            if (
+              prior?.objectType &&
+              prior.objectGuid &&
+              ["BINDING_UNCONFIRMED", "TASK_NOT_ON_CARD", "SUMMARY_ONLY"].includes(deny) &&
+              (await isObjectLinkedToClientCard(
+                options.cardGuid,
+                prior.objectType,
+                prior.objectGuid,
+              ))
+            ) {
+              await requirePool().query(
+                `UPDATE bitrix24_task_cache SET published = false, cache_version = cache_version + 1
+                 WHERE portal_id = $1 AND task_id = $2 AND cache_version = $3`,
+                [scope.portalId, taskId, prior.cacheVersion],
+              );
+            }
+            throw new Error("MANUAL_SYNC_SCOPE_DENIED");
+          },
+        });
+        aggregate = aggregate ? mergeSyncResults(aggregate, result) : result;
+        if (result.cacheWrites > 0) {
+          writtenTaskIds.push(taskId);
+        }
+        if (sourceDeny) break;
+      }
+      aggregate ??= baseSyncResult();
+      if (discovery) {
+        aggregate = applyDiscoveryState(aggregate, discovery);
+      }
+    }
+
+    const canUnpublish =
+      scope.mode === "working" &&
+      discovery?.complete === true &&
+      !discovery.fatalError &&
+      !sourceDeny &&
+      aggregate.status !== "failed";
+
+    if (canUnpublish) {
+      const holdingLock = await session.acquireHoldingLock(scope.holdingGuid);
+      if (holdingLock.ok) {
+        await unpublishResponsibleTasksNotInSet({
+          portalId: scope.portalId,
+          bitrixUserId: scope.bitrixUserId,
+          objectType: scope.objectType,
+          objectGuid: scope.objectGuid,
+          holdingGuid: scope.holdingGuid,
+          keepTaskIds: writtenTaskIds,
+          snapshotTaskIds: publishedSnapshot,
+        });
+      } else {
+        aggregate = {
+          ...aggregate,
+          status: aggregate.cacheWrites > 0 ? "partial" : "failed",
+          complete: false,
+          ok: aggregate.cacheWrites > 0,
+        };
+      }
     }
   } finally {
-    await taskLock.release();
-    await cardLock.release();
+    await session.release();
   }
 
   return {
-    aggregate: aggregate ?? emptySyncResult(),
+    aggregate: aggregate ?? baseSyncResult(),
     sourceDeny,
     lockDeny: null,
-    syncedTaskIds: taskIdsToSync,
+    writtenTaskIds,
   };
 }
 
@@ -337,7 +428,7 @@ export async function runClientCardBitrix24Sync(
     options.context,
     scope.portalId,
     options.cardGuid,
-    batch.syncedTaskIds,
+    batch.writtenTaskIds,
   );
   if (postDeny) {
     return denyResponse(403, postDeny);
@@ -346,7 +437,7 @@ export async function runClientCardBitrix24Sync(
   const result = batch.aggregate;
   const finishedAt = new Date();
 
-  if (!result.ok && result.status === "failed" && result.tasksFetched === 0) {
+  if (!result.ok && result.status === "failed" && result.tasksFetched === 0 && result.cacheWrites === 0) {
     return {
       httpStatus: 200,
       body: {

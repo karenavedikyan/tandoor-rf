@@ -5,12 +5,25 @@ export type ManualSyncLockResult =
   | { ok: true; release: () => Promise<void> }
   | { ok: false; code: "SYNC_IN_PROGRESS" | "COOLDOWN"; retryAfterMs: number };
 
+export type ManualSyncCardSession =
+  | {
+      ok: true;
+      acquireTaskLocks: (taskIds: string[]) => Promise<ManualSyncLockResult>;
+      acquireHoldingLock: (holdingGuid: string) => Promise<ManualSyncLockResult>;
+      release: () => Promise<void>;
+    }
+  | { ok: false; code: "SYNC_IN_PROGRESS" | "COOLDOWN"; retryAfterMs: number };
+
 function manualSyncLockKey(portalId: string, taskId: string): [string, string] {
   return [portalId, `manual_sync:${taskId}`];
 }
 
 function manualSyncCardLockKey(portalId: string, cardGuid: string, userId: string): [string, string] {
   return [portalId, `manual_sync:card:${cardGuid}:${userId}`];
+}
+
+function manualSyncHoldingLockKey(portalId: string, holdingGuid: string): [string, string] {
+  return [portalId, `manual_sync:holding:${holdingGuid}`];
 }
 
 export function loadManualSyncMinIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -104,59 +117,22 @@ async function acquireLocksOnClient(
   return { ok: true, heldLocks };
 }
 
-export async function acquireManualSyncLocks(
-  portalId: string,
-  taskIds: string[],
-  minIntervalMs = loadManualSyncMinIntervalMs(),
-): Promise<ManualSyncLockResult> {
-  if (taskIds.length === 0) {
-    return { ok: true, release: async () => {} };
+async function tryAcquireAdvisoryLock(
+  client: PoolClient,
+  lockA: string,
+  lockB: string,
+  heldLocks: Array<[string, string]>,
+  minIntervalMs: number,
+): Promise<{ ok: true } | { ok: false; code: "SYNC_IN_PROGRESS"; retryAfterMs: number }> {
+  const acquired = await client.query<{ locked: boolean }>(
+    `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+    [lockA, lockB],
+  );
+  if (!acquired.rows[0]?.locked) {
+    return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
   }
-
-  const pool = requirePool();
-  const client = await pool.connect();
-  const heldLocks: Array<[string, string]> = [];
-  let releasePromise: Promise<void> | undefined;
-  const release = (): Promise<void> => {
-    releasePromise ??= (async () => {
-      let broken = false;
-      try {
-        await unlockHeldLocks(client, heldLocks);
-      } catch {
-        // Never put a session with uncertain lock ownership back into the pool.
-        broken = true;
-      } finally {
-        client.release(broken);
-      }
-    })();
-    return releasePromise;
-  };
-
-  try {
-    const result = await acquireLocksOnClient(
-      client, portalId, [...new Set(taskIds)].sort(), minIntervalMs, heldLocks,
-    );
-    if (!result.ok) {
-      await release();
-      return result;
-    }
-    return { ok: true, release };
-  } catch (error) {
-    if (!releasePromise) {
-      // Connection/transaction state is unknown after an acquisition error.
-      client.release(true);
-      releasePromise = Promise.resolve();
-    }
-    throw error;
-  }
-}
-
-export async function acquireManualSyncLock(
-  portalId: string,
-  taskId: string,
-  minIntervalMs = loadManualSyncMinIntervalMs(),
-): Promise<ManualSyncLockResult> {
-  return acquireManualSyncLocks(portalId, [taskId], minIntervalMs);
+  heldLocks.push([lockA, lockB]);
+  return { ok: true };
 }
 
 async function checkAndRecordCardCooldown(
@@ -199,21 +175,23 @@ async function checkAndRecordCardCooldown(
   }
 }
 
-export async function acquireManualSyncCardLock(
+/** Single-connection card session: card lock + optional task/holding locks before external HTTP. */
+export async function beginManualSyncCardSession(
   portalId: string,
   cardGuid: string,
   userId: string,
   minIntervalMs = loadManualSyncMinIntervalMs(),
-): Promise<ManualSyncLockResult> {
+): Promise<ManualSyncCardSession> {
   const pool = requirePool();
   const client = await pool.connect();
-  const [lockA, lockB] = manualSyncCardLockKey(portalId, cardGuid, userId);
+  const heldLocks: Array<[string, string]> = [];
   let releasePromise: Promise<void> | undefined;
+
   const release = (): Promise<void> => {
     releasePromise ??= (async () => {
       let broken = false;
       try {
-        await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+        await unlockHeldLocks(client, heldLocks);
       } catch {
         broken = true;
       } finally {
@@ -224,19 +202,92 @@ export async function acquireManualSyncCardLock(
   };
 
   try {
-    const acquired = await client.query<{ locked: boolean }>(
-      `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
-      [lockA, lockB],
-    );
-    if (!acquired.rows[0]?.locked) {
+    const [lockA, lockB] = manualSyncCardLockKey(portalId, cardGuid, userId);
+    const acquired = await tryAcquireAdvisoryLock(client, lockA, lockB, heldLocks, minIntervalMs);
+    if (!acquired.ok) {
+      await unlockHeldLocks(client, heldLocks);
       client.release();
-      return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
+      return acquired;
     }
+
     const cooldown = await checkAndRecordCardCooldown(client, portalId, cardGuid, userId, minIntervalMs);
     if (!cooldown.ok) {
-      await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+      await unlockHeldLocks(client, heldLocks);
       client.release();
       return { ok: false, code: "COOLDOWN", retryAfterMs: cooldown.retryAfterMs };
+    }
+
+    return {
+      ok: true,
+      acquireTaskLocks: async (taskIds: string[]) => {
+        if (taskIds.length === 0) {
+          return { ok: true, release: async () => {} };
+        }
+        const result = await acquireLocksOnClient(
+          client,
+          portalId,
+          [...new Set(taskIds)].sort(),
+          minIntervalMs,
+          heldLocks,
+        );
+        if (!result.ok) {
+          return result;
+        }
+        return { ok: true, release: async () => {} };
+      },
+      acquireHoldingLock: async (holdingGuid: string) => {
+        const [hA, hB] = manualSyncHoldingLockKey(portalId, holdingGuid);
+        const holding = await tryAcquireAdvisoryLock(client, hA, hB, heldLocks, minIntervalMs);
+        if (!holding.ok) {
+          return holding;
+        }
+        return { ok: true, release: async () => {} };
+      },
+      release,
+    };
+  } catch (error) {
+    if (!releasePromise) {
+      client.release(true);
+      releasePromise = Promise.resolve();
+    }
+    throw error;
+  }
+}
+
+export async function acquireManualSyncLocks(
+  portalId: string,
+  taskIds: string[],
+  minIntervalMs = loadManualSyncMinIntervalMs(),
+): Promise<ManualSyncLockResult> {
+  if (taskIds.length === 0) {
+    return { ok: true, release: async () => {} };
+  }
+
+  const pool = requirePool();
+  const client = await pool.connect();
+  const heldLocks: Array<[string, string]> = [];
+  let releasePromise: Promise<void> | undefined;
+  const release = (): Promise<void> => {
+    releasePromise ??= (async () => {
+      let broken = false;
+      try {
+        await unlockHeldLocks(client, heldLocks);
+      } catch {
+        broken = true;
+      } finally {
+        client.release(broken);
+      }
+    })();
+    return releasePromise;
+  };
+
+  try {
+    const result = await acquireLocksOnClient(
+      client, portalId, [...new Set(taskIds)].sort(), minIntervalMs, heldLocks,
+    );
+    if (!result.ok) {
+      await release();
+      return result;
     }
     return { ok: true, release };
   } catch (error) {
@@ -246,4 +297,25 @@ export async function acquireManualSyncCardLock(
     }
     throw error;
   }
+}
+
+export async function acquireManualSyncLock(
+  portalId: string,
+  taskId: string,
+  minIntervalMs = loadManualSyncMinIntervalMs(),
+): Promise<ManualSyncLockResult> {
+  return acquireManualSyncLocks(portalId, [taskId], minIntervalMs);
+}
+
+export async function acquireManualSyncCardLock(
+  portalId: string,
+  cardGuid: string,
+  userId: string,
+  minIntervalMs = loadManualSyncMinIntervalMs(),
+): Promise<ManualSyncLockResult> {
+  const session = await beginManualSyncCardSession(portalId, cardGuid, userId, minIntervalMs);
+  if (!session.ok) {
+    return session;
+  }
+  return { ok: true, release: session.release };
 }

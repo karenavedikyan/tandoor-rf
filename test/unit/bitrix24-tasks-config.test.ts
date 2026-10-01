@@ -37,4 +37,18 @@ describe("bitrix24 tasks config", () => {
     assert.equal(isWorkingModeActive(config), true);
     assert.equal(isPilotTaskFilterActive(config), false);
   });
+
+  it("caps working discovery limits to bounded maximums", () => {
+    const config = loadBitrix24TasksRuntimeConfig({
+      BITRIX24_TASKS_MODE: "working",
+      BITRIX24_CACHE_PUBLISH_ENABLED: "true",
+      BITRIX24_CACHE_ACCESS_TTL_MS: "3600000",
+      BITRIX24_WORKING_MAX_TASKS_PER_SYNC: "9999",
+      BITRIX24_WORKING_MAX_DISCOVERY_PAGES: "9999",
+      BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL: "9999",
+    });
+    assert.equal(config.workingMaxTasksPerSync, 100);
+    assert.equal(config.workingMaxDiscoveryPages, 50);
+    assert.equal(config.workingMaxDiscoveryPagesTotal, 100);
+  });
 });

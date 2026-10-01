@@ -549,11 +549,28 @@ export async function findEmployeePortalLink(
 export async function recordEmployeePortalVerification(
   userId: string,
   portalId: string,
+  expectedBitrixUserId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<boolean> {
+  const result = await client.query(
+    `UPDATE bitrix24_employee_portal_links
+     SET last_verified_at = NOW()
+     WHERE user_id = $1::uuid
+       AND portal_id = $2
+       AND bitrix_user_id = $3`,
+    [userId, portalId, expectedBitrixUserId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function clearEmployeePortalVerification(
+  userId: string,
+  portalId: string,
   client: Pool | PoolClient = requirePool(),
 ): Promise<void> {
   await client.query(
     `UPDATE bitrix24_employee_portal_links
-     SET last_verified_at = NOW()
+     SET last_verified_at = NULL
      WHERE user_id = $1::uuid AND portal_id = $2`,
     [userId, portalId],
   );
@@ -729,6 +746,48 @@ export async function confirmObjectHierarchyLink(
   );
 }
 
+export async function listPublishedTaskIdsForResponsibleScope(input: {
+  portalId: string;
+  bitrixUserId: string;
+  objectType: Bitrix24ObjectType;
+  objectGuid: string;
+  holdingGuid: string;
+  client?: Pool | PoolClient;
+}): Promise<string[]> {
+  const client = input.client ?? requirePool();
+  const result = await client.query<{ task_id: string }>(
+    `SELECT c.task_id
+     FROM bitrix24_task_cache c
+     JOIN bitrix24_task_bindings b
+       ON c.portal_id = b.portal_id AND c.task_id = b.task_id
+     WHERE c.portal_id = $1
+       AND c.responsible_bitrix_user_id = $2
+       AND b.binding_status = 'confirmed'
+       AND c.published = TRUE
+       AND (
+         (b.object_type = $3::bitrix24_object_type AND b.object_guid = $4::uuid)
+         OR (
+           $3::text = 'holding'
+           AND EXISTS (
+             SELECT 1 FROM bitrix24_object_hierarchy h
+             WHERE h.parent_type = 'holding'
+               AND h.parent_guid = $5::uuid
+               AND h.child_type = b.object_type
+               AND h.child_guid = b.object_guid
+           )
+         )
+       )`,
+    [
+      input.portalId,
+      input.bitrixUserId,
+      input.objectType,
+      input.objectGuid,
+      input.holdingGuid,
+    ],
+  );
+  return result.rows.map((row) => row.task_id);
+}
+
 export async function unpublishResponsibleTasksNotInSet(input: {
   portalId: string;
   bitrixUserId: string;
@@ -736,9 +795,14 @@ export async function unpublishResponsibleTasksNotInSet(input: {
   objectGuid: string;
   holdingGuid: string;
   keepTaskIds: string[];
+  /** Only tasks from this pre-sync snapshot may be unpublished. */
+  snapshotTaskIds: string[];
   client?: Pool | PoolClient;
 }): Promise<number> {
   const client = input.client ?? requirePool();
+  if (input.snapshotTaskIds.length === 0) {
+    return 0;
+  }
   const keep = input.keepTaskIds.length > 0 ? input.keepTaskIds : ["__none__"];
   const result = await client.query(
     `UPDATE bitrix24_task_cache c
@@ -749,15 +813,16 @@ export async function unpublishResponsibleTasksNotInSet(input: {
        AND c.responsible_bitrix_user_id = $2
        AND b.binding_status = 'confirmed'
        AND c.published = TRUE
-       AND c.task_id <> ALL($3::text[])
+       AND c.task_id = ANY($3::text[])
+       AND c.task_id <> ALL($4::text[])
        AND (
-         (b.object_type = $4::bitrix24_object_type AND b.object_guid = $5::uuid)
+         (b.object_type = $5::bitrix24_object_type AND b.object_guid = $6::uuid)
          OR (
-           $4::text = 'holding'
+           $5::text = 'holding'
            AND EXISTS (
              SELECT 1 FROM bitrix24_object_hierarchy h
              WHERE h.parent_type = 'holding'
-               AND h.parent_guid = $6::uuid
+               AND h.parent_guid = $7::uuid
                AND h.child_type = b.object_type
                AND h.child_guid = b.object_guid
            )
@@ -766,6 +831,7 @@ export async function unpublishResponsibleTasksNotInSet(input: {
     [
       input.portalId,
       input.bitrixUserId,
+      input.snapshotTaskIds,
       keep,
       input.objectType,
       input.objectGuid,
