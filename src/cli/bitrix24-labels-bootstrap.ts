@@ -5,6 +5,11 @@ function parseArgs(argv: string[]): {
   actorUserId: string | null;
   expectedFingerprint: string | null;
 } {
+  if (argv.some((arg) => arg !== "--apply" && arg !== "--dry-run" &&
+    !arg.startsWith("--actor=") && !arg.startsWith("--fingerprint="))) {
+    throw new Error("Unknown bootstrap option");
+  }
+  if (argv.includes("--apply") && argv.includes("--dry-run")) throw new Error("Conflicting bootstrap modes");
   const apply = argv.includes("--apply");
   if (!apply) {
     return { mode: "dry_run", actorUserId: null, expectedFingerprint: null };

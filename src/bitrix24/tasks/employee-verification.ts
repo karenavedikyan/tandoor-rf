@@ -7,7 +7,7 @@ import {
   recordEmployeePortalVerification,
   type EmployeePortalLinkIdentity,
 } from "./repository";
-import { isLinkAccessValid, type TaskVisibilityDenyCode } from "./access";
+import { isLinkAccessValid, isLinkIdentityValid, type TaskVisibilityDenyCode } from "./access";
 import { loadBitrix24TasksRuntimeConfig } from "./config";
 
 export type EmployeeVerificationResult =
@@ -19,23 +19,23 @@ export async function ensureEmployeePortalLinkVerified(
   portalId: string,
   config: Bitrix24WebhookConfig,
   operation: Bitrix24OperationContext,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; expectedIdentity?: { bitrixUserId: string; confirmedAtMs: number } } = {},
 ): Promise<EmployeeVerificationResult> {
   const runtime = loadBitrix24TasksRuntimeConfig();
   const link = await findEmployeePortalLink(userId, portalId);
   if (!link) {
     return { ok: false, code: "NO_EMPLOYEE_LINK" };
   }
-  if (link.accessExpiresAt) {
-    const expiresMs = Date.parse(link.accessExpiresAt);
-    if (Number.isFinite(expiresMs) && expiresMs < Date.now()) {
-      return { ok: false, code: "ACCESS_EXPIRED" };
-    }
-  }
+  if (!isLinkIdentityValid(link, runtime)) return { ok: false, code: "ACCESS_EXPIRED" };
+  if (options.expectedIdentity && (
+    options.expectedIdentity.bitrixUserId !== link.bitrixUserId ||
+    options.expectedIdentity.confirmedAtMs !== link.confirmedAtMs
+  )) return { ok: false, code: "VERIFICATION_FAILED" };
 
   const identity: EmployeePortalLinkIdentity = {
     bitrixUserId: link.bitrixUserId,
     confirmedAtMs: link.confirmedAtMs,
+    verificationVersion: link.verificationVersion,
   };
 
   const needsRefresh =

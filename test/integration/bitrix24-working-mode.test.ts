@@ -15,6 +15,9 @@ import {
   listPublishedTaskSnapshotForResponsibleScope,
   unpublishResponsibleTasksNotInSet,
   upsertEmployeePortalLink,
+  findEmployeePortalLink,
+  recordEmployeePortalVerification,
+  clearEmployeePortalVerification,
   upsertTaskSnapshot,
 } from "../../src/bitrix24/tasks/repository";
 import { requirePool, resetPoolForTests } from "../../src/db/pool";
@@ -176,6 +179,74 @@ describe("bitrix24 working mode integration", { concurrency: false }, () => {
     const after = await runLabelsBulkBootstrap("dry_run");
     assert.equal(after.counters.cardLinksCreated, before.counters.cardLinksCreated);
     assert.equal(after.fingerprint, before.fingerprint);
+  });
+
+  it("refreshes stale verification without changing confirmed identity", async () => {
+    const user = await createTestUser({ databaseUrl, email: "stale-refresh@example.com",
+      password: TEST_PASSWORD, fullName: "Stale", role: "admin" });
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({ userId: user.id, portalId: config.portalId, bitrixUserId: "42" });
+    await requirePool().query(`UPDATE bitrix24_employee_portal_links SET confirmed_at = NOW() - INTERVAL '2 days',
+      last_verified_at = NOW() - INTERVAL '2 days' WHERE user_id = $1`, [user.id]);
+    const before = await findEmployeePortalLink(user.id, config.portalId);
+    await issueLabelInTransaction("holding", HOLDING_ONE);
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(user.id, "admin"), cardGuid: CLIENT_ONE,
+      objectType: "holding", objectGuid: HOLDING_ONE, holdingGuid: HOLDING_ONE,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [`${config.webhookBaseUrl}user.get`]: { body: { result: [{ ID: "42", ACTIVE: true }] } },
+        [`${config.webhookBaseUrl}tasks.task.list`]: { body: { result: { tasks: [] }, total: 0 } },
+      }).pinnedRequest, resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 200);
+    const after = await findEmployeePortalLink(user.id, config.portalId);
+    assert.equal(after?.confirmedAt, before?.confirmedAt);
+    assert.notEqual(after?.lastVerifiedAt, before?.lastVerifiedAt);
+  });
+
+  it("rejects a late verification clear after a newer verification", async () => {
+    const user = await createTestUser({ databaseUrl, email: "verify-cas@example.com",
+      password: TEST_PASSWORD, fullName: "CAS", role: "admin" });
+    const portalId = sampleWebhookConfig().portalId;
+    await upsertEmployeePortalLink({ userId: user.id, portalId, bitrixUserId: "42" });
+    const previous = await findEmployeePortalLink(user.id, portalId);
+    assert.ok(previous);
+    assert.equal(await recordEmployeePortalVerification(user.id, portalId, previous), true);
+    await clearEmployeePortalVerification(user.id, portalId, previous);
+    assert.ok((await findEmployeePortalLink(user.id, portalId))?.lastVerifiedAt);
+  });
+
+  it("does not bootstrap a revoked holding or its missing card mapping", async () => {
+    const pool = requirePool();
+    await issueLabelInTransaction("holding", HOLDING_ONE);
+    await pool.query("UPDATE bitrix24_object_labels SET revoked_at = NOW() WHERE object_guid = $1", [HOLDING_ONE]);
+    await pool.query("DELETE FROM bitrix24_client_card_objects WHERE card_guid = $1", [CLIENT_ONE]);
+    const user = await createTestUser({ databaseUrl, email: "bootstrap-revoked@example.com",
+      password: TEST_PASSWORD, fullName: "Admin", role: "admin" });
+    const preview = await runLabelsBulkBootstrap("dry_run");
+    assert.equal(preview.counters.cardLinksCreated, 0);
+    await runLabelsBulkBootstrap("apply", user.id, preview.fingerprint);
+    assert.equal(await findCardObjectMapping(CLIENT_ONE), null);
+  });
+
+  it("rolls back all bootstrap writes on a later SQL failure and records a failed audit", async () => {
+    const pool = requirePool();
+    await pool.query("DELETE FROM bitrix24_client_card_objects WHERE card_guid = $1", [CLIENT_ONE]);
+    const user = await createTestUser({ databaseUrl, email: "bootstrap-rollback@example.com",
+      password: TEST_PASSWORD, fullName: "Admin", role: "admin" });
+    await pool.query(`CREATE FUNCTION test_bootstrap_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic card write failure'; END $$;
+      CREATE TRIGGER test_bootstrap_fail BEFORE INSERT ON bitrix24_client_card_objects
+      FOR EACH ROW EXECUTE FUNCTION test_bootstrap_fail()`);
+    try {
+      const preview = await runLabelsBulkBootstrap("dry_run");
+      await assert.rejects(runLabelsBulkBootstrap("apply", user.id, preview.fingerprint));
+      assert.equal(Number((await pool.query("SELECT count(*) AS n FROM bitrix24_object_labels")).rows[0].n), 0);
+      assert.equal(await findCardObjectMapping(CLIENT_ONE), null);
+      assert.equal((await pool.query("SELECT status FROM bitrix24_labels_bootstrap_audit")).rows[0]?.status, "failed");
+    } finally {
+      await pool.query("DROP TRIGGER test_bootstrap_fail ON bitrix24_client_card_objects; DROP FUNCTION test_bootstrap_fail()");
+    }
   });
 
   it("reports failed discovery when tasks.task.list returns 403", async () => {

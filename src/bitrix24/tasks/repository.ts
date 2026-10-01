@@ -530,6 +530,7 @@ export async function findEmployeePortalLink(
   bitrixUserId: string;
   confirmedAt: string;
   confirmedAtMs: number;
+  verificationVersion: string | null;
   accessExpiresAt: string | null;
   lastVerifiedAt: string | null;
 } | null> {
@@ -537,12 +538,14 @@ export async function findEmployeePortalLink(
     bitrix_user_id: string;
     confirmed_at: Date;
     confirmed_at_ms: string;
+    verification_version: string | null;
     access_expires_at: Date | null;
     last_verified_at: Date | null;
   }>(
     `SELECT bitrix_user_id,
             confirmed_at,
             (extract(epoch from confirmed_at) * 1000)::bigint AS confirmed_at_ms,
+            last_verified_at::text AS verification_version,
             access_expires_at,
             last_verified_at
      FROM bitrix24_employee_portal_links
@@ -557,6 +560,7 @@ export async function findEmployeePortalLink(
     bitrixUserId: row.bitrix_user_id,
     confirmedAt: row.confirmed_at.toISOString(),
     confirmedAtMs: Number(row.confirmed_at_ms),
+    verificationVersion: row.verification_version,
     accessExpiresAt: row.access_expires_at ? row.access_expires_at.toISOString() : null,
     lastVerifiedAt: row.last_verified_at ? row.last_verified_at.toISOString() : null,
   };
@@ -565,6 +569,7 @@ export async function findEmployeePortalLink(
 export type EmployeePortalLinkIdentity = {
   bitrixUserId: string;
   confirmedAtMs: number;
+  verificationVersion: string | null;
 };
 
 export async function recordEmployeePortalVerification(
@@ -579,8 +584,11 @@ export async function recordEmployeePortalVerification(
      WHERE user_id = $1::uuid
        AND portal_id = $2
        AND bitrix_user_id = $3
-       AND (extract(epoch from confirmed_at) * 1000)::bigint = $4::bigint`,
-    [userId, portalId, identity.bitrixUserId, Math.round(identity.confirmedAtMs)],
+       AND (extract(epoch from confirmed_at) * 1000)::bigint = $4::bigint
+       AND last_verified_at IS NOT DISTINCT FROM $5::timestamptz
+       AND (access_expires_at IS NULL OR access_expires_at > clock_timestamp())
+       AND EXISTS (SELECT 1 FROM users u WHERE u.id = user_id AND u.status = 'active')`,
+    [userId, portalId, identity.bitrixUserId, Math.round(identity.confirmedAtMs), identity.verificationVersion],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -597,8 +605,9 @@ export async function clearEmployeePortalVerification(
      WHERE user_id = $1::uuid
        AND portal_id = $2
        AND bitrix_user_id = $3
-       AND (extract(epoch from confirmed_at) * 1000)::bigint = $4::bigint`,
-    [userId, portalId, identity.bitrixUserId, Math.round(identity.confirmedAtMs)],
+       AND (extract(epoch from confirmed_at) * 1000)::bigint = $4::bigint
+       AND last_verified_at IS NOT DISTINCT FROM $5::timestamptz`,
+    [userId, portalId, identity.bitrixUserId, Math.round(identity.confirmedAtMs), identity.verificationVersion],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -777,6 +786,9 @@ export type PublishedTaskSnapshotEntry = {
   taskId: string;
   cacheVersion: number;
   syncedAt: string;
+  syncedAtVersion: string;
+  objectType: Bitrix24ObjectType;
+  objectGuid: string;
 };
 
 export async function listPublishedTaskSnapshotForResponsibleScope(input: {
@@ -792,8 +804,12 @@ export async function listPublishedTaskSnapshotForResponsibleScope(input: {
     task_id: string;
     cache_version: number;
     synced_at: Date;
+    synced_at_version: string;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
   }>(
-    `SELECT c.task_id, c.cache_version, c.synced_at
+    `SELECT c.task_id, c.cache_version, c.synced_at, c.synced_at::text AS synced_at_version,
+            b.object_type, b.object_guid::text
      FROM bitrix24_task_cache c
      JOIN bitrix24_task_bindings b
        ON c.portal_id = b.portal_id AND c.task_id = b.task_id
@@ -826,6 +842,9 @@ export async function listPublishedTaskSnapshotForResponsibleScope(input: {
     taskId: row.task_id,
     cacheVersion: Number(row.cache_version),
     syncedAt: row.synced_at.toISOString(),
+    syncedAtVersion: row.synced_at_version,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
   }));
 }
 
@@ -859,6 +878,8 @@ export async function unpublishResponsibleTasksNotInSet(input: {
          AND c.portal_id = $1
          AND c.task_id = $2
          AND c.cache_version = $3
+         AND c.synced_at = $8::timestamptz
+         AND b.object_type = $9::bitrix24_object_type AND b.object_guid = $10::uuid
          AND c.responsible_bitrix_user_id = $4
          AND b.binding_status = 'confirmed'
          AND c.published = TRUE
@@ -883,6 +904,9 @@ export async function unpublishResponsibleTasksNotInSet(input: {
         input.objectType,
         input.objectGuid,
         input.holdingGuid,
+        entry.syncedAtVersion,
+        entry.objectType,
+        entry.objectGuid,
       ],
     );
     unpublished += result.rowCount ?? 0;

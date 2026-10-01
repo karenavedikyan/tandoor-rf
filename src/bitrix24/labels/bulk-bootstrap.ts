@@ -75,6 +75,7 @@ async function buildBootstrapPlan(client: PoolClient): Promise<BootstrapPlan> {
   const holdings = [...new Set(rows.map((row) => row.holdingGuid))];
   const conflicts: BootstrapResult["conflicts"] = [];
   const actions: BootstrapAction[] = [];
+  const blockedHoldings = new Set<string>();
 
   for (const holdingGuid of holdings) {
     const existingLabel = await client.query<{ label_code: string; revoked_at: Date | null }>(
@@ -85,7 +86,14 @@ async function buildBootstrapPlan(client: PoolClient): Promise<BootstrapPlan> {
       [holdingGuid],
     );
     const labelRow = existingLabel.rows[0];
-    if (labelRow?.revoked_at) {
+    const confirmed = await isObjectConfirmed("holding", holdingGuid, client);
+    const removed = await client.query(
+      `SELECT 1 FROM bitrix24_label_audit
+       WHERE object_type = 'holding' AND object_guid = $1::uuid AND action = 'unconfirm' LIMIT 1`,
+      [holdingGuid],
+    );
+    if (labelRow?.revoked_at || (!confirmed && (labelRow || removed.rowCount))) {
+      blockedHoldings.add(holdingGuid);
       actions.push({ kind: "skip_label_revoked", holdingGuid });
     } else if (labelRow) {
       actions.push({ kind: "skip_label_existing", holdingGuid });
@@ -95,6 +103,7 @@ async function buildBootstrapPlan(client: PoolClient): Promise<BootstrapPlan> {
   }
 
   for (const row of rows) {
+    if (blockedHoldings.has(row.holdingGuid)) continue;
     const mapping = await client.query<{ object_type: string; object_guid: string }>(
       `SELECT object_type, object_guid::text FROM bitrix24_client_card_objects
        WHERE card_guid = $1::uuid
@@ -156,7 +165,7 @@ export function computeBootstrapFingerprint(plan: Pick<BootstrapPlan, "actions" 
 
 async function assertActiveAdminActor(actorUserId: string, client: PoolClient): Promise<void> {
   const result = await client.query<{ role: string; status: string }>(
-    `SELECT role, status FROM users WHERE id = $1::uuid`,
+    `SELECT role, status FROM users WHERE id = $1::uuid FOR SHARE`,
     [actorUserId],
   );
   const row = result.rows[0];
@@ -219,7 +228,15 @@ export async function runLabelsBulkBootstrap(
   const client = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SET LOCAL statement_timeout = '30s'");
+    if (mode === "apply") {
+      // Freeze the source and registries together before computing the reviewed plan.
+      await client.query(`LOCK TABLE onec_clients, bitrix24_confirmed_objects,
+        bitrix24_object_labels, bitrix24_client_card_objects, bitrix24_label_audit
+        IN SHARE ROW EXCLUSIVE MODE`);
+    }
     const plan = await buildBootstrapPlan(client);
     const counters = countersFromPlan(plan);
     const fingerprint = computeBootstrapFingerprint(plan);
@@ -253,6 +270,7 @@ export async function runLabelsBulkBootstrap(
             fingerprint,
             applied: false,
             actorUserId,
+            basis: "Owner-approved client-to-holding relationships from existing 1C snapshot; fingerprint reviewed before apply",
           }),
         ],
       );
@@ -284,6 +302,7 @@ export async function runLabelsBulkBootstrap(
             fingerprint,
             applied: true,
             actorUserId,
+            basis: "Owner-approved client-to-holding relationships from existing 1C snapshot; fingerprint reviewed before apply",
           }),
         ],
       );
@@ -297,6 +316,8 @@ export async function runLabelsBulkBootstrap(
         applied: true,
       };
     } catch (error) {
+      // Never commit partially applied mappings, even for a non-SQL exception.
+      await client.query("ROLLBACK");
       await client.query(
         `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
          VALUES ('apply', NOW(), 'failed', $1::jsonb)`,
@@ -306,11 +327,11 @@ export async function runLabelsBulkBootstrap(
             fingerprint,
             applied: false,
             actorUserId,
+            basis: "Owner-approved client-to-holding relationships from existing 1C snapshot; fingerprint reviewed before apply",
             message: error instanceof Error ? error.message : "bootstrap_apply_failed",
           }),
         ],
       );
-      await client.query("COMMIT");
       throw error;
     }
   } catch (error) {

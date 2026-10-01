@@ -38,7 +38,7 @@ describe("bitrix24 tasks config", () => {
     assert.equal(isPilotTaskFilterActive(config), false);
   });
 
-  it("disables pilot allowlist when allowlistRequired is false even with pilot ids", () => {
+  it("cannot bypass pilot allowlist without explicit working mode", () => {
     const config = loadBitrix24TasksRuntimeConfig({
       BITRIX24_TASKS_MODE: "pilot",
       BITRIX24_CACHE_PUBLISH_ENABLED: "true",
@@ -46,7 +46,7 @@ describe("bitrix24 tasks config", () => {
       BITRIX24_PILOT_ALLOWLIST_REQUIRED: "false",
       BITRIX24_PILOT_TASK_IDS: "9001,9002",
     });
-    assert.equal(isPilotTaskFilterActive(config), false);
+    assert.equal(isPilotTaskFilterActive(config), true);
     assert.equal(isWorkingModeActive(config), false);
   });
 

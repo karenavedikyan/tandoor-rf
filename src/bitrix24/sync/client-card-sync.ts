@@ -1,4 +1,5 @@
 import type { AccessContext } from "../../access/types";
+import { loadAccessContext } from "../../access/context";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
 import { loadBitrix24Config } from "../config";
@@ -14,7 +15,8 @@ import {
   type PublishedTaskSnapshotEntry,
   unpublishResponsibleTasksNotInSet,
 } from "../tasks/repository";
-import { isObjectLinkedToClientCard } from "../tasks/object-access";
+import { canReadBoundBitrixObject, isObjectLinkedToClientCard } from "../tasks/object-access";
+import { listConfirmedLabelTargetsForCard } from "./card-labels";
 import { ensureEmployeePortalLinkVerified } from "../tasks/employee-verification";
 import {
   beginManualSyncCardSession,
@@ -265,7 +267,7 @@ async function syncTaskBatch(
       scope.portalId,
       loaded.config,
       operation,
-      { force: scope.mode === "working" },
+      { force: scope.mode === "working", expectedIdentity: scope },
     );
     if (!verification.ok) {
       return {
@@ -278,6 +280,21 @@ async function syncTaskBatch(
 
     let taskIdsToSync = [...scope.taskIds];
     if (scope.mode === "working") {
+      const currentContext = await loadAccessContext(options.context.userId);
+      const currentScope = await resolveManualSyncScope(currentContext, options.cardGuid, scope);
+      if (!currentScope.ok || currentScope.bitrixUserId !== scope.bitrixUserId ||
+          currentScope.confirmedAtMs !== scope.confirmedAtMs) {
+        return { aggregate: baseSyncResult(), sourceDeny: "NO_CLIENT_ACCESS", lockDeny: null, writtenTaskIds: [] };
+      }
+      const labelTargets = [];
+      for (const target of await listConfirmedLabelTargetsForCard(options.cardGuid, scope.holdingGuid)) {
+        if (await canReadBoundBitrixObject(currentContext, options.cardGuid, target.objectType, target.objectGuid)) {
+          labelTargets.push(target);
+        }
+      }
+      if (labelTargets.length === 0) {
+        return { aggregate: baseSyncResult(), sourceDeny: "CARD_NOT_LINKED", lockDeny: null, writtenTaskIds: [] };
+      }
       publishedSnapshot = await listPublishedTaskSnapshotForResponsibleScope({
         portalId: scope.portalId,
         bitrixUserId: scope.bitrixUserId,
@@ -291,6 +308,7 @@ async function syncTaskBatch(
         cardGuid: options.cardGuid,
         holdingGuid: scope.holdingGuid,
         operation,
+        labelTargets,
       });
       if (discovery.fatalError && discovery.taskIds.length === 0) {
         return {
@@ -386,7 +404,11 @@ async function syncTaskBatch(
       aggregate.status === "success" &&
       aggregate.complete === true &&
       failedDiscoveredTaskIds.length === 0;
-    const accessDeny = await evaluateUserBitrixTaskConfig(options.context, scope.portalId);
+    const freshContext = await loadAccessContext(options.context.userId);
+    const freshScope = await resolveManualSyncScope(freshContext, options.cardGuid, scope);
+    const accessDeny = await evaluateUserBitrixTaskConfig(freshContext, scope.portalId);
+    if (!freshScope.ok || freshScope.bitrixUserId !== scope.bitrixUserId ||
+        freshScope.confirmedAtMs !== scope.confirmedAtMs) sourceDeny = "NO_CLIENT_ACCESS";
     const discoveredKeepIds = discovery?.taskIds ?? [];
     const canUnpublish =
       scope.mode === "working" &&
@@ -398,9 +420,13 @@ async function syncTaskBatch(
       syncFullySucceeded;
 
     if (canUnpublish) {
-      const toUnpublish = publishedSnapshot.filter(
-        (entry) => !discoveredKeepIds.includes(entry.taskId),
-      );
+      const toUnpublish: PublishedTaskSnapshotEntry[] = [];
+      for (const entry of publishedSnapshot) {
+        if (!discoveredKeepIds.includes(entry.taskId) &&
+            await canReadBoundBitrixObject(freshContext, options.cardGuid, entry.objectType, entry.objectGuid)) {
+          toUnpublish.push(entry);
+        }
+      }
       if (toUnpublish.length > 0) {
         const sweepLocks = await session.acquireTaskLocks(toUnpublish.map((entry) => entry.taskId));
         if (!sweepLocks.ok) {
@@ -418,7 +444,7 @@ async function syncTaskBatch(
             objectGuid: scope.objectGuid,
             holdingGuid: scope.holdingGuid,
             keepTaskIds: discoveredKeepIds,
-            snapshotEntries: publishedSnapshot,
+            snapshotEntries: toUnpublish,
           });
         }
       }

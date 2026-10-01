@@ -193,24 +193,23 @@ async function tryAcquireAdmissionSlot(
   minIntervalMs: number,
   admissionDeadlineMs?: number,
 ): Promise<{ ok: true } | { ok: false; code: "SYNC_IN_PROGRESS"; retryAfterMs: number }> {
-  const deadlineMs = admissionDeadlineMs ?? Date.now();
-  while (true) {
-    for (let slot = 0; slot < MANUAL_SYNC_ADMISSION_SLOT_COUNT; slot += 1) {
-      const [lockA, lockB] = manualSyncAdmissionSlotKey(slot);
-      const acquired = await client.query<{ locked: boolean }>(
-        `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
-        [lockA, lockB],
-      );
-      if (acquired.rows[0]?.locked) {
-        heldLocks.push([lockA, lockB]);
-        return { ok: true };
-      }
-    }
-    if (Date.now() >= deadlineMs) {
-      return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+  if (admissionDeadlineMs !== undefined && Date.now() >= admissionDeadlineMs) {
+    return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
   }
+  for (let slot = 0; slot < MANUAL_SYNC_ADMISSION_SLOT_COUNT; slot += 1) {
+    const [lockA, lockB] = manualSyncAdmissionSlotKey(slot);
+    const acquired = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+      [lockA, lockB],
+    );
+    if (acquired.rows[0]?.locked) {
+      heldLocks.push([lockA, lockB]);
+      return { ok: true };
+    }
+  }
+  // Never wait while holding a pool connection: contenders must leave capacity
+  // for admitted sessions' verification/cache queries.
+  return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
 }
 
 /** Single-connection card session: admission + card lock before external HTTP. */

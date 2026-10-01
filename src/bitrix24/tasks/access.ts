@@ -34,7 +34,7 @@ export type EmployeePortalLinkRow = {
   lastVerifiedAt: string | null;
 };
 
-export function isLinkAccessValid(
+export function isLinkIdentityValid(
   link: EmployeePortalLinkRow,
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
   nowMs = Date.now(),
@@ -52,6 +52,15 @@ export function isLinkAccessValid(
       return false;
     }
   }
+  return true;
+}
+
+export function isLinkAccessValid(
+  link: EmployeePortalLinkRow,
+  runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
+  nowMs = Date.now(),
+): boolean {
+  if (!isLinkIdentityValid(link, runtime, nowMs)) return false;
   if (runtime.linkVerificationTtlMs > 0) {
     if (!link.lastVerifiedAt) {
       return false;
@@ -176,6 +185,7 @@ export async function evaluateUserBitrixTaskConfig(
   context: AccessContext,
   portalId: string,
 ): Promise<TaskVisibilityDenyCode | null> {
+  if (context.status !== "active") return "NO_CLIENT_ACCESS";
   const runtime = loadBitrix24TasksRuntimeConfig();
   if (!isCachePublishAllowed(runtime)) {
     return "NOT_PUBLISHED";
@@ -187,6 +197,7 @@ export async function evaluateUserBitrixTaskConfig(
   if (!link) {
     return "NO_EMPLOYEE_LINK";
   }
+  if (!isLinkIdentityValid(link, runtime)) return "ACCESS_EXPIRED";
   if (!link.lastVerifiedAt && runtime.linkVerificationTtlMs > 0) {
     return "LINK_UNVERIFIED";
   }

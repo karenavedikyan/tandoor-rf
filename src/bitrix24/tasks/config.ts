@@ -53,7 +53,7 @@ export function isWorkingModeActive(
 }
 
 export function isPilotTaskFilterActive(config: Bitrix24TasksRuntimeConfig): boolean {
-  return !isWorkingModeActive(config) && config.pilotAllowListRequired;
+  return !isWorkingModeActive(config);
 }
 
 export function loadBitrix24TasksRuntimeConfig(

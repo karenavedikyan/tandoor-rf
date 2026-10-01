@@ -1,6 +1,6 @@
 import type { Bitrix24ObjectType } from "../labels/format";
 import { formatLabelToken } from "../labels/format";
-import { findActiveLabel } from "../labels/repository";
+import { findActiveLabel, isObjectConfirmed } from "../labels/repository";
 import { requirePool } from "../../db/pool";
 import { requireCardHoldingGuid } from "../tasks/card-objects";
 
@@ -23,7 +23,7 @@ export async function listConfirmedLabelTargetsForCard(
 
   const targets: CardLabelTarget[] = [];
   const holdingLabel = await findActiveLabel("holding", holdingGuid);
-  if (holdingLabel) {
+  if (holdingLabel && await isObjectConfirmed("holding", holdingGuid)) {
     targets.push({
       objectType: "holding",
       objectGuid: holdingGuid,
@@ -43,7 +43,7 @@ export async function listConfirmedLabelTargetsForCard(
   );
   for (const row of children.rows) {
     const label = await findActiveLabel(row.child_type, row.child_guid);
-    if (label) {
+    if (label && await isObjectConfirmed(row.child_type, row.child_guid)) {
       targets.push({
         objectType: row.child_type,
         objectGuid: row.child_guid,

@@ -15,6 +15,8 @@ import {
 import { canReadBoundBitrixObject, isObjectLinkedToClientCard } from "../tasks/object-access";
 import {
   evaluateUserBitrixTaskConfig,
+  isLinkIdentityValid,
+  canViewClientCard,
   type TaskVisibilityDenyCode,
 } from "../tasks/access";
 import {
@@ -41,6 +43,7 @@ export type ManualSyncScopeResult =
       mode: "pilot" | "working";
       portalId: string;
       bitrixUserId: string;
+      confirmedAtMs: number;
       taskIds: string[];
       objectType: Bitrix24ObjectType;
       objectGuid: string;
@@ -126,7 +129,7 @@ async function resolvePilotManualSyncScope(
   context: AccessContext,
   portalId: string,
   cardGuid: string,
-  link: { bitrixUserId: string },
+  link: { bitrixUserId: string; confirmedAtMs: number },
   input: {
     objectType: Bitrix24ObjectType;
     objectGuid: string;
@@ -172,6 +175,7 @@ async function resolvePilotManualSyncScope(
     mode: "pilot",
     portalId,
     bitrixUserId: link.bitrixUserId,
+    confirmedAtMs: link.confirmedAtMs,
     taskIds: eligible,
     objectType: input.objectType,
     objectGuid: input.objectGuid,
@@ -183,7 +187,7 @@ async function resolveWorkingManualSyncScope(
   context: AccessContext,
   portalId: string,
   cardGuid: string,
-  link: { bitrixUserId: string },
+  link: { bitrixUserId: string; confirmedAtMs: number },
   input: {
     objectType: Bitrix24ObjectType;
     objectGuid: string;
@@ -206,24 +210,14 @@ async function resolveWorkingManualSyncScope(
     .filter((task) => task.responsibleBitrixUserId === link.bitrixUserId)
     .map((task) => task.taskId);
 
-  if (labelTargets.length === 0 && cachedEligible.length === 0) {
-    return {
-      ok: true,
-      mode: "working",
-      portalId,
-      bitrixUserId: link.bitrixUserId,
-      taskIds: [],
-      objectType: input.objectType,
-      objectGuid: input.objectGuid,
-      holdingGuid: input.holdingGuid,
-    };
-  }
+  if (labelTargets.length === 0) return { ok: false, code: "CARD_NOT_LINKED" };
 
   return {
     ok: true,
     mode: "working",
     portalId,
     bitrixUserId: link.bitrixUserId,
+    confirmedAtMs: link.confirmedAtMs,
     taskIds: cachedEligible,
     objectType: input.objectType,
     objectGuid: input.objectGuid,
@@ -250,13 +244,18 @@ export async function resolveManualSyncScope(
   }
 
   const configDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
-  if (configDeny) {
+  if (configDeny && configDeny !== "LINK_UNVERIFIED" && configDeny !== "ACCESS_EXPIRED") {
     return { ok: false, code: configDeny };
   }
 
   const link = await findEmployeePortalLink(context.userId, loaded.config.portalId);
   if (!link) {
     return { ok: false, code: "NO_EMPLOYEE_LINK" };
+  }
+  if (!isLinkIdentityValid(link, runtime)) return { ok: false, code: "ACCESS_EXPIRED" };
+  context = await loadAccessContext(context.userId);
+  if (context.status !== "active" || !(await canViewClientCard(context, cardGuid))) {
+    return { ok: false, code: "NO_CLIENT_ACCESS" };
   }
 
   if (isWorkingModeActive(runtime)) {
@@ -286,6 +285,7 @@ export async function verifyManualSyncOutcome(
 ): Promise<ManualSyncDenyCode | null> {
   context = await loadAccessContext(context.userId);
   if (context.status !== "active") return "NO_CLIENT_ACCESS";
+  if (!(await canViewClientCard(context, cardGuid))) return "NO_CLIENT_ACCESS";
   const configDeny = await evaluateUserBitrixTaskConfig(context, portalId);
   if (configDeny) {
     return configDeny;
