@@ -44,6 +44,23 @@ describe("bitrix24 link access verification", () => {
     );
   });
 
+  it("rejects cleared last_verified_at after inactive verification", () => {
+    const nowMs = Date.parse("2026-10-01T12:00:00.000Z");
+    assert.equal(
+      isLinkAccessValid(
+        {
+          bitrixUserId: "42",
+          confirmedAt: "2026-09-01T12:00:00.000Z",
+          accessExpiresAt: null,
+          lastVerifiedAt: null,
+        },
+        runtime,
+        nowMs,
+      ),
+      false,
+    );
+  });
+
   it("accepts fresh verification within TTL", () => {
     const nowMs = Date.parse("2026-10-01T12:00:00.000Z");
     assert.equal(

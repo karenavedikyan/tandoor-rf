@@ -131,6 +131,8 @@ function mapDenyCodeToState(code: TaskVisibilityDenyCode): string {
       return "pilot_filtered";
     case "PILOT_LIST_MISSING":
       return "pilot_list_missing";
+    case "LINK_UNVERIFIED":
+      return "link_unverified";
     case "STALE_SNAPSHOT":
       return "stale_snapshot";
     case "FUTURE_TASK":
@@ -413,6 +415,7 @@ export async function getClientBitrix24TasksHandler(
           message = "Связь сотрудника с порталом Bitrix24 не подтверждена.";
           break;
         case "ACCESS_EXPIRED":
+        case "LINK_UNVERIFIED":
           message = "Данные задач устарели. Требуется повторная синхронизация.";
           break;
         case "PILOT_LIST_MISSING":

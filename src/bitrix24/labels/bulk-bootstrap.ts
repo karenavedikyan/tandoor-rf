@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { requirePool } from "../../db/pool";
 import { insertCardObjectLinkIfAbsent } from "../tasks/card-objects";
-import { confirmObject, issueLabelOnClient } from "./repository";
+import { confirmObject, isObjectConfirmed, issueLabelOnClient } from "./repository";
 
 export type BootstrapRow = {
   clientGuid: string;
@@ -22,18 +23,27 @@ export type BootstrapCounters = {
   labelsRevokedSkipped: number;
 };
 
+export type BootstrapAction =
+  | { kind: "issue_label"; holdingGuid: string }
+  | { kind: "skip_label_existing"; holdingGuid: string }
+  | { kind: "skip_label_revoked"; holdingGuid: string }
+  | { kind: "create_card_link"; clientGuid: string; holdingGuid: string }
+  | { kind: "skip_card_link"; clientGuid: string; holdingGuid: string }
+  | { kind: "conflict_card_link"; clientGuid: string; holdingGuid: string; reason: string };
+
 export type BootstrapResult = {
   mode: "dry_run" | "apply";
   counters: BootstrapCounters;
   conflicts: Array<{ clientGuid: string; holdingGuid: string; reason: string }>;
+  actions: BootstrapAction[];
+  fingerprint: string;
   applied: boolean;
 };
 
 type BootstrapPlan = {
   rows: BootstrapRow[];
   holdings: string[];
-  cardActions: Array<{ clientGuid: string; holdingGuid: string; action: "create" | "skip" | "conflict" }>;
-  holdingActions: Array<{ holdingGuid: string; action: "issue" | "skip_existing" | "skip_revoked" }>;
+  actions: BootstrapAction[];
   conflicts: BootstrapResult["conflicts"];
 };
 
@@ -64,41 +74,56 @@ async function buildBootstrapPlan(client: PoolClient): Promise<BootstrapPlan> {
   const rows = await loadBootstrapRows(client);
   const holdings = [...new Set(rows.map((row) => row.holdingGuid))];
   const conflicts: BootstrapResult["conflicts"] = [];
-  const cardActions: BootstrapPlan["cardActions"] = [];
-  const holdingActions: BootstrapPlan["holdingActions"] = [];
+  const actions: BootstrapAction[] = [];
 
   for (const holdingGuid of holdings) {
     const existingLabel = await client.query<{ label_code: string; revoked_at: Date | null }>(
       `SELECT label_code, revoked_at FROM bitrix24_object_labels
        WHERE object_type = 'holding' AND object_guid = $1::uuid
-       ORDER BY issued_at DESC LIMIT 1`,
+       ORDER BY issued_at DESC LIMIT 1
+       FOR UPDATE`,
       [holdingGuid],
     );
     const labelRow = existingLabel.rows[0];
     if (labelRow?.revoked_at) {
-      holdingActions.push({ holdingGuid, action: "skip_revoked" });
+      actions.push({ kind: "skip_label_revoked", holdingGuid });
     } else if (labelRow) {
-      holdingActions.push({ holdingGuid, action: "skip_existing" });
+      actions.push({ kind: "skip_label_existing", holdingGuid });
     } else {
-      holdingActions.push({ holdingGuid, action: "issue" });
+      actions.push({ kind: "issue_label", holdingGuid });
     }
   }
 
   for (const row of rows) {
     const mapping = await client.query<{ object_type: string; object_guid: string }>(
-      `SELECT object_type, object_guid::text FROM bitrix24_client_card_objects WHERE card_guid = $1::uuid`,
+      `SELECT object_type, object_guid::text FROM bitrix24_client_card_objects
+       WHERE card_guid = $1::uuid
+       FOR UPDATE`,
       [row.clientGuid],
     );
     const existing = mapping.rows[0];
     if (!existing) {
-      cardActions.push({ clientGuid: row.clientGuid, holdingGuid: row.holdingGuid, action: "create" });
+      actions.push({
+        kind: "create_card_link",
+        clientGuid: row.clientGuid,
+        holdingGuid: row.holdingGuid,
+      });
       continue;
     }
     if (existing.object_type === "holding" && existing.object_guid === row.holdingGuid) {
-      cardActions.push({ clientGuid: row.clientGuid, holdingGuid: row.holdingGuid, action: "skip" });
+      actions.push({
+        kind: "skip_card_link",
+        clientGuid: row.clientGuid,
+        holdingGuid: row.holdingGuid,
+      });
       continue;
     }
-    cardActions.push({ clientGuid: row.clientGuid, holdingGuid: row.holdingGuid, action: "conflict" });
+    actions.push({
+      kind: "conflict_card_link",
+      clientGuid: row.clientGuid,
+      holdingGuid: row.holdingGuid,
+      reason: "existing_card_link_mismatch",
+    });
     conflicts.push({
       clientGuid: row.clientGuid,
       holdingGuid: row.holdingGuid,
@@ -106,23 +131,38 @@ async function buildBootstrapPlan(client: PoolClient): Promise<BootstrapPlan> {
     });
   }
 
-  return { rows, holdings, cardActions, holdingActions, conflicts };
+  return { rows, holdings, actions, conflicts };
 }
 
 function countersFromPlan(plan: BootstrapPlan): BootstrapCounters {
   return {
     clientsScanned: plan.rows.length,
     holdingsDistinct: plan.holdings.length,
-    cardLinksCreated: plan.cardActions.filter((a) => a.action === "create").length,
-    cardLinksSkippedExisting: plan.cardActions.filter((a) => a.action === "skip").length,
-    cardLinksConflict: plan.cardActions.filter((a) => a.action === "conflict").length,
-    objectsConfirmed:
-      plan.holdingActions.filter((a) => a.action === "issue").length +
-      plan.cardActions.filter((a) => a.action === "create").length,
-    labelsIssued: plan.holdingActions.filter((a) => a.action === "issue").length,
-    labelsSkippedExisting: plan.holdingActions.filter((a) => a.action === "skip_existing").length,
-    labelsRevokedSkipped: plan.holdingActions.filter((a) => a.action === "skip_revoked").length,
+    cardLinksCreated: plan.actions.filter((a) => a.kind === "create_card_link").length,
+    cardLinksSkippedExisting: plan.actions.filter((a) => a.kind === "skip_card_link").length,
+    cardLinksConflict: plan.actions.filter((a) => a.kind === "conflict_card_link").length,
+    objectsConfirmed: plan.actions.filter((a) => a.kind === "issue_label").length,
+    labelsIssued: plan.actions.filter((a) => a.kind === "issue_label").length,
+    labelsSkippedExisting: plan.actions.filter((a) => a.kind === "skip_label_existing").length,
+    labelsRevokedSkipped: plan.actions.filter((a) => a.kind === "skip_label_revoked").length,
   };
+}
+
+export function computeBootstrapFingerprint(plan: Pick<BootstrapPlan, "actions" | "conflicts">): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ actions: plan.actions, conflicts: plan.conflicts }))
+    .digest("hex");
+}
+
+async function assertActiveAdminActor(actorUserId: string, client: PoolClient): Promise<void> {
+  const result = await client.query<{ role: string; status: string }>(
+    `SELECT role, status FROM users WHERE id = $1::uuid`,
+    [actorUserId],
+  );
+  const row = result.rows[0];
+  if (!row || row.status !== "active" || row.role !== "admin") {
+    throw new Error("BOOTSTRAP_ACTOR_INVALID");
+  }
 }
 
 async function applyBootstrapPlan(
@@ -132,32 +172,29 @@ async function applyBootstrapPlan(
 ): Promise<BootstrapCounters> {
   const counters = countersFromPlan(plan);
 
-  await client.query("BEGIN");
-  try {
-    for (const holding of plan.holdingActions) {
-      if (holding.action !== "issue") {
-        continue;
+  for (const action of plan.actions) {
+    if (action.kind === "issue_label") {
+      const confirmed = await isObjectConfirmed("holding", action.holdingGuid, client);
+      if (!confirmed) {
+        await confirmObject("holding", action.holdingGuid, actorUserId, client);
       }
-      await confirmObject("holding", holding.holdingGuid, actorUserId, client);
-      const issued = await issueLabelOnClient("holding", holding.holdingGuid, actorUserId, client);
+      const issued = await issueLabelOnClient("holding", action.holdingGuid, actorUserId, client);
       if (!issued.created) {
         counters.labelsSkippedExisting += 1;
         counters.labelsIssued -= 1;
+        counters.objectsConfirmed -= 1;
       }
+      continue;
     }
-
-    for (const card of plan.cardActions) {
-      if (card.action === "skip") {
-        continue;
+    if (action.kind === "create_card_link") {
+      const holdingConfirmed = await isObjectConfirmed("holding", action.holdingGuid, client);
+      if (!holdingConfirmed) {
+        throw new Error("BOOTSTRAP_HOLDING_NOT_CONFIRMED");
       }
-      if (card.action === "conflict") {
-        continue;
-      }
-      await confirmObject("holding", card.holdingGuid, actorUserId, client);
       const inserted = await insertCardObjectLinkIfAbsent(
-        card.clientGuid,
+        action.clientGuid,
         "holding",
-        card.holdingGuid,
+        action.holdingGuid,
         client,
       );
       if (inserted === "conflict") {
@@ -168,51 +205,117 @@ async function applyBootstrapPlan(
         counters.cardLinksSkippedExisting += 1;
       }
     }
-
-    await client.query(
-      `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
-       VALUES ('apply', NOW(), $1, $2::jsonb)`,
-      [
-        plan.conflicts.length > 0 ? "conflict" : "success",
-        JSON.stringify({ counters, conflictCount: plan.conflicts.length }),
-      ],
-    );
-    await client.query("COMMIT");
-    return counters;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
   }
+
+  return counters;
 }
 
 export async function runLabelsBulkBootstrap(
   mode: "dry_run" | "apply",
   actorUserId: string | null = null,
+  expectedFingerprint: string | null = null,
 ): Promise<BootstrapResult> {
   const pool = requirePool();
   const client = await pool.connect();
 
   try {
+    await client.query("BEGIN");
     const plan = await buildBootstrapPlan(client);
     const counters = countersFromPlan(plan);
+    const fingerprint = computeBootstrapFingerprint(plan);
 
-    if (mode === "apply") {
-      if (!actorUserId) {
-        throw new Error("BOOTSTRAP_ACTOR_REQUIRED");
-      }
-      if (plan.conflicts.length > 0) {
-        await client.query(
-          `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
-           VALUES ('apply', NOW(), 'conflict', $1::jsonb)`,
-          [JSON.stringify({ counters, conflictCount: plan.conflicts.length, applied: false })],
-        );
-        return { mode, counters, conflicts: plan.conflicts, applied: false };
-      }
-      const appliedCounters = await applyBootstrapPlan(client, plan, actorUserId);
-      return { mode, counters: appliedCounters, conflicts: [], applied: true };
+    if (mode === "dry_run") {
+      await client.query("ROLLBACK");
+      return {
+        mode,
+        counters,
+        conflicts: plan.conflicts,
+        actions: plan.actions,
+        fingerprint,
+        applied: false,
+      };
     }
 
-    return { mode, counters, conflicts: plan.conflicts, applied: false };
+    if (!actorUserId) {
+      await client.query("ROLLBACK");
+      throw new Error("BOOTSTRAP_ACTOR_REQUIRED");
+    }
+    await assertActiveAdminActor(actorUserId, client);
+
+    if (plan.conflicts.length > 0) {
+      await client.query(
+        `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
+         VALUES ('apply', NOW(), 'conflict', $1::jsonb)`,
+        [
+          JSON.stringify({
+            counters,
+            conflictCount: plan.conflicts.length,
+            fingerprint,
+            applied: false,
+            actorUserId,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+      return {
+        mode,
+        counters,
+        conflicts: plan.conflicts,
+        actions: plan.actions,
+        fingerprint,
+        applied: false,
+      };
+    }
+
+    if (!expectedFingerprint || expectedFingerprint !== fingerprint) {
+      await client.query("ROLLBACK");
+      throw new Error("BOOTSTRAP_STALE_FINGERPRINT");
+    }
+
+    try {
+      const appliedCounters = await applyBootstrapPlan(client, plan, actorUserId);
+      await client.query(
+        `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
+         VALUES ('apply', NOW(), 'success', $1::jsonb)`,
+        [
+          JSON.stringify({
+            counters: appliedCounters,
+            conflictCount: 0,
+            fingerprint,
+            applied: true,
+            actorUserId,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+      return {
+        mode,
+        counters: appliedCounters,
+        conflicts: [],
+        actions: plan.actions,
+        fingerprint,
+        applied: true,
+      };
+    } catch (error) {
+      await client.query(
+        `INSERT INTO bitrix24_labels_bootstrap_audit (run_mode, finished_at, status, summary)
+         VALUES ('apply', NOW(), 'failed', $1::jsonb)`,
+        [
+          JSON.stringify({
+            counters,
+            fingerprint,
+            applied: false,
+            actorUserId,
+            message: error instanceof Error ? error.message : "bootstrap_apply_failed",
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+      throw error;
+    }
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }

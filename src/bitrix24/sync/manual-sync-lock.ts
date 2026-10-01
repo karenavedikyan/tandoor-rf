@@ -26,6 +26,18 @@ function manualSyncHoldingLockKey(portalId: string, holdingGuid: string): [strin
   return [portalId, `manual_sync:holding:${holdingGuid}`];
 }
 
+function manualSyncAdmissionSlotKey(slot: number): [string, string] {
+  return ["manual_sync_admission", String(slot)];
+}
+
+/** Reserve pool headroom: pool max=5, at most 3 concurrent card sessions. */
+export const MANUAL_SYNC_ADMISSION_SLOT_COUNT = 3;
+
+export type BeginManualSyncCardSessionOptions = {
+  /** Wall-clock deadline for admission wait (includes DB, not only HTTP). */
+  admissionDeadlineMs?: number;
+};
+
 export function loadManualSyncMinIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS?.trim() || "30000");
   if (!Number.isInteger(raw) || raw < 0) {
@@ -175,12 +187,39 @@ async function checkAndRecordCardCooldown(
   }
 }
 
-/** Single-connection card session: card lock + optional task/holding locks before external HTTP. */
+async function tryAcquireAdmissionSlot(
+  client: PoolClient,
+  heldLocks: Array<[string, string]>,
+  minIntervalMs: number,
+  admissionDeadlineMs?: number,
+): Promise<{ ok: true } | { ok: false; code: "SYNC_IN_PROGRESS"; retryAfterMs: number }> {
+  const deadlineMs = admissionDeadlineMs ?? Date.now();
+  while (true) {
+    for (let slot = 0; slot < MANUAL_SYNC_ADMISSION_SLOT_COUNT; slot += 1) {
+      const [lockA, lockB] = manualSyncAdmissionSlotKey(slot);
+      const acquired = await client.query<{ locked: boolean }>(
+        `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+        [lockA, lockB],
+      );
+      if (acquired.rows[0]?.locked) {
+        heldLocks.push([lockA, lockB]);
+        return { ok: true };
+      }
+    }
+    if (Date.now() >= deadlineMs) {
+      return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/** Single-connection card session: admission + card lock before external HTTP. */
 export async function beginManualSyncCardSession(
   portalId: string,
   cardGuid: string,
   userId: string,
   minIntervalMs = loadManualSyncMinIntervalMs(),
+  options: BeginManualSyncCardSessionOptions = {},
 ): Promise<ManualSyncCardSession> {
   const pool = requirePool();
   const client = await pool.connect();
@@ -202,6 +241,18 @@ export async function beginManualSyncCardSession(
   };
 
   try {
+    const admission = await tryAcquireAdmissionSlot(
+      client,
+      heldLocks,
+      minIntervalMs,
+      options.admissionDeadlineMs,
+    );
+    if (!admission.ok) {
+      await unlockHeldLocks(client, heldLocks);
+      client.release();
+      return admission;
+    }
+
     const [lockA, lockB] = manualSyncCardLockKey(portalId, cardGuid, userId);
     const acquired = await tryAcquireAdvisoryLock(client, lockA, lockB, heldLocks, minIntervalMs);
     if (!acquired.ok) {

@@ -5,6 +5,7 @@ import {
   clearEmployeePortalVerification,
   findEmployeePortalLink,
   recordEmployeePortalVerification,
+  type EmployeePortalLinkIdentity,
 } from "./repository";
 import { isLinkAccessValid, type TaskVisibilityDenyCode } from "./access";
 import { loadBitrix24TasksRuntimeConfig } from "./config";
@@ -32,39 +33,33 @@ export async function ensureEmployeePortalLinkVerified(
     }
   }
 
+  const identity: EmployeePortalLinkIdentity = {
+    bitrixUserId: link.bitrixUserId,
+    confirmedAtMs: link.confirmedAtMs,
+  };
+
   const needsRefresh =
     options.force ||
+    !link.lastVerifiedAt ||
     !isLinkAccessValid(link, runtime) ||
     (runtime.linkVerificationTtlMs > 0 &&
-      Date.parse(link.lastVerifiedAt ?? link.confirmedAt) + runtime.linkVerificationTtlMs <= Date.now());
+      link.lastVerifiedAt &&
+      Date.parse(link.lastVerifiedAt) + runtime.linkVerificationTtlMs <= Date.now());
 
   if (!needsRefresh) {
     return { ok: true, refreshed: false };
   }
 
-  const expectedBitrixUserId = link.bitrixUserId;
-  const expectedConfirmedAtMs = Date.parse(link.confirmedAt);
-
-  const userResult = await readBitrixUserById(config, expectedBitrixUserId, { operation });
+  const userResult = await readBitrixUserById(config, identity.bitrixUserId, { operation });
   if (!userResult.ok) {
     return { ok: false, code: "VERIFICATION_FAILED" };
   }
   if (userResult.user.active !== true) {
-    await clearEmployeePortalVerification(userId, portalId);
+    await clearEmployeePortalVerification(userId, portalId, identity);
     return { ok: false, code: "BITRIX_USER_INACTIVE" };
   }
 
-  const freshLink = await findEmployeePortalLink(userId, portalId);
-  if (
-    !freshLink ||
-    freshLink.bitrixUserId !== expectedBitrixUserId ||
-    !Number.isFinite(expectedConfirmedAtMs) ||
-    Math.abs(Date.parse(freshLink.confirmedAt) - expectedConfirmedAtMs) > 1
-  ) {
-    return { ok: false, code: "VERIFICATION_FAILED" };
-  }
-
-  const refreshed = await recordEmployeePortalVerification(userId, portalId, expectedBitrixUserId);
+  const refreshed = await recordEmployeePortalVerification(userId, portalId, identity);
   if (!refreshed) {
     return { ok: false, code: "VERIFICATION_FAILED" };
   }

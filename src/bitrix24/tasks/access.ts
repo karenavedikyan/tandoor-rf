@@ -53,17 +53,30 @@ export function isLinkAccessValid(
     }
   }
   if (runtime.linkVerificationTtlMs > 0) {
-    const verifiedAt = link.lastVerifiedAt ?? link.confirmedAt;
-    const verifiedGuard = guardPastTimestamp(verifiedAt, nowMs);
+    if (!link.lastVerifiedAt) {
+      return false;
+    }
+    const verifiedGuard = guardPastTimestamp(link.lastVerifiedAt, nowMs);
     if (!verifiedGuard.ok) {
       return false;
     }
-    const verifiedMs = Date.parse(verifiedAt);
+    const verifiedMs = Date.parse(link.lastVerifiedAt);
     if (verifiedMs + runtime.linkVerificationTtlMs < nowMs) {
       return false;
     }
   }
   return true;
+}
+
+export function isLinkVerificationFresh(
+  link: EmployeePortalLinkRow,
+  runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
+  nowMs = Date.now(),
+): boolean {
+  if (runtime.linkVerificationTtlMs <= 0) {
+    return true;
+  }
+  return isLinkAccessValid(link, runtime, nowMs);
 }
 
 function isTaskSnapshotCurrent(
@@ -118,6 +131,9 @@ export async function canViewPublishedTaskCacheForUser(
   if (!link) {
     return { ok: false, code: "NO_EMPLOYEE_LINK" };
   }
+  if (!link.lastVerifiedAt && runtime.linkVerificationTtlMs > 0) {
+    return { ok: false, code: "LINK_UNVERIFIED" };
+  }
   if (!isLinkAccessValid(link, runtime)) {
     return { ok: false, code: "ACCESS_EXPIRED" };
   }
@@ -170,6 +186,9 @@ export async function evaluateUserBitrixTaskConfig(
   const link = await findEmployeePortalLink(context.userId, portalId);
   if (!link) {
     return "NO_EMPLOYEE_LINK";
+  }
+  if (!link.lastVerifiedAt && runtime.linkVerificationTtlMs > 0) {
+    return "LINK_UNVERIFIED";
   }
   if (!isLinkAccessValid(link, runtime)) {
     return "ACCESS_EXPIRED";

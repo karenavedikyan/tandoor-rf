@@ -98,6 +98,32 @@ export function createSafePortalResolver(
   return async () => [{ address, family: 4 }];
 }
 
+/** Real optovik.bitrix24.ru ignores %DESCRIPTION; mocks must behave the same. */
+export function createResponsibleTaskListHandler(
+  tasks: Array<Record<string, unknown>>,
+  bitrixUserId: string,
+): (body: unknown) => MockBitrixResponse {
+  return (body: unknown) => {
+    const filter = (body as { filter?: Record<string, unknown> }).filter ?? {};
+    let scoped = tasks.filter((task) => String(task.RESPONSIBLE_ID) === String(bitrixUserId));
+    if (filter.RESPONSIBLE_ID !== undefined) {
+      scoped = scoped.filter(
+        (task) => String(task.RESPONSIBLE_ID) === String(filter.RESPONSIBLE_ID),
+      );
+    }
+    if (filter.ID !== undefined) {
+      scoped = scoped.filter((task) => String(task.ID) === String(filter.ID));
+    }
+    void filter["%DESCRIPTION"];
+    return {
+      body: {
+        result: { tasks: scoped },
+        total: scoped.length,
+      },
+    };
+  };
+}
+
 export function sampleWebhookConfig() {
   return {
     enabled: true as const,

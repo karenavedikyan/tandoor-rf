@@ -38,6 +38,18 @@ describe("bitrix24 tasks config", () => {
     assert.equal(isPilotTaskFilterActive(config), false);
   });
 
+  it("disables pilot allowlist when allowlistRequired is false even with pilot ids", () => {
+    const config = loadBitrix24TasksRuntimeConfig({
+      BITRIX24_TASKS_MODE: "pilot",
+      BITRIX24_CACHE_PUBLISH_ENABLED: "true",
+      BITRIX24_CACHE_ACCESS_TTL_MS: "3600000",
+      BITRIX24_PILOT_ALLOWLIST_REQUIRED: "false",
+      BITRIX24_PILOT_TASK_IDS: "9001,9002",
+    });
+    assert.equal(isPilotTaskFilterActive(config), false);
+    assert.equal(isWorkingModeActive(config), false);
+  });
+
   it("caps working discovery limits to bounded maximums", () => {
     const config = loadBitrix24TasksRuntimeConfig({
       BITRIX24_TASKS_MODE: "working",

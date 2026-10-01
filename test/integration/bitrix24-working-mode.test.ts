@@ -6,15 +6,19 @@ import { runLabelsBulkBootstrap } from "../../src/bitrix24/labels/bulk-bootstrap
 import { runClientCardBitrix24Sync } from "../../src/bitrix24/sync/client-card-sync";
 import { findCardObjectMapping } from "../../src/bitrix24/tasks/card-objects";
 import {
+  beginManualSyncCardSession,
+  MANUAL_SYNC_ADMISSION_SLOT_COUNT,
+} from "../../src/bitrix24/sync/manual-sync-lock";
+import {
   findPublishedTaskById,
   findTaskSnapshotById,
-  listPublishedTaskIdsForResponsibleScope,
+  listPublishedTaskSnapshotForResponsibleScope,
   unpublishResponsibleTasksNotInSet,
   upsertEmployeePortalLink,
   upsertTaskSnapshot,
 } from "../../src/bitrix24/tasks/repository";
-import { requirePool } from "../../src/db/pool";
-import { resetPoolForTests } from "../../src/db/pool";
+import { requirePool, resetPoolForTests } from "../../src/db/pool";
+import request from "supertest";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -25,6 +29,7 @@ import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import {
   createBitrixMockPinnedRequest,
+  createResponsibleTaskListHandler,
   createSafePortalResolver,
   sampleWebhookConfig,
 } from "../helpers/bitrix24-mock-fetch";
@@ -166,8 +171,11 @@ describe("bitrix24 working mode integration", { concurrency: false }, () => {
     const before = await runLabelsBulkBootstrap("dry_run");
     assert.equal(before.mode, "dry_run");
     assert.ok(before.counters.clientsScanned >= 1);
+    assert.ok(before.fingerprint.length >= 32);
+    assert.ok(before.actions.length >= 1);
     const after = await runLabelsBulkBootstrap("dry_run");
     assert.equal(after.counters.cardLinksCreated, before.counters.cardLinksCreated);
+    assert.equal(after.fingerprint, before.fingerprint);
   });
 
   it("reports failed discovery when tasks.task.list returns 403", async () => {
@@ -507,46 +515,243 @@ describe("bitrix24 working mode integration", { concurrency: false }, () => {
     assert.equal(mapping?.objectGuid, HOLDING_TWO);
   });
 
-  it("unpublish respects pre-sync snapshot and keeps tasks published after snapshot", async () => {
+  it("unpublish CAS respects cache_version and keeps newer generation published", async () => {
     const label = await issueLabelInTransaction("holding", HOLDING_ONE);
     const config = sampleWebhookConfig();
-    for (const taskId of ["88100", "88101"]) {
-      await upsertTaskSnapshot({
-        portalId: config.portalId,
-        taskId,
-        responsibleBitrixUserId: "42",
-        title: `Task ${taskId}`,
-        statusLabel: "in_progress",
-        deadline: null,
-        changedAt: "2026-09-30T10:00:00+03:00",
-        descriptionHash: `hash-${taskId}`,
-        published: true,
-        objectType: "holding",
-        objectGuid: HOLDING_ONE,
-        labelCode: label.labelCode,
-        bindingStatus: "confirmed",
-        conflictReason: null,
-        linkedAt: new Date().toISOString(),
-      });
-    }
-    const snapshot = await listPublishedTaskIdsForResponsibleScope({
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "88101",
+      responsibleBitrixUserId: "42",
+      title: "Task v1",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T10:00:00+03:00",
+      descriptionHash: "hash-v1",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    const snapshot = await listPublishedTaskSnapshotForResponsibleScope({
       portalId: config.portalId,
       bitrixUserId: "42",
       objectType: "holding",
       objectGuid: HOLDING_ONE,
       holdingGuid: HOLDING_ONE,
     });
-    assert.deepEqual(snapshot.sort(), ["88100", "88101"]);
+    assert.equal(snapshot.length, 1);
+    assert.equal(snapshot[0]?.cacheVersion, 1);
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "88101",
+      responsibleBitrixUserId: "42",
+      title: "Task v2",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T13:00:00+03:00",
+      descriptionHash: "hash-v2",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
     await unpublishResponsibleTasksNotInSet({
       portalId: config.portalId,
       bitrixUserId: "42",
       objectType: "holding",
       objectGuid: HOLDING_ONE,
       holdingGuid: HOLDING_ONE,
-      snapshotTaskIds: ["88100"],
+      snapshotEntries: snapshot,
       keepTaskIds: [],
     });
-    assert.equal((await findTaskSnapshotById(config.portalId, "88100"))?.published, false);
     assert.equal((await findPublishedTaskById(config.portalId, "88101"))?.published, true);
+    assert.equal((await findTaskSnapshotById(config.portalId, "88101"))?.cacheVersion, 2);
+  });
+
+  it("discovery ignores %DESCRIPTION filter and matches labels server-side", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "wmdisc@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Discovery",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: manager.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    const token = formatLabelToken(label.labelCode);
+    const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
+    const userUrl = `${config.webhookBaseUrl}user.get`;
+    const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
+    const sync = await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [userUrl]: { body: { result: [{ ID: "42", ACTIVE: true }] } },
+        [tasksUrl]: createResponsibleTaskListHandler(
+          [
+            sampleValidBitrixTask({
+              ID: "88200",
+              RESPONSIBLE_ID: "42",
+              DESCRIPTION: token,
+              CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+            }),
+            sampleValidBitrixTask({
+              ID: "88201",
+              RESPONSIBLE_ID: "42",
+              DESCRIPTION: "Task without card label",
+              CHANGED_DATE: "2026-09-30T12:00:00+03:00",
+            }),
+          ],
+          "42",
+        ),
+        [checklistUrl]: {
+          body: { result: [{ ...sampleChecklistRootGroup(), TASK_ID: "88200" }], total: 1 },
+        },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    assert.equal(sync.httpStatus, 200);
+    if (sync.httpStatus === 200) {
+      assert.equal(sync.body.tasksSynced, 1);
+    }
+  });
+
+  it("denies cache API read after inactive Bitrix user clears verification", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "wmcache@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Cache",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = sampleWebhookConfig();
+    await upsertEmployeePortalLink({
+      userId: manager.id,
+      portalId: config.portalId,
+      bitrixUserId: "42",
+    });
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "88300",
+      responsibleBitrixUserId: "42",
+      title: "Cached task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T12:00:00+03:00",
+      descriptionHash: "hash",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    await requirePool().query(
+      `UPDATE bitrix24_employee_portal_links SET last_verified_at = NOW()
+       WHERE user_id = $1::uuid`,
+      [manager.id],
+    );
+    const userUrl = `${config.webhookBaseUrl}user.get`;
+    await runClientCardBitrix24Sync({
+      context: accessContext(manager.id, "manager", MANAGER_A),
+      cardGuid: CLIENT_ONE,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      holdingGuid: HOLDING_ONE,
+      pinnedRequest: createBitrixMockPinnedRequest({
+        [userUrl]: { body: { result: [{ ID: "42", ACTIVE: false }] } },
+      }).pinnedRequest,
+      resolvePortalAddresses: createSafePortalResolver(),
+    });
+    await resetPoolForTests();
+    const { createApp } = await import("../../src/server");
+    const app = createApp();
+    const login = await request(app)
+      .post("/api/auth/login")
+      .set({ Origin: ORIGIN, "Content-Type": "application/json" })
+      .send({ email: "wmcache@example.com", password: TEST_PASSWORD });
+    const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    const res = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks?objectType=holding&objectGuid=${HOLDING_ONE}`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+    assert.equal(Array.isArray(res.body?.tasks) ? res.body.tasks.length : res.body?.items?.length ?? 0, 0);
+  });
+
+  it("limits concurrent card sessions without exhausting the pool", async () => {
+    await resetPoolForTests();
+    const cardIds = [
+      "11111111-1111-4111-8111-111111111101",
+      "11111111-1111-4111-8111-111111111102",
+      "11111111-1111-4111-8111-111111111103",
+    ];
+    const sessions = [];
+    for (let i = 0; i < MANUAL_SYNC_ADMISSION_SLOT_COUNT; i += 1) {
+      const user = await createTestUser({
+        databaseUrl,
+        email: `admission${i}@example.com`,
+        password: TEST_PASSWORD,
+        fullName: `Admission ${i}`,
+        role: "manager",
+      });
+      const session = await beginManualSyncCardSession(
+        "portal.admission",
+        cardIds[i]!,
+        user.id,
+        0,
+      );
+      assert.equal(session.ok, true);
+      sessions.push(session);
+    }
+    const blockedUser = await createTestUser({
+      databaseUrl,
+      email: "admission-blocked@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admission Blocked",
+      role: "manager",
+    });
+    const blocked = await beginManualSyncCardSession(
+      "portal.admission",
+      "33333333-3333-4333-8333-333333333333",
+      blockedUser.id,
+      0,
+      { admissionDeadlineMs: Date.now() + 100 },
+    );
+    assert.equal(blocked.ok, false);
+    const probe = await requirePool().query("SELECT 1 AS ok");
+    assert.equal(probe.rows[0]?.ok, 1);
+    for (const session of sessions) {
+      if (session.ok) {
+        await session.release();
+      }
+    }
   });
 });

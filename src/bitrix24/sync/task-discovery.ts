@@ -1,4 +1,6 @@
 import type { Bitrix24WebhookConfig, Bitrix24OperationContext } from "../types";
+import { extractLabelsFromDescription } from "../labels/parser";
+import { parseBitrixUserId } from "../parse-id";
 import { readBitrixTasksForUser } from "../read-tasks";
 import { loadBitrix24TasksRuntimeConfig } from "../tasks/config";
 import { listConfirmedLabelTargetsForCard, type CardLabelTarget } from "./card-labels";
@@ -11,7 +13,20 @@ export type TaskDiscoveryResult = {
   fatalError?: string;
   labelsSearched: number;
   pagesUsed: number;
+  /** False when card has no confirmed labels — not proof tasks disappeared. */
+  hasLabelTargets: boolean;
 };
+
+function taskMatchesAllowedCardLabels(
+  description: string | null | undefined,
+  allowedLabelCodes: Set<string>,
+): boolean {
+  const extracted = extractLabelsFromDescription(description);
+  if (!extracted.ok || extracted.labels.length === 0) {
+    return false;
+  }
+  return extracted.labels.some((label) => allowedLabelCodes.has(label.labelCode));
+}
 
 export async function discoverResponsibleTasksForCard(input: {
   config: Bitrix24WebhookConfig;
@@ -26,79 +41,74 @@ export async function discoverResponsibleTasksForCard(input: {
     input.labelTargets ??
     (await listConfirmedLabelTargetsForCard(input.cardGuid, input.holdingGuid));
   if (labelTargets.length === 0) {
-    return { taskIds: [], complete: true, labelsSearched: 0, pagesUsed: 0 };
+    return {
+      taskIds: [],
+      complete: true,
+      labelsSearched: 0,
+      pagesUsed: 0,
+      hasLabelTargets: false,
+    };
+  }
+
+  const expectedResponsibleId = parseBitrixUserId(input.bitrixUserId);
+  if (!expectedResponsibleId) {
+    return {
+      taskIds: [],
+      complete: false,
+      fatalError: "INVALID_USER_ID",
+      truncatedReason: "INVALID_USER_ID",
+      labelsSearched: labelTargets.length,
+      pagesUsed: 0,
+      hasLabelTargets: true,
+    };
+  }
+
+  const allowedLabelCodes = new Set(labelTargets.map((target) => target.labelCode));
+  const maxTasks = runtime.workingMaxTasksPerSync;
+  const maxPagesTotal = runtime.workingMaxDiscoveryPagesTotal;
+
+  const readResult = await readBitrixTasksForUser(input.config, input.bitrixUserId, {
+    operation: input.operation,
+    maxPages: maxPagesTotal,
+  });
+
+  if (!readResult.ok) {
+    return {
+      taskIds: [],
+      complete: false,
+      fatalError: readResult.code,
+      truncatedReason: readResult.code,
+      labelsSearched: labelTargets.length,
+      pagesUsed: 1,
+      hasLabelTargets: true,
+    };
   }
 
   const discovered = new Set<string>();
-  let complete = true;
-  let truncatedReason: string | undefined;
-  let fatalError: string | undefined;
-  const maxTasks = runtime.workingMaxTasksPerSync;
-  const maxPagesPerLabel = runtime.workingMaxDiscoveryPages;
-  const maxPagesTotal = runtime.workingMaxDiscoveryPagesTotal;
-  let pagesUsed = 0;
+  let complete = readResult.data.complete;
+  let truncatedReason: string | undefined = readResult.data.truncatedReason;
 
-  for (const target of labelTargets) {
-    if (input.operation.deadline.expired() || discovered.size >= maxTasks) {
+  for (const task of readResult.data.tasks) {
+    if (discovered.size >= maxTasks) {
       complete = false;
-      truncatedReason = truncatedReason ?? "MAX_DURATION";
+      truncatedReason = "MAX_TASKS";
       break;
     }
-    if (pagesUsed >= maxPagesTotal) {
-      complete = false;
-      truncatedReason = truncatedReason ?? "MAX_PAGES";
-      break;
+    if (task.responsibleId !== expectedResponsibleId) {
+      continue;
     }
-
-    const pagesRemaining = Math.max(1, maxPagesTotal - pagesUsed);
-    const labelPageBudget = Math.min(maxPagesPerLabel, pagesRemaining);
-
-    const readResult = await readBitrixTasksForUser(input.config, input.bitrixUserId, {
-      operation: input.operation,
-      maxPages: labelPageBudget,
-      descriptionContains: target.token,
-    });
-    pagesUsed += readResult.ok ? readResult.data.pagesFetched : 1;
-
-    if (!readResult.ok) {
-      if (discovered.size === 0) {
-        return {
-          taskIds: [],
-          complete: false,
-          fatalError: readResult.code,
-          truncatedReason: readResult.code,
-          labelsSearched: labelTargets.indexOf(target) + 1,
-          pagesUsed,
-        };
-      }
-      complete = false;
-      truncatedReason = readResult.code;
-      break;
+    if (!taskMatchesAllowedCardLabels(task.description, allowedLabelCodes)) {
+      continue;
     }
-    if (!readResult.data.complete) {
-      complete = false;
-      truncatedReason = readResult.data.truncatedReason ?? "INCOMPLETE";
-    }
-    for (const task of readResult.data.tasks) {
-      if (discovered.size >= maxTasks) {
-        complete = false;
-        truncatedReason = "MAX_TASKS";
-        break;
-      }
-      discovered.add(task.taskId);
-    }
-    if (pagesUsed >= maxPagesTotal && !complete) {
-      truncatedReason = truncatedReason ?? "MAX_PAGES";
-      break;
-    }
+    discovered.add(task.taskId);
   }
 
   return {
     taskIds: [...discovered].sort(),
     complete,
     truncatedReason,
-    fatalError,
     labelsSearched: labelTargets.length,
-    pagesUsed,
+    pagesUsed: readResult.data.pagesFetched,
+    hasLabelTargets: true,
   };
 }

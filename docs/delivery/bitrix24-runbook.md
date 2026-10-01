@@ -158,7 +158,9 @@ BITRIX24_WORKING_MAX_DISCOVERY_PAGES=5
 BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL=25
 ```
 
-- Discovery ищет задачи ответственного (`RESPONSIBLE_ID`) по подтверждённым меткам карточки. Официальный REST [`tasks.task.list`](https://apidocs.bitrix24.ru/api-reference/tasks/tasks-task-list.html) документирует шаблонный поиск только для `TITLE`, не для `DESCRIPTION`; фильтр `%DESCRIPTION` отправляется best-effort, но совпадение метки всегда перепроверяется на стороне сервера по полю `DESCRIPTION` в ответе. Mock в CI не подтверждает поведение реального портала.
+- Discovery: **один** bounded-обход `tasks.task.list` с `filter={RESPONSIBLE_ID}` (без `%DESCRIPTION`). Метки карточки проверяются на сервере через `extractLabelsFromDescription` и registry подтверждённых меток; `RESPONSIBLE_ID` повторно сверяется в каждой записи ответа.
+- **Проверка реального портала (read-only, владелец):** `optovik.bitrix24.ru`, webhook backend. `tasks.task.list` с `filter={ID:1041697, RESPONSIBLE_ID:2, "%DESCRIPTION":"#LK_H_000001"}` и с `"%DESCRIPTION":"#LK_H_999999"` **оба** вернули задачу `1041697` — `%DESCRIPTION` фактически игнорируется. Discovery от него не зависит.
+- Официальный REST [`tasks.task.list`](https://apidocs.bitrix24.ru/api-reference/tasks/tasks-task-list.html) документирует шаблонный поиск только для `TITLE`. Mock-тесты имитируют игнорируемый `%DESCRIPTION`.
 - Общий бюджет страниц discovery — `BITRIX24_WORKING_MAX_DISCOVERY_PAGES_TOTAL` на всю операцию (не N×maxPages на метку).
 - Перед sync выполняется `user.get` для обновления `last_verified_at`; `confirmed_at` не истекает по TTL кэша.
 - Cooldown/lock: сотрудник+карточка (`018`) и task-locks (`017`).
