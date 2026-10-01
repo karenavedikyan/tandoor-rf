@@ -1,13 +1,13 @@
 import type { PoolClient } from "pg";
-import fs from "node:fs/promises";
 import {
   ensureStorageDir,
   getCatalogImageSourceDir,
   getCatalogImageStorageDir,
+  processImageToPreview,
+  readBoundedFile,
   readStoredImage,
-  resolveSourcePath,
-  validateImageBytes,
-  writeImageToStorage,
+  resolveSafeSourcePath,
+  writeImmutablePreview,
 } from "./image-storage";
 
 export type CatalogImageSyncOptions = {
@@ -78,30 +78,33 @@ export async function runCatalogImageSync(
     if (report.bytesProcessed >= maxBytes) break;
     report.filesSeen += 1;
 
-    const absoluteSource = resolveSourcePath(sourceDir, sourcePath);
+    const absoluteSource = await resolveSafeSourcePath(sourceDir, sourcePath);
     if (!absoluteSource) {
       report.filesFailed += 1;
       report.errors.push({ sourcePath, message: "Unsafe source path." });
       continue;
     }
 
-    let buffer: Buffer;
+    let sourceBuffer: Buffer;
     try {
-      buffer = await fs.readFile(absoluteSource);
-    } catch {
+      sourceBuffer = await readBoundedFile(absoluteSource, maxBytes);
+    } catch (error) {
       report.filesFailed += 1;
-      report.errors.push({ sourcePath, message: "Source file not found." });
+      report.errors.push({
+        sourcePath,
+        message: error instanceof Error ? error.message : "Source file not readable.",
+      });
       continue;
     }
 
-    const validated = await validateImageBytes(buffer);
-    if (!validated.ok) {
+    const processed = await processImageToPreview(sourceBuffer);
+    if (!processed.ok) {
       report.filesFailed += 1;
-      report.errors.push({ sourcePath, message: validated.message });
+      report.errors.push({ sourcePath, message: processed.message });
       continue;
     }
 
-    report.bytesProcessed += validated.byteSize;
+    report.bytesProcessed += processed.byteSize;
 
     const existing = await client.query<{
       id: string;
@@ -112,7 +115,7 @@ export async function runCatalogImageSync(
       [sourcePath],
     );
     const row = existing.rows[0];
-    if (row?.status === "ready" && row.content_sha256 === validated.contentSha256) {
+    if (row?.status === "ready" && row.content_sha256 === processed.contentSha256) {
       report.filesSkipped += 1;
       continue;
     }
@@ -122,38 +125,52 @@ export async function runCatalogImageSync(
       continue;
     }
 
-    const storagePath = await writeImageToStorage(storageDir!, sourcePath, buffer);
-    await client.query(
-      `
-        INSERT INTO onec_catalog_image_assets (
-          source_path, content_sha256, storage_path, mime_type, byte_size, width, height,
-          status, prepared_at, published_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', NOW(), NOW(), NOW())
-        ON CONFLICT (source_path) DO UPDATE SET
-          content_sha256 = EXCLUDED.content_sha256,
-          storage_path = EXCLUDED.storage_path,
-          mime_type = EXCLUDED.mime_type,
-          byte_size = EXCLUDED.byte_size,
-          width = EXCLUDED.width,
-          height = EXCLUDED.height,
-          status = 'ready',
-          prepared_at = NOW(),
-          published_at = NOW(),
-          updated_at = NOW(),
-          last_error = NULL
-      `,
-      [
+    try {
+      const storagePath = await writeImmutablePreview(
+        storageDir!,
+        processed.contentSha256,
+        processed.previewBuffer,
+      );
+      await client.query(
+        `
+          INSERT INTO onec_catalog_image_assets (
+            source_path, content_sha256, storage_path, mime_type, byte_size, width, height,
+            status, prepared_at, published_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', NOW(), NOW(), NOW())
+          ON CONFLICT (source_path) DO UPDATE SET
+            content_sha256 = EXCLUDED.content_sha256,
+            storage_path = EXCLUDED.storage_path,
+            mime_type = EXCLUDED.mime_type,
+            byte_size = EXCLUDED.byte_size,
+            width = EXCLUDED.width,
+            height = EXCLUDED.height,
+            status = 'ready',
+            prepared_at = NOW(),
+            published_at = NOW(),
+            updated_at = NOW(),
+            last_error = NULL
+          WHERE onec_catalog_image_assets.content_sha256 IS DISTINCT FROM EXCLUDED.content_sha256
+             OR onec_catalog_image_assets.storage_path IS DISTINCT FROM EXCLUDED.storage_path
+        `,
+        [
+          sourcePath,
+          processed.contentSha256,
+          storagePath,
+          processed.mimeType,
+          processed.byteSize,
+          processed.width,
+          processed.height,
+        ],
+      );
+      report.filesPrepared += 1;
+    } catch (error) {
+      report.filesFailed += 1;
+      report.errors.push({
         sourcePath,
-        validated.contentSha256,
-        storagePath,
-        validated.mimeType,
-        validated.byteSize,
-        validated.width,
-        validated.height,
-      ],
-    );
-    report.filesPrepared += 1;
+        message: error instanceof Error ? error.message : "Failed to publish image asset.",
+      });
+    }
   }
 
   return report;

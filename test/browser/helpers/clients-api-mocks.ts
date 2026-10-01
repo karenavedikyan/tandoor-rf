@@ -409,6 +409,8 @@ export function resolveMockResponse(
           key: "brand",
           label: "Бренд",
           values: [{ value: "Tandoor", count: 1 }],
+          totalValues: 1,
+          valuesTruncated: false,
         },
       ],
     });

@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import type { ParsedCatalogSearchQuery } from "./query-params";
 import {
+  assertCatalogPropertyFiltersAvailable,
   extractArticleFromProperties,
   selectKeyProperties,
 } from "./facets-repository";
@@ -132,6 +133,7 @@ export async function searchCatalogProducts(
   versionId: string,
   query: ParsedCatalogSearchQuery,
 ): Promise<CatalogProductSearchResult> {
+  await assertCatalogPropertyFiltersAvailable(client, versionId, query.propertyFilters);
   const built = await buildCatalogProductFilters(client, versionId, query);
   const params = [...built.params];
   const whereClause = built.whereClause;

@@ -34,6 +34,38 @@ export async function loadSectionRows(
   return result.rows;
 }
 
+export async function findUnavailablePropertyFilters(
+  client: PoolClient,
+  versionId: string,
+  propertyFilters: Record<string, string[]>,
+): Promise<string[]> {
+  const requestedKeys = Object.keys(propertyFilters).filter(
+    (key) => propertyFilters[key]?.length,
+  );
+  if (!requestedKeys.length) return [];
+
+  const rows = await client.query<{ property_code: string; property_name: string }>(
+    `
+      SELECT DISTINCT property_code, property_name
+      FROM onec_catalog_product_properties
+      WHERE version_id = $1::uuid
+    `,
+    [versionId],
+  );
+
+  const availableKeys = new Set<string>();
+  for (const row of rows.rows) {
+    const matched = matchPropertyToFilter(row.property_code, row.property_name);
+    if (matched) availableKeys.add(matched.key);
+  }
+
+  return requestedKeys.filter((key) => !availableKeys.has(key));
+}
+
+function lowercased(values: string[]): string[] {
+  return values.map((value) => value.toLowerCase());
+}
+
 export async function resolvePropertyFilterBindings(
   client: PoolClient,
   versionId: string,
@@ -71,8 +103,8 @@ export async function resolvePropertyFilterBindings(
     if (!codes.length && !names.length) continue;
     bindings.push({
       key: definition.key,
-      propertyCodes: codes.length ? codes : definition.propertyCodes,
-      propertyNames: names.length ? names : definition.propertyNames,
+      propertyCodes: lowercased(codes.length ? codes : definition.propertyCodes),
+      propertyNames: lowercased(names.length ? names : definition.propertyNames),
       values,
     });
   }
@@ -129,8 +161,8 @@ export async function buildCatalogProductFilters(
            AND pf.product_code = p.code
            AND pf.property_value = ANY($${valuesIndex}::text[])
            AND (
-             pf.property_code = ANY($${codesIndex}::text[])
-             OR pf.property_name = ANY($${namesIndex}::text[])
+             LOWER(pf.property_code) = ANY($${codesIndex}::text[])
+             OR LOWER(pf.property_name) = ANY($${namesIndex}::text[])
            )
        )`,
     );

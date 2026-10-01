@@ -47,7 +47,8 @@
     "express": "^4.21.2",
     "ipaddr.js": "^2.2.0",
     "pg": "^8.13.1",
-    "sax": "^1.6.1"
+    "sax": "^1.6.1",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

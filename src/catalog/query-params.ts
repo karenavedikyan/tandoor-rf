@@ -69,15 +69,17 @@ export function parseCatalogVersionId(raw: unknown): ParsedCatalogVersionIdResul
 
 function parseFilterValues(raw: unknown): string[] | null {
   if (raw === undefined || raw === null || raw === "") return [];
-  if (rejectNonScalar(raw) || typeof raw !== "string") return null;
-  const values = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (values.length > CATALOG_MAX_FILTER_VALUES) return null;
-  for (const value of values) {
-    if (value.length > CATALOG_MAX_FILTER_VALUE_LENGTH) return null;
+  const items = Array.isArray(raw) ? raw : [raw];
+  if (!items.length) return [];
+  const values: string[] = [];
+  for (const item of items) {
+    if (rejectNonScalar(item) || typeof item !== "string") return null;
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > CATALOG_MAX_FILTER_VALUE_LENGTH) return null;
+    values.push(trimmed);
   }
+  if (values.length > CATALOG_MAX_FILTER_VALUES) return null;
   return values;
 }
 

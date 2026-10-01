@@ -222,13 +222,10 @@ describe("client catalog visual API integration", { concurrency: false }, () => 
     const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "catalog-store-"));
     const imagePath = "images/p1.jpg";
     await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
-    const png = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-      0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
-      0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
-      0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
-      0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-    ]);
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
     await fs.writeFile(path.join(sourceDir, imagePath), png);
 
     process.env.CATALOG_IMAGE_SOURCE_DIR = sourceDir;
@@ -257,7 +254,7 @@ describe("client catalog visual API integration", { concurrency: false }, () => 
         .get(`/api/clients/${CLIENT_ONE}/catalog/media/${assetId}`)
         .set({ Origin: ORIGIN, Cookie: adminCookie });
       assert.equal(media.status, 200);
-      assert.equal(media.headers["content-type"], "image/png");
+      assert.equal(media.headers["content-type"], "image/webp");
       assert.equal(media.headers["cache-control"], "no-store");
 
       const foreign = await request(app)

@@ -143,6 +143,53 @@ describe("client catalog workspace (R3.2 visual, mocked API)", { concurrency: fa
     await context.close();
   });
 
+  it("does not multiply facet/product requests on repeated searches", async () => {
+    const counts = { facets: 0, products: 0 };
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/catalog/facets")) counts.facets += 1;
+      if (url.pathname.endsWith("/catalog/products")) counts.products += 1;
+      const mock = resolveMockResponse(
+        url,
+        { role: "admin", detailBody: syntheticDetailPayload() },
+        { listCalls: 0, catalogProductsCalls: 0 },
+        route.request().method(),
+      );
+      if (mock) await route.fulfill(mock);
+      else await route.fulfill({ status: 404, body: "{}" });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}/catalog`);
+    await page.waitForSelector(".pc-catalog-workspace-layout");
+    const baselineFacets = counts.facets;
+    const baselineProducts = counts.products;
+
+    for (let i = 0; i < 3; i += 1) {
+      await page.fill('[name="q"]', "Product " + i);
+      await page.locator('[data-catalog-search-form] button[type="submit"]').click();
+      await page.waitForSelector(".pc-catalog-card");
+    }
+
+    assert.equal(counts.facets - baselineFacets, 3);
+    assert.equal(counts.products - baselineProducts, 3);
+    await page.waitForFunction(() => {
+      var extras = document.querySelector("[data-catalog-toolbar-extras]");
+      return extras && /Поиск: Product 2/.test(extras.textContent || "");
+    });
+    assert.equal(await page.inputValue('[name="q"]'), "Product 2");
+
+    await page.locator('[data-catalog-action="reset-filters"]').click();
+    await page.waitForFunction(() => {
+      var extras = document.querySelector("[data-catalog-toolbar-extras]");
+      return extras && !/Поиск:/.test(extras.textContent || "");
+    });
+    assert.equal(await page.inputValue('[name="q"]'), "");
+
+    await page.close();
+    await context.close();
+  });
+
   it("links from showcase tab to workspace", async () => {
     const context = await browser.newContext();
     const page = await context.newPage();

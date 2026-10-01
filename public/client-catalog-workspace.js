@@ -90,13 +90,16 @@
     var params = new URLSearchParams();
     Object.keys(query).forEach(function (key) {
       var val = query[key];
-      if (val !== undefined && val !== null && val !== "") {
-        if (Array.isArray(val)) {
-          if (val.length) params.set(key, val.join(","));
-        } else {
-          params.set(key, String(val));
-        }
+      if (val === undefined || val === null || val === "") return;
+      if (Array.isArray(val)) {
+        val.forEach(function (item) {
+          if (item !== undefined && item !== null && String(item) !== "") {
+            params.append(key, String(item));
+          }
+        });
+        return;
       }
+      params.set(key, String(val));
     });
     var qs = params.toString();
     return qs ? url + "?" + qs : url;
@@ -116,7 +119,7 @@
     };
     Object.keys(state.propertyFilters || {}).forEach(function (key) {
       var values = state.propertyFilters[key];
-      if (values && values.length) query[filterParamKey(key)] = values.join(",");
+      if (values && values.length) query[filterParamKey(key)] = values.slice();
     });
     return query;
   }
@@ -176,7 +179,10 @@
 
     var saved = readSessionState(clientGuid);
     var state = {
-      loadId: 0,
+      opId: 0,
+      detailLoadId: 0,
+      delegationBound: false,
+      layoutReady: false,
       clientGuid: clientGuid,
       clientName: clientInfo && clientInfo.name ? clientInfo.name : "Клиент",
       meta: null,
@@ -193,6 +199,7 @@
       view: "list",
       refreshing: false,
       scrollY: saved && saved.scrollY ? saved.scrollY : 0,
+      lastTotal: 0,
     };
 
     function persistState() {
@@ -320,10 +327,18 @@
               );
             })
             .join("");
+          var truncatedNote = group.valuesTruncated
+            ? '<p class="pc-label">Показаны первые ' +
+              esc(String(group.values.length)) +
+              " из " +
+              esc(String(group.totalValues)) +
+              " значений.</p>"
+            : "";
           return (
             '<fieldset class="pc-catalog-facet"><legend>' +
             esc(group.label) +
             "</legend>" +
+            truncatedNote +
             values +
             "</fieldset>"
           );
@@ -460,20 +475,83 @@
       );
     }
 
-    function renderListShell(resultsHtml) {
-      setHtml(
-        renderHeader() +
-          renderMetaBanner(state.meta) +
-          '<div class="pc-catalog-workspace-layout">' +
-          renderFiltersPanel() +
-          '<div class="pc-catalog-workspace-main">' +
-          renderToolbar() +
-          '<div class="pc-catalog-results-count pc-label" data-results-count></div>' +
-          '<div class="pc-catalog-results" data-catalog-results aria-live="polite">' +
-          (resultsHtml || renderState("Загрузка каталога…", "loading")) +
-          "</div></div></div>",
-      );
-      bindShellEvents();
+    function captureSearchFocus() {
+      var input = root.querySelector('[data-catalog-search-form] [name="q"]');
+      if (input && document.activeElement === input) {
+        return { input: input, start: input.selectionStart, end: input.selectionEnd };
+      }
+      return null;
+    }
+
+    function restoreSearchFocus(focus) {
+      if (!focus || !focus.input || !root.contains(focus.input)) return;
+      focus.input.focus();
+      try {
+        if (typeof focus.start === "number" && typeof focus.end === "number") {
+          focus.input.setSelectionRange(focus.start, focus.end);
+        }
+      } catch (_error) {
+        focus.input.focus();
+      }
+    }
+
+    function ensureListLayout(resultsHtml) {
+      if (!state.layoutReady || !root.querySelector("[data-catalog-workspace-layout]")) {
+        setHtml(
+          renderHeader() +
+            '<div data-catalog-meta-banner>' +
+            renderMetaBanner(state.meta) +
+            "</div>" +
+            '<div class="pc-catalog-workspace-layout" data-catalog-workspace-layout>' +
+            '<aside class="pc-catalog-filters-panel" data-catalog-filters-panel>' +
+            "<h2 class=\"pc-label\">Фильтры</h2>" +
+            '<div data-catalog-section-tree>' +
+            renderSectionTree() +
+            "</div>" +
+            '<div class="pc-catalog-facets" data-catalog-facets>' +
+            renderFacetGroups() +
+            "</div></aside>" +
+            '<div class="pc-catalog-workspace-main">' +
+            '<form class="pc-catalog-toolbar pc-catalog-toolbar--workspace" data-catalog-search-form>' +
+            '<label class="pc-catalog-field"><span class="pc-label">Поиск по названию или коду 1С</span>' +
+            '<input class="pc-catalog-input" type="search" name="q" value="' +
+            esc(state.query) +
+            '" maxlength="' +
+            MAX_QUERY_LENGTH +
+            '" autocomplete="off" /></label>' +
+            '<button type="submit" class="pc-catalog-btn">Найти</button></form>' +
+            '<div data-catalog-toolbar-extras>' +
+            renderViewModeToggle() +
+            renderActiveFilters() +
+            "</div>" +
+            '<div class="pc-catalog-results-count pc-label" data-results-count></div>' +
+            '<div class="pc-catalog-results" data-catalog-results aria-live="polite">' +
+            (resultsHtml || renderState("Загрузка каталога…", "loading")) +
+            "</div></div></div>",
+        );
+        state.layoutReady = true;
+        bindDelegationOnce();
+        return;
+      }
+      var metaBanner = root.querySelector("[data-catalog-meta-banner]");
+      if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
+      refreshFilterChrome();
+      if (resultsHtml !== undefined) {
+        setResultsHtml(resultsHtml);
+      }
+    }
+
+    function refreshFilterChrome() {
+      var focus = captureSearchFocus();
+      var sectionTree = root.querySelector("[data-catalog-section-tree]");
+      if (sectionTree) sectionTree.innerHTML = renderSectionTree();
+      var facets = root.querySelector("[data-catalog-facets]");
+      if (facets) facets.innerHTML = renderFacetGroups();
+      var extras = root.querySelector("[data-catalog-toolbar-extras]");
+      if (extras) extras.innerHTML = renderViewModeToggle() + renderActiveFilters();
+      var qInput = root.querySelector('[data-catalog-search-form] [name="q"]');
+      if (qInput && qInput.value !== state.query) qInput.value = state.query;
+      restoreSearchFocus(focus);
     }
 
     function updateResultsCount(total) {
@@ -511,11 +589,11 @@
               .join("") +
             "</div>"
           : "");
-      if (!setResultsHtml(html)) renderListShell(html);
-      bindActionButtons();
+      if (!setResultsHtml(html)) ensureListLayout(html);
     }
 
     function renderListResult(body) {
+      state.lastTotal = body.total || 0;
       updateResultsCount(body.total);
       if (body.state === "empty") {
         showListMessage(body.message || "Каталог пуст.", "empty");
@@ -534,6 +612,7 @@
             ? "pc-catalog-grid pc-catalog-grid--compact"
             : "pc-catalog-grid pc-catalog-grid--large";
       var maxPage = Math.max(1, Math.ceil(body.total / body.pageSize));
+      if (body.query !== undefined) state.query = body.query;
       setResultsHtml(
         '<div class="' +
           gridClass +
@@ -541,7 +620,9 @@
           body.items.map(renderProductCard).join("") +
           "</div>" +
           '<div class="pc-catalog-pagination">' +
-          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="prev">Назад</button>' +
+          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="prev"' +
+          (body.page <= 1 ? " disabled" : "") +
+          ">Назад</button>" +
           '<span class="pc-label">Страница ' +
           esc(String(body.page)) +
           " из " +
@@ -549,11 +630,10 @@
           " · " +
           esc(String(body.total)) +
           " товаров</span>" +
-          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="next">Вперёд</button></div>',
+          '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-page-nav="next"' +
+          (body.page >= maxPage ? " disabled" : "") +
+          ">Вперёд</button></div>",
       );
-      bindProductCards();
-      bindPagination(body.total);
-      bindZoomButtons();
       if (state.scrollY) {
         window.scrollTo(0, state.scrollY);
         state.scrollY = 0;
@@ -570,7 +650,6 @@
           contentHtml +
           "</div>",
       );
-      bindDetailActions();
     }
 
     function renderDetail(product, metaNote) {
@@ -645,10 +724,16 @@
           ) +
           "</p></div>",
       );
-      bindZoomButtons();
+    }
+
+    function closeLightbox() {
+      document.querySelectorAll(".pc-catalog-lightbox").forEach(function (node) {
+        node.remove();
+      });
     }
 
     function openLightbox(src) {
+      closeLightbox();
       var overlay = document.createElement("div");
       overlay.className = "pc-catalog-lightbox";
       overlay.innerHTML =
@@ -666,27 +751,79 @@
       });
     }
 
-    function bindZoomButtons() {
-      root.querySelectorAll("[data-catalog-zoom]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var src = button.getAttribute("data-catalog-zoom");
-          if (src) openLightbox(src);
-        });
-      });
-    }
+    function bindDelegationOnce() {
+      if (state.delegationBound) return;
+      state.delegationBound = true;
 
-    function bindActionButtons() {
-      root.querySelectorAll("[data-catalog-action]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var action = button.getAttribute("data-catalog-action");
+      root.addEventListener("submit", function (event) {
+        var form = event.target.closest("[data-catalog-search-form]");
+        if (!form || !root.contains(form)) return;
+        event.preventDefault();
+        var qInput = form.querySelector('[name="q"]');
+        if (qInput) state.query = qInput.value.trim().slice(0, MAX_QUERY_LENGTH);
+        state.page = 1;
+        state.selectedCode = null;
+        persistState();
+        runCatalogQuery({ includeFacets: true, includeProducts: true });
+      });
+
+      root.addEventListener("click", function (event) {
+        var target = event.target.closest(
+          "[data-section-code], [data-view-mode], [data-clear-filter], [data-catalog-action], [data-catalog-page-nav], [data-catalog-open], [data-catalog-zoom], [data-catalog-back], [data-catalog-refresh]",
+        );
+        if (!target || !root.contains(target)) return;
+
+        if (target.hasAttribute("data-section-code")) {
+          state.sectionCode = target.getAttribute("data-section-code") || "";
+          state.page = 1;
+          persistState();
+          runCatalogQuery({ includeFacets: true, includeProducts: true });
+          return;
+        }
+
+        var viewMode = target.getAttribute("data-view-mode");
+        if (viewMode) {
+          if (!VALID_VIEW_MODES[viewMode]) return;
+          state.viewMode = viewMode;
+          persistState();
+          refreshFilterChrome();
+          if (state.facets) {
+            setResultsHtml(renderState("Обновление вида…", "loading"));
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
+          }
+          return;
+        }
+
+        if (target.hasAttribute("data-clear-filter")) {
+          var kind = target.getAttribute("data-clear-filter") || "";
+          if (kind === "q") state.query = "";
+          else if (kind === "section") state.sectionCode = "";
+          else if (kind.indexOf("filter:") === 0) {
+            var parts = kind.split(":");
+            var key = parts[1];
+            var value = parts.slice(2).join(":");
+            var list = (state.propertyFilters[key] || []).filter(function (item) {
+              return item !== value;
+            });
+            if (list.length) state.propertyFilters[key] = list;
+            else delete state.propertyFilters[key];
+          }
+          state.page = 1;
+          persistState();
+          runCatalogQuery({ includeFacets: true, includeProducts: true });
+          return;
+        }
+
+        var action = target.getAttribute("data-catalog-action");
+        if (action) {
           if (action === "retry-meta") loadAll(true);
-          if (action === "retry-list") loadList();
+          if (action === "retry-list") runCatalogQuery({ includeFacets: true, includeProducts: true });
           if (action === "retry-detail" && state.selectedCode) loadDetail(state.selectedCode);
           if (action === "refresh") refreshCatalog();
           if (action === "back") goBackToList();
           if (action === "first-page") {
             state.page = 1;
-            loadList();
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
           }
           if (action === "reset-filters") {
             state.query = "";
@@ -694,152 +831,79 @@
             state.propertyFilters = {};
             state.page = 1;
             persistState();
-            loadFacets().then(loadList);
+            runCatalogQuery({ includeFacets: true, includeProducts: true });
           }
-        });
-      });
-    }
+          return;
+        }
 
-    function bindShellEvents() {
-      bindSearchForm();
-      bindSectionTree();
-      bindFacetInputs();
-      bindViewModes();
-      bindActiveFilterChips();
-      bindActionButtons();
-    }
-
-    function bindSearchForm() {
-      var form = root.querySelector("[data-catalog-search-form]");
-      if (!form) return;
-      form.addEventListener("submit", function (event) {
-        event.preventDefault();
-        var qInput = form.querySelector('[name="q"]');
-        if (qInput) state.query = qInput.value.trim().slice(0, MAX_QUERY_LENGTH);
-        state.page = 1;
-        state.selectedCode = null;
-        persistState();
-        loadFacets().then(loadList);
-      });
-    }
-
-    function bindSectionTree() {
-      root.querySelectorAll("[data-section-code]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          state.sectionCode = button.getAttribute("data-section-code") || "";
-          state.page = 1;
-          persistState();
-          loadFacets().then(loadList);
-        });
-      });
-    }
-
-    function bindFacetInputs() {
-      root.querySelectorAll("[data-filter-key]").forEach(function (input) {
-        input.addEventListener("change", function () {
-          var key = input.getAttribute("data-filter-key");
-          var value = input.getAttribute("data-filter-value");
-          if (!key || !value) return;
-          var list = state.propertyFilters[key] ? state.propertyFilters[key].slice() : [];
-          if (input.checked) {
-            if (list.indexOf(value) < 0) list.push(value);
-          } else {
-            list = list.filter(function (v) {
-              return v !== value;
-            });
-          }
-          if (list.length) state.propertyFilters[key] = list;
-          else delete state.propertyFilters[key];
-          state.page = 1;
-          persistState();
-          loadFacets().then(loadList);
-        });
-      });
-    }
-
-    function bindViewModes() {
-      root.querySelectorAll("[data-view-mode]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var mode = button.getAttribute("data-view-mode");
-          if (!VALID_VIEW_MODES[mode]) return;
-          state.viewMode = mode;
-          persistState();
-          renderListShell(renderState("Обновление вида…", "loading"));
-          loadList();
-        });
-      });
-    }
-
-    function bindActiveFilterChips() {
-      root.querySelectorAll("[data-clear-filter]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var kind = button.getAttribute("data-clear-filter") || "";
-          if (kind === "q") state.query = "";
-          else if (kind === "section") state.sectionCode = "";
-          else if (kind.indexOf("filter:") === 0) {
-            var parts = kind.split(":");
-            var key = parts[1];
-            var value = parts.slice(2).join(":");
-            var list = (state.propertyFilters[key] || []).filter(function (v) {
-              return v !== value;
-            });
-            if (list.length) state.propertyFilters[key] = list;
-            else delete state.propertyFilters[key];
-          }
-          state.page = 1;
-          persistState();
-          loadFacets().then(loadList);
-        });
-      });
-    }
-
-    function bindPagination(total) {
-      var maxPage = Math.max(1, Math.ceil(total / state.pageSize));
-      root.querySelectorAll("[data-catalog-page-nav]").forEach(function (button) {
-        var direction = button.getAttribute("data-catalog-page-nav");
-        button.disabled = direction === "prev" ? state.page <= 1 : state.page >= maxPage;
-        button.addEventListener("click", function () {
-          if (direction === "prev" && state.page > 1) {
+        var pageNav = target.getAttribute("data-catalog-page-nav");
+        if (pageNav) {
+          var maxPage = Math.max(1, Math.ceil((state.lastTotal || 0) / state.pageSize));
+          if (pageNav === "prev" && state.page > 1) {
             state.page -= 1;
             persistState();
-            loadList();
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
           }
-          if (direction === "next" && state.page < maxPage) {
+          if (pageNav === "next" && state.page < maxPage) {
             state.page += 1;
             persistState();
-            loadList();
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
           }
-        });
-      });
-    }
+          return;
+        }
 
-    function bindProductCards() {
-      root.querySelectorAll("[data-catalog-open]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var code = button.getAttribute("data-catalog-open");
-          if (!code) return;
+        var productCode = target.getAttribute("data-catalog-open");
+        if (productCode) {
           state.scrollY = window.scrollY;
           persistState();
-          state.selectedCode = code;
+          state.selectedCode = productCode;
           state.view = "detail";
-          loadDetail(code);
-        });
-      });
-    }
+          loadDetail(productCode);
+          return;
+        }
 
-    function bindDetailActions() {
-      var back = root.querySelector("[data-catalog-back]");
-      if (back) back.addEventListener("click", goBackToList);
-      var refresh = root.querySelector("[data-catalog-refresh]");
-      if (refresh) refresh.addEventListener("click", refreshCatalog);
-      bindActionButtons();
+        var zoomSrc = target.getAttribute("data-catalog-zoom");
+        if (zoomSrc) {
+          openLightbox(zoomSrc);
+          return;
+        }
+
+        if (target.hasAttribute("data-catalog-back")) {
+          goBackToList();
+          return;
+        }
+        if (target.hasAttribute("data-catalog-refresh")) {
+          refreshCatalog();
+        }
+      });
+
+      root.addEventListener("change", function (event) {
+        var input = event.target.closest("[data-filter-key]");
+        if (!input || !root.contains(input)) return;
+        var key = input.getAttribute("data-filter-key");
+        var value = input.getAttribute("data-filter-value");
+        if (!key || !value) return;
+        var list = state.propertyFilters[key] ? state.propertyFilters[key].slice() : [];
+        if (input.checked) {
+          if (list.indexOf(value) < 0) list.push(value);
+        } else {
+          list = list.filter(function (item) {
+            return item !== value;
+          });
+        }
+        if (list.length) state.propertyFilters[key] = list;
+        else delete state.propertyFilters[key];
+        state.page = 1;
+        persistState();
+        runCatalogQuery({ includeFacets: true, includeProducts: true });
+      });
     }
 
     function goBackToList() {
       state.view = "list";
       state.selectedCode = null;
-      renderListShell();
-      loadFacets().then(loadList);
+      ensureListLayout();
+      runCatalogQuery({ includeFacets: true, includeProducts: true });
     }
 
     function refreshCatalog() {
@@ -852,15 +916,28 @@
       });
     }
 
-    function handleAccessDenied() {
+    function clearProtectedState() {
+      closeLightbox();
       state.meta = null;
       state.versionId = null;
+      state.sectionTree = [];
+      state.facets = null;
+      state.propertyFilters = {};
+      state.query = "";
+      state.sectionCode = "";
+      state.page = 1;
+      state.selectedCode = null;
+      state.lastTotal = 0;
+      state.layoutReady = false;
+    }
+
+    function handleAccessDenied() {
+      clearProtectedState();
       setHtml(
         renderHeader() +
           renderState("Каталог недоступен для этой карточки.", "error") +
           '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-meta">Повторить</button></div>',
       );
-      bindActionButtons();
     }
 
     function handleVersionConflict(message) {
@@ -869,9 +946,23 @@
       ]);
     }
 
-    function confirmCatalogAccess(loadId) {
+    function isCurrentOp(opId) {
+      return opId === state.opId && root.isConnected;
+    }
+
+    function beginOperation() {
+      return ++state.opId;
+    }
+
+    function applySnapshotVersion(versionId) {
+      if (!versionId) return;
+      state.versionId = versionId;
+      if (state.meta) state.meta.versionId = versionId;
+    }
+
+    function confirmCatalogAccess(detailLoadId) {
       return api.apiRequest(buildApiUrl(state.clientGuid, "meta")).then(function (metaResult) {
-        if (loadId !== state.loadId || !root.isConnected) return { kind: "stale" };
+        if (detailLoadId !== state.detailLoadId || !root.isConnected) return { kind: "stale" };
         if (metaResult.response.status === 403 || metaResult.response.status === 404) {
           return { kind: "denied" };
         }
@@ -884,69 +975,129 @@
       });
     }
 
-    function loadFacets() {
-      var loadId = ++state.loadId;
+    function handleCatalogResponseStatus(result, opId) {
+      if (!isCurrentOp(opId)) return "stale";
+      if (result.response.status === 403 || result.response.status === 404) {
+        handleAccessDenied();
+        return "stop";
+      }
+      if (result.response.status === 409 && result.data) {
+        handleVersionConflict(result.data.message);
+        return "stop";
+      }
+      if (result.response.status === 422 && result.data) {
+        showListMessage(
+          result.data.message || "Выбранный фильтр недоступен в текущем снимке.",
+          "error",
+          [{ id: "reset-filters", label: "Сбросить фильтры", ghost: true }],
+        );
+        return "stop";
+      }
+      return "ok";
+    }
+
+    function fetchSectionsTree(opId) {
       return api
-        .apiRequest(buildApiUrl(state.clientGuid, "facets", buildListQuery(state)))
+        .apiRequest(
+          buildApiUrl(state.clientGuid, "sections-tree", { versionId: state.versionId }),
+        )
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
-          if (result.response.status === 409) {
-            handleVersionConflict(result.data && result.data.message);
-            return;
+          var status = handleCatalogResponseStatus(result, opId);
+          if (status !== "ok") return status;
+          if (result.response.status === 200 && result.data && result.data.tree) {
+            state.sectionTree = result.data.tree;
+            if (result.data.versionId) applySnapshotVersion(result.data.versionId);
           }
-          if (result.response.status === 200 && result.data) {
-            state.facets = result.data;
-            if (result.data.versionId) state.versionId = result.data.versionId;
-          }
+          return "ok";
         })
         .catch(function () {
-          /* facets are optional for list */
+          return isCurrentOp(opId) ? "ok" : "stale";
         });
     }
 
-    function loadList() {
-      var loadId = ++state.loadId;
-      if (state.view === "list" && root.querySelector("[data-catalog-results]")) {
-        setResultsHtml(renderState("Загрузка…", "loading"));
-      } else {
-        renderListShell(renderState("Загрузка…", "loading"));
-      }
-      persistState();
+    function fetchFacets(opId) {
+      return api
+        .apiRequest(buildApiUrl(state.clientGuid, "facets", buildListQuery(state)))
+        .then(function (result) {
+          var status = handleCatalogResponseStatus(result, opId);
+          if (status !== "ok") return status;
+          if (result.response.status !== 200 || !result.data) return "stop";
+          state.facets = result.data;
+          if (result.data.versionId) applySnapshotVersion(result.data.versionId);
+          refreshFilterChrome();
+          return "ok";
+        })
+        .catch(function () {
+          if (!isCurrentOp(opId)) return "stale";
+          showListMessage("Не удалось загрузить фильтры.", "error", [
+            { id: "retry-list", label: "Повторить", ghost: false },
+          ]);
+          return "stop";
+        });
+    }
+
+    function fetchProducts(opId) {
       return api
         .apiRequest(buildApiUrl(state.clientGuid, "products", buildListQuery(state)))
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
-          if (result.response.status === 403 || result.response.status === 404) {
-            handleAccessDenied();
-            return;
-          }
-          if (result.response.status === 409 && result.data) {
-            handleVersionConflict(result.data.message);
-            return;
-          }
+          var status = handleCatalogResponseStatus(result, opId);
+          if (status !== "ok") return status;
           if (result.response.status !== 200 || !result.data) {
             showListMessage("Не удалось загрузить каталог.", "error", [
               { id: "retry-list", label: "Повторить", ghost: false },
             ]);
-            return;
+            return "stop";
           }
-          if (result.data.versionId) state.versionId = result.data.versionId;
-          if (state.view === "list" && !root.querySelector("[data-catalog-results]")) {
-            renderListShell();
-          }
+          if (result.data.versionId) applySnapshotVersion(result.data.versionId);
+          ensureListLayout();
           renderListResult(result.data);
-          bindShellEvents();
+          refreshFilterChrome();
+          return "ok";
         })
         .catch(function () {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (!isCurrentOp(opId)) return "stale";
           showListMessage("Ошибка сети при загрузке каталога.", "error", [
             { id: "retry-list", label: "Повторить", ghost: false },
           ]);
+          return "stop";
         });
     }
 
+    function runCatalogQuery(options) {
+      var opId = beginOperation();
+      var includeFacets = options.includeFacets !== false;
+      var includeProducts = options.includeProducts !== false;
+      persistState();
+      if (includeProducts) {
+        ensureListLayout(renderState("Загрузка…", "loading"));
+      } else {
+        refreshFilterChrome();
+      }
+
+      var chain = Promise.resolve("ok");
+      if (!state.sectionTree.length) {
+        chain = chain.then(function (step) {
+          if (step !== "ok" || !isCurrentOp(opId)) return step === "ok" ? "stale" : step;
+          return fetchSectionsTree(opId);
+        });
+      }
+      if (includeFacets) {
+        chain = chain.then(function (step) {
+          if (step !== "ok" || !isCurrentOp(opId)) return step === "ok" ? "stale" : step;
+          return fetchFacets(opId);
+        });
+      }
+      if (includeProducts) {
+        chain = chain.then(function (step) {
+          if (step !== "ok" || !isCurrentOp(opId)) return step === "ok" ? "stale" : step;
+          return fetchProducts(opId);
+        });
+      }
+      return chain;
+    }
+
     function loadDetail(code) {
-      var loadId = ++state.loadId;
+      var detailLoadId = ++state.detailLoadId;
       renderDetailShell(renderState("Загрузка товара…", "loading"));
       return api
         .apiRequest(
@@ -955,13 +1106,13 @@
           }),
         )
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (detailLoadId !== state.detailLoadId || !root.isConnected) return;
           if (result.response.status === 403) {
             handleAccessDenied();
             return;
           }
           if (result.response.status === 404) {
-            return confirmCatalogAccess(loadId).then(function (access) {
+            return confirmCatalogAccess(detailLoadId).then(function (access) {
               if (access.kind === "stale") return;
               if (access.kind === "denied") {
                 handleAccessDenied();
@@ -971,7 +1122,6 @@
                 renderState("Товар не найден в текущем снимке.", "empty") +
                   '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn pc-catalog-btn--ghost" data-catalog-action="back">← К списку</button></div>',
               );
-              bindActionButtons();
             });
           }
           if (result.response.status === 409 && result.data) {
@@ -979,7 +1129,6 @@
               renderState(result.data.message || "Каталог обновился.", "error") +
                 '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="refresh">Обновить каталог</button></div>',
             );
-            bindActionButtons();
             return;
           }
           if (result.response.status !== 200 || !result.data || !result.data.product) {
@@ -987,44 +1136,28 @@
               renderState("Не удалось загрузить товар.", "error") +
                 '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-detail">Повторить</button></div>',
             );
-            bindActionButtons();
             return;
           }
-          state.versionId = result.data.product.versionId;
+          applySnapshotVersion(result.data.product.versionId);
           renderDetail(result.data.product, result.data.futureActionsBlockedReason);
         })
         .catch(function () {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (detailLoadId !== state.detailLoadId || !root.isConnected) return;
           renderDetailShell(
             renderState("Ошибка сети при загрузке товара.", "error") +
               '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-detail">Повторить</button></div>',
           );
-          bindActionButtons();
-        });
-    }
-
-    function loadSectionsTree() {
-      return api
-        .apiRequest(
-          buildApiUrl(state.clientGuid, "sections-tree", { versionId: state.versionId }),
-        )
-        .then(function (result) {
-          if (result.response.status === 200 && result.data && result.data.tree) {
-            state.sectionTree = result.data.tree;
-          }
-        })
-        .catch(function () {
-          /* optional */
         });
     }
 
     function loadAll(reloadList) {
-      var loadId = ++state.loadId;
+      var opId = beginOperation();
+      state.layoutReady = false;
       setHtml(renderHeader() + renderState("Загрузка каталога…", "loading"));
       return api
         .apiRequest(buildApiUrl(state.clientGuid, "meta"))
         .then(function (result) {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (!isCurrentOp(opId)) return;
           if (result.response.status === 403 || result.response.status === 404) {
             handleAccessDenied();
             return;
@@ -1035,30 +1168,27 @@
                 renderState("Не удалось загрузить каталог.", "error") +
                 '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-meta">Повторить</button></div>',
             );
-            bindActionButtons();
             return;
           }
           state.meta = result.data;
-          if (result.data.versionId) state.versionId = result.data.versionId;
+          applySnapshotVersion(result.data.versionId);
           if (result.data.state !== "ready") {
             setHtml(renderHeader() + renderMetaBanner(result.data));
             return;
           }
-          return loadSectionsTree()
-            .then(loadFacets)
-            .then(function () {
-              renderListShell();
-              if (reloadList !== false) return loadList();
-            });
+          if (reloadList === false) return;
+          return fetchSectionsTree(opId).then(function (step) {
+            if (step !== "ok" || !isCurrentOp(opId)) return;
+            return runCatalogQuery({ includeFacets: true, includeProducts: true });
+          });
         })
         .catch(function () {
-          if (loadId !== state.loadId || !root.isConnected) return;
+          if (!isCurrentOp(opId)) return;
           setHtml(
             renderHeader() +
               renderState("Ошибка сети.", "error") +
               '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-meta">Повторить</button></div>',
           );
-          bindActionButtons();
         });
     }
 

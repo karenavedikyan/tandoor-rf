@@ -2,13 +2,42 @@ import type { PoolClient } from "pg";
 import { CATALOG_FILTER_DEFINITIONS, matchPropertyToFilter } from "./filter-config";
 import type { CatalogFacetsResult } from "./types";
 import type { ParsedCatalogSearchQuery } from "./query-params";
-import { buildCatalogProductFilters, resolvePropertyFilterBindings } from "./search-filters";
+import {
+  buildCatalogProductFilters,
+  findUnavailablePropertyFilters,
+  resolvePropertyFilterBindings,
+} from "./search-filters";
+
+export const CATALOG_FACET_VALUES_PAGE_SIZE = 100;
+
+export class CatalogFilterUnavailableError extends Error {
+  readonly filters: string[];
+
+  constructor(filters: string[]) {
+    super("Requested catalog filters are unavailable in the active snapshot.");
+    this.name = "CatalogFilterUnavailableError";
+    this.filters = filters;
+  }
+}
+
+export async function assertCatalogPropertyFiltersAvailable(
+  client: PoolClient,
+  versionId: string,
+  propertyFilters: Record<string, string[]>,
+): Promise<void> {
+  const unavailable = await findUnavailablePropertyFilters(client, versionId, propertyFilters);
+  if (unavailable.length) {
+    throw new CatalogFilterUnavailableError(unavailable);
+  }
+}
 
 export async function loadCatalogFacets(
   client: PoolClient,
   versionId: string,
   query: ParsedCatalogSearchQuery,
 ): Promise<CatalogFacetsResult> {
+  await assertCatalogPropertyFiltersAvailable(client, versionId, query.propertyFilters);
+
   const built = await buildCatalogProductFilters(client, versionId, query);
   const totalResult = await client.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM onec_catalog_products p WHERE ${built.whereClause}`,
@@ -27,15 +56,26 @@ export async function loadCatalogFacets(
     const scopedQuery = { ...query, propertyFilters: otherFilters };
     const scopedBuilt = await buildCatalogProductFilters(client, versionId, scopedQuery);
 
-    const propertyMatchClause = binding
-      ? `(pf.property_code = ANY($${scopedBuilt.params.length + 1}::text[]) OR pf.property_name = ANY($${scopedBuilt.params.length + 2}::text[]))`
-      : `(pf.property_code = ANY($${scopedBuilt.params.length + 1}::text[]) OR pf.property_name = ANY($${scopedBuilt.params.length + 2}::text[]))`;
+    const propertyCodes = binding?.propertyCodes ?? lowercased(definition.propertyCodes);
+    const propertyNames = binding?.propertyNames ?? lowercased(definition.propertyNames);
+    const propertyMatchClause = `(LOWER(pf.property_code) = ANY($${scopedBuilt.params.length + 1}::text[]) OR LOWER(pf.property_name) = ANY($${scopedBuilt.params.length + 2}::text[]))`;
 
-    const countParams = [
-      ...scopedBuilt.params,
-      binding?.propertyCodes ?? definition.propertyCodes,
-      binding?.propertyNames ?? definition.propertyNames,
-    ];
+    const countParams = [...scopedBuilt.params, propertyCodes, propertyNames];
+
+    const totalValuesResult = await client.query<{ count: string }>(
+      `
+        SELECT COUNT(DISTINCT pf.property_value)::text AS count
+        FROM onec_catalog_products p
+        JOIN onec_catalog_product_properties pf
+          ON pf.version_id = p.version_id AND pf.product_code = p.code
+        WHERE ${scopedBuilt.whereClause}
+          AND ${propertyMatchClause}
+          AND pf.property_value <> ''
+      `,
+      countParams,
+    );
+    const totalValues = Number(totalValuesResult.rows[0]?.count ?? "0");
+    if (!totalValues) continue;
 
     const valuesResult = await client.query<{ value: string; count: string }>(
       `
@@ -48,12 +88,11 @@ export async function loadCatalogFacets(
           AND pf.property_value <> ''
         GROUP BY pf.property_value
         ORDER BY pf.property_value ASC
-        LIMIT 100
+        LIMIT ${CATALOG_FACET_VALUES_PAGE_SIZE}
       `,
       countParams,
     );
 
-    if (!valuesResult.rows.length) continue;
     availableFilters.push({ key: definition.key, label: definition.label });
     facets.push({
       key: definition.key,
@@ -62,6 +101,8 @@ export async function loadCatalogFacets(
         value: row.value,
         count: Number(row.count),
       })),
+      totalValues,
+      valuesTruncated: totalValues > valuesResult.rows.length,
     });
   }
 
@@ -71,6 +112,10 @@ export async function loadCatalogFacets(
     facets,
     availableFilters,
   };
+}
+
+function lowercased(values: string[]): string[] {
+  return values.map((value) => value.toLowerCase());
 }
 
 export function extractArticleFromProperties(

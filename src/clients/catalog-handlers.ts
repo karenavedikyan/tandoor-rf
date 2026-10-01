@@ -1,6 +1,9 @@
 import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
-import { loadCatalogFacets } from "../catalog/facets-repository";
+import {
+  CatalogFilterUnavailableError,
+  loadCatalogFacets,
+} from "../catalog/facets-repository";
 import { readReadyImageAssetBytes } from "../catalog/image-sync";
 import {
   loadCatalogProductDetail,
@@ -50,6 +53,15 @@ function respondCatalogVersionChanged(
     message: "Каталог обновился после открытия списка. Обновите данные и повторите выбор.",
     currentVersionId,
     importedAt,
+  });
+}
+
+function respondCatalogFilterUnavailable(res: Response, filters: string[]): void {
+  setNoStore(res);
+  res.status(422).json({
+    code: "CATALOG_FILTER_UNAVAILABLE",
+    message: "Выбранный фильтр недоступен в текущем снимке каталога.",
+    filters,
   });
 }
 
@@ -144,12 +156,20 @@ export async function getClientCatalogProductsHandler(
       return;
     }
 
-    const result = await searchCatalogProducts(client, meta.versionId, parsed.value);
-    setNoStore(res);
-    res.status(200).json({
-      state: "ready",
-      ...result,
-    });
+    try {
+      const result = await searchCatalogProducts(client, meta.versionId, parsed.value);
+      setNoStore(res);
+      res.status(200).json({
+        state: "ready",
+        ...result,
+      });
+    } catch (error) {
+      if (error instanceof CatalogFilterUnavailableError) {
+        respondCatalogFilterUnavailable(res, error.filters);
+        return;
+      }
+      throw error;
+    }
   } finally {
     client.release();
   }
@@ -250,9 +270,17 @@ export async function getClientCatalogFacetsHandler(req: AccessRequest, res: Res
       respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
       return;
     }
-    const facets = await loadCatalogFacets(client, meta.versionId, parsed.value);
-    setNoStore(res);
-    res.status(200).json({ state: "ready", ...facets });
+    try {
+      const facets = await loadCatalogFacets(client, meta.versionId, parsed.value);
+      setNoStore(res);
+      res.status(200).json({ state: "ready", ...facets });
+    } catch (error) {
+      if (error instanceof CatalogFilterUnavailableError) {
+        respondCatalogFilterUnavailable(res, error.filters);
+        return;
+      }
+      throw error;
+    }
   } finally {
     client.release();
   }

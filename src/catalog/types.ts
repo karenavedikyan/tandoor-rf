@@ -65,6 +65,8 @@ export type CatalogFacetGroup = {
   key: string;
   label: string;
   values: CatalogFacetValue[];
+  totalValues: number;
+  valuesTruncated: boolean;
 };
 
 export type CatalogFacetsResult = {
