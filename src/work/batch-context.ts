@@ -4,7 +4,9 @@ import { findEmployeePortalLink } from "../bitrix24/tasks/repository";
 import { loadBitrix24TasksRuntimeConfig } from "../bitrix24/tasks/config";
 import type { Bitrix24ObjectType } from "../bitrix24/labels/format";
 import type { ChecklistSnapshotRow } from "../bitrix24/tasks/checklist-repository";
+import { isOrkPublicationAlignedWithTask } from "../bitrix24/claims/ork-publication-visibility";
 import type { ContactActionRow, SummaryPublicationRow } from "../bitrix24/tasks/work-repository";
+import type { SummaryPublicationOrigin } from "../bitrix24/tasks/work-repository";
 import type { ResponsibleProfileState } from "../bitrix24/tasks/responsible-profile";
 import { isLinkAccessValid } from "../bitrix24/tasks/access";
 import { requirePool } from "../db/pool";
@@ -139,19 +141,52 @@ export async function loadWorkAccessBatch(input: {
       object_guid: string;
       brief_text: string;
       confirmed_at: Date;
+      publication_origin: SummaryPublicationOrigin;
+      task_cache_version: number | null;
     }>(
-      `SELECT task_id, object_type, object_guid::text, brief_text, confirmed_at
+      `SELECT task_id, object_type, object_guid::text, brief_text, confirmed_at,
+              publication_origin, task_cache_version
        FROM bitrix24_task_summary_publications
        WHERE portal_id = $1 AND task_id = ANY($2::text[]) AND revoked_at IS NULL`,
       [input.portalId, taskIds],
     );
+    const candidateByKey = new Map(
+      input.candidates.map((row) => [
+        publicationKey(row.taskId, row.objectType!, row.objectGuid!),
+        row,
+      ]),
+    );
     for (const row of summaryRows.rows) {
       const key = publicationKey(row.task_id, row.object_type, row.object_guid);
-      if (publicationObjectGuids.includes(key)) {
-        publications.set(key, {
-          briefText: row.brief_text,
-          confirmedAt: row.confirmed_at.toISOString(),
-        });
+      if (!publicationObjectGuids.includes(key)) {
+        continue;
+      }
+      const candidate = candidateByKey.get(key);
+      const publication: SummaryPublicationRow = {
+        briefText: row.brief_text,
+        confirmedAt: row.confirmed_at.toISOString(),
+        publicationOrigin: row.publication_origin,
+        taskCacheVersion: row.task_cache_version,
+        objectType: row.object_type,
+        objectGuid: row.object_guid,
+      };
+      if (row.publication_origin === "admin") {
+        publications.set(key, publication);
+        continue;
+      }
+      if (
+        candidate &&
+        isOrkPublicationAlignedWithTask(
+          {
+            cacheVersion: candidate.cacheVersion,
+            objectType: candidate.objectType,
+            objectGuid: candidate.objectGuid,
+            bindingStatus: candidate.bindingStatus,
+          },
+          publication,
+        )
+      ) {
+        publications.set(key, publication);
       }
     }
   }

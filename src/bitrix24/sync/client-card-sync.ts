@@ -88,6 +88,8 @@ function baseSyncResult(): Bitrix24SyncResult {
     versionConflicts: 0,
     checklistsSynced: 0,
     checklistsFailed: 0,
+    orkPublicationsRevoked: 0,
+    orkPublishIssues: 0,
     complete: true,
     message: "success",
   };
@@ -173,16 +175,25 @@ function mergeSyncResults(
       : aggregate.status === "partial" || result.status === "partial"
         ? "partial"
         : "success";
+  const mergedDenied = [
+    ...(aggregate.orkPublishDenied ?? []),
+    ...(result.orkPublishDenied ?? []),
+  ];
+  const complete = aggregate.complete && result.complete;
   return {
     ...aggregate,
-    ok: mergedStatus !== "failed",
+    ok: mergedStatus === "success" && complete,
     status: mergedStatus,
     tasksFetched: aggregate.tasksFetched + result.tasksFetched,
     cacheWrites: aggregate.cacheWrites + result.cacheWrites,
     checklistsSynced: aggregate.checklistsSynced + result.checklistsSynced,
     checklistsFailed: aggregate.checklistsFailed + result.checklistsFailed,
-    complete: aggregate.complete && result.complete,
-    message: result.complete ? aggregate.message : result.message,
+    orkPublicationsRevoked:
+      aggregate.orkPublicationsRevoked + result.orkPublicationsRevoked,
+    orkPublishIssues: aggregate.orkPublishIssues + result.orkPublishIssues,
+    complete,
+    message: complete ? aggregate.message : result.message || aggregate.message,
+    orkPublishDenied: mergedDenied.length > 0 ? mergedDenied : undefined,
   };
 }
 
@@ -357,6 +368,7 @@ async function syncTaskBatch(
           resolvePortalAddresses: options.resolvePortalAddresses,
           env,
           operation,
+          syncExecutorUserId: options.context.userId,
           assertTaskScope: async (task) => {
             const deny = await verifyManualSyncSource(
               options.context.userId,

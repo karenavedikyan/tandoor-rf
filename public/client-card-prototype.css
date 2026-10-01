@@ -92,6 +92,7 @@
 .pc-bitrix24-checklist-state--open {color:var(--rf-text-muted);}
 .pc-bitrix24-checklist-coexecutors {color:var(--rf-text-muted);}
 .pc-bitrix24-checklist-item > .pc-bitrix24-checklist-list {flex:1 0 100%;margin-left:0;padding-left:0;}
+.pc-bitrix24-claim__text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;}
 @media(max-width:1100px){.pc-three{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:700px){
   .pc-bitrix24-checklist-item{padding-left:calc(var(--checklist-depth, 0) * 12px);}

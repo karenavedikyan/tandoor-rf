@@ -13,11 +13,15 @@ import { loadBitrix24Config } from "../bitrix24/config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../bitrix24/tasks/config";
 import {
   canViewClientCard,
+  canViewPublishedTaskCacheForUser,
   canViewTaskForUser,
   evaluateUserBitrixTaskConfig,
   isTaskAudienceMatch,
 } from "../bitrix24/tasks/access";
-import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
+import type {
+  TaskVisibilityDenyCode,
+  TaskVisibilityResult,
+} from "../bitrix24/tasks/access";
 import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
 import {
   canReadBoundBitrixObject,
@@ -30,18 +34,41 @@ import {
   listPublishedTasksForObject,
 } from "../bitrix24/tasks/repository";
 import {
+  buildClaimTaskWorkDto,
   buildFullTaskWorkDto,
   buildSummaryTaskWorkDto,
   parseContactActionBody,
 } from "../bitrix24/tasks/task-work-response";
 import {
+  findActiveSummaryPublicationMeta,
   revokeContactAction,
   setContactActionMarked,
 } from "../bitrix24/tasks/work-repository";
 import { canMutateBitrixTaskContactAction } from "../bitrix24/tasks/work-access";
 import { runClientCardBitrix24Sync } from "../bitrix24/sync/client-card-sync";
+import { isOrkPublicationAlignedWithTask } from "../bitrix24/claims/ork-publication-visibility";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
+
+const EXCLUDED_FROM_CLAIMS_SCOPE_CODES: ReadonlySet<TaskVisibilityDenyCode> = new Set([
+  "PILOT_FILTER",
+  "PILOT_LIST_MISSING",
+  "NOT_PUBLISHED",
+]);
+
+const STALE_TASK_CACHE_CODES: ReadonlySet<TaskVisibilityDenyCode> = new Set([
+  "ACCESS_EXPIRED",
+  "STALE_SNAPSHOT",
+  "FUTURE_TASK",
+]);
+
+function isTaskExcludedFromClaimsScope(result: TaskVisibilityResult): boolean {
+  return !result.ok && EXCLUDED_FROM_CLAIMS_SCOPE_CODES.has(result.code);
+}
+
+function isStaleTaskCacheVisibility(result: TaskVisibilityResult): boolean {
+  return !result.ok && STALE_TASK_CACHE_CODES.has(result.code);
+}
 
 function parseObjectType(raw: unknown): Bitrix24ObjectType | null {
   const value = typeof raw === "string" ? raw.trim() : "";
@@ -478,6 +505,184 @@ export async function getClientBitrix24TasksHandler(
       buildTaskPortalUrl(loaded.config.portalHost, runtime.portalPublicUrl, "1", "1"),
     ),
     tasks: visible,
+  });
+}
+
+export async function getClientBitrix24ClaimsHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!isValidUuidParam(cardGuid)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
+    return;
+  }
+  const context = req.accessContext!;
+  const allowed = await canViewClientCard(context, cardGuid);
+  if (!allowed) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Client not found."));
+    return;
+  }
+
+  const target = await resolveTaskTarget(req, cardGuid);
+  if (!target.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, target.message));
+    return;
+  }
+
+  const loaded = loadBitrix24Config();
+  if (!loaded.ok) {
+    setNoStore(res);
+    res.status(200).json({
+      state: "not_configured",
+      message: "Bitrix24 integration is not configured.",
+      claims: [],
+      count: null,
+      sync: null,
+    });
+    return;
+  }
+
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!isCachePublishAllowed(runtime)) {
+    setNoStore(res);
+    res.status(200).json({
+      state: "cache_not_published",
+      message: "Кэш задач Битрикс24 не опубликован.",
+      claims: [],
+      count: null,
+      sync: null,
+    });
+    return;
+  }
+
+  const employeeLink = await findEmployeePortalLink(context.userId, loaded.config.portalId);
+  const userConfigDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
+  const syncEntry = employeeLink
+    ? await findLatestSyncJournalEntry(loaded.config.portalId, employeeLink.bitrixUserId)
+    : null;
+
+  const queryObjectType = target.objectType;
+  const queryObjectGuid =
+    queryObjectType === "holding" ? target.holdingGuid : target.objectGuid;
+  const rows = await listPublishedTasksForObject(
+    loaded.config.portalId,
+    queryObjectType,
+    queryObjectGuid,
+  );
+
+  const claims: Record<string, unknown>[] = [];
+  const actorDisplayName = req.authUser?.fullName ?? "Сотрудник";
+  let staleOrkDetected = false;
+
+  for (const row of rows) {
+    if (!row.objectType || !row.objectGuid) {
+      continue;
+    }
+    const objectAllowed = await canReadBoundBitrixObject(
+      context,
+      cardGuid,
+      row.objectType,
+      row.objectGuid,
+    );
+    if (!objectAllowed) {
+      continue;
+    }
+    const cacheVisibility = await canViewPublishedTaskCacheForUser(
+      context,
+      loaded.config.portalId,
+      row,
+    );
+    if (isTaskExcludedFromClaimsScope(cacheVisibility)) {
+      continue;
+    }
+    const activePublication = await findActiveSummaryPublicationMeta(
+      loaded.config.portalId,
+      row.taskId,
+    );
+    const orkPublication =
+      activePublication?.publicationOrigin === "ork_sync" ? activePublication : null;
+    if (orkPublication) {
+      // A publication belonging to a previous/different object is outside this
+      // card's scope, not evidence of a stale claim visible to this reader.
+      if (
+        orkPublication.objectType !== row.objectType ||
+        orkPublication.objectGuid.toLowerCase() !== row.objectGuid.toLowerCase()
+      ) {
+        continue;
+      }
+      const orkAligned = isOrkPublicationAlignedWithTask(
+        {
+          cacheVersion: row.cacheVersion,
+          objectType: row.objectType,
+          objectGuid: row.objectGuid,
+          bindingStatus: row.bindingStatus,
+        },
+        orkPublication,
+      );
+      if (!orkAligned) {
+        staleOrkDetected = true;
+      } else if (isStaleTaskCacheVisibility(cacheVisibility)) {
+        staleOrkDetected = true;
+      }
+    }
+    const claimDto = await buildClaimTaskWorkDto({
+      context,
+      portalId: loaded.config.portalId,
+      cardGuid,
+      task: row,
+      actorDisplayName,
+    });
+    if (claimDto) {
+      claims.push(claimDto);
+    }
+  }
+
+  let state = "ready";
+  let message: string | null = null;
+  let count: number | null = claims.length;
+  if (staleOrkDetected) {
+    count = null;
+  }
+  if (claims.length === 0) {
+    if (userConfigDeny) {
+      state = mapDenyCodeToState(userConfigDeny);
+      count = null;
+      message =
+        userConfigDeny === "ACCESS_EXPIRED" || userConfigDeny === "LINK_UNVERIFIED"
+          ? "Данные рекламаций устарели. Требуется повторная синхронизация."
+          : "Доступ к рекламациям недоступен.";
+    } else if (staleOrkDetected) {
+      state = "stale_snapshot";
+      message =
+        "Сводки рекламаций устарели относительно кэша задач. Требуется повторная синхронизация ответственным специалистом.";
+    } else {
+      state = "empty";
+      count = 0;
+      message = "Опубликованные рекламации по этому клиенту не найдены.";
+    }
+  } else if (staleOrkDetected) {
+    message =
+      "Часть сводок рекламаций недоступна из-за устаревших данных кэша. Показано только подтверждённое количество.";
+  }
+
+  setNoStore(res);
+  res.status(200).json({
+    state,
+    message,
+    count,
+    sync: syncEntry
+      ? {
+          lastFinishedAt: syncEntry.finishedAt,
+          lastFinishedAtLabel: formatDisplayDate(syncEntry.finishedAt),
+          lastStatus: syncEntry.status,
+          partial: syncEntry.status === "partial",
+        }
+      : null,
+    claims,
   });
 }
 

@@ -156,6 +156,7 @@ export type MockOptions = {
   failListOnce?: boolean;
   bitrix24Label?: Record<string, unknown>;
   bitrix24Tasks?: Record<string, unknown>;
+  bitrix24Claims?: Record<string, unknown>;
   bitrix24Sync?: Record<string, unknown> | number;
 };
 
@@ -273,6 +274,19 @@ export function resolveMockResponse(
       tasks: [],
       sync: null,
       portalConfigured: false,
+    });
+  }
+
+  if (path.endsWith("/bitrix24/claims")) {
+    if (options.bitrix24Claims) {
+      return jsonResponse(200, options.bitrix24Claims);
+    }
+    return jsonResponse(200, {
+      state: "empty",
+      message: "Опубликованные рекламации по этому клиенту не найдены.",
+      count: 0,
+      claims: [],
+      sync: null,
     });
   }
 

@@ -26,8 +26,10 @@
       ["Отгрузки / план", "1С / планы"], ["Дистрибьюция", "Осмотры торговых точек"],
       ["Просрочка", "1С / взаиморасчёты"], ["Рекламации", "Разрешённая сводка Битрикс24"]
     ].map(function (x) {
+      var numberAttrs = x[0] === "Рекламации" ? ' data-stat-claims' : '';
       return '<div class="pc-stat"><div class="pc-label">' + x[0] +
-        '</div><div class="pc-number">—</div><div class="pc-label">Не подключено · ' + x[1] + '</div></div>';
+        '</div><div class="pc-number"' + numberAttrs + '>—</div><div class="pc-label">' +
+        (x[0] === "Рекламации" ? "Разрешённая сводка · " : "Не подключено · ") + x[1] + '</div></div>';
     }).join("") + '</div>';
     return '<div class="pc-tabs" role="tablist" aria-label="Разделы карточки">' +
       tabs.map(function (t, i) {
@@ -72,6 +74,11 @@
         if (t[0] === "work") {
           return '<section id="pc-panel-work" role="tabpanel" aria-labelledby="pc-tab-work" hidden>' +
             card("Работа", '<div class="pc-pad" id="pc-bitrix24-work" data-bitrix24-root></div>', sources.work) +
+            '</section>';
+        }
+        if (t[0] === "claims") {
+          return '<section id="pc-panel-claims" role="tabpanel" aria-labelledby="pc-tab-claims" hidden>' +
+            card("Рекламации", '<div class="pc-pad" id="pc-bitrix24-claims" data-bitrix24-claims-root aria-live="polite"></div>', sources.claims) +
             '</section>';
         }
         return '<section id="pc-panel-' + t[0] + '" role="tabpanel" aria-labelledby="pc-tab-' + t[0] + '" hidden>' +
@@ -128,6 +135,7 @@
     });
     if (window.ClientBitrix24 && client.guid) {
       window.ClientBitrix24.mountWorkTab(wrapper, client.guid);
+      window.ClientBitrix24.mountClaimsTab(wrapper, client.guid);
     }
   }
   window.ClientCardPrototype = {mount:mount};

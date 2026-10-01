@@ -13,6 +13,7 @@ import {
   canViewFullBitrixTaskForUser,
 } from "./work-access";
 import { buildChecklistPublicDto } from "./checklist-dto";
+import { filterVisibleOrkPublication } from "../claims/ork-publication-visibility";
 import {
   findActiveContactAction,
   findActiveSummaryPublication,
@@ -136,6 +137,69 @@ export async function buildFullTaskWorkDto(input: {
   };
 }
 
+export async function buildClaimTaskWorkDto(input: {
+  context: AccessContext;
+  portalId: string;
+  cardGuid: string;
+  task: TaskCacheRow & TaskBindingRow;
+  actorDisplayName: string;
+}): Promise<Record<string, unknown> | null> {
+  if (!input.task.objectType || !input.task.objectGuid) {
+    return null;
+  }
+  const full = await canViewFullBitrixTaskForUser(
+    input.context,
+    input.portalId,
+    input.task,
+    input.cardGuid,
+  );
+  const summary = full
+    ? false
+    : await canViewBitrixTaskSummaryForUser(
+        input.context,
+        input.portalId,
+        input.task,
+        input.cardGuid,
+      );
+  if (!full && !summary) {
+    return null;
+  }
+  const publication = filterVisibleOrkPublication(
+    {
+      cacheVersion: input.task.cacheVersion,
+      objectType: input.task.objectType,
+      objectGuid: input.task.objectGuid,
+      bindingStatus: input.task.bindingStatus,
+    },
+    await findActiveSummaryPublication(
+      input.portalId,
+      input.task.taskId,
+      input.task.objectType,
+      input.task.objectGuid,
+    ),
+  );
+  if (!publication || publication.publicationOrigin !== "ork_sync") {
+    return null;
+  }
+  const contactAction = await buildContactActionDto(
+    input.context,
+    input.portalId,
+    input.task,
+    input.cardGuid,
+    input.actorDisplayName,
+  );
+  return {
+    taskId: input.task.taskId,
+    accessLevel: "summary",
+    briefText: publication.briefText,
+    publishedAtLabel: formatDisplayDate(publication.confirmedAt),
+    cacheSyncedAtLabel: formatDisplayDate(input.task.syncedAt),
+    boundObjectLabel: formatBoundObjectLabel(input.task.objectType),
+    responsible: await buildResponsibleDto(input.portalId, input.task.responsibleBitrixUserId),
+    contactAction,
+  };
+}
+
 export async function buildSummaryTaskWorkDto(input: {
   context: AccessContext;
   portalId: string;
@@ -155,8 +219,19 @@ export async function buildSummaryTaskWorkDto(input: {
   ) {
     return null;
   }
-  const publication = await findActiveSummaryPublication(
-    input.portalId, input.task.taskId, input.task.objectType, input.task.objectGuid,
+  const publication = filterVisibleOrkPublication(
+    {
+      cacheVersion: input.task.cacheVersion,
+      objectType: input.task.objectType,
+      objectGuid: input.task.objectGuid,
+      bindingStatus: input.task.bindingStatus,
+    },
+    await findActiveSummaryPublication(
+      input.portalId,
+      input.task.taskId,
+      input.task.objectType,
+      input.task.objectGuid,
+    ),
   );
   if (!publication) {
     return null;

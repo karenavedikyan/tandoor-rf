@@ -2,9 +2,25 @@ import type { Pool, PoolClient } from "pg";
 import { requirePool } from "../../db/pool";
 import type { Bitrix24ObjectType } from "../labels/format";
 
+export type SummaryPublicationOrigin = "admin" | "ork_sync";
+
 export type SummaryPublicationRow = {
   briefText: string;
   confirmedAt: string;
+  publicationOrigin?: SummaryPublicationOrigin;
+  taskCacheVersion?: number | null;
+  objectType?: Bitrix24ObjectType;
+  objectGuid?: string;
+};
+
+export type ActiveSummaryPublicationMeta = {
+  id: string;
+  briefText: string;
+  confirmedAt: string;
+  publicationOrigin: SummaryPublicationOrigin;
+  taskCacheVersion: number | null;
+  objectType: Bitrix24ObjectType;
+  objectGuid: string;
 };
 
 export type ContactActionRow = {
@@ -23,8 +39,13 @@ export async function findActiveSummaryPublication(
   const result = await client.query<{
     brief_text: string;
     confirmed_at: Date;
+    publication_origin: SummaryPublicationOrigin;
+    task_cache_version: number | null;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
   }>(
-    `SELECT brief_text, confirmed_at
+    `SELECT brief_text, confirmed_at, publication_origin, task_cache_version,
+            object_type, object_guid::text
      FROM bitrix24_task_summary_publications
      WHERE portal_id = $1 AND task_id = $2
        AND object_type = $3::bitrix24_object_type AND object_guid = $4::uuid
@@ -39,7 +60,130 @@ export async function findActiveSummaryPublication(
   return {
     briefText: row.brief_text,
     confirmedAt: row.confirmed_at.toISOString(),
+    publicationOrigin: row.publication_origin,
+    taskCacheVersion: row.task_cache_version,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
   };
+}
+
+export async function findActiveSummaryPublicationMeta(
+  portalId: string,
+  taskId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<ActiveSummaryPublicationMeta | null> {
+  const result = await client.query<{
+    id: string;
+    brief_text: string;
+    confirmed_at: Date;
+    publication_origin: SummaryPublicationOrigin;
+    task_cache_version: number | null;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
+  }>(
+    `SELECT id::text, brief_text, confirmed_at, publication_origin, task_cache_version,
+            object_type, object_guid::text
+     FROM bitrix24_task_summary_publications
+     WHERE portal_id = $1 AND task_id = $2 AND revoked_at IS NULL
+     LIMIT 1`,
+    [portalId, taskId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    briefText: row.brief_text,
+    confirmedAt: row.confirmed_at.toISOString(),
+    publicationOrigin: row.publication_origin,
+    taskCacheVersion: row.task_cache_version,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
+  };
+}
+
+export async function applyOrkSummaryPublicationSync(
+  input: {
+    portalId: string;
+    taskId: string;
+    objectType: Bitrix24ObjectType | null;
+    objectGuid: string | null;
+    taskCacheVersion: number;
+    syncExecutorUserId: string | null;
+    briefText: string | null;
+  },
+  client: PoolClient,
+): Promise<"inserted" | "updated" | "revoked" | "none"> {
+  const active = await findActiveSummaryPublicationMeta(input.portalId, input.taskId, client);
+  if (active?.publicationOrigin === "admin") {
+    return "none";
+  }
+
+  if (!input.briefText || !input.objectType || !input.objectGuid) {
+    if (!active || active.publicationOrigin !== "ork_sync") {
+      return "none";
+    }
+    if (
+      active.taskCacheVersion !== null &&
+      active.taskCacheVersion > input.taskCacheVersion
+    ) {
+      return "none";
+    }
+    await client.query(
+      `UPDATE bitrix24_task_summary_publications
+       SET revoked_at = NOW()
+       WHERE id = $1::uuid AND revoked_at IS NULL AND publication_origin = 'ork_sync'`,
+      [active.id],
+    );
+    return "revoked";
+  }
+
+  if (active?.publicationOrigin === "ork_sync") {
+    if (
+      active.taskCacheVersion !== null &&
+      active.taskCacheVersion > input.taskCacheVersion
+    ) {
+      return "none";
+    }
+    if (
+      active.briefText === input.briefText &&
+      active.objectType === input.objectType &&
+      active.objectGuid.toLowerCase() === input.objectGuid.toLowerCase() &&
+      active.taskCacheVersion === input.taskCacheVersion
+    ) {
+      return "none";
+    }
+    await client.query(
+      `UPDATE bitrix24_task_summary_publications
+       SET revoked_at = NOW()
+       WHERE id = $1::uuid AND revoked_at IS NULL AND publication_origin = 'ork_sync'
+         AND (task_cache_version IS NULL OR task_cache_version <= $2)`,
+      [active.id, input.taskCacheVersion],
+    );
+  }
+
+  if (!input.syncExecutorUserId) {
+    return "none";
+  }
+
+  const inserted = await client.query<{ id: string }>(
+    `INSERT INTO bitrix24_task_summary_publications (
+       portal_id, task_id, object_type, object_guid, brief_text,
+       published_by_user_id, publication_origin, task_cache_version
+     ) VALUES ($1, $2, $3::bitrix24_object_type, $4::uuid, $5, $6::uuid, 'ork_sync', $7)
+     RETURNING id::text`,
+    [
+      input.portalId,
+      input.taskId,
+      input.objectType,
+      input.objectGuid,
+      input.briefText,
+      input.syncExecutorUserId,
+      input.taskCacheVersion,
+    ],
+  );
+  return active?.publicationOrigin === "ork_sync" ? "updated" : "inserted";
 }
 
 export async function findActiveContactAction(

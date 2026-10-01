@@ -736,6 +736,35 @@
       });
   }
 
+  function renderClaimRow(claim, clientGuid) {
+    var workLink =
+      "/clients/" +
+      encodeURIComponent(clientGuid) +
+      "?tab=work&task=" +
+      encodeURIComponent(claim.taskId);
+    return (
+      '<article class="pc-bitrix24-claim pc-bitrix24-task pc-bitrix24-task--summary" data-task-id="' +
+      esc(claim.taskId) +
+      '">' +
+      '<div class="pc-value pc-bitrix24-claim__text">' +
+      esc(claim.briefText || "Сводка недоступна") +
+      "</div>" +
+      '<div class="pc-label">Опубликовано: ' +
+      esc(claim.publishedAtLabel || "—") +
+      (claim.cacheSyncedAtLabel
+        ? " · данные кэша: " + esc(claim.cacheSyncedAtLabel)
+        : "") +
+      "</div>" +
+      renderResponsibleBlock(claim.responsible) +
+      '<div class="pc-label">Технический статус задачи в кэше не является статусом решения рекламации.</div>' +
+      '<a class="pc-link" href="' +
+      esc(workLink) +
+      '">Открыть в разделе «Работа»</a>' +
+      renderContactAction(claim, clientGuid, false) +
+      "</article>"
+    );
+  }
+
   function renderOverviewTask(task, clientGuid) {
     var title = task.accessLevel === "summary" ? task.briefText : task.title;
     return '<article class="pc-bitrix24-task pc-bitrix24-overview-task" data-overview-task-id="' +
@@ -948,17 +977,111 @@
   }
 
   function reloadBitrix24Data(root, clientGuid, preservedUi) {
-    return loadBitrix24Sections(
+    var tasksPromise = loadBitrix24Sections(
       root,
       clientGuid,
       preservedUi || captureBitrix24UiState(root),
     );
+    var claimsPromise = mountClaimsTab(root, clientGuid);
+    return Promise.all([tasksPromise, claimsPromise]).then(function (results) {
+      return {
+        ok: results[0].ok !== false && results[1].ok !== false,
+        tasks: results[0],
+        claims: results[1],
+      };
+    });
   }
 
   function mountWorkTab(root, clientGuid) {
     var promise = loadBitrix24Sections(root, clientGuid, null);
     root._bitrix24WorkLoadPromise = promise;
     return promise;
+  }
+
+  function mountClaimsTab(root, clientGuid) {
+    var container = root.querySelector("#pc-bitrix24-claims");
+    if (!container) {
+      return Promise.resolve({ ok: true });
+    }
+    var loadId = (root._claimsLoadId || 0) + 1;
+    root._claimsLoadId = loadId;
+    container.innerHTML = renderState("Загрузка рекламаций…", "loading");
+    return api
+      .apiRequest("/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/claims")
+      .then(function (result) {
+        if (loadId !== root._claimsLoadId || !root.isConnected) {
+          return { ok: true, stale: true };
+        }
+        if (result.response.status === 403 || result.response.status === 404) {
+          container.innerHTML = renderState("Доступ к рекламациям недоступен.", "error");
+          updateClaimsStat(root, null);
+          return { ok: false };
+        }
+        if (result.response.status !== 200 || !result.data) {
+          container.innerHTML = renderState("Не удалось загрузить рекламации.", "error");
+          updateClaimsStat(root, null);
+          return { ok: false };
+        }
+        var body = result.data;
+        updateClaimsStat(root, typeof body.count === "number" ? body.count : null);
+        if (
+          body.state === "access_expired" ||
+          body.state === "stale_snapshot" ||
+          body.state === "link_unverified" ||
+          body.state === "cache_not_published" ||
+          body.state === "not_configured"
+        ) {
+          container.innerHTML = renderState(
+            body.message || "Данные рекламаций недоступны.",
+            "error",
+          );
+          return { ok: true };
+        }
+        if (body.state === "ready" && body.claims && body.claims.length) {
+          var meta = "";
+          if (body.sync && body.sync.lastFinishedAtLabel) {
+            meta =
+              '<p class="pc-label">Последняя синхронизация: ' +
+              esc(body.sync.lastFinishedAtLabel) +
+              (body.sync.partial ? " (неполная)" : "") +
+              "</p>";
+          }
+          if (body.count === null && body.message) {
+            meta += '<p class="pc-label">' + esc(body.message) + "</p>";
+          }
+          container.innerHTML =
+            meta +
+            '<p class="pc-label">Показаны только разрешённые сводки исходных задач. Внутреннее описание, переписка и вложения не отображаются.</p>' +
+            body.claims
+              .map(function (claim) {
+                return renderClaimRow(claim, clientGuid);
+              })
+              .join("");
+          bindContactActions(container, clientGuid, root);
+          return { ok: true };
+        }
+        container.innerHTML = renderState(
+          body.message || "Опубликованные рекламации не найдены.",
+          body.state === "empty" ? "empty" : "info",
+        );
+        return { ok: true };
+      })
+      .catch(function () {
+        if (loadId !== root._claimsLoadId || !root.isConnected) {
+          return { ok: true, stale: true };
+        }
+        container.innerHTML = renderState("Не удалось загрузить рекламации.", "error");
+        updateClaimsStat(root, null);
+        return { ok: false };
+      });
+  }
+
+  function updateClaimsStat(root, count) {
+    var stat = root.querySelector(".pc-stat .pc-number[data-stat-claims]");
+    if (!stat) {
+      return;
+    }
+    stat.textContent = count === null ? "—" : String(count);
   }
 
   function loadBitrix24Sections(root, clientGuid, uiStateToRestore) {
@@ -1130,6 +1253,7 @@
 
   window.ClientBitrix24 = {
     mountWorkTab: mountWorkTab,
+    mountClaimsTab: mountClaimsTab,
     reloadBitrix24Data: reloadBitrix24Data,
     renderChecklistProgress: renderChecklistProgress,
     renderChecklistExpandable: renderChecklistExpandable,
