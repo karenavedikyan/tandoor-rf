@@ -776,6 +776,131 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
     assert.doesNotMatch(claims.body.message ?? "", /не найдены/i);
   });
 
+  it("returns identical empty claims when hidden pilot ork exists or is revoked", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-hidden-leak@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Hidden Leak",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    await syncDescription({
+      managerId: manager.id,
+      description: formatLabelToken(label.labelCode) + "\n#орк Hidden pilot claim",
+    });
+    assert.ok(await findActiveSummaryPublicationMeta(sampleWebhookConfig().portalId, "9001"));
+
+    process.env.BITRIX24_PILOT_TASK_IDS = "9002";
+    const app = await loadApp();
+    const cookie = await login("mgr-hidden-leak@example.com");
+    const withHidden = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(withHidden.body.state, "empty");
+    assert.equal(withHidden.body.count, 0);
+    assert.equal(withHidden.body.claims.length, 0);
+    assert.match(withHidden.body.message ?? "", /не найдены/i);
+
+    const config = sampleWebhookConfig();
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_summary_publications
+       SET revoked_at = NOW()
+       WHERE portal_id = $1 AND task_id = $2
+         AND publication_origin = 'ork_sync' AND revoked_at IS NULL`,
+      [config.portalId, "9001"],
+    );
+    await pool.end();
+    assert.equal(await findActiveSummaryPublicationMeta(config.portalId, "9001"), null);
+
+    const afterRevoke = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.deepEqual(
+      {
+        state: afterRevoke.body.state,
+        count: afterRevoke.body.count,
+        message: afterRevoke.body.message,
+        claimsLength: afterRevoke.body.claims.length,
+      },
+      {
+        state: withHidden.body.state,
+        count: withHidden.body.count,
+        message: withHidden.body.message,
+        claimsLength: withHidden.body.claims.length,
+      },
+    );
+  });
+
+  it("keeps exact visible count when a hidden pilot task also has ork publication", async () => {
+    process.env.BITRIX24_PILOT_TASK_IDS = "9001,9002";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-hidden-count@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Hidden Count",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9002",
+      responsibleBitrixUserId: "42",
+      title: "Hidden pilot task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:30:00+03:00",
+      descriptionHash: "hash-hidden",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    await syncDescription({
+      managerId: manager.id,
+      taskId: "9001",
+      description: formatLabelToken(label.labelCode) + "\n#орк Visible claim",
+      changedAt: "2026-09-30T12:00:00+03:00",
+    });
+    await syncDescription({
+      managerId: manager.id,
+      taskId: "9002",
+      description: formatLabelToken(label.labelCode) + "\n#орк Hidden claim",
+      changedAt: "2026-09-30T12:10:00+03:00",
+    });
+
+    process.env.BITRIX24_PILOT_TASK_IDS = "9001";
+    const app = await loadApp();
+    const cookie = await login("mgr-hidden-count@example.com");
+    const claims = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(claims.body.state, "ready");
+    assert.equal(claims.body.count, 1);
+    assert.equal(claims.body.claims.length, 1);
+    assert.match(claims.body.claims[0]?.briefText, /Visible claim/);
+    assert.equal(JSON.stringify(claims.body).includes("Hidden claim"), false);
+  });
+
   it("returns null count for mixed fresh and stale ork claims", async () => {
     process.env.BITRIX24_PILOT_TASK_IDS = "9001,9002";
     const manager = await createTestUser({

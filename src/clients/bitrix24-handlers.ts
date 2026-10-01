@@ -18,7 +18,10 @@ import {
   evaluateUserBitrixTaskConfig,
   isTaskAudienceMatch,
 } from "../bitrix24/tasks/access";
-import type { TaskVisibilityDenyCode } from "../bitrix24/tasks/access";
+import type {
+  TaskVisibilityDenyCode,
+  TaskVisibilityResult,
+} from "../bitrix24/tasks/access";
 import { buildTaskPortalUrl } from "../bitrix24/tasks/portal-url";
 import {
   canReadBoundBitrixObject,
@@ -46,6 +49,26 @@ import { runClientCardBitrix24Sync } from "../bitrix24/sync/client-card-sync";
 import { isOrkPublicationAlignedWithTask } from "../bitrix24/claims/ork-publication-visibility";
 
 const OBJECT_TYPES: Bitrix24ObjectType[] = ["holding", "legal_entity", "outlet"];
+
+const EXCLUDED_FROM_CLAIMS_SCOPE_CODES: ReadonlySet<TaskVisibilityDenyCode> = new Set([
+  "PILOT_FILTER",
+  "PILOT_LIST_MISSING",
+  "NOT_PUBLISHED",
+]);
+
+const STALE_TASK_CACHE_CODES: ReadonlySet<TaskVisibilityDenyCode> = new Set([
+  "ACCESS_EXPIRED",
+  "STALE_SNAPSHOT",
+  "FUTURE_TASK",
+]);
+
+function isTaskExcludedFromClaimsScope(result: TaskVisibilityResult): boolean {
+  return !result.ok && EXCLUDED_FROM_CLAIMS_SCOPE_CODES.has(result.code);
+}
+
+function isStaleTaskCacheVisibility(result: TaskVisibilityResult): boolean {
+  return !result.ok && STALE_TASK_CACHE_CODES.has(result.code);
+}
 
 function parseObjectType(raw: unknown): Bitrix24ObjectType | null {
   const value = typeof raw === "string" ? raw.trim() : "";
@@ -568,36 +591,33 @@ export async function getClientBitrix24ClaimsHandler(
     if (!objectAllowed) {
       continue;
     }
+    const cacheVisibility = await canViewPublishedTaskCacheForUser(
+      context,
+      loaded.config.portalId,
+      row,
+    );
+    if (isTaskExcludedFromClaimsScope(cacheVisibility)) {
+      continue;
+    }
     const activePublication = await findActiveSummaryPublicationMeta(
       loaded.config.portalId,
       row.taskId,
     );
-    const orkCandidate = activePublication?.publicationOrigin === "ork_sync";
-    if (orkCandidate) {
-      const cacheVisibility = await canViewPublishedTaskCacheForUser(
-        context,
-        loaded.config.portalId,
-        row,
+    const orkPublication =
+      activePublication?.publicationOrigin === "ork_sync" ? activePublication : null;
+    if (orkPublication) {
+      const orkAligned = isOrkPublicationAlignedWithTask(
+        {
+          cacheVersion: row.cacheVersion,
+          objectType: row.objectType,
+          objectGuid: row.objectGuid,
+          bindingStatus: row.bindingStatus,
+        },
+        orkPublication,
       );
-      if (
-        !cacheVisibility.ok &&
-        (cacheVisibility.code === "ACCESS_EXPIRED" ||
-          cacheVisibility.code === "STALE_SNAPSHOT" ||
-          cacheVisibility.code === "FUTURE_TASK")
-      ) {
+      if (!orkAligned) {
         staleOrkDetected = true;
-      }
-      if (
-        !isOrkPublicationAlignedWithTask(
-          {
-            cacheVersion: row.cacheVersion,
-            objectType: row.objectType,
-            objectGuid: row.objectGuid,
-            bindingStatus: row.bindingStatus,
-          },
-          activePublication,
-        )
-      ) {
+      } else if (isStaleTaskCacheVisibility(cacheVisibility)) {
         staleOrkDetected = true;
       }
     }
@@ -610,8 +630,6 @@ export async function getClientBitrix24ClaimsHandler(
     });
     if (claimDto) {
       claims.push(claimDto);
-    } else if (orkCandidate) {
-      staleOrkDetected = true;
     }
   }
 
