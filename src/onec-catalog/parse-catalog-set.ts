@@ -3,6 +3,7 @@ import { CATALOG_FILE_ROOTS, ROOT_PARENT_CODES } from "./constants";
 import { parseXmlBufferSafely, ensureNonEmptyFile } from "./safe-xml";
 import { buildManifest, buildFileEntries } from "./manifest";
 import { readXmlScalar } from "./xml-field";
+import { XmlStructureGuard, assertDirectParent } from "./xml-structure-guard";
 import type {
   CatalogFileEntry,
   ParsedCatalogGroup,
@@ -17,32 +18,6 @@ import type {
   SchemaDriftWarning,
   ValidationIssue,
 } from "./types";
-
-const KNOWN_ELEMENTS: Partial<Record<CatalogRelativeFile, Set<string>>> = {
-  "catalog/groups/data.xml": new Set(["Группы", "Группа"]),
-  "catalog/section/data.xml": new Set(["Разделы", "Раздел"]),
-  "catalog/storage/data.xml": new Set(["Склады", "Склад"]),
-  "catalog/types_prices/data.xml": new Set(["ТипыЦен", "ТипЦены"]),
-  "catalog/products/data.xml": new Set([
-    "Товары",
-    "Товар",
-    "Картинки",
-    "Картинка",
-    "Свойства",
-    "Свойство",
-    "Разделы",
-    "Раздел",
-  ]),
-  "catalog/prices/data.xml": new Set(["Цены", "ЦенаТовара"]),
-  "catalog/stock/data.xml": new Set(["ОстаткиСклада", "Остаток", "Склады", "Склад"]),
-  "catalog/stock_expected/data.xml": new Set([
-    "ОстаткиСклада",
-    "Остаток",
-    "Склады",
-    "Склад",
-    "ОжидаемыеОстаткиСклада",
-  ]),
-};
 
 const KNOWN_ATTRIBUTES: Partial<Record<CatalogRelativeFile, Record<string, Set<string>>>> = {
   "catalog/groups/data.xml": { Группа: new Set(["Код", "Родитель"]) },
@@ -76,29 +51,6 @@ function normalizeParentCode(raw: string | undefined): string | null {
   return trimmed;
 }
 
-function trackDrift(
-  warnings: SchemaDriftWarning[],
-  file: CatalogRelativeFile,
-  element: string,
-): void {
-  warnings.push({
-    code: "SCHEMA_DRIFT",
-    message: `Unknown element <${element}> observed; not mapped automatically.`,
-    file,
-    element,
-  });
-}
-
-function assertDirectParent(
-  parent: string | undefined,
-  allowedParents: string[],
-  errorCode: string,
-): void {
-  if (!parent || !allowedParents.includes(parent)) {
-    throw new Error(`INVALID_STRUCTURE:${errorCode}:${parent ?? "none"}`);
-  }
-}
-
 function trackUnknownAttributes(
   warnings: SchemaDriftWarning[],
   file: CatalogRelativeFile,
@@ -125,19 +77,16 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
 }> {
   const rows: ParsedCatalogGroup[] = [];
   const seen = new Set<string>();
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/groups/data.xml", "Группы", warnings);
   let current: ParsedCatalogGroup | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/groups/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/groups/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        if (!KNOWN_ELEMENTS["catalog/groups/data.xml"]!.has(name) && name !== "Группы") {
-          trackDrift(warnings, "catalog/groups/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Группа") {
-          assertDirectParent(elementStack[elementStack.length - 1], ["Группы"], "nested_group");
+          assertDirectParent(parent, ["Группы"], "nested_group");
           trackUnknownAttributes(warnings, "catalog/groups/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         if (!code) {
@@ -152,14 +101,14 @@ async function parseGroups(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
             parentCode: normalizeParentCode(attrs["Родитель"]),
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Группа" && current) {
           rows.push(current);
           current = null;
         }
-        elementStack.pop();
       },
     },
   );
@@ -173,19 +122,16 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogSection[] = [];
   const seen = new Set<string>();
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/section/data.xml", "Разделы", warnings);
   let current: ParsedCatalogSection | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/section/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/section/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        if (!KNOWN_ELEMENTS["catalog/section/data.xml"]!.has(name) && name !== "Разделы") {
-          trackDrift(warnings, "catalog/section/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Раздел") {
-          assertDirectParent(elementStack[elementStack.length - 1], ["Разделы"], "nested_section");
+          assertDirectParent(parent, ["Разделы"], "nested_section");
           trackUnknownAttributes(warnings, "catalog/section/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         const title = attrs["Название"]?.trim() ?? "";
@@ -205,14 +151,14 @@ async function parseSections(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
             parentCode: normalizeParentCode(attrs["КодРодителя"]),
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Раздел" && current) {
           rows.push(current);
           current = null;
         }
-        elementStack.pop();
       },
     },
   );
@@ -226,19 +172,16 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogStorage[] = [];
   const seen = new Set<string>();
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/storage/data.xml", "Склады", warnings);
   let current: ParsedCatalogStorage | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/storage/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/storage/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        if (!KNOWN_ELEMENTS["catalog/storage/data.xml"]!.has(name) && name !== "Склады") {
-          trackDrift(warnings, "catalog/storage/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Склад") {
-          assertDirectParent(elementStack[elementStack.length - 1], ["Склады"], "nested_storage");
+          assertDirectParent(parent, ["Склады"], "nested_storage");
           trackUnknownAttributes(warnings, "catalog/storage/data.xml", name, attrs);
         const code = attrs["Код"]?.trim();
         if (!code) {
@@ -256,14 +199,14 @@ async function parseStorages(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
             phone: attrs["Телефон"]?.trim() ?? "",
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Склад" && current) {
           rows.push(current);
           current = null;
         }
-        elementStack.pop();
       },
     },
   );
@@ -277,7 +220,7 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
 }> {
   const rows: ParsedCatalogPriceType[] = [];
   const seen = new Set<string>();
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/types_prices/data.xml", "ТипыЦен", warnings);
   let current: ParsedCatalogPriceType | null = null;
   const parsed = await parseXmlBufferSafely(
     {
@@ -287,13 +230,10 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
     },
     {
       onOpenTag: (name, attrs) => {
-        if (!KNOWN_ELEMENTS["catalog/types_prices/data.xml"]!.has(name) && name !== "ТипыЦен") {
-          trackDrift(warnings, "catalog/types_prices/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "ТипЦены") {
-          assertDirectParent(elementStack[elementStack.length - 1], ["ТипыЦен"], "nested_price_type");
+          assertDirectParent(parent, ["ТипыЦен"], "nested_price_type");
           trackUnknownAttributes(warnings, "catalog/types_prices/data.xml", name, attrs);
         const code = attrs["КодЦены"]?.trim();
         if (!code) {
@@ -305,14 +245,14 @@ async function parsePriceTypes(bytes: Buffer, warnings: SchemaDriftWarning[]): P
         seen.add(code);
           current = { priceTypeCode: code, name: attrs["Название"]?.trim() ?? "" };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "ТипЦены" && current) {
           rows.push(current);
           current = null;
         }
-        elementStack.pop();
       },
     },
   );
@@ -326,7 +266,7 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
 }> {
   const rows: ParsedCatalogProduct[] = [];
   const seen = new Set<string>();
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/products/data.xml", "Товары", warnings);
   let current: ParsedCatalogProduct | null = null;
   let inProperties = false;
   let inImages = false;
@@ -336,12 +276,8 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
     { bytes, file: "catalog/products/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/products/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        const parent = elementStack[elementStack.length - 1];
-        if (!KNOWN_ELEMENTS["catalog/products/data.xml"]!.has(name) && name !== "Товары") {
-          trackDrift(warnings, "catalog/products/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Товар") {
           assertDirectParent(parent, ["Товары"], "nested_product");
           trackUnknownAttributes(warnings, "catalog/products/data.xml", name, attrs);
@@ -400,7 +336,7 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
           const existing = propertyIndex.get(propCode);
           if (existing) {
             if (existing.name === prop.name && existing.value === prop.value) {
-              elementStack.push(name);
+              guard.pushHandledOpenTag(name);
               return;
             }
             throw new Error(`CONFLICTING_PROPERTY:product:${current!.code}:${propCode}`);
@@ -421,22 +357,23 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
             throw new Error(`INVALID_SECTION_REF:product:${current.code}`);
           }
           if (current!.sectionCodes.includes(sectionCode)) {
-            elementStack.push(name);
+            guard.pushHandledOpenTag(name);
             return;
           }
           current!.sectionCodes.push(sectionCode);
         } else if (name === "Картинка") {
           assertDirectParent(parent, ["Картинки"], "image_parent");
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onText: (text) => {
-        if (!current) return;
+        if (guard.isSkipping() || !current) return;
         if (inImages && text) {
           current.images.push(text);
         }
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Товар" && current) {
           rows.push(current);
           current = null;
@@ -444,7 +381,6 @@ async function parseProducts(bytes: Buffer, warnings: SchemaDriftWarning[]): Pro
         if (name === "Свойства") inProperties = false;
         if (name === "Картинки") inImages = false;
         if (name === "Разделы") inSections = false;
-        elementStack.pop();
       },
     },
   );
@@ -459,18 +395,14 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogPrice[] = [];
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/prices/data.xml", "Цены", warnings);
   let current: MutablePriceRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/prices/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/prices/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        const parent = elementStack[elementStack.length - 1];
-        if (!KNOWN_ELEMENTS["catalog/prices/data.xml"]!.has(name) && name !== "Цены") {
-          trackDrift(warnings, "catalog/prices/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "ЦенаТовара") {
           assertDirectParent(parent, ["Цены"], "price_row_parent");
           trackUnknownAttributes(warnings, "catalog/prices/data.xml", name, attrs);
@@ -482,12 +414,14 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
             _text: "",
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onText: (text) => {
-        if (current && text) current._text += text;
+        if (guard.isSkipping() || !current || !text) return;
+        current._text += text;
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "ЦенаТовара" && current) {
           const scalar = readXmlScalar("Цена", current._attrs, current._text);
           if (scalar.kind === "ambiguous") {
@@ -500,7 +434,6 @@ async function parsePrices(bytes: Buffer, warnings: SchemaDriftWarning[]): Promi
           });
           current = null;
         }
-        elementStack.pop();
       },
     },
   );
@@ -515,19 +448,15 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockLine[] = [];
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard("catalog/stock/data.xml", "ОстаткиСклада", warnings);
   let productCode = "";
   let currentStorage: MutableStockRow | null = null;
   const parsed = await parseXmlBufferSafely(
     { bytes, file: "catalog/stock/data.xml", expectedRoot: CATALOG_FILE_ROOTS["catalog/stock/data.xml"] },
     {
       onOpenTag: (name, attrs) => {
-        const parent = elementStack[elementStack.length - 1];
-        if (!KNOWN_ELEMENTS["catalog/stock/data.xml"]!.has(name) && name !== "ОстаткиСклада") {
-          trackDrift(warnings, "catalog/stock/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Остаток") {
           assertDirectParent(parent, ["ОстаткиСклада"], "stock_product_parent");
           trackUnknownAttributes(warnings, "catalog/stock/data.xml", name, attrs);
@@ -549,12 +478,14 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
             _text: "",
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onText: (text) => {
-        if (currentStorage && text) currentStorage._text += text;
+        if (guard.isSkipping() || !currentStorage || !text) return;
+        currentStorage._text += text;
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Склад" && currentStorage) {
           const scalar = readXmlScalar("Количество", currentStorage._attrs, currentStorage._text);
           if (scalar.kind === "ambiguous") {
@@ -568,7 +499,6 @@ async function parseStock(bytes: Buffer, warnings: SchemaDriftWarning[]): Promis
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
-        elementStack.pop();
       },
     },
   );
@@ -586,7 +516,11 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
   issue?: ValidationIssue;
 }> {
   const rows: ParsedCatalogStockExpectedLine[] = [];
-  const elementStack: string[] = [];
+  const guard = new XmlStructureGuard(
+    "catalog/stock_expected/data.xml",
+    "ОжидаемыеОстаткиСклада",
+    warnings,
+  );
   let productCode = "";
   let currentStorage: MutableStockExpectedRow | null = null;
   const parsed = await parseXmlBufferSafely(
@@ -597,15 +531,8 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
     },
     {
       onOpenTag: (name, attrs) => {
-        const parent = elementStack[elementStack.length - 1];
-        if (
-          !KNOWN_ELEMENTS["catalog/stock_expected/data.xml"]!.has(name) &&
-          name !== "ОжидаемыеОстаткиСклада"
-        ) {
-          trackDrift(warnings, "catalog/stock_expected/data.xml", name);
-          elementStack.push(name);
-          return;
-        }
+        if (guard.enterOpenTag(name) === "skip") return;
+        const parent = guard.parentName();
         if (name === "Остаток") {
           assertDirectParent(parent, ["ОжидаемыеОстаткиСклада"], "stock_expected_product_parent");
           trackUnknownAttributes(warnings, "catalog/stock_expected/data.xml", name, attrs);
@@ -629,12 +556,14 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
             _text: "",
           };
         }
-        elementStack.push(name);
+        guard.pushHandledOpenTag(name);
       },
       onText: (text) => {
-        if (currentStorage && text) currentStorage._text += text;
+        if (guard.isSkipping() || !currentStorage || !text) return;
+        currentStorage._text += text;
       },
       onCloseTag: (name) => {
+        if (!guard.leaveCloseTag(name)) return;
         if (name === "Склад" && currentStorage) {
           const scalar = readXmlScalar("Количество", currentStorage._attrs, currentStorage._text);
           if (scalar.kind === "ambiguous") {
@@ -652,7 +581,6 @@ async function parseStockExpected(bytes: Buffer, warnings: SchemaDriftWarning[])
           currentStorage = null;
         }
         if (name === "Остаток") productCode = "";
-        elementStack.pop();
       },
     },
   );

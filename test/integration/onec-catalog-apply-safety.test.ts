@@ -306,6 +306,28 @@ describe("onec catalog apply safety", { concurrency: false }, () => {
     }
   });
 
+  it("preserves outer product when inner catalog is inside an unknown extension subtree", async () => {
+    const xmlSet = buildMinimalCatalogXmlSet();
+    xmlSet["catalog/products/data.xml"] = `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="outer">
+    <Extension>
+      <Товары>
+        <Товар Код="p2" Группа="g1" Активность="Y" Название="inner"/>
+      </Товары>
+    </Extension>
+  </Товар>
+  <Товар Код="p2" Группа="g2" Активность="Y" Название="Product two"/>
+</Товары>`;
+    const data = await validatedCatalogFromXmlSet(xmlSet);
+    assert.deepEqual(
+      data.products.map((row) => row.code),
+      ["p1", "p2"],
+    );
+    assert.equal(data.products.find((row) => row.code === "p1")?.name, "outer");
+    assert.ok(data.warnings.some((warning) => warning.element === "Extension"));
+  });
+
   it(
     "applies a catalog with on the order of 107k product properties via batch insert",
     { timeout: 600_000 },
