@@ -1,5 +1,42 @@
+.work-page .legacy-content {
+  --rf-bg: #f3f5f6;
+  --rf-surface: #fff;
+  --rf-text: #232c35;
+  --rf-text-muted: #697683;
+  --rf-border: #e1e6e9;
+  --rf-primary-hover: #507f22;
+  --rf-surface-muted: #eef5e7;
+  --rf-radius: 9px;
+  --rf-shadow-sm: 0 1px 2px rgba(35, 44, 53, 0.06);
+  font-family: "Golos", system-ui, sans-serif;
+  padding: 24px 28px;
+  background: var(--rf-bg);
+}
+
+[data-theme="dark"] .work-page .legacy-content {
+  --rf-bg: #172019;
+  --rf-surface: #222c25;
+  --rf-text: #ecf0e9;
+  --rf-text-muted: #a7b2a9;
+  --rf-border: #39483d;
+  --rf-primary-hover: #a8cb78;
+  --rf-surface-muted: #31422b;
+}
+
+.work-page .legacy-content button,
+.work-page .legacy-content input,
+.work-page .legacy-content select {
+  font-family: inherit;
+}
+
 .work-page-header {
-  margin-bottom: 0.75rem;
+  margin-bottom: 16px;
+}
+
+.work-page .clients-page-title {
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: -0.4px;
 }
 
 .work-meta {
@@ -7,7 +44,7 @@
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   margin-bottom: 0.75rem;
-  font-size: 0.85rem;
+  font-size: 12px;
   color: var(--rf-text-muted);
 }
 
@@ -19,20 +56,20 @@
 }
 
 .work-chip {
-  min-height: 2.25rem;
+  min-height: 44px;
   padding: 0.35rem 0.75rem;
   border: 1px solid var(--rf-border);
   border-radius: 999px;
   background: var(--rf-surface);
   color: var(--rf-text);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 12px;
   cursor: pointer;
 }
 
 .work-chip.is-active {
-  border-color: var(--rf-primary);
-  background: color-mix(in srgb, var(--rf-primary) 12%, var(--rf-surface));
+  border-color: var(--rf-primary-hover);
+  background: color-mix(in srgb, var(--rf-primary-hover) 12%, var(--rf-surface));
 }
 
 .work-chip__count {
@@ -50,11 +87,11 @@
 
 .work-list {
   display: grid;
-  gap: 0.65rem;
+  gap: 16px;
 }
 
 .work-row {
-  padding: 0.85rem;
+  padding: 20px;
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
   border-radius: var(--rf-radius);
@@ -62,7 +99,7 @@
 }
 
 .work-row--overdue {
-  border-left: 3px solid var(--rf-danger, #c0392b);
+  border-left: 3px solid var(--rf-danger-text);
 }
 
 .work-row__head {
@@ -87,7 +124,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem 0.75rem;
-  font-size: 0.85rem;
+  font-size: 12px;
   color: var(--rf-text-muted);
 }
 
@@ -100,6 +137,10 @@
 }
 
 @media (max-width: 767px) {
+  .work-page .legacy-content {
+    padding: 20px 16px;
+  }
+
   .work-row__head {
     flex-direction: column;
   }

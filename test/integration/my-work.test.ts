@@ -92,6 +92,33 @@ function wrapQueryCounter(): { getCount: () => number; restore: () => void } {
   };
 }
 
+function wrapQueryRecorder(): {
+  queries: string[];
+  params: unknown[][];
+  restore: () => void;
+} {
+  const { getPool } = require("../../src/db/pool") as { getPool: () => PgPool };
+  const pool = getPool();
+  const queries: string[] = [];
+  const params: unknown[][] = [];
+  const original = pool.query.bind(pool);
+  pool.query = (async (...args: Parameters<PgPool["query"]>) => {
+    const text = args[0];
+    if (typeof text === "string") {
+      queries.push(text);
+      params.push((args[1] as unknown[]) ?? []);
+    }
+    return original(...args);
+  }) as PgPool["query"];
+  return {
+    queries,
+    params,
+    restore: () => {
+      pool.query = original;
+    },
+  };
+}
+
 describe("my work queue integration", { concurrency: false }, () => {
   let databaseUrl = "";
 
@@ -464,7 +491,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.notEqual(page1.body.items[0]?.taskId, page2.body.items[0]?.taskId);
   });
 
-  it("uses bounded SQL regardless of candidate count", async () => {
+  it("hydrates only the current page without checklist items_json", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "mgr-sql@example.com",
@@ -478,47 +505,38 @@ describe("my work queue integration", { concurrency: false }, () => {
       employeeId: MANAGER_A,
       confirmedByUserId: manager.id,
     });
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 100; i += 1) {
       await seedTask({
-        taskId: "930" + i,
-        title: "SQL task " + i,
+        taskId: "940" + String(i).padStart(2, "0"),
+        title: "Payload task " + i,
         responsibleBitrixUserId: "42",
         responsibleUserId: manager.id,
+        checklist: i % 10 === 0,
       });
     }
     const app = await loadApp();
     const cookie = await login("mgr-sql@example.com");
-    const smallCounter = wrapQueryCounter();
-    let smallCount = 0;
-    try {
-      await request(app).get("/api/work/tasks?page=1&pageSize=5").set(authHeaders(cookie));
-      smallCount = smallCounter.getCount();
-    } finally {
-      smallCounter.restore();
-    }
-
-    for (let i = 3; i < 15; i += 1) {
-      await seedTask({
-        taskId: "930" + i,
-        title: "SQL task " + i,
-        responsibleBitrixUserId: "42",
-        responsibleUserId: manager.id,
-      });
-    }
-    const largeCounter = wrapQueryCounter();
+    const recorder = wrapQueryRecorder();
     try {
       const res = await request(app)
         .get("/api/work/tasks?page=1&pageSize=5")
         .set(authHeaders(cookie));
       assert.equal(res.status, 200);
-      assert.equal(res.body.total, 15);
-      const largeCount = largeCounter.getCount();
+      assert.equal(res.body.total, 100);
+      assert.equal(res.body.items.length, 5);
       assert.ok(
-        largeCount <= smallCount + 4,
-        `expected sublinear SQL (${smallCount} -> ${largeCount})`,
+        recorder.queries.every((sql) => !sql.includes("items_json")),
+        "checklist hydration must not select items_json",
       );
+      const checklistQuery = recorder.queries.find((sql) =>
+        sql.includes("bitrix24_task_checklist_snapshots"),
+      );
+      assert.ok(checklistQuery);
+      const checklistParams = recorder.params[recorder.queries.indexOf(checklistQuery!)]!;
+      const hydratedTaskIds = checklistParams[1] as string[];
+      assert.equal(hydratedTaskIds.length, 5);
     } finally {
-      largeCounter.restore();
+      recorder.restore();
     }
   });
 
@@ -556,7 +574,7 @@ describe("my work queue integration", { concurrency: false }, () => {
     assert.equal(res.body.items.length, 0);
   });
 
-  it("allows assistant delegation before expiry and hides after", async () => {
+  it("allows assistant summary via delegation with distinct portal ids", async () => {
     const manager = await createTestUser({
       databaseUrl,
       email: "mgr-del@example.com",
@@ -584,15 +602,21 @@ describe("my work queue integration", { concurrency: false }, () => {
       confirmedByUserId: manager.id,
     });
     await upsertEmployeePortalLink({
-      userId: assistant.id,
+      userId: manager.id,
       portalId: sampleWebhookConfig().portalId,
       bitrixUserId: "42",
     });
+    await upsertEmployeePortalLink({
+      userId: assistant.id,
+      portalId: sampleWebhookConfig().portalId,
+      bitrixUserId: "77",
+    });
     await seedTask({
       taskId: "91006",
-      title: "Delegated task",
+      title: "Secret manager task title",
       responsibleBitrixUserId: "42",
       responsibleUserId: manager.id,
+      briefText: "Published summary for assistant",
     });
     await createDelegationRecord({
       databaseUrl,
@@ -608,6 +632,20 @@ describe("my work queue integration", { concurrency: false }, () => {
     const cookie = await login("asst@example.com");
     const active = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
     assert.equal(active.body.total, 1);
+    assert.equal(active.body.items[0]?.accessLevel, "summary");
+    assert.equal(active.body.items[0]?.briefText, "Published summary for assistant");
+    assert.equal(active.body.items[0]?.title, undefined);
+    assert.equal(active.body.items[0]?.deadlineUnavailable, true);
+
+    const card = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(card.status, 200);
+    assert.equal(card.body.tasks.length, 1);
+    assert.equal(card.body.tasks[0]?.accessLevel, "summary");
+    assert.equal(card.body.tasks[0]?.briefText, "Published summary for assistant");
+    assert.equal(card.body.tasks[0]?.title, undefined);
+    assert.equal(card.body.tasks[0]?.portalUrl, undefined);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
@@ -617,6 +655,75 @@ describe("my work queue integration", { concurrency: false }, () => {
     await pool.end();
     const expired = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
     assert.equal(expired.body.total, 0);
+  });
+
+  it("matches responsible contact dto between work queue and card", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-resp@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Resp",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    await upsertEmployeePortalLink({
+      userId: manager.id,
+      portalId: sampleWebhookConfig().portalId,
+      bitrixUserId: "42",
+    });
+    await seedTask({
+      taskId: "91009",
+      title: "Responsible task",
+      responsibleBitrixUserId: "42",
+      responsibleUserId: manager.id,
+    });
+    const app = await loadApp();
+    const cookie = await login("mgr-resp@example.com");
+    const work = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    const card = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    const workResponsible = work.body.items[0]?.responsible;
+    const cardResponsible = card.body.tasks[0]?.responsible;
+    assert.equal(workResponsible?.internalContactEmail, "mgr-resp@example.com");
+    assert.equal(cardResponsible?.internalContactEmail, "mgr-resp@example.com");
+    assert.equal(workResponsible?.displayName, cardResponsible?.displayName);
+  });
+
+  it("keeps pinned filter label when zero-result query removes options", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-filter@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Filter",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    await seedTask({
+      taskId: "91010",
+      title: "Alpha only",
+      responsibleBitrixUserId: "42",
+      responsibleUserId: manager.id,
+    });
+    const app = await loadApp();
+    const cookie = await login("mgr-filter@example.com");
+    const baseline = await request(app).get("/api/work/tasks").set(authHeaders(cookie));
+    assert.equal(baseline.body.options.responsibles.length, 1);
+    const filtered = await request(app)
+      .get("/api/work/tasks?responsibleBitrixUserId=999")
+      .set(authHeaders(cookie));
+    assert.equal(filtered.body.total, 0);
+    assert.equal(filtered.body.options.responsibles.length, 0);
   });
 
   it("shares contact mark with card API binding", async () => {

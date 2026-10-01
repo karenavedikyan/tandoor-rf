@@ -19,12 +19,20 @@ type MockState = {
   contactMarked: boolean;
   contactComment: string;
   checklistExpanded: boolean;
+  checklistMode: "ready" | "stale" | "summary403";
   delayedMs: number;
   failRefresh: boolean;
+  denyAccess: boolean;
+  emptyResponsibleOptions: boolean;
+  contactSaveDelayMs: number;
+  contactSaveCount: number;
 };
 
 function buildWorkPayload(state: MockState) {
   const openCounts = { overdue: 1, today: 0, upcoming: 0, no_deadline: 0, completed: 1 };
+  const responsibles = state.emptyResponsibleOptions
+    ? []
+    : [{ id: "42", name: "Manager A" }];
   const items =
     state.deadlineGroup === "completed"
       ? [
@@ -91,7 +99,7 @@ function buildWorkPayload(state: MockState) {
         { id: CLIENT_ONE, name: "Alpha Client" },
         { id: CLIENT_TWO, name: "Beta Client" },
       ],
-      responsibles: [{ id: "42", name: "Manager A" }],
+      responsibles,
       statusLabels: [
         { id: "in_progress", name: "В работе" },
         { id: "completed", name: "Завершена" },
@@ -114,6 +122,10 @@ async function installWorkMocks(page: Page, state: MockState): Promise<void> {
       return;
     }
     if (url.pathname === "/api/work/tasks") {
+      if (state.denyAccess) {
+        await route.fulfill({ status: 403, contentType: "application/json", body: '{"message":"forbidden"}' });
+        return;
+      }
       if (state.failRefresh) {
         state.failRefresh = false;
         await route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"unavailable"}' });
@@ -132,24 +144,30 @@ async function installWorkMocks(page: Page, state: MockState): Promise<void> {
       return;
     }
     if (url.pathname === `/api/clients/${CLIENT_ONE}/bitrix24/tasks`) {
+      if (state.checklistMode === "summary403") {
+        await route.fulfill({ status: 403, contentType: "application/json", body: '{"message":"forbidden"}' });
+        return;
+      }
       const checklist =
         state.checklistExpanded
-          ? {
-              state: "ready",
-              progress: { completed: 2, total: 5 },
-              syncedAtLabel: "01.10.2026, 12:00",
-              items: [
-                {
-                  id: "1",
-                  title: "Проверить документы",
-                  isGroup: false,
-                  isComplete: true,
-                  sortIndex: 0,
-                  coExecutorNames: [],
-                  children: [],
-                },
-              ],
-            }
+          ? state.checklistMode === "stale"
+            ? { state: "stale", syncedAtLabel: "01.10.2026, 10:00" }
+            : {
+                state: "ready",
+                progress: { completed: 2, total: 5 },
+                syncedAtLabel: "01.10.2026, 12:00",
+                items: [
+                  {
+                    id: "1",
+                    title: "Проверить документы",
+                    isGroup: false,
+                    isComplete: true,
+                    sortIndex: 0,
+                    coExecutorNames: [],
+                    children: [],
+                  },
+                ],
+              }
           : { state: "stale", syncedAtLabel: "01.10.2026, 10:00" };
       await route.fulfill({
         status: 200,
@@ -175,6 +193,10 @@ async function installWorkMocks(page: Page, state: MockState): Promise<void> {
       url.pathname === `/api/clients/${CLIENT_ONE}/bitrix24/tasks/91001/contact` &&
       route.request().method() === "PUT"
     ) {
+      state.contactSaveCount += 1;
+      if (state.contactSaveDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, state.contactSaveDelayMs));
+      }
       const body = route.request().postDataJSON() as { marked?: boolean; comment?: string };
       state.contactMarked = Boolean(body.marked);
       if (body.comment !== undefined) {
@@ -228,8 +250,13 @@ describe("my work browser", { concurrency: false }, () => {
         contactMarked: false,
         contactComment: "",
         checklistExpanded: false,
+        checklistMode: "ready",
         delayedMs: 0,
         failRefresh: false,
+        denyAccess: false,
+        emptyResponsibleOptions: false,
+        contactSaveDelayMs: 0,
+        contactSaveCount: 0,
       };
       const context: BrowserContext = await browser.newContext({
         viewport: { width, height: 900 },
@@ -291,5 +318,70 @@ describe("my work browser", { concurrency: false }, () => {
       });
       await context.close();
     }
+  });
+
+  it("clears queue on 403, pins empty filter labels, syncs stale checklist progress and locks contact saves", async () => {
+    const state: MockState = {
+      deadlineGroup: "",
+      page: 1,
+      contactMarked: false,
+      contactComment: "",
+      checklistExpanded: false,
+      checklistMode: "stale",
+      delayedMs: 0,
+      failRefresh: false,
+      denyAccess: false,
+      emptyResponsibleOptions: false,
+      contactSaveDelayMs: 500,
+      contactSaveCount: 0,
+    };
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: baseUrl });
+    const page = await context.newPage();
+    await installWorkMocks(page, state);
+    await page.goto("/work");
+    await page.waitForSelector(".work-row");
+    assert.match(await page.locator(".pc-bitrix24-checklist-progress-host").innerText(), /2.*5/);
+
+    await page.locator("#work-responsible-filter").selectOption("42");
+    await page.waitForTimeout(200);
+    state.emptyResponsibleOptions = true;
+    await page.locator("#work-refresh-cache").click();
+    await page.waitForTimeout(400);
+    const responsibleFilter = page.locator("#work-responsible-filter");
+    assert.equal(await responsibleFilter.inputValue(), "42");
+    assert.match(await responsibleFilter.locator("option:checked").innerText(), /Manager A|Выбранный фильтр/);
+
+    state.checklistExpanded = true;
+    await page.locator(".pc-bitrix24-checklist--lazy summary").click();
+    await page.waitForFunction(() => {
+      const host = document.querySelector(".pc-bitrix24-checklist-progress-host");
+      return host && /устарел/i.test(host.textContent || "");
+    });
+    assert.doesNotMatch(await page.locator(".pc-bitrix24-checklist-progress-host").innerText(), /2.*5/);
+
+    state.denyAccess = true;
+    await page.locator("#work-refresh-cache").click();
+    await page.waitForSelector("#access-panel:not(.clients-hidden)");
+    assert.equal(await page.locator(".work-row").count(), 0);
+    assert.equal(await page.locator(".work-chip").count(), 0);
+
+    state.denyAccess = false;
+    state.emptyResponsibleOptions = false;
+    state.contactSaveDelayMs = 500;
+    state.contactSaveCount = 0;
+    await page.reload();
+    await page.waitForSelector(".work-row");
+    const checkbox = page.locator(".pc-bitrix24-contact-checkbox");
+    await checkbox.click();
+    await checkbox.click({ force: true });
+    await page.waitForTimeout(700);
+    assert.equal(state.contactSaveCount, 1);
+
+    state.checklistMode = "summary403";
+    await page.locator(".pc-bitrix24-checklist--lazy summary").click();
+    await page.waitForSelector("#access-panel:not(.clients-hidden)");
+    assert.equal(await page.locator(".pc-bitrix24-checklist-block").count(), 0);
+
+    await context.close();
   });
 });

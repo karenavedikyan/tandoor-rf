@@ -9,7 +9,11 @@ import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
 import { compareWorkQueueRows, type DeadlineGroup } from "./deadline-groups";
 import type { WorkListQuery, WorkStatusFilter } from "./query";
 import { listCandidateWorkTasksForScope } from "./repository";
-import { loadWorkBatchContext } from "./batch-context";
+import {
+  loadResponsibleProfiles,
+  loadWorkAccessBatch,
+  loadWorkPageHydration,
+} from "./batch-context";
 import {
   assembleWorkTaskDto,
   groupCandidateRows,
@@ -121,7 +125,7 @@ function matchesListFilters(item: ResolvedWorkTaskIndex, query: WorkListQuery): 
 
 function buildOptions(
   items: ResolvedWorkTaskIndex[],
-  batch: Awaited<ReturnType<typeof loadWorkBatchContext>>,
+  batch: Awaited<ReturnType<typeof loadWorkAccessBatch>>,
 ): WorkQueueListResponse["options"] {
   const clients = new Map<string, string>();
   const responsibles = new Map<string, string>();
@@ -208,11 +212,10 @@ export async function listWorkQueueForUser(input: {
   }
 
   const candidates = await listCandidateWorkTasksForScope(context, loaded.config.portalId);
-  const batch = await loadWorkBatchContext({
+  const batch = await loadWorkAccessBatch({
     context,
     portalId: loaded.config.portalId,
     candidates,
-    actorUserId: context.userId,
   });
 
   const resolved: ResolvedWorkTaskIndex[] = [];
@@ -244,11 +247,30 @@ export async function listWorkQueueForUser(input: {
   const totalPages = total === 0 ? 0 : Math.ceil(total / input.query.pageSize);
   const offset = (input.query.page - 1) * input.query.pageSize;
   const pageItems = listFiltered.slice(offset, offset + input.query.pageSize);
+  const responsibleIds = [
+    ...new Set(
+      counterBase
+        .map((item) => item.responsibleBitrixUserId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  batch.responsibles = await loadResponsibleProfiles(
+    loaded.config.portalId,
+    responsibleIds,
+    batch.nowMs,
+  );
+  const pageTaskIds = pageItems.map((item) => item.taskId);
+  const hydration = await loadWorkPageHydration({
+    portalId: loaded.config.portalId,
+    actorUserId: context.userId,
+    taskIds: pageTaskIds,
+  });
   const items = pageItems.map((index) =>
     assembleWorkTaskDto({
       context,
       index,
       batch,
+      hydration,
       portalHost: loaded.config.portalHost,
       portalPublicUrl: runtime.portalPublicUrl,
       actorDisplayName: input.actorDisplayName,

@@ -27,6 +27,10 @@ describe("work deadline groups", () => {
       "today",
     );
     assert.equal(
+      classifyDeadlineGroup("in_progress", "2026-09-30T08:00:00+03:00", nowMs),
+      "overdue",
+    );
+    assert.equal(
       classifyDeadlineGroup("in_progress", "2026-10-01T09:00:00+03:00", nowMs),
       "upcoming",
     );

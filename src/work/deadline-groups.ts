@@ -48,6 +48,9 @@ export function classifyDeadlineGroup(
   if (!date) {
     return "no_deadline";
   }
+  if (date.getTime() < nowMs) {
+    return "overdue";
+  }
   const deadlineKey = mskDateKey(date);
   const todayKey = getMskTodayKey(nowMs);
   if (deadlineKey < todayKey) {

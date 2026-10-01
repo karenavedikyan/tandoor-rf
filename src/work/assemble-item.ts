@@ -5,7 +5,9 @@ import { formatBoundObjectLabel } from "../bitrix24/tasks/object-type-labels";
 import { formatTaskStatusLabel } from "../bitrix24/tasks/status-labels";
 import { buildTaskOverviewMetadata } from "../bitrix24/tasks/overview-metadata";
 import { buildChecklistPublicDtoFromSnapshot } from "../bitrix24/tasks/checklist-dto";
-import { classifyDeadlineGroup } from "./deadline-groups";
+import { buildWorkOverviewFields } from "./deadline-groups";
+import type { WorkPageHydration } from "./batch-context";
+import { toResponsiblePublicDto } from "./responsible-dto";
 import {
   canMutateBitrixTaskContactActionBatch,
   canViewFullTaskBatch,
@@ -102,15 +104,10 @@ export function resolveWorkTaskIndex(
   const publication = batch.publications.get(
     publicationKey(task.taskId, task.objectType, task.objectGuid),
   );
-  const overview = buildTaskOverviewMetadata(
+  const overviewFields = buildWorkOverviewFields(
     task.statusLabel,
     accessLevel === "full" ? task.deadline : null,
     accessLevel === "full",
-    batch.nowMs,
-  );
-  const deadlineGroup = classifyDeadlineGroup(
-    task.statusLabel,
-    accessLevel === "full" ? task.deadline : null,
     batch.nowMs,
   );
 
@@ -130,17 +127,17 @@ export function resolveWorkTaskIndex(
     accessLevel,
     title: accessLevel === "full" ? task.title : null,
     briefText: accessLevel === "summary" ? publication?.briefText ?? null : null,
-    deadlineGroup,
+    deadlineGroup: overviewFields.deadlineGroup,
     statusLabelRaw: task.statusLabel,
     responsibleBitrixUserId: task.responsibleBitrixUserId,
     searchText,
     sortRow: {
-      deadlineGroup,
-      deadlineAt: overview.deadlineAt,
+      deadlineGroup: overviewFields.deadlineGroup,
+      deadlineAt: overviewFields.deadlineAt,
       taskId: task.taskId,
     },
-    deadlineAt: overview.deadlineAt,
-    isOverdue: overview.isOverdue,
+    deadlineAt: overviewFields.deadlineAt,
+    isOverdue: overviewFields.isOverdue,
     candidate: task,
   };
 }
@@ -149,6 +146,7 @@ export function assembleWorkTaskDto(input: {
   context: AccessContext;
   index: ResolvedWorkTaskIndex;
   batch: WorkBatchContext;
+  hydration: WorkPageHydration;
   portalHost: string;
   portalPublicUrl: string | null;
   actorDisplayName: string;
@@ -157,7 +155,7 @@ export function assembleWorkTaskDto(input: {
   const objectType = task.objectType as Bitrix24ObjectType;
   const objectGuid = task.objectGuid!;
   const pubKey = publicationKey(task.taskId, objectType, objectGuid);
-  const contact = input.batch.contacts.get(pubKey) ?? null;
+  const contact = input.hydration.contacts.get(pubKey) ?? null;
   const canMark = canMutateBitrixTaskContactActionBatch(
     input.context,
     task,
@@ -176,7 +174,7 @@ export function assembleWorkTaskDto(input: {
       }
     : null;
 
-  const responsible =
+  const responsibleProfile =
     task.responsibleBitrixUserId && input.batch.responsibles.has(task.responsibleBitrixUserId)
       ? input.batch.responsibles.get(task.responsibleBitrixUserId)!
       : {
@@ -185,6 +183,7 @@ export function assembleWorkTaskDto(input: {
           lkUserId: null,
           email: null,
         };
+  const responsible = toResponsiblePublicDto(responsibleProfile);
 
   if (input.index.accessLevel === "summary") {
     return {
@@ -195,13 +194,14 @@ export function assembleWorkTaskDto(input: {
       boundObjectLabel: formatBoundObjectLabel(objectType),
       responsible,
       contactAction,
+      deadlineUnavailable: true,
       clientGuid: input.index.clientGuid,
       clientName: input.index.clientName,
       clients: input.index.clients,
     };
   }
 
-  const snapshot = input.batch.checklists.get(task.taskId) ?? null;
+  const snapshot = input.hydration.checklists.get(task.taskId) ?? null;
   const checklist = snapshot
     ? buildChecklistPublicDtoFromSnapshot({
         snapshot,

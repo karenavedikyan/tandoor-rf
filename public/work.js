@@ -39,6 +39,11 @@
     responsibleBitrixUserId: "",
     statusLabel: "",
     lastBody: null,
+    pinnedFilters: {
+      clientGuid: null,
+      responsibleBitrixUserId: null,
+      statusLabel: null,
+    },
   };
 
   var searchTimer = null;
@@ -175,13 +180,30 @@
     });
   }
 
+  function pinnedFilterKey(selectId) {
+    if (selectId === "work-client-filter") {
+      return "clientGuid";
+    }
+    if (selectId === "work-responsible-filter") {
+      return "responsibleBitrixUserId";
+    }
+    if (selectId === "work-status-filter") {
+      return "statusLabel";
+    }
+    return null;
+  }
+
   function fillSelect(select, options, current) {
     var html = select.id === "work-client-filter"
       ? '<option value="">Все клиенты</option>'
       : select.id === "work-responsible-filter"
         ? '<option value="">Все</option>'
         : '<option value="">Все</option>';
+    var hasCurrent = false;
     (options || []).forEach(function (opt) {
+      if (current === opt.id) {
+        hasCurrent = true;
+      }
       html +=
         '<option value="' +
         esc(opt.id) +
@@ -191,13 +213,48 @@
         esc(opt.name) +
         "</option>";
     });
+    if (current && !hasCurrent) {
+      var key = pinnedFilterKey(select.id);
+      var pinned = key ? state.pinnedFilters[key] : null;
+      var label = pinned && pinned.id === current ? pinned.name : "Выбранный фильтр";
+      html +=
+        '<option value="' +
+        esc(current) +
+        '" selected>' +
+        esc(label) +
+        "</option>";
+    }
     select.innerHTML = html;
+    if (current) {
+      select.value = current;
+    }
+  }
+
+  function rememberPinnedOptions(body) {
+    if (!body || !body.options) {
+      return;
+    }
+    function remember(list, current, key) {
+      if (!current) {
+        return;
+      }
+      var found = (list || []).find(function (opt) {
+        return opt.id === current;
+      });
+      if (found) {
+        state.pinnedFilters[key] = { id: found.id, name: found.name };
+      }
+    }
+    remember(body.options.clients, state.clientGuid, "clientGuid");
+    remember(body.options.responsibles, state.responsibleBitrixUserId, "responsibleBitrixUserId");
+    remember(body.options.statusLabels, state.statusLabel, "statusLabel");
   }
 
   function renderOptions(body) {
     if (!body || !body.options) {
       return;
     }
+    rememberPinnedOptions(body);
     fillSelect(clientFilter, body.options.clients, state.clientGuid);
     fillSelect(responsibleFilter, body.options.responsibles, state.responsibleBitrixUserId);
     fillSelect(statusFilter, body.options.statusLabels, state.statusLabel);
@@ -242,8 +299,8 @@
     var deadline =
       task.accessLevel === "full" && task.deadline
         ? esc(task.deadline)
-        : task.accessLevel === "summary"
-          ? "—"
+        : task.accessLevel === "summary" || task.deadlineUnavailable
+          ? "недоступен"
           : esc(task.deadline || "—");
     var checklist =
       bitrix && bitrix.renderChecklistExpandable
@@ -298,9 +355,36 @@
     );
   }
 
+  function clearAuthorizedQueueState() {
+    state.lastBody = null;
+    state.pinnedFilters = {
+      clientGuid: null,
+      responsibleBitrixUserId: null,
+      statusLabel: null,
+    };
+    metaEl.textContent = "";
+    chipsEl.innerHTML = "";
+    paginationEl.innerHTML = "";
+    listEl.innerHTML = "";
+  }
+
+  function isAccessDeniedPayload(data) {
+    return (
+      data &&
+      (data.state === "no_employee_link" ||
+        data.state === "access_expired" ||
+        data.state === "link_unverified")
+    );
+  }
+
   function bindListInteractions(body) {
     if (bitrix && bitrix.bindChecklistLazyLoad) {
-      bitrix.bindChecklistLazyLoad(listEl);
+      bitrix.bindChecklistLazyLoad(listEl, {
+        onAccessDenied: function () {
+          clearAuthorizedQueueState();
+          showAccess("forbidden");
+        },
+      });
     }
     if (bitrix && bitrix.bindContactActions) {
       bitrix.bindContactActions(listEl, null, appEl, {
@@ -396,20 +480,35 @@
           return { ok: false, status: 401 };
         }
         if (result.response.status === 403) {
-          if (options.preserveOnError && state.lastBody) {
-            applyQueueBody(state.lastBody, seq);
-            return { ok: false, status: 403 };
-          }
+          clearAuthorizedQueueState();
           showAccess("forbidden");
           return { ok: false, status: 403 };
         }
         if (result.response.status !== 200 || !result.data) {
-          if (options.preserveOnError && state.lastBody) {
+          if (
+            options.preserveOnError &&
+            state.lastBody &&
+            result.response.status !== 401 &&
+            result.response.status !== 403
+          ) {
             applyQueueBody(state.lastBody, seq);
             return { ok: false, status: result.response.status };
           }
+          if (result.response.status === 503) {
+            showState("Сервис временно недоступен", "Повторите попытку позже.", "retry-work");
+            return { ok: false, status: 503 };
+          }
           showState("Не удалось загрузить очередь", "Повторите попытку позже.", "retry-work");
           return { ok: false, status: result.response.status };
+        }
+        if (isAccessDeniedPayload(result.data)) {
+          clearAuthorizedQueueState();
+          showState(
+            result.data.message || "Доступ к задачам недоступен.",
+            "Повторите попытку позже.",
+            "retry-work",
+          );
+          return { ok: false, status: 200, denied: true };
         }
         applyQueueBody(result.data, seq);
         return { ok: true, status: 200, data: result.data };
@@ -422,6 +521,7 @@
           applyQueueBody(state.lastBody, seq);
           return { ok: false, error: err };
         }
+        clearAuthorizedQueueState();
         showState(
           "Ошибка сети",
           api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
@@ -471,6 +571,11 @@
       state.statusLabel = "";
       state.deadlineGroup = "";
       state.page = 1;
+      state.pinnedFilters = {
+        clientGuid: null,
+        responsibleBitrixUserId: null,
+        statusLabel: null,
+      };
       searchInput.value = "";
       loadQueue();
     });
