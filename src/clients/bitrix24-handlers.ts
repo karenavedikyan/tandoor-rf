@@ -606,6 +606,14 @@ export async function getClientBitrix24ClaimsHandler(
     const orkPublication =
       activePublication?.publicationOrigin === "ork_sync" ? activePublication : null;
     if (orkPublication) {
+      // A publication belonging to a previous/different object is outside this
+      // card's scope, not evidence of a stale claim visible to this reader.
+      if (
+        orkPublication.objectType !== row.objectType ||
+        orkPublication.objectGuid.toLowerCase() !== row.objectGuid.toLowerCase()
+      ) {
+        continue;
+      }
       const orkAligned = isOrkPublicationAlignedWithTask(
         {
           cacheVersion: row.cacheVersion,

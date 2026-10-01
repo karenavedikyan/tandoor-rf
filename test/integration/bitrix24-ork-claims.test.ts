@@ -735,6 +735,48 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
     assert.equal(active!.taskCacheVersion, currentVersion + 1);
   });
 
+  it("does not expose a publication for another object through state or count", async () => {
+    const manager = await createTestUser({
+      databaseUrl, email: "mgr-rebound@example.com", password: TEST_PASSWORD,
+      fullName: "Manager Rebound", role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl, userId: manager.id, employeeId: MANAGER_A, confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    const config = await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    await syncDescription({
+      managerId: manager.id,
+      description: formatLabelToken(label.labelCode) + "\n#орк Summary for another object",
+    });
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const app = await loadApp();
+    const cookie = await login("mgr-rebound@example.com");
+    try {
+      await pool.query(
+        `UPDATE bitrix24_task_summary_publications SET object_guid = $2::uuid
+         WHERE portal_id = $1 AND task_id = '9001' AND revoked_at IS NULL`,
+        [config.portalId, CLIENT_TWO],
+      );
+      const hidden = await request(app)
+        .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`).set(authHeaders(cookie));
+      await pool.query(
+        `UPDATE bitrix24_task_summary_publications SET revoked_at = NOW()
+         WHERE portal_id = $1 AND task_id = '9001' AND revoked_at IS NULL`,
+        [config.portalId],
+      );
+      const absent = await request(app)
+        .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`).set(authHeaders(cookie));
+      assert.equal(hidden.status, 200);
+      assert.equal(absent.status, 200);
+      assert.deepEqual(hidden.body, absent.body);
+      assert.equal(hidden.body.count, 0);
+      assert.equal(JSON.stringify(hidden.body).includes("Summary for another object"), false);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("returns stale_snapshot when task cache TTL expired", async () => {
     const manager = await createTestUser({
       databaseUrl,
