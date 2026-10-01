@@ -21,7 +21,8 @@ export type ChecklistPublicState =
       state: "ready";
       syncedAtLabel: string;
       progress: { completed: number; total: number };
-      items: ChecklistItemPublicNode[];
+      /** Present when full tree is loaded; omitted in list/progress-only views. */
+      items?: ChecklistItemPublicNode[];
     };
 
 export type ChecklistItemPublicNode = {
@@ -109,8 +110,9 @@ function evaluateSnapshotFreshness(
 
 function mapSnapshotToPublic(
   snapshot: ChecklistSnapshotRow,
-  publicTree: ChecklistItemPublicNode[],
+  publicTree: ChecklistItemPublicNode[] | null,
   freshness: "ready" | "stale" | "future" | "invalid",
+  listMode = false,
 ): ChecklistPublicState {
   const syncedAtLabel = formatDisplayDate(snapshot.syncedAt);
   if (freshness === "stale") {
@@ -137,20 +139,52 @@ function mapSnapshotToPublic(
       ) {
         return { state: "partial", syncedAtLabel };
       }
-      return syncedAtLabel
-        ? {
-            state: "ready",
-            syncedAtLabel,
-            progress: {
-              completed: snapshot.progressCompleted,
-              total: snapshot.progressTotal,
-            },
-            items: publicTree,
-          }
-        : { state: "not_loaded" };
+      if (!syncedAtLabel) {
+        return { state: "not_loaded" };
+      }
+      if (listMode) {
+        return {
+          state: "ready",
+          syncedAtLabel,
+          progress: {
+            completed: snapshot.progressCompleted,
+            total: snapshot.progressTotal,
+          },
+        };
+      }
+      return {
+        state: "ready",
+        syncedAtLabel,
+        progress: {
+          completed: snapshot.progressCompleted,
+          total: snapshot.progressTotal,
+        },
+        items: publicTree ?? [],
+      };
     default:
       return { state: "not_loaded" };
   }
+}
+
+/** Synchronous checklist DTO for preloaded snapshots (list progress only). */
+export function buildChecklistPublicDtoFromSnapshot(input: {
+  snapshot: ChecklistSnapshotRow;
+  objectType: Bitrix24ObjectType | null;
+  objectGuid: string | null;
+  taskCacheVersion: number;
+  taskSyncedAt: string;
+  listMode?: boolean;
+}): ChecklistPublicState {
+  if (!isChecklistBindingMatch(input.snapshot, input.objectType, input.objectGuid)) {
+    return { state: "not_loaded" };
+  }
+  const freshness = evaluateSnapshotFreshness(
+    input.snapshot,
+    input.taskCacheVersion,
+    input.taskSyncedAt,
+  );
+  const listMode = input.listMode ?? true;
+  return mapSnapshotToPublic(input.snapshot, null, freshness, listMode);
 }
 
 export async function buildChecklistPublicDto(input: {
@@ -160,6 +194,8 @@ export async function buildChecklistPublicDto(input: {
   objectGuid: string | null;
   taskCacheVersion: number;
   taskSyncedAt: string;
+  /** Skip building item tree — list views only need progress/state. */
+  listMode?: boolean;
 }): Promise<ChecklistPublicState> {
   const snapshot = await findChecklistSnapshot(input.portalId, input.taskId);
   if (!snapshot) {
@@ -173,8 +209,12 @@ export async function buildChecklistPublicDto(input: {
     input.taskCacheVersion,
     input.taskSyncedAt,
   );
-  const publicTree = freshness === "ready"
-    ? await buildPublicTree(input.portalId, snapshot.itemsJson)
-    : [];
-  return mapSnapshotToPublic(snapshot, publicTree, freshness);
+  const listMode = input.listMode ?? false;
+  const publicTree =
+    freshness === "ready" && !listMode
+      ? await buildPublicTree(input.portalId, snapshot.itemsJson)
+      : listMode
+        ? null
+        : [];
+  return mapSnapshotToPublic(snapshot, publicTree, freshness, listMode);
 }

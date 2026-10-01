@@ -87,6 +87,7 @@ export async function buildFullTaskWorkDto(input: {
   portalPublicUrl: string | null;
   task: TaskCacheRow & TaskBindingRow;
   actorDisplayName: string;
+  listMode?: boolean;
 }): Promise<Record<string, unknown> | null> {
   if (
     !(await canViewFullBitrixTaskForUser(
@@ -112,6 +113,7 @@ export async function buildFullTaskWorkDto(input: {
     objectGuid: input.task.objectGuid ?? null,
     taskCacheVersion: input.task.cacheVersion,
     taskSyncedAt: input.task.syncedAt,
+    listMode: input.listMode ?? false,
   });
   return {
     taskId: input.task.taskId,

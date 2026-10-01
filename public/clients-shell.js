@@ -131,6 +131,9 @@
     var clientsLink = showClients
       ? navLink("/clients", "Клиенты", "clients", active, "clients")
       : "";
+    var workLink = showClients
+      ? navLink("/work", "Моя работа", "work", active, "work")
+      : "";
     var workspaceLink = showAccessWorkspace
       ? navLink("/access", "Замещения", "profile", active, "access-workspace")
       : "";
@@ -152,6 +155,7 @@
       "</div>" +
       '<nav class="legacy-sidebar__nav">' +
       clientsLink +
+      workLink +
       workspaceLink +
       adminLink +
       navLink("/profile", "Мой профиль", "profile", active, "profile") +
