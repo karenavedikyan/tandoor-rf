@@ -88,6 +88,8 @@ function baseSyncResult(): Bitrix24SyncResult {
     versionConflicts: 0,
     checklistsSynced: 0,
     checklistsFailed: 0,
+    orkPublicationsRevoked: 0,
+    orkPublishSkipped: 0,
     complete: true,
     message: "success",
   };

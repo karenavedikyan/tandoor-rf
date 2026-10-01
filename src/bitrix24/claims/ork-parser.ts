@@ -7,7 +7,8 @@
  *   not followed by a Unicode letter, digit, or underscore (so `#оркестр` is rejected).
  * - Exactly one tag per description; zero or multiple tags → no publication.
  * - Summary text is everything after the tag (optional horizontal whitespace skipped) to EOF.
- * - Line breaks inside the summary are preserved.
+ * - Line breaks inside the summary are preserved when non-empty.
+ * - Supported markup/BBCode is stripped before tag detection and summary extraction.
  * - `[ЛК]` blocks are not used; only DESCRIPTION is parsed.
  */
 
@@ -48,6 +49,10 @@ function extractSummaryAfterTag(normalized: string, match: RegExpMatchArray): st
   return tail.replace(/^[ \t]+/, "");
 }
 
+function hasVisibleSummaryText(text: string): boolean {
+  return /\S/u.test(text);
+}
+
 export function parseOrkSummaryFromDescription(
   description: string | null | undefined,
 ): ParsedOrkSummary {
@@ -56,7 +61,8 @@ export function parseOrkSummaryFromDescription(
   }
 
   const normalized = normalizeDescription(description);
-  const matches = findOrkTagMatches(normalized);
+  const forScan = stripUnsafeMarkup(normalized);
+  const matches = findOrkTagMatches(forScan);
   if (matches.length === 0) {
     return { ok: false, reason: "missing_tag" };
   }
@@ -64,18 +70,18 @@ export function parseOrkSummaryFromDescription(
     return { ok: false, reason: "multiple_tags" };
   }
 
-  const rawSummary = extractSummaryAfterTag(normalized, matches[0]!);
+  const rawSummary = extractSummaryAfterTag(forScan, matches[0]!);
   if (/javascript:/i.test(rawSummary)) {
     return { ok: false, reason: "unsafe_content" };
   }
-  const briefText = stripUnsafeMarkup(rawSummary).replace(/\u0000/g, "");
-  const trimmed = briefText.replace(/[ \t\u00A0]+$/g, "").replace(/^[ \t\u00A0]+/g, "");
-  if (trimmed.length === 0) {
+  const briefText = rawSummary.replace(/\u0000/g, "");
+  const edgeTrimmed = briefText.replace(/[ \t\u00A0]+$/g, "").replace(/^[ \t\u00A0]+/g, "");
+  if (!hasVisibleSummaryText(edgeTrimmed)) {
     return { ok: false, reason: "empty_summary" };
   }
-  if (trimmed.length > ORK_SUMMARY_MAX_LENGTH) {
+  if (edgeTrimmed.length > ORK_SUMMARY_MAX_LENGTH) {
     return { ok: false, reason: "too_long" };
   }
 
-  return { ok: true, briefText: trimmed };
+  return { ok: true, briefText: edgeTrimmed };
 }

@@ -8,6 +8,9 @@ export type SummaryPublicationRow = {
   briefText: string;
   confirmedAt: string;
   publicationOrigin?: SummaryPublicationOrigin;
+  taskCacheVersion?: number | null;
+  objectType?: Bitrix24ObjectType;
+  objectGuid?: string;
 };
 
 export type ActiveSummaryPublicationMeta = {
@@ -37,8 +40,12 @@ export async function findActiveSummaryPublication(
     brief_text: string;
     confirmed_at: Date;
     publication_origin: SummaryPublicationOrigin;
+    task_cache_version: number | null;
+    object_type: Bitrix24ObjectType;
+    object_guid: string;
   }>(
-    `SELECT brief_text, confirmed_at, publication_origin
+    `SELECT brief_text, confirmed_at, publication_origin, task_cache_version,
+            object_type, object_guid::text
      FROM bitrix24_task_summary_publications
      WHERE portal_id = $1 AND task_id = $2
        AND object_type = $3::bitrix24_object_type AND object_guid = $4::uuid
@@ -54,6 +61,9 @@ export async function findActiveSummaryPublication(
     briefText: row.brief_text,
     confirmedAt: row.confirmed_at.toISOString(),
     publicationOrigin: row.publication_origin,
+    taskCacheVersion: row.task_cache_version,
+    objectType: row.object_type,
+    objectGuid: row.object_guid,
   };
 }
 
@@ -100,7 +110,7 @@ export async function applyOrkSummaryPublicationSync(
     objectType: Bitrix24ObjectType | null;
     objectGuid: string | null;
     taskCacheVersion: number;
-    syncExecutorUserId: string;
+    syncExecutorUserId: string | null;
     briefText: string | null;
   },
   client: PoolClient,
@@ -151,6 +161,10 @@ export async function applyOrkSummaryPublicationSync(
          AND (task_cache_version IS NULL OR task_cache_version <= $2)`,
       [active.id, input.taskCacheVersion],
     );
+  }
+
+  if (!input.syncExecutorUserId) {
+    return "none";
   }
 
   const inserted = await client.query<{ id: string }>(

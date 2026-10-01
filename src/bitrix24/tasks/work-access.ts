@@ -3,6 +3,7 @@ import { isCachePublishAllowed, isPilotTaskFilterActive, loadBitrix24TasksRuntim
 import { findEmployeePortalLink, type TaskBindingRow, type TaskCacheRow } from "./repository";
 
 type TaskWorkRow = TaskCacheRow & Partial<TaskBindingRow>;
+import { filterVisibleOrkPublication } from "../claims/ork-publication-visibility";
 import { findActiveSummaryPublication } from "./work-repository";
 import {
   canViewPublishedTaskCacheForUser,
@@ -70,8 +71,16 @@ export async function canViewBitrixTaskSummaryForUser(
   ) {
     return false;
   }
-  const publication = await findActiveSummaryPublication(
-    portalId, task.taskId, task.objectType, task.objectGuid,
+  const publication = filterVisibleOrkPublication(
+    {
+      cacheVersion: task.cacheVersion,
+      objectType: task.objectType,
+      objectGuid: task.objectGuid,
+      bindingStatus: task.bindingStatus ?? null,
+    },
+    await findActiveSummaryPublication(
+      portalId, task.taskId, task.objectType, task.objectGuid,
+    ),
   );
   return publication !== null;
 }

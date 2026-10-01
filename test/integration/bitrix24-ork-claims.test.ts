@@ -92,19 +92,12 @@ async function seedResponsibleTask(input: {
   return config;
 }
 
-async function syncDescription(input: {
-  managerId: string;
-  description: string;
-  changedAt?: string;
-}) {
+function buildSyncPinnedRequest(input: { description: string; changedAt?: string }) {
   const config = sampleWebhookConfig();
   const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
   const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
-  return runBitrix24TaskSync({
-    bitrixUserId: "42",
-    apply: true,
-    taskId: "9001",
-    syncExecutorUserId: input.managerId,
+  return {
+    config,
     pinnedRequest: createBitrixMockPinnedRequest({
       [tasksUrl]: {
         body: {
@@ -127,6 +120,21 @@ async function syncDescription(input: {
         },
       },
     }).pinnedRequest,
+  };
+}
+
+async function syncDescription(input: {
+  managerId?: string;
+  description: string;
+  changedAt?: string;
+}) {
+  const { config, pinnedRequest } = buildSyncPinnedRequest(input);
+  return runBitrix24TaskSync({
+    bitrixUserId: "42",
+    apply: true,
+    taskId: "9001",
+    syncExecutorUserId: input.managerId,
+    pinnedRequest,
     resolvePortalAddresses: createSafePortalResolver(),
   });
 }
@@ -218,6 +226,7 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
           objectType: "holding",
           objectGuid: HOLDING_ONE,
           bindingStatus: "confirmed",
+          responsibleBitrixUserId: "42",
           description,
           taskCacheVersion: Number(meta.rows[0]!.cache_version),
           syncExecutorUserId: manager.id,
@@ -519,6 +528,7 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
           objectType: "holding",
           objectGuid: HOLDING_ONE,
           bindingStatus: "confirmed",
+          responsibleBitrixUserId: "42",
           description: formatLabelToken(label.labelCode) + "\n#орк Устаревшая попытка",
           taskCacheVersion: Math.max(1, (active!.taskCacheVersion ?? 1) - 1),
           syncExecutorUserId: manager.id,
@@ -535,5 +545,181 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
 
     const stillActive = await findActiveSummaryPublicationMeta(config.portalId, "9001");
     assert.match(stillActive!.briefText, /Актуальная сводка/);
+  });
+
+  it("revokes ork publication on CLI sync without syncExecutorUserId when tag is removed", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-cli@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager CLI",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    const withTag = formatLabelToken(label.labelCode) + "\n#орк CLI revoke test";
+    const first = await syncDescription({ managerId: manager.id, description: withTag });
+    assert.equal(first.ok, true);
+    assert.ok(await findActiveSummaryPublicationMeta(config.portalId, "9001"));
+
+    const withoutTag = formatLabelToken(label.labelCode) + "\nБез метки";
+    const cliSync = await syncDescription({
+      description: withoutTag,
+      changedAt: "2026-09-30T15:00:00+03:00",
+    });
+    assert.equal(cliSync.status, "success");
+    assert.ok((cliSync.orkPublicationsRevoked ?? 0) >= 1);
+    assert.equal(await findActiveSummaryPublicationMeta(config.portalId, "9001"), null);
+
+    const app = await loadApp();
+    const cookie = await login("mgr-cli@example.com");
+    const claims = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(claims.body.count, 0);
+    assert.equal(claims.body.state, "empty");
+    assert.equal(JSON.stringify(claims.body).includes("CLI revoke test"), false);
+  });
+
+  it("hides stale ork generation across claims, tasks and work queue", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-gen@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Gen",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    const description = formatLabelToken(label.labelCode) + "\n#орк Сводка поколения";
+    await syncDescription({ managerId: manager.id, description });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache
+       SET cache_version = cache_version + 2, synced_at = NOW()
+       WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9001"],
+    );
+    await pool.end();
+
+    const app = await loadApp();
+    const cookie = await login("mgr-gen@example.com");
+    const claims = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(claims.body.count, null);
+    assert.equal(claims.body.state, "stale_snapshot");
+    assert.equal(JSON.stringify(claims.body).includes("Сводка поколения"), false);
+
+    const tasks = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/tasks`)
+      .set(authHeaders(cookie));
+    assert.equal(JSON.stringify(tasks.body).includes("Сводка поколения"), false);
+
+    const work = await request(app)
+      .get("/api/work/tasks")
+      .set(authHeaders(cookie));
+    assert.equal(JSON.stringify(work.body).includes("Сводка поколения"), false);
+  });
+
+  it("applies concurrent ork writes without letting stale generation win", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-race@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Race",
+      role: "manager",
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    const labelToken = formatLabelToken(label.labelCode);
+    await syncDescription({
+      managerId: manager.id,
+      description: labelToken + "\n#орк Базовая",
+    });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const meta = await pool.query<{ cache_version: number }>(
+      `SELECT cache_version FROM bitrix24_task_cache WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9001"],
+    );
+    const currentVersion = Number(meta.rows[0]!.cache_version);
+    await pool.query(
+      `UPDATE bitrix24_task_cache SET cache_version = $3 WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9001", currentVersion + 1],
+    );
+
+    const baseInput = {
+      portalId: config.portalId,
+      taskId: "9001",
+      objectType: "holding" as const,
+      objectGuid: HOLDING_ONE,
+      bindingStatus: "confirmed",
+      responsibleBitrixUserId: "42",
+      publishAllowed: true,
+      syncExecutorUserId: manager.id,
+    };
+
+    const results = await Promise.all([
+      (async () => {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const action = await syncOrkPublicationFromDescription(
+            {
+              ...baseInput,
+              description: labelToken + "\n#орк Устаревшая гонка",
+              taskCacheVersion: currentVersion,
+            },
+            client,
+          );
+          await client.query("COMMIT");
+          return action.action;
+        } finally {
+          client.release();
+        }
+      })(),
+      (async () => {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const action = await syncOrkPublicationFromDescription(
+            {
+              ...baseInput,
+              description: labelToken + "\n#орк Победившая гонка",
+              taskCacheVersion: currentVersion + 1,
+            },
+            client,
+          );
+          await client.query("COMMIT");
+          return action.action;
+        } finally {
+          client.release();
+        }
+      })(),
+    ]);
+    await pool.end();
+
+    assert.ok(results.includes("published") || results.includes("updated"));
+    const active = await findActiveSummaryPublicationMeta(config.portalId, "9001");
+    assert.match(active!.briefText, /Победившая гонка/);
+    assert.doesNotMatch(active!.briefText, /Устаревшая гонка/);
+    assert.equal(active!.taskCacheVersion, currentVersion + 1);
   });
 });

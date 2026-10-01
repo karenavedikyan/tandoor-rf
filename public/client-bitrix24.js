@@ -977,13 +977,19 @@
   }
 
   function reloadBitrix24Data(root, clientGuid, preservedUi) {
-    var promise = loadBitrix24Sections(
+    var tasksPromise = loadBitrix24Sections(
       root,
       clientGuid,
       preservedUi || captureBitrix24UiState(root),
     );
-    mountClaimsTab(root, clientGuid);
-    return promise;
+    var claimsPromise = mountClaimsTab(root, clientGuid);
+    return Promise.all([tasksPromise, claimsPromise]).then(function (results) {
+      return {
+        ok: results[0].ok !== false && results[1].ok !== false,
+        tasks: results[0],
+        claims: results[1],
+      };
+    });
   }
 
   function mountWorkTab(root, clientGuid) {
@@ -997,12 +1003,14 @@
     if (!container) {
       return Promise.resolve({ ok: true });
     }
+    var loadId = (root._claimsLoadId || 0) + 1;
+    root._claimsLoadId = loadId;
     container.innerHTML = renderState("Загрузка рекламаций…", "loading");
     return api
       .apiRequest("/api/clients/" + encodeURIComponent(clientGuid) + "/bitrix24/claims")
       .then(function (result) {
-        if (!root.isConnected) {
-          return { ok: true };
+        if (loadId !== root._claimsLoadId || !root.isConnected) {
+          return { ok: true, stale: true };
         }
         if (result.response.status === 403 || result.response.status === 404) {
           container.innerHTML = renderState("Доступ к рекламациям недоступен.", "error");
@@ -1016,6 +1024,19 @@
         }
         var body = result.data;
         updateClaimsStat(root, typeof body.count === "number" ? body.count : null);
+        if (
+          body.state === "access_expired" ||
+          body.state === "stale_snapshot" ||
+          body.state === "link_unverified" ||
+          body.state === "cache_not_published" ||
+          body.state === "not_configured"
+        ) {
+          container.innerHTML = renderState(
+            body.message || "Данные рекламаций недоступны.",
+            "error",
+          );
+          return { ok: true };
+        }
         if (body.state === "ready" && body.claims && body.claims.length) {
           var meta = "";
           if (body.sync && body.sync.lastFinishedAtLabel) {
@@ -1043,8 +1064,8 @@
         return { ok: true };
       })
       .catch(function () {
-        if (!root.isConnected) {
-          return { ok: true };
+        if (loadId !== root._claimsLoadId || !root.isConnected) {
+          return { ok: true, stale: true };
         }
         container.innerHTML = renderState("Не удалось загрузить рекламации.", "error");
         updateClaimsStat(root, null);

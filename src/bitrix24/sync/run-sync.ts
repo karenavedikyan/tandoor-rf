@@ -61,10 +61,13 @@ export type Bitrix24SyncResult = {
   versionConflicts: number;
   checklistsSynced: number;
   checklistsFailed: number;
+  orkPublicationsRevoked: number;
+  orkPublishSkipped: number;
   complete: boolean;
   truncatedReason?: string;
   message: string;
   journalId?: string;
+  orkPublishDenied?: Array<{ taskId: string; code: string; message: string }>;
 };
 
 type PreparedTaskWrite = {
@@ -188,6 +191,8 @@ export async function runBitrix24TaskSync(
       versionConflicts: 0,
       checklistsSynced: 0,
       checklistsFailed: 0,
+      orkPublicationsRevoked: 0,
+      orkPublishSkipped: 0,
       complete: false,
       message: "Bitrix24 is not configured.",
     };
@@ -222,6 +227,8 @@ export async function runBitrix24TaskSync(
       versionConflicts: 0,
       checklistsSynced: 0,
       checklistsFailed: 0,
+      orkPublicationsRevoked: 0,
+      orkPublishSkipped: 0,
       complete: false,
       message: "Bitrix user is not linked to this portal.",
       journalId,
@@ -269,6 +276,8 @@ export async function runBitrix24TaskSync(
       versionConflicts: 0,
       checklistsSynced: 0,
       checklistsFailed: 0,
+      orkPublicationsRevoked: 0,
+      orkPublishSkipped: 0,
       complete: false,
       message,
       journalId,
@@ -283,6 +292,9 @@ export async function runBitrix24TaskSync(
   let versionConflicts = 0;
   let checklistsSynced = 0;
   let checklistsFailed = 0;
+  let orkPublicationsRevoked = 0;
+  let orkPublishSkipped = 0;
+  const orkPublishDenied: Array<{ taskId: string; code: string; message: string }> = [];
   let journalId: string | undefined;
   const pool = requirePool();
   const preparedWrites: PreparedTaskWrite[] = [];
@@ -415,23 +427,36 @@ export async function runBitrix24TaskSync(
                 syncedAt = meta.synced_at.toISOString();
               }
             }
-            if (options.syncExecutorUserId && cacheVersion !== undefined && syncedAt) {
-              await syncOrkPublicationFromDescription(
+            if (cacheVersion !== undefined && syncedAt) {
+              const orkResult = await syncOrkPublicationFromDescription(
                 {
                   portalId: config.portalId,
                   taskId: prepared.taskId,
                   objectType: prepared.objectType,
                   objectGuid: prepared.objectGuid,
                   bindingStatus: prepared.bindingStatus,
+                  responsibleBitrixUserId: prepared.responsibleBitrixUserId,
                   description:
                     readResult.data.tasks.find((entry) => entry.taskId === prepared.taskId)
                       ?.description ?? prepared.description,
                   taskCacheVersion: cacheVersion,
-                  syncExecutorUserId: options.syncExecutorUserId,
+                  syncExecutorUserId: options.syncExecutorUserId ?? null,
                   publishAllowed,
                 },
                 taskClient,
               );
+              if (orkResult.action === "revoked") {
+                orkPublicationsRevoked += 1;
+              } else if (orkResult.action === "skipped_unauthorized") {
+                orkPublishSkipped += 1;
+                if (orkResult.denyCode && orkResult.denyMessage) {
+                  orkPublishDenied.push({
+                    taskId: prepared.taskId,
+                    code: orkResult.denyCode,
+                    message: orkResult.denyMessage,
+                  });
+                }
+              }
             }
             if (cacheVersion !== undefined && syncedAt) {
               acceptedWrites.push({
@@ -500,6 +525,9 @@ export async function runBitrix24TaskSync(
           versionConflicts,
           checklistsSynced,
           checklistsFailed,
+          orkPublicationsRevoked,
+          orkPublishSkipped,
+          orkPublishDenied,
           truncatedReason: readResult.data.truncatedReason ?? null,
         },
       });
@@ -523,6 +551,9 @@ export async function runBitrix24TaskSync(
         versionConflicts,
         checklistsSynced,
         checklistsFailed,
+        orkPublicationsRevoked,
+        orkPublishSkipped,
+        orkPublishDenied,
       },
     });
     return {
@@ -538,17 +569,21 @@ export async function runBitrix24TaskSync(
       versionConflicts,
       checklistsSynced,
       checklistsFailed,
+      orkPublicationsRevoked,
+      orkPublishSkipped,
       complete: false,
       message: partialApply
         ? "Bitrix24 task sync partially applied before failure."
         : "Bitrix24 task sync apply failed.",
       journalId,
+      orkPublishDenied: orkPublishDenied.length > 0 ? orkPublishDenied : undefined,
     };
   }
 
   const tasksComplete = readResult.data.complete;
   const checklistsComplete = checklistsFailed === 0;
-  const complete = tasksComplete && checklistsComplete;
+  const orkComplete = orkPublishSkipped === 0;
+  const complete = tasksComplete && checklistsComplete && orkComplete;
   const status = complete ? "success" : "partial";
 
   return {
@@ -564,15 +599,20 @@ export async function runBitrix24TaskSync(
     versionConflicts,
     checklistsSynced,
     checklistsFailed,
+    orkPublicationsRevoked,
+    orkPublishSkipped,
     complete,
     truncatedReason: readResult.data.truncatedReason,
     message: complete
       ? options.apply
         ? "Bitrix24 task sync applied to local cache."
         : "Bitrix24 task sync dry-run completed."
-      : checklistsFailed > 0
-        ? "Bitrix24 task sync completed with checklist failures."
-        : "Bitrix24 task sync completed with partial result.",
+      : orkPublishSkipped > 0
+        ? "Bitrix24 task sync applied; #орк publication requires authorized specialist."
+        : checklistsFailed > 0
+          ? "Bitrix24 task sync completed with checklist failures."
+          : "Bitrix24 task sync completed with partial result.",
     journalId,
+    orkPublishDenied: orkPublishDenied.length > 0 ? orkPublishDenied : undefined,
   };
 }

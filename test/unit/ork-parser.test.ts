@@ -28,6 +28,11 @@ describe("ork summary parser", () => {
 
   it("rejects empty summary and strips unsafe markup", () => {
     assert.equal(parseOrkSummaryFromDescription("#орк   ").ok, false);
+    assert.equal(parseOrkSummaryFromDescription("#орк\n\n").ok, false);
+    assert.equal(
+      parseOrkSummaryFromDescription("#орк Public\n[b]#орк[/b] second").ok,
+      false,
+    );
     const parsed = parseOrkSummaryFromDescription(
       "#орк <b>Безопасно</b> <script>x</script>",
     );

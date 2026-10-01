@@ -13,6 +13,7 @@ import {
   canViewFullBitrixTaskForUser,
 } from "./work-access";
 import { buildChecklistPublicDto } from "./checklist-dto";
+import { filterVisibleOrkPublication } from "../claims/ork-publication-visibility";
 import {
   findActiveContactAction,
   findActiveSummaryPublication,
@@ -163,11 +164,19 @@ export async function buildClaimTaskWorkDto(input: {
   if (!full && !summary) {
     return null;
   }
-  const publication = await findActiveSummaryPublication(
-    input.portalId,
-    input.task.taskId,
-    input.task.objectType,
-    input.task.objectGuid,
+  const publication = filterVisibleOrkPublication(
+    {
+      cacheVersion: input.task.cacheVersion,
+      objectType: input.task.objectType,
+      objectGuid: input.task.objectGuid,
+      bindingStatus: input.task.bindingStatus,
+    },
+    await findActiveSummaryPublication(
+      input.portalId,
+      input.task.taskId,
+      input.task.objectType,
+      input.task.objectGuid,
+    ),
   );
   if (!publication || publication.publicationOrigin !== "ork_sync") {
     return null;
@@ -210,8 +219,19 @@ export async function buildSummaryTaskWorkDto(input: {
   ) {
     return null;
   }
-  const publication = await findActiveSummaryPublication(
-    input.portalId, input.task.taskId, input.task.objectType, input.task.objectGuid,
+  const publication = filterVisibleOrkPublication(
+    {
+      cacheVersion: input.task.cacheVersion,
+      objectType: input.task.objectType,
+      objectGuid: input.task.objectGuid,
+      bindingStatus: input.task.bindingStatus,
+    },
+    await findActiveSummaryPublication(
+      input.portalId,
+      input.task.taskId,
+      input.task.objectType,
+      input.task.objectGuid,
+    ),
   );
   if (!publication) {
     return null;
