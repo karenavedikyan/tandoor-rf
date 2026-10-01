@@ -30,8 +30,11 @@ export async function resolveConfirmedResponsibleProfile(
     email: string;
     access_expires_at: Date | null;
     confirmed_at: Date;
+    last_verified_at: Date | null;
+    bitrix_user_id: string;
   }>(
-    `SELECT u.id::text AS user_id, u.full_name, u.email, l.access_expires_at, l.confirmed_at
+    `SELECT u.id::text AS user_id, u.full_name, u.email, l.access_expires_at, l.confirmed_at,
+            l.last_verified_at, l.bitrix_user_id
      FROM bitrix24_employee_portal_links l
      JOIN users u ON u.id = l.user_id
      WHERE l.portal_id = $1
@@ -45,8 +48,10 @@ export async function resolveConfirmedResponsibleProfile(
     return { state: "unknown", displayName: null, lkUserId: null, email: null };
   }
   if (!isLinkAccessValid({
+    bitrixUserId: row.bitrix_user_id,
     confirmedAt: row.confirmed_at.toISOString(),
     accessExpiresAt: row.access_expires_at?.toISOString() ?? null,
+    lastVerifiedAt: row.last_verified_at?.toISOString() ?? null,
   }, loadBitrix24TasksRuntimeConfig())) {
     return { state: "unknown", displayName: null, lkUserId: null, email: null };
   }

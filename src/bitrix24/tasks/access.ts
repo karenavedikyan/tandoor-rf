@@ -1,7 +1,11 @@
 import type { AccessContext } from "../../access/types";
 import { canReadClientGuid } from "../../clients/repository";
 import { bitrixChangedAtToDate } from "../parse-changed-at";
-import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "./config";
+import {
+  isCachePublishAllowed,
+  isPilotTaskFilterActive,
+  loadBitrix24TasksRuntimeConfig,
+} from "./config";
 import { findEmployeePortalLink, type TaskCacheRow } from "./repository";
 import { guardPastTimestamp } from "./timestamp-guard";
 
@@ -13,7 +17,8 @@ export type TaskVisibilityDenyCode =
   | "ACCESS_EXPIRED"
   | "NO_CLIENT_ACCESS"
   | "STALE_SNAPSHOT"
-  | "FUTURE_TASK";
+  | "FUTURE_TASK"
+  | "LINK_UNVERIFIED";
 
 export type TaskVisibilityResult = { ok: true } | { ok: false; code: TaskVisibilityDenyCode };
 
@@ -22,8 +27,15 @@ export function isAudienceOnlyDeny(code: TaskVisibilityDenyCode): boolean {
   return code === "NO_CLIENT_ACCESS";
 }
 
+export type EmployeePortalLinkRow = {
+  bitrixUserId: string;
+  confirmedAt: string;
+  accessExpiresAt: string | null;
+  lastVerifiedAt: string | null;
+};
+
 export function isLinkAccessValid(
-  link: { accessExpiresAt: string | null; confirmedAt: string },
+  link: EmployeePortalLinkRow,
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
   nowMs = Date.now(),
 ): boolean {
@@ -40,9 +52,10 @@ export function isLinkAccessValid(
       return false;
     }
   }
-  if (runtime.cacheAccessTtlMs > 0) {
-    const confirmedAtMs = Date.parse(link.confirmedAt);
-    if (confirmedAtMs + runtime.cacheAccessTtlMs < nowMs) {
+  if (runtime.linkVerificationTtlMs > 0) {
+    const verifiedAt = link.lastVerifiedAt ?? link.confirmedAt;
+    const verifiedMs = Date.parse(verifiedAt);
+    if (!Number.isFinite(verifiedMs) || verifiedMs + runtime.linkVerificationTtlMs < nowMs) {
       return false;
     }
   }
@@ -51,7 +64,7 @@ export function isLinkAccessValid(
 
 function isTaskSnapshotCurrent(
   task: TaskCacheRow,
-  link: { confirmedAt: string },
+  link: EmployeePortalLinkRow,
   runtime: ReturnType<typeof loadBitrix24TasksRuntimeConfig>,
   nowMs = Date.now(),
 ): TaskVisibilityResult {
@@ -60,11 +73,11 @@ function isTaskSnapshotCurrent(
     return { ok: false, code: syncedGuard.reason === "future" ? "FUTURE_TASK" : "STALE_SNAPSHOT" };
   }
   const syncedAtMs = Date.parse(task.syncedAt);
-  const linkConfirmedMs = Date.parse(link.confirmedAt);
-  if (!Number.isFinite(linkConfirmedMs)) {
+  const identityFloorMs = Date.parse(link.confirmedAt);
+  if (!Number.isFinite(identityFloorMs)) {
     return { ok: false, code: "STALE_SNAPSHOT" };
   }
-  if (syncedAtMs < linkConfirmedMs) {
+  if (syncedAtMs < identityFloorMs) {
     return { ok: false, code: "STALE_SNAPSHOT" };
   }
   if (runtime.cacheAccessTtlMs > 0 && syncedAtMs + runtime.cacheAccessTtlMs < nowMs) {
@@ -90,10 +103,10 @@ export async function canViewPublishedTaskCacheForUser(
     return { ok: false, code: "NOT_PUBLISHED" };
   }
 
-  if (runtime.pilotAllowListRequired && runtime.pilotTaskIds.size === 0) {
+  if (isPilotTaskFilterActive(runtime) && runtime.pilotTaskIds.size === 0) {
     return { ok: false, code: "PILOT_LIST_MISSING" };
   }
-  if (runtime.pilotTaskIds.size > 0 && !runtime.pilotTaskIds.has(task.taskId)) {
+  if (isPilotTaskFilterActive(runtime) && !runtime.pilotTaskIds.has(task.taskId)) {
     return { ok: false, code: "PILOT_FILTER" };
   }
 
@@ -147,7 +160,7 @@ export async function evaluateUserBitrixTaskConfig(
   if (!isCachePublishAllowed(runtime)) {
     return "NOT_PUBLISHED";
   }
-  if (runtime.pilotAllowListRequired && runtime.pilotTaskIds.size === 0) {
+  if (isPilotTaskFilterActive(runtime) && runtime.pilotTaskIds.size === 0) {
     return "PILOT_LIST_MISSING";
   }
   const link = await findEmployeePortalLink(context.userId, portalId);

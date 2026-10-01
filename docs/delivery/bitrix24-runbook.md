@@ -144,13 +144,39 @@ npm run bitrix24-diagnostics:local -- --bitrix-user-id <BITRIX_USER_ID>
 - После success, partial, failed и отказа доступа интерфейс перечитывает разрешённые данные ЛК. При HTTP-ошибке перечитывания нет ложного сообщения об успешном обновлении; старый прогресс не сохраняется на экране как актуальный.
 - Кнопка «Обновить данные ЛК» остаётся чтением кэша. Открытие карточки не запускает обмен; 1С, расписания, права webhook и состав пилота не меняются.
 
+### Рабочий режим (working mode)
+
+По умолчанию `BITRIX24_TASKS_MODE=pilot`. Рабочий режим включается только при явной политике кэша:
+
+```bash
+BITRIX24_TASKS_MODE=working
+BITRIX24_CACHE_PUBLISH_ENABLED=true
+BITRIX24_CACHE_ACCESS_TTL_MS=3600000
+BITRIX24_LINK_VERIFICATION_TTL_MS=86400000
+BITRIX24_WORKING_MAX_TASKS_PER_SYNC=20
+BITRIX24_WORKING_MAX_DISCOVERY_PAGES=5
+```
+
+- Discovery ищет задачи ответственного по подтверждённым меткам объектов карточки (`%DESCRIPTION` в REST), без allowlist ID.
+- Перед sync выполняется `user.get` для обновления `last_verified_at`; `confirmed_at` не истекает по TTL кэша.
+- Cooldown/lock: сотрудник+карточка (`018`) и task-locks (`017`).
+- Массовая регистрация меток из снимка 1С (dry-run по умолчанию):
+
+```bash
+npm run bitrix24-labels-bootstrap:local          # dry-run
+npm run bitrix24-labels-bootstrap:local -- --apply  # только после проверки счётчиков
+```
+
+**Откат:** `BITRIX24_TASKS_MODE=pilot` и прежний `BITRIX24_PILOT_TASK_IDS`.
+
 ### 9.4. Публикация кэша в UI (только после согласования)
 
 ```bash
 BITRIX24_CACHE_PUBLISH_ENABLED=true
 BITRIX24_CACHE_ACCESS_TTL_MS=3600000   # явный положительный TTL
 BITRIX24_PORTAL_PUBLIC_URL=https://<portal>.bitrix24.ru
-# опционально для пилота:
+# пилот (по умолчанию):
+BITRIX24_TASKS_MODE=pilot
 # BITRIX24_PILOT_TASK_IDS=9001,9002
 ```
 

@@ -9,6 +9,10 @@ function manualSyncLockKey(portalId: string, taskId: string): [string, string] {
   return [portalId, `manual_sync:${taskId}`];
 }
 
+function manualSyncCardLockKey(portalId: string, cardGuid: string, userId: string): [string, string] {
+  return [portalId, `manual_sync:card:${cardGuid}:${userId}`];
+}
+
 export function loadManualSyncMinIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.BITRIX24_MANUAL_SYNC_MIN_INTERVAL_MS?.trim() || "30000");
   if (!Number.isInteger(raw) || raw < 0) {
@@ -153,4 +157,93 @@ export async function acquireManualSyncLock(
   minIntervalMs = loadManualSyncMinIntervalMs(),
 ): Promise<ManualSyncLockResult> {
   return acquireManualSyncLocks(portalId, [taskId], minIntervalMs);
+}
+
+async function checkAndRecordCardCooldown(
+  client: PoolClient,
+  portalId: string,
+  cardGuid: string,
+  userId: string,
+  minIntervalMs: number,
+): Promise<{ ok: true } | { ok: false; retryAfterMs: number }> {
+  await client.query("BEGIN");
+  try {
+    const existing = await client.query<{ last_started_at: Date }>(
+      `SELECT last_started_at
+       FROM bitrix24_manual_sync_card_cooldown
+       WHERE portal_id = $1 AND card_guid = $2::uuid AND user_id = $3::uuid
+       FOR UPDATE`,
+      [portalId, cardGuid, userId],
+    );
+    const prior = existing.rows[0];
+    const nowMs = Date.now();
+    if (prior) {
+      const elapsedMs = nowMs - prior.last_started_at.getTime();
+      if (elapsedMs < minIntervalMs) {
+        await client.query("ROLLBACK");
+        return { ok: false, retryAfterMs: minIntervalMs - elapsedMs };
+      }
+    }
+    await client.query(
+      `INSERT INTO bitrix24_manual_sync_card_cooldown (portal_id, card_guid, user_id, last_started_at)
+       VALUES ($1, $2::uuid, $3::uuid, NOW())
+       ON CONFLICT (portal_id, card_guid, user_id) DO UPDATE SET
+         last_started_at = EXCLUDED.last_started_at`,
+      [portalId, cardGuid, userId],
+    );
+    await client.query("COMMIT");
+    return { ok: true };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function acquireManualSyncCardLock(
+  portalId: string,
+  cardGuid: string,
+  userId: string,
+  minIntervalMs = loadManualSyncMinIntervalMs(),
+): Promise<ManualSyncLockResult> {
+  const pool = requirePool();
+  const client = await pool.connect();
+  const [lockA, lockB] = manualSyncCardLockKey(portalId, cardGuid, userId);
+  let releasePromise: Promise<void> | undefined;
+  const release = (): Promise<void> => {
+    releasePromise ??= (async () => {
+      let broken = false;
+      try {
+        await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+      } catch {
+        broken = true;
+      } finally {
+        client.release(broken);
+      }
+    })();
+    return releasePromise;
+  };
+
+  try {
+    const acquired = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked`,
+      [lockA, lockB],
+    );
+    if (!acquired.rows[0]?.locked) {
+      client.release();
+      return { ok: false, code: "SYNC_IN_PROGRESS", retryAfterMs: minIntervalMs };
+    }
+    const cooldown = await checkAndRecordCardCooldown(client, portalId, cardGuid, userId, minIntervalMs);
+    if (!cooldown.ok) {
+      await client.query(`SELECT pg_advisory_unlock(hashtext($1), hashtext($2))`, [lockA, lockB]);
+      client.release();
+      return { ok: false, code: "COOLDOWN", retryAfterMs: cooldown.retryAfterMs };
+    }
+    return { ok: true, release };
+  } catch (error) {
+    if (!releasePromise) {
+      client.release(true);
+      releasePromise = Promise.resolve();
+    }
+    throw error;
+  }
 }

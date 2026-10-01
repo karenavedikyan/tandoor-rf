@@ -1,21 +1,31 @@
 import type { AccessContext } from "../../access/types";
 import type { PinnedRequestFn } from "../pinned-request";
 import type { ResolvePortalAddressesFn } from "../dns-resolve";
+import { loadBitrix24Config } from "../config";
+import { createOperationContext } from "../transport";
 import { formatMskDateTime } from "../../clients/dto";
 import { requirePool } from "../../db/pool";
-import { findTaskSnapshotById } from "../tasks/repository";
-import { isObjectLinkedToClientCard } from "../tasks/object-access";
 import {
+  findTaskSnapshotById,
+  unpublishResponsibleTasksNotInSet,
+} from "../tasks/repository";
+import { isObjectLinkedToClientCard } from "../tasks/object-access";
+import { ensureEmployeePortalLinkVerified } from "../tasks/employee-verification";
+import {
+  acquireManualSyncCardLock,
   acquireManualSyncLocks,
   loadManualSyncMinIntervalMs,
+  type ManualSyncLockResult,
 } from "./manual-sync-lock";
 import { runBitrix24TaskSync, type Bitrix24SyncResult } from "./run-sync";
+import { discoverResponsibleTasksForCard } from "./task-discovery";
 import {
   mapManualSyncDenyMessage,
   resolveManualSyncScope,
   verifyManualSyncOutcome,
   verifyManualSyncSource,
   type ManualSyncDenyCode,
+  type ManualSyncScopeResult,
 } from "./sync-access";
 
 export type ClientCardSyncOptions = {
@@ -50,6 +60,32 @@ export type ClientCardSyncResponse =
         retryAfterMs?: number;
       };
     };
+
+type SyncBatchResult = {
+  aggregate: Bitrix24SyncResult;
+  sourceDeny: ManualSyncDenyCode | null;
+  lockDeny: ManualSyncLockResult | null;
+  syncedTaskIds: string[];
+};
+
+function emptySyncResult(): Bitrix24SyncResult {
+  return {
+    ok: true,
+    status: "success",
+    mode: "apply",
+    tasksFetched: 0,
+    bindingsConfirmed: 0,
+    bindingsConflict: 0,
+    bindingsInvalid: 0,
+    bindingsPending: 0,
+    cacheWrites: 0,
+    versionConflicts: 0,
+    checklistsSynced: 0,
+    checklistsFailed: 0,
+    complete: true,
+    message: "success",
+  };
+}
 
 function mapSyncResultMessage(result: Bitrix24SyncResult): string {
   if (result.status === "success" && result.complete) {
@@ -120,37 +156,96 @@ function mergeSyncResults(
   };
 }
 
-export async function runClientCardBitrix24Sync(
+async function syncTaskBatch(
   options: ClientCardSyncOptions,
-): Promise<ClientCardSyncResponse> {
-  const env = options.env ?? process.env;
-  const scope = await resolveManualSyncScope(options.context, options.cardGuid, {
-    objectType: options.objectType,
-    objectGuid: options.objectGuid,
-    holdingGuid: options.holdingGuid,
-  });
-  if (!scope.ok) {
-    const status =
-      scope.code === "NOT_CONFIGURED"
-        ? 503
-        : scope.code === "TASK_NOT_ON_CARD" ||
-            scope.code === "SUMMARY_ONLY" ||
-            scope.code === "BINDING_UNCONFIRMED"
-          ? 403
-          : 403;
-    return denyResponse(status, scope.code);
+  scope: Extract<ManualSyncScopeResult, { ok: true }>,
+  env: NodeJS.ProcessEnv,
+): Promise<SyncBatchResult> {
+  const loaded = loadBitrix24Config(env);
+  if (!loaded.ok) {
+    return {
+      aggregate: { ...emptySyncResult(), ok: false, status: "failed", complete: false, message: "NOT_CONFIGURED" },
+      sourceDeny: "NOT_CONFIGURED",
+      lockDeny: null,
+      syncedTaskIds: [],
+    };
+  }
+
+  const operation = createOperationContext(loaded.config);
+  operation.pinnedRequest = options.pinnedRequest;
+  operation.resolvePortalAddresses = options.resolvePortalAddresses;
+
+  const verification = await ensureEmployeePortalLinkVerified(
+    options.context.userId,
+    scope.portalId,
+    loaded.config,
+    operation,
+    { force: scope.mode === "working" },
+  );
+  if (!verification.ok) {
+    return {
+      aggregate: emptySyncResult(),
+      sourceDeny: verification.code as ManualSyncDenyCode,
+      lockDeny: null,
+      syncedTaskIds: [],
+    };
+  }
+
+  let taskIdsToSync = [...scope.taskIds];
+  let discoveryComplete = true;
+  if (scope.mode === "working") {
+    const discovery = await discoverResponsibleTasksForCard({
+      config: loaded.config,
+      bitrixUserId: scope.bitrixUserId,
+      cardGuid: options.cardGuid,
+      holdingGuid: scope.holdingGuid,
+      operation,
+    });
+    taskIdsToSync = discovery.taskIds;
+    discoveryComplete = discovery.complete;
   }
 
   const minIntervalMs = loadManualSyncMinIntervalMs(env);
-  const lock = await acquireManualSyncLocks(scope.portalId, scope.taskIds, minIntervalMs);
-  if (!lock.ok) {
-    return denyResponse(429, lock.code, lock.retryAfterMs);
+  const cardLock = await acquireManualSyncCardLock(
+    scope.portalId,
+    options.cardGuid,
+    options.context.userId,
+    minIntervalMs,
+  );
+  if (!cardLock.ok) {
+    return {
+      aggregate: emptySyncResult(),
+      sourceDeny: null,
+      lockDeny: cardLock,
+      syncedTaskIds: [],
+    };
   }
 
-  let aggregate: Bitrix24SyncResult | null = null;
+  const taskLock =
+    taskIdsToSync.length > 0
+      ? await acquireManualSyncLocks(scope.portalId, taskIdsToSync, minIntervalMs)
+      : { ok: true as const, release: async () => {} };
+  if (!taskLock.ok) {
+    await cardLock.release();
+    return {
+      aggregate: emptySyncResult(),
+      sourceDeny: null,
+      lockDeny: taskLock,
+      syncedTaskIds: [],
+    };
+  }
+
+  let aggregate: Bitrix24SyncResult | null = taskIdsToSync.length === 0 ? emptySyncResult() : null;
   let sourceDeny: ManualSyncDenyCode | null = null;
   try {
-    for (const taskId of scope.taskIds) {
+    for (const taskId of taskIdsToSync) {
+      if (operation.deadline.expired()) {
+        aggregate = aggregate
+          ? { ...aggregate, status: "partial", complete: false }
+          : { ...emptySyncResult(), status: "partial", complete: false };
+        discoveryComplete = false;
+        break;
+      }
       const prior = await findTaskSnapshotById(scope.portalId, taskId);
       const result = await runBitrix24TaskSync({
         bitrixUserId: scope.bitrixUserId,
@@ -159,18 +254,26 @@ export async function runClientCardBitrix24Sync(
         pinnedRequest: options.pinnedRequest,
         resolvePortalAddresses: options.resolvePortalAddresses,
         env,
+        operation,
         assertTaskScope: async (task) => {
           const deny = await verifyManualSyncSource(
-            options.context.userId, scope.portalId, options.cardGuid, scope.bitrixUserId, task,
+            options.context.userId,
+            scope.portalId,
+            options.cardGuid,
+            scope.bitrixUserId,
+            task,
           );
           if (!deny) return;
           sourceDeny = deny;
-          // A changed source binding must stop exposing the OLD card's snapshot.
-          // Do not publish foreign data or invalidate a newer concurrent generation.
           if (
-            prior?.objectType && prior.objectGuid &&
+            prior?.objectType &&
+            prior.objectGuid &&
             ["BINDING_UNCONFIRMED", "TASK_NOT_ON_CARD", "SUMMARY_ONLY"].includes(deny) &&
-            await isObjectLinkedToClientCard(options.cardGuid, prior.objectType, prior.objectGuid)
+            (await isObjectLinkedToClientCard(
+              options.cardGuid,
+              prior.objectType,
+              prior.objectGuid,
+            ))
           ) {
             await requirePool().query(
               `UPDATE bitrix24_task_cache SET published = false, cache_version = cache_version + 1
@@ -184,22 +287,63 @@ export async function runClientCardBitrix24Sync(
       aggregate = aggregate ? mergeSyncResults(aggregate, result) : result;
       if (sourceDeny) break;
     }
+
+    if (scope.mode === "working" && discoveryComplete && !sourceDeny) {
+      await unpublishResponsibleTasksNotInSet({
+        portalId: scope.portalId,
+        bitrixUserId: scope.bitrixUserId,
+        objectType: scope.objectType,
+        objectGuid: scope.objectGuid,
+        holdingGuid: scope.holdingGuid,
+        keepTaskIds: taskIdsToSync,
+      });
+    }
   } finally {
-    await lock.release();
+    await taskLock.release();
+    await cardLock.release();
   }
 
-  if (sourceDeny) return denyResponse(403, sourceDeny);
-  const result = aggregate!;
+  return {
+    aggregate: aggregate ?? emptySyncResult(),
+    sourceDeny,
+    lockDeny: null,
+    syncedTaskIds: taskIdsToSync,
+  };
+}
+
+export async function runClientCardBitrix24Sync(
+  options: ClientCardSyncOptions,
+): Promise<ClientCardSyncResponse> {
+  const env = options.env ?? process.env;
+  const scope = await resolveManualSyncScope(options.context, options.cardGuid, {
+    objectType: options.objectType,
+    objectGuid: options.objectGuid,
+    holdingGuid: options.holdingGuid,
+  });
+  if (!scope.ok) {
+    const status = scope.code === "NOT_CONFIGURED" ? 503 : 403;
+    return denyResponse(status, scope.code);
+  }
+
+  const batch = await syncTaskBatch(options, scope, env);
+  if (batch.lockDeny && !batch.lockDeny.ok) {
+    return denyResponse(429, batch.lockDeny.code, batch.lockDeny.retryAfterMs);
+  }
+  if (batch.sourceDeny) {
+    return denyResponse(403, batch.sourceDeny);
+  }
+
   const postDeny = await verifyManualSyncOutcome(
     options.context,
     scope.portalId,
     options.cardGuid,
-    scope.taskIds,
+    batch.syncedTaskIds,
   );
   if (postDeny) {
     return denyResponse(403, postDeny);
   }
 
+  const result = batch.aggregate;
   const finishedAt = new Date();
 
   if (!result.ok && result.status === "failed" && result.tasksFetched === 0) {

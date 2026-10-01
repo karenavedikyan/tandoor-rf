@@ -30,6 +30,8 @@ export type ReadBitrixTasksOptions = {
   startedAtMs?: number;
   maxPages?: number;
   taskId?: string;
+  /** Substring filter for DESCRIPTION (%DESCRIPTION in Bitrix REST). */
+  descriptionContains?: string;
 };
 
 function finalizeTaskListResult(input: {
@@ -114,12 +116,19 @@ export async function readBitrixTasksForUser(
       break;
     }
 
+    const filter: Record<string, unknown> = { RESPONSIBLE_ID: parsedId };
+    if (taskId) {
+      filter.ID = taskId;
+    }
+    if (options.descriptionContains) {
+      filter["%DESCRIPTION"] = options.descriptionContains;
+    }
     const transport = await callBitrix24Method(
       config,
       "tasks.task.list",
       {
         order: { CHANGED_DATE: "desc" },
-        filter: { RESPONSIBLE_ID: parsedId, ...(taskId ? { ID: taskId } : {}) },
+        filter,
         select: [...TASK_SELECT_FIELDS],
         start,
       },

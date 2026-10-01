@@ -2,7 +2,12 @@ import type { AccessContext } from "../../access/types";
 import { loadAccessContext } from "../../access/context";
 import type { Bitrix24ObjectType } from "../labels/format";
 import { loadBitrix24Config } from "../config";
-import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../tasks/config";
+import {
+  isCachePublishAllowed,
+  isPilotTaskFilterActive,
+  isWorkingModeActive,
+  loadBitrix24TasksRuntimeConfig,
+} from "../tasks/config";
 import {
   canViewBitrixTaskSummaryForUser,
   canViewFullBitrixTaskForUser,
@@ -16,7 +21,9 @@ import {
   findEmployeePortalLink,
   findPublishedTaskById,
   findTaskSnapshotById,
+  listPublishedTasksForObject,
 } from "../tasks/repository";
+import { listConfirmedLabelTargetsForCard } from "./card-labels";
 
 export type ManualSyncDenyCode =
   | TaskVisibilityDenyCode
@@ -24,11 +31,14 @@ export type ManualSyncDenyCode =
   | "CARD_NOT_LINKED"
   | "TASK_NOT_ON_CARD"
   | "BINDING_UNCONFIRMED"
-  | "SUMMARY_ONLY";
+  | "SUMMARY_ONLY"
+  | "BITRIX_USER_INACTIVE"
+  | "VERIFICATION_FAILED";
 
 export type ManualSyncScopeResult =
   | {
       ok: true;
+      mode: "pilot" | "working";
       portalId: string;
       bitrixUserId: string;
       taskIds: string[];
@@ -60,12 +70,15 @@ export function mapManualSyncDenyMessage(code: ManualSyncDenyCode): string {
       return "Недостаточно прав для синхронизации полной задачи и чек-листа.";
     case "NOT_PUBLISHED":
       return "Кэш задач Bitrix24 не опубликован.";
+    case "BITRIX_USER_INACTIVE":
+      return "Учётная запись Bitrix24 сотрудника неактивна.";
+    case "VERIFICATION_FAILED":
+      return "Не удалось подтвердить доступ к Bitrix24.";
     default:
       return "Синхронизация недоступна.";
   }
 }
 
-/** Pre-sync: allow trigger without fresh cache; deny summary-only and foreign-card tasks. */
 async function assessManualSyncPrecheck(
   context: AccessContext,
   portalId: string,
@@ -109,36 +122,20 @@ async function assessManualSyncPrecheck(
   return null;
 }
 
-export async function resolveManualSyncScope(
+async function resolvePilotManualSyncScope(
   context: AccessContext,
+  portalId: string,
   cardGuid: string,
+  link: { bitrixUserId: string },
   input: {
     objectType: Bitrix24ObjectType;
     objectGuid: string;
     holdingGuid: string;
   },
 ): Promise<ManualSyncScopeResult> {
-  const loaded = loadBitrix24Config();
-  if (!loaded.ok) {
-    return { ok: false, code: "NOT_CONFIGURED" };
-  }
   const runtime = loadBitrix24TasksRuntimeConfig();
-  if (!isCachePublishAllowed(runtime)) {
-    return { ok: false, code: "NOT_PUBLISHED" };
-  }
-
-  const configDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
-  if (configDeny) {
-    return { ok: false, code: configDeny };
-  }
-
-  if (runtime.pilotAllowListRequired && runtime.pilotTaskIds.size === 0) {
+  if (isPilotTaskFilterActive(runtime) && runtime.pilotTaskIds.size === 0) {
     return { ok: false, code: "PILOT_LIST_MISSING" };
-  }
-
-  const link = await findEmployeePortalLink(context.userId, loaded.config.portalId);
-  if (!link) {
-    return { ok: false, code: "NO_EMPLOYEE_LINK" };
   }
 
   const pilotIds = [...runtime.pilotTaskIds];
@@ -151,7 +148,7 @@ export async function resolveManualSyncScope(
   for (const taskId of pilotIds) {
     const deny = await assessManualSyncPrecheck(
       context,
-      loaded.config.portalId,
+      portalId,
       cardGuid,
       taskId,
       link.bitrixUserId,
@@ -172,7 +169,8 @@ export async function resolveManualSyncScope(
 
   return {
     ok: true,
-    portalId: loaded.config.portalId,
+    mode: "pilot",
+    portalId,
     bitrixUserId: link.bitrixUserId,
     taskIds: eligible,
     objectType: input.objectType,
@@ -181,13 +179,118 @@ export async function resolveManualSyncScope(
   };
 }
 
-/** Post-sync: require confirmed binding, card match, responsible, and fresh full-view rights. */
+async function resolveWorkingManualSyncScope(
+  context: AccessContext,
+  portalId: string,
+  cardGuid: string,
+  link: { bitrixUserId: string },
+  input: {
+    objectType: Bitrix24ObjectType;
+    objectGuid: string;
+    holdingGuid: string;
+  },
+): Promise<ManualSyncScopeResult> {
+  if (
+    !(await canReadBoundBitrixObject(context, cardGuid, input.objectType, input.objectGuid))
+  ) {
+    return { ok: false, code: "NO_CLIENT_ACCESS" };
+  }
+
+  const labelTargets = await listConfirmedLabelTargetsForCard(cardGuid, input.holdingGuid);
+  const cachedTasks = await listPublishedTasksForObject(
+    portalId,
+    input.objectType,
+    input.objectGuid,
+  );
+  const cachedEligible = cachedTasks
+    .filter((task) => task.responsibleBitrixUserId === link.bitrixUserId)
+    .map((task) => task.taskId);
+
+  if (labelTargets.length === 0 && cachedEligible.length === 0) {
+    return {
+      ok: true,
+      mode: "working",
+      portalId,
+      bitrixUserId: link.bitrixUserId,
+      taskIds: [],
+      objectType: input.objectType,
+      objectGuid: input.objectGuid,
+      holdingGuid: input.holdingGuid,
+    };
+  }
+
+  return {
+    ok: true,
+    mode: "working",
+    portalId,
+    bitrixUserId: link.bitrixUserId,
+    taskIds: cachedEligible,
+    objectType: input.objectType,
+    objectGuid: input.objectGuid,
+    holdingGuid: input.holdingGuid,
+  };
+}
+
+export async function resolveManualSyncScope(
+  context: AccessContext,
+  cardGuid: string,
+  input: {
+    objectType: Bitrix24ObjectType;
+    objectGuid: string;
+    holdingGuid: string;
+  },
+): Promise<ManualSyncScopeResult> {
+  const loaded = loadBitrix24Config();
+  if (!loaded.ok) {
+    return { ok: false, code: "NOT_CONFIGURED" };
+  }
+  const runtime = loadBitrix24TasksRuntimeConfig();
+  if (!isCachePublishAllowed(runtime)) {
+    return { ok: false, code: "NOT_PUBLISHED" };
+  }
+
+  const configDeny = await evaluateUserBitrixTaskConfig(context, loaded.config.portalId);
+  if (configDeny && configDeny !== "ACCESS_EXPIRED") {
+    return { ok: false, code: configDeny };
+  }
+
+  const link = await findEmployeePortalLink(context.userId, loaded.config.portalId);
+  if (!link) {
+    return { ok: false, code: "NO_EMPLOYEE_LINK" };
+  }
+
+  if (isWorkingModeActive(runtime)) {
+    return resolveWorkingManualSyncScope(
+      context,
+      loaded.config.portalId,
+      cardGuid,
+      link,
+      input,
+    );
+  }
+
+  if (configDeny === "ACCESS_EXPIRED") {
+    return { ok: false, code: configDeny };
+  }
+
+  return resolvePilotManualSyncScope(
+    context,
+    loaded.config.portalId,
+    cardGuid,
+    link,
+    input,
+  );
+}
+
 export async function verifyManualSyncOutcome(
   context: AccessContext,
   portalId: string,
   cardGuid: string,
   taskIds: string[],
 ): Promise<ManualSyncDenyCode | null> {
+  if (taskIds.length === 0) {
+    return null;
+  }
   context = await loadAccessContext(context.userId);
   if (context.status !== "active") return "NO_CLIENT_ACCESS";
   const link = await findEmployeePortalLink(context.userId, portalId);
@@ -226,7 +329,6 @@ export async function verifyManualSyncOutcome(
   return null;
 }
 
-/** Source metadata must be authorized before publishing, including a cache-less first run. */
 export async function verifyManualSyncSource(
   userId: string,
   portalId: string,
@@ -243,9 +345,13 @@ export async function verifyManualSyncSource(
   const context = await loadAccessContext(userId);
   if (context.status !== "active") return "NO_CLIENT_ACCESS";
   const configDeny = await evaluateUserBitrixTaskConfig(context, portalId);
-  if (configDeny) return configDeny;
+  if (configDeny && configDeny !== "ACCESS_EXPIRED") return configDeny;
+
   const runtime = loadBitrix24TasksRuntimeConfig();
-  if (!runtime.pilotTaskIds.has(task.taskId)) return "PILOT_FILTER";
+  if (isPilotTaskFilterActive(runtime) && !runtime.pilotTaskIds.has(task.taskId)) {
+    return "PILOT_FILTER";
+  }
+
   const link = await findEmployeePortalLink(userId, portalId);
   if (!link || link.bitrixUserId !== bitrixUserId) return "NO_EMPLOYEE_LINK";
   if (task.bindingStatus !== "confirmed" || !task.objectType || !task.objectGuid) {

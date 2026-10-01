@@ -521,13 +521,15 @@ export async function findEmployeePortalLink(
   bitrixUserId: string;
   confirmedAt: string;
   accessExpiresAt: string | null;
+  lastVerifiedAt: string | null;
 } | null> {
   const result = await client.query<{
     bitrix_user_id: string;
     confirmed_at: Date;
     access_expires_at: Date | null;
+    last_verified_at: Date | null;
   }>(
-    `SELECT bitrix_user_id, confirmed_at, access_expires_at
+    `SELECT bitrix_user_id, confirmed_at, access_expires_at, last_verified_at
      FROM bitrix24_employee_portal_links
      WHERE user_id = $1::uuid AND portal_id = $2`,
     [userId, portalId],
@@ -540,7 +542,21 @@ export async function findEmployeePortalLink(
     bitrixUserId: row.bitrix_user_id,
     confirmedAt: row.confirmed_at.toISOString(),
     accessExpiresAt: row.access_expires_at ? row.access_expires_at.toISOString() : null,
+    lastVerifiedAt: row.last_verified_at ? row.last_verified_at.toISOString() : null,
   };
+}
+
+export async function recordEmployeePortalVerification(
+  userId: string,
+  portalId: string,
+  client: Pool | PoolClient = requirePool(),
+): Promise<void> {
+  await client.query(
+    `UPDATE bitrix24_employee_portal_links
+     SET last_verified_at = NOW()
+     WHERE user_id = $1::uuid AND portal_id = $2`,
+    [userId, portalId],
+  );
 }
 
 export async function isPortalBitrixUserConfirmed(
@@ -711,4 +727,50 @@ export async function confirmObjectHierarchyLink(
      ON CONFLICT (parent_type, parent_guid, child_type, child_guid) DO NOTHING`,
     [parentGuid, childType, childGuid],
   );
+}
+
+export async function unpublishResponsibleTasksNotInSet(input: {
+  portalId: string;
+  bitrixUserId: string;
+  objectType: Bitrix24ObjectType;
+  objectGuid: string;
+  holdingGuid: string;
+  keepTaskIds: string[];
+  client?: Pool | PoolClient;
+}): Promise<number> {
+  const client = input.client ?? requirePool();
+  const keep = input.keepTaskIds.length > 0 ? input.keepTaskIds : ["__none__"];
+  const result = await client.query(
+    `UPDATE bitrix24_task_cache c
+     SET published = FALSE, cache_version = c.cache_version + 1
+     FROM bitrix24_task_bindings b
+     WHERE c.portal_id = b.portal_id AND c.task_id = b.task_id
+       AND c.portal_id = $1
+       AND c.responsible_bitrix_user_id = $2
+       AND b.binding_status = 'confirmed'
+       AND c.published = TRUE
+       AND c.task_id <> ALL($3::text[])
+       AND (
+         (b.object_type = $4::bitrix24_object_type AND b.object_guid = $5::uuid)
+         OR (
+           $4::text = 'holding'
+           AND EXISTS (
+             SELECT 1 FROM bitrix24_object_hierarchy h
+             WHERE h.parent_type = 'holding'
+               AND h.parent_guid = $6::uuid
+               AND h.child_type = b.object_type
+               AND h.child_guid = b.object_guid
+           )
+         )
+       )`,
+    [
+      input.portalId,
+      input.bitrixUserId,
+      keep,
+      input.objectType,
+      input.objectGuid,
+      input.holdingGuid,
+    ],
+  );
+  return result.rowCount ?? 0;
 }

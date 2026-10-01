@@ -36,6 +36,7 @@ export type Bitrix24SyncOptions = {
   pinnedRequest?: PinnedRequestFn;
   resolvePortalAddresses?: ResolvePortalAddressesFn;
   env?: NodeJS.ProcessEnv;
+  operation?: Bitrix24OperationContext;
   /** Server-only card scope guard. Never supplied by a request body. */
   assertTaskScope?: (task: PreparedTaskWrite) => Promise<void>;
   /** Integration-test fault injection only. */
@@ -223,9 +224,10 @@ export async function runBitrix24TaskSync(
     };
   }
 
-  const operation = createOperationContext(config);
-  operation.pinnedRequest = options.pinnedRequest;
-  operation.resolvePortalAddresses = options.resolvePortalAddresses;
+  const operation = options.operation ?? createOperationContext(config);
+  operation.pinnedRequest = options.pinnedRequest ?? operation.pinnedRequest;
+  operation.resolvePortalAddresses =
+    options.resolvePortalAddresses ?? operation.resolvePortalAddresses;
 
   const readResult = await readBitrixTasksForUser(config, options.bitrixUserId, {
     operation,
