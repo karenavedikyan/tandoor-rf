@@ -40,6 +40,7 @@ export type CatalogApplyResult =
       versionId: string;
       coreApplied: true;
       commercialReady: false;
+      distributionReady: boolean;
       quarantineCount: number;
       newProducts: number;
       changedProducts: number;
@@ -160,6 +161,7 @@ async function configureSession(managed: ManagedClient): Promise<void> {
 
 function buildManifestReport(data: ParsedCatalogSet, readAt?: string) {
   return {
+    profile: data.profile,
     manifestSha256: data.manifest.manifestSha256,
     totalByteSize: data.manifest.totalByteSize,
     readAt: readAt ?? null,
@@ -355,6 +357,7 @@ async function recoverFromCommitUncertainty(
           versionId: recovered.versionId,
           coreApplied: true,
           commercialReady: false,
+          distributionReady: recovered.distributionReady,
           quarantineCount: recovered.quarantineCount,
           newProducts: recovered.newProducts,
           changedProducts: recovered.changedProducts,
@@ -561,18 +564,23 @@ export async function applyCatalogImport(
       }
     }
 
-    const commercial = classifyCommercialData(data, options.readAt ? new Date(options.readAt) : new Date());
-    const quarantineCount = commercial.quarantineRowCount;
-    const quarantineRows: QuarantineEntry[] = commercial.quarantineEntries;
+    const isDistribution = data.profile === "distribution";
+    const commercial = isDistribution
+      ? null
+      : classifyCommercialData(data, options.readAt ? new Date(options.readAt) : new Date());
+    const quarantineCount = commercial?.quarantineRowCount ?? 0;
+    const quarantineRows: QuarantineEntry[] = commercial?.quarantineEntries ?? [];
+    const distributionReady = isDistribution;
 
     const runInsert = await queryManaged<{ id: string }>(
       managed,
       `
-        INSERT INTO onec_catalog_import_runs (status, mode, trigger_source, manifest_sha256, source_byte_size)
-        VALUES ('running', 'apply', $1, $2, $3)
+        INSERT INTO onec_catalog_import_runs
+          (status, mode, trigger_source, manifest_sha256, source_byte_size, import_profile)
+        VALUES ('running', 'apply', $1, $2, $3, $4)
         RETURNING id
       `,
-      [triggerSource, data.manifest.manifestSha256, data.manifest.totalByteSize],
+      [triggerSource, data.manifest.manifestSha256, data.manifest.totalByteSize, data.profile],
     );
     phase.runId = runInsert.rows[0]!.id;
 
@@ -582,11 +590,12 @@ export async function applyCatalogImport(
     const versionInsert = await queryManaged<{ id: string }>(
       managed,
       `
-        INSERT INTO onec_catalog_versions (manifest_sha256, product_count, is_active)
-        VALUES ($1, $2, FALSE)
+        INSERT INTO onec_catalog_versions
+          (manifest_sha256, product_count, is_active, import_profile, distribution_ready)
+        VALUES ($1, $2, FALSE, $3, $4)
         RETURNING id
       `,
-      [data.manifest.manifestSha256, data.products.length],
+      [data.manifest.manifestSha256, data.products.length, data.profile, distributionReady],
     );
     const versionId = versionInsert.rows[0]!.id;
     phase.versionId = versionId;
@@ -605,20 +614,22 @@ export async function applyCatalogImport(
         [versionId, section.code, section.name, section.parentCode],
       );
     }
-    for (const storage of data.storages) {
-      await queryManaged(
-        managed,
-        `INSERT INTO onec_catalog_storages (version_id, code, name, address, email, phone)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
-        [versionId, storage.code, storage.name, storage.address, storage.email, storage.phone],
-      );
-    }
-    for (const priceType of data.priceTypes) {
-      await queryManaged(
-        managed,
-        `INSERT INTO onec_catalog_price_types (version_id, price_type_code, name) VALUES ($1::uuid, $2, $3)`,
-        [versionId, priceType.priceTypeCode, priceType.name],
-      );
+    if (!isDistribution) {
+      for (const storage of data.storages) {
+        await queryManaged(
+          managed,
+          `INSERT INTO onec_catalog_storages (version_id, code, name, address, email, phone)
+           VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
+          [versionId, storage.code, storage.name, storage.address, storage.email, storage.phone],
+        );
+      }
+      for (const priceType of data.priceTypes) {
+        await queryManaged(
+          managed,
+          `INSERT INTO onec_catalog_price_types (version_id, price_type_code, name) VALUES ($1::uuid, $2, $3)`,
+          [versionId, priceType.priceTypeCode, priceType.name],
+        );
+      }
     }
 
     const propertyRows: Array<[string, string, string, string]> = [];
@@ -653,66 +664,68 @@ export async function applyCatalogImport(
     await insertCatalogProductImagesBatch(managed.client, versionId, imageRows);
     await insertCatalogProductSectionsBatch(managed.client, versionId, sectionRows);
 
-    const priceRows = data.prices.map((row, index) => {
-      const classified = commercial.prices[index]!;
-      return [
-        row.priceTypeCode,
-        row.productCode,
-        row.priceRaw,
-        classified.numeric,
-        classified.quarantined,
-        classified.reason,
-      ] as [string, string, string, string | null, boolean, string | null];
-    });
-    await insertCatalogPricesStagingBatch(managed.client, versionId, priceRows);
+    if (!isDistribution && commercial) {
+      const priceRows = data.prices.map((row, index) => {
+        const classified = commercial.prices[index]!;
+        return [
+          row.priceTypeCode,
+          row.productCode,
+          row.priceRaw,
+          classified.numeric,
+          classified.quarantined,
+          classified.reason,
+        ] as [string, string, string, string | null, boolean, string | null];
+      });
+      await insertCatalogPricesStagingBatch(managed.client, versionId, priceRows);
 
-    const stockRows = data.stock.map((row, index) => {
-      const classified = commercial.stock[index]!;
-      return [
-        row.productCode,
-        row.storageCode,
-        row.quantityRaw,
-        classified.numeric,
-        classified.quarantined,
-        classified.reason,
-      ] as [string, string, string, string | null, boolean, string | null];
-    });
-    await insertCatalogStockStagingBatch(managed.client, versionId, stockRows);
+      const stockRows = data.stock.map((row, index) => {
+        const classified = commercial.stock[index]!;
+        return [
+          row.productCode,
+          row.storageCode,
+          row.quantityRaw,
+          classified.numeric,
+          classified.quarantined,
+          classified.reason,
+        ] as [string, string, string, string | null, boolean, string | null];
+      });
+      await insertCatalogStockStagingBatch(managed.client, versionId, stockRows);
 
-    const stockExpectedRows = data.stockExpected.map((row, index) => {
-      const classified = commercial.stockExpected[index]!;
-      let expectedExpired = classified.expectedExpired;
-      if (row.expectedDateRaw) {
-        const parsedDate = parseExpectedCalendar(row.expectedDateRaw);
-        if (parsedDate.ok) {
-          expectedExpired = markExpectedCalendarExpiry(
-            parsedDate,
-            options.readAt ? new Date(options.readAt) : new Date(),
-          ).expired;
+      const stockExpectedRows = data.stockExpected.map((row, index) => {
+        const classified = commercial.stockExpected[index]!;
+        let expectedExpired = classified.expectedExpired;
+        if (row.expectedDateRaw) {
+          const parsedDate = parseExpectedCalendar(row.expectedDateRaw);
+          if (parsedDate.ok) {
+            expectedExpired = markExpectedCalendarExpiry(
+              parsedDate,
+              options.readAt ? new Date(options.readAt) : new Date(),
+            ).expired;
+          }
         }
-      }
-      return [
-        row.productCode,
-        row.storageCode,
-        row.quantityRaw,
-        classified.numeric,
-        row.expectedDateRaw,
-        null,
-        expectedExpired,
-        row.availableRaw,
-        classified.quarantined,
-        classified.reason,
-      ] as [string, string, string, string | null, string | null, string | null, boolean, string | null, boolean, string | null];
-    });
-    await insertCatalogStockExpectedStagingBatch(managed.client, versionId, stockExpectedRows);
+        return [
+          row.productCode,
+          row.storageCode,
+          row.quantityRaw,
+          classified.numeric,
+          row.expectedDateRaw,
+          null,
+          expectedExpired,
+          row.availableRaw,
+          classified.quarantined,
+          classified.reason,
+        ] as [string, string, string, string | null, string | null, string | null, boolean, string | null, boolean, string | null];
+      });
+      await insertCatalogStockExpectedStagingBatch(managed.client, versionId, stockExpectedRows);
 
-    for (const entry of quarantineRows) {
-      await queryManaged(
-        managed,
-        `INSERT INTO onec_catalog_quarantine (version_id, layer, reason_code, source_identifiers)
-         VALUES ($1::uuid, $2, $3, $4::jsonb)`,
-        [versionId, entry.layer, entry.reasonCode, JSON.stringify(entry.sourceIdentifiers)],
-      );
+      for (const entry of quarantineRows) {
+        await queryManaged(
+          managed,
+          `INSERT INTO onec_catalog_quarantine (version_id, layer, reason_code, source_identifiers)
+           VALUES ($1::uuid, $2, $3, $4::jsonb)`,
+          [versionId, entry.layer, entry.reasonCode, JSON.stringify(entry.sourceIdentifiers)],
+        );
+      }
     }
 
     await queryManaged(managed, "UPDATE onec_catalog_versions SET is_active = FALSE WHERE is_active = TRUE");
@@ -751,9 +764,13 @@ export async function applyCatalogImport(
       counts: data.counts,
       quarantineCount,
       quarantineReasonCounts: data.counts.quarantineReasonCounts ?? {},
+      classificationWarnings: data.classificationWarnings,
+      classificationIncomplete: data.classificationIncomplete,
+      commercialStatus: data.commercialStatus,
       newProducts,
       changedProducts,
       commercialReady: false,
+      distributionReady,
       coreApplied: true,
     };
 
@@ -762,6 +779,7 @@ export async function applyCatalogImport(
       versionId,
       coreApplied: true,
       commercialReady: false,
+      distributionReady,
       quarantineCount,
       newProducts,
       changedProducts,
@@ -780,6 +798,7 @@ export async function applyCatalogImport(
             status = $2,
             core_applied = TRUE,
             commercial_ready = FALSE,
+            distribution_ready = $7,
             applied_version_id = $3::uuid,
             product_count = $4,
             quarantine_count = $5,
@@ -788,11 +807,12 @@ export async function applyCatalogImport(
       `,
       [
         phase.runId,
-        quarantineCount > 0 ? "partial" : "success",
+        !isDistribution && quarantineCount > 0 ? "partial" : "success",
         versionId,
         data.products.length,
         quarantineCount,
         JSON.stringify(report),
+        distributionReady,
       ],
     );
 

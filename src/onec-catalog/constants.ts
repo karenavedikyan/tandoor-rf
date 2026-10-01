@@ -1,3 +1,7 @@
+export const CATALOG_IMPORT_PROFILES = ["full", "distribution"] as const;
+export type CatalogImportProfile = (typeof CATALOG_IMPORT_PROFILES)[number];
+export const DEFAULT_CATALOG_IMPORT_PROFILE: CatalogImportProfile = "full";
+
 export const CATALOG_RELATIVE_FILES = [
   "catalog/groups/data.xml",
   "catalog/section/data.xml",
@@ -10,6 +14,21 @@ export const CATALOG_RELATIVE_FILES = [
 ] as const;
 
 export type CatalogRelativeFile = (typeof CATALOG_RELATIVE_FILES)[number];
+
+/** Distribution stage: product selection without commercial layers. */
+export const CATALOG_DISTRIBUTION_FILES = [
+  "catalog/groups/data.xml",
+  "catalog/section/data.xml",
+  "catalog/products/data.xml",
+] as const;
+
+export function getCatalogFilesForProfile(
+  profile: CatalogImportProfile,
+): readonly CatalogRelativeFile[] {
+  return profile === "distribution" ? CATALOG_DISTRIBUTION_FILES : CATALOG_RELATIVE_FILES;
+}
+
+export const MAX_CLASSIFICATION_WARNING_SAMPLES = 5;
 
 export const CATALOG_FILE_ROOTS: Record<CatalogRelativeFile, string> = {
   "catalog/groups/data.xml": "Группы",

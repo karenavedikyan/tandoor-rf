@@ -1,6 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { CATALOG_RELATIVE_FILES } from "../../src/onec-catalog/constants";
+import {
+  CATALOG_DISTRIBUTION_FILES,
+  CATALOG_RELATIVE_FILES,
+  type CatalogImportProfile,
+} from "../../src/onec-catalog/constants";
 import { buildFileEntries, buildManifest } from "../../src/onec-catalog/manifest";
 import type { CatalogFileEntry } from "../../src/onec-catalog/types";
 
@@ -73,6 +77,32 @@ export function catalogEntriesFromXmlSet(
   );
 }
 
+export function catalogDistributionEntriesFromXmlSet(
+  xmlSet: Pick<
+    Record<(typeof CATALOG_RELATIVE_FILES)[number], string>,
+    (typeof CATALOG_DISTRIBUTION_FILES)[number]
+  >,
+): CatalogFileEntry[] {
+  return buildFileEntries(
+    CATALOG_DISTRIBUTION_FILES.map((relativePath) => ({
+      relativePath,
+      bytes: Buffer.from(xmlSet[relativePath], "utf8"),
+    })),
+  );
+}
+
+export function buildMinimalDistributionXmlSet(): Pick<
+  Record<(typeof CATALOG_RELATIVE_FILES)[number], string>,
+  (typeof CATALOG_DISTRIBUTION_FILES)[number]
+> {
+  const full = buildMinimalCatalogXmlSet();
+  return {
+    "catalog/groups/data.xml": full["catalog/groups/data.xml"],
+    "catalog/section/data.xml": full["catalog/section/data.xml"],
+    "catalog/products/data.xml": full["catalog/products/data.xml"],
+  };
+}
+
 /** ~107k properties across many products for apply batch-write regression. */
 export function buildHighPropertyCountProductsXml(
   productCount = 1079,
@@ -135,6 +165,11 @@ export async function writeCatalogFixtureDir(
 
 export function manifestFromXmlSet(
   xmlSet: Record<(typeof CATALOG_RELATIVE_FILES)[number], string>,
+  profile: CatalogImportProfile = "full",
 ): string {
-  return buildManifest(catalogEntriesFromXmlSet(xmlSet)).manifestSha256;
+  const entries =
+    profile === "distribution"
+      ? catalogDistributionEntriesFromXmlSet(xmlSet)
+      : catalogEntriesFromXmlSet(xmlSet);
+  return buildManifest(entries, profile).manifestSha256;
 }

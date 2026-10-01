@@ -1,5 +1,6 @@
+import { DEFAULT_CATALOG_IMPORT_PROFILE, CATALOG_IMPORT_PROFILES } from "./constants";
 import { isSha256Hex } from "./manifest";
-import type { CatalogImportCliOptions } from "./types";
+import type { CatalogImportCliOptions, CatalogImportProfile } from "./types";
 
 export type CliParseResult =
   | { ok: true; options: CatalogImportCliOptions }
@@ -11,13 +12,35 @@ export const CLI_ARGUMENT_ERROR_MESSAGES: Record<string, string> = {
   INVALID_ARGUMENTS: "Invalid CLI arguments.",
 };
 
+function parseProfileValue(raw: string | undefined): CatalogImportProfile | null {
+  if (!raw) return null;
+  const normalized = raw.trim().toLowerCase();
+  return (CATALOG_IMPORT_PROFILES as readonly string[]).includes(normalized)
+    ? (normalized as CatalogImportProfile)
+    : null;
+}
+
 export function parseCatalogImportCliArgs(argv: string[]): CliParseResult {
   let mode: CatalogImportCliOptions["mode"] = "dry_run";
+  let profile: CatalogImportProfile = DEFAULT_CATALOG_IMPORT_PROFILE;
   let expectedManifestSha256: string | undefined;
   let localDir: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    if (arg.startsWith("--profile=")) {
+      const parsedProfile = parseProfileValue(arg.slice("--profile=".length));
+      if (!parsedProfile) return { ok: false, code: "INVALID_ARGUMENTS" };
+      profile = parsedProfile;
+      continue;
+    }
+    if (arg === "--profile") {
+      const parsedProfile = parseProfileValue(argv[i + 1]);
+      if (!parsedProfile) return { ok: false, code: "INVALID_ARGUMENTS" };
+      profile = parsedProfile;
+      i += 1;
+      continue;
+    }
     if (arg === "--dry-run" || arg === "--dry_run") {
       mode = "dry_run";
       continue;
@@ -57,6 +80,7 @@ export function parseCatalogImportCliArgs(argv: string[]): CliParseResult {
     ok: true,
     options: {
       mode,
+      profile,
       expectedManifestSha256,
       localDir,
     },

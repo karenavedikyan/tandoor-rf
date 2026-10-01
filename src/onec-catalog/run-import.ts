@@ -5,6 +5,7 @@ import {
   MAX_DETAILED_ERRORS,
   MAX_DETAILED_QUARANTINE,
   MAX_DETAILED_WARNINGS,
+  type CatalogImportProfile,
 } from "./constants";
 import { buildManifest } from "./manifest";
 import { parseCatalogSet } from "./parse-catalog-set";
@@ -22,6 +23,7 @@ export function getCatalogImportExitCode(status: CatalogImportResult["status"]):
 export type RunCatalogImportOptions = {
   env?: NodeJS.ProcessEnv;
   argv?: string[];
+  profile?: CatalogImportProfile;
   ftpReader?: CatalogFtpReader;
   localFiles?: CatalogFileEntry[];
   skipStabilityCheck?: boolean;
@@ -29,6 +31,7 @@ export type RunCatalogImportOptions = {
 
 async function readCatalogFiles(
   options: RunCatalogImportOptions,
+  profile: CatalogImportProfile,
   cliLocalDir?: string,
 ): Promise<
   | { ok: true; files: CatalogFileEntry[]; readAt?: string }
@@ -38,18 +41,19 @@ async function readCatalogFiles(
   const env = options.env ?? process.env;
 
   if (options.localFiles) {
-    const manifest = buildManifest(options.localFiles);
+    const manifest = buildManifest(options.localFiles, profile);
     return { ok: true, files: manifest.files, readAt: new Date().toISOString() };
   }
 
   if (cliLocalDir) {
-    const localRead = await readCatalogSetFromLocalDir(cliLocalDir);
+    const localRead = await readCatalogSetFromLocalDir(cliLocalDir, profile);
     if (!localRead.ok) {
       return {
         ok: false,
         result: sanitizeCatalogImportResult({
           status: "VALIDATION_FAILED",
           mode: "dry_run",
+          profile,
           durationMs: Date.now() - startedAt,
           errorCount: localRead.issues.length,
           errors: localRead.issues.slice(0, MAX_DETAILED_ERRORS),
@@ -75,7 +79,7 @@ async function readCatalogFiles(
   }
 
   const reader = options.ftpReader ?? defaultCatalogFtpReader;
-  const readOnce = () => readCatalogSetFromFtp(loadedConfig.config, reader);
+  const readOnce = () => readCatalogSetFromFtp(loadedConfig.config, reader, { profile });
   if (options.skipStabilityCheck) {
     const single = await readOnce();
     if (!single.ok) {
@@ -128,22 +132,24 @@ export async function runCatalogImport(
   }
 
   const cli = parsedArgs.options;
-  const readResult = await readCatalogFiles(options, cli.localDir);
+  const profile = options.profile ?? cli.profile;
+  const readResult = await readCatalogFiles(options, profile, cli.localDir);
   if (!readResult.ok) {
-    return readResult.result;
+    return { ...readResult.result, profile };
   }
 
-  const manifest = buildManifest(readResult.files);
+  const manifest = buildManifest(readResult.files, profile);
   const fileInputs = readResult.files.map((file) => ({
     relativePath: file.relativePath,
     bytes: file.bytes,
   }));
 
-  const parsed = await parseCatalogSet(fileInputs);
+  const parsed = await parseCatalogSet(fileInputs, profile);
   if (!parsed.ok) {
     return sanitizeCatalogImportResult({
       status: "VALIDATION_FAILED",
       mode: cli.mode,
+      profile,
       durationMs: Date.now() - startedAt,
       manifestSha256: manifest.manifestSha256,
       totalByteSize: manifest.totalByteSize,
@@ -154,11 +160,12 @@ export async function runCatalogImport(
     });
   }
 
-  const validated = validateCatalogSet(parsed.data);
+  const validated = validateCatalogSet(parsed.data, { profile });
   if (!validated.ok) {
     return sanitizeCatalogImportResult({
       status: "VALIDATION_FAILED",
       mode: cli.mode,
+      profile,
       durationMs: Date.now() - startedAt,
       manifestSha256: manifest.manifestSha256,
       totalByteSize: manifest.totalByteSize,
@@ -170,21 +177,32 @@ export async function runCatalogImport(
   }
 
   const data = validated.data;
+  const classificationWarningCount = data.classificationWarnings.length;
   const baseResult = {
+    profile,
     manifestSha256: data.manifest.manifestSha256,
     totalByteSize: data.manifest.totalByteSize,
     counts: data.counts,
     warningCount: data.warnings.length,
     warnings: data.warnings,
+    classificationWarningCount,
+    classificationWarnings: data.classificationWarnings,
+    classificationIncomplete: data.classificationIncomplete,
+    commercialStatus: data.commercialStatus,
     quarantineCount: data.quarantine.length,
     quarantine: data.quarantine,
     coreApplied: false,
     commercialReady: false,
+    distributionReady: false,
     readAt: readResult.readAt,
   };
 
   if (cli.mode === "dry_run") {
-    const status = data.quarantine.length > 0 ? "PARTIAL" : "SUCCESS";
+    const status =
+      profile === "full" && data.quarantine.length > 0 ? "PARTIAL" : "SUCCESS";
+    const classificationNote = data.classificationIncomplete
+      ? " Classification is incomplete (missing group references preserved)."
+      : "";
     return sanitizeCatalogImportResult({
       status,
       mode: "dry_run",
@@ -193,7 +211,7 @@ export async function runCatalogImport(
       message:
         status === "PARTIAL"
           ? "Catalog dry-run succeeded; core catalog is valid but commercial staging contains quarantined rows."
-          : "Catalog dry-run succeeded (no database changes).",
+          : `Catalog dry-run succeeded (no database changes).${classificationNote}`,
     });
   }
 
@@ -259,10 +277,15 @@ export async function runCatalogImport(
     });
   }
 
-  const status = applied.quarantineCount > 0 ? "PARTIAL" : "SUCCESS";
+  const status =
+    profile === "full" && applied.quarantineCount > 0 ? "PARTIAL" : "SUCCESS";
+  const classificationNote = data.classificationIncomplete
+    ? " Classification is incomplete (missing group references preserved)."
+    : "";
   return sanitizeCatalogImportResult({
     status,
     mode: "apply",
+    profile,
     durationMs: Date.now() - startedAt,
     runId: applied.runId,
     manifestSha256: data.manifest.manifestSha256,
@@ -270,7 +293,11 @@ export async function runCatalogImport(
     counts: data.counts,
     coreApplied: applied.coreApplied,
     commercialReady: applied.commercialReady,
-    appliedVersionId: applied.versionId,
+    distributionReady: applied.distributionReady,
+    classificationIncomplete: data.classificationIncomplete,
+    commercialStatus: data.commercialStatus,
+    classificationWarningCount,
+    classificationWarnings: data.classificationWarnings,
     quarantineCount: applied.quarantineCount,
     quarantine: data.quarantine,
     warningCount: data.warnings.length,
@@ -278,10 +305,13 @@ export async function runCatalogImport(
     newProducts: applied.newProducts,
     changedProducts: applied.changedProducts,
     missingFromSnapshot: applied.missingFromSnapshot,
+    appliedVersionId: applied.versionId,
     message:
       status === "PARTIAL"
         ? "Catalog core applied; commercial staging stored with quarantined rows (commercialReady=false)."
-        : "Catalog import applied successfully (commercialReady=false).",
+        : profile === "distribution"
+          ? `Distribution catalog applied successfully (distributionReady=true, commercialReady=false).${classificationNote}`
+          : `Catalog import applied successfully (commercialReady=false).${classificationNote}`,
     readAt: readResult.readAt,
   });
 }

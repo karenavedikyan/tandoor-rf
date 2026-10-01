@@ -1,17 +1,25 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { CATALOG_RELATIVE_FILES, MAX_CATALOG_FILE_BYTES, MAX_CATALOG_SET_BYTES } from "./constants";
+import {
+  DEFAULT_CATALOG_IMPORT_PROFILE,
+  getCatalogFilesForProfile,
+  MAX_CATALOG_FILE_BYTES,
+  MAX_CATALOG_SET_BYTES,
+  type CatalogImportProfile,
+} from "./constants";
 import type { CatalogFileEntry, ValidationIssue } from "./types";
 import { buildFileEntries } from "./manifest";
 
 export async function readCatalogSetFromLocalDir(
   localDir: string,
+  profile: CatalogImportProfile = DEFAULT_CATALOG_IMPORT_PROFILE,
 ): Promise<{ ok: true; files: CatalogFileEntry[] } | { ok: false; issues: ValidationIssue[] }> {
   const issues: ValidationIssue[] = [];
-  const inputs: Array<{ relativePath: (typeof CATALOG_RELATIVE_FILES)[number]; bytes: Buffer }> = [];
+  const fileList = getCatalogFilesForProfile(profile);
+  const inputs: Array<{ relativePath: (typeof fileList)[number]; bytes: Buffer }> = [];
   let totalBytes = 0;
 
-  for (const relativePath of CATALOG_RELATIVE_FILES) {
+  for (const relativePath of fileList) {
     const absolutePath = path.join(localDir, relativePath);
     let bytes: Buffer;
     try {

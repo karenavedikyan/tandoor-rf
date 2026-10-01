@@ -160,17 +160,18 @@
 
 ## 9. Каталог 1С (R3.1)
 
-**Назначение:** безопасный импорт 8 XML `/LC/catalog/*/data.xml` в PostgreSQL **без UI** и **без** изменения клиентского snapshot.
+**Назначение:** безопасный импорт XML `/LC/catalog/` в PostgreSQL **без UI** и **без** изменения клиентского snapshot.
 
 ### Принципы
 
-- Источник: только согласованный plain FTP `{ONEC_FTP_BASE_PATH}/catalog/...` или локальная папка с тем же деревом (`--local-dir`).
-- **Dry-run по умолчанию.** Apply: `--apply --expected-manifest-sha256=<sha-from-dry-run>`.
-- Manifest SHA покрывает **весь набор** (8 файлов); не путать с SHA отдельного файла.
-- Коммерческие цены/остатки сохраняются в staging; `commercialReady=false` до отдельного согласования семантики.
-- История прогонов: `onec_catalog_import_runs` (отдельно от `onec_client_import_runs`).
+- Источник: только согласованный plain FTP `{ONEC_FTP_BASE_PATH}/catalog/...` или локальная папка (`--local-dir`).
+- **Dry-run по умолчанию.** Без `--apply` — только dry-run. Apply: `--apply --expected-manifest-sha256=<sha-from-dry-run>`.
+- **Профиль `full` (по умолчанию):** 8 файлов; manifest SHA покрывает все 8; коммерция → staging; `commercialReady=false`.
+- **Профиль `distribution`:** только `groups`, `section`, `products`; коммерческие файлы **не читаются**; `commercialStatus=not_requested`; отсутствующая группа у товара → warning `MISSING_GROUP_REFERENCE`, не блокировка.
+- Manifest SHA включает `profile` + файлы профиля; снимки разных профилей **не** совпадают.
+- История прогонов: `onec_catalog_import_runs` (+ `import_profile`, `distribution_ready` после migration `021`).
 
-### Команды
+### Команды — профиль `full` (8 файлов)
 
 1. **Dry-run (FTP):**
    ```bash
@@ -185,11 +186,28 @@
    npm run onec-catalog-import -- --apply --expected-manifest-sha256 <64-char-hex>
    ```
 
+### Команды — профиль `distribution` (первый этап, 3 файла)
+
+1. **Dry-run (FTP):**
+   ```bash
+   npm run onec-catalog-import -- --profile=distribution --dry-run
+   ```
+2. **Dry-run (локальная папка; достаточно `catalog/groups`, `catalog/section`, `catalog/products`):**
+   ```bash
+   npm run onec-catalog-import -- --profile=distribution --dry-run --local-dir /path/to/LC
+   ```
+3. **Apply** (после backup и review manifest **distribution**):
+   ```bash
+   npm run onec-catalog-import -- --profile=distribution --apply --expected-manifest-sha256 <64-char-hex>
+   ```
+
+JSON-отчёт содержит: `profile`, `mode`, `manifestSha256`, `readAt`, counts (товары/группы/разделы/свойства/изображения), `classificationWarnings`, `commercialStatus`. После apply: `runId`, `appliedVersionId`, `distributionReady`, `coreApplied`.
+
 ### Проверка результата
 
 ```sql
-SELECT id, started_at, finished_at, status, mode, manifest_sha256,
-       core_applied, commercial_ready, product_count, quarantine_count
+SELECT id, started_at, finished_at, status, mode, import_profile, manifest_sha256,
+       core_applied, commercial_ready, distribution_ready, product_count, quarantine_count
 FROM onec_catalog_import_runs
 ORDER BY started_at DESC
 LIMIT 5;
@@ -200,7 +218,7 @@ FROM onec_catalog_state WHERE id = 1;
 
 При `apply_blocked=true` apply возвращает `APPLY_BLOCKED` и **не** переключает активную версию. После `COMMIT_UNCERTAIN` проверьте journal по `runId`; снимите блок только после подтверждения исхода (или явного rollback).
 
-Report apply (`onec_catalog_import_runs.report`) содержит manifest (8 файлов: path, size, sha256), `readAt`, counts и `quarantineReasonCounts`.
+Report apply (`onec_catalog_import_runs.report`) содержит `profile`, manifest (файлы профиля: path, size, sha256), `readAt`, counts, `classificationWarnings` и (для `full`) `quarantineReasonCounts`.
 
 ### Откат активной версии (без отката клиентов)
 
@@ -220,8 +238,8 @@ WHERE id = 1;
 ### Live-приёмка (обязательна до production apply)
 
 1. Резервная копия PostgreSQL.
-2. Миграция `020_onec_catalog.sql` по согласованному плану деплоя.
-3. Dry-run на live FTP → сохранить `manifestSha256`, counts, quarantine.
+2. Миграции `020_onec_catalog.sql` и `021_onec_catalog_import_profile.sql` по согласованному плану деплоя.
+3. Dry-run на live FTP (для distribution: `--profile=distribution`) → сохранить `manifestSha256`, counts, warnings.
 4. Сверка с наблюдениями 01.10.2026 (не как жёсткие константы).
 5. Apply с тем же manifest SHA **без** повторного незащищённого скачивания (CLI выполняет stability read на FTP).
 

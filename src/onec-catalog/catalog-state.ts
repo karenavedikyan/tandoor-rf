@@ -294,6 +294,7 @@ export async function resolveCatalogCommitUncertainFresh(
 export type RecoveredApplySuccess = {
   runId: string;
   versionId: string;
+  distributionReady: boolean;
   quarantineCount: number;
   newProducts: number;
   changedProducts: number;
@@ -308,13 +309,15 @@ export async function loadRecoveredApplySuccessFresh(
       const run = await client.query<{
         applied_version_id: string | null;
         quarantine_count: number | null;
+        distribution_ready: boolean | null;
         report: {
           newProducts?: number;
           changedProducts?: number;
+          distributionReady?: boolean;
         } | null;
       }>(
         `
-          SELECT applied_version_id, quarantine_count, report
+          SELECT applied_version_id, quarantine_count, distribution_ready, report
           FROM onec_catalog_import_runs
           WHERE id = $1::uuid
         `,
@@ -325,6 +328,7 @@ export async function loadRecoveredApplySuccessFresh(
       return {
         runId,
         versionId: row.applied_version_id,
+        distributionReady: row.distribution_ready ?? row.report?.distributionReady ?? false,
         quarantineCount: row.quarantine_count ?? 0,
         newProducts: row.report?.newProducts ?? 0,
         changedProducts: row.report?.changedProducts ?? 0,

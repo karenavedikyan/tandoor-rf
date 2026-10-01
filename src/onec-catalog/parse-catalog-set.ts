@@ -1,5 +1,10 @@
-import type { CatalogRelativeFile } from "./constants";
-import { CATALOG_FILE_ROOTS, ROOT_PARENT_CODES } from "./constants";
+import type { CatalogImportProfile, CatalogRelativeFile } from "./constants";
+import {
+  CATALOG_FILE_ROOTS,
+  DEFAULT_CATALOG_IMPORT_PROFILE,
+  getCatalogFilesForProfile,
+  ROOT_PARENT_CODES,
+} from "./constants";
 import { parseXmlBufferSafely, ensureNonEmptyFile } from "./safe-xml";
 import { buildManifest, buildFileEntries } from "./manifest";
 import { readXmlScalar } from "./xml-field";
@@ -619,12 +624,14 @@ function mapThrownIssue(error: unknown, file: CatalogRelativeFile): ValidationIs
 
 export async function parseCatalogSet(
   fileInputs: Array<{ relativePath: CatalogRelativeFile; bytes: Buffer }>,
+  profile: CatalogImportProfile = DEFAULT_CATALOG_IMPORT_PROFILE,
 ): Promise<{ ok: true; data: ParsedCatalogSet } | { ok: false; issues: ValidationIssue[] }> {
   const issues: ValidationIssue[] = [];
   const warnings: SchemaDriftWarning[] = [];
   const byPath = new Map(fileInputs.map((entry) => [entry.relativePath, entry.bytes]));
+  const requiredFiles = getCatalogFilesForProfile(profile);
 
-  for (const relativePath of Object.keys(CATALOG_FILE_ROOTS) as CatalogRelativeFile[]) {
+  for (const relativePath of requiredFiles) {
     const bytes = byPath.get(relativePath);
     if (!bytes) {
       issues.push({
@@ -641,10 +648,12 @@ export async function parseCatalogSet(
     return { ok: false, issues };
   }
 
-  const entries = buildFileEntries(
-    fileInputs.map((input) => ({ relativePath: input.relativePath, bytes: input.bytes })),
-  );
-  const manifest = buildManifest(entries);
+  const manifestInputs = requiredFiles.map((relativePath) => ({
+    relativePath,
+    bytes: byPath.get(relativePath)!,
+  }));
+  const entries = buildFileEntries(manifestInputs);
+  const manifest = buildManifest(entries, profile);
 
   try {
     const groupsResult = await parseGroups(byPath.get("catalog/groups/data.xml")!, warnings);
@@ -653,48 +662,67 @@ export async function parseCatalogSet(
     const sectionsResult = await parseSections(byPath.get("catalog/section/data.xml")!, warnings);
     if (sectionsResult.issue) return { ok: false, issues: [sectionsResult.issue] };
 
-    const storagesResult = await parseStorages(byPath.get("catalog/storage/data.xml")!, warnings);
-    if (storagesResult.issue) return { ok: false, issues: [storagesResult.issue] };
-
-    const priceTypesResult = await parsePriceTypes(byPath.get("catalog/types_prices/data.xml")!, warnings);
-    if (priceTypesResult.issue) return { ok: false, issues: [priceTypesResult.issue] };
-
     const productsResult = await parseProducts(byPath.get("catalog/products/data.xml")!, warnings);
     if (productsResult.issue) return { ok: false, issues: [productsResult.issue] };
 
-    const pricesResult = await parsePrices(byPath.get("catalog/prices/data.xml")!, warnings);
-    if (pricesResult.issue) return { ok: false, issues: [pricesResult.issue] };
+    let storages: ParsedCatalogStorage[] = [];
+    let priceTypes: ParsedCatalogPriceType[] = [];
+    let prices: ParsedCatalogPrice[] = [];
+    let stock: ParsedCatalogStockLine[] = [];
+    let stockExpected: ParsedCatalogStockExpectedLine[] = [];
 
-    const stockResult = await parseStock(byPath.get("catalog/stock/data.xml")!, warnings);
-    if (stockResult.issue) return { ok: false, issues: [stockResult.issue] };
+    if (profile === "full") {
+      const storagesResult = await parseStorages(byPath.get("catalog/storage/data.xml")!, warnings);
+      if (storagesResult.issue) return { ok: false, issues: [storagesResult.issue] };
+      storages = storagesResult.rows;
 
-    const stockExpectedResult = await parseStockExpected(
-      byPath.get("catalog/stock_expected/data.xml")!,
-      warnings,
-    );
-    if (stockExpectedResult.issue) return { ok: false, issues: [stockExpectedResult.issue] };
+      const priceTypesResult = await parsePriceTypes(byPath.get("catalog/types_prices/data.xml")!, warnings);
+      if (priceTypesResult.issue) return { ok: false, issues: [priceTypesResult.issue] };
+      priceTypes = priceTypesResult.rows;
+
+      const pricesResult = await parsePrices(byPath.get("catalog/prices/data.xml")!, warnings);
+      if (pricesResult.issue) return { ok: false, issues: [pricesResult.issue] };
+      prices = pricesResult.rows;
+
+      const stockResult = await parseStock(byPath.get("catalog/stock/data.xml")!, warnings);
+      if (stockResult.issue) return { ok: false, issues: [stockResult.issue] };
+      stock = stockResult.rows;
+
+      const stockExpectedResult = await parseStockExpected(
+        byPath.get("catalog/stock_expected/data.xml")!,
+        warnings,
+      );
+      if (stockExpectedResult.issue) return { ok: false, issues: [stockExpectedResult.issue] };
+      stockExpected = stockExpectedResult.rows;
+    }
 
     const data: ParsedCatalogSet = {
       manifest,
+      profile,
       groups: groupsResult.rows,
       sections: sectionsResult.rows,
-      storages: storagesResult.rows,
-      priceTypes: priceTypesResult.rows,
+      storages,
+      priceTypes,
       products: productsResult.rows,
-      prices: pricesResult.rows,
-      stock: stockResult.rows,
-      stockExpected: stockExpectedResult.rows,
+      prices,
+      stock,
+      stockExpected,
       warnings,
+      classificationWarnings: [],
+      classificationIncomplete: false,
+      commercialStatus: profile === "distribution" ? "not_requested" : "classified",
       quarantine: [],
       counts: {
         groups: groupsResult.rows.length,
         sections: sectionsResult.rows.length,
-        storages: storagesResult.rows.length,
-        priceTypes: priceTypesResult.rows.length,
+        storages: storages.length,
+        priceTypes: priceTypes.length,
         products: productsResult.rows.length,
-        prices: pricesResult.rows.length,
-        stockLines: stockResult.rows.length,
-        stockExpectedLines: stockExpectedResult.rows.length,
+        prices: prices.length,
+        stockLines: stock.length,
+        stockExpectedLines: stockExpected.length,
+        propertyCount: 0,
+        imagePathCount: 0,
         quarantine: 0,
       },
     };

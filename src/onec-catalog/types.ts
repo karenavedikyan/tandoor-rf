@@ -1,6 +1,19 @@
-import type { CatalogRelativeFile } from "./constants";
+import type { CatalogImportProfile, CatalogRelativeFile } from "./constants";
+
+export type { CatalogImportProfile } from "./constants";
 
 export type CatalogImportMode = "dry_run" | "apply";
+
+export type CatalogCommercialStatus = "classified" | "not_requested";
+
+export type CatalogClassificationWarning = {
+  code: "MISSING_GROUP_REFERENCE";
+  message: string;
+  affectedProductCount: number;
+  uniqueMissingGroupCodeCount: number;
+  sampleProductCodes: string[];
+  sampleGroupCodes: string[];
+};
 
 export type CatalogFileEntry = {
   relativePath: CatalogRelativeFile;
@@ -13,6 +26,7 @@ export type CatalogManifest = {
   files: CatalogFileEntry[];
   manifestSha256: string;
   totalByteSize: number;
+  profile: CatalogImportProfile;
 };
 
 export type ValidationIssue = {
@@ -74,6 +88,7 @@ export type ParsedCatalogStockExpectedLine = {
 
 export type ParsedCatalogSet = {
   manifest: CatalogManifest;
+  profile: CatalogImportProfile;
   groups: ParsedCatalogGroup[];
   sections: ParsedCatalogSection[];
   storages: ParsedCatalogStorage[];
@@ -83,6 +98,9 @@ export type ParsedCatalogSet = {
   stock: ParsedCatalogStockLine[];
   stockExpected: ParsedCatalogStockExpectedLine[];
   warnings: SchemaDriftWarning[];
+  classificationWarnings: CatalogClassificationWarning[];
+  classificationIncomplete: boolean;
+  commercialStatus: CatalogCommercialStatus;
   quarantine: QuarantineEntry[];
   productCodes?: Set<string>;
   groupCodes?: Set<string>;
@@ -98,6 +116,8 @@ export type ParsedCatalogSet = {
     prices: number;
     stockLines: number;
     stockExpectedLines: number;
+    propertyCount: number;
+    imagePathCount: number;
     quarantine: number;
     quarantineReasonCounts?: Record<string, number>;
   };
@@ -125,12 +145,16 @@ export type CatalogImportStatus =
 export type CatalogImportResult = {
   status: CatalogImportStatus;
   mode: CatalogImportMode;
+  profile?: CatalogImportProfile;
   runId?: string;
   durationMs: number;
   manifestSha256?: string;
   totalByteSize?: number;
   coreApplied?: boolean;
   commercialReady?: boolean;
+  distributionReady?: boolean;
+  classificationIncomplete?: boolean;
+  commercialStatus?: CatalogCommercialStatus;
   appliedVersionId?: string;
   counts?: ParsedCatalogSet["counts"];
   newProducts?: number;
@@ -139,12 +163,15 @@ export type CatalogImportResult = {
   quarantineCount?: number;
   errorCount?: number;
   warningCount?: number;
+  classificationWarningCount?: number;
   errors?: ValidationIssue[];
   warnings?: SchemaDriftWarning[];
+  classificationWarnings?: CatalogClassificationWarning[];
   quarantine?: QuarantineEntry[];
   errorsTruncated?: boolean;
   warningsTruncated?: boolean;
   quarantineTruncated?: boolean;
+  classificationWarningsTruncated?: boolean;
   message: string;
   errorCode?: string;
   readAt?: string;
@@ -152,6 +179,7 @@ export type CatalogImportResult = {
 
 export type CatalogImportCliOptions = {
   mode: CatalogImportMode;
+  profile: CatalogImportProfile;
   expectedManifestSha256?: string;
   localDir?: string;
 };

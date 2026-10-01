@@ -2,10 +2,12 @@ import { Writable } from "node:stream";
 import { Client } from "basic-ftp";
 import type { OnecFtpConfig } from "../onec-ftp/types";
 import {
-  CATALOG_RELATIVE_FILES,
+  DEFAULT_CATALOG_IMPORT_PROFILE,
   FTP_READ_DEADLINE_MS,
+  getCatalogFilesForProfile,
   MAX_CATALOG_FILE_BYTES,
   MAX_CATALOG_SET_BYTES,
+  type CatalogImportProfile,
 } from "./constants";
 import { buildCatalogFilePath } from "./paths";
 import { buildFileEntries } from "./manifest";
@@ -47,7 +49,7 @@ export type CatalogFtpReadResult =
 
 export type CatalogFtpReader = (
   config: OnecFtpConfig,
-  context?: { readDeadlineMs?: number },
+  context?: { readDeadlineMs?: number; profile?: CatalogImportProfile },
 ) => Promise<CatalogFtpReadResult>;
 
 async function withReadDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -66,6 +68,8 @@ async function withReadDeadline<T>(promise: Promise<T>, timeoutMs: number): Prom
 
 export const defaultCatalogFtpReader: CatalogFtpReader = async (config, context) => {
   const readDeadlineMs = context?.readDeadlineMs ?? FTP_READ_DEADLINE_MS;
+  const profile = context?.profile ?? DEFAULT_CATALOG_IMPORT_PROFILE;
+  const fileList = getCatalogFilesForProfile(profile);
   const client = new Client(config.timeoutMs);
   client.ftp.verbose = false;
 
@@ -80,9 +84,9 @@ export const defaultCatalogFtpReader: CatalogFtpReader = async (config, context)
           secure: false,
         });
 
-        const inputs: Array<{ relativePath: (typeof CATALOG_RELATIVE_FILES)[number]; bytes: Buffer }> = [];
+        const inputs: Array<{ relativePath: (typeof fileList)[number]; bytes: Buffer }> = [];
         let totalBytes = 0;
-        for (const relativePath of CATALOG_RELATIVE_FILES) {
+        for (const relativePath of fileList) {
           const remotePath = buildCatalogFilePath(config.basePath, relativePath);
           const sink = new SizeLimitedBuffer(MAX_CATALOG_FILE_BYTES);
           await client.downloadTo(sink, remotePath);
@@ -118,7 +122,7 @@ export const defaultCatalogFtpReader: CatalogFtpReader = async (config, context)
 export async function readCatalogSetFromFtp(
   config: OnecFtpConfig,
   reader: CatalogFtpReader = defaultCatalogFtpReader,
-  context?: { readDeadlineMs?: number },
+  context?: { readDeadlineMs?: number; profile?: CatalogImportProfile },
 ): Promise<CatalogFtpReadResult> {
   return reader(config, context);
 }
