@@ -13,6 +13,7 @@ import { loadBitrix24Config } from "../bitrix24/config";
 import { isCachePublishAllowed, loadBitrix24TasksRuntimeConfig } from "../bitrix24/tasks/config";
 import {
   canViewClientCard,
+  canViewPublishedTaskCacheForUser,
   canViewTaskForUser,
   evaluateUserBitrixTaskConfig,
   isTaskAudienceMatch,
@@ -571,19 +572,34 @@ export async function getClientBitrix24ClaimsHandler(
       loaded.config.portalId,
       row.taskId,
     );
-    if (
-      activePublication?.publicationOrigin === "ork_sync" &&
-      !isOrkPublicationAlignedWithTask(
-        {
-          cacheVersion: row.cacheVersion,
-          objectType: row.objectType,
-          objectGuid: row.objectGuid,
-          bindingStatus: row.bindingStatus,
-        },
-        activePublication,
-      )
-    ) {
-      staleOrkDetected = true;
+    const orkCandidate = activePublication?.publicationOrigin === "ork_sync";
+    if (orkCandidate) {
+      const cacheVisibility = await canViewPublishedTaskCacheForUser(
+        context,
+        loaded.config.portalId,
+        row,
+      );
+      if (
+        !cacheVisibility.ok &&
+        (cacheVisibility.code === "ACCESS_EXPIRED" ||
+          cacheVisibility.code === "STALE_SNAPSHOT" ||
+          cacheVisibility.code === "FUTURE_TASK")
+      ) {
+        staleOrkDetected = true;
+      }
+      if (
+        !isOrkPublicationAlignedWithTask(
+          {
+            cacheVersion: row.cacheVersion,
+            objectType: row.objectType,
+            objectGuid: row.objectGuid,
+            bindingStatus: row.bindingStatus,
+          },
+          activePublication,
+        )
+      ) {
+        staleOrkDetected = true;
+      }
     }
     const claimDto = await buildClaimTaskWorkDto({
       context,
@@ -594,16 +610,21 @@ export async function getClientBitrix24ClaimsHandler(
     });
     if (claimDto) {
       claims.push(claimDto);
+    } else if (orkCandidate) {
+      staleOrkDetected = true;
     }
   }
 
   let state = "ready";
   let message: string | null = null;
   let count: number | null = claims.length;
+  if (staleOrkDetected) {
+    count = null;
+  }
   if (claims.length === 0) {
-    count = userConfigDeny || staleOrkDetected ? null : 0;
     if (userConfigDeny) {
       state = mapDenyCodeToState(userConfigDeny);
+      count = null;
       message =
         userConfigDeny === "ACCESS_EXPIRED" || userConfigDeny === "LINK_UNVERIFIED"
           ? "Данные рекламаций устарели. Требуется повторная синхронизация."
@@ -614,8 +635,12 @@ export async function getClientBitrix24ClaimsHandler(
         "Сводки рекламаций устарели относительно кэша задач. Требуется повторная синхронизация ответственным специалистом.";
     } else {
       state = "empty";
+      count = 0;
       message = "Опубликованные рекламации по этому клиенту не найдены.";
     }
+  } else if (staleOrkDetected) {
+    message =
+      "Часть сводок рекламаций недоступна из-за устаревших данных кэша. Показано только подтверждённое количество.";
   }
 
   setNoStore(res);

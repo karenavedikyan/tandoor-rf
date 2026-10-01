@@ -8,7 +8,7 @@ import { readBitrixTasksForUser } from "../../src/bitrix24/read-tasks";
 import { createOperationContext } from "../../src/bitrix24/transport";
 import { runBitrix24TaskSync } from "../../src/bitrix24/sync/run-sync";
 import { syncOrkPublicationFromDescription } from "../../src/bitrix24/claims/ork-publication-sync";
-import { parseOrkSummaryFromDescription } from "../../src/bitrix24/claims/ork-parser";
+import { ORK_SUMMARY_MAX_LENGTH, parseOrkSummaryFromDescription } from "../../src/bitrix24/claims/ork-parser";
 import { upsertEmployeePortalLink, upsertTaskSnapshot } from "../../src/bitrix24/tasks/repository";
 import { findActiveSummaryPublicationMeta } from "../../src/bitrix24/tasks/work-repository";
 import { resetPoolForTests } from "../../src/db/pool";
@@ -92,8 +92,13 @@ async function seedResponsibleTask(input: {
   return config;
 }
 
-function buildSyncPinnedRequest(input: { description: string; changedAt?: string }) {
+function buildSyncPinnedRequest(input: {
+  description: string;
+  changedAt?: string;
+  taskId?: string;
+}) {
   const config = sampleWebhookConfig();
+  const taskId = input.taskId ?? "9001";
   const tasksUrl = `${config.webhookBaseUrl}tasks.task.list`;
   const checklistUrl = `${config.webhookBaseUrl}task.checklistitem.getlist`;
   return {
@@ -104,7 +109,7 @@ function buildSyncPinnedRequest(input: { description: string; changedAt?: string
           result: {
             tasks: [
               sampleValidBitrixTask({
-                ID: "9001",
+                ID: taskId,
                 DESCRIPTION: input.description,
                 CHANGED_DATE: input.changedAt ?? "2026-09-30T12:00:00+03:00",
               }),
@@ -125,14 +130,19 @@ function buildSyncPinnedRequest(input: { description: string; changedAt?: string
 
 async function syncDescription(input: {
   managerId?: string;
+  taskId?: string;
   description: string;
   changedAt?: string;
 }) {
-  const { config, pinnedRequest } = buildSyncPinnedRequest(input);
+  const { config, pinnedRequest } = buildSyncPinnedRequest({
+    description: input.description,
+    changedAt: input.changedAt,
+    taskId: input.taskId,
+  });
   return runBitrix24TaskSync({
     bitrixUserId: "42",
     apply: true,
-    taskId: "9001",
+    taskId: input.taskId ?? "9001",
     syncExecutorUserId: input.managerId,
     pinnedRequest,
     resolvePortalAddresses: createSafePortalResolver(),
@@ -409,7 +419,9 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
       description: formatLabelToken(label.labelCode) + "\n#орк one\n#орк two",
       changedAt: "2026-09-30T14:00:00+03:00",
     });
-    assert.equal(dupSync.ok, true);
+    assert.equal(dupSync.status, "partial");
+    assert.equal(dupSync.complete, false);
+    assert.equal(dupSync.orkPublishIssues, 1);
     assert.equal(await findActiveSummaryPublicationMeta(config.portalId, "9001"), null);
   });
 
@@ -721,5 +733,232 @@ describe("bitrix24 #орк claims integration", { concurrency: false }, () => {
     assert.match(active!.briefText, /Победившая гонка/);
     assert.doesNotMatch(active!.briefText, /Устаревшая гонка/);
     assert.equal(active!.taskCacheVersion, currentVersion + 1);
+  });
+
+  it("returns stale_snapshot when task cache TTL expired", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-ttl@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager TTL",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    await syncDescription({
+      managerId: manager.id,
+      description: formatLabelToken(label.labelCode) + "\n#орк TTL test",
+    });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache
+       SET synced_at = NOW() - INTERVAL '2 hours'
+       WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9001"],
+    );
+    await pool.end();
+
+    const app = await loadApp();
+    const cookie = await login("mgr-ttl@example.com");
+    const claims = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(claims.body.state, "stale_snapshot");
+    assert.equal(claims.body.count, null);
+    assert.doesNotMatch(claims.body.message ?? "", /не найдены/i);
+  });
+
+  it("returns null count for mixed fresh and stale ork claims", async () => {
+    process.env.BITRIX24_PILOT_TASK_IDS = "9001,9002";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-mix@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Mix",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    await upsertTaskSnapshot({
+      portalId: config.portalId,
+      taskId: "9002",
+      responsibleBitrixUserId: "42",
+      title: "Second task",
+      statusLabel: "in_progress",
+      deadline: null,
+      changedAt: "2026-09-30T11:30:00+03:00",
+      descriptionHash: "hash2",
+      published: true,
+      objectType: "holding",
+      objectGuid: HOLDING_ONE,
+      labelCode: label.labelCode,
+      bindingStatus: "confirmed",
+      conflictReason: null,
+      linkedAt: new Date().toISOString(),
+    });
+    await syncDescription({
+      managerId: manager.id,
+      taskId: "9001",
+      description: formatLabelToken(label.labelCode) + "\n#орк Fresh claim",
+      changedAt: "2026-09-30T12:00:00+03:00",
+    });
+    await syncDescription({
+      managerId: manager.id,
+      taskId: "9002",
+      description: formatLabelToken(label.labelCode) + "\n#орк Stale claim",
+      changedAt: "2026-09-30T12:10:00+03:00",
+    });
+    assert.ok(await findActiveSummaryPublicationMeta(config.portalId, "9002"));
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE bitrix24_task_cache
+       SET synced_at = NOW() - INTERVAL '2 hours'
+       WHERE portal_id = $1 AND task_id = $2`,
+      [config.portalId, "9002"],
+    );
+    await pool.end();
+
+    const app = await loadApp();
+    const cookie = await login("mgr-mix@example.com");
+    const claims = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/bitrix24/claims`)
+      .set(authHeaders(cookie));
+    assert.equal(claims.body.state, "ready");
+    assert.equal(claims.body.count, null);
+    assert.equal(claims.body.claims.length, 1);
+    assert.match(claims.body.claims[0]?.briefText, /Fresh claim/);
+    assert.equal(JSON.stringify(claims.body).includes("Stale claim"), false);
+  });
+
+  it("marks too_long #орк as partial sync with journal status partial", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-long@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Long",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    const tooLong =
+      formatLabelToken(label.labelCode) +
+      "\n#орк " +
+      "x".repeat(ORK_SUMMARY_MAX_LENGTH + 1);
+    const sync = await syncDescription({
+      managerId: manager.id,
+      description: tooLong,
+      changedAt: "2026-09-30T16:00:00+03:00",
+    });
+    assert.equal(sync.status, "partial");
+    assert.equal(sync.complete, false);
+    assert.equal(sync.orkPublishIssues, 1);
+    assert.equal(sync.orkPublishDenied?.[0]?.code, "too_long");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{ status: string }>(
+      `SELECT status FROM bitrix24_sync_journal ORDER BY finished_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    assert.equal(journal.rows[0]?.status, "partial");
+    assert.equal(await findActiveSummaryPublicationMeta(config.portalId, "9001"), null);
+  });
+
+  it("marks unauthorized new #орк publication as partial without journal success", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-unauth@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Unauth",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const sync = await syncDescription({
+      description:
+        formatLabelToken(label.labelCode) + "\n#орк Unauthorized new publication",
+      changedAt: "2026-09-30T16:10:00+03:00",
+    });
+    assert.equal(sync.status, "partial");
+    assert.equal(sync.complete, false);
+    assert.equal(sync.orkPublishIssues, 1);
+    assert.equal(sync.orkPublishDenied?.[0]?.code, "NO_EXECUTOR");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{ status: string }>(
+      `SELECT status FROM bitrix24_sync_journal ORDER BY finished_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    assert.equal(journal.rows[0]?.status, "partial");
+  });
+
+  it("revokes existing ork and reports partial when republication lacks executor", async () => {
+    const manager = await createTestUser({
+      databaseUrl,
+      email: "mgr-repub@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Repub",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: MANAGER_A,
+      confirmedByUserId: manager.id,
+    });
+    const label = await issueLabelInTransaction("holding", HOLDING_ONE);
+    await seedResponsibleTask({ userId: manager.id, labelCode: label.labelCode });
+    const config = sampleWebhookConfig();
+    await syncDescription({
+      managerId: manager.id,
+      description: formatLabelToken(label.labelCode) + "\n#орк Первая публикация",
+    });
+    assert.ok(await findActiveSummaryPublicationMeta(config.portalId, "9001"));
+
+    const republic = await syncDescription({
+      description: formatLabelToken(label.labelCode) + "\n#орк Новая без исполнителя",
+      changedAt: "2026-09-30T16:20:00+03:00",
+    });
+    assert.equal(republic.status, "partial");
+    assert.equal(republic.complete, false);
+    assert.equal(republic.orkPublishIssues, 1);
+    assert.equal(republic.orkPublishDenied?.[0]?.code, "NO_EXECUTOR");
+    assert.ok((republic.orkPublicationsRevoked ?? 0) >= 1);
+    assert.equal(await findActiveSummaryPublicationMeta(config.portalId, "9001"), null);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{ status: string }>(
+      `SELECT status FROM bitrix24_sync_journal ORDER BY finished_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    assert.equal(journal.rows[0]?.status, "partial");
   });
 });

@@ -1046,6 +1046,9 @@
               (body.sync.partial ? " (неполная)" : "") +
               "</p>";
           }
+          if (body.count === null && body.message) {
+            meta += '<p class="pc-label">' + esc(body.message) + "</p>";
+          }
           container.innerHTML =
             meta +
             '<p class="pc-label">Показаны только разрешённые сводки исходных задач. Внутреннее описание, переписка и вложения не отображаются.</p>' +
