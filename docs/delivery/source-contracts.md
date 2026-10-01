@@ -33,7 +33,7 @@
 | Путь (при base `/LC`) | Назначение | ЛК |
 |-----------------------|------------|-----|
 | `/LC/clients/all_clients.json` | Snapshot клиентов | импорт CLI ✅ |
-| `/LC/catalog/` (`groups`, `section`, `products` + 5 коммерческих `*/data.xml`) | Товарный блок XML | **CLI dry-run/apply** (R3.1 draft): профиль `full` (8 файлов) или `distribution` (3 файла); UI не подключён |
+| `/LC/catalog/` (`groups`, `section`, `products` + 5 коммерческих `*/data.xml`) | Товарный блок XML | **CLI import** (R3.1 ✅); **read API** во вкладке «Витрина» (R3.2 draft) — только активная версия PostgreSQL, без FTP |
 | Заказы / финансы | — | **не исследовались** в R0.2 |
 
 ---
@@ -70,10 +70,12 @@
 | 8 файлов `*/data.xml` | **наблюдалось** — [catalog-contract-spec.md §2](./catalog-contract-spec.md#2-наблюдаемая-структура-снимка-не-полный-контракт) |
 | `types_prices` | **существует**; 6 типов в снимке |
 | Связность цен | **2 252** строки → UUID `dc5ff0fd-f584-11e9-80ec-00155d0a0a4e` **отсутствует** в справочнике |
-| Утверждённый контракт / импорт | **частично** — профиль `distribution` (выбор товаров без коммерции) + профиль `full` (staging коммерции); семантика цен/остатков **не утверждена** |
-| Отсутствующая группа у товара | **warning** в `distribution`; **ошибка** в `full` |
+| Утверждённый контракт / импорт | **частично** — import ✅; read API R3.2 draft; семантика цен/остатков **не утверждена** |
+| Отсутствующая группа у товара | **warning** при import `distribution`; **ошибка** в `full`; в read API — `groupStatus=missing_reference`, товар **виден** |
+| Read API (R3.2) | `GET /api/clients/:guid/catalog/meta|products|products/:code` — только при доступе к карточке клиента; `Cache-Control: no-store` |
 
-Ожидаемое поведение R3.1: [catalog-contract-spec.md §3](./catalog-contract-spec.md#3-реализованное-поведение-r31-код).
+Контракт импорта: [catalog-contract-spec.md §3](./catalog-contract-spec.md#3-реализованное-поведение-r31-код).  
+Семантика витрины R3.3: [r33-showcase-semantics.md](./r33-showcase-semantics.md).
 
 ---
 

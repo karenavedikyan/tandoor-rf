@@ -158,7 +158,75 @@ export type MockOptions = {
   bitrix24Tasks?: Record<string, unknown>;
   bitrix24Claims?: Record<string, unknown>;
   bitrix24Sync?: Record<string, unknown> | number;
+  catalogMeta?: Record<string, unknown>;
+  catalogProducts?: Record<string, unknown>;
+  catalogProductDetail?: Record<string, unknown>;
 };
+
+export function syntheticCatalogMetaPayload() {
+  return {
+    state: "ready",
+    versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    importedAt: "2026-10-01T12:00:00.000Z",
+    importProfile: "distribution",
+    distributionReady: true,
+    productCount: 2,
+    sectionCount: 2,
+    propertyCount: 2,
+    imagePathCount: 1,
+    classificationIncomplete: true,
+    message: "Часть товаров ссылается на группы, отсутствующие в выгрузке; исходные коды групп сохранены.",
+    sections: [{ code: "s1", name: "Section one" }],
+    outletConfirmed: false,
+    futureActionsBlockedReason:
+      "Подтверждённая торговая точка ещё не подключена: сохранение факта установки и плана будет доступно на этапе R3.3.",
+  };
+}
+
+export function syntheticCatalogProductsPayload() {
+  return {
+    state: "ready",
+    versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    query: "",
+    sectionCode: null,
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    items: [
+      {
+        code: "p1",
+        name: "Product one with a very long name for wrapping test in narrow layout",
+        groupCode: "ghost-group",
+        groupStatus: "missing_reference",
+        sectionNames: ["Section one"],
+        primaryImagePath: "images/p1.jpg",
+        activity: "Y",
+      },
+    ],
+  };
+}
+
+export function syntheticCatalogProductDetailPayload() {
+  return {
+    state: "ready",
+    product: {
+      versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      code: "p1",
+      name: "Product one with a very long name for wrapping test in narrow layout",
+      groupCode: "ghost-group",
+      groupStatus: "missing_reference",
+      activity: "Y",
+      sectionNames: ["Section one"],
+      properties: [{ code: "type", name: "Тип товара", value: "Складская" }],
+      imagePaths: ["images/p1.jpg"],
+      snapshotImportedAt: "2026-10-01T12:00:00.000Z",
+    },
+    outletConfirmed: false,
+    selectionPersisted: false,
+    futureActionsBlockedReason:
+      "Выбор товара доступен для просмотра. Сохранение факта установки или плана потребует подтверждённой торговой точки (R3.3).",
+  };
+}
 
 export function jsonResponse(status: number, body: unknown): {
   status: number;
@@ -288,6 +356,19 @@ export function resolveMockResponse(
       claims: [],
       sync: null,
     });
+  }
+
+  if (path.endsWith("/catalog/meta")) {
+    return jsonResponse(200, options.catalogMeta ?? syntheticCatalogMetaPayload());
+  }
+
+  if (path.endsWith("/catalog/products")) {
+    return jsonResponse(200, options.catalogProducts ?? syntheticCatalogProductsPayload());
+  }
+
+  const productDetailMatch = path.match(/\/catalog\/products\/([^/]+)$/);
+  if (productDetailMatch) {
+    return jsonResponse(200, options.catalogProductDetail ?? syntheticCatalogProductDetailPayload());
   }
 
   return null;

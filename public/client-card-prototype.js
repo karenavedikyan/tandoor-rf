@@ -81,6 +81,11 @@
             card("Рекламации", '<div class="pc-pad" id="pc-bitrix24-claims" data-bitrix24-claims-root aria-live="polite"></div>', sources.claims) +
             '</section>';
         }
+        if (t[0] === "showcase") {
+          return '<section id="pc-panel-showcase" role="tabpanel" aria-labelledby="pc-tab-showcase" hidden>' +
+            card("Каталог для дистрибуции", '<div class="pc-pad" id="pc-catalog-showcase" data-catalog-root aria-live="polite"></div>', sources.showcase) +
+            '</section>';
+        }
         return '<section id="pc-panel-' + t[0] + '" role="tabpanel" aria-labelledby="pc-tab-' + t[0] + '" hidden>' +
           card(t[1], pending("Раздел ещё не подключён. После интеграции здесь появятся данные по этому клиенту; сейчас их наличие и количество неизвестны."), sources[t[0]]) +
           '</section>';
@@ -136,6 +141,9 @@
     if (window.ClientBitrix24 && client.guid) {
       window.ClientBitrix24.mountWorkTab(wrapper, client.guid);
       window.ClientBitrix24.mountClaimsTab(wrapper, client.guid);
+    }
+    if (window.ClientCatalog && client.guid) {
+      window.ClientCatalog.mountShowcaseTab(wrapper, client.guid);
     }
   }
   window.ClientCardPrototype = {mount:mount};

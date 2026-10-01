@@ -174,7 +174,9 @@
 | ID | Релиз | Статус | Приёмка |
 |----|-------|--------|---------|
 | R2-01…R2-04 | Моя работа | R2.3 принят в PR #26; ограниченная сводка рекламаций требует проверки | [Семантика и приёмка R2.3](./r23-moya-rabota-semantics.md); [решение по объёму R2](./release-plan.md#r2--моя-работа-и-общий-контекст) |
-| R3-01…R3-04 | Каталог, витрины | 📋 planned | n/a |
+| R3-01 | Импорт каталога (distribution/full) | ✅ accepted (PR #31, merge `2e43425`) | [catalog-contract-spec.md](./catalog-contract-spec.md) |
+| R3-02 | Поиск каталога во «Витрине» | 🟡 draft PR | read API `/api/clients/:guid/catalog/*`, вкладка «Витрина» |
+| R3-03…R3-04 | Факт витрины, визиты | 📋 planned | [r33-showcase-semantics.md](./r33-showcase-semantics.md) |
 | R4-01…R4-04 | Заказы, замещение | 📋 planned | n/a |
 | R5-01…R5-03 | Планы, развитие | 📋 planned | n/a |
 | R6-01…R6-02 | Заказные продажи | 📋 planned | n/a |
