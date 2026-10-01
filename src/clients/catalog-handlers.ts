@@ -1,7 +1,10 @@
 import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
+import { loadCatalogFacets } from "../catalog/facets-repository";
+import { readReadyImageAssetBytes } from "../catalog/image-sync";
 import {
   loadCatalogProductDetail,
+  loadCatalogSectionsTree,
   loadCatalogSnapshotMeta,
   listCatalogSections,
   searchCatalogProducts,
@@ -71,7 +74,7 @@ export async function getClientCatalogMetaHandler(req: AccessRequest, res: Respo
       sections,
       outletConfirmed: false,
       futureActionsBlockedReason:
-        "Подтверждённая торговая точка ещё не подключена: сохранение факта установки и плана будет доступно на этапе R3.3.",
+        "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
     });
   } finally {
     client.release();
@@ -90,6 +93,12 @@ export async function getClientCatalogProductsHandler(
     section: req.query.section,
     page: req.query.page,
     pageSize: req.query.pageSize,
+    filterBrand: req.query.filterBrand,
+    filterSeries: req.query.filterSeries,
+    filterColor: req.query.filterColor,
+    filterCoating: req.query.filterCoating,
+    filterOpening: req.query.filterOpening,
+    filterArticle: req.query.filterArticle,
   });
   if (!parsed.ok) {
     setNoStore(res);
@@ -141,6 +150,144 @@ export async function getClientCatalogProductsHandler(
       state: "ready",
       ...result,
     });
+  } finally {
+    client.release();
+  }
+}
+
+export async function getClientCatalogSectionsTreeHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!(await assertClientCatalogAccess(req, res, cardGuid))) return;
+
+  const versionParsed = parseCatalogVersionId(req.query.versionId);
+  if (!versionParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, versionParsed.message));
+    return;
+  }
+  const expectedVersionId = versionParsed.value;
+
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Database unavailable."));
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const meta = await loadCatalogSnapshotMeta(client);
+    if (meta.state !== "ready" || !meta.versionId) {
+      setNoStore(res);
+      res.status(200).json({ state: "empty", versionId: null, tree: [] });
+      return;
+    }
+    if (expectedVersionId && expectedVersionId !== meta.versionId) {
+      respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
+      return;
+    }
+    const tree = await loadCatalogSectionsTree(client, meta.versionId);
+    setNoStore(res);
+    res.status(200).json({ state: "ready", versionId: meta.versionId, tree });
+  } finally {
+    client.release();
+  }
+}
+
+export async function getClientCatalogFacetsHandler(req: AccessRequest, res: Response): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!(await assertClientCatalogAccess(req, res, cardGuid))) return;
+
+  const parsed = parseCatalogSearchQuery({
+    q: req.query.q,
+    section: req.query.section,
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+    filterBrand: req.query.filterBrand,
+    filterSeries: req.query.filterSeries,
+    filterColor: req.query.filterColor,
+    filterCoating: req.query.filterCoating,
+    filterOpening: req.query.filterOpening,
+    filterArticle: req.query.filterArticle,
+  });
+  if (!parsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, parsed.message));
+    return;
+  }
+
+  const versionParsed = parseCatalogVersionId(req.query.versionId);
+  if (!versionParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, versionParsed.message));
+    return;
+  }
+  const expectedVersionId = versionParsed.value;
+
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Database unavailable."));
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const meta = await loadCatalogSnapshotMeta(client);
+    if (meta.state !== "ready" || !meta.versionId) {
+      setNoStore(res);
+      res.status(200).json({
+        state: "empty",
+        versionId: null,
+        total: 0,
+        facets: [],
+        availableFilters: [],
+      });
+      return;
+    }
+    if (expectedVersionId && expectedVersionId !== meta.versionId) {
+      respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
+      return;
+    }
+    const facets = await loadCatalogFacets(client, meta.versionId, parsed.value);
+    setNoStore(res);
+    res.status(200).json({ state: "ready", ...facets });
+  } finally {
+    client.release();
+  }
+}
+
+export async function getClientCatalogMediaHandler(req: AccessRequest, res: Response): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!(await assertClientCatalogAccess(req, res, cardGuid))) return;
+
+  const assetId = String(req.params.assetId ?? "").trim();
+  if (!isValidUuidParam(assetId)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid image id."));
+    return;
+  }
+
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Database unavailable."));
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const image = await readReadyImageAssetBytes(client, assetId);
+    if (!image) {
+      setNoStore(res);
+      res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Image not found."));
+      return;
+    }
+    setNoStore(res);
+    res.setHeader("Content-Type", image.mimeType);
+    res.setHeader("Content-Length", String(image.buffer.length));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.status(200).send(image.buffer);
   } finally {
     client.release();
   }
@@ -208,7 +355,7 @@ export async function getClientCatalogProductHandler(req: AccessRequest, res: Re
       outletConfirmed: false,
       selectionPersisted: false,
       futureActionsBlockedReason:
-        "Выбор товара доступен для просмотра. Сохранение факта установки или плана потребует подтверждённой торговой точки (R3.3).",
+        "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
     });
   } finally {
     client.release();

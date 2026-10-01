@@ -1,4 +1,8 @@
 import { isValidUuidParam } from "../clients/uuid-param";
+import { CATALOG_FILTER_DEFINITIONS } from "./filter-config";
+
+export const CATALOG_MAX_FILTER_VALUE_LENGTH = 128;
+export const CATALOG_MAX_FILTER_VALUES = 20;
 
 export const CATALOG_DEFAULT_PAGE = 1;
 export const CATALOG_DEFAULT_PAGE_SIZE = 20;
@@ -11,6 +15,7 @@ export const CATALOG_MAX_OFFSET = 1_000_000;
 export type ParsedCatalogSearchQuery = {
   q: string;
   sectionCode: string | null;
+  propertyFilters: Record<string, string[]>;
   page: number;
   pageSize: number;
 };
@@ -62,11 +67,60 @@ export function parseCatalogVersionId(raw: unknown): ParsedCatalogVersionIdResul
   return { ok: true, value: trimmed.toLowerCase() };
 }
 
+function parseFilterValues(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null || raw === "") return [];
+  if (rejectNonScalar(raw) || typeof raw !== "string") return null;
+  const values = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (values.length > CATALOG_MAX_FILTER_VALUES) return null;
+  for (const value of values) {
+    if (value.length > CATALOG_MAX_FILTER_VALUE_LENGTH) return null;
+  }
+  return values;
+}
+
+export function parseCatalogPropertyFilters(
+  input: Record<string, unknown>,
+): { ok: true; value: Record<string, string[]> } | { ok: false; message: string } {
+  const result: Record<string, string[]> = {};
+  for (const definition of CATALOG_FILTER_DEFINITIONS) {
+    const paramKey = `filter${definition.key.charAt(0).toUpperCase()}${definition.key.slice(1)}`;
+    const raw = input[paramKey];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = parseFilterValues(raw);
+    if (parsed === null) {
+      return { ok: false, message: `Invalid filter values for ${definition.key}.` };
+    }
+    if (parsed.length) result[definition.key] = parsed;
+  }
+  for (const [key, raw] of Object.entries(input)) {
+    if (!key.startsWith("filter") || key === "filter") continue;
+    const suffix = key.slice("filter".length);
+    if (!suffix) continue;
+    const normalized =
+      suffix.charAt(0).toLowerCase() + suffix.slice(1);
+    if (CATALOG_FILTER_DEFINITIONS.some((item) => item.key === normalized)) continue;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      return { ok: false, message: `Unknown catalog filter: ${normalized}.` };
+    }
+  }
+  return { ok: true, value: result };
+}
+
 export function parseCatalogSearchQuery(input: {
   q?: unknown;
   section?: unknown;
   page?: unknown;
   pageSize?: unknown;
+  filterBrand?: unknown;
+  filterSeries?: unknown;
+  filterColor?: unknown;
+  filterCoating?: unknown;
+  filterOpening?: unknown;
+  filterArticle?: unknown;
+  [key: string]: unknown;
 }): ParsedCatalogSearchResult {
   const qRaw = parseScalarString(input.q, "");
   if (qRaw === null) {
@@ -100,11 +154,17 @@ export function parseCatalogSearchQuery(input: {
     return { ok: false, message: "Page offset is out of allowed range." };
   }
 
+  const propertyFilters = parseCatalogPropertyFilters(input);
+  if (!propertyFilters.ok) {
+    return { ok: false, message: propertyFilters.message };
+  }
+
   return {
     ok: true,
     value: {
       q: qRaw,
       sectionCode: sectionRaw || null,
+      propertyFilters: propertyFilters.value,
       page,
       pageSize,
     },

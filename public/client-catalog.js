@@ -294,9 +294,15 @@
       );
     }
 
+    function renderWorkspaceEntry() {
+      if (!window.ClientCatalogWorkspace) return "";
+      return window.ClientCatalogWorkspace.renderShowcaseEntry(state.clientGuid);
+    }
+
     function renderListShell(meta, resultsHtml) {
       setHtml(
-        renderMetaBanner(meta) +
+        renderWorkspaceEntry() +
+          renderMetaBanner(meta) +
           renderToolbar(meta) +
           '<div class="pc-catalog-results" data-catalog-results aria-live="polite">' +
           (resultsHtml || renderState("Загрузка каталога…", "loading")) +

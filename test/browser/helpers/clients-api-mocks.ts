@@ -186,7 +186,7 @@ export function syntheticCatalogMetaPayload() {
     ],
     outletConfirmed: false,
     futureActionsBlockedReason:
-      "Подтверждённая торговая точка ещё не подключена: сохранение факта установки и плана будет доступно на этапе R3.3.",
+      "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
   };
 }
 
@@ -207,6 +207,9 @@ export function syntheticCatalogProductsPayload() {
         groupStatus: "missing_reference",
         sectionNames: ["Section one"],
         primaryImagePath: "images/p1.jpg",
+        primaryImageAssetId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        article: null,
+        keyProperties: [{ code: "type", name: "Тип товара", value: "Складская" }],
         activity: "Y",
       },
     ],
@@ -226,12 +229,14 @@ export function syntheticCatalogProductDetailPayload() {
       sectionNames: ["Section one"],
       properties: [{ code: "type", name: "Тип товара", value: "Складская" }],
       imagePaths: ["images/p1.jpg"],
+      imageAssetIds: ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+      article: null,
       snapshotImportedAt: "2026-10-01T12:00:00.000Z",
     },
     outletConfirmed: false,
     selectionPersisted: false,
     futureActionsBlockedReason:
-      "Выбор товара доступен для просмотра. Сохранение факта установки или плана потребует подтверждённой торговой точки (R3.3).",
+      "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
   };
 }
 
@@ -370,6 +375,59 @@ export function resolveMockResponse(
       return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
     }
     return jsonResponse(200, options.catalogMeta ?? syntheticCatalogMetaPayload());
+  }
+
+  if (path.endsWith("/catalog/sections-tree")) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
+    }
+    return jsonResponse(200, {
+      state: "ready",
+      versionId: syntheticCatalogMetaPayload().versionId,
+      tree: [
+        {
+          code: "s1",
+          name: "Section one",
+          parentCode: null,
+          children: [{ code: "s2", name: "Section two", parentCode: "s1", children: [] }],
+        },
+      ],
+    });
+  }
+
+  if (path.endsWith("/catalog/facets")) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
+    }
+    return jsonResponse(200, {
+      state: "ready",
+      versionId: syntheticCatalogMetaPayload().versionId,
+      total: 1,
+      availableFilters: [{ key: "brand", label: "Бренд" }],
+      facets: [
+        {
+          key: "brand",
+          label: "Бренд",
+          values: [{ value: "Tandoor", count: 1 }],
+        },
+      ],
+    });
+  }
+
+  const mediaMatch = path.match(/\/catalog\/media\/([^/]+)$/);
+  if (mediaMatch) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Image not found." } });
+    }
+    return {
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+      headers: { "Cache-Control": "no-store" },
+    };
   }
 
   if (path.endsWith("/catalog/products") && !path.match(/\/catalog\/products\/[^/]+$/)) {

@@ -74,6 +74,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "019_bitrix24_ork_publications.sql",
       "020_onec_catalog.sql",
       "021_onec_catalog_import_profile.sql",
+      "022_catalog_image_assets.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);
