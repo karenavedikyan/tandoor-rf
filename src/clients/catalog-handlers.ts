@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
 import {
   CatalogFilterUnavailableError,
+  loadCatalogFacetValues,
   loadCatalogFacets,
 } from "../catalog/facets-repository";
 import { readReadyImageAssetBytes } from "../catalog/image-sync";
@@ -13,6 +14,7 @@ import {
   searchCatalogProducts,
 } from "../catalog/read-repository";
 import {
+  parseCatalogFacetValuesQuery,
   parseCatalogProductCode,
   parseCatalogSearchQuery,
   parseCatalogVersionId,
@@ -274,6 +276,96 @@ export async function getClientCatalogFacetsHandler(req: AccessRequest, res: Res
       const facets = await loadCatalogFacets(client, meta.versionId, parsed.value);
       setNoStore(res);
       res.status(200).json({ state: "ready", ...facets });
+    } catch (error) {
+      if (error instanceof CatalogFilterUnavailableError) {
+        respondCatalogFilterUnavailable(res, error.filters);
+        return;
+      }
+      throw error;
+    }
+  } finally {
+    client.release();
+  }
+}
+
+export async function getClientCatalogFacetValuesHandler(
+  req: AccessRequest,
+  res: Response,
+): Promise<void> {
+  const cardGuid = String(req.params.guid ?? "");
+  if (!(await assertClientCatalogAccess(req, res, cardGuid))) return;
+
+  const parsed = parseCatalogSearchQuery({
+    q: req.query.q,
+    section: req.query.section,
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+    filterBrand: req.query.filterBrand,
+    filterSeries: req.query.filterSeries,
+    filterColor: req.query.filterColor,
+    filterCoating: req.query.filterCoating,
+    filterOpening: req.query.filterOpening,
+    filterArticle: req.query.filterArticle,
+  });
+  if (!parsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, parsed.message));
+    return;
+  }
+
+  const facetParsed = parseCatalogFacetValuesQuery({
+    facetKey: req.query.facetKey,
+    facetQ: req.query.facetQ,
+    facetOffset: req.query.facetOffset,
+  });
+  if (!facetParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, facetParsed.message));
+    return;
+  }
+
+  const versionParsed = parseCatalogVersionId(req.query.versionId);
+  if (!versionParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, versionParsed.message));
+    return;
+  }
+  const expectedVersionId = versionParsed.value;
+
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Database unavailable."));
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const meta = await loadCatalogSnapshotMeta(client);
+    if (meta.state !== "ready" || !meta.versionId) {
+      setNoStore(res);
+      res.status(200).json({ state: "empty", versionId: null, total: 0, values: [], hasMore: false, offset: 0 });
+      return;
+    }
+    if (expectedVersionId && expectedVersionId !== meta.versionId) {
+      respondCatalogVersionChanged(res, meta.versionId, meta.importedAt);
+      return;
+    }
+    try {
+      const values = await loadCatalogFacetValues(
+        client,
+        meta.versionId,
+        parsed.value,
+        facetParsed.value.facetKey,
+        facetParsed.value.facetQ,
+        facetParsed.value.facetOffset,
+      );
+      if (!values) {
+        setNoStore(res);
+        res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Facet not found."));
+        return;
+      }
+      setNoStore(res);
+      res.status(200).json({ state: "ready", versionId: meta.versionId, ...values });
     } catch (error) {
       if (error instanceof CatalogFilterUnavailableError) {
         respondCatalogFilterUnavailable(res, error.filters);

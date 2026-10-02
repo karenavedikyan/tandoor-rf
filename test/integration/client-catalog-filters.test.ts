@@ -149,6 +149,18 @@ describe("client catalog filter contract integration", { concurrency: false }, (
     }
   });
 
+  it("searches facet values beyond the first page", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await request(app)
+      .get(
+        `/api/clients/${CLIENT_ONE}/catalog/facet-values?versionId=${versionId}&facetKey=color&facetQ=мат`,
+      )
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.values.some((item: { value: string }) => item.value === "Белый, матовый"));
+  });
+
   it("keeps facets and product totals aligned for comma-containing values", async () => {
     const cookie = await login("admin@example.com");
     const app = await loadApp();

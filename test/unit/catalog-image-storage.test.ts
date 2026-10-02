@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,8 @@ import {
   processImageToPreview,
   readBoundedFile,
   resolveSafeSourcePath,
+  resolveSafeStorageRoot,
+  verifyStoredPreview,
   writeImmutablePreview,
 } from "../../src/catalog/image-storage";
 
@@ -54,6 +57,23 @@ describe("catalog image storage", () => {
     await fs.rm(linkPath);
   });
 
+  it("rejects symlink previews root before writing", async () => {
+    const isolatedStore = await fs.mkdtemp(path.join(os.tmpdir(), "catalog-store-link-"));
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "catalog-outside-dir-"));
+    await fs.writeFile(path.join(outsideDir, "leak.webp"), Buffer.from("broken"));
+    await fs.symlink(outsideDir, path.join(isolatedStore, "previews"));
+    assert.equal(await resolveSafeStorageRoot(isolatedStore), null);
+    const processed = await processImageToPreview(VALID_PNG);
+    assert.equal(processed.ok, true);
+    if (!processed.ok) return;
+    await assert.rejects(
+      () => writeImmutablePreview(isolatedStore, processed.contentSha256, processed.previewBuffer),
+      /Unsafe storage path/,
+    );
+    await fs.rm(isolatedStore, { recursive: true, force: true });
+    await fs.rm(outsideDir, { recursive: true, force: true });
+  });
+
   it("rejects truncated png and decodes valid png into preview", async () => {
     const truncated = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
@@ -70,6 +90,19 @@ describe("catalog image storage", () => {
     assert.ok(ok.previewBuffer.length > 0);
   });
 
+  it("rejects corrupted existing preview objects with matching hash name", async () => {
+    const processed = await processImageToPreview(VALID_PNG);
+    assert.equal(processed.ok, true);
+    if (!processed.ok) return;
+    const target = await writeImmutablePreview(storageDir, processed.contentSha256, processed.previewBuffer);
+    await fs.writeFile(target, Buffer.from("broken"));
+    const verified = await verifyStoredPreview(target, processed.contentSha256);
+    assert.equal(verified.ok, false);
+    const restored = await writeImmutablePreview(storageDir, processed.contentSha256, processed.previewBuffer);
+    const restoredVerified = await verifyStoredPreview(restored, processed.contentSha256);
+    assert.equal(restoredVerified.ok, true);
+  });
+
   it("writes immutable preview objects once", async () => {
     const processed = await processImageToPreview(VALID_PNG);
     assert.equal(processed.ok, true);
@@ -78,6 +111,6 @@ describe("catalog image storage", () => {
     const second = await writeImmutablePreview(storageDir, processed.contentSha256, processed.previewBuffer);
     assert.equal(first, second);
     const bytes = await readBoundedFile(first, processed.previewBuffer.length + 1);
-    assert.ok(bytes.length > 0);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), processed.contentSha256);
   });
 });

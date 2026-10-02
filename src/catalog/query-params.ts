@@ -173,6 +173,51 @@ export function parseCatalogSearchQuery(input: {
   };
 }
 
+export function parseCatalogFacetValuesQuery(input: {
+  facetKey?: unknown;
+  facetQ?: unknown;
+  facetOffset?: unknown;
+}): { ok: true; value: { facetKey: string; facetQ: string; facetOffset: number } } | { ok: false; message: string } {
+  const facetKeyRaw = parseScalarString(input.facetKey, "");
+  if (facetKeyRaw === null || !facetKeyRaw) {
+    return { ok: false, message: "facetKey is required." };
+  }
+  const definition = CATALOG_FILTER_DEFINITIONS.find((item) => item.key === facetKeyRaw);
+  if (!definition) {
+    return { ok: false, message: "Unknown facet key." };
+  }
+  const facetQRaw = parseScalarString(input.facetQ, "");
+  if (facetQRaw === null) {
+    return { ok: false, message: "facetQ must be a string." };
+  }
+  if (facetQRaw.length > 64) {
+    return { ok: false, message: "facetQ is too long." };
+  }
+  const facetOffsetRaw =
+    input.facetOffset === undefined || input.facetOffset === null || input.facetOffset === ""
+      ? 0
+      : input.facetOffset;
+  if (rejectNonScalar(facetOffsetRaw)) {
+    return { ok: false, message: "facetOffset must be an integer." };
+  }
+  const facetOffsetText = String(facetOffsetRaw).trim();
+  if (!/^\d+$/.test(facetOffsetText)) {
+    return { ok: false, message: "facetOffset must be a non-negative integer." };
+  }
+  const facetOffset = Number(facetOffsetText);
+  if (!Number.isSafeInteger(facetOffset) || facetOffset < 0 || facetOffset > 10_000) {
+    return { ok: false, message: "facetOffset is out of allowed range." };
+  }
+  return {
+    ok: true,
+    value: {
+      facetKey: definition.key,
+      facetQ: facetQRaw,
+      facetOffset,
+    },
+  };
+}
+
 export function parseCatalogProductCode(raw: string | undefined): string | null {
   const code = (raw ?? "").trim();
   if (!code || code.length > CATALOG_MAX_PRODUCT_CODE_LENGTH) return null;

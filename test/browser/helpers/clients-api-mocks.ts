@@ -416,6 +416,31 @@ export function resolveMockResponse(
     });
   }
 
+  if (path.endsWith("/catalog/facet-values")) {
+    if (options.catalogAccessRevoked) {
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "Client not found." } });
+    }
+    const facetKey = url.searchParams.get("facetKey") ?? "brand";
+    const facetQ = (url.searchParams.get("facetQ") ?? "").toLowerCase();
+    const allValues = [
+      { value: "Tandoor", count: 1 },
+      { value: "Other brand", count: 1 },
+    ];
+    const filtered = facetQ
+      ? allValues.filter((entry) => entry.value.toLowerCase().includes(facetQ))
+      : allValues;
+    return jsonResponse(200, {
+      state: "ready",
+      versionId: syntheticCatalogMetaPayload().versionId,
+      key: facetKey,
+      label: "Бренд",
+      total: filtered.length,
+      values: filtered,
+      offset: Number(url.searchParams.get("facetOffset") ?? "0"),
+      hasMore: false,
+    });
+  }
+
   const mediaMatch = path.match(/\/catalog\/media\/([^/]+)$/);
   if (mediaMatch) {
     if (options.catalogAccessRevoked) {

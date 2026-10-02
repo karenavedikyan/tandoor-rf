@@ -190,6 +190,81 @@ describe("client catalog workspace (R3.2 visual, mocked API)", { concurrency: fa
     await context.close();
   });
 
+  it("ignores stale detail response after returning to list", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let detailDelayMs = 1200;
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.match(/\/catalog\/products\/[^/]+$/) && !url.pathname.endsWith("/products")) {
+        await new Promise((resolve) => setTimeout(resolve, detailDelayMs));
+      }
+      const mock = resolveMockResponse(
+        url,
+        { role: "admin", detailBody: syntheticDetailPayload(), catalogProductDetail: syntheticCatalogProductDetailPayload() },
+        { listCalls: 0, catalogProductsCalls: 0 },
+        route.request().method(),
+      );
+      if (mock) await route.fulfill(mock);
+      else await route.fulfill({ status: 404, body: "{}" });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}/catalog`);
+    await page.waitForSelector(".pc-catalog-card");
+    await page.locator('[data-catalog-open="p1"]').click();
+    await page.waitForSelector(".pc-catalog-detail");
+    detailDelayMs = 1800;
+    await page.locator("[data-catalog-back]").click();
+    await page.waitForSelector(".pc-catalog-workspace-layout");
+    await page.waitForTimeout(2200);
+    assert.equal(await page.locator(".pc-catalog-detail").count(), 0);
+    assert.ok(await page.locator(".pc-catalog-workspace-layout").isVisible());
+    await page.close();
+    await context.close();
+  });
+
+  it("shows retry state when facets endpoint fails", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let facetsFail = true;
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (facetsFail && url.pathname.endsWith("/catalog/facets")) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Temporary"}' });
+        return;
+      }
+      const mock = resolveMockResponse(
+        url,
+        { role: "admin", detailBody: syntheticDetailPayload() },
+        { listCalls: 0, catalogProductsCalls: 0 },
+        route.request().method(),
+      );
+      if (mock) await route.fulfill(mock);
+      else await route.fulfill({ status: 404, body: "{}" });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}/catalog`);
+    await page.waitForSelector('.pc-catalog-state--error');
+    assert.match(await page.locator("#catalog-workspace-root").textContent(), /Не удалось загрузить фильтры/);
+    facetsFail = false;
+    await page.locator('[data-catalog-action="retry-list"]').click();
+    await page.waitForSelector(".pc-catalog-card");
+    await page.close();
+    await context.close();
+  });
+
+  it("clears session state after access revocation", async () => {
+    const { page, context, mocks } = await openWorkspace();
+    await page.fill('[name="q"]', "Persist me");
+    await page.locator('[data-catalog-search-form] button[type="submit"]').click();
+    await page.waitForSelector(".pc-catalog-card");
+    mocks.set({ catalogAccessRevoked: true });
+    await page.reload();
+    await page.waitForSelector('.pc-catalog-state--error');
+    const stored = await page.evaluate((guid) => sessionStorage.getItem("tandoor-catalog-workspace-" + guid), SYNTHETIC_CLIENT_GUID);
+    assert.equal(stored, null);
+    await page.close();
+    await context.close();
+  });
+
   it("links from showcase tab to workspace", async () => {
     const context = await browser.newContext();
     const page = await context.newPage();

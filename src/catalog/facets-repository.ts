@@ -7,8 +7,11 @@ import {
   findUnavailablePropertyFilters,
   resolvePropertyFilterBindings,
 } from "./search-filters";
+import { escapeIlikeLiteral } from "./sql-utils";
 
 export const CATALOG_FACET_VALUES_PAGE_SIZE = 100;
+export const CATALOG_FACET_SEARCH_MAX_LENGTH = 64;
+export const CATALOG_FACET_SEARCH_MAX_OFFSET = 10_000;
 
 export class CatalogFilterUnavailableError extends Error {
   readonly filters: string[];
@@ -94,13 +97,34 @@ export async function loadCatalogFacets(
     );
 
     availableFilters.push({ key: definition.key, label: definition.label });
+    const values = valuesResult.rows.map((row) => ({
+      value: row.value,
+      count: Number(row.count),
+    }));
+    const selectedValues = query.propertyFilters[definition.key] ?? [];
+    for (const selected of selectedValues) {
+      if (values.some((entry) => entry.value === selected)) continue;
+      const selectedCount = await client.query<{ count: string }>(
+        `
+          SELECT COUNT(DISTINCT p.code)::text AS count
+          FROM onec_catalog_products p
+          JOIN onec_catalog_product_properties pf
+            ON pf.version_id = p.version_id AND pf.product_code = p.code
+          WHERE ${scopedBuilt.whereClause}
+            AND ${propertyMatchClause}
+            AND pf.property_value = $${countParams.length + 1}
+        `,
+        [...countParams, selected],
+      );
+      values.unshift({
+        value: selected,
+        count: Number(selectedCount.rows[0]?.count ?? "0"),
+      });
+    }
     facets.push({
       key: definition.key,
       label: definition.label,
-      values: valuesResult.rows.map((row) => ({
-        value: row.value,
-        count: Number(row.count),
-      })),
+      values,
       totalValues,
       valuesTruncated: totalValues > valuesResult.rows.length,
     });
@@ -111,6 +135,85 @@ export async function loadCatalogFacets(
     total,
     facets,
     availableFilters,
+  };
+}
+
+export async function loadCatalogFacetValues(
+  client: PoolClient,
+  versionId: string,
+  query: ParsedCatalogSearchQuery,
+  facetKey: string,
+  searchQ: string,
+  offset: number,
+): Promise<{
+  key: string;
+  label: string;
+  total: number;
+  values: Array<{ value: string; count: number }>;
+  offset: number;
+  hasMore: boolean;
+} | null> {
+  await assertCatalogPropertyFiltersAvailable(client, versionId, query.propertyFilters);
+  const definition = CATALOG_FILTER_DEFINITIONS.find((item) => item.key === facetKey);
+  if (!definition) return null;
+
+  const otherFilters = { ...query.propertyFilters };
+  delete otherFilters[facetKey];
+  const scopedQuery = { ...query, propertyFilters: otherFilters };
+  const scopedBuilt = await buildCatalogProductFilters(client, versionId, scopedQuery);
+  const bindings = await resolvePropertyFilterBindings(client, versionId, query.propertyFilters);
+  const binding = bindings.find((item) => item.key === definition.key);
+  const propertyCodes = binding?.propertyCodes ?? lowercased(definition.propertyCodes);
+  const propertyNames = binding?.propertyNames ?? lowercased(definition.propertyNames);
+  const propertyMatchClause = `(LOWER(pf.property_code) = ANY($${scopedBuilt.params.length + 1}::text[]) OR LOWER(pf.property_name) = ANY($${scopedBuilt.params.length + 2}::text[]))`;
+  const countParams = [...scopedBuilt.params, propertyCodes, propertyNames];
+  const searchClause = searchQ
+    ? ` AND pf.property_value ILIKE $${countParams.length + 1}`
+    : "";
+  const searchParams = searchQ ? [`%${escapeIlikeLiteral(searchQ)}%`] : [];
+
+  const totalResult = await client.query<{ count: string }>(
+    `
+      SELECT COUNT(DISTINCT pf.property_value)::text AS count
+      FROM onec_catalog_products p
+      JOIN onec_catalog_product_properties pf
+        ON pf.version_id = p.version_id AND pf.product_code = p.code
+      WHERE ${scopedBuilt.whereClause}
+        AND ${propertyMatchClause}
+        AND pf.property_value <> ''
+        ${searchClause}
+    `,
+    [...countParams, ...searchParams],
+  );
+  const total = Number(totalResult.rows[0]?.count ?? "0");
+  const valuesResult = await client.query<{ value: string; count: string }>(
+    `
+      SELECT pf.property_value AS value, COUNT(DISTINCT p.code)::text AS count
+      FROM onec_catalog_products p
+      JOIN onec_catalog_product_properties pf
+        ON pf.version_id = p.version_id AND pf.product_code = p.code
+      WHERE ${scopedBuilt.whereClause}
+        AND ${propertyMatchClause}
+        AND pf.property_value <> ''
+        ${searchClause}
+      GROUP BY pf.property_value
+      ORDER BY pf.property_value ASC
+      LIMIT ${CATALOG_FACET_VALUES_PAGE_SIZE}
+      OFFSET ${offset}
+    `,
+    [...countParams, ...searchParams],
+  );
+
+  return {
+    key: definition.key,
+    label: definition.label,
+    total,
+    values: valuesResult.rows.map((row) => ({
+      value: row.value,
+      count: Number(row.count),
+    })),
+    offset,
+    hasMore: offset + valuesResult.rows.length < total,
   };
 }
 

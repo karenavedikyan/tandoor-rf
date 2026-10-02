@@ -130,8 +130,14 @@
 .pc-catalog-active-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0;}
 .pc-catalog-chip{padding:6px 10px;border:1px solid var(--rf-border);border-radius:999px;background:var(--rf-surface-muted);font:inherit;cursor:pointer;}
 .pc-catalog-view-modes{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
-.pc-catalog-view-modes__btn{padding:8px 12px;border:1px solid var(--rf-border);border-radius:6px;background:var(--rf-surface);font:inherit;cursor:pointer;}
+.pc-catalog-view-modes__btn{padding:8px 12px;border:1px solid var(--rf-border);border-radius:6px;background:var(--rf-surface);color:var(--rf-text);font:inherit;cursor:pointer;}
 .pc-catalog-view-modes__btn--active{background:var(--rf-primary-hover);color:#fff;border-color:var(--rf-primary-hover);}
+[data-theme="dark"] .pc-catalog-view-modes__btn:not(.pc-catalog-view-modes__btn--active){background:var(--rf-surface-muted);color:var(--rf-text);border-color:var(--rf-border);}
+.pc-catalog-filters-toggle{display:none;width:100%;margin-bottom:12px;}
+.pc-catalog-facet-search{margin:8px 0 12px;}
+.pc-catalog-image--broken{display:none;}
+.pc-catalog-image--photo:has(.pc-catalog-image--broken),.pc-catalog-image--photo.pc-catalog-image--broken-fallback{min-height:120px;}
+.pc-catalog-image--photo.pc-catalog-image--broken-fallback::after{content:attr(aria-label);display:flex;align-items:center;justify-content:center;padding:12px;color:var(--rf-text-muted);font-size:12px;text-align:center;}
 .pc-catalog-toolbar--workspace{grid-template-columns:minmax(0,1fr) auto;margin-bottom:0;}
 .pc-catalog-grid--large{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));}
 .pc-catalog-grid--compact{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));}
@@ -152,7 +158,7 @@
 .pc-catalog-lightbox__figure{position:relative;z-index:1;margin:0;max-width:min(960px,100%);max-height:100%;}
 .pc-catalog-lightbox__figure img{display:block;max-width:100%;max-height:calc(100vh - 48px);object-fit:contain;background:#111;}
 .pc-catalog-lightbox__close{position:absolute;top:-12px;right:-12px;width:36px;height:36px;border:0;border-radius:50%;background:var(--rf-surface);font-size:24px;line-height:1;cursor:pointer;}
-@media(max-width:1100px){.pc-three{grid-template-columns:repeat(2,minmax(0,1fr));}.pc-catalog-workspace-layout{grid-template-columns:minmax(0,1fr);}.pc-catalog-filters-panel{position:static;max-height:none;}}
+@media(max-width:1100px){.pc-three{grid-template-columns:repeat(2,minmax(0,1fr));}.pc-catalog-workspace-layout{grid-template-columns:minmax(0,1fr);}.pc-catalog-filters-toggle{display:block;}.pc-catalog-filters-panel{display:none;position:static;max-height:none;}.pc-catalog-filters-panel.pc-catalog-filters-panel--expanded{display:block;}}
 @media(max-width:700px){
   .pc-catalog-toolbar{grid-template-columns:minmax(0,1fr);}
   .pc-bitrix24-checklist-item{padding-left:calc(var(--checklist-depth, 0) * 12px);}
