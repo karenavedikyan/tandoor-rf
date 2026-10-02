@@ -22,6 +22,8 @@ export type CatalogImageSyncTestHooks = {
 
 export type CatalogImageSyncOptions = {
   apply: boolean;
+  /** Internal CLI batch scope, intersected with the active catalog. No HTTP exposure. */
+  sourcePaths?: string[];
   maxFiles?: number;
   maxBytes?: number;
   maxRunMs?: number;
@@ -518,7 +520,11 @@ export async function runCatalogImageSync(
 
     const { versionId, paths } = await listActiveCatalogImagePaths(client);
     report.catalogVersionId = versionId;
-    const sortedPaths = [...paths].sort((left, right) => left.localeCompare(right));
+    const selected = options.sourcePaths ? new Set(options.sourcePaths) : null;
+    if (selected && [...selected].some((p) => !paths.includes(p))) {
+      throw new Error("Photo batch is outside the active catalog.");
+    }
+    const sortedPaths = paths.filter((p) => !selected || selected.has(p)).sort((left, right) => left.localeCompare(right));
 
     if (options.apply && storageDir) {
       await ensureStorageDir(storageDir);
@@ -529,7 +535,7 @@ export async function runCatalogImageSync(
       return report;
     }
 
-    const cursor = await loadSyncCursor(client, versionId);
+    const cursor = selected ? null : await loadSyncCursor(client, versionId);
     const orderedPaths = rotatePaths(sortedPaths, cursor);
 
     const assetRows =
@@ -567,7 +573,7 @@ export async function runCatalogImageSync(
     let verifyOps = 0;
     const maxVerifyOps = Math.max(maxFiles * 4, verifyConcurrency);
     const sourceBudget = new SourceByteBudget(maxBytes, report);
-    const persistQueue = options.apply;
+    const persistQueue = options.apply && !selected;
 
     for (const sourcePath of orderedPaths) {
       report.filesSeen += 1;

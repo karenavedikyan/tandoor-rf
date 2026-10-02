@@ -216,6 +216,17 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
     }
   });
 
+  it("internal photo batches reject paths outside active catalog without publishing", async () => {
+    const c = await pool.connect();
+    try {
+      const before = await c.query("SELECT count(*)::int n FROM onec_catalog_image_assets");
+      const r = await runCatalogImageSync(c, { apply: true, sourcePaths: ["outside-catalog.jpg"] });
+      assert.ok(r.errors.length > 0);
+      const after = await c.query("SELECT count(*)::int n FROM onec_catalog_image_assets");
+      assert.equal(after.rows[0].n, before.rows[0].n);
+    } finally { c.release(); }
+  });
+
   it("does not let a missing leading path block later files within maxFiles", async () => {
     await prepareDatabase(databaseUrl);
     await applyDistributionXml(
