@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type Sharp, type Metadata } from "sharp";
+import { s3Enabled, s3Config, checkS3Storage, readS3Preview, writeS3Preview } from "./image-s3";
 
 export type ImageValidationResult =
   | {
@@ -23,6 +24,7 @@ const SHA256_HEX = /^[a-f0-9]{64}$/;
 const ALLOWED_IMAGE_FORMATS = new Set(["jpeg", "png", "webp", "gif"]);
 
 export function getCatalogImageStorageDir(): string | null {
+  if (s3Enabled()) return `s3://${s3Config().bucket}`;
   const configured = process.env.CATALOG_IMAGE_STORAGE_DIR?.trim();
   return configured || null;
 }
@@ -209,8 +211,8 @@ export async function readBoundedFile(filePath: string, maxBytes: number): Promi
 }
 
 async function withSharpTimeout<T>(
-  createPipeline: () => sharp.Sharp,
-  operation: (pipeline: sharp.Sharp) => Promise<T>,
+  createPipeline: () => Sharp,
+  operation: (pipeline: Sharp) => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
   const pipeline = createPipeline();
@@ -230,7 +232,7 @@ async function withSharpTimeout<T>(
   }
 }
 
-function isAllowedImageMetadata(metadata: sharp.Metadata): boolean {
+function isAllowedImageMetadata(metadata: Metadata): boolean {
   const format = metadata.format?.toLowerCase() ?? "";
   if (!ALLOWED_IMAGE_FORMATS.has(format)) {
     return false;
@@ -308,6 +310,11 @@ export async function processImageToPreview(sourceBuffer: Buffer): Promise<Image
 }
 
 export async function ensureStorageDir(storageDir: string): Promise<void> {
+  if (s3Enabled()) {
+    if (storageDir !== `s3://${s3Config().bucket}`) throw new Error("Invalid S3 storage.");
+    await checkS3Storage();
+    return;
+  }
   const root = await resolveSafeStorageRoot(storageDir);
   if (!root) {
     throw new Error("Unsafe storage directory.");
@@ -342,6 +349,17 @@ export async function verifyStoredPreview(
 ): Promise<StoredPreviewVerification> {
   if (!isValidSha256Hex(expectedSha256)) {
     return { ok: false, message: "Invalid preview hash." };
+  }
+  if (storagePath.startsWith("s3://")) {
+    try {
+      const buffer = await readS3Preview(storagePath, getMaxImageBytes());
+      if (createHash("sha256").update(buffer).digest("hex") !== expectedSha256) {
+        return { ok: false, message: "Stored preview hash mismatch." };
+      }
+      const meta = await sharp(buffer, { failOn: "error", limitInputPixels: getMaxImagePixels() }).metadata();
+      if (meta.format !== "webp") return { ok: false, message: "Stored preview format invalid." };
+      return { ok: true, byteSize: buffer.length };
+    } catch { return { ok: false, message: "Stored preview unavailable." }; }
   }
   let stat;
   try {
@@ -392,6 +410,12 @@ export async function writeImmutablePreview(
   const actualSha256 = createHash("sha256").update(previewBuffer).digest("hex");
   if (actualSha256 !== contentSha256) {
     throw new Error("Preview buffer hash mismatch.");
+  }
+  if (s3Enabled()) {
+    if (storageDir !== `s3://${s3Config().bucket}`) throw new Error("Invalid S3 storage.");
+    const meta = await sharp(previewBuffer, { failOn: "error", limitInputPixels: getMaxImagePixels() }).metadata();
+    if (meta.format !== "webp") throw new Error("Preview format invalid.");
+    return writeS3Preview(contentSha256, previewBuffer);
   }
 
   const relativePath = buildImmutablePreviewRelativePath(contentSha256);
@@ -448,6 +472,7 @@ export async function writeImmutablePreview(
 }
 
 export async function readStoredImage(storagePath: string, storageDir?: string): Promise<Buffer> {
+  if (storagePath.startsWith("s3://")) return readS3Preview(storagePath, getMaxImageBytes());
   if (storageDir) {
     const root = await resolveSafeStorageRoot(storageDir);
     if (!root) {
