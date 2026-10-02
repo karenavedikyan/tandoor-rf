@@ -5,13 +5,19 @@ import type {
   CatalogProductListItem,
   CatalogProductSearchResult,
   CatalogSectionOption,
+  CatalogSectionTreeNode,
   CatalogSnapshotMeta,
 } from "./types";
 import type { ParsedCatalogSearchQuery } from "./query-params";
+import {
+  assertCatalogPropertyFiltersAvailable,
+  extractArticleFromProperties,
+  selectKeyProperties,
+} from "./facets-repository";
+import { buildCatalogProductFilters, buildSectionTree, loadSectionRows } from "./search-filters";
+import { escapeIlikeLiteral } from "./sql-utils";
 
-export function escapeIlikeLiteral(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-}
+export { escapeIlikeLiteral } from "./sql-utils";
 
 type ActiveVersionRow = {
   version_id: string;
@@ -127,32 +133,10 @@ export async function searchCatalogProducts(
   versionId: string,
   query: ParsedCatalogSearchQuery,
 ): Promise<CatalogProductSearchResult> {
-  const params: unknown[] = [versionId];
-  const filters: string[] = ["p.version_id = $1::uuid"];
-
-  if (query.q) {
-    params.push(`%${escapeIlikeLiteral(query.q)}%`);
-    const qIndex = params.length;
-    filters.push(
-      `(p.name ILIKE $${qIndex} ESCAPE '\\' OR p.code ILIKE $${qIndex} ESCAPE '\\')`,
-    );
-  }
-
-  if (query.sectionCode) {
-    params.push(query.sectionCode);
-    const sectionIndex = params.length;
-    filters.push(
-      `EXISTS (
-         SELECT 1
-         FROM onec_catalog_product_sections ps
-         WHERE ps.version_id = p.version_id
-           AND ps.product_code = p.code
-           AND ps.section_code = $${sectionIndex}
-       )`,
-    );
-  }
-
-  const whereClause = filters.join(" AND ");
+  await assertCatalogPropertyFiltersAvailable(client, versionId, query.propertyFilters);
+  const built = await buildCatalogProductFilters(client, versionId, query);
+  const params = [...built.params];
+  const whereClause = built.whereClause;
   const countResult = await client.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM onec_catalog_products p WHERE ${whereClause}`,
     params,
@@ -171,6 +155,7 @@ export async function searchCatalogProducts(
     activity: string;
     group_found: boolean | null;
     primary_image_path: string | null;
+    primary_image_asset_id: string | null;
     section_names: string[] | null;
   }>(
     `
@@ -180,14 +165,8 @@ export async function searchCatalogProducts(
         p.group_code,
         p.activity,
         (g.code IS NOT NULL) AS group_found,
-        (
-          SELECT i.image_path
-          FROM onec_catalog_product_images i
-          WHERE i.version_id = p.version_id
-            AND i.product_code = p.code
-          ORDER BY i.sort_order ASC
-          LIMIT 1
-        ) AS primary_image_path,
+        img.image_path AS primary_image_path,
+        asset.id::text AS primary_image_asset_id,
         (
           SELECT ARRAY_AGG(s.name ORDER BY s.name)
           FROM onec_catalog_product_sections ps
@@ -199,6 +178,16 @@ export async function searchCatalogProducts(
       FROM onec_catalog_products p
       LEFT JOIN onec_catalog_groups g
         ON g.version_id = p.version_id AND g.code = p.group_code
+      LEFT JOIN LATERAL (
+        SELECT i.image_path
+        FROM onec_catalog_product_images i
+        WHERE i.version_id = p.version_id
+          AND i.product_code = p.code
+        ORDER BY i.sort_order ASC
+        LIMIT 1
+      ) img ON TRUE
+      LEFT JOIN onec_catalog_image_assets asset
+        ON asset.source_path = img.image_path AND asset.status = 'ready'
       WHERE ${whereClause}
       ORDER BY p.name ASC, p.code ASC
       LIMIT $${limitIndex} OFFSET $${offsetIndex}
@@ -206,25 +195,66 @@ export async function searchCatalogProducts(
     params,
   );
 
-  const items: CatalogProductListItem[] = rows.rows.map((row) => ({
-    code: row.code,
-    name: row.name,
-    groupCode: row.group_code,
-    groupStatus: mapGroupStatus(row.group_code, row.group_found),
-    sectionNames: row.section_names ?? [],
-    primaryImagePath: row.primary_image_path,
-    activity: row.activity,
-  }));
+  const codes = rows.rows.map((row) => row.code);
+  const propertiesByCode = new Map<
+    string,
+    Array<{ property_code: string; property_name: string; property_value: string }>
+  >();
+  if (codes.length) {
+    const props = await client.query<{
+      product_code: string;
+      property_code: string;
+      property_name: string;
+      property_value: string;
+    }>(
+      `
+        SELECT product_code, property_code, property_name, property_value
+        FROM onec_catalog_product_properties
+        WHERE version_id = $1::uuid AND product_code = ANY($2::text[])
+      `,
+      [versionId, codes],
+    );
+    for (const row of props.rows) {
+      const list = propertiesByCode.get(row.product_code) ?? [];
+      list.push(row);
+      propertiesByCode.set(row.product_code, list);
+    }
+  }
+
+  const items: CatalogProductListItem[] = rows.rows.map((row) => {
+    const properties = propertiesByCode.get(row.code) ?? [];
+    return {
+      code: row.code,
+      name: row.name,
+      groupCode: row.group_code,
+      groupStatus: mapGroupStatus(row.group_code, row.group_found),
+      sectionNames: row.section_names ?? [],
+      primaryImagePath: row.primary_image_path,
+      primaryImageAssetId: row.primary_image_asset_id,
+      article: extractArticleFromProperties(properties),
+      keyProperties: selectKeyProperties(properties),
+      activity: row.activity,
+    };
+  });
 
   return {
     versionId,
     query: query.q,
     sectionCode: query.sectionCode,
+    propertyFilters: query.propertyFilters,
     page: query.page,
     pageSize: query.pageSize,
     total,
     items,
   };
+}
+
+export async function loadCatalogSectionsTree(
+  client: PoolClient,
+  versionId: string,
+): Promise<CatalogSectionTreeNode[]> {
+  const rows = await loadSectionRows(client, versionId);
+  return buildSectionTree(rows);
 }
 
 export async function loadCatalogProductDetail(
@@ -292,6 +322,21 @@ export async function loadCatalogProductDetail(
     [versionId, productCode],
   );
 
+  const imageAssetRows = images.rows.length
+    ? await client.query<{ image_path: string; asset_id: string | null }>(
+        `
+          SELECT i.image_path, a.id::text AS asset_id
+          FROM onec_catalog_product_images i
+          LEFT JOIN onec_catalog_image_assets a
+            ON a.source_path = i.image_path AND a.status = 'ready'
+          WHERE i.version_id = $1::uuid AND i.product_code = $2
+          ORDER BY i.sort_order ASC
+        `,
+        [versionId, productCode],
+      )
+    : { rows: [] as Array<{ image_path: string; asset_id: string | null }> };
+
+  const propertyRows = properties.rows;
   return {
     versionId,
     code: row.code,
@@ -300,12 +345,14 @@ export async function loadCatalogProductDetail(
     groupStatus: mapGroupStatus(row.group_code, row.group_found),
     activity: row.activity,
     sectionNames: sections.rows.map((section) => section.name),
-    properties: properties.rows.map((property) => ({
+    properties: propertyRows.map((property) => ({
       code: property.property_code,
       name: property.property_name,
       value: property.property_value,
     })),
-    imagePaths: images.rows.map((image) => image.image_path),
+    imagePaths: imageAssetRows.rows.map((image) => image.image_path),
+    imageAssetIds: imageAssetRows.rows.map((image) => image.asset_id).filter(Boolean) as string[],
+    article: extractArticleFromProperties(propertyRows),
     snapshotImportedAt: row.imported_at.toISOString(),
   };
 }

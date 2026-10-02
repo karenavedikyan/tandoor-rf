@@ -1,4 +1,8 @@
 import { isValidUuidParam } from "../clients/uuid-param";
+import { CATALOG_FILTER_DEFINITIONS } from "./filter-config";
+
+export const CATALOG_MAX_FILTER_VALUE_LENGTH = 128;
+export const CATALOG_MAX_FILTER_VALUES = 20;
 
 export const CATALOG_DEFAULT_PAGE = 1;
 export const CATALOG_DEFAULT_PAGE_SIZE = 20;
@@ -11,6 +15,7 @@ export const CATALOG_MAX_OFFSET = 1_000_000;
 export type ParsedCatalogSearchQuery = {
   q: string;
   sectionCode: string | null;
+  propertyFilters: Record<string, string[]>;
   page: number;
   pageSize: number;
 };
@@ -62,11 +67,62 @@ export function parseCatalogVersionId(raw: unknown): ParsedCatalogVersionIdResul
   return { ok: true, value: trimmed.toLowerCase() };
 }
 
+function parseFilterValues(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null || raw === "") return [];
+  const items = Array.isArray(raw) ? raw : [raw];
+  if (!items.length) return [];
+  const values: string[] = [];
+  for (const item of items) {
+    if (rejectNonScalar(item) || typeof item !== "string") return null;
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > CATALOG_MAX_FILTER_VALUE_LENGTH) return null;
+    values.push(trimmed);
+  }
+  if (values.length > CATALOG_MAX_FILTER_VALUES) return null;
+  return values;
+}
+
+export function parseCatalogPropertyFilters(
+  input: Record<string, unknown>,
+): { ok: true; value: Record<string, string[]> } | { ok: false; message: string } {
+  const result: Record<string, string[]> = {};
+  for (const definition of CATALOG_FILTER_DEFINITIONS) {
+    const paramKey = `filter${definition.key.charAt(0).toUpperCase()}${definition.key.slice(1)}`;
+    const raw = input[paramKey];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = parseFilterValues(raw);
+    if (parsed === null) {
+      return { ok: false, message: `Invalid filter values for ${definition.key}.` };
+    }
+    if (parsed.length) result[definition.key] = parsed;
+  }
+  for (const [key, raw] of Object.entries(input)) {
+    if (!key.startsWith("filter") || key === "filter") continue;
+    const suffix = key.slice("filter".length);
+    if (!suffix) continue;
+    const normalized =
+      suffix.charAt(0).toLowerCase() + suffix.slice(1);
+    if (CATALOG_FILTER_DEFINITIONS.some((item) => item.key === normalized)) continue;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      return { ok: false, message: `Unknown catalog filter: ${normalized}.` };
+    }
+  }
+  return { ok: true, value: result };
+}
+
 export function parseCatalogSearchQuery(input: {
   q?: unknown;
   section?: unknown;
   page?: unknown;
   pageSize?: unknown;
+  filterBrand?: unknown;
+  filterSeries?: unknown;
+  filterColor?: unknown;
+  filterCoating?: unknown;
+  filterOpening?: unknown;
+  filterArticle?: unknown;
+  [key: string]: unknown;
 }): ParsedCatalogSearchResult {
   const qRaw = parseScalarString(input.q, "");
   if (qRaw === null) {
@@ -100,13 +156,64 @@ export function parseCatalogSearchQuery(input: {
     return { ok: false, message: "Page offset is out of allowed range." };
   }
 
+  const propertyFilters = parseCatalogPropertyFilters(input);
+  if (!propertyFilters.ok) {
+    return { ok: false, message: propertyFilters.message };
+  }
+
   return {
     ok: true,
     value: {
       q: qRaw,
       sectionCode: sectionRaw || null,
+      propertyFilters: propertyFilters.value,
       page,
       pageSize,
+    },
+  };
+}
+
+export function parseCatalogFacetValuesQuery(input: {
+  facetKey?: unknown;
+  facetQ?: unknown;
+  facetOffset?: unknown;
+}): { ok: true; value: { facetKey: string; facetQ: string; facetOffset: number } } | { ok: false; message: string } {
+  const facetKeyRaw = parseScalarString(input.facetKey, "");
+  if (facetKeyRaw === null || !facetKeyRaw) {
+    return { ok: false, message: "facetKey is required." };
+  }
+  const definition = CATALOG_FILTER_DEFINITIONS.find((item) => item.key === facetKeyRaw);
+  if (!definition) {
+    return { ok: false, message: "Unknown facet key." };
+  }
+  const facetQRaw = parseScalarString(input.facetQ, "");
+  if (facetQRaw === null) {
+    return { ok: false, message: "facetQ must be a string." };
+  }
+  if (facetQRaw.length > 64) {
+    return { ok: false, message: "facetQ is too long." };
+  }
+  const facetOffsetRaw =
+    input.facetOffset === undefined || input.facetOffset === null || input.facetOffset === ""
+      ? 0
+      : input.facetOffset;
+  if (rejectNonScalar(facetOffsetRaw)) {
+    return { ok: false, message: "facetOffset must be an integer." };
+  }
+  const facetOffsetText = String(facetOffsetRaw).trim();
+  if (!/^\d+$/.test(facetOffsetText)) {
+    return { ok: false, message: "facetOffset must be a non-negative integer." };
+  }
+  const facetOffset = Number(facetOffsetText);
+  if (!Number.isSafeInteger(facetOffset) || facetOffset < 0 || facetOffset > 10_000) {
+    return { ok: false, message: "facetOffset is out of allowed range." };
+  }
+  return {
+    ok: true,
+    value: {
+      facetKey: definition.key,
+      facetQ: facetQRaw,
+      facetOffset,
     },
   };
 }

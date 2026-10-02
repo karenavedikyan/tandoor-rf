@@ -411,7 +411,7 @@ describe("client catalog API integration", { concurrency: false }, () => {
       )
       .set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(sectionOne.status, 200);
-    assert.equal(sectionOne.body.total, 2);
+    assert.equal(sectionOne.body.total, 3);
     assert.equal(sectionOne.body.items.length, 1);
 
     const sectionOnePageTwo = await request(app)

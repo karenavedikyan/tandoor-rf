@@ -136,7 +136,7 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
     assert.match(await page.locator("#pc-catalog-showcase .pc-catalog-meta").textContent(), /Цены и остатки/);
     assert.match(
       await page.locator("#pc-catalog-showcase .pc-catalog-meta").textContent(),
-      /Подтверждённая торговая точка/,
+      /Сохранение дистрибуции/,
     );
 
     await page.waitForSelector(".pc-catalog-card");
@@ -157,7 +157,7 @@ describe("client catalog showcase tab (R3.2, mocked API)", { concurrency: false 
     assert.match(await page.locator(".pc-catalog-detail .pc-value").first().textContent(), /ghost-group/);
     assert.match(
       await page.locator(".pc-catalog-future").textContent(),
-      /Сохранение факта установки или плана/,
+      /Сохранение дистрибуции/,
     );
     assert.equal(await page.locator(".pc-field .pc-value").filter({ hasText: "Складская" }).count(), 1);
 

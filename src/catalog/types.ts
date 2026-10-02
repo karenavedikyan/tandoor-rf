@@ -19,6 +19,19 @@ export type CatalogSectionOption = {
   name: string;
 };
 
+export type CatalogSectionTreeNode = {
+  code: string;
+  name: string;
+  parentCode: string | null;
+  children: CatalogSectionTreeNode[];
+};
+
+export type CatalogKeyProperty = {
+  code: string;
+  name: string;
+  value: string;
+};
+
 export type CatalogProductListItem = {
   code: string;
   name: string;
@@ -26,6 +39,9 @@ export type CatalogProductListItem = {
   groupStatus: CatalogGroupStatus;
   sectionNames: string[];
   primaryImagePath: string | null;
+  primaryImageAssetId: string | null;
+  article: string | null;
+  keyProperties: CatalogKeyProperty[];
   activity: string;
 };
 
@@ -33,10 +49,31 @@ export type CatalogProductSearchResult = {
   versionId: string;
   query: string;
   sectionCode: string | null;
+  propertyFilters: Record<string, string[]>;
   page: number;
   pageSize: number;
   total: number;
   items: CatalogProductListItem[];
+};
+
+export type CatalogFacetValue = {
+  value: string;
+  count: number;
+};
+
+export type CatalogFacetGroup = {
+  key: string;
+  label: string;
+  values: CatalogFacetValue[];
+  totalValues: number;
+  valuesTruncated: boolean;
+};
+
+export type CatalogFacetsResult = {
+  versionId: string;
+  total: number;
+  facets: CatalogFacetGroup[];
+  availableFilters: Array<{ key: string; label: string }>;
 };
 
 export type CatalogProductProperty = {
@@ -55,5 +92,7 @@ export type CatalogProductDetail = {
   sectionNames: string[];
   properties: CatalogProductProperty[];
   imagePaths: string[];
+  imageAssetIds: string[];
+  article: string | null;
   snapshotImportedAt: string | null;
 };

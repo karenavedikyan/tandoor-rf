@@ -23,6 +23,8 @@
     "onec-scheduled-exchange:local": "node --env-file=.env dist/cli/onec-scheduled-exchange.js",
     "onec-catalog-import": "node dist/cli/onec-catalog-import.js",
     "onec-catalog-import:local": "node --env-file=.env dist/cli/onec-catalog-import.js",
+    "onec-catalog-image-sync": "node dist/cli/onec-catalog-image-sync.js",
+    "onec-catalog-image-sync:local": "node --env-file=.env dist/cli/onec-catalog-image-sync.js",
     "bitrix24-probe": "node dist/cli/bitrix24-probe.js",
     "bitrix24-probe:local": "node --env-file=.env dist/cli/bitrix24-probe.js",
     "bitrix24-sync": "node dist/cli/bitrix24-sync.js",
@@ -45,7 +47,8 @@
     "express": "^4.21.2",
     "ipaddr.js": "^2.2.0",
     "pg": "^8.13.1",
-    "sax": "^1.6.1"
+    "sax": "^1.6.1",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

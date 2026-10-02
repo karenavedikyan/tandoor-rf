@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Клиент — tandoor-rf</title>
+    <title>Каталог образцов — tandoor-rf</title>
     <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
     <link rel="stylesheet" href="/brand/legacy-shell.css" />
     <link rel="stylesheet" href="/clients.css" />
     <link rel="stylesheet" href="/client-card-prototype.css" />
   </head>
-  <body class="legacy-body client-card-page">
+  <body class="legacy-body client-card-page catalog-workspace-page">
     <div class="legacy-app">
       <div id="workspace-sidebar"></div>
       <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
@@ -19,9 +19,8 @@
           <div id="access-panel" class="clients-hidden" role="alert"></div>
           <div id="init-panel" class="clients-hidden" role="alert"></div>
           <div id="state-panel" class="clients-hidden" role="status" aria-live="polite"></div>
-
-          <div id="client-detail" class="clients-hidden">
-            <div id="client-detail-root"></div>
+          <div id="catalog-workspace-app" class="clients-hidden">
+            <div id="catalog-workspace-root" data-catalog-workspace aria-live="polite"></div>
           </div>
         </main>
       </div>
@@ -29,12 +28,9 @@
     <script src="/common.js" defer></script>
     <script src="/clients-logic.js" defer></script>
     <script src="/client-detail-sections.js" defer></script>
-    <script src="/client-card-prototype.js" defer></script>
-    <script src="/client-bitrix24.js" defer></script>
     <script src="/client-catalog-workspace.js" defer></script>
-    <script src="/client-catalog.js" defer></script>
     <script src="/brand/shell-icons.js" defer></script>
     <script src="/clients-shell.js" defer></script>
-    <script src="/client-detail.js" defer></script>
+    <script src="/client-catalog-workspace-page.js" defer></script>
   </body>
 </html>

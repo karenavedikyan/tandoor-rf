@@ -220,6 +220,10 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "clients.html");
   });
 
+  app.get("/clients/:guid/catalog", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "client-catalog-workspace.html");
+  });
+
   app.get("/clients/:guid", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "client-detail.html");
   });

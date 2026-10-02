@@ -7,9 +7,13 @@ import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
 import { requireDatabaseReady } from "../middleware/database";
 import {
+  getClientCatalogFacetValuesHandler,
+  getClientCatalogFacetsHandler,
+  getClientCatalogMediaHandler,
   getClientCatalogMetaHandler,
   getClientCatalogProductHandler,
   getClientCatalogProductsHandler,
+  getClientCatalogSectionsTreeHandler,
 } from "./catalog-handlers";
 import {
   getClientBitrix24ClaimsHandler,
@@ -58,6 +62,22 @@ export function createClientsRouter(): express.Router {
 
   router.get("/:guid/catalog/products/:productCode", ...readChain, (req, res, next) => {
     void getClientCatalogProductHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/sections-tree", ...readChain, (req, res, next) => {
+    void getClientCatalogSectionsTreeHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/facets", ...readChain, (req, res, next) => {
+    void getClientCatalogFacetsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/facet-values", ...readChain, (req, res, next) => {
+    void getClientCatalogFacetValuesHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/media/:assetId", ...readChain, (req, res, next) => {
+    void getClientCatalogMediaHandler(req, res).catch(next);
   });
 
   router.get("/:guid/bitrix24/label", ...readChain, (req, res, next) => {
