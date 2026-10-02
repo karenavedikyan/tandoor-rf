@@ -80,20 +80,23 @@ function buildBlockFreshness(
   };
 }
 
-function summarizeRowFreshness(
+export function summarizeRowFreshness(
   blockFreshness: NonNullable<ExtendedSnapshotBlocks["blockFreshness"]>,
 ): "current" | "preserved_from_previous" | "not_provided_in_snapshot" {
   const values = Object.values(blockFreshness);
-  if (values.every((value) => value === "preserved_from_previous")) {
-    return "preserved_from_previous";
+  if (values.every((value) => value === "current")) {
+    return "current";
   }
   if (values.every((value) => value === "not_provided_in_snapshot")) {
     return "not_provided_in_snapshot";
   }
-  if (values.some((value) => value === "current")) {
-    return "current";
+  if (values.every((value) => value === "preserved_from_previous")) {
+    return "preserved_from_previous";
   }
-  return "preserved_from_previous";
+  if (values.some((value) => value === "preserved_from_previous")) {
+    return "preserved_from_previous";
+  }
+  return "not_provided_in_snapshot";
 }
 
 export function buildExtendedSnapshotJson(
@@ -148,12 +151,15 @@ export function buildExtendedSnapshotJson(
     },
   });
 
-  const effectiveImportedAt =
-    previous && !businessChanged ? previous.importedAt : importedAt;
-  const effectiveSourceSha256 =
-    previous && !businessChanged ? previous.sourceSha256 : sourceSha256;
-
   const blockFreshness = buildBlockFreshness(record.fieldPresence, hasPrevious);
+  const hasPreservedBlocks = Object.values(blockFreshness).some(
+    (value) => value === "preserved_from_previous",
+  );
+
+  const effectiveImportedAt =
+    previous && (hasPreservedBlocks || !businessChanged) ? previous.importedAt : importedAt;
+  const effectiveSourceSha256 =
+    previous && (hasPreservedBlocks || !businessChanged) ? previous.sourceSha256 : sourceSha256;
 
   return {
     formatVersion: "extended_v1",

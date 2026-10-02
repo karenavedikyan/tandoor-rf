@@ -1,5 +1,6 @@
 import type { AccessContext } from "../access/types";
 import type {
+  ExtendedBlockFreshness,
   ExtendedFreshnessState,
   ExtendedSnapshot,
   ManagerAssignmentState,
@@ -7,7 +8,7 @@ import type {
   ParsedRetailOutlet,
   RetailOutletHistoryEntry,
 } from "../onec-clients/extended-types";
-import { readExtendedSnapshot } from "../onec-clients/extended-apply";
+import { readExtendedSnapshot, summarizeRowFreshness } from "../onec-clients/extended-apply";
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import { canReadNestedRetailOutlets, MAX_OUTLETS_IN_DETAIL_RESPONSE } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
@@ -65,6 +66,19 @@ export type ClientExtendedManagersDto = {
   headOfSales: ManagerRefDto;
 };
 
+export type BlockFreshnessEntryDto = {
+  state: ExtendedFreshnessState;
+  label: string;
+};
+
+export type ClientExtendedBlockFreshnessDto = {
+  holding: BlockFreshnessEntryDto;
+  regionalManager: BlockFreshnessEntryDto;
+  hardwareManager: BlockFreshnessEntryDto;
+  headOfSales: BlockFreshnessEntryDto;
+  retailOutlets: BlockFreshnessEntryDto;
+};
+
 export type ClientExtendedDto = {
   formatVersion: string;
   sourceSha256: string | null;
@@ -72,6 +86,7 @@ export type ClientExtendedDto = {
   importedAtLabel: string | null;
   freshnessState: ExtendedFreshnessState | null;
   freshnessLabel: string;
+  blockFreshness: ClientExtendedBlockFreshnessDto | null;
   isHolding: boolean | null;
   holdingCardLabel: string | null;
   managers: ClientExtendedManagersDto;
@@ -106,7 +121,55 @@ const DAY_LABELS: Array<[LoadingDayField, string, string]> = [
   ["loadingOnSunday", "sun", "Вс"],
 ];
 
-function freshnessLabel(state: ExtendedFreshnessState | null): string {
+function blockFreshnessEntryLabel(state: ExtendedFreshnessState): string {
+  if (state === "current") {
+    return "Из текущей выгрузки";
+  }
+  if (state === "preserved_from_previous") {
+    return "Сохранено из предыдущей выгрузки";
+  }
+  return "Не передано в текущем снимке";
+}
+
+function toBlockFreshnessDto(
+  blockFreshness: ExtendedBlockFreshness | undefined,
+): ClientExtendedBlockFreshnessDto | null {
+  if (!blockFreshness) {
+    return null;
+  }
+  return {
+    holding: { state: blockFreshness.holding, label: blockFreshnessEntryLabel(blockFreshness.holding) },
+    regionalManager: {
+      state: blockFreshness.regionalManager,
+      label: blockFreshnessEntryLabel(blockFreshness.regionalManager),
+    },
+    hardwareManager: {
+      state: blockFreshness.hardwareManager,
+      label: blockFreshnessEntryLabel(blockFreshness.hardwareManager),
+    },
+    headOfSales: {
+      state: blockFreshness.headOfSales,
+      label: blockFreshnessEntryLabel(blockFreshness.headOfSales),
+    },
+    retailOutlets: {
+      state: blockFreshness.retailOutlets,
+      label: blockFreshnessEntryLabel(blockFreshness.retailOutlets),
+    },
+  };
+}
+
+function freshnessLabel(
+  state: ExtendedFreshnessState | null,
+  blockFreshness?: ExtendedBlockFreshness | null,
+): string {
+  if (blockFreshness) {
+    const values = Object.values(blockFreshness);
+    const hasCurrent = values.some((value) => value === "current");
+    const hasPreserved = values.some((value) => value === "preserved_from_previous");
+    if (hasCurrent && hasPreserved) {
+      return "Частично обновлено: часть блоков сохранена из предыдущей выгрузки";
+    }
+  }
   if (state === "current") {
     return "Обновлено из текущей выгрузки";
   }
@@ -304,7 +367,8 @@ export function toClientExtendedDto(
         importedAt: row.extended_imported_at?.toISOString() ?? null,
         importedAtLabel: row.extended_imported_at ? formatMskDateTime(row.extended_imported_at) : null,
         freshnessState: row.extended_freshness_state,
-        freshnessLabel: freshnessLabel(row.extended_freshness_state),
+        freshnessLabel: freshnessLabel(row.extended_freshness_state, null),
+        blockFreshness: null,
         isHolding: row.is_holding,
         holdingCardLabel:
           row.is_holding === true ? "Карточка холдинга" : row.is_holding === false ? "Не холдинг" : null,
@@ -345,11 +409,20 @@ export function toClientExtendedDto(
   const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
+  const blockFreshness = snapshot?.blocks?.blockFreshness ?? null;
+  const blockFreshnessDto = toBlockFreshnessDto(blockFreshness ?? undefined);
+  const resolvedFreshnessState =
+    blockFreshness != null
+      ? summarizeRowFreshness(blockFreshness)
+      : row.extended_freshness_state;
+  const resolvedSourceSha256 = snapshot?.sourceSha256 ?? row.extended_source_sha256 ?? null;
+  const resolvedImportedAt =
+    snapshot?.importedAt ?? row.extended_imported_at?.toISOString() ?? null;
 
   let dataQualityLabel = "Структура торговых точек не передана";
   if (!outletAccessGranted) {
     dataQualityLabel = "Торговые точки недоступны для вашей роли";
-  } else if (row.extended_freshness_state === "preserved_from_previous") {
+  } else if (resolvedFreshnessState === "preserved_from_previous") {
     dataQualityLabel = "Расширенные данные сохранены из предыдущей выгрузки";
   } else if (currentOutlets.length > 0) {
     dataQualityLabel = "Частично подключено";
@@ -357,15 +430,16 @@ export function toClientExtendedDto(
 
   return {
     formatVersion: row.extended_format_version ?? snapshot?.formatVersion ?? "extended_v1",
-    sourceSha256: row.extended_source_sha256 ?? snapshot?.sourceSha256 ?? null,
-    importedAt: row.extended_imported_at?.toISOString() ?? snapshot?.importedAt ?? null,
+    sourceSha256: resolvedSourceSha256,
+    importedAt: resolvedImportedAt,
     importedAtLabel: row.extended_imported_at
       ? formatMskDateTime(row.extended_imported_at)
       : snapshot?.importedAt
         ? snapshot.importedAt
         : null,
-    freshnessState: row.extended_freshness_state,
-    freshnessLabel: freshnessLabel(row.extended_freshness_state),
+    freshnessState: resolvedFreshnessState,
+    freshnessLabel: freshnessLabel(resolvedFreshnessState, blockFreshness),
+    blockFreshness: blockFreshnessDto,
     isHolding: row.is_holding,
     holdingCardLabel:
       row.is_holding === true ? "Карточка холдинга" : row.is_holding === false ? "Не холдинг" : null,

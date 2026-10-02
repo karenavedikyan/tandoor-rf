@@ -4,6 +4,7 @@ import {
   buildExtendedSnapshotJson,
   extendedBusinessDataEqual,
   readExtendedSnapshot,
+  summarizeRowFreshness,
 } from "../../src/onec-clients/extended-apply";
 import {
   extendedBusinessProjection,
@@ -87,6 +88,36 @@ function record(overrides: Partial<ParsedExtendedClientRecord> = {}): ParsedExte
 }
 
 describe("extended field presence merge", () => {
+  it("does not mark mixed preserved/current blocks as fully current", () => {
+    const first = buildExtendedSnapshotJson(
+      record(),
+      null,
+      "sha-first",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      record({
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        retailOutlets: [],
+        fieldPresence: defaultPresence({
+          regionalManager: "missing",
+          retailOutlets: "missing",
+        }),
+      }),
+      first,
+      "sha-second",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+
+    assert.equal(second.blocks.blockFreshness?.holding, "current");
+    assert.equal(second.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
+    assert.equal(summarizeRowFreshness(second.blocks.blockFreshness!), "preserved_from_previous");
+    assert.equal(second.sourceSha256, "sha-first");
+    assert.equal(second.importedAt, first.importedAt);
+  });
+
   it("preserves regional manager and outlets when second snapshot omits those blocks", () => {
     const first = buildExtendedSnapshotJson(
       record(),

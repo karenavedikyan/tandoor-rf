@@ -230,12 +230,12 @@ export async function runClientsImport(
   }
 
   const extendedBlockedCount = applied.counts.extendedBlockedCount ?? 0;
-  const extendedApplied = applied.blockSummary?.extendedApplied ?? true;
+  const extendedApplied = applied.blockSummary?.extendedApplied;
   let applyMessage = "Client import applied successfully.";
-  if (applied.blockSummary && !extendedApplied && extendedBlockedCount > 0) {
+  if (extendedApplied === false && extendedBlockedCount > 0) {
     applyMessage =
       "Legacy client fields applied; extended block was not published (awaiting live JSON contract verification).";
-  } else if (applied.blockSummary && extendedApplied && extendedBlockedCount > 0) {
+  } else if (extendedApplied === true && extendedBlockedCount > 0) {
     applyMessage =
       "Client import applied with legacy fields; some extended records were skipped.";
   }
@@ -261,7 +261,7 @@ export async function runClientsImport(
         changedCount: applied.counts.changedCount,
         unchangedCount: applied.counts.unchangedCount,
         extendedBlockedCount: extendedBlockedCount > 0 ? extendedBlockedCount : undefined,
-        extendedApplied,
+        extendedApplied: extendedApplied === undefined ? undefined : extendedApplied,
         extendedBlockReason: applied.blockSummary?.extendedBlockReason ?? undefined,
       },
     },

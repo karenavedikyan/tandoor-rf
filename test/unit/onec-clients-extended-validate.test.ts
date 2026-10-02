@@ -96,6 +96,78 @@ describe("onec clients extended validate", () => {
     }
   });
 
+  it("marks missing outlet managers block as not_provided", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          {
+            holding: "Holding Alpha",
+            warehouse: false,
+            address: { store_address: "Store" },
+            contact_information: {},
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const outlet = result.payload.records[0]?.retailOutlets[0];
+      assert.equal(outlet?.managers.manager.state, "not_provided");
+      assert.equal(outlet?.managers.regionalManager.state, "not_provided");
+    }
+  });
+
+  it("marks null outlet managers block as not_provided", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          {
+            holding: "Holding Alpha",
+            warehouse: false,
+            managers: null,
+            address: { store_address: "Store" },
+            contact_information: {},
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const outlet = result.payload.records[0]?.retailOutlets[0];
+      assert.equal(outlet?.managers.manager.state, "not_provided");
+    }
+  });
+
+  it("marks empty outlet managers object keys as not_provided", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          {
+            holding: "Holding Alpha",
+            warehouse: false,
+            managers: {},
+            address: { store_address: "Store" },
+            contact_information: {},
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const outlet = result.payload.records[0]?.retailOutlets[0];
+      assert.equal(outlet?.managers.hardwareManager.state, "not_provided");
+    }
+  });
+
   it("does not treat outlet presence as normalized business id", () => {
     const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
     const result = validateExtendedClientsFileBytes(bytes);

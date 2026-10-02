@@ -62,6 +62,7 @@ export type ApplyTestHooks = {
   afterRecordIndex?: number;
   failUnlock?: boolean;
   failCommit?: boolean;
+  failAfterCommitConfirm?: boolean;
   failExchangeStateUpdate?: boolean;
   failRelease?: boolean;
   failPoolEnd?: boolean;
@@ -98,6 +99,7 @@ type ApplyPhaseState = {
   commitAttempted: boolean;
   commitConfirmed: boolean;
   counts?: ApplyCounts;
+  blockSummary?: ApplyBlockSummary;
 };
 
 const CLEANUP_LOCK_WARNING =
@@ -188,6 +190,7 @@ function resolveConnectionFault(state: ApplyPhaseState): ApplyResult {
       ok: true,
       runId: state.runId,
       counts: state.counts,
+      blockSummary: state.blockSummary,
       cleanupWarning:
         "Import committed successfully but the database connection failed afterward; verify the import run journal.",
     };
@@ -258,6 +261,74 @@ function journalWarningsForPayload(payload: ValidatedClientsPayload) {
   return prepareJournalWarnings(payload.warnings, { totalWarningCount: payload.warningCount });
 }
 
+function buildApplyBlockSummary(
+  extendedApply: boolean,
+  contractVerified: boolean,
+): ApplyBlockSummary | undefined {
+  if (!extendedApply) {
+    return undefined;
+  }
+  return {
+    legacyApplied: true,
+    extendedApplied: contractVerified,
+    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
+  };
+}
+
+function mergeExtendedDiagnosticsForJournal(
+  payload: ValidatedClientsPayload,
+  extendedApply: boolean,
+  contractVerified: boolean,
+  extendedBlockedCount: number,
+): string | null {
+  if (!extendedApply) {
+    return null;
+  }
+  const applyBlocks = {
+    legacyApplied: true,
+    extendedApplied: contractVerified,
+    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
+    extendedBlockedCount,
+  };
+  const base = payload.extendedDiagnostics ?? {};
+  return JSON.stringify({ ...base, applyBlocks });
+}
+
+async function loadApplyBlockSummaryFromJournal(
+  databaseUrl: string,
+  runId: string,
+): Promise<ApplyBlockSummary | undefined> {
+  const pool = createImportPool(databaseUrl);
+  try {
+    const client = await pool.connect();
+    try {
+      const result = await client.query<{ extended_diagnostics: { applyBlocks?: ApplyBlockSummary & { extendedBlockedCount?: number } } | null }>(
+        `
+          SELECT extended_diagnostics
+          FROM onec_client_import_runs
+          WHERE id = $1::uuid
+        `,
+        [runId],
+      );
+      const applyBlocks = result.rows[0]?.extended_diagnostics?.applyBlocks;
+      if (!applyBlocks) {
+        return undefined;
+      }
+      return {
+        legacyApplied: applyBlocks.legacyApplied,
+        extendedApplied: applyBlocks.extendedApplied,
+        extendedBlockReason: applyBlocks.extendedBlockReason ?? null,
+      };
+    } finally {
+      client.release();
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await pool.end();
+  }
+}
+
 async function recoverFromCommitUncertainty(
   managed: ManagedClient | undefined,
   phase: ApplyPhaseState,
@@ -301,10 +372,16 @@ async function recoverFromCommitUncertainty(
   try {
     const resolution = await resolveCommitUncertainFresh(resolvedDatabaseUrl, phase.runId);
     if (resolution === "committed" && phase.counts) {
+      const blockSummary =
+        phase.blockSummary ??
+        (resolvedDatabaseUrl
+          ? await loadApplyBlockSummaryFromJournal(resolvedDatabaseUrl, phase.runId)
+          : undefined);
       return {
         ok: true,
         runId: phase.runId,
         counts: phase.counts,
+        blockSummary,
         cleanupWarning:
           "Import committed successfully but the database connection failed during commit confirmation; outcome was verified by runId.",
       };
@@ -865,7 +942,7 @@ export async function applyClientsImport(options: {
                 extendedSnapshotJson?.headOfSales.guid ?? null,
                 extendedSnapshotJson?.headOfSales.name ?? "",
                 extendedSnapshotJson ? "extended_v1" : null,
-                extendedSnapshotJson ? options.payload.sha256 : null,
+                extendedSnapshotJson?.sourceSha256 ?? null,
                 extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
                 extendedImportedAt,
                 extendedFreshnessState,
@@ -877,10 +954,15 @@ export async function applyClientsImport(options: {
             }
           }
 
-          const extendedDiagnosticsJson = extendedApply && options.payload.extendedDiagnostics
-            ? JSON.stringify(options.payload.extendedDiagnostics)
-            : null;
+          const extendedDiagnosticsJson = mergeExtendedDiagnosticsForJournal(
+            options.payload,
+            extendedApply,
+            contractVerified,
+            extendedBlockedCount,
+          );
           const sourceFormatVersion = options.payload.sourceFormat ?? "legacy";
+
+          phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified);
 
           await queryManaged(
             managed,
@@ -924,6 +1006,10 @@ export async function applyClientsImport(options: {
           await queryManaged(managed, "COMMIT");
           phase.commitConfirmed = true;
 
+          if (options.testHooks?.failAfterCommitConfirm) {
+            throw new ClientConnectionFault();
+          }
+
           let postCommitCleanupWarning: string | undefined;
           if (!options.retainLock) {
             try {
@@ -939,15 +1025,7 @@ export async function applyClientsImport(options: {
             ok: true,
             runId: phase.runId!,
             counts: phase.counts,
-            blockSummary: extendedApply
-              ? {
-                  legacyApplied: true,
-                  extendedApplied: contractVerified,
-                  extendedBlockReason: contractVerified
-                    ? null
-                    : "awaiting_live_json_verification",
-                }
-              : undefined,
+            blockSummary: phase.blockSummary,
             cleanupWarning: postCommitCleanupWarning,
           };
           }

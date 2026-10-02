@@ -124,6 +124,8 @@
 
 **Сравнение изменений:** `extendedBusinessDataEqual()` сравнивает только бизнес-проекцию (холдинг, ответственные, `currentRetailOutlets`); SHA, `importedAt`, `retailOutletHistory` и технические флаги не влияют на `changedCount`. История ТТ дополняется только при реальном изменении содержания точек.
 
+**Актуальность по блокам:** `blocks.blockFreshness` и DTO `blockFreshness` передают состояние каждого блока (`current` / `preserved_from_previous` / `not_provided_in_snapshot`). Смешанное состояние не маркируется как полностью актуальное; `extended_source_sha256` и `snapshot.sourceSha256` совпадают и не приписывают сохранённые блоки новой выгрузке, пока хотя бы один блок `preserved_from_previous`.
+
 **Блокировка apply расширения:** production-путь всегда `extendedContractVerification=unverified`. Расширенный блок **не публикуется** в рабочие колонки/`extended_snapshot`, пока контракт не подтверждён; legacy-поля клиента применяются. Результат apply/CLI содержит `extendedApplied`, `extendedBlockReason`, `extendedBlockedCount`. Тесты используют `validateClientsForApplyTest()` с `synthetic_confirmed`.
 
 **Сотрудники 1С:** в снимке хранится `directory_unverified`; связь с аккаунтом ЛК (`directory_unverified_account_linked`) **разрешается при чтении** по актуальным `user_onec_employee_links` (отзыв связи виден без re-import). Справочник 1С не подтверждён; связь не расширяет права. `clientExtendedReady=false` до live JSON от специалиста.

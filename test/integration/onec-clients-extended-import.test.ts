@@ -251,15 +251,17 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const row = await pool.query<{
       guid_regional_manager: string | null;
+      extended_source_sha256: string | null;
       extended_freshness_state: string | null;
       extended_snapshot: {
+        sourceSha256: string;
         regionalManager: { guid: string | null };
         currentRetailOutlets: unknown[];
-        blocks: { blockFreshness?: { retailOutlets: string } };
+        blocks: { blockFreshness?: { retailOutlets: string; holding: string } };
       };
     }>(
       `
-        SELECT guid_regional_manager::text, extended_freshness_state, extended_snapshot
+        SELECT guid_regional_manager::text, extended_source_sha256, extended_freshness_state, extended_snapshot
         FROM onec_clients WHERE guid_client = $1::uuid
       `,
       [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
@@ -267,6 +269,59 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(row.rows[0]?.guid_regional_manager, EXTENDED_FIXTURE_GUIDS.REGIONAL);
     assert.ok((row.rows[0]?.extended_snapshot.currentRetailOutlets.length ?? 0) > 0);
     assert.equal(row.rows[0]?.extended_snapshot.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
+    assert.equal(row.rows[0]?.extended_freshness_state, "preserved_from_previous");
+    assert.equal(row.rows[0]?.extended_source_sha256, firstValidated.payload.sha256);
+    assert.equal(row.rows[0]?.extended_snapshot.sourceSha256, firstValidated.payload.sha256);
+    assert.equal(row.rows[0]?.extended_snapshot.blocks.blockFreshness?.holding, "current");
     await pool.end();
   });
+
+  it("recovers blockSummary after successful commit with lost connection response", async () => {
+    const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
+    const seeded = validateClientsForApplyTest(bytes);
+    assert.equal(seeded.ok, true);
+    if (!seeded.ok) return;
+    await applyClientsImport({ databaseUrl, payload: seeded.payload });
+
+    const unverified = validateClientsFileBytes(
+      buildExtendedClientsFileBytes([
+        sampleExtendedHolding({ name_client: "Holding Alpha Post-Commit Loss" }),
+      ]),
+    );
+    assert.equal(unverified.ok, true);
+    if (!unverified.ok) return;
+
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: unverified.payload,
+      expectedCommittedSha256: seeded.payload.sha256,
+      testHooks: { failAfterCommitConfirm: true },
+    });
+    assert.equal(applied.ok, true);
+    assert.equal(applied.blockSummary?.extendedApplied, false);
+    assert.equal(applied.blockSummary?.extendedBlockReason, "awaiting_live_json_verification");
+    assert.equal(applied.counts?.extendedBlockedCount, 1);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{
+      extended_diagnostics: {
+        applyBlocks?: { extendedApplied?: boolean; extendedBlockReason?: string | null };
+      } | null;
+    }>(
+      `
+        SELECT extended_diagnostics
+        FROM onec_client_import_runs
+        WHERE status = 'success'
+        ORDER BY finished_at DESC
+        LIMIT 1
+      `,
+    );
+    assert.equal(journal.rows[0]?.extended_diagnostics?.applyBlocks?.extendedApplied, false);
+    assert.equal(
+      journal.rows[0]?.extended_diagnostics?.applyBlocks?.extendedBlockReason,
+      "awaiting_live_json_verification",
+    );
+    await pool.end();
+  });
+
 });

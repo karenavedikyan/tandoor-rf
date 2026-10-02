@@ -16,7 +16,7 @@ import {
 } from "./field-value";
 import { detectClientsSourceFormat, hasExtendedManagerFields, isExtendedClientRecord } from "./format";
 import type { ExtendedRecordFieldPresence } from "./extended-presence";
-import { parseManagerFieldWithPresence, parseManagerRef, parseOptionalHoldingGuid } from "./manager-status";
+import { parseManagerFieldWithPresence, parseOptionalHoldingGuid } from "./manager-status";
 import { sha256Hex } from "./sha256";
 import type {
   ExtendedDiagnosticsSummary,
@@ -274,13 +274,13 @@ function validateLegacyCore(
   };
 }
 
-function defaultOutletManagers(): ParsedOutletManagers {
-  const unassigned = { guid: null, name: "", state: "unassigned" as const };
+function notProvidedOutletManagers(): ParsedOutletManagers {
+  const notProvided = { guid: null, name: "", state: "not_provided" as const };
   return {
-    manager: unassigned,
-    regionalManager: unassigned,
-    hardwareManager: unassigned,
-    headOfSales: unassigned,
+    manager: notProvided,
+    regionalManager: notProvided,
+    hardwareManager: notProvided,
+    headOfSales: notProvided,
   };
 }
 
@@ -292,7 +292,7 @@ function parseOutletManagers(
   issueCount: { value: number },
 ): ParsedOutletManagers | null {
   if (raw === undefined || raw === null) {
-    return defaultOutletManagers();
+    return notProvidedOutletManagers();
   }
   if (!isPlainObject(raw)) {
     pushIssue(issues, {
@@ -303,48 +303,65 @@ function parseOutletManagers(
     }, issueCount);
     return null;
   }
-  const manager = parseManagerRef(raw.guid_manager, raw.name_manager, { allowMissingKeys: true });
+
+  const manager = parseManagerFieldWithPresence(raw, "guid_manager", "name_manager");
   if (!manager.ok) {
     pushIssue(issues, {
-      code: manager.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
+      code:
+        manager.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : manager.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_manager",
       index: clientIndex,
       outletIndex,
     }, issueCount);
     return null;
   }
-  const regional = parseManagerRef(raw.guid_regional_manager, raw.name_regional_manager, {
-    allowMissingKeys: true,
-  });
+  const regional = parseManagerFieldWithPresence(raw, "guid_regional_manager", "name_regional_manager");
   if (!regional.ok) {
     pushIssue(issues, {
-      code: regional.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
+      code:
+        regional.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : regional.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_regional_manager",
       index: clientIndex,
       outletIndex,
     }, issueCount);
     return null;
   }
-  const hardware = parseManagerRef(raw.guid_hardware_manager, raw.name_hardware_manager, {
-    allowMissingKeys: true,
-  });
+  const hardware = parseManagerFieldWithPresence(raw, "guid_hardware_manager", "name_hardware_manager");
   if (!hardware.ok) {
     pushIssue(issues, {
-      code: hardware.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
+      code:
+        hardware.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : hardware.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_hardware_manager",
       index: clientIndex,
       outletIndex,
     }, issueCount);
     return null;
   }
-  const head = parseManagerRef(
-    raw.guid_head_of_the_sales_department,
-    raw.name_head_of_the_sales_department,
-    { allowMissingKeys: true },
+  const head = parseManagerFieldWithPresence(
+    raw,
+    "guid_head_of_the_sales_department",
+    "name_head_of_the_sales_department",
   );
   if (!head.ok) {
     pushIssue(issues, {
-      code: head.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
+      code:
+        head.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : head.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_head_of_the_sales_department",
       index: clientIndex,
       outletIndex,
@@ -352,10 +369,10 @@ function parseOutletManagers(
     return null;
   }
   return {
-    manager: manager.value,
-    regionalManager: regional.value,
-    hardwareManager: hardware.value,
-    headOfSales: head.value,
+    manager: manager.ref,
+    regionalManager: regional.ref,
+    hardwareManager: hardware.ref,
+    headOfSales: head.ref,
   };
 }
 

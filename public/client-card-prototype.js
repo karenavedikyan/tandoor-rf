@@ -175,6 +175,11 @@
     var freshnessNote = ext && ext.freshnessLabel
       ? '<p class="pc-label">' + esc(ext.freshnessLabel) + '</p>'
       : "";
+    if (ext && ext.blockFreshness) {
+      freshnessNote += '<p class="pc-label">Холдинг: ' + esc(ext.blockFreshness.holding.label) +
+        " · ТТ: " + esc(ext.blockFreshness.retailOutlets.label) +
+        " · Региональный: " + esc(ext.blockFreshness.regionalManager.label) + "</p>";
+    }
     var dataQuality = ext
       ? '<div class="pc-pad"><span class="pc-tag">' + esc(ext.dataQualityLabel || "Частично подключено") + '</span>' +
         freshnessNote +
