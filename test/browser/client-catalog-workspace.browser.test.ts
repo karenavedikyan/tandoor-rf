@@ -8,6 +8,7 @@ import { createApp } from "../../src/server";
 import {
   SYNTHETIC_CLIENT_GUID,
   resolveMockResponse,
+  syntheticCatalogMetaPayload,
   syntheticCatalogProductDetailPayload,
   syntheticDetailPayload,
   type MockOptions,
@@ -261,6 +262,234 @@ describe("client catalog workspace (R3.2 visual, mocked API)", { concurrency: fa
     await page.waitForSelector('.pc-catalog-state--error');
     const stored = await page.evaluate((guid) => sessionStorage.getItem("tandoor-catalog-workspace-" + guid), SYNTHETIC_CLIENT_GUID);
     assert.equal(stored, null);
+    await page.close();
+    await context.close();
+  });
+
+  function truncatedFacetsBody(versionId = syntheticCatalogMetaPayload().versionId) {
+    return JSON.stringify({
+      state: "ready",
+      versionId,
+      total: 1,
+      facets: [
+        {
+          key: "brand",
+          label: "Бренд",
+          values: [{ value: "Tandoor", count: 1 }],
+          totalValues: 50,
+          valuesTruncated: true,
+        },
+      ],
+    });
+  }
+
+  async function openWorkspaceWithTruncatedFacets(
+    page: Page,
+    facetValuesHandler: (url: URL) => Promise<{ status: number; body: string; contentType?: string }>,
+    options: MockOptions = {},
+  ) {
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/catalog/facet-values")) {
+        const mock = await facetValuesHandler(url);
+        await route.fulfill({
+          status: mock.status,
+          contentType: mock.contentType ?? "application/json",
+          body: mock.body,
+        });
+        return;
+      }
+      if (url.pathname.endsWith("/catalog/facets")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: truncatedFacetsBody(),
+        });
+        return;
+      }
+      const mock = resolveMockResponse(
+        url,
+        { role: "admin", ...options },
+        { listCalls: 0, catalogProductsCalls: 0 },
+        route.request().method(),
+      );
+      if (mock) await route.fulfill(mock);
+      else await route.fulfill({ status: 404, body: "{}" });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}/catalog`);
+    await page.waitForSelector(".pc-catalog-workspace-layout");
+    await page.waitForSelector('[data-facet-search="brand"]');
+  }
+
+  it("ignores stale facet-values when a newer search finishes first", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await openWorkspaceWithTruncatedFacets(page, async (url) => {
+      const facetQ = (url.searchParams.get("facetQ") ?? "").toLowerCase();
+      if (facetQ === "old") {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return {
+          status: 200,
+          body: JSON.stringify({
+            state: "ready",
+            versionId: syntheticCatalogMetaPayload().versionId,
+            key: "brand",
+            label: "Бренд",
+            total: 1,
+            values: [{ value: "OldBrand", count: 1 }],
+            offset: 0,
+            hasMore: false,
+          }),
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return {
+        status: 200,
+        body: JSON.stringify({
+          state: "ready",
+          versionId: syntheticCatalogMetaPayload().versionId,
+          key: "brand",
+          label: "Бренд",
+          total: 1,
+          values: [{ value: "NewBrand", count: 1 }],
+          offset: 0,
+          hasMore: false,
+        }),
+      };
+    });
+
+    const search = page.locator('[data-facet-search="brand"]');
+    await search.fill("old");
+    await page.waitForTimeout(350);
+    await search.fill("new");
+    await page.waitForTimeout(600);
+    await page.waitForFunction(() => /NewBrand/.test(document.body.textContent || ""));
+    await page.waitForTimeout(1400);
+    assert.equal(await search.inputValue(), "new");
+    assert.match(await page.locator("[data-catalog-facets]").textContent(), /NewBrand/);
+    assert.doesNotMatch(await page.locator("[data-catalog-facets]").textContent(), /OldBrand/);
+    await page.close();
+    await context.close();
+  });
+
+  it("drops facet-values results after section change during search", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await openWorkspaceWithTruncatedFacets(page, async (url) => {
+      const facetQ = url.searchParams.get("facetQ") ?? "";
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return {
+        status: 200,
+        body: JSON.stringify({
+          state: "ready",
+          versionId: syntheticCatalogMetaPayload().versionId,
+          key: "brand",
+          label: "Бренд",
+          total: 1,
+          values: [{ value: facetQ + "Result", count: 1 }],
+          offset: 0,
+          hasMore: false,
+        }),
+      };
+    });
+
+    const search = page.locator('[data-facet-search="brand"]');
+    await search.fill("Section");
+    await page.waitForTimeout(350);
+    await page.locator('[data-section-code="s2"]').click();
+    await page.waitForFunction(() => {
+      var extras = document.querySelector("[data-catalog-toolbar-extras]");
+      return extras && /Раздел: Section two/.test(extras.textContent || "");
+    });
+    await page.waitForTimeout(1200);
+    assert.doesNotMatch(await page.locator("[data-catalog-facets]").textContent(), /SectionResult/);
+    await page.close();
+    await context.close();
+  });
+
+  it("shows catalog refresh on facet-values version conflict", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await openWorkspaceWithTruncatedFacets(page, async () => ({
+      status: 409,
+      body: JSON.stringify({
+        error: { code: "VERSION_CONFLICT", message: "Каталог обновился." },
+      }),
+    }));
+
+    await page.locator('[data-facet-search="brand"]').fill("conflict");
+    await page.waitForTimeout(400);
+    await page.waitForSelector(".pc-catalog-state--error");
+    assert.match(await page.locator("#catalog-workspace-root").textContent(), /Каталог обновился/);
+    assert.doesNotMatch(await page.locator("[data-catalog-facets]").textContent(), /Не удалось найти значения/);
+    await page.close();
+    await context.close();
+  });
+
+  it("invalidates pending facet-values after access revocation", async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let accessRevoked = false;
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/catalog/facet-values")) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        if (accessRevoked) {
+          await route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Client not found." } }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            state: "ready",
+            versionId: syntheticCatalogMetaPayload().versionId,
+            key: "brand",
+            label: "Бренд",
+            total: 1,
+            values: [{ value: "LateBrand", count: 1 }],
+            offset: 0,
+            hasMore: false,
+          }),
+        });
+        return;
+      }
+      if (url.pathname.endsWith("/catalog/facets")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: truncatedFacetsBody(),
+        });
+        return;
+      }
+      if (accessRevoked && url.pathname.endsWith("/catalog/products")) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Client not found." } }),
+        });
+        return;
+      }
+      const mock = resolveMockResponse(
+        url,
+        { role: "admin", catalogAccessRevoked: accessRevoked },
+        { listCalls: 0, catalogProductsCalls: 0 },
+        route.request().method(),
+      );
+      if (mock) await route.fulfill(mock);
+      else await route.fulfill({ status: 404, body: "{}" });
+    });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}/catalog`);
+    await page.waitForSelector('[data-facet-search="brand"]');
+    await page.locator('[data-facet-search="brand"]').fill("late");
+    await page.waitForTimeout(350);
+    accessRevoked = true;
+    await page.waitForSelector('.pc-catalog-state--error');
+    assert.match(await page.locator("#catalog-workspace-root").textContent(), /Каталог недоступен/);
     await page.close();
     await context.close();
   });

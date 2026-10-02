@@ -209,9 +209,26 @@
       scrollY: saved && saved.scrollY ? saved.scrollY : 0,
       lastTotal: 0,
       facetExtras: {},
+      facetRequestGen: {},
       filtersExpanded: false,
       lightboxReturnFocus: null,
     };
+
+    function serializeCatalogContext() {
+      return JSON.stringify({
+        versionId: state.versionId,
+        query: state.query,
+        sectionCode: state.sectionCode,
+        propertyFilters: state.propertyFilters,
+      });
+    }
+
+    function invalidateFacetRequests() {
+      state.facetExtras = {};
+      Object.keys(state.facetRequestGen).forEach(function (key) {
+        state.facetRequestGen[key] = (state.facetRequestGen[key] || 0) + 1;
+      });
+    }
 
     function persistState() {
       writeViewMode(state.viewMode);
@@ -1041,11 +1058,11 @@
     function clearProtectedState() {
       closeLightbox();
       clearSessionState(clientGuid);
+      invalidateFacetRequests();
       state.meta = null;
       state.versionId = null;
       state.sectionTree = [];
       state.facets = null;
-      state.facetExtras = {};
       state.propertyFilters = {};
       state.query = "";
       state.sectionCode = "";
@@ -1176,6 +1193,10 @@
     }
 
     function loadFacetValues(facetKey, q, offset, append) {
+      if (!state.facetRequestGen[facetKey]) state.facetRequestGen[facetKey] = 0;
+      var requestGen = ++state.facetRequestGen[facetKey];
+      var captureOpId = state.opId;
+      var captureContext = serializeCatalogContext();
       var requestQuery = buildListQuery(state);
       requestQuery.facetKey = facetKey;
       requestQuery.facetQ = q;
@@ -1186,11 +1207,27 @@
         error: "",
       });
       refreshFilterChrome();
+
+      function isFacetResponseCurrent() {
+        return (
+          requestGen === state.facetRequestGen[facetKey] &&
+          captureOpId === state.opId &&
+          captureContext === serializeCatalogContext() &&
+          root.isConnected
+        );
+      }
+
       return api
         .apiRequest(buildApiUrl(state.clientGuid, "facet-values", requestQuery))
         .then(function (result) {
+          if (!isFacetResponseCurrent()) return;
           if (result.response.status === 403 || result.response.status === 404) {
+            invalidateFacetRequests();
             handleAccessDenied();
+            return;
+          }
+          if (result.response.status === 409 && result.data) {
+            handleVersionConflict(result.data.message);
             return;
           }
           if (result.response.status !== 200 || !result.data) {
@@ -1201,7 +1238,11 @@
             refreshFilterChrome();
             return;
           }
-          var previous = append ? (state.facetExtras[facetKey] && state.facetExtras[facetKey].values) || [] : [];
+          if (result.data.versionId) applySnapshotVersion(result.data.versionId);
+          var previous =
+            append && state.facetExtras[facetKey] && captureContext === serializeCatalogContext()
+              ? state.facetExtras[facetKey].values || []
+              : [];
           var merged = previous.slice();
           (result.data.values || []).forEach(function (entry) {
             if (merged.some(function (item) { return item.value === entry.value; })) return;
@@ -1218,6 +1259,7 @@
           refreshFilterChrome();
         })
         .catch(function () {
+          if (!isFacetResponseCurrent()) return;
           state.facetExtras[facetKey] = Object.assign({}, state.facetExtras[facetKey] || {}, {
             loading: false,
             error: "Ошибка сети при поиске значений.",
@@ -1255,6 +1297,7 @@
 
     function runCatalogQuery(options) {
       var opId = beginOperation();
+      invalidateFacetRequests();
       var includeFacets = options.includeFacets !== false;
       var includeProducts = options.includeProducts !== false;
       persistState();

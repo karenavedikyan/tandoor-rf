@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import type { PoolClient } from "pg";
 import {
@@ -14,12 +15,19 @@ import {
   writeImmutablePreview,
 } from "./image-storage";
 
+export type CatalogImageSyncTestHooks = {
+  afterSourceRead?: (sourcePath: string) => Promise<void>;
+  beforePublish?: (sourcePath: string) => Promise<void>;
+};
+
 export type CatalogImageSyncOptions = {
   apply: boolean;
   maxFiles?: number;
   maxBytes?: number;
   maxRunMs?: number;
   maxRetries?: number;
+  verifyConcurrency?: number;
+  testHooks?: CatalogImageSyncTestHooks;
 };
 
 export type CatalogImageSyncReport = {
@@ -40,7 +48,20 @@ export type CatalogImageSyncReport = {
   errors: Array<{ sourcePath: string; message: string }>;
 };
 
+type AssetRow = {
+  id: string;
+  content_sha256: string | null;
+  storage_path: string | null;
+  status: string;
+  source_byte_size: number | null;
+  source_sha256: string | null;
+};
+
 const TRANSIENT_ERROR_CODES = new Set(["EBUSY", "EMFILE", "ENFILE", "EAGAIN", "ETIMEDOUT"]);
+
+export function computeSourceSha256(sourceBuffer: Buffer): string {
+  return createHash("sha256").update(sourceBuffer).digest("hex");
+}
 
 function parseLimit(raw: unknown, fallback: number): number | null {
   if (raw === undefined || raw === null || raw === "") return fallback;
@@ -93,24 +114,16 @@ async function listActiveCatalogImagePaths(client: PoolClient): Promise<{
   };
 }
 
-async function loadExistingAsset(
-  client: PoolClient,
-  sourcePath: string,
-): Promise<{
-  id: string;
-  content_sha256: string | null;
-  storage_path: string | null;
-  status: string;
-  source_byte_size: number | null;
-} | null> {
+async function loadExistingAsset(client: PoolClient, sourcePath: string): Promise<AssetRow | null> {
   const existing = await client.query<{
     id: string;
     content_sha256: string | null;
     storage_path: string | null;
     status: string;
     source_byte_size: string | null;
+    source_sha256: string | null;
   }>(
-    `SELECT id::text, content_sha256, storage_path, status, source_byte_size
+    `SELECT id::text, content_sha256, storage_path, status, source_byte_size, source_sha256
      FROM onec_catalog_image_assets
      WHERE source_path = $1
      LIMIT 1`,
@@ -125,7 +138,7 @@ async function loadExistingAsset(
 }
 
 async function isAssetStorageReady(
-  row: { content_sha256: string | null; storage_path: string | null; status: string },
+  row: Pick<AssetRow, "content_sha256" | "storage_path" | "status">,
 ): Promise<boolean> {
   if (row.status !== "ready" || !row.content_sha256 || !row.storage_path) {
     return false;
@@ -137,21 +150,121 @@ async function isAssetStorageReady(
 async function shouldSkipReadyAsset(
   sourceDir: string,
   sourcePath: string,
-  row: {
-    content_sha256: string | null;
-    storage_path: string | null;
-    status: string;
-    source_byte_size: number | null;
-  },
+  row: AssetRow,
+  readLimit: number,
 ): Promise<boolean> {
+  if (!row.source_sha256) return false;
   if (!(await isAssetStorageReady(row))) return false;
+
   const absoluteSource = await resolveSafeSourcePath(sourceDir, sourcePath);
   if (!absoluteSource) return false;
-  const stat = await fs.stat(absoluteSource);
+
+  let stat;
+  try {
+    stat = await fs.stat(absoluteSource);
+  } catch {
+    return false;
+  }
   if (row.source_byte_size !== null && stat.size !== Number(row.source_byte_size)) {
     return false;
   }
-  return true;
+
+  try {
+    const boundedLimit = Math.min(readLimit, getMaxImageBytes(), stat.size);
+    const buffer = await readBoundedFile(absoluteSource, boundedLimit);
+    return computeSourceSha256(buffer) === row.source_sha256;
+  } catch {
+    return false;
+  }
+}
+
+function rotatePaths(paths: string[], startPath: string | null): string[] {
+  if (!startPath) return paths;
+  const index = paths.indexOf(startPath);
+  if (index <= 0) return paths;
+  return [...paths.slice(index), ...paths.slice(0, index)];
+}
+
+async function loadSyncCursor(
+  client: PoolClient,
+  catalogVersionId: string,
+): Promise<string | null> {
+  const result = await client.query<{ next_source_path: string }>(
+    `SELECT next_source_path FROM onec_catalog_image_sync_cursor WHERE catalog_version_id = $1::uuid`,
+    [catalogVersionId],
+  );
+  return result.rows[0]?.next_source_path ?? null;
+}
+
+async function saveSyncCursor(
+  client: PoolClient,
+  catalogVersionId: string,
+  nextSourcePath: string,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO onec_catalog_image_sync_cursor (catalog_version_id, next_source_path, updated_at)
+      VALUES ($1::uuid, $2, NOW())
+      ON CONFLICT (catalog_version_id) DO UPDATE SET
+        next_source_path = EXCLUDED.next_source_path,
+        updated_at = NOW()
+    `,
+    [catalogVersionId, nextSourcePath],
+  );
+}
+
+async function recordQueueOutcome(
+  client: PoolClient,
+  catalogVersionId: string,
+  sourcePath: string,
+  outcome: "ready" | "failed" | "skipped",
+  errorMessage: string | null,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO onec_catalog_image_sync_queue (
+        catalog_version_id, source_path, last_outcome, last_error, attempt_count, last_attempt_at, updated_at
+      )
+      VALUES ($1::uuid, $2, $3, $4, 1, NOW(), NOW())
+      ON CONFLICT (catalog_version_id, source_path) DO UPDATE SET
+        last_outcome = EXCLUDED.last_outcome,
+        last_error = EXCLUDED.last_error,
+        attempt_count = onec_catalog_image_sync_queue.attempt_count + 1,
+        last_attempt_at = NOW(),
+        updated_at = NOW()
+    `,
+    [catalogVersionId, sourcePath, outcome, errorMessage],
+  );
+}
+
+function nextPathInOrder(sortedPaths: string[], currentPath: string): string {
+  const index = sortedPaths.indexOf(currentPath);
+  if (index < 0) return sortedPaths[0] ?? currentPath;
+  return sortedPaths[(index + 1) % sortedPaths.length] ?? currentPath;
+}
+
+async function isStalePublication(
+  client: PoolClient,
+  sourceDir: string,
+  input: { sourcePath: string; sourceSha256: string },
+): Promise<boolean> {
+  const existing = await loadExistingAsset(client, input.sourcePath);
+  if (!existing?.source_sha256 || existing.source_sha256 === input.sourceSha256) {
+    return false;
+  }
+
+  const absoluteSource = await resolveSafeSourcePath(sourceDir, input.sourcePath);
+  if (!absoluteSource) return true;
+
+  try {
+    const stat = await fs.stat(absoluteSource);
+    const boundedLimit = Math.min(stat.size, getMaxImageBytes());
+    const buffer = await readBoundedFile(absoluteSource, boundedLimit);
+    const diskHash = computeSourceSha256(buffer);
+    return diskHash !== input.sourceSha256;
+  } catch {
+    return true;
+  }
 }
 
 async function publishAsset(
@@ -159,6 +272,7 @@ async function publishAsset(
   input: {
     sourcePath: string;
     contentSha256: string;
+    sourceSha256: string;
     storagePath: string;
     mimeType: string;
     byteSize: number;
@@ -170,12 +284,13 @@ async function publishAsset(
   await client.query(
     `
       INSERT INTO onec_catalog_image_assets (
-        source_path, content_sha256, storage_path, mime_type, byte_size, width, height,
+        source_path, content_sha256, source_sha256, storage_path, mime_type, byte_size, width, height,
         source_byte_size, status, prepared_at, published_at, updated_at, last_error
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ready', NOW(), NOW(), NOW(), NULL)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ready', NOW(), NOW(), NOW(), NULL)
       ON CONFLICT (source_path) DO UPDATE SET
         content_sha256 = EXCLUDED.content_sha256,
+        source_sha256 = EXCLUDED.source_sha256,
         storage_path = EXCLUDED.storage_path,
         mime_type = EXCLUDED.mime_type,
         byte_size = EXCLUDED.byte_size,
@@ -187,13 +302,11 @@ async function publishAsset(
         published_at = NOW(),
         updated_at = NOW(),
         last_error = NULL
-      WHERE onec_catalog_image_assets.content_sha256 IS DISTINCT FROM EXCLUDED.content_sha256
-         OR onec_catalog_image_assets.storage_path IS DISTINCT FROM EXCLUDED.storage_path
-         OR onec_catalog_image_assets.status IS DISTINCT FROM 'ready'
     `,
     [
       input.sourcePath,
       input.contentSha256,
+      input.sourceSha256,
       input.storagePath,
       input.mimeType,
       input.byteSize,
@@ -202,15 +315,37 @@ async function publishAsset(
       input.sourceByteSize,
     ],
   );
+}
 
+async function publishAssetUnderLock(
+  client: PoolClient,
+  sourceDir: string,
+  input: Parameters<typeof publishAsset>[1],
+  testHooks?: CatalogImageSyncTestHooks,
+): Promise<boolean> {
+  if (testHooks?.beforePublish) {
+    await testHooks.beforePublish(input.sourcePath);
+  }
+  await client.query("BEGIN");
+  try {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [input.sourcePath]);
+    if (await isStalePublication(client, sourceDir, input)) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await publishAsset(client, input);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 export async function runCatalogImageSync(
   client: PoolClient,
   options: CatalogImageSyncOptions,
 ): Promise<CatalogImageSyncReport> {
-  const sourceDir = getCatalogImageSourceDir();
-  const storageDir = getCatalogImageStorageDir();
   const report: CatalogImageSyncReport = {
     mode: options.apply ? "apply" : "dry_run",
     catalogVersionId: null,
@@ -228,193 +363,250 @@ export async function runCatalogImageSync(
     errors: [],
   };
 
-  const maxFiles = parseLimit(
-    options.maxFiles ?? process.env.CATALOG_IMAGE_SYNC_MAX_FILES,
-    500,
-  );
-  const maxBytes = parseLimit(
-    options.maxBytes ?? process.env.CATALOG_IMAGE_SYNC_MAX_BYTES,
-    256 * 1024 * 1024,
-  );
-  const maxRunMs = parseLimit(
-    options.maxRunMs ?? process.env.CATALOG_IMAGE_SYNC_MAX_RUN_MS,
-    30 * 60 * 1000,
-  );
-  const maxRetries = parseLimit(options.maxRetries ?? process.env.CATALOG_IMAGE_SYNC_MAX_RETRIES, 2) ?? 2;
-  const perFileMaxBytes = getMaxImageBytes();
-  const startedAt = Date.now();
+  try {
+    const sourceDir = getCatalogImageSourceDir();
+    const storageDir = getCatalogImageStorageDir();
 
-  if (maxFiles === null || maxBytes === null || maxRunMs === null) {
-    report.errors.push({ sourcePath: "*", message: "Invalid sync limits." });
-    return report;
-  }
+    const maxFiles = parseLimit(
+      options.maxFiles ?? process.env.CATALOG_IMAGE_SYNC_MAX_FILES,
+      500,
+    );
+    const maxBytes = parseLimit(
+      options.maxBytes ?? process.env.CATALOG_IMAGE_SYNC_MAX_BYTES,
+      256 * 1024 * 1024,
+    );
+    const maxRunMs = parseLimit(
+      options.maxRunMs ?? process.env.CATALOG_IMAGE_SYNC_MAX_RUN_MS,
+      30 * 60 * 1000,
+    );
+    const maxRetries =
+      parseLimit(options.maxRetries ?? process.env.CATALOG_IMAGE_SYNC_MAX_RETRIES, 2) ?? 2;
+    const verifyConcurrency =
+      parseLimit(
+        options.verifyConcurrency ?? process.env.CATALOG_IMAGE_SYNC_VERIFY_CONCURRENCY,
+        4,
+      ) ?? 4;
+    const perFileMaxBytes = getMaxImageBytes();
+    const startedAt = Date.now();
 
-  if (!sourceDir) {
-    report.errors.push({ sourcePath: "*", message: "CATALOG_IMAGE_SOURCE_DIR is not configured." });
-    return report;
-  }
-  if (options.apply && !storageDir) {
-    report.errors.push({ sourcePath: "*", message: "CATALOG_IMAGE_STORAGE_DIR is not configured." });
-    return report;
-  }
-
-  const { versionId, paths } = await listActiveCatalogImagePaths(client);
-  report.catalogVersionId = versionId;
-
-  if (options.apply && storageDir) {
-    await ensureStorageDir(storageDir);
-  }
-
-  const assetRows =
-    paths.length > 0
-      ? await client.query<{
-          source_path: string;
-          content_sha256: string | null;
-          storage_path: string | null;
-          status: string;
-          source_byte_size: string | null;
-        }>(
-          `SELECT source_path, content_sha256, storage_path, status, source_byte_size
-           FROM onec_catalog_image_assets
-           WHERE source_path = ANY($1::text[])`,
-          [paths],
-        )
-      : { rows: [] };
-  const assetByPath = new Map(
-    assetRows.rows.map((row) => [
-      row.source_path,
-      {
-        ...row,
-        source_byte_size: row.source_byte_size === null ? null : Number(row.source_byte_size),
-      },
-    ]),
-  );
-  const readiness = await Promise.all(
-    paths.map(async (sourcePath) => {
-      const row = assetByPath.get(sourcePath);
-      if (!row) return { sourcePath, ready: false };
-      return { sourcePath, ready: await shouldSkipReadyAsset(sourceDir, sourcePath, row) };
-    }),
-  );
-  const orderedPaths = readiness
-    .sort((left, right) => {
-      if (left.ready !== right.ready) return left.ready ? 1 : -1;
-      return left.sourcePath.localeCompare(right.sourcePath);
-    })
-    .map((item) => item.sourcePath);
-
-  for (const sourcePath of orderedPaths) {
-    report.filesSeen += 1;
-
-    if (Date.now() - startedAt >= maxRunMs) {
-      report.stoppedByLimit = true;
-      break;
-    }
-    if (report.sourceBytesRead >= maxBytes) {
-      report.stoppedByLimit = true;
-      break;
+    if (maxFiles === null || maxBytes === null || maxRunMs === null) {
+      report.errors.push({ sourcePath: "*", message: "Invalid sync limits." });
+      return report;
     }
 
-    const existing = await loadExistingAsset(client, sourcePath);
-    if (existing && (await shouldSkipReadyAsset(sourceDir, sourcePath, existing))) {
-      report.filesSkipped += 1;
-      continue;
+    if (!sourceDir) {
+      report.errors.push({ sourcePath: "*", message: "CATALOG_IMAGE_SOURCE_DIR is not configured." });
+      return report;
+    }
+    if (options.apply && !storageDir) {
+      report.errors.push({ sourcePath: "*", message: "CATALOG_IMAGE_STORAGE_DIR is not configured." });
+      return report;
     }
 
-    if (report.filesWorked >= maxFiles) {
-      report.stoppedByLimit = true;
-      break;
+    const { versionId, paths } = await listActiveCatalogImagePaths(client);
+    report.catalogVersionId = versionId;
+    const sortedPaths = [...paths].sort((left, right) => left.localeCompare(right));
+
+    if (options.apply && storageDir) {
+      await ensureStorageDir(storageDir);
     }
 
-    report.filesWorked += 1;
-
-    const absoluteSource = await resolveSafeSourcePath(sourceDir, sourcePath);
-    if (!absoluteSource) {
-      report.filesFailed += 1;
-      report.errors.push({ sourcePath, message: "Unsafe source path." });
-      continue;
+    if (!versionId || !sortedPaths.length) {
+      report.queueComplete = true;
+      return report;
     }
 
-    const remainingBudget = maxBytes - report.sourceBytesRead;
-    const readLimit = Math.min(perFileMaxBytes, remainingBudget);
-    if (readLimit <= 0) {
-      report.stoppedByLimit = true;
-      break;
-    }
+    const cursor = await loadSyncCursor(client, versionId);
+    const orderedPaths = rotatePaths(sortedPaths, cursor);
 
-    let sourceBuffer: Buffer;
-    try {
-      sourceBuffer = await withRetries(
-        () => readBoundedFile(absoluteSource, readLimit),
-        maxRetries,
-        (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
-      );
-      report.sourceBytesRead += sourceBuffer.length;
-      report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
-    } catch (error) {
-      report.filesFailed += 1;
-      report.errors.push({
-        sourcePath,
-        message: sanitizeImageSyncErrorMessage(error),
-      });
-      continue;
-    }
+    const assetRows =
+      sortedPaths.length > 0
+        ? await client.query<{
+            source_path: string;
+            id: string;
+            content_sha256: string | null;
+            storage_path: string | null;
+            status: string;
+            source_byte_size: string | null;
+            source_sha256: string | null;
+          }>(
+            `SELECT source_path, id::text AS id, content_sha256, storage_path, status, source_byte_size, source_sha256
+             FROM onec_catalog_image_assets
+             WHERE source_path = ANY($1::text[])`,
+            [sortedPaths],
+          )
+        : { rows: [] };
 
-    const processed = await processImageToPreview(sourceBuffer);
-    if (!processed.ok) {
-      report.filesFailed += 1;
-      report.errors.push({ sourcePath, message: processed.message });
-      continue;
-    }
+    const assetByPath = new Map<string, AssetRow>(
+      assetRows.rows.map((row) => [
+        row.source_path,
+        {
+          id: row.id,
+          content_sha256: row.content_sha256,
+          storage_path: row.storage_path,
+          status: row.status,
+          source_byte_size: row.source_byte_size === null ? null : Number(row.source_byte_size),
+          source_sha256: row.source_sha256,
+        },
+      ]),
+    );
 
-    const needsRestore =
-      existing?.status === "ready" &&
-      existing.content_sha256 === processed.contentSha256 &&
-      existing.storage_path &&
-      !(await verifyStoredPreview(existing.storage_path, processed.contentSha256)).ok;
+    let verifyOps = 0;
+    const maxVerifyOps = Math.max(maxFiles * 4, verifyConcurrency);
 
-    if (!options.apply) {
-      report.filesPrepared += 1;
-      continue;
-    }
+    for (const sourcePath of orderedPaths) {
+      report.filesSeen += 1;
 
-    try {
-      const storagePath = await withRetries(
-        () =>
-          writeImmutablePreview(storageDir!, processed.contentSha256, processed.previewBuffer),
-        maxRetries,
-        (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
-      );
-      report.previewBytesWritten += processed.byteSize;
-      report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
-
-      await publishAsset(client, {
-        sourcePath,
-        contentSha256: processed.contentSha256,
-        storagePath,
-        mimeType: processed.mimeType,
-        byteSize: processed.byteSize,
-        width: processed.width,
-        height: processed.height,
-        sourceByteSize: sourceBuffer.length,
-      });
-
-      if (needsRestore) {
-        report.filesRestored += 1;
-      } else {
-        report.filesPrepared += 1;
+      if (Date.now() - startedAt >= maxRunMs) {
+        report.stoppedByLimit = true;
+        await saveSyncCursor(client, versionId, sourcePath);
+        break;
       }
-    } catch (error) {
-      report.filesFailed += 1;
-      report.errors.push({
-        sourcePath,
-        message: sanitizeImageSyncErrorMessage(error),
-      });
-    }
-  }
+      if (report.sourceBytesRead >= maxBytes) {
+        report.stoppedByLimit = true;
+        await saveSyncCursor(client, versionId, sourcePath);
+        break;
+      }
 
-  report.queueComplete = !report.stoppedByLimit;
-  return report;
+      const existing = assetByPath.get(sourcePath) ?? (await loadExistingAsset(client, sourcePath));
+      if (existing && verifyOps < maxVerifyOps) {
+        verifyOps += 1;
+        const remainingBudget = maxBytes - report.sourceBytesRead;
+        const verifyLimit = Math.min(perFileMaxBytes, remainingBudget > 0 ? remainingBudget : perFileMaxBytes);
+        if (await shouldSkipReadyAsset(sourceDir, sourcePath, existing, verifyLimit)) {
+          report.filesSkipped += 1;
+          await recordQueueOutcome(client, versionId, sourcePath, "skipped", null);
+          await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+          continue;
+        }
+      }
+
+      if (report.filesWorked >= maxFiles) {
+        report.stoppedByLimit = true;
+        await saveSyncCursor(client, versionId, sourcePath);
+        break;
+      }
+
+      const absoluteSource = await resolveSafeSourcePath(sourceDir, sourcePath);
+      if (!absoluteSource) {
+        report.filesFailed += 1;
+        report.errors.push({ sourcePath, message: "Unsafe or missing source path." });
+        await recordQueueOutcome(client, versionId, sourcePath, "failed", "Unsafe or missing source path.");
+        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        continue;
+      }
+
+      const remainingBudget = maxBytes - report.sourceBytesRead;
+      const readLimit = Math.min(perFileMaxBytes, remainingBudget);
+      if (readLimit <= 0) {
+        report.stoppedByLimit = true;
+        await saveSyncCursor(client, versionId, sourcePath);
+        break;
+      }
+
+      let sourceBuffer: Buffer;
+      try {
+        sourceBuffer = await withRetries(
+          () => readBoundedFile(absoluteSource, readLimit),
+          maxRetries,
+          (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
+        );
+        report.sourceBytesRead += sourceBuffer.length;
+        report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
+      } catch (error) {
+        report.filesFailed += 1;
+        const message = sanitizeImageSyncErrorMessage(error);
+        report.errors.push({ sourcePath, message });
+        await recordQueueOutcome(client, versionId, sourcePath, "failed", message);
+        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        continue;
+      }
+
+      report.filesWorked += 1;
+
+      if (options.testHooks?.afterSourceRead) {
+        await options.testHooks.afterSourceRead(sourcePath);
+      }
+
+      const sourceSha256 = computeSourceSha256(sourceBuffer);
+      const processed = await processImageToPreview(sourceBuffer);
+      if (!processed.ok) {
+        report.filesFailed += 1;
+        report.errors.push({ sourcePath, message: processed.message });
+        await recordQueueOutcome(client, versionId, sourcePath, "failed", processed.message);
+        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        continue;
+      }
+
+      const needsRestore =
+        existing?.status === "ready" &&
+        existing.content_sha256 === processed.contentSha256 &&
+        existing.storage_path &&
+        !(await verifyStoredPreview(existing.storage_path, processed.contentSha256)).ok;
+
+      if (!options.apply) {
+        report.filesPrepared += 1;
+        await recordQueueOutcome(client, versionId, sourcePath, "ready", null);
+        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        continue;
+      }
+
+      try {
+        const storagePath = await withRetries(
+          () =>
+            writeImmutablePreview(storageDir!, processed.contentSha256, processed.previewBuffer),
+          maxRetries,
+          (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
+        );
+        report.previewBytesWritten += processed.byteSize;
+        report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
+
+        const published = await publishAssetUnderLock(
+          client,
+          sourceDir,
+          {
+            sourcePath,
+            contentSha256: processed.contentSha256,
+            sourceSha256,
+            storagePath,
+            mimeType: processed.mimeType,
+            byteSize: processed.byteSize,
+            width: processed.width,
+            height: processed.height,
+            sourceByteSize: sourceBuffer.length,
+          },
+          options.testHooks,
+        );
+
+        if (!published) {
+          report.filesSkipped += 1;
+          await recordQueueOutcome(client, versionId, sourcePath, "skipped", "Superseded by newer publication.");
+        } else if (needsRestore) {
+          report.filesRestored += 1;
+          await recordQueueOutcome(client, versionId, sourcePath, "ready", null);
+        } else {
+          report.filesPrepared += 1;
+          await recordQueueOutcome(client, versionId, sourcePath, "ready", null);
+        }
+      } catch (error) {
+        report.filesFailed += 1;
+        const message = sanitizeImageSyncErrorMessage(error);
+        report.errors.push({ sourcePath, message });
+        await recordQueueOutcome(client, versionId, sourcePath, "failed", message);
+      }
+
+      await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+    }
+
+    report.queueComplete = !report.stoppedByLimit;
+    return report;
+  } catch (error) {
+    report.errors.push({
+      sourcePath: "*",
+      message: sanitizeImageSyncErrorMessage(error),
+    });
+    return report;
+  }
 }
 
 export async function loadReadyImageAsset(
