@@ -112,6 +112,7 @@ type ClientRow = {
   address: string;
   telephone: unknown;
   last_imported_at: Date;
+  source_sha256?: string | null;
   is_holding?: boolean | null;
   extended_format_version?: string | null;
   extended_source_sha256?: string | null;
@@ -175,6 +176,7 @@ export function toClientDetail(
   const extended = toClientExtendedDto(
     {
       is_holding: row.is_holding ?? null,
+      source_sha256: row.source_sha256 ?? null,
       extended_format_version: row.extended_format_version ?? null,
       extended_source_sha256: row.extended_source_sha256 ?? null,
       extended_imported_at: row.extended_imported_at ?? null,

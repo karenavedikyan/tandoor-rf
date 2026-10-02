@@ -8,6 +8,9 @@ import {
   type ExtendedRecordFieldPresence,
 } from "./extended-presence";
 import type {
+  ExtendedBlockFreshness,
+  ExtendedBlockProvenance,
+  ExtendedBlockProvenanceEntry,
   ExtendedSnapshot,
   ExtendedSnapshotBlocks,
   ParsedExtendedClientRecord,
@@ -59,12 +62,81 @@ function appendHistoryWhenBusinessChanged(
   if (!previous) {
     return history;
   }
+  const previousOutletProvenance = previous.blocks?.blockProvenance?.retailOutlets;
   history.push({
-    sourceSha256: previous.sourceSha256,
-    capturedAt: previous.importedAt,
+    sourceSha256: previousOutletProvenance?.sourceSha256 ?? previous.sourceSha256,
+    capturedAt: previousOutletProvenance?.importedAt ?? previous.importedAt,
     retailOutlets: previousCurrent,
   });
   return history;
+}
+
+const BLOCK_PROVENANCE_KEYS = [
+  "holding",
+  "regionalManager",
+  "hardwareManager",
+  "headOfSales",
+  "retailOutlets",
+] as const satisfies ReadonlyArray<keyof ExtendedBlockFreshness>;
+
+function buildBlockProvenanceEntry(
+  freshness: ExtendedBlockFreshness[keyof ExtendedBlockFreshness],
+  previous: ExtendedSnapshot | null,
+  key: keyof ExtendedBlockProvenance,
+  sourceSha256: string,
+  importedAt: string,
+): ExtendedBlockProvenanceEntry {
+  if (freshness === "preserved_from_previous" && previous) {
+    const previousEntry = previous.blocks?.blockProvenance?.[key];
+    if (previousEntry) {
+      return {
+        freshness: "preserved_from_previous",
+        sourceSha256: previousEntry.sourceSha256,
+        importedAt: previousEntry.importedAt,
+      };
+    }
+    return {
+      freshness: "preserved_from_previous",
+      sourceSha256: previous.sourceSha256,
+      importedAt: previous.importedAt,
+    };
+  }
+  return {
+    freshness,
+    sourceSha256,
+    importedAt,
+  };
+}
+
+function buildBlockProvenance(
+  blockFreshness: ExtendedBlockFreshness,
+  previous: ExtendedSnapshot | null,
+  sourceSha256: string,
+  importedAt: string,
+): ExtendedBlockProvenance {
+  const provenance = {} as ExtendedBlockProvenance;
+  for (const key of BLOCK_PROVENANCE_KEYS) {
+    provenance[key] = buildBlockProvenanceEntry(
+      blockFreshness[key],
+      previous,
+      key,
+      sourceSha256,
+      importedAt,
+    );
+  }
+  return provenance;
+}
+
+export function summarizeRowFreshnessFromProvenance(
+  blockProvenance: ExtendedBlockProvenance,
+): "current" | "preserved_from_previous" | "not_provided_in_snapshot" {
+  return summarizeRowFreshness({
+    holding: blockProvenance.holding.freshness,
+    regionalManager: blockProvenance.regionalManager.freshness,
+    hardwareManager: blockProvenance.hardwareManager.freshness,
+    headOfSales: blockProvenance.headOfSales.freshness,
+    retailOutlets: blockProvenance.retailOutlets.freshness,
+  });
 }
 
 function buildBlockFreshness(
@@ -152,18 +224,13 @@ export function buildExtendedSnapshotJson(
   });
 
   const blockFreshness = buildBlockFreshness(record.fieldPresence, hasPrevious);
-  const hasPreservedBlocks = Object.values(blockFreshness).some(
-    (value) => value === "preserved_from_previous",
-  );
-
+  const blockProvenance = buildBlockProvenance(blockFreshness, previous, sourceSha256, importedAt);
   const effectiveImportedAt =
-    previous && (hasPreservedBlocks || !businessChanged) ? previous.importedAt : importedAt;
-  const effectiveSourceSha256 =
-    previous && (hasPreservedBlocks || !businessChanged) ? previous.sourceSha256 : sourceSha256;
+    previous && !businessChanged ? previous.importedAt : importedAt;
 
   return {
     formatVersion: "extended_v1",
-    sourceSha256: effectiveSourceSha256,
+    sourceSha256,
     importedAt: effectiveImportedAt,
     isHolding,
     regionalManager,
@@ -176,6 +243,7 @@ export function buildExtendedSnapshotJson(
       outletNormalizedReady: false,
       clientExtendedBlockedReason: options.contractVerified ? null : "awaiting_live_json_verification",
       blockFreshness,
+      blockProvenance,
     },
   };
 }
@@ -209,10 +277,13 @@ export function resolveExtendedRecordsForApply(
 export function summarizeExtendedFreshness(snapshot: ExtendedSnapshot | null): {
   extendedFreshnessState: "current" | "preserved_from_previous" | "not_provided_in_snapshot";
 } {
-  if (!snapshot?.blocks.blockFreshness) {
-    return { extendedFreshnessState: "current" };
+  if (snapshot?.blocks.blockProvenance) {
+    return { extendedFreshnessState: summarizeRowFreshnessFromProvenance(snapshot.blocks.blockProvenance) };
   }
-  return { extendedFreshnessState: summarizeRowFreshness(snapshot.blocks.blockFreshness) };
+  if (snapshot?.blocks.blockFreshness) {
+    return { extendedFreshnessState: summarizeRowFreshness(snapshot.blocks.blockFreshness) };
+  }
+  return { extendedFreshnessState: "current" };
 }
 
 export async function loadExistingExtendedSnapshots(

@@ -8,7 +8,12 @@ import type {
   ParsedRetailOutlet,
   RetailOutletHistoryEntry,
 } from "../onec-clients/extended-types";
-import { readExtendedSnapshot, summarizeRowFreshness } from "../onec-clients/extended-apply";
+import {
+  readExtendedSnapshot,
+  summarizeRowFreshness,
+  summarizeRowFreshnessFromProvenance,
+} from "../onec-clients/extended-apply";
+import type { ExtendedBlockProvenance, ExtendedBlockProvenanceEntry } from "../onec-clients/extended-types";
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import { canReadNestedRetailOutlets, MAX_OUTLETS_IN_DETAIL_RESPONSE } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
@@ -69,6 +74,9 @@ export type ClientExtendedManagersDto = {
 export type BlockFreshnessEntryDto = {
   state: ExtendedFreshnessState;
   label: string;
+  sourceSha256: string | null;
+  importedAt: string | null;
+  importedAtLabel: string | null;
 };
 
 export type ClientExtendedBlockFreshnessDto = {
@@ -131,39 +139,135 @@ function blockFreshnessEntryLabel(state: ExtendedFreshnessState): string {
   return "Не передано в текущем снимке";
 }
 
-function toBlockFreshnessDto(
-  blockFreshness: ExtendedBlockFreshness | undefined,
+function formatImportedAtLabel(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return formatMskDateTime(parsed);
+}
+
+function toBlockFreshnessEntryDto(entry: ExtendedBlockProvenanceEntry): BlockFreshnessEntryDto {
+  return {
+    state: entry.freshness,
+    label: blockFreshnessEntryLabel(entry.freshness),
+    sourceSha256: entry.sourceSha256,
+    importedAt: entry.importedAt,
+    importedAtLabel: formatImportedAtLabel(entry.importedAt),
+  };
+}
+
+function toBlockFreshnessDtoFromProvenance(
+  blockProvenance: ExtendedBlockProvenance | undefined,
 ): ClientExtendedBlockFreshnessDto | null {
-  if (!blockFreshness) {
+  if (!blockProvenance) {
     return null;
   }
   return {
-    holding: { state: blockFreshness.holding, label: blockFreshnessEntryLabel(blockFreshness.holding) },
-    regionalManager: {
-      state: blockFreshness.regionalManager,
-      label: blockFreshnessEntryLabel(blockFreshness.regionalManager),
-    },
-    hardwareManager: {
-      state: blockFreshness.hardwareManager,
-      label: blockFreshnessEntryLabel(blockFreshness.hardwareManager),
-    },
-    headOfSales: {
-      state: blockFreshness.headOfSales,
-      label: blockFreshnessEntryLabel(blockFreshness.headOfSales),
-    },
-    retailOutlets: {
-      state: blockFreshness.retailOutlets,
-      label: blockFreshnessEntryLabel(blockFreshness.retailOutlets),
-    },
+    holding: toBlockFreshnessEntryDto(blockProvenance.holding),
+    regionalManager: toBlockFreshnessEntryDto(blockProvenance.regionalManager),
+    hardwareManager: toBlockFreshnessEntryDto(blockProvenance.hardwareManager),
+    headOfSales: toBlockFreshnessEntryDto(blockProvenance.headOfSales),
+    retailOutlets: toBlockFreshnessEntryDto(blockProvenance.retailOutlets),
   };
+}
+
+function toBlockFreshnessEntryFromState(
+  state: ExtendedFreshnessState,
+  snapshot: ExtendedSnapshot,
+): BlockFreshnessEntryDto {
+  const provenanceEntry = snapshot.blocks?.blockProvenance
+    ? Object.values(snapshot.blocks.blockProvenance).find((entry) => entry.freshness === state)
+    : undefined;
+  return {
+    state,
+    label: blockFreshnessEntryLabel(state),
+    sourceSha256: provenanceEntry?.sourceSha256 ?? snapshot.sourceSha256,
+    importedAt: provenanceEntry?.importedAt ?? snapshot.importedAt,
+    importedAtLabel: formatImportedAtLabel(provenanceEntry?.importedAt ?? snapshot.importedAt),
+  };
+}
+
+function toBlockFreshnessDtoFromFreshness(
+  blockFreshness: ExtendedBlockFreshness,
+  snapshot: ExtendedSnapshot,
+  row: ExtendedRow,
+): ClientExtendedBlockFreshnessDto {
+  const applyOverride = (state: ExtendedFreshnessState): ExtendedFreshnessState => {
+    if (
+      row.extended_freshness_state === "preserved_from_previous" &&
+      extendedNotUpdatedOnLastImport(row) &&
+      state === "current"
+    ) {
+      return "preserved_from_previous";
+    }
+    return state;
+  };
+  return {
+    holding: toBlockFreshnessEntryFromState(applyOverride(blockFreshness.holding), snapshot),
+    regionalManager: toBlockFreshnessEntryFromState(applyOverride(blockFreshness.regionalManager), snapshot),
+    hardwareManager: toBlockFreshnessEntryFromState(applyOverride(blockFreshness.hardwareManager), snapshot),
+    headOfSales: toBlockFreshnessEntryFromState(applyOverride(blockFreshness.headOfSales), snapshot),
+    retailOutlets: toBlockFreshnessEntryFromState(applyOverride(blockFreshness.retailOutlets), snapshot),
+  };
+}
+
+function extendedNotUpdatedOnLastImport(row: ExtendedRow): boolean {
+  return Boolean(
+    row.source_sha256 &&
+      row.extended_source_sha256 &&
+      row.source_sha256 !== row.extended_source_sha256,
+  );
+}
+
+function applyRowFreshnessOverride(
+  blockProvenance: ExtendedBlockProvenance,
+  row: ExtendedRow,
+): ExtendedBlockProvenance {
+  if (row.extended_freshness_state !== "preserved_from_previous" || !extendedNotUpdatedOnLastImport(row)) {
+    return blockProvenance;
+  }
+  const overrideEntry = (entry: ExtendedBlockProvenanceEntry): ExtendedBlockProvenanceEntry => ({
+    ...entry,
+    freshness: "preserved_from_previous",
+  });
+  return {
+    holding: overrideEntry(blockProvenance.holding),
+    regionalManager: overrideEntry(blockProvenance.regionalManager),
+    hardwareManager: overrideEntry(blockProvenance.hardwareManager),
+    headOfSales: overrideEntry(blockProvenance.headOfSales),
+    retailOutlets: overrideEntry(blockProvenance.retailOutlets),
+  };
+}
+
+function resolveFreshnessState(row: ExtendedRow, snapshot: ExtendedSnapshot | null): ExtendedFreshnessState | null {
+  if (row.extended_freshness_state != null) {
+    return row.extended_freshness_state;
+  }
+  const provenance = snapshot?.blocks?.blockProvenance;
+  if (provenance) {
+    return summarizeRowFreshnessFromProvenance(provenance);
+  }
+  const blockFreshness = snapshot?.blocks?.blockFreshness;
+  if (blockFreshness) {
+    return summarizeRowFreshness(blockFreshness);
+  }
+  return null;
 }
 
 function freshnessLabel(
   state: ExtendedFreshnessState | null,
-  blockFreshness?: ExtendedBlockFreshness | null,
+  blockProvenance?: ExtendedBlockProvenance | null,
+  row?: ExtendedRow,
 ): string {
-  if (blockFreshness) {
-    const values = Object.values(blockFreshness);
+  if (row && extendedNotUpdatedOnLastImport(row) && row.extended_freshness_state === "preserved_from_previous") {
+    return "Расширенные данные не обновлены последней выгрузкой; сохранены из предыдущего снимка";
+  }
+  if (blockProvenance) {
+    const values = Object.values(blockProvenance).map((entry) => entry.freshness);
     const hasCurrent = values.some((value) => value === "current");
     const hasPreserved = values.some((value) => value === "preserved_from_previous");
     if (hasCurrent && hasPreserved) {
@@ -340,6 +444,7 @@ function resolveSnapshotManagerLinks(
 
 type ExtendedRow = {
   is_holding: boolean | null;
+  source_sha256?: string | null;
   extended_format_version: string | null;
   extended_source_sha256: string | null;
   extended_imported_at: Date | null;
@@ -409,15 +514,20 @@ export function toClientExtendedDto(
   const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
-  const blockFreshness = snapshot?.blocks?.blockFreshness ?? null;
-  const blockFreshnessDto = toBlockFreshnessDto(blockFreshness ?? undefined);
-  const resolvedFreshnessState =
-    blockFreshness != null
-      ? summarizeRowFreshness(blockFreshness)
-      : row.extended_freshness_state;
-  const resolvedSourceSha256 = snapshot?.sourceSha256 ?? row.extended_source_sha256 ?? null;
+  const rawBlockProvenance = snapshot?.blocks?.blockProvenance ?? null;
+  const effectiveBlockProvenance = rawBlockProvenance
+    ? applyRowFreshnessOverride(rawBlockProvenance, row)
+    : null;
+  const blockFreshnessDto =
+    toBlockFreshnessDtoFromProvenance(effectiveBlockProvenance ?? undefined) ??
+    (snapshot?.blocks?.blockFreshness
+      ? toBlockFreshnessDtoFromFreshness(snapshot.blocks.blockFreshness, snapshot, row)
+      : null);
+  const resolvedFreshnessState = resolveFreshnessState(row, snapshot);
+  const resolvedSourceSha256 =
+    row.extended_source_sha256 ?? snapshot?.sourceSha256 ?? null;
   const resolvedImportedAt =
-    snapshot?.importedAt ?? row.extended_imported_at?.toISOString() ?? null;
+    row.extended_imported_at?.toISOString() ?? snapshot?.importedAt ?? null;
 
   let dataQualityLabel = "Структура торговых точек не передана";
   if (!outletAccessGranted) {
@@ -432,13 +542,9 @@ export function toClientExtendedDto(
     formatVersion: row.extended_format_version ?? snapshot?.formatVersion ?? "extended_v1",
     sourceSha256: resolvedSourceSha256,
     importedAt: resolvedImportedAt,
-    importedAtLabel: row.extended_imported_at
-      ? formatMskDateTime(row.extended_imported_at)
-      : snapshot?.importedAt
-        ? snapshot.importedAt
-        : null,
+    importedAtLabel: formatImportedAtLabel(resolvedImportedAt),
     freshnessState: resolvedFreshnessState,
-    freshnessLabel: freshnessLabel(resolvedFreshnessState, blockFreshness),
+    freshnessLabel: freshnessLabel(resolvedFreshnessState, effectiveBlockProvenance, row),
     blockFreshness: blockFreshnessDto,
     isHolding: row.is_holding,
     holdingCardLabel:

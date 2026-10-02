@@ -26,6 +26,7 @@ type ClientRow = {
   address: string;
   telephone: unknown;
   last_imported_at: Date;
+  source_sha256: string | null;
   is_holding: boolean | null;
   extended_format_version: string | null;
   extended_source_sha256: string | null;
@@ -171,6 +172,7 @@ export async function getClientByGuid(
         address,
         telephone,
         last_imported_at,
+        source_sha256,
         is_holding,
         extended_format_version,
         extended_source_sha256,

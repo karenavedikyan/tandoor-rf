@@ -114,8 +114,11 @@ describe("extended field presence merge", () => {
     assert.equal(second.blocks.blockFreshness?.holding, "current");
     assert.equal(second.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
     assert.equal(summarizeRowFreshness(second.blocks.blockFreshness!), "preserved_from_previous");
-    assert.equal(second.sourceSha256, "sha-first");
+    assert.equal(second.sourceSha256, "sha-second");
     assert.equal(second.importedAt, first.importedAt);
+    assert.equal(second.blocks.blockProvenance?.holding.sourceSha256, "sha-second");
+    assert.equal(second.blocks.blockProvenance?.retailOutlets.sourceSha256, "sha-first");
+    assert.equal(second.blocks.blockProvenance?.regionalManager.sourceSha256, "sha-first");
   });
 
   it("preserves regional manager and outlets when second snapshot omits those blocks", () => {
@@ -213,9 +216,85 @@ describe("extended field presence merge", () => {
     );
 
     assert.equal(extendedBusinessDataEqual(first, second), true);
-    assert.equal(second.sourceSha256, "sha-first");
+    assert.equal(second.sourceSha256, "sha-resaved-formatting");
     assert.equal(second.importedAt, first.importedAt);
     assert.equal(second.retailOutletHistory.length, 0);
+  });
+
+  it("attributes updated outlet address to the current import while preserving regional provenance", () => {
+    const first = buildExtendedSnapshotJson(
+      record(),
+      null,
+      "sha-first",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      record({
+        retailOutlets: [outlet("Store B New Address")],
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        fieldPresence: defaultPresence({
+          retailOutlets: "present",
+          regionalManager: "missing",
+        }),
+      }),
+      first,
+      "sha-second",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+
+    assert.equal(second.currentRetailOutlets[0]?.address.storeAddress, "Store B New Address");
+    assert.equal(second.regionalManager.guid, REGIONAL);
+    assert.equal(second.blocks.blockFreshness?.retailOutlets, "current");
+    assert.equal(second.blocks.blockFreshness?.regionalManager, "preserved_from_previous");
+    assert.equal(second.blocks.blockProvenance?.retailOutlets.sourceSha256, "sha-second");
+    assert.equal(second.blocks.blockProvenance?.regionalManager.sourceSha256, "sha-first");
+    assert.equal(second.sourceSha256, "sha-second");
+    assert.equal(second.retailOutletHistory.length, 1);
+    assert.equal(second.retailOutletHistory[0]?.sourceSha256, "sha-first");
+  });
+
+  it("keeps preserved block provenance on a third partial import", () => {
+    const first = buildExtendedSnapshotJson(
+      record(),
+      null,
+      "sha-first",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      record({
+        retailOutlets: [outlet("Store B New Address")],
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        fieldPresence: defaultPresence({
+          retailOutlets: "present",
+          regionalManager: "missing",
+        }),
+      }),
+      first,
+      "sha-second",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const third = buildExtendedSnapshotJson(
+      record({
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        retailOutlets: [],
+        fieldPresence: defaultPresence({
+          regionalManager: "missing",
+          retailOutlets: "missing",
+        }),
+      }),
+      second,
+      "sha-third",
+      "2026-01-03T00:00:00.000Z",
+      { contractVerified: true },
+    );
+
+    assert.equal(third.blocks.blockProvenance?.retailOutlets.sourceSha256, "sha-second");
+    assert.equal(third.blocks.blockProvenance?.regionalManager.sourceSha256, "sha-first");
+    assert.equal(third.currentRetailOutlets[0]?.address.storeAddress, "Store B New Address");
   });
 
   it("excludes sha, importedAt and history from business projection comparison", () => {

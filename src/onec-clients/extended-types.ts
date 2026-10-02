@@ -88,11 +88,26 @@ export type ExtendedBlockFreshness = {
   retailOutlets: ExtendedFreshnessState;
 };
 
+export type ExtendedBlockProvenanceEntry = {
+  freshness: ExtendedFreshnessState;
+  sourceSha256: string;
+  importedAt: string;
+};
+
+export type ExtendedBlockProvenance = {
+  holding: ExtendedBlockProvenanceEntry;
+  regionalManager: ExtendedBlockProvenanceEntry;
+  hardwareManager: ExtendedBlockProvenanceEntry;
+  headOfSales: ExtendedBlockProvenanceEntry;
+  retailOutlets: ExtendedBlockProvenanceEntry;
+};
+
 export type ExtendedSnapshotBlocks = {
   clientExtendedReady: boolean;
   outletNormalizedReady: false;
   clientExtendedBlockedReason?: string | null;
   blockFreshness?: ExtendedBlockFreshness;
+  blockProvenance?: ExtendedBlockProvenance;
 };
 
 export type ExtendedSnapshot = {

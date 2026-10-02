@@ -164,14 +164,15 @@ describe("clients extended dto", () => {
     const dto = toClientExtendedDto(
       {
         is_holding: true,
+        source_sha256: "sha-new",
         extended_format_version: "extended_v1",
-        extended_source_sha256: "sha-old",
-        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
-        extended_freshness_state: "current",
+        extended_source_sha256: "sha-new",
+        extended_imported_at: new Date("2026-01-02T10:00:00Z"),
+        extended_freshness_state: "preserved_from_previous",
         extended_snapshot: {
           formatVersion: "extended_v1",
-          sourceSha256: "sha-old",
-          importedAt: "2026-01-01T10:00:00.000Z",
+          sourceSha256: "sha-new",
+          importedAt: "2026-01-02T10:00:00.000Z",
           isHolding: true,
           regionalManager: {
             guid: EXTENDED_FIXTURE_GUIDS.REGIONAL,
@@ -192,6 +193,33 @@ describe("clients extended dto", () => {
               headOfSales: "not_provided_in_snapshot",
               retailOutlets: "preserved_from_previous",
             },
+            blockProvenance: {
+              holding: {
+                freshness: "current",
+                sourceSha256: "sha-new",
+                importedAt: "2026-01-02T10:00:00.000Z",
+              },
+              regionalManager: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-old",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+              hardwareManager: {
+                freshness: "not_provided_in_snapshot",
+                sourceSha256: "sha-new",
+                importedAt: "2026-01-02T10:00:00.000Z",
+              },
+              headOfSales: {
+                freshness: "not_provided_in_snapshot",
+                sourceSha256: "sha-new",
+                importedAt: "2026-01-02T10:00:00.000Z",
+              },
+              retailOutlets: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-old",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+            },
           },
         },
       },
@@ -199,9 +227,55 @@ describe("clients extended dto", () => {
     );
     assert.ok(dto!.blockFreshness);
     assert.equal(dto!.blockFreshness!.retailOutlets.state, "preserved_from_previous");
+    assert.equal(dto!.blockFreshness!.retailOutlets.sourceSha256, "sha-old");
+    assert.equal(dto!.blockFreshness!.holding.sourceSha256, "sha-new");
     assert.match(dto!.freshnessLabel, /Частично обновлено/);
     assert.equal(dto!.freshnessState, "preserved_from_previous");
-    assert.equal(dto!.sourceSha256, "sha-old");
+    assert.equal(dto!.sourceSha256, "sha-new");
+  });
+
+  it("does not treat stale snapshot freshness as current after blocked import", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        source_sha256: "sha-new-unverified",
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "sha-old-confirmed",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "preserved_from_previous",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "sha-old-confirmed",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: {
+            guid: EXTENDED_FIXTURE_GUIDS.REGIONAL,
+            name: "Regional",
+            state: "directory_unverified",
+          },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [],
+          retailOutletHistory: [],
+          blocks: {
+            clientExtendedReady: true,
+            outletNormalizedReady: false,
+            blockFreshness: {
+              holding: "current",
+              regionalManager: "current",
+              hardwareManager: "current",
+              headOfSales: "current",
+              retailOutlets: "current",
+            },
+          },
+        },
+      },
+      adminContext,
+    );
+    assert.equal(dto!.freshnessState, "preserved_from_previous");
+    assert.match(dto!.freshnessLabel, /не обновлены последней выгрузкой/);
+    assert.equal(dto!.blockFreshness!.holding.state, "preserved_from_previous");
+    assert.equal(dto!.blockFreshness!.retailOutlets.state, "preserved_from_previous");
   });
 
   it("labels not_provided separately from unassigned", () => {

@@ -211,14 +211,111 @@ describe("onec clients extended import integration", { concurrency: false }, () 
 
     const after = await pool.query<{
       name_client: string;
+      source_sha256: string;
+      extended_source_sha256: string | null;
+      extended_freshness_state: string | null;
       extended_snapshot: { regionalManager: { guid: string | null }; currentRetailOutlets: unknown[] };
     }>(
-      "SELECT name_client, extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
+      `
+        SELECT name_client, source_sha256, extended_source_sha256, extended_freshness_state, extended_snapshot
+        FROM onec_clients WHERE guid_client = $1::uuid
+      `,
       [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
     );
     assert.equal(after.rows[0]?.name_client, "Holding Alpha Updated Name Only");
     assert.equal(after.rows[0]?.extended_snapshot.regionalManager.guid, beforeGuid);
     assert.ok((after.rows[0]?.extended_snapshot.currentRetailOutlets.length ?? 0) > 0);
+    assert.equal(after.rows[0]?.source_sha256, unverified.payload.sha256);
+    assert.equal(after.rows[0]?.extended_source_sha256, seeded.payload.sha256);
+    assert.equal(after.rows[0]?.extended_freshness_state, "preserved_from_previous");
+    await pool.end();
+  });
+
+  it("attributes updated outlet address to current import while preserving regional provenance", async () => {
+    const firstBytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
+    const firstValidated = validateClientsForApplyTest(firstBytes);
+    assert.equal(firstValidated.ok, true);
+    if (!firstValidated.ok) return;
+    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+
+    const secondBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        guid_regional_manager: undefined,
+        name_regional_manager: undefined,
+        retail_outlets: [
+          {
+            holding: "Holding Alpha",
+            warehouse: true,
+            address: {
+              store_address: "Updated store street",
+              delivery_address: "Updated delivery dock",
+              direction_of_the_route: "South",
+            },
+            information_loading: { loading_on_monday: true, loading_time: "11:00" },
+            managers: {
+              guid_manager: "",
+              name_manager: "",
+              guid_regional_manager: "",
+              name_regional_manager: "",
+              guid_hardware_manager: "",
+              name_hardware_manager: "",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+    const secondValidated = validateClientsForApplyTest(secondBytes);
+    assert.equal(secondValidated.ok, true);
+    if (!secondValidated.ok) return;
+
+    const secondApply = await applyClientsImport({
+      databaseUrl,
+      payload: secondValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+    assert.equal(secondApply.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{
+      guid_regional_manager: string | null;
+      extended_snapshot: {
+        sourceSha256: string;
+        currentRetailOutlets: Array<{ address: { storeAddress: string } }>;
+        blocks: {
+          blockProvenance?: {
+            retailOutlets: { sourceSha256: string };
+            regionalManager: { sourceSha256: string };
+          };
+        };
+        retailOutletHistory: Array<{ sourceSha256: string }>;
+      };
+    }>(
+      `
+        SELECT guid_regional_manager::text, extended_snapshot
+        FROM onec_clients WHERE guid_client = $1::uuid
+      `,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(row.rows[0]?.guid_regional_manager, EXTENDED_FIXTURE_GUIDS.REGIONAL);
+    assert.equal(
+      row.rows[0]?.extended_snapshot.currentRetailOutlets[0]?.address.storeAddress,
+      "Updated store street",
+    );
+    assert.equal(row.rows[0]?.extended_snapshot.sourceSha256, secondValidated.payload.sha256);
+    assert.equal(
+      row.rows[0]?.extended_snapshot.blocks.blockProvenance?.retailOutlets.sourceSha256,
+      secondValidated.payload.sha256,
+    );
+    assert.equal(
+      row.rows[0]?.extended_snapshot.blocks.blockProvenance?.regionalManager.sourceSha256,
+      firstValidated.payload.sha256,
+    );
+    assert.equal(row.rows[0]?.extended_snapshot.retailOutletHistory[0]?.sourceSha256, firstValidated.payload.sha256);
     await pool.end();
   });
 
@@ -270,9 +367,17 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.ok((row.rows[0]?.extended_snapshot.currentRetailOutlets.length ?? 0) > 0);
     assert.equal(row.rows[0]?.extended_snapshot.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
     assert.equal(row.rows[0]?.extended_freshness_state, "preserved_from_previous");
-    assert.equal(row.rows[0]?.extended_source_sha256, firstValidated.payload.sha256);
-    assert.equal(row.rows[0]?.extended_snapshot.sourceSha256, firstValidated.payload.sha256);
+    assert.equal(row.rows[0]?.extended_source_sha256, secondValidated.payload.sha256);
+    assert.equal(row.rows[0]?.extended_snapshot.sourceSha256, secondValidated.payload.sha256);
     assert.equal(row.rows[0]?.extended_snapshot.blocks.blockFreshness?.holding, "current");
+    assert.equal(
+      row.rows[0]?.extended_snapshot.blocks.blockProvenance?.regionalManager.sourceSha256,
+      firstValidated.payload.sha256,
+    );
+    assert.equal(
+      row.rows[0]?.extended_snapshot.blocks.blockProvenance?.holding.sourceSha256,
+      secondValidated.payload.sha256,
+    );
     await pool.end();
   });
 

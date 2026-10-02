@@ -176,9 +176,18 @@
       ? '<p class="pc-label">' + esc(ext.freshnessLabel) + '</p>'
       : "";
     if (ext && ext.blockFreshness) {
-      freshnessNote += '<p class="pc-label">Холдинг: ' + esc(ext.blockFreshness.holding.label) +
-        " · ТТ: " + esc(ext.blockFreshness.retailOutlets.label) +
-        " · Региональный: " + esc(ext.blockFreshness.regionalManager.label) + "</p>";
+      function blockLine(name, block) {
+        var line = name + ": " + block.label;
+        if (block.importedAtLabel) {
+          line += " (" + block.importedAtLabel + ")";
+        }
+        return line;
+      }
+      freshnessNote += '<p class="pc-label">' +
+        esc(blockLine("Холдинг", ext.blockFreshness.holding)) +
+        " · " + esc(blockLine("ТТ", ext.blockFreshness.retailOutlets)) +
+        " · " + esc(blockLine("Региональный", ext.blockFreshness.regionalManager)) +
+        "</p>";
     }
     var dataQuality = ext
       ? '<div class="pc-pad"><span class="pc-tag">' + esc(ext.dataQualityLabel || "Частично подключено") + '</span>' +
