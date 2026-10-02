@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { MAX_SOURCE_BYTES, MAX_SOURCE_RECORDS } from "../onec-clients/constants";
+import { detectClientsSourceFormat } from "../onec-clients/format";
+import { validateExtendedClientsFileBytes } from "../onec-clients/extended-validate";
 import { isValidNonZeroUuid } from "../onec-clients/uuid";
 
 type Row = Record<string, unknown>;
@@ -59,6 +61,8 @@ export function buildIdentitySnapshot(bytes: Buffer) {
     }
     assignments.push({ clientGuid, holdingGuid: guid(row.guid_holding), managerGuid });
   }
+  const sourceFormat = detectClientsSourceFormat(parsed);
+  const extendedValidation = validateExtendedClientsFileBytes(bytes);
   const result = {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
@@ -67,12 +71,18 @@ export function buildIdentitySnapshot(bytes: Buffer) {
     sha256: createHash("sha256").update(bytes).digest("hex"),
     bytes: bytes.length,
     records: parsed.length,
+    sourceFormat,
     uniqueClientGuids: clientGuids.size,
     invalidRows, invalidClientGuids, invalidManagerGuids, duplicateClientGuids,
     fields: [...fields].sort(([a], [b]) => a.localeCompare(b)).map(([name, count]) => ({ name: safeLabel(name), ...count })),
     managers: [...managers.values()].sort((a, b) => a.guid.localeCompare(b.guid))
       .map(m => ({ ...m, names: [...m.names].sort() })),
     assignments,
+    extendedSummary: extendedValidation.ok ? extendedValidation.payload.diagnostics : {
+      validationOk: false,
+      issueCount: extendedValidation.issueCount,
+      warningCount: extendedValidation.warningCount,
+    },
   };
   if (Buffer.byteLength(JSON.stringify(result)) > 2_000_000) throw new Error("REPORT_TOO_LARGE");
   return result;

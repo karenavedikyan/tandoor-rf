@@ -229,6 +229,17 @@ export async function runClientsImport(
     );
   }
 
+  const extendedBlockedCount = applied.counts.extendedBlockedCount ?? 0;
+  const extendedApplied = applied.blockSummary?.extendedApplied;
+  let applyMessage = "Client import applied successfully.";
+  if (extendedApplied === false && extendedBlockedCount > 0) {
+    applyMessage =
+      "Legacy client fields applied; extended block was not published (awaiting live JSON contract verification).";
+  } else if (extendedApplied === true && extendedBlockedCount > 0) {
+    applyMessage =
+      "Client import applied with legacy fields; some extended records were skipped.";
+  }
+
   return sanitizeImportResult(
     {
       status: "SUCCESS",
@@ -242,13 +253,16 @@ export async function runClientsImport(
       warningCount: payload.warningCount,
       warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
       warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
-      message: "Client import applied successfully.",
+      message: applyMessage,
       cleanupWarning: applied.cleanupWarning,
       apply: {
         runId: applied.runId,
         newCount: applied.counts.newCount,
         changedCount: applied.counts.changedCount,
         unchangedCount: applied.counts.unchangedCount,
+        extendedBlockedCount: extendedBlockedCount > 0 ? extendedBlockedCount : undefined,
+        extendedApplied: extendedApplied === undefined ? undefined : extendedApplied,
+        extendedBlockReason: applied.blockSummary?.extendedBlockReason ?? undefined,
       },
     },
     secrets,

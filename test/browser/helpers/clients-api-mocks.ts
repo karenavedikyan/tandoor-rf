@@ -147,6 +147,71 @@ export function syntheticLongDetailPayload() {
   });
 }
 
+export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied" = "granted") {
+  const outlet = {
+    ordinal: 0,
+    holdingName: "Холдинг Восток",
+    identityLabel: "Точка из выгрузки 1С. Идентификатор ещё не передан",
+    closureStatusLabel: "Статус не передан",
+    warehouse: true,
+    warehouseLabel: "Используется как склад",
+    addresses: {
+      storeAddress: "Store street with a very long name for layout testing",
+      deliveryAddress: "Delivery street",
+      routeDirection: "North",
+    },
+    loading: {
+      days: [
+        { key: "mon", label: "Пн", value: false },
+        { key: "tue", label: "Вт", value: false },
+        { key: "wed", label: "Ср", value: false },
+        { key: "thu", label: "Чт", value: false },
+        { key: "fri", label: "Пт", value: false },
+        { key: "sat", label: "Сб", value: false },
+        { key: "sun", label: "Вс", value: false },
+      ],
+      loadingTime: "09:00",
+      loadingEndTime: null,
+      scheduleState: "all_false" as const,
+    },
+    managers: {
+      manager: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
+      regionalManager: { assignmentLabel: "Regional One", assignmentState: "directory_unverified" },
+      hardwareManager: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
+      headOfSales: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
+    },
+    contacts: { storePhone: "+7 495 000-00-00", accountantPhone: "", accountantEmail: "" },
+    distributionAllowed: false as const,
+  };
+  return syntheticDetailPayload({
+    extended: {
+      formatVersion: "extended_v1",
+      sourceSha256: "abc123",
+      importedAt: "2026-01-01T10:00:00.000Z",
+      importedAtLabel: "01.01.2026, 13:00",
+      freshnessState: "current",
+      freshnessLabel: "Обновлено из текущей выгрузки",
+      isHolding: true,
+      holdingCardLabel: "Карточка холдинга",
+      managers: {
+        regionalManager: { assignmentLabel: "Regional One", assignmentState: "directory_unverified" },
+        hardwareManager: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
+        headOfSales: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
+      },
+      retailOutlets: outletAccess === "granted" ? [outlet, { ...outlet, ordinal: 1 }] : [],
+      retailOutletsTotalCount: outletAccess === "granted" ? 2 : 0,
+      retailOutletsTruncated: false,
+      retailOutletsAccess: outletAccess,
+      retailOutletHistoryCount: 0,
+      dataQualityLabel:
+        outletAccess === "granted" ? "Частично подключено" : "Торговые точки недоступны для вашей роли",
+      sensitiveFieldsWithheld: true,
+      outletNormalizedReady: false,
+      clientExtendedReady: false,
+    },
+  });
+}
+
 export type MockOptions = {
   role?: MockRole;
   listStatus?: number;

@@ -26,6 +26,13 @@ type ClientRow = {
   address: string;
   telephone: unknown;
   last_imported_at: Date;
+  source_sha256: string | null;
+  is_holding: boolean | null;
+  extended_format_version: string | null;
+  extended_source_sha256: string | null;
+  extended_imported_at: Date | null;
+  extended_freshness_state: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
+  extended_snapshot: unknown;
 };
 
 type CountRow = { count: string };
@@ -127,6 +134,17 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
   };
 }
 
+async function loadActiveLinkedEmployeeGuids(): Promise<Set<string>> {
+  const result = await query<{ employee_id: string }>(
+    `
+      SELECT employee_id::text
+      FROM user_onec_employee_links
+      WHERE revoked_at IS NULL
+    `,
+  );
+  return new Set(result.rows.map((row) => row.employee_id.toLowerCase()));
+}
+
 export async function getClientByGuid(
   context: AccessContext,
   guid: string,
@@ -140,6 +158,8 @@ export async function getClientByGuid(
     return null;
   }
 
+  const linkedEmployeeGuids = await loadActiveLinkedEmployeeGuids();
+
   const result = await query<ClientRow>(
     `
       SELECT
@@ -151,7 +171,14 @@ export async function getClientByGuid(
         name_manager,
         address,
         telephone,
-        last_imported_at
+        last_imported_at,
+        source_sha256,
+        is_holding,
+        extended_format_version,
+        extended_source_sha256,
+        extended_imported_at,
+        extended_freshness_state,
+        extended_snapshot
       FROM onec_clients
       ${detailFilter.whereSql}
     `,
@@ -161,7 +188,7 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row);
+  return toClientDetail(row, context, { linkedEmployeeGuids });
 }
 
 export async function canReadClientGuid(

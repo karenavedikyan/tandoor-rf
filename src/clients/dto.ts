@@ -1,4 +1,6 @@
+import type { AccessContext } from "../access/types";
 import { telHrefFromPhone } from "./phone";
+import { toClientExtendedDto, type ClientExtendedDto, type ClientExtendedDtoOptions } from "./extended-dto";
 import { shortUuidLabel } from "./uuid-param";
 
 export type ClientListItemDto = {
@@ -40,7 +42,10 @@ export type ClientDetailDto = {
   sourceLabel: string;
   lastImportedAt: string;
   lastImportedAtLabel: string;
+  extended?: ClientExtendedDto;
 };
+
+export type { ClientExtendedDto };
 
 export type ClientOptionDto = {
   id: string;
@@ -107,6 +112,13 @@ type ClientRow = {
   address: string;
   telephone: unknown;
   last_imported_at: Date;
+  source_sha256?: string | null;
+  is_holding?: boolean | null;
+  extended_format_version?: string | null;
+  extended_source_sha256?: string | null;
+  extended_imported_at?: Date | null;
+  extended_freshness_state?: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
+  extended_snapshot?: unknown;
 };
 
 export function formatMskDateTime(value: Date): string {
@@ -154,9 +166,26 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   };
 }
 
-export function toClientDetail(row: ClientRow): ClientDetailDto {
+export function toClientDetail(
+  row: ClientRow,
+  context?: AccessContext,
+  options?: ClientExtendedDtoOptions,
+): ClientDetailDto {
   const telephones = parseTelephones(row.telephone);
   const nonEmptyPhones = telephones.filter((item) => item.trim().length > 0);
+  const extended = toClientExtendedDto(
+    {
+      is_holding: row.is_holding ?? null,
+      source_sha256: row.source_sha256 ?? null,
+      extended_format_version: row.extended_format_version ?? null,
+      extended_source_sha256: row.extended_source_sha256 ?? null,
+      extended_imported_at: row.extended_imported_at ?? null,
+      extended_freshness_state: row.extended_freshness_state ?? null,
+      extended_snapshot: row.extended_snapshot,
+    },
+    context,
+    options,
+  );
   return {
     guid: row.guid_client,
     name: row.name_client,
@@ -179,6 +208,7 @@ export function toClientDetail(row: ClientRow): ClientDetailDto {
     sourceLabel: "Данные из 1С",
     lastImportedAt: row.last_imported_at.toISOString(),
     lastImportedAtLabel: formatMskDateTime(row.last_imported_at),
+    ...(extended ? { extended } : {}),
   };
 }
 

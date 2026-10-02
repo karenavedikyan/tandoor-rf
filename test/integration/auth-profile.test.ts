@@ -76,6 +76,8 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "021_onec_catalog_import_profile.sql",
       "022_catalog_image_assets.sql",
       "023_catalog_image_source_sha256.sql",
+      "024_onec_clients_extended.sql",
+      "025_onec_clients_extended_freshness.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);

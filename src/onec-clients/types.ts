@@ -43,7 +43,11 @@ export type ValidationIssue = {
 export type ValidationWarningCode =
   | "EXTRA_FIELDS"
   | "EMPTY_ADDRESS"
-  | "EMPTY_TELEPHONE";
+  | "EMPTY_TELEPHONE"
+  | "UNCONFIRMED_OUTLET_GUID"
+  | "UNCONFIRMED_CLOSURE_STATUS"
+  | "OUTLETS_NOT_NORMALIZED"
+  | "EMPLOYEE_DIRECTORY_UNAVAILABLE";
 
 export type ValidationWarning = {
   code: ValidationWarningCode;
@@ -63,6 +67,8 @@ export type ParsedClientRecord = {
   telephone: string[];
 };
 
+export type ExtendedContractVerification = "synthetic_confirmed" | "unverified";
+
 export type ValidatedClientsPayload = {
   sha256: string;
   byteSize: number;
@@ -70,6 +76,10 @@ export type ValidatedClientsPayload = {
   records: ParsedClientRecord[];
   warnings: ValidationWarning[];
   warningCount: number;
+  sourceFormat?: import("./extended-types").ClientsSourceFormat;
+  extendedRecords?: import("./extended-types").ParsedExtendedClientRecord[];
+  extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary;
+  extendedContractVerification?: ExtendedContractVerification;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";
@@ -96,6 +106,9 @@ export type ClientsImportResult = {
     newCount?: number;
     changedCount?: number;
     unchangedCount?: number;
+    extendedBlockedCount?: number;
+    extendedApplied?: boolean;
+    extendedBlockReason?: string;
   };
   errorCode?: string;
 };

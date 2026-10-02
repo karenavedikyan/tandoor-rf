@@ -8,7 +8,7 @@
 | Документ | Содержание |
 |----------|------------|
 | [r02-existing-evidence.md](./r02-existing-evidence.md) | Метаданные **ранее прочитанного** снимка; уровни доказательства |
-| [clients-field-contract.md](./clients-field-contract.md) | Поля `all_clients.json`: 8 ключей, коммерция, расширение |
+| [clients-field-contract.md](./clients-field-contract.md) | Поля `all_clients.json`: 8 ключей, коммерция, расширение, доступ к ТТ, freshness |
 | [exchange-rules.md](./exchange-rules.md) | Snapshot, повтор, unknown fields, открытые вопросы |
 | [catalog-contract-spec.md](./catalog-contract-spec.md) | Наблюдаемая структура 8 XML + ожидание R3.1 |
 | [onec-specialist-questions.md](./onec-specialist-questions.md) | Вопросы 1С → материалы → техпроверки |

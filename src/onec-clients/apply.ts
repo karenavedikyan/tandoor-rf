@@ -11,6 +11,17 @@ import {
 } from "../onec-exchange/state";
 import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
+import {
+  buildExtendedSnapshotJson,
+  extendedBusinessDataEqual,
+  isExtendedApplyPayload,
+  isExtendedContractVerified,
+  loadExistingExtendedSnapshots,
+  readExtendedSnapshot,
+  resolveExtendedRecordsForApply,
+  summarizeExtendedFreshness,
+} from "./extended-apply";
+import type { ExtendedSnapshot } from "./extended-types";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -21,10 +32,17 @@ export type ApplyCounts = {
   newCount: number;
   changedCount: number;
   unchangedCount: number;
+  extendedBlockedCount?: number;
+};
+
+export type ApplyBlockSummary = {
+  legacyApplied: true;
+  extendedApplied: boolean;
+  extendedBlockReason?: string | null;
 };
 
 export type ApplyResult =
-  | { ok: true; runId: string; counts: ApplyCounts; cleanupWarning?: string }
+  | { ok: true; runId: string; counts: ApplyCounts; blockSummary?: ApplyBlockSummary; cleanupWarning?: string }
   | {
       ok: false;
       code:
@@ -44,6 +62,7 @@ export type ApplyTestHooks = {
   afterRecordIndex?: number;
   failUnlock?: boolean;
   failCommit?: boolean;
+  failAfterCommitConfirm?: boolean;
   failExchangeStateUpdate?: boolean;
   failRelease?: boolean;
   failPoolEnd?: boolean;
@@ -80,6 +99,7 @@ type ApplyPhaseState = {
   commitAttempted: boolean;
   commitConfirmed: boolean;
   counts?: ApplyCounts;
+  blockSummary?: ApplyBlockSummary;
 };
 
 const CLEANUP_LOCK_WARNING =
@@ -103,6 +123,25 @@ function isBusinessDataEqual(existing: ExistingClientRow, incoming: ParsedClient
     existing.address === incoming.address &&
     telephoneEqual(existing.telephone, incoming.telephone)
   );
+}
+
+function isImportRecordEqual(
+  existing: ExistingClientRow | undefined,
+  incoming: ParsedClientRecord,
+  previousExtendedSnapshot: unknown,
+  nextExtendedSnapshot: ExtendedSnapshot | null,
+): boolean {
+  if (!existing) {
+    return false;
+  }
+  if (!isBusinessDataEqual(existing, incoming)) {
+    return false;
+  }
+  const previous = readExtendedSnapshot(previousExtendedSnapshot);
+  if (nextExtendedSnapshot) {
+    return extendedBusinessDataEqual(previous, nextExtendedSnapshot);
+  }
+  return true;
 }
 
 function mergeCleanupWarnings(existing: string | undefined, additions: string[]): string | undefined {
@@ -151,6 +190,7 @@ function resolveConnectionFault(state: ApplyPhaseState): ApplyResult {
       ok: true,
       runId: state.runId,
       counts: state.counts,
+      blockSummary: state.blockSummary,
       cleanupWarning:
         "Import committed successfully but the database connection failed afterward; verify the import run journal.",
     };
@@ -221,6 +261,74 @@ function journalWarningsForPayload(payload: ValidatedClientsPayload) {
   return prepareJournalWarnings(payload.warnings, { totalWarningCount: payload.warningCount });
 }
 
+function buildApplyBlockSummary(
+  extendedApply: boolean,
+  contractVerified: boolean,
+): ApplyBlockSummary | undefined {
+  if (!extendedApply) {
+    return undefined;
+  }
+  return {
+    legacyApplied: true,
+    extendedApplied: contractVerified,
+    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
+  };
+}
+
+function mergeExtendedDiagnosticsForJournal(
+  payload: ValidatedClientsPayload,
+  extendedApply: boolean,
+  contractVerified: boolean,
+  extendedBlockedCount: number,
+): string | null {
+  if (!extendedApply) {
+    return null;
+  }
+  const applyBlocks = {
+    legacyApplied: true,
+    extendedApplied: contractVerified,
+    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
+    extendedBlockedCount,
+  };
+  const base = payload.extendedDiagnostics ?? {};
+  return JSON.stringify({ ...base, applyBlocks });
+}
+
+async function loadApplyBlockSummaryFromJournal(
+  databaseUrl: string,
+  runId: string,
+): Promise<ApplyBlockSummary | undefined> {
+  const pool = createImportPool(databaseUrl);
+  try {
+    const client = await pool.connect();
+    try {
+      const result = await client.query<{ extended_diagnostics: { applyBlocks?: ApplyBlockSummary & { extendedBlockedCount?: number } } | null }>(
+        `
+          SELECT extended_diagnostics
+          FROM onec_client_import_runs
+          WHERE id = $1::uuid
+        `,
+        [runId],
+      );
+      const applyBlocks = result.rows[0]?.extended_diagnostics?.applyBlocks;
+      if (!applyBlocks) {
+        return undefined;
+      }
+      return {
+        legacyApplied: applyBlocks.legacyApplied,
+        extendedApplied: applyBlocks.extendedApplied,
+        extendedBlockReason: applyBlocks.extendedBlockReason ?? null,
+      };
+    } finally {
+      client.release();
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await pool.end();
+  }
+}
+
 async function recoverFromCommitUncertainty(
   managed: ManagedClient | undefined,
   phase: ApplyPhaseState,
@@ -264,10 +372,16 @@ async function recoverFromCommitUncertainty(
   try {
     const resolution = await resolveCommitUncertainFresh(resolvedDatabaseUrl, phase.runId);
     if (resolution === "committed" && phase.counts) {
+      const blockSummary =
+        phase.blockSummary ??
+        (resolvedDatabaseUrl
+          ? await loadApplyBlockSummaryFromJournal(resolvedDatabaseUrl, phase.runId)
+          : undefined);
       return {
         ok: true,
         runId: phase.runId,
         counts: phase.counts,
+        blockSummary,
         cleanupWarning:
           "Import committed successfully but the database connection failed during commit confirmation; outcome was verified by runId.",
       };
@@ -661,20 +775,59 @@ export async function applyClientsImport(options: {
 
           await queryManaged(managed, "BEGIN");
 
+          const extendedApply = isExtendedApplyPayload(options.payload);
+          const contractVerified = isExtendedContractVerified(options.payload);
+          const extendedRecords = resolveExtendedRecordsForApply(options.payload);
+          const previousExtended = await loadExistingExtendedSnapshots(managed.client);
+          const importTimestamp = new Date().toISOString();
+
           let newCount = 0;
           let changedCount = 0;
           let unchangedCount = 0;
+          let extendedBlockedCount = 0;
 
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
             const current = existing.get(record.guid_client);
+            const extendedRecord = extendedRecords.get(record.guid_client);
+            const previousRow = previousExtended.get(record.guid_client);
+            const previousSnapshot = previousRow?.extended_snapshot;
+
+            let extendedSnapshotJson: ExtendedSnapshot | null = null;
+            if (extendedRecord && contractVerified) {
+              extendedSnapshotJson = buildExtendedSnapshotJson(
+                extendedRecord,
+                previousSnapshot,
+                options.payload.sha256,
+                importTimestamp,
+                { contractVerified: true },
+              );
+            } else if (extendedRecord && !contractVerified) {
+              extendedBlockedCount += 1;
+            }
+
             if (!current) {
               newCount += 1;
-            } else if (isBusinessDataEqual(current, record)) {
+            } else if (
+              isImportRecordEqual(current, record, previousSnapshot, extendedSnapshotJson)
+            ) {
               unchangedCount += 1;
             } else {
               changedCount += 1;
             }
+
+            const hasPreviousExtended = Boolean(previousRow?.extended_snapshot);
+            const freshnessFromSnapshot = extendedSnapshotJson
+              ? summarizeExtendedFreshness(extendedSnapshotJson).extendedFreshnessState
+              : null;
+            const extendedImportedAt = extendedSnapshotJson
+              ? extendedSnapshotJson.importedAt
+              : null;
+            const extendedFreshnessState = extendedSnapshotJson
+              ? freshnessFromSnapshot
+              : hasPreviousExtended
+                ? "preserved_from_previous"
+                : null;
 
             await queryManaged(
               managed,
@@ -689,12 +842,26 @@ export async function applyClientsImport(options: {
                   address,
                   telephone,
                   source_sha256,
+                  is_holding,
+                  guid_regional_manager,
+                  name_regional_manager,
+                  guid_hardware_manager,
+                  name_hardware_manager,
+                  guid_head_sales,
+                  name_head_sales,
+                  extended_format_version,
+                  extended_source_sha256,
+                  extended_snapshot,
+                  extended_imported_at,
+                  extended_freshness_state,
                   first_imported_at,
                   last_imported_at,
                   updated_at
                 )
                 VALUES (
-                  $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NOW(), NOW(), NOW()
+                  $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                  $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::timestamptz, $21,
+                  NOW(), NOW(), NOW()
                 )
                 ON CONFLICT (guid_client) DO UPDATE SET
                   name_client = EXCLUDED.name_client,
@@ -705,6 +872,43 @@ export async function applyClientsImport(options: {
                   address = EXCLUDED.address,
                   telephone = EXCLUDED.telephone,
                   source_sha256 = EXCLUDED.source_sha256,
+                  is_holding = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.is_holding
+                    ELSE onec_clients.is_holding
+                  END,
+                  guid_regional_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_regional_manager
+                    ELSE onec_clients.guid_regional_manager
+                  END,
+                  name_regional_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_regional_manager
+                    ELSE onec_clients.name_regional_manager
+                  END,
+                  guid_hardware_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_hardware_manager
+                    ELSE onec_clients.guid_hardware_manager
+                  END,
+                  name_hardware_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_hardware_manager
+                    ELSE onec_clients.name_hardware_manager
+                  END,
+                  guid_head_sales = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_head_sales
+                    ELSE onec_clients.guid_head_sales
+                  END,
+                  name_head_sales = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_head_sales
+                    ELSE onec_clients.name_head_sales
+                  END,
+                  extended_format_version = COALESCE(EXCLUDED.extended_format_version, onec_clients.extended_format_version),
+                  extended_source_sha256 = COALESCE(EXCLUDED.extended_source_sha256, onec_clients.extended_source_sha256),
+                  extended_snapshot = COALESCE(EXCLUDED.extended_snapshot, onec_clients.extended_snapshot),
+                  extended_imported_at = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.extended_imported_at
+                    WHEN EXCLUDED.extended_freshness_state = 'preserved_from_previous' THEN onec_clients.extended_imported_at
+                    ELSE onec_clients.extended_imported_at
+                  END,
+                  extended_freshness_state = COALESCE(EXCLUDED.extended_freshness_state, onec_clients.extended_freshness_state),
                   last_imported_at = NOW(),
                   updated_at = CASE
                     WHEN onec_clients.name_client IS DISTINCT FROM EXCLUDED.name_client
@@ -714,6 +918,8 @@ export async function applyClientsImport(options: {
                       OR onec_clients.name_manager IS DISTINCT FROM EXCLUDED.name_manager
                       OR onec_clients.address IS DISTINCT FROM EXCLUDED.address
                       OR onec_clients.telephone IS DISTINCT FROM EXCLUDED.telephone
+                      OR (EXCLUDED.extended_snapshot IS NOT NULL
+                        AND onec_clients.extended_snapshot IS DISTINCT FROM EXCLUDED.extended_snapshot)
                     THEN NOW()
                     ELSE onec_clients.updated_at
                   END
@@ -728,6 +934,18 @@ export async function applyClientsImport(options: {
                 record.address,
                 JSON.stringify(record.telephone),
                 options.payload.sha256,
+                extendedSnapshotJson?.isHolding ?? null,
+                extendedSnapshotJson?.regionalManager.guid ?? null,
+                extendedSnapshotJson?.regionalManager.name ?? "",
+                extendedSnapshotJson?.hardwareManager.guid ?? null,
+                extendedSnapshotJson?.hardwareManager.name ?? "",
+                extendedSnapshotJson?.headOfSales.guid ?? null,
+                extendedSnapshotJson?.headOfSales.name ?? "",
+                extendedSnapshotJson ? "extended_v1" : null,
+                extendedSnapshotJson?.sourceSha256 ?? null,
+                extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
+                extendedImportedAt,
+                extendedFreshnessState,
               ],
             );
 
@@ -735,6 +953,16 @@ export async function applyClientsImport(options: {
               throw new Error("Simulated apply failure after record write.");
             }
           }
+
+          const extendedDiagnosticsJson = mergeExtendedDiagnosticsForJournal(
+            options.payload,
+            extendedApply,
+            contractVerified,
+            extendedBlockedCount,
+          );
+          const sourceFormatVersion = options.payload.sourceFormat ?? "legacy";
+
+          phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified);
 
           await queryManaged(
             managed,
@@ -746,10 +974,12 @@ export async function applyClientsImport(options: {
                 new_count = $2,
                 changed_count = $3,
                 unchanged_count = $4,
-                error_code = NULL
+                error_code = NULL,
+                source_format_version = $5,
+                extended_diagnostics = $6::jsonb
               WHERE id = $1
             `,
-            [phase.runId, newCount, changedCount, unchangedCount],
+            [phase.runId, newCount, changedCount, unchangedCount, sourceFormatVersion, extendedDiagnosticsJson],
           );
 
           if (options.syncExchangeState !== false) {
@@ -762,7 +992,12 @@ export async function applyClientsImport(options: {
             });
           }
 
-          phase.counts = { newCount, changedCount, unchangedCount };
+          phase.counts = {
+            newCount,
+            changedCount,
+            unchangedCount,
+            ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
+          };
           phase.commitAttempted = true;
           if (options.testHooks?.failCommit) {
             throw new Error("Simulated commit response loss.");
@@ -770,6 +1005,10 @@ export async function applyClientsImport(options: {
 
           await queryManaged(managed, "COMMIT");
           phase.commitConfirmed = true;
+
+          if (options.testHooks?.failAfterCommitConfirm) {
+            throw new ClientConnectionFault();
+          }
 
           let postCommitCleanupWarning: string | undefined;
           if (!options.retainLock) {
@@ -786,6 +1025,7 @@ export async function applyClientsImport(options: {
             ok: true,
             runId: phase.runId!,
             counts: phase.counts,
+            blockSummary: phase.blockSummary,
             cleanupWarning: postCommitCleanupWarning,
           };
           }
