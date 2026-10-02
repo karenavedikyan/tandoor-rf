@@ -71,10 +71,11 @@ describe("client card extended render", () => {
               accountantEmail: "",
             },
             distributionAllowed: false,
-            presentInCurrentSnapshot: true,
-            staleLabel: null,
           },
         ],
+        retailOutletsAccess: "granted",
+        retailOutletsTruncated: false,
+        freshnessLabel: "Обновлено из текущей выгрузки",
         dataQualityLabel: "Частично подключено",
         sensitiveFieldsWithheld: true,
         outletNormalizedReady: false,
@@ -103,5 +104,81 @@ describe("client card extended render", () => {
     assert.match(label, /Пн, Ср/);
     assert.match(label, /10:00/);
     assert.doesNotMatch(label, /оконч/i);
+  });
+
+  it("does not treat all-false days as not-provided", () => {
+    const label = prototype.loadingDaysLabel({
+      days: [
+        { value: false, label: "Пн" },
+        { value: false, label: "Вт" },
+        { value: false, label: "Ср" },
+        { value: false, label: "Чт" },
+        { value: false, label: "Пт" },
+        { value: false, label: "Сб" },
+        { value: false, label: "Вс" },
+      ],
+      loadingTime: null,
+    });
+    assert.equal(label, "Дни не отмечены");
+    assert.doesNotMatch(label, /не переданы/i);
+  });
+
+  it("shows loading time when days are not provided", () => {
+    const label = prototype.loadingDaysLabel({
+      days: [
+        { value: null, label: "Пн" },
+        { value: null, label: "Вт" },
+      ],
+      loadingTime: "08:30",
+    });
+    assert.match(label, /08:30/);
+    assert.match(label, /Начало приёмки/);
+  });
+
+  it("uses neutral multi-outlet summary instead of first outlet delivery", () => {
+    const html = prototype.render({
+      guid: "11111111-1111-4111-8111-111111111111",
+      name: "Multi Outlet Client",
+      manager: { name: "Manager" },
+      holding: { name: "Holding" },
+      address: "HQ",
+      phones: [],
+      extended: {
+        formatVersion: "extended_v1",
+        retailOutletsAccess: "granted",
+        retailOutletsTruncated: false,
+        freshnessLabel: "Обновлено из текущей выгрузки",
+        retailOutlets: [
+          {
+            ordinal: 0,
+            identityLabel: "First",
+            closureStatusLabel: "Статус не передан",
+            warehouseLabel: "Не используется как склад",
+            warehouse: false,
+            addresses: { storeAddress: "First store", deliveryAddress: "First delivery", routeDirection: "" },
+            loading: { days: [{ value: true, label: "Пн" }], loadingTime: "09:00" },
+            managers: { manager: { assignmentLabel: "M1" } },
+            contacts: { storePhone: "1" },
+          },
+          {
+            ordinal: 1,
+            identityLabel: "Second",
+            closureStatusLabel: "Статус не передан",
+            warehouseLabel: "Не используется как склад",
+            warehouse: false,
+            addresses: { storeAddress: "Second store", deliveryAddress: "Second delivery", routeDirection: "" },
+            loading: { days: [{ value: true, label: "Вт" }], loadingTime: "10:00" },
+            managers: { manager: { assignmentLabel: "M2" } },
+            contacts: { storePhone: "2" },
+          },
+        ],
+        dataQualityLabel: "Частично подключено",
+        sensitiveFieldsWithheld: true,
+      },
+    });
+    assert.match(html, /2 точек в текущем снимке/);
+    assert.match(html, /Выберите торговую точку/);
+    const shopSection = html.split('id="pc-panel-data"')[1]?.split("pc-grid pc-equal")[0] ?? "";
+    assert.doesNotMatch(shopSection, /First delivery/);
   });
 });

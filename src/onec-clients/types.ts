@@ -43,7 +43,11 @@ export type ValidationIssue = {
 export type ValidationWarningCode =
   | "EXTRA_FIELDS"
   | "EMPTY_ADDRESS"
-  | "EMPTY_TELEPHONE";
+  | "EMPTY_TELEPHONE"
+  | "UNCONFIRMED_OUTLET_GUID"
+  | "UNCONFIRMED_CLOSURE_STATUS"
+  | "OUTLETS_NOT_NORMALIZED"
+  | "EMPLOYEE_DIRECTORY_UNAVAILABLE";
 
 export type ValidationWarning = {
   code: ValidationWarningCode;

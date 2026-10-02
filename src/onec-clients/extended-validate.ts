@@ -6,7 +6,15 @@ import {
   MAX_SOURCE_RECORDS,
   type KnownClientKey,
 } from "./constants";
-import { detectClientsSourceFormat, isExtendedClientRecord } from "./format";
+import {
+  readCalendarDateField,
+  readLocalTimeField,
+  readOptionalStringField,
+  readScalarField,
+  readStrictBooleanField,
+  readStringField,
+} from "./field-value";
+import { detectClientsSourceFormat, hasExtendedManagerFields, isExtendedClientRecord } from "./format";
 import { parseManagerRef, parseOptionalHoldingGuid } from "./manager-status";
 import { sha256Hex } from "./sha256";
 import type {
@@ -147,6 +155,10 @@ function validateLegacyCore(
 } | null {
   for (const key of KNOWN_CLIENT_KEYS) {
     if (!(key in raw)) {
+      if (extendedFile && key === "name_holding") {
+        raw.name_holding = "";
+        continue;
+      }
       pushIssue(issues, { code: "MISSING_FIELD", field: key, index }, issueCount);
       return null;
     }
@@ -200,11 +212,14 @@ function validateLegacyCore(
   }
   const hasHoldingId = guidHoldingRaw.length > 0;
 
-  if (typeof raw.name_holding !== "string") {
-    pushIssue(issues, { code: "INVALID_TYPE", field: "name_holding", index }, issueCount);
-    return null;
+  let nameHolding = "";
+  if ("name_holding" in raw) {
+    if (typeof raw.name_holding !== "string") {
+      pushIssue(issues, { code: "INVALID_TYPE", field: "name_holding", index }, issueCount);
+      return null;
+    }
+    nameHolding = raw.name_holding.trim();
   }
-  const nameHolding = raw.name_holding.trim();
   const hasHoldingName = nameHolding.length > 0;
 
   if (!extendedFile && hasHoldingId !== hasHoldingName) {
@@ -258,6 +273,16 @@ function validateLegacyCore(
   };
 }
 
+function defaultOutletManagers(): ParsedOutletManagers {
+  const unassigned = { guid: null, name: "", state: "unassigned" as const };
+  return {
+    manager: unassigned,
+    regionalManager: unassigned,
+    hardwareManager: unassigned,
+    headOfSales: unassigned,
+  };
+}
+
 function parseOutletManagers(
   raw: unknown,
   clientIndex: number,
@@ -265,6 +290,9 @@ function parseOutletManagers(
   issues: ExtendedValidationIssue[],
   issueCount: { value: number },
 ): ParsedOutletManagers | null {
+  if (raw === undefined || raw === null) {
+    return defaultOutletManagers();
+  }
   if (!isPlainObject(raw)) {
     pushIssue(issues, {
       code: "INVALID_OUTLET_SHAPE",
@@ -277,7 +305,7 @@ function parseOutletManagers(
   const manager = parseManagerRef(raw.guid_manager, raw.name_manager, { allowMissingKeys: true });
   if (!manager.ok) {
     pushIssue(issues, {
-      code: "INVALID_OUTLET_FIELD",
+      code: manager.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_manager",
       index: clientIndex,
       outletIndex,
@@ -289,7 +317,7 @@ function parseOutletManagers(
   });
   if (!regional.ok) {
     pushIssue(issues, {
-      code: "INVALID_OUTLET_FIELD",
+      code: regional.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_regional_manager",
       index: clientIndex,
       outletIndex,
@@ -301,7 +329,7 @@ function parseOutletManagers(
   });
   if (!hardware.ok) {
     pushIssue(issues, {
-      code: "INVALID_OUTLET_FIELD",
+      code: hardware.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_hardware_manager",
       index: clientIndex,
       outletIndex,
@@ -315,7 +343,7 @@ function parseOutletManagers(
   );
   if (!head.ok) {
     pushIssue(issues, {
-      code: "INVALID_OUTLET_FIELD",
+      code: head.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_OUTLET_FIELD",
       field: "retail_outlets.managers.guid_head_of_the_sales_department",
       index: clientIndex,
       outletIndex,
@@ -330,15 +358,48 @@ function parseOutletManagers(
   };
 }
 
-function parseOutletAddress(raw: unknown): ParsedOutletAddress {
-  if (!isPlainObject(raw)) {
+function parseOutletAddress(
+  raw: unknown,
+  clientIndex: number,
+  outletIndex: number,
+  issues: ExtendedValidationIssue[],
+  issueCount: { value: number },
+): ParsedOutletAddress | null {
+  if (raw === undefined || raw === null) {
     return { storeAddress: "", deliveryAddress: "", routeDirection: "" };
   }
-  return {
-    storeAddress: readOptionalString(raw.store_address).trim(),
-    deliveryAddress: readOptionalString(raw.delivery_address).trim(),
-    routeDirection: readOptionalString(raw.direction_of_the_route).trim(),
-  };
+  if (!isPlainObject(raw)) {
+    pushIssue(issues, {
+      code: "INVALID_OUTLET_FIELD",
+      field: "retail_outlets.address",
+      index: clientIndex,
+      outletIndex,
+    }, issueCount);
+    return null;
+  }
+  const fields: Array<[keyof ParsedOutletAddress, string]> = [
+    ["storeAddress", "store_address"],
+    ["deliveryAddress", "delivery_address"],
+    ["routeDirection", "direction_of_the_route"],
+  ];
+  const result: ParsedOutletAddress = { storeAddress: "", deliveryAddress: "", routeDirection: "" };
+  for (const [target, source] of fields) {
+    if (!(source in raw)) {
+      continue;
+    }
+    const parsed = readOptionalStringField(raw[source]);
+    if (parsed.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: `retail_outlets.address.${source}`,
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    result[target] = parsed.kind === "value" ? parsed.value : "";
+  }
+  return result;
 }
 
 function parseOutletLoading(
@@ -384,8 +445,8 @@ function parseOutletLoading(
     if (!(source in raw)) {
       continue;
     }
-    const parsed = readStrictBoolean(raw[source]);
-    if (parsed === "invalid") {
+    const parsed = readStrictBooleanField(raw[source]);
+    if (parsed.kind === "invalid_type") {
       pushIssue(issues, {
         code: "INVALID_OUTLET_FIELD",
         field: `retail_outlets.information_loading.${source}`,
@@ -394,10 +455,11 @@ function parseOutletLoading(
       }, issueCount);
       return null;
     }
-    loading[target] = parsed;
+    loading[target] = parsed.kind === "value" ? parsed.value : null;
   }
   if ("loading_time" in raw) {
-    if (raw.loading_time !== null && typeof raw.loading_time !== "string") {
+    const parsedTime = readLocalTimeField(raw.loading_time);
+    if (parsedTime.kind === "invalid_type") {
       pushIssue(issues, {
         code: "INVALID_OUTLET_FIELD",
         field: "retail_outlets.information_loading.loading_time",
@@ -406,27 +468,63 @@ function parseOutletLoading(
       }, issueCount);
       return null;
     }
-    loading.loadingTime =
-      typeof raw.loading_time === "string" && raw.loading_time.trim().length > 0
-        ? raw.loading_time.trim()
-        : null;
+    loading.loadingTime = parsedTime.kind === "value" ? parsedTime.value : null;
   }
   return loading;
 }
 
-function parseOutletContacts(raw: unknown): ParsedOutletContacts {
-  if (!isPlainObject(raw)) {
+function parseOutletContacts(
+  raw: unknown,
+  clientIndex: number,
+  outletIndex: number,
+  issues: ExtendedValidationIssue[],
+  issueCount: { value: number },
+): ParsedOutletContacts | null {
+  if (raw === undefined || raw === null) {
     return { storePhone: "", accountantPhone: "", accountantEmail: "" };
   }
-  return {
-    storePhone: readOptionalString(raw.store_phone).trim(),
-    accountantPhone: readOptionalString(raw.accountant_phone).trim(),
-    accountantEmail: readOptionalString(raw.accountant_email).trim(),
-  };
+  if (!isPlainObject(raw)) {
+    pushIssue(issues, {
+      code: "INVALID_OUTLET_FIELD",
+      field: "retail_outlets.contact_information",
+      index: clientIndex,
+      outletIndex,
+    }, issueCount);
+    return null;
+  }
+  const fields: Array<[keyof ParsedOutletContacts, string]> = [
+    ["storePhone", "store_phone"],
+    ["accountantPhone", "accountant_phone"],
+    ["accountantEmail", "accountant_email"],
+  ];
+  const result: ParsedOutletContacts = { storePhone: "", accountantPhone: "", accountantEmail: "" };
+  for (const [target, source] of fields) {
+    if (!(source in raw)) {
+      continue;
+    }
+    const parsed = readOptionalStringField(raw[source]);
+    if (parsed.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: `retail_outlets.contact_information.${source}`,
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    result[target] = parsed.kind === "value" ? parsed.value : "";
+  }
+  return result;
 }
 
-function parseOutletLpr(raw: unknown): ParsedOutletLpr {
-  if (!isPlainObject(raw)) {
+function parseOutletLpr(
+  raw: unknown,
+  clientIndex: number,
+  outletIndex: number,
+  issues: ExtendedValidationIssue[],
+  issueCount: { value: number },
+): ParsedOutletLpr | null {
+  if (raw === undefined || raw === null) {
     return {
       name: "",
       post: "",
@@ -437,26 +535,118 @@ function parseOutletLpr(raw: unknown): ParsedOutletLpr {
       conditionsBonus: "",
     };
   }
-  const dob = readOptionalCalendarDate(raw.date_of_birth);
-  return {
-    name: readOptionalString(raw.name).trim(),
-    post: readOptionalString(raw.post).trim(),
-    dateOfBirth: dob === "invalid" ? null : dob,
-    phone: readOptionalString(raw.phone).trim(),
-    email: readOptionalString(raw.email).trim(),
-    bonus: readOptionalString(raw.bonus).trim(),
-    conditionsBonus: readOptionalString(raw.conditions_bonus).trim(),
+  if (!isPlainObject(raw)) {
+    pushIssue(issues, {
+      code: "INVALID_OUTLET_FIELD",
+      field: "retail_outlets.LPR_information",
+      index: clientIndex,
+      outletIndex,
+    }, issueCount);
+    return null;
+  }
+  const stringFields: Array<[keyof ParsedOutletLpr, string]> = [
+    ["name", "name"],
+    ["post", "post"],
+    ["phone", "phone"],
+    ["email", "email"],
+    ["bonus", "bonus"],
+    ["conditionsBonus", "conditions_bonus"],
+  ];
+  const result: ParsedOutletLpr = {
+    name: "",
+    post: "",
+    dateOfBirth: null,
+    phone: "",
+    email: "",
+    bonus: "",
+    conditionsBonus: "",
   };
+  for (const [target, source] of stringFields) {
+    if (!(source in raw)) {
+      continue;
+    }
+    const parsed = readOptionalStringField(raw[source]);
+    if (parsed.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: `retail_outlets.LPR_information.${source}`,
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    if (target !== "dateOfBirth") {
+      result[target] = parsed.kind === "value" ? parsed.value : "";
+    }
+  }
+  if ("date_of_birth" in raw) {
+    const dob = readCalendarDateField(raw.date_of_birth);
+    if (dob.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: "retail_outlets.LPR_information.date_of_birth",
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    result.dateOfBirth = dob.kind === "value" ? dob.value : null;
+  }
+  return result;
 }
 
-function parseOutletAdditional(raw: unknown): ParsedOutletAdditional {
-  if (!isPlainObject(raw)) {
+function formatScalarValue(value: string | number | boolean): string {
+  return String(value);
+}
+
+function parseOutletAdditional(
+  raw: unknown,
+  clientIndex: number,
+  outletIndex: number,
+  issues: ExtendedValidationIssue[],
+  issueCount: { value: number },
+): ParsedOutletAdditional | null {
+  if (raw === undefined || raw === null) {
     return { statusTandoorClub: "", bonusTandoorClub: "" };
   }
-  return {
-    statusTandoorClub: readOptionalString(raw.status_tandoor_club).trim(),
-    bonusTandoorClub: readOptionalString(raw.bonus_tandoor_club).trim(),
-  };
+  if (!isPlainObject(raw)) {
+    pushIssue(issues, {
+      code: "INVALID_OUTLET_FIELD",
+      field: "retail_outlets.additional_information",
+      index: clientIndex,
+      outletIndex,
+    }, issueCount);
+    return null;
+  }
+  const result: ParsedOutletAdditional = { statusTandoorClub: "", bonusTandoorClub: "" };
+  if ("status_tandoor_club" in raw) {
+    const parsed = readOptionalStringField(raw.status_tandoor_club);
+    if (parsed.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: "retail_outlets.additional_information.status_tandoor_club",
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    result.statusTandoorClub = parsed.kind === "value" ? parsed.value : "";
+  }
+  if ("bonus_tandoor_club" in raw) {
+    const parsed = readScalarField(raw.bonus_tandoor_club);
+    if (parsed.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: "retail_outlets.additional_information.bonus_tandoor_club",
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
+    }
+    result.bonusTandoorClub =
+      parsed.kind === "value" ? formatScalarValue(parsed.value) : "";
+  }
+  return result;
 }
 
 function validateRetailOutlets(
@@ -540,20 +730,67 @@ function validateRetailOutlets(
       outletIndex,
     }, warningCount);
 
+    const address = parseOutletAddress(item.address, clientIndex, outletIndex, issues, issueCount);
+    if (address === null) {
+      return null;
+    }
+    const contacts = parseOutletContacts(
+      item.contact_information,
+      clientIndex,
+      outletIndex,
+      issues,
+      issueCount,
+    );
+    if (contacts === null) {
+      return null;
+    }
+    const lpr = parseOutletLpr(item.LPR_information, clientIndex, outletIndex, issues, issueCount);
+    if (lpr === null) {
+      return null;
+    }
+    const additional = parseOutletAdditional(
+      item.additional_information,
+      clientIndex,
+      outletIndex,
+      issues,
+      issueCount,
+    );
+    if (additional === null) {
+      return null;
+    }
+
+    if ("holding" in item) {
+      const holdingName = readOptionalStringField(item.holding);
+      if (holdingName.kind === "invalid_type") {
+        pushIssue(issues, {
+          code: "INVALID_OUTLET_FIELD",
+          field: "retail_outlets.holding",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        return null;
+      }
+    }
+
+    let holdingName = "";
+    if ("holding" in item) {
+      const parsedHolding = readOptionalStringField(item.holding);
+      holdingName = parsedHolding.kind === "value" ? parsedHolding.value : "";
+    }
+
     outlets.push({
       ordinal: outletIndex,
-      holdingName: readOptionalString(item.holding).trim(),
+      holdingName,
       warehouse,
-      address: parseOutletAddress(item.address),
+      address,
       loading,
       managers,
-      contacts: parseOutletContacts(item.contact_information),
-      lpr: parseOutletLpr(item.LPR_information),
-      additional: parseOutletAdditional(item.additional_information),
+      contacts,
+      lpr,
+      additional,
       outletGuidStatus: "not_provided",
       closureStatus: "not_provided",
       distributionAllowed: false,
-      presentInCurrentSnapshot: true,
     });
   }
 
@@ -602,14 +839,22 @@ function validateExtendedRecord(
     allowMissingKeys: true,
   });
   if (!regional.ok) {
-    pushIssue(issues, { code: "INVALID_MANAGER_PAIR", field: "guid_regional_manager", index }, issueCount);
+    pushIssue(issues, {
+      code: regional.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
+      field: "guid_regional_manager",
+      index,
+    }, issueCount);
     return null;
   }
   const hardware = parseManagerRef(raw.guid_hardware_manager, raw.name_hardware_manager, {
     allowMissingKeys: true,
   });
   if (!hardware.ok) {
-    pushIssue(issues, { code: "INVALID_MANAGER_PAIR", field: "guid_hardware_manager", index }, issueCount);
+    pushIssue(issues, {
+      code: hardware.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
+      field: "guid_hardware_manager",
+      index,
+    }, issueCount);
     return null;
   }
   const head = parseManagerRef(
@@ -619,12 +864,14 @@ function validateExtendedRecord(
   );
   if (!head.ok) {
     pushIssue(issues, {
-      code: "INVALID_MANAGER_PAIR",
+      code: head.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
       field: "guid_head_of_the_sales_department",
       index,
     }, issueCount);
     return null;
   }
+
+  const recordHasExtendedManagerFields = hasExtendedManagerFields(raw);
 
   let retailOutlets: ParsedRetailOutlet[] = [];
   if (recordExtended) {
@@ -650,7 +897,29 @@ function validateExtendedRecord(
     headOfSales: head.value,
     retailOutlets,
     recordFormat: recordExtended ? "extended_v1" : "legacy",
+    hasExtendedManagerFields: recordHasExtendedManagerFields,
   };
+}
+
+function validateHoldingTargets(
+  records: ParsedExtendedClientRecord[],
+  issues: ExtendedValidationIssue[],
+  issueCount: { value: number },
+): void {
+  const byGuid = new Map(records.map((record) => [record.guid_client, record]));
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    if (!record.guid_holding) {
+      continue;
+    }
+    const target = byGuid.get(record.guid_holding);
+    if (!target) {
+      continue;
+    }
+    if (target.isHolding !== true) {
+      pushIssue(issues, { code: "HOLDING_TARGET_NOT_HOLDING_CARD", index }, issueCount);
+    }
+  }
 }
 
 function detectHoldingCycles(
@@ -695,7 +964,7 @@ function buildDiagnostics(
   let nestedOutletCount = 0;
   let recordsWithExtendedFields = 0;
   let legacyOnlyRecords = 0;
-  let unmatchedManagerGuidCount = 0;
+  let invalidManagerGuidCount = 0;
 
   for (const record of records) {
     if (record.isHolding === true) {
@@ -705,7 +974,7 @@ function buildDiagnostics(
       childHoldingLinkCount += 1;
     }
     nestedOutletCount += record.retailOutlets.length;
-    if (record.recordFormat === "extended_v1") {
+    if (record.recordFormat === "extended_v1" || record.hasExtendedManagerFields) {
       recordsWithExtendedFields += 1;
     } else {
       legacyOnlyRecords += 1;
@@ -721,8 +990,8 @@ function buildDiagnostics(
         outlet.managers.headOfSales,
       ]),
     ]) {
-      if (manager.state === "unmatched") {
-        unmatchedManagerGuidCount += 1;
+      if (manager.state === "invalid") {
+        invalidManagerGuidCount += 1;
       }
     }
   }
@@ -734,13 +1003,14 @@ function buildDiagnostics(
     nestedOutletCount,
     outletsWithoutGuid: nestedOutletCount,
     unconfirmedClosureStatusCount: nestedOutletCount,
-    unmatchedManagerGuidCount,
+    invalidManagerGuidCount,
+    employeeDirectoryVerified: false,
     holdingLinkErrors,
     recordsWithExtendedFields,
     legacyOnlyRecords,
     blocks: {
       legacyImportReady: true,
-      clientExtendedReady: sourceFormat === "extended_v1",
+      clientExtendedReady: false,
       outletNormalizedReady: false,
     },
   };
@@ -824,11 +1094,16 @@ export function validateExtendedClientsFileBytes(
   const holdingErrorsBefore = issueCount.value;
   if (sourceFormat === "extended_v1") {
     detectHoldingCycles(records, issues, issueCount);
+    validateHoldingTargets(records, issues, issueCount);
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
   if (issueCount.value > 0) {
     return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+  }
+
+  if (sourceFormat === "extended_v1") {
+    pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
   }
 
   const diagnostics = buildDiagnostics(sourceFormat, records, holdingLinkErrors);
@@ -875,7 +1150,9 @@ export type LegacyCompatiblePayload = {
 
 export function toLegacyValidatedPayload(
   payload: ValidatedExtendedClientsPayload,
+  options?: { keepExtendedWarnings?: boolean },
 ): LegacyCompatiblePayload {
+  const keepExtendedWarnings = options?.keepExtendedWarnings === true;
   return {
     sha256: payload.sha256,
     byteSize: payload.byteSize,
@@ -891,12 +1168,14 @@ export function toLegacyValidatedPayload(
       address: record.address,
       telephone: record.telephone,
     })),
-    warnings: payload.warnings.filter(
-      (warning): warning is ValidationWarning =>
-        warning.code === "EXTRA_FIELDS" ||
-        warning.code === "EMPTY_ADDRESS" ||
-        warning.code === "EMPTY_TELEPHONE",
-    ),
+    warnings: keepExtendedWarnings
+      ? (payload.warnings as ValidationWarning[])
+      : payload.warnings.filter(
+          (warning): warning is ValidationWarning =>
+            warning.code === "EXTRA_FIELDS" ||
+            warning.code === "EMPTY_ADDRESS" ||
+            warning.code === "EMPTY_TELEPHONE",
+        ),
     warningCount: payload.warningCount,
   };
 }

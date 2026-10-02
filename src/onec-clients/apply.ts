@@ -13,11 +13,14 @@ import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
 import {
   buildExtendedSnapshotJson,
+  extendedSnapshotsEqual,
   isExtendedApplyPayload,
   loadExistingExtendedSnapshots,
-  loadKnownEmployeeGuids,
+  loadLinkedEmployeeGuids,
+  readExtendedSnapshot,
   resolveExtendedRecordsForApply,
 } from "./extended-apply";
+import type { ExtendedSnapshot } from "./extended-types";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -110,6 +113,25 @@ function isBusinessDataEqual(existing: ExistingClientRow, incoming: ParsedClient
     existing.address === incoming.address &&
     telephoneEqual(existing.telephone, incoming.telephone)
   );
+}
+
+function isImportRecordEqual(
+  existing: ExistingClientRow | undefined,
+  incoming: ParsedClientRecord,
+  previousExtendedSnapshot: unknown,
+  nextExtendedSnapshot: ExtendedSnapshot | null,
+): boolean {
+  if (!existing) {
+    return false;
+  }
+  if (!isBusinessDataEqual(existing, incoming)) {
+    return false;
+  }
+  if (nextExtendedSnapshot) {
+    const previous = readExtendedSnapshot(previousExtendedSnapshot);
+    return extendedSnapshotsEqual(previous, nextExtendedSnapshot);
+  }
+  return true;
 }
 
 function mergeCleanupWarnings(existing: string | undefined, additions: string[]): string | undefined {
@@ -669,13 +691,12 @@ export async function applyClientsImport(options: {
           await queryManaged(managed, "BEGIN");
 
           const extendedApply = isExtendedApplyPayload(options.payload);
-          const knownEmployees = extendedApply
-            ? await loadKnownEmployeeGuids(managed.client)
+          const linkedEmployees = extendedApply
+            ? await loadLinkedEmployeeGuids(managed.client)
             : new Set<string>();
-          const extendedRecords = resolveExtendedRecordsForApply(options.payload, knownEmployees);
-          const previousExtended = extendedApply
-            ? await loadExistingExtendedSnapshots(managed.client)
-            : new Map();
+          const extendedRecords = resolveExtendedRecordsForApply(options.payload, linkedEmployees);
+          const previousExtended = await loadExistingExtendedSnapshots(managed.client);
+          const importTimestamp = new Date().toISOString();
 
           let newCount = 0;
           let changedCount = 0;
@@ -684,23 +705,42 @@ export async function applyClientsImport(options: {
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
             const current = existing.get(record.guid_client);
-            if (!current) {
-              newCount += 1;
-            } else if (isBusinessDataEqual(current, record)) {
-              unchangedCount += 1;
-            } else {
-              changedCount += 1;
-            }
-
             const extendedRecord = extendedRecords.get(record.guid_client);
-            const previousSnapshot = previousExtended.get(record.guid_client)?.extended_snapshot;
+            const previousRow = previousExtended.get(record.guid_client);
+            const previousSnapshot = previousRow?.extended_snapshot;
             const extendedSnapshotJson = extendedRecord
               ? buildExtendedSnapshotJson(
                   extendedRecord,
                   previousSnapshot,
                   options.payload.sha256,
+                  importTimestamp,
                 )
               : null;
+
+            if (!current) {
+              newCount += 1;
+            } else if (
+              isImportRecordEqual(current, record, previousSnapshot, extendedSnapshotJson)
+            ) {
+              unchangedCount += 1;
+            } else {
+              changedCount += 1;
+            }
+
+            const hasPreviousExtended = Boolean(previousRow?.extended_snapshot);
+            const sameExtendedSource =
+              extendedRecord &&
+              previousRow?.extended_source_sha256 === options.payload.sha256;
+            const extendedImportedAt = extendedRecord
+              ? sameExtendedSource && previousRow?.extended_imported_at
+                ? previousRow.extended_imported_at.toISOString()
+                : importTimestamp
+              : null;
+            const extendedFreshnessState = extendedRecord
+              ? "current"
+              : hasPreviousExtended
+                ? "preserved_from_previous"
+                : null;
 
             await queryManaged(
               managed,
@@ -725,13 +765,15 @@ export async function applyClientsImport(options: {
                   extended_format_version,
                   extended_source_sha256,
                   extended_snapshot,
+                  extended_imported_at,
+                  extended_freshness_state,
                   first_imported_at,
                   last_imported_at,
                   updated_at
                 )
                 VALUES (
                   $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
-                  $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb,
+                  $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::timestamptz, $21,
                   NOW(), NOW(), NOW()
                 )
                 ON CONFLICT (guid_client) DO UPDATE SET
@@ -774,6 +816,12 @@ export async function applyClientsImport(options: {
                   extended_format_version = COALESCE(EXCLUDED.extended_format_version, onec_clients.extended_format_version),
                   extended_source_sha256 = COALESCE(EXCLUDED.extended_source_sha256, onec_clients.extended_source_sha256),
                   extended_snapshot = COALESCE(EXCLUDED.extended_snapshot, onec_clients.extended_snapshot),
+                  extended_imported_at = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.extended_imported_at
+                    WHEN EXCLUDED.extended_freshness_state = 'preserved_from_previous' THEN onec_clients.extended_imported_at
+                    ELSE onec_clients.extended_imported_at
+                  END,
+                  extended_freshness_state = COALESCE(EXCLUDED.extended_freshness_state, onec_clients.extended_freshness_state),
                   last_imported_at = NOW(),
                   updated_at = CASE
                     WHEN onec_clients.name_client IS DISTINCT FROM EXCLUDED.name_client
@@ -809,6 +857,8 @@ export async function applyClientsImport(options: {
                 extendedRecord ? "extended_v1" : null,
                 extendedRecord ? options.payload.sha256 : null,
                 extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
+                extendedImportedAt,
+                extendedFreshnessState,
               ],
             );
 

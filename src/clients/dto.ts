@@ -1,3 +1,4 @@
+import type { AccessContext } from "../access/types";
 import { telHrefFromPhone } from "./phone";
 import { toClientExtendedDto, type ClientExtendedDto } from "./extended-dto";
 import { shortUuidLabel } from "./uuid-param";
@@ -114,6 +115,8 @@ type ClientRow = {
   is_holding?: boolean | null;
   extended_format_version?: string | null;
   extended_source_sha256?: string | null;
+  extended_imported_at?: Date | null;
+  extended_freshness_state?: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
   extended_snapshot?: unknown;
 };
 
@@ -162,15 +165,20 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   };
 }
 
-export function toClientDetail(row: ClientRow): ClientDetailDto {
+export function toClientDetail(row: ClientRow, context?: AccessContext): ClientDetailDto {
   const telephones = parseTelephones(row.telephone);
   const nonEmptyPhones = telephones.filter((item) => item.trim().length > 0);
-  const extended = toClientExtendedDto({
-    is_holding: row.is_holding ?? null,
-    extended_format_version: row.extended_format_version ?? null,
-    extended_source_sha256: row.extended_source_sha256 ?? null,
-    extended_snapshot: row.extended_snapshot,
-  });
+  const extended = toClientExtendedDto(
+    {
+      is_holding: row.is_holding ?? null,
+      extended_format_version: row.extended_format_version ?? null,
+      extended_source_sha256: row.extended_source_sha256 ?? null,
+      extended_imported_at: row.extended_imported_at ?? null,
+      extended_freshness_state: row.extended_freshness_state ?? null,
+      extended_snapshot: row.extended_snapshot,
+    },
+    context,
+  );
   return {
     guid: row.guid_client,
     name: row.name_client,

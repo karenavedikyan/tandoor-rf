@@ -49,7 +49,7 @@ export function validateClientsFileBytes(
   return {
     ok: true,
     payload: {
-      ...toLegacyValidatedPayload(payload),
+      ...toLegacyValidatedPayload(payload, { keepExtendedWarnings: true }),
       sourceFormat: payload.sourceFormat,
       extendedRecords: payload.records,
       extendedDiagnostics: payload.diagnostics,

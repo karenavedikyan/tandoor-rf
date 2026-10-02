@@ -7,52 +7,50 @@ export function parseManagerRef(
   options?: { allowMissingKeys?: boolean },
 ): { ok: true; value: ParsedManagerRef } | { ok: false; code: "INVALID_TYPE" | "INVALID_UUID" } {
   const allowMissing = options?.allowMissingKeys === true;
+  const name = typeof nameRaw === "string" ? nameRaw.trim() : typeof nameRaw === "undefined" || nameRaw === null ? "" : null;
+
   if (guidRaw === undefined || guidRaw === null) {
     if (!allowMissing) {
       return { ok: false, code: "INVALID_TYPE" };
     }
+    if (name === null) {
+      return { ok: false, code: "INVALID_TYPE" };
+    }
     return {
       ok: true,
-      value: { guid: null, name: typeof nameRaw === "string" ? nameRaw.trim() : "", state: "unassigned" },
+      value: { guid: null, name, state: "unassigned" },
     };
   }
   if (typeof guidRaw !== "string") {
     return { ok: false, code: "INVALID_TYPE" };
   }
+  if (name === null) {
+    return { ok: false, code: "INVALID_TYPE" };
+  }
+
   const guidTrimmed = guidRaw.trim();
   if (guidTrimmed.length === 0) {
     return {
       ok: true,
-      value: {
-        guid: null,
-        name: typeof nameRaw === "string" ? nameRaw.trim() : "",
-        state: "unassigned",
-      },
+      value: { guid: null, name, state: "unassigned" },
     };
   }
   if (!isValidNonZeroUuid(guidTrimmed)) {
-    return {
-      ok: true,
-      value: {
-        guid: null,
-        name: typeof nameRaw === "string" ? nameRaw.trim() : "",
-        state: "invalid",
-      },
-    };
+    return { ok: false, code: "INVALID_UUID" };
   }
   return {
     ok: true,
     value: {
       guid: normalizeUuid(guidTrimmed),
-      name: typeof nameRaw === "string" ? nameRaw.trim() : "",
-      state: "assigned",
+      name,
+      state: "directory_unverified",
     },
   };
 }
 
-export function resolveManagerStates(
+export function resolveManagerAccountLinks(
   refs: ParsedManagerRef[],
-  knownEmployeeGuids: ReadonlySet<string>,
+  linkedEmployeeGuids: ReadonlySet<string>,
 ): ParsedManagerRef[] {
   return refs.map((ref) => {
     if (ref.state === "unassigned" || ref.state === "invalid") {
@@ -64,10 +62,10 @@ export function resolveManagerStates(
     if (!isValidNonZeroUuid(ref.guid)) {
       return { ...ref, state: "invalid" };
     }
-    if (!knownEmployeeGuids.has(ref.guid)) {
-      return { ...ref, state: "unmatched" };
+    if (linkedEmployeeGuids.has(ref.guid)) {
+      return { ...ref, state: "directory_unverified_account_linked" };
     }
-    return { ...ref, state: "assigned" };
+    return { ...ref, state: "directory_unverified" };
   });
 }
 

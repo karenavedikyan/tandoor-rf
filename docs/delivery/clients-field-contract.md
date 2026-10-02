@@ -110,9 +110,17 @@
 | Постоянный GUID ТТ | — | **не реализовано** | блокер production-import ТТ |
 | Статус закрытой ТТ | — | **не реализовано** | UI: «Статус не передан» |
 
-**Определение версии файла:** `extended_v1`, если **хотя бы одна** запись содержит `holding: boolean` и/или массив `retail_outlets`. Иначе — legacy (8 ключей, прежние правила).
+**Определение версии файла:** `extended_v1`, если **хотя бы одна** запись содержит `holding: boolean`, массив `retail_outlets` и/или ключи доп. ответственных (`guid_regional_manager`, `guid_hardware_manager`, `guid_head_of_the_sales_department` и пары `name_*`). Иначе — legacy (8 ключей, прежние правила).
 
-**Запрещено:** синтетические GUID ТТ, наследование пустого ответственного ТТ, `outletConfirmed=true` из-за наличия `retail_outlets`, автоматическое расширение прав из полей ответственных.
+**Запрещено:** синтетические GUID ТТ, сопоставление ТТ между снимками по ordinal, наследование пустого ответственного ТТ, `outletConfirmed=true` из-за наличия `retail_outlets`, автоматическое расширение прав из полей ответственных, автоматическая выдача вложенных ТТ по доступу к карточке клиента.
+
+**Доступ к вложенным ТТ (API/UI):** deny-by-default; исключения только по матрице R13 — `admin`, `director` с `fullClientBase`. Менеджер с доступом к карточке холдинга **не** получает адреса/контакты/назначения вложенных ТТ без отдельного разрешения. Количество недоступных ТТ не раскрывается.
+
+**Снимок ТТ:** текущий массив хранится целиком в `extended_snapshot.currentRetailOutlets`; предыдущие снимки — в `retailOutletHistory[]` с собственными `sourceSha256` и `capturedAt`. Без постоянного GUID ТТ не объявляются закрытыми/исчезнувшими.
+
+**Актуальность расширения:** колонки `extended_imported_at`, `extended_freshness_state` (`current` | `preserved_from_previous` | `not_provided_in_snapshot`). После legacy-снимка блок помечается как сохранённый из предыдущей выгрузки.
+
+**Сотрудники 1С:** `directory_unverified` / `directory_unverified_account_linked` — справочник 1С не подтверждён; связь с аккаунтом ЛК не расширяет права. `clientExtendedReady=false` до live JSON от специалиста.
 
 ### 3.1 Кандидаты без подтверждённого live-образца (прежний перечень)
 
@@ -158,6 +166,6 @@
 | `repeat-snapshot.json` | та же нормализованная запись, что первая в `valid-two-records` | ok (**только** validate; не apply/БД) |
 | `valid-uuid-v5.json` | ненулевой UUID версии 5 | ok |
 
-**Extended (синтетика, не live):** `test/helpers/onec-clients-extended-fixtures.ts` — holding + outlets, пустой ответственный ТТ, unmatched manager.
+**Extended (синтетика, не live):** `test/helpers/onec-clients-extended-fixtures.ts` — holding + outlets, пустой ответственный ТТ, directory-unverified manager.
 
-Тесты: `test/unit/onec-clients-synthetic-fixtures.test.ts`, `test/unit/onec-clients-extended-validate.test.ts`, `test/integration/onec-clients-extended-import.test.ts`.
+Тесты: `test/unit/onec-clients-extended-validate.test.ts`, `test/unit/onec-clients-extended-strict-validate.test.ts`, `test/unit/onec-clients-extended-snapshot-history.test.ts`, `test/integration/onec-clients-extended-import.test.ts`, `test/integration/clients-extended-access.test.ts`, `test/unit/client-card-extended-render.test.ts`.

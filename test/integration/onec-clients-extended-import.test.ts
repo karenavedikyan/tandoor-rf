@@ -46,7 +46,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const holdingRow = await pool.query<{
       extended_format_version: string | null;
       is_holding: boolean | null;
-      extended_snapshot: { retailOutlets?: Array<{ outletGuidStatus: string }> } | null;
+      extended_snapshot: { currentRetailOutlets?: Array<{ outletGuidStatus: string }> } | null;
     }>(
       `
         SELECT extended_format_version, is_holding, extended_snapshot
@@ -56,7 +56,10 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     );
     assert.equal(holdingRow.rows[0]?.extended_format_version, "extended_v1");
     assert.equal(holdingRow.rows[0]?.is_holding, true);
-    assert.equal(holdingRow.rows[0]?.extended_snapshot?.retailOutlets?.[0]?.outletGuidStatus, "not_provided");
+    assert.equal(
+      holdingRow.rows[0]?.extended_snapshot?.currentRetailOutlets?.[0]?.outletGuidStatus,
+      "not_provided",
+    );
 
     const journal = await pool.query<{ source_format_version: string | null }>(
       "SELECT source_format_version FROM onec_client_import_runs WHERE status = 'success' ORDER BY finished_at DESC LIMIT 1",
@@ -82,7 +85,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(second.counts?.unchangedCount, 2);
   });
 
-  it("stores unmatched manager state without creating employee links", async () => {
+  it("stores directory-unverified manager state without creating employee links", async () => {
     const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
     const validated = validateClientsFileBytes(bytes);
     assert.equal(validated.ok, true);
@@ -99,14 +102,16 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(Number(links.rows[0]?.count), 0);
 
     const snapshot = await pool.query<{
-      extended_snapshot: { retailOutlets: Array<{ managers: { hardwareManager: { state: string } } }> };
+      extended_snapshot: {
+        currentRetailOutlets: Array<{ managers: { hardwareManager: { state: string } } }>;
+      };
     }>(
       "SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
       [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
     );
     assert.equal(
-      snapshot.rows[0]?.extended_snapshot.retailOutlets[0]?.managers.hardwareManager.state,
-      "unmatched",
+      snapshot.rows[0]?.extended_snapshot.currentRetailOutlets[0]?.managers.hardwareManager.state,
+      "directory_unverified",
     );
     await pool.end();
   });

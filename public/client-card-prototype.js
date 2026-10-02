@@ -24,15 +24,26 @@
 
   function loadingDaysLabel(loading) {
     if (!loading || !loading.days) return "";
+    var hasAnyDayKey = loading.days.some(function (d) { return d.value !== null; });
     var active = loading.days.filter(function (d) { return d.value === true; }).map(function (d) { return d.label; });
-    if (active.length === 0) return "Дни приёмки не переданы";
-    var time = loading.loadingTime ? " · начало " + loading.loadingTime : "";
-    return "Приёмка: " + active.join(", ") + time;
+    var timePart = loading.loadingTime ? " · начало " + loading.loadingTime : "";
+    if (!hasAnyDayKey && !loading.loadingTime) return "";
+    if (!hasAnyDayKey && loading.loadingTime) return "Начало приёмки" + timePart;
+    if (hasAnyDayKey && active.length === 0) return "Дни не отмечены" + timePart;
+    if (active.length > 0) return "Приёмка: " + active.join(", ") + timePart;
+    return timePart ? "Начало приёмки" + timePart : "";
+  }
+
+  function loadingFieldKnown(loading) {
+    if (!loading) return false;
+    if (loading.loadingTime) return true;
+    if (!loading.days) return false;
+    return loading.days.some(function (d) { return d.value !== null; }) ||
+      loading.scheduleState === "all_false" ||
+      loading.scheduleState === "has_selected";
   }
 
   function renderOutletBlock(outlet, index) {
-    var title = "Торговая точка " + (index + 1);
-    var stale = outlet.staleLabel ? '<p class="pc-label pc-unavailable">' + esc(outlet.staleLabel) + "</p>" : "";
     return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
       field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
@@ -40,7 +51,7 @@
       field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
       field("Направление маршрута", outlet.addresses && outlet.addresses.routeDirection, !!(outlet.addresses && outlet.addresses.routeDirection)) +
-      field("Приёмка", loadingDaysLabel(outlet.loading), !!(outlet.loading && outlet.loading.days && outlet.loading.days.some(function (d) { return d.value === true; }))) +
+      field("Приёмка", loadingDaysLabel(outlet.loading), loadingFieldKnown(outlet.loading)) +
       field("Склад", outlet.warehouseLabel, outlet.warehouse !== null && outlet.warehouse !== undefined) +
       field("Менеджер ТТ", managerLabel(outlet.managers && outlet.managers.manager), !!(outlet.managers && outlet.managers.manager)) +
       field("Региональный менеджер ТТ", managerLabel(outlet.managers && outlet.managers.regionalManager), !!(outlet.managers && outlet.managers.regionalManager && outlet.managers.regionalManager.assignmentState !== "unassigned")) +
@@ -49,19 +60,53 @@
       field("Телефон магазина", outlet.contacts && outlet.contacts.storePhone, !!(outlet.contacts && outlet.contacts.storePhone)) +
       field("Телефон бухгалтерии", outlet.contacts && outlet.contacts.accountantPhone, !!(outlet.contacts && outlet.contacts.accountantPhone)) +
       field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail)) +
-      stale +
       '<p class="pc-label pc-unavailable">Запись дистрибуции недоступна без идентификатора торговой точки.</p>' +
       "</div>";
+  }
+
+  function renderShopCard(ext, outletCount) {
+    if (!ext || ext.retailOutletsAccess === "denied") {
+      return field("Торговые точки", "Недоступны для вашей роли", true) +
+        field("Место поставки", "") +
+        field("Приёмка", "") +
+        field("Контакт приёмки", "") +
+        field("График / направление", "") +
+        '<p class="pc-label">Адрес из обмена показан в контактах. Он не считается автоматически торговой точкой или местом доставки.</p>';
+    }
+    if (!ext.retailOutlets || outletCount === 0) {
+      return field("Торговая точка", "") + field("Место поставки", "") +
+        field("Приёмка", "") + field("Контакт приёмки", "") +
+        field("График / направление", "") +
+        '<p class="pc-label">Адрес из обмена показан в контактах. Он не считается автоматически торговой точкой или местом доставки.</p>';
+    }
+    if (outletCount === 1) {
+      var outlet = ext.retailOutlets[0];
+      return field("Торговая точка", outlet.identityLabel, true) +
+        field("Место поставки", outlet.addresses.deliveryAddress, !!outlet.addresses.deliveryAddress) +
+        field("Приёмка", loadingDaysLabel(outlet.loading), loadingFieldKnown(outlet.loading)) +
+        field("Контакт приёмки", outlet.contacts.storePhone, !!outlet.contacts.storePhone) +
+        field("График / направление", outlet.addresses.routeDirection, !!outlet.addresses.routeDirection) +
+        field("Склад", outlet.warehouseLabel, outlet.warehouse !== null);
+    }
+    return field("Торговые точки", outletCount + " точек в текущем снимке. Подробности — в списке ниже.", true) +
+      field("Место поставки", "Выберите торговую точку в списке ниже", true) +
+      field("Приёмка", "Зависит от выбранной торговой точки", true) +
+      field("Контакт приёмки", "") +
+      field("График / направление", "") +
+      '<p class="pc-label">Первая точка в массиве не считается основной автоматически.</p>';
   }
 
   function render(client) {
     var ext = client.extended || null;
     var manager = client.manager && client.manager.name;
     var holding = client.holding && client.holding.name;
+    var outletAccessDenied = ext && ext.retailOutletsAccess === "denied";
     var outletCount = ext && ext.retailOutlets ? ext.retailOutlets.length : 0;
-    var structureLabel = outletCount > 0
-      ? "Торговые точки: " + outletCount + " (без постоянного GUID)"
-      : "данные не переданы";
+    var structureLabel = outletAccessDenied
+      ? "данные торговых точек недоступны"
+      : outletCount > 0
+        ? "Торговые точки: " + outletCount + (ext.retailOutletsTruncated ? "+" : "") + " (без постоянного GUID)"
+        : "данные не переданы";
     var meta = '<div class="pc-meta"><span class="pc-tag">Источник: 1С</span><span>Холдинг: ' +
       esc(holding || "Не указан") + '</span><span>Менеджер: ' + esc(manager || "Не указан") +
       '</span><span>Структура: ' + esc(structureLabel) + '</span></div>';
@@ -82,9 +127,11 @@
     }
 
     var holdingCard = ext && ext.holdingCardLabel ? ext.holdingCardLabel + " · " : "";
-    var overviewOutlets = outletCount > 0
-      ? outletCount + " точек из выгрузки 1С (идентификатор не передан)"
-      : "Структура торговых точек не передана";
+    var overviewOutlets = outletAccessDenied
+      ? "Торговые точки недоступны для вашей роли"
+      : outletCount > 0
+        ? outletCount + " точек из выгрузки 1С (идентификатор не передан)"
+        : "Структура торговых точек не передана";
 
     var stats = '<div class="pc-stats">' + [
       ["Отгрузки / план", "1С / планы"], ["Дистрибьюция", "Осмотры торговых точек"],
@@ -101,23 +148,19 @@
       outletCards = ext.retailOutlets.map(function (outlet, index) {
         return card("Торговая точка " + (index + 1), '<div class="pc-pad">' + renderOutletBlock(outlet, index) + "</div>", "1С");
       }).join("");
+      if (ext.retailOutletsTruncated) {
+        outletCards += '<p class="pc-pad pc-label pc-unavailable">Показаны первые ' + ext.retailOutlets.length + ' торговых точек. Полный список усечён.</p>';
+      }
     }
 
-    var firstOutlet = ext && ext.retailOutlets && ext.retailOutlets[0];
-    var shopCard = firstOutlet
-      ? field("Торговая точка", firstOutlet.identityLabel, true) +
-        field("Место поставки", firstOutlet.addresses.deliveryAddress, !!firstOutlet.addresses.deliveryAddress) +
-        field("Приёмка", loadingDaysLabel(firstOutlet.loading), !!(firstOutlet.loading && firstOutlet.loading.days && firstOutlet.loading.days.some(function (d) { return d.value === true; }))) +
-        field("Контакт приёмки", firstOutlet.contacts.storePhone, !!firstOutlet.contacts.storePhone) +
-        field("График / направление", firstOutlet.addresses.routeDirection, !!firstOutlet.addresses.routeDirection) +
-        field("Склад", firstOutlet.warehouseLabel, firstOutlet.warehouse !== null)
-      : field("Торговая точка", "") + field("Место поставки", "") +
-        field("Приёмка", "") + field("Контакт приёмки", "") +
-        field("График / направление", "") +
-        '<p class="pc-label">Адрес из обмена показан в контактах. Он не считается автоматически торговой точкой или местом доставки.</p>';
+    var shopCard = renderShopCard(ext, outletCount);
 
+    var freshnessNote = ext && ext.freshnessLabel
+      ? '<p class="pc-label">' + esc(ext.freshnessLabel) + '</p>'
+      : "";
     var dataQuality = ext
       ? '<div class="pc-pad"><span class="pc-tag">' + esc(ext.dataQualityLabel || "Частично подключено") + '</span>' +
+        freshnessNote +
         '<p>Торговые точки доступны только для просмотра. ЛПР и персональные бонусы не публикуются без отдельного разрешения.</p></div>'
       : '<div class="pc-pad"><span class="pc-tag">Частично подключено</span>' +
         '<p>Связи холдинга, юрлиц и торговых точек ожидаются из 1С. Неподтверждённые сведения не подставляются.</p></div>';
@@ -134,7 +177,7 @@
       stats + '<div class="pc-grid pc-two">' +
       card("Следующие действия", '<div class="pc-pad" id="pc-bitrix24-overview" aria-live="polite"></div>', "Битрикс24") +
       card("Точки и контакты", '<div class="pc-pad">' +
-        field("Торговые точки", overviewOutlets, outletCount > 0) +
+        field("Торговые точки", overviewOutlets, !outletAccessDenied && outletCount > 0) +
         field("Адрес из 1С", client.address && client.address.trim(), !!(client.address && client.address.trim())) +
         field("Телефоны", (client.phones || []).map(function (p) { return p.value; }).join("; "), !!(client.phones || []).length) +
         '<button type="button" class="pc-link" data-card-open="data">Все данные и контакты →</button></div>', "1С") +

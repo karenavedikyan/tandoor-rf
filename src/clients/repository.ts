@@ -29,6 +29,8 @@ type ClientRow = {
   is_holding: boolean | null;
   extended_format_version: string | null;
   extended_source_sha256: string | null;
+  extended_imported_at: Date | null;
+  extended_freshness_state: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
   extended_snapshot: unknown;
 };
 
@@ -159,6 +161,8 @@ export async function getClientByGuid(
         is_holding,
         extended_format_version,
         extended_source_sha256,
+        extended_imported_at,
+        extended_freshness_state,
         extended_snapshot
       FROM onec_clients
       ${detailFilter.whereSql}
@@ -169,7 +173,7 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row);
+  return toClientDetail(row, context);
 }
 
 export async function canReadClientGuid(

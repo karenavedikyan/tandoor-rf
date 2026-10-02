@@ -1,6 +1,10 @@
 export type ClientsSourceFormat = "legacy" | "extended_v1";
 
-export type ManagerAssignmentState = "unassigned" | "assigned" | "unmatched" | "invalid";
+export type ManagerAssignmentState =
+  | "unassigned"
+  | "invalid"
+  | "directory_unverified"
+  | "directory_unverified_account_linked";
 
 export type ParsedManagerRef = {
   guid: string | null;
@@ -54,6 +58,7 @@ export type ParsedOutletAdditional = {
 };
 
 export type ParsedRetailOutlet = {
+  /** Position in the current source array; not a stable business id. */
   ordinal: number;
   holdingName: string;
   warehouse: boolean | null;
@@ -66,8 +71,37 @@ export type ParsedRetailOutlet = {
   outletGuidStatus: "not_provided";
   closureStatus: "not_provided";
   distributionAllowed: false;
-  presentInCurrentSnapshot: boolean;
 };
+
+export type RetailOutletHistoryEntry = {
+  sourceSha256: string;
+  capturedAt: string;
+  retailOutlets: ParsedRetailOutlet[];
+};
+
+export type ExtendedSnapshotBlocks = {
+  clientExtendedReady: boolean;
+  outletNormalizedReady: false;
+  clientExtendedBlockedReason?: string | null;
+};
+
+export type ExtendedSnapshot = {
+  formatVersion: "extended_v1";
+  sourceSha256: string;
+  importedAt: string;
+  isHolding: boolean | null;
+  regionalManager: ParsedManagerRef;
+  hardwareManager: ParsedManagerRef;
+  headOfSales: ParsedManagerRef;
+  currentRetailOutlets: ParsedRetailOutlet[];
+  retailOutletHistory: RetailOutletHistoryEntry[];
+  blocks: ExtendedSnapshotBlocks;
+};
+
+export type ExtendedFreshnessState =
+  | "current"
+  | "preserved_from_previous"
+  | "not_provided_in_snapshot";
 
 export type ParsedExtendedClientRecord = {
   guid_client: string;
@@ -84,6 +118,7 @@ export type ParsedExtendedClientRecord = {
   headOfSales: ParsedManagerRef;
   retailOutlets: ParsedRetailOutlet[];
   recordFormat: "legacy" | "extended_v1";
+  hasExtendedManagerFields: boolean;
 };
 
 export type ExtendedValidationIssueCode =
@@ -92,7 +127,9 @@ export type ExtendedValidationIssueCode =
   | "INVALID_OUTLET_SHAPE"
   | "INVALID_OUTLET_FIELD"
   | "INVALID_MANAGER_PAIR"
+  | "INVALID_MANAGER_GUID"
   | "HOLDING_GUID_UNKNOWN"
+  | "HOLDING_TARGET_NOT_HOLDING_CARD"
   | "HOLDING_SELF_REFERENCE"
   | "HOLDING_CYCLE"
   | "MIXED_FORMAT_FILE";
@@ -107,7 +144,8 @@ export type ExtendedValidationIssue = {
 export type ExtendedValidationWarningCode =
   | "UNCONFIRMED_OUTLET_GUID"
   | "UNCONFIRMED_CLOSURE_STATUS"
-  | "OUTLETS_NOT_NORMALIZED";
+  | "OUTLETS_NOT_NORMALIZED"
+  | "EMPLOYEE_DIRECTORY_UNAVAILABLE";
 
 export type ExtendedValidationWarning = {
   code: ExtendedValidationWarningCode | import("./types").ValidationWarningCode;
@@ -124,7 +162,8 @@ export type ExtendedDiagnosticsSummary = {
   nestedOutletCount: number;
   outletsWithoutGuid: number;
   unconfirmedClosureStatusCount: number;
-  unmatchedManagerGuidCount: number;
+  invalidManagerGuidCount: number;
+  employeeDirectoryVerified: false;
   holdingLinkErrors: number;
   recordsWithExtendedFields: number;
   legacyOnlyRecords: number;

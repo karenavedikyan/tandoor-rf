@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { AccessContext } from "../../src/access/types";
 import { toClientExtendedDto } from "../../src/clients/extended-dto";
 import type { ParsedManagerRef, ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
+
+const adminContext: AccessContext = {
+  userId: "admin",
+  role: "admin",
+  status: "active",
+  fullClientBase: true,
+  employeeId: null,
+  teamIds: [],
+};
+
+const managerContext: AccessContext = {
+  userId: "manager",
+  role: "manager",
+  status: "active",
+  fullClientBase: false,
+  employeeId: "22222222-2222-4222-8222-222222222222",
+  teamIds: [],
+};
 
 describe("clients extended dto", () => {
   it("withholds LPR and bonus fields from API dto", () => {
@@ -40,41 +59,132 @@ describe("clients extended dto", () => {
       outletGuidStatus: "not_provided",
       closureStatus: "not_provided",
       distributionAllowed: false,
-      presentInCurrentSnapshot: true,
     };
 
-    const dto = toClientExtendedDto({
-      is_holding: true,
-      extended_format_version: "extended_v1",
-      extended_source_sha256: "abc",
-      extended_snapshot: {
-        sourceSha256: "abc",
-        regionalManager: { guid: null, name: "", state: "unassigned" } satisfies ParsedManagerRef,
-        hardwareManager: { guid: null, name: "", state: "unassigned" },
-        headOfSales: { guid: null, name: "", state: "unassigned" },
-        retailOutlets: [outlet],
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" } satisfies ParsedManagerRef,
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [outlet],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
       },
-    });
+      adminContext,
+    );
 
     assert.ok(dto);
     assert.equal(dto!.sensitiveFieldsWithheld, true);
+    assert.equal(dto!.retailOutletsAccess, "granted");
+    assert.equal(dto!.retailOutlets.length, 1);
     const serialized = JSON.stringify(dto);
     assert.doesNotMatch(serialized, /Secret|secret@x|conditions_bonus|bonus_tandoor/i);
   });
 
-  it("labels unmatched manager separately from unassigned", () => {
-    const dto = toClientExtendedDto({
-      is_holding: false,
-      extended_format_version: "extended_v1",
-      extended_source_sha256: "abc",
-      extended_snapshot: {
-        regionalManager: { guid: "99999999-9999-4999-8999-999999999999", name: "Unknown Person", state: "unmatched" },
-        hardwareManager: { guid: null, name: "", state: "unassigned" },
-        headOfSales: { guid: null, name: "", state: "unassigned" },
-        retailOutlets: [],
+  it("denies nested outlets for manager without fullClientBase", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [
+            {
+              ordinal: 0,
+              holdingName: "H",
+              warehouse: null,
+              address: { storeAddress: "secret", deliveryAddress: "", routeDirection: "" },
+              loading: {
+                loadingOnMonday: null,
+                loadingOnTuesday: null,
+                loadingOnWednesday: null,
+                loadingOnThursday: null,
+                loadingOnFriday: null,
+                loadingOnSaturday: null,
+                loadingOnSunday: null,
+                loadingTime: null,
+              },
+              managers: {
+                manager: { guid: null, name: "", state: "unassigned" },
+                regionalManager: { guid: null, name: "", state: "unassigned" },
+                hardwareManager: { guid: null, name: "", state: "unassigned" },
+                headOfSales: { guid: null, name: "", state: "unassigned" },
+              },
+              contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+              lpr: {
+                name: "",
+                post: "",
+                dateOfBirth: null,
+                phone: "",
+                email: "",
+                bonus: "",
+                conditionsBonus: "",
+              },
+              additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+              outletGuidStatus: "not_provided",
+              closureStatus: "not_provided",
+              distributionAllowed: false,
+            },
+          ],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
       },
-    });
-    assert.equal(dto!.managers.regionalManager.assignmentLabel, "Unknown Person · Сотрудник не сопоставлен");
+      managerContext,
+    );
+
+    assert.equal(dto!.retailOutletsAccess, "denied");
+    assert.equal(dto!.retailOutlets.length, 0);
+    assert.equal(dto!.retailOutletHistoryCount, 0);
+    assert.doesNotMatch(JSON.stringify(dto), /secret/);
+  });
+
+  it("labels directory-unverified manager separately from unassigned", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: false,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          regionalManager: {
+            guid: "99999999-9999-4999-8999-999999999999",
+            name: "Unknown Person",
+            state: "directory_unverified",
+          },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [],
+          retailOutletHistory: [],
+        },
+      },
+      adminContext,
+    );
+    assert.match(
+      dto!.managers.regionalManager.assignmentLabel,
+      /Unknown Person · Справочник 1С не проверен/,
+    );
     assert.equal(dto!.managers.hardwareManager.assignmentLabel, "Не назначен");
   });
 });
