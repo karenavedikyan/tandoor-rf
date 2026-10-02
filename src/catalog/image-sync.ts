@@ -79,10 +79,6 @@ class SourceByteBudget {
     return this.maxBytes - this.report.sourceBytesRead;
   }
 
-  effectiveLimit(requested: number): number {
-    return Math.min(requested, this.remaining());
-  }
-
   record(bytesRead: number): void {
     recordSourceBytesRead(this.report, bytesRead);
   }
@@ -97,20 +93,60 @@ function recordSourceBytesRead(report: CatalogImageSyncReport, bytesRead: number
   report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
 }
 
+async function statSourceFileSize(
+  absoluteSource: string,
+): Promise<{ ok: true; size: number } | { ok: false; message: string }> {
+  try {
+    const stat = await fs.stat(absoluteSource);
+    if (!stat.isFile()) {
+      return { ok: false, message: "Source is not a regular file." };
+    }
+    if (stat.size <= 0) {
+      return { ok: false, message: "Empty file." };
+    }
+    return { ok: true, size: stat.size };
+  } catch {
+    return { ok: false, message: "Unable to read source file." };
+  }
+}
+
+function classifySourceRead(
+  fileSize: number,
+  budget: SourceByteBudget,
+  perFileMaxBytes: number,
+): SourceReadOutcome | { ok: true; limit: number } {
+  if (fileSize > perFileMaxBytes) {
+    return { ok: false, reason: "error", message: "Image exceeds size limit." };
+  }
+  if (fileSize > budget.remaining()) {
+    return { ok: false, reason: "budget_exhausted" };
+  }
+  return { ok: true, limit: fileSize };
+}
+
 async function readSourceFile(
   absoluteSource: string,
-  requestedLimit: number,
   budget: SourceByteBudget,
   maxRetries: number,
+  knownFileSize?: number,
 ): Promise<SourceReadOutcome> {
-  const limit = budget.effectiveLimit(requestedLimit);
-  if (limit <= 0) {
-    return { ok: false, reason: "budget_exhausted" };
+  let fileSize = knownFileSize;
+  if (fileSize === undefined) {
+    const statResult = await statSourceFileSize(absoluteSource);
+    if (!statResult.ok) {
+      return { ok: false, reason: "error", message: statResult.message };
+    }
+    fileSize = statResult.size;
+  }
+
+  const planned = classifySourceRead(fileSize, budget, getMaxImageBytes());
+  if (!("limit" in planned)) {
+    return planned;
   }
 
   try {
     const buffer = await withRetries(
-      () => readBoundedFile(absoluteSource, limit),
+      () => readBoundedFile(absoluteSource, planned.limit),
       maxRetries,
       (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
     );
@@ -228,8 +264,7 @@ async function shouldSkipReadyAsset(
     return { outcome: "continue" };
   }
 
-  const boundedLimit = Math.min(getMaxImageBytes(), stat.size);
-  const readResult = await readSourceFile(absoluteSource, boundedLimit, budget, maxRetries);
+  const readResult = await readSourceFile(absoluteSource, budget, maxRetries, stat.size);
   if (readResult.ok === false) {
     if (readResult.reason === "budget_exhausted") {
       return { outcome: "budget_exhausted" };
@@ -322,19 +357,12 @@ async function isStalePublication(
   const absoluteSource = await resolveSafeSourcePath(sourceDir, input.sourcePath);
   if (!absoluteSource) return "stale";
 
-  let stat;
-  try {
-    stat = await fs.stat(absoluteSource);
-  } catch {
+  const statResult = await statSourceFileSize(absoluteSource);
+  if (!statResult.ok) {
     return "stale";
   }
 
-  const readResult = await readSourceFile(
-    absoluteSource,
-    Math.min(stat.size, getMaxImageBytes()),
-    budget,
-    maxRetries,
-  );
+  const readResult = await readSourceFile(absoluteSource, budget, maxRetries, statResult.size);
   if (readResult.ok === false) {
     if (readResult.reason === "budget_exhausted") {
       return "budget_exhausted";
@@ -605,7 +633,7 @@ export async function runCatalogImageSync(
         continue;
       }
 
-      const readResult = await readSourceFile(absoluteSource, perFileMaxBytes, sourceBudget, maxRetries);
+      const readResult = await readSourceFile(absoluteSource, sourceBudget, maxRetries);
       if (readResult.ok === false) {
         if (readResult.reason === "budget_exhausted") {
           report.stoppedByLimit = true;

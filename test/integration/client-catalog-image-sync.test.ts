@@ -50,6 +50,28 @@ async function buildSameSizeColorPair(): Promise<{ red: Buffer; blue: Buffer }> 
 
 let RED_PNG = Buffer.alloc(0);
 let BLUE_PNG = Buffer.alloc(0);
+let PNG_102_RED = Buffer.alloc(0);
+let PNG_102_BLUE = Buffer.alloc(0);
+
+async function build102BytePngPair(): Promise<{ red: Buffer; blue: Buffer }> {
+  const red = await sharp({
+    create: { width: 3, height: 1, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
+  const blue = await sharp({
+    create: { width: 3, height: 1, channels: 4, background: { r: 0, g: 0, b: 255, alpha: 1 } },
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
+  assert.equal(red.length, blue.length);
+  assert.equal(red.length, 102);
+  const redPreview = await processImageToPreview(red);
+  const bluePreview = await processImageToPreview(blue);
+  assert.equal(redPreview.ok, true);
+  assert.equal(bluePreview.ok, true);
+  return { red, blue };
+}
 
 async function countStorageFiles(storageRoot: string): Promise<number> {
   let count = 0;
@@ -126,6 +148,9 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
     const pair = await buildSameSizeColorPair();
     RED_PNG = pair.red;
     BLUE_PNG = pair.blue;
+    const pair102 = await build102BytePngPair();
+    PNG_102_RED = pair102.red;
+    PNG_102_BLUE = pair102.blue;
 
     databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl);
@@ -453,6 +478,200 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
       const afterApply = await snapshotQueueState(client, versionId, storageDir);
       assert.deepEqual(afterApply.assets, beforeDry.assets);
       assert.equal(afterApply.cursor, beforeDry.cursor);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("stops on non-divisible remaining budget without marking the next file failed", async () => {
+    const fileBytes = PNG_102_RED.length;
+    assert.equal(fileBytes, 102);
+    const maxBytes = 153;
+
+    await prepareDatabase(databaseUrl);
+    const { versionId } = await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки>
+      <Картинка>images/edge-a.png</Картинка>
+      <Картинка>images/edge-b.png</Картинка>
+    </Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "images/edge-a.png"), PNG_102_RED);
+    await fs.writeFile(path.join(sourceDir, "images/edge-b.png"), PNG_102_BLUE);
+
+    const client = await pool.connect();
+    try {
+      const first = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes });
+      assert.equal(first.filesPrepared, 1);
+      assert.equal(first.filesFailed, 0);
+      assert.equal(first.stoppedByLimit, true);
+      assert.equal(first.queueComplete, false);
+      assert.equal(first.sourceBytesRead, fileBytes);
+      assert.equal(
+        (
+          await client.query<{ source_path: string }>(
+            `SELECT source_path FROM onec_catalog_image_assets WHERE status = 'ready'`,
+          )
+        ).rowCount,
+        1,
+      );
+
+      const cursor = await client.query<{ next_source_path: string }>(
+        `SELECT next_source_path FROM onec_catalog_image_sync_cursor WHERE catalog_version_id = $1::uuid`,
+        [versionId],
+      );
+      assert.equal(cursor.rows[0]!.next_source_path, "images/edge-b.png");
+
+      const second = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes: 4096 });
+      assert.equal(second.filesPrepared, 1);
+      assert.equal(second.filesFailed, 0);
+      assert.equal(second.queueComplete, true);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("stops verified skip on non-divisible budget without failed queue outcome", async () => {
+    const fileBytes = PNG_102_RED.length;
+    const maxBytes = 153;
+
+    await prepareDatabase(databaseUrl);
+    const { versionId } = await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки>
+      <Картинка>images/skip-a.png</Картинка>
+      <Картинка>images/skip-b.png</Картинка>
+    </Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "images/skip-a.png"), PNG_102_RED);
+    await fs.writeFile(path.join(sourceDir, "images/skip-b.png"), PNG_102_BLUE);
+
+    const client = await pool.connect();
+    try {
+      const seeded = await runCatalogImageSync(client, { apply: true, maxFiles: 2, maxBytes: 4096 });
+      assert.equal(seeded.filesPrepared, 2);
+
+      const limited = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes });
+      assert.equal(limited.filesSkipped, 1);
+      assert.equal(limited.filesFailed, 0);
+      assert.equal(limited.stoppedByLimit, true);
+      assert.equal(limited.queueComplete, false);
+      assert.equal(limited.sourceBytesRead, fileBytes);
+
+      const failedQueue = await client.query(
+        `SELECT 1 FROM onec_catalog_image_sync_queue
+         WHERE catalog_version_id = $1::uuid AND source_path = 'images/skip-b.png' AND last_outcome = 'failed'`,
+        [versionId],
+      );
+      assert.equal(failedQueue.rowCount, 0);
+
+      const cursor = await client.query<{ next_source_path: string }>(
+        `SELECT next_source_path FROM onec_catalog_image_sync_cursor WHERE catalog_version_id = $1::uuid`,
+        [versionId],
+      );
+      assert.equal(cursor.rows[0]!.next_source_path, "images/skip-b.png");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("does not mark file failed when publish stale-check exceeds remaining budget", async () => {
+    await prepareDatabase(databaseUrl);
+    await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки><Картинка>images/publish-budget.png</Картинка></Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    const imagePath = path.join(sourceDir, "images/publish-budget.png");
+    await fs.writeFile(imagePath, PNG_102_RED);
+
+    const client = await pool.connect();
+    try {
+      const seeded = await runCatalogImageSync(client, { apply: true, maxFiles: 1, maxBytes: 4096 });
+      assert.equal(seeded.filesPrepared, 1);
+
+      await fs.writeFile(imagePath, PNG_102_BLUE);
+      const limited = await runCatalogImageSync(client, {
+        apply: true,
+        maxFiles: 1,
+        maxBytes: PNG_102_BLUE.length,
+      });
+      assert.equal(limited.filesFailed, 0);
+      assert.equal(limited.stoppedByLimit, true);
+      assert.equal(limited.queueComplete, false);
+      assert.doesNotMatch(
+        limited.errors.map((item) => item.message).join(" "),
+        /exceeds size limit|Unsupported|corrupted/i,
+      );
+
+      const row = await client.query<{ source_sha256: string }>(
+        `SELECT source_sha256 FROM onec_catalog_image_assets WHERE source_path = 'images/publish-budget.png'`,
+      );
+      assert.equal(row.rows[0]!.source_sha256, computeSourceSha256(PNG_102_RED));
+    } finally {
+      client.release();
+    }
+  });
+
+  it("keeps dry-run queue isolated when non-divisible budget stops mid-run", async () => {
+    const maxBytes = 153;
+
+    await prepareDatabase(databaseUrl);
+    const { versionId } = await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки>
+      <Картинка>images/dry-edge-a.png</Картинка>
+      <Картинка>images/dry-edge-b.png</Картинка>
+    </Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "images/dry-edge-a.png"), PNG_102_RED);
+    await fs.writeFile(path.join(sourceDir, "images/dry-edge-b.png"), PNG_102_BLUE);
+
+    const client = await pool.connect();
+    try {
+      const before = await snapshotQueueState(client, versionId, storageDir);
+      const dry = await runCatalogImageSync(client, { apply: false, maxFiles: 5, maxBytes });
+      assert.equal(dry.filesPrepared, 1);
+      assert.equal(dry.filesFailed, 0);
+      assert.equal(dry.stoppedByLimit, true);
+      assert.equal(dry.queueComplete, false);
+
+      const after = await snapshotQueueState(client, versionId, storageDir);
+      assert.deepEqual(after.assets, before.assets);
+      assert.deepEqual(after.queue, before.queue);
+      assert.equal(after.cursor, before.cursor);
+      assert.equal(after.storageCount, before.storageCount);
     } finally {
       client.release();
     }
