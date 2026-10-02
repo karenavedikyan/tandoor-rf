@@ -59,8 +59,66 @@ type AssetRow = {
 
 const TRANSIENT_ERROR_CODES = new Set(["EBUSY", "EMFILE", "ENFILE", "EAGAIN", "ETIMEDOUT"]);
 
+type SourceReadOutcome =
+  | { ok: true; buffer: Buffer }
+  | { ok: false; reason: "budget_exhausted" }
+  | { ok: false; reason: "error"; message: string };
+
+type SkipCheckOutcome =
+  | { outcome: "skip" }
+  | { outcome: "continue" }
+  | { outcome: "budget_exhausted" };
+
+class SourceByteBudget {
+  constructor(
+    private readonly maxBytes: number,
+    private readonly report: CatalogImageSyncReport,
+  ) {}
+
+  remaining(): number {
+    return this.maxBytes - this.report.sourceBytesRead;
+  }
+
+  effectiveLimit(requested: number): number {
+    return Math.min(requested, this.remaining());
+  }
+
+  record(bytesRead: number): void {
+    recordSourceBytesRead(this.report, bytesRead);
+  }
+}
+
 export function computeSourceSha256(sourceBuffer: Buffer): string {
   return createHash("sha256").update(sourceBuffer).digest("hex");
+}
+
+function recordSourceBytesRead(report: CatalogImageSyncReport, bytesRead: number): void {
+  report.sourceBytesRead += bytesRead;
+  report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
+}
+
+async function readSourceFile(
+  absoluteSource: string,
+  requestedLimit: number,
+  budget: SourceByteBudget,
+  maxRetries: number,
+): Promise<SourceReadOutcome> {
+  const limit = budget.effectiveLimit(requestedLimit);
+  if (limit <= 0) {
+    return { ok: false, reason: "budget_exhausted" };
+  }
+
+  try {
+    const buffer = await withRetries(
+      () => readBoundedFile(absoluteSource, limit),
+      maxRetries,
+      (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
+    );
+    budget.record(buffer.length);
+    return { ok: true, buffer };
+  } catch (error) {
+    return { ok: false, reason: "error", message: sanitizeImageSyncErrorMessage(error) };
+  }
 }
 
 function parseLimit(raw: unknown, fallback: number): number | null {
@@ -151,31 +209,37 @@ async function shouldSkipReadyAsset(
   sourceDir: string,
   sourcePath: string,
   row: AssetRow,
-  readLimit: number,
-): Promise<boolean> {
-  if (!row.source_sha256) return false;
-  if (!(await isAssetStorageReady(row))) return false;
+  budget: SourceByteBudget,
+  maxRetries: number,
+): Promise<SkipCheckOutcome> {
+  if (!row.source_sha256) return { outcome: "continue" };
+  if (!(await isAssetStorageReady(row))) return { outcome: "continue" };
 
   const absoluteSource = await resolveSafeSourcePath(sourceDir, sourcePath);
-  if (!absoluteSource) return false;
+  if (!absoluteSource) return { outcome: "continue" };
 
   let stat;
   try {
     stat = await fs.stat(absoluteSource);
   } catch {
-    return false;
+    return { outcome: "continue" };
   }
   if (row.source_byte_size !== null && stat.size !== Number(row.source_byte_size)) {
-    return false;
+    return { outcome: "continue" };
   }
 
-  try {
-    const boundedLimit = Math.min(readLimit, getMaxImageBytes(), stat.size);
-    const buffer = await readBoundedFile(absoluteSource, boundedLimit);
-    return computeSourceSha256(buffer) === row.source_sha256;
-  } catch {
-    return false;
+  const boundedLimit = Math.min(getMaxImageBytes(), stat.size);
+  const readResult = await readSourceFile(absoluteSource, boundedLimit, budget, maxRetries);
+  if (readResult.ok === false) {
+    if (readResult.reason === "budget_exhausted") {
+      return { outcome: "budget_exhausted" };
+    }
+    return { outcome: "continue" };
   }
+
+  return computeSourceSha256(readResult.buffer) === row.source_sha256
+    ? { outcome: "skip" }
+    : { outcome: "continue" };
 }
 
 function rotatePaths(paths: string[], startPath: string | null): string[] {
@@ -247,24 +311,38 @@ async function isStalePublication(
   client: PoolClient,
   sourceDir: string,
   input: { sourcePath: string; sourceSha256: string },
-): Promise<boolean> {
+  budget: SourceByteBudget,
+  maxRetries: number,
+): Promise<"fresh" | "stale" | "budget_exhausted"> {
   const existing = await loadExistingAsset(client, input.sourcePath);
   if (!existing?.source_sha256 || existing.source_sha256 === input.sourceSha256) {
-    return false;
+    return "fresh";
   }
 
   const absoluteSource = await resolveSafeSourcePath(sourceDir, input.sourcePath);
-  if (!absoluteSource) return true;
+  if (!absoluteSource) return "stale";
 
+  let stat;
   try {
-    const stat = await fs.stat(absoluteSource);
-    const boundedLimit = Math.min(stat.size, getMaxImageBytes());
-    const buffer = await readBoundedFile(absoluteSource, boundedLimit);
-    const diskHash = computeSourceSha256(buffer);
-    return diskHash !== input.sourceSha256;
+    stat = await fs.stat(absoluteSource);
   } catch {
-    return true;
+    return "stale";
   }
+
+  const readResult = await readSourceFile(
+    absoluteSource,
+    Math.min(stat.size, getMaxImageBytes()),
+    budget,
+    maxRetries,
+  );
+  if (readResult.ok === false) {
+    if (readResult.reason === "budget_exhausted") {
+      return "budget_exhausted";
+    }
+    return "stale";
+  }
+
+  return computeSourceSha256(readResult.buffer) === input.sourceSha256 ? "fresh" : "stale";
 }
 
 async function publishAsset(
@@ -321,21 +399,28 @@ async function publishAssetUnderLock(
   client: PoolClient,
   sourceDir: string,
   input: Parameters<typeof publishAsset>[1],
+  budget: SourceByteBudget,
+  maxRetries: number,
   testHooks?: CatalogImageSyncTestHooks,
-): Promise<boolean> {
+): Promise<"published" | "superseded" | "budget_exhausted"> {
   if (testHooks?.beforePublish) {
     await testHooks.beforePublish(input.sourcePath);
   }
   await client.query("BEGIN");
   try {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [input.sourcePath]);
-    if (await isStalePublication(client, sourceDir, input)) {
+    const staleCheck = await isStalePublication(client, sourceDir, input, budget, maxRetries);
+    if (staleCheck === "budget_exhausted") {
       await client.query("ROLLBACK");
-      return false;
+      return "budget_exhausted";
+    }
+    if (staleCheck === "stale") {
+      await client.query("ROLLBACK");
+      return "superseded";
     }
     await publishAsset(client, input);
     await client.query("COMMIT");
-    return true;
+    return "published";
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -453,37 +538,59 @@ export async function runCatalogImageSync(
 
     let verifyOps = 0;
     const maxVerifyOps = Math.max(maxFiles * 4, verifyConcurrency);
+    const sourceBudget = new SourceByteBudget(maxBytes, report);
+    const persistQueue = options.apply;
 
     for (const sourcePath of orderedPaths) {
       report.filesSeen += 1;
 
       if (Date.now() - startedAt >= maxRunMs) {
         report.stoppedByLimit = true;
-        await saveSyncCursor(client, versionId, sourcePath);
+        if (persistQueue) {
+          await saveSyncCursor(client, versionId, sourcePath);
+        }
         break;
       }
-      if (report.sourceBytesRead >= maxBytes) {
+      if (sourceBudget.remaining() <= 0) {
         report.stoppedByLimit = true;
-        await saveSyncCursor(client, versionId, sourcePath);
+        if (persistQueue) {
+          await saveSyncCursor(client, versionId, sourcePath);
+        }
         break;
       }
 
       const existing = assetByPath.get(sourcePath) ?? (await loadExistingAsset(client, sourcePath));
       if (existing && verifyOps < maxVerifyOps) {
         verifyOps += 1;
-        const remainingBudget = maxBytes - report.sourceBytesRead;
-        const verifyLimit = Math.min(perFileMaxBytes, remainingBudget > 0 ? remainingBudget : perFileMaxBytes);
-        if (await shouldSkipReadyAsset(sourceDir, sourcePath, existing, verifyLimit)) {
+        const skipCheck = await shouldSkipReadyAsset(
+          sourceDir,
+          sourcePath,
+          existing,
+          sourceBudget,
+          maxRetries,
+        );
+        if (skipCheck.outcome === "budget_exhausted") {
+          report.stoppedByLimit = true;
+          if (persistQueue) {
+            await saveSyncCursor(client, versionId, sourcePath);
+          }
+          break;
+        }
+        if (skipCheck.outcome === "skip") {
           report.filesSkipped += 1;
-          await recordQueueOutcome(client, versionId, sourcePath, "skipped", null);
-          await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+          if (persistQueue) {
+            await recordQueueOutcome(client, versionId, sourcePath, "skipped", null);
+            await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+          }
           continue;
         }
       }
 
       if (report.filesWorked >= maxFiles) {
         report.stoppedByLimit = true;
-        await saveSyncCursor(client, versionId, sourcePath);
+        if (persistQueue) {
+          await saveSyncCursor(client, versionId, sourcePath);
+        }
         break;
       }
 
@@ -491,37 +598,32 @@ export async function runCatalogImageSync(
       if (!absoluteSource) {
         report.filesFailed += 1;
         report.errors.push({ sourcePath, message: "Unsafe or missing source path." });
-        await recordQueueOutcome(client, versionId, sourcePath, "failed", "Unsafe or missing source path.");
-        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        if (persistQueue) {
+          await recordQueueOutcome(client, versionId, sourcePath, "failed", "Unsafe or missing source path.");
+          await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        }
         continue;
       }
 
-      const remainingBudget = maxBytes - report.sourceBytesRead;
-      const readLimit = Math.min(perFileMaxBytes, remainingBudget);
-      if (readLimit <= 0) {
-        report.stoppedByLimit = true;
-        await saveSyncCursor(client, versionId, sourcePath);
-        break;
-      }
-
-      let sourceBuffer: Buffer;
-      try {
-        sourceBuffer = await withRetries(
-          () => readBoundedFile(absoluteSource, readLimit),
-          maxRetries,
-          (error) => TRANSIENT_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? ""),
-        );
-        report.sourceBytesRead += sourceBuffer.length;
-        report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
-      } catch (error) {
+      const readResult = await readSourceFile(absoluteSource, perFileMaxBytes, sourceBudget, maxRetries);
+      if (readResult.ok === false) {
+        if (readResult.reason === "budget_exhausted") {
+          report.stoppedByLimit = true;
+          if (persistQueue) {
+            await saveSyncCursor(client, versionId, sourcePath);
+          }
+          break;
+        }
         report.filesFailed += 1;
-        const message = sanitizeImageSyncErrorMessage(error);
-        report.errors.push({ sourcePath, message });
-        await recordQueueOutcome(client, versionId, sourcePath, "failed", message);
-        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        report.errors.push({ sourcePath, message: readResult.message });
+        if (persistQueue) {
+          await recordQueueOutcome(client, versionId, sourcePath, "failed", readResult.message);
+          await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        }
         continue;
       }
 
+      const sourceBuffer = readResult.buffer;
       report.filesWorked += 1;
 
       if (options.testHooks?.afterSourceRead) {
@@ -533,8 +635,10 @@ export async function runCatalogImageSync(
       if (!processed.ok) {
         report.filesFailed += 1;
         report.errors.push({ sourcePath, message: processed.message });
-        await recordQueueOutcome(client, versionId, sourcePath, "failed", processed.message);
-        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        if (persistQueue) {
+          await recordQueueOutcome(client, versionId, sourcePath, "failed", processed.message);
+          await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
+        }
         continue;
       }
 
@@ -546,8 +650,6 @@ export async function runCatalogImageSync(
 
       if (!options.apply) {
         report.filesPrepared += 1;
-        await recordQueueOutcome(client, versionId, sourcePath, "ready", null);
-        await saveSyncCursor(client, versionId, nextPathInOrder(sortedPaths, sourcePath));
         continue;
       }
 
@@ -561,7 +663,7 @@ export async function runCatalogImageSync(
         report.previewBytesWritten += processed.byteSize;
         report.bytesProcessed = report.sourceBytesRead + report.previewBytesWritten;
 
-        const published = await publishAssetUnderLock(
+        const publishResult = await publishAssetUnderLock(
           client,
           sourceDir,
           {
@@ -575,12 +677,25 @@ export async function runCatalogImageSync(
             height: processed.height,
             sourceByteSize: sourceBuffer.length,
           },
+          sourceBudget,
+          maxRetries,
           options.testHooks,
         );
 
-        if (!published) {
+        if (publishResult === "budget_exhausted") {
+          report.stoppedByLimit = true;
+          await saveSyncCursor(client, versionId, sourcePath);
+          break;
+        }
+        if (publishResult === "superseded") {
           report.filesSkipped += 1;
-          await recordQueueOutcome(client, versionId, sourcePath, "skipped", "Superseded by newer publication.");
+          await recordQueueOutcome(
+            client,
+            versionId,
+            sourcePath,
+            "skipped",
+            "Superseded by newer publication.",
+          );
         } else if (needsRestore) {
           report.filesRestored += 1;
           await recordQueueOutcome(client, versionId, sourcePath, "ready", null);

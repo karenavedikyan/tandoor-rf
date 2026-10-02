@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Pool, type PoolClient } from "pg";
+import sharp from "sharp";
+import { processImageToPreview } from "../../src/catalog/image-storage";
 import { computeSourceSha256, runCatalogImageSync } from "../../src/catalog/image-sync";
 import { applyCatalogImport } from "../../src/onec-catalog/apply";
 import { parseCatalogSet } from "../../src/onec-catalog/parse-catalog-set";
@@ -15,18 +16,86 @@ import {
 } from "../helpers/onec-catalog-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
-const RED_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2ZkAAAAASUVORK5CYII=",
-  "base64",
-);
-const BLUE_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBASbQ9XEAAAAASUVORK5CYII=",
-  "base64",
-);
 const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+
+async function buildSameSizeColorPair(): Promise<{ red: Buffer; blue: Buffer }> {
+  const red = await sharp({
+    create: { width: 1, height: 1, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
+  const blue = await sharp({
+    create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 255, alpha: 1 } },
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
+
+  assert.equal(red.length, blue.length);
+  assert.notDeepEqual(red, blue);
+
+  const redPreview = await processImageToPreview(red);
+  const bluePreview = await processImageToPreview(blue);
+  assert.equal(redPreview.ok, true);
+  assert.equal(bluePreview.ok, true);
+  assert.notEqual(
+    redPreview.ok && bluePreview.ok ? redPreview.contentSha256 : "",
+    bluePreview.ok ? bluePreview.contentSha256 : "",
+  );
+
+  return { red, blue };
+}
+
+let RED_PNG = Buffer.alloc(0);
+let BLUE_PNG = Buffer.alloc(0);
+
+async function countStorageFiles(storageRoot: string): Promise<number> {
+  let count = 0;
+  async function walk(dir: string): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else {
+        count += 1;
+      }
+    }
+  }
+  try {
+    await walk(storageRoot);
+  } catch {
+    return 0;
+  }
+  return count;
+}
+
+async function snapshotQueueState(
+  client: PoolClient,
+  versionId: string,
+  storageRoot: string,
+) {
+  const assets = await client.query(
+    `SELECT source_path, status, source_sha256 FROM onec_catalog_image_assets ORDER BY source_path`,
+  );
+  const cursor = await client.query(
+    `SELECT next_source_path FROM onec_catalog_image_sync_cursor WHERE catalog_version_id = $1::uuid`,
+    [versionId],
+  );
+  const queue = await client.query(
+    `SELECT source_path, last_outcome FROM onec_catalog_image_sync_queue WHERE catalog_version_id = $1::uuid ORDER BY source_path`,
+    [versionId],
+  );
+  const storageCount = await countStorageFiles(storageRoot);
+  return {
+    assets: assets.rows,
+    cursor: cursor.rows[0]?.next_source_path ?? null,
+    queue: queue.rows,
+    storageCount,
+  };
+}
 
 async function applyDistributionXml(
   databaseUrl: string,
@@ -54,6 +123,10 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
   let pool: Pool;
 
   before(async () => {
+    const pair = await buildSameSizeColorPair();
+    RED_PNG = pair.red;
+    BLUE_PNG = pair.blue;
+
     databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl);
     await prepareDatabase(databaseUrl);
@@ -242,6 +315,8 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
       );
       assert.equal(finalRow.rows[0]!.source_sha256, computeSourceSha256(BLUE_PNG));
     } finally {
+      releaseSourceRead?.();
+      releasePublish?.();
       clientA.release();
       clientB.release();
     }
@@ -323,6 +398,104 @@ describe("client catalog image sync integration", { concurrency: false }, () => 
         `SELECT source_path FROM onec_catalog_image_assets WHERE status = 'ready' AND source_path = 'images/v2-only.png'`,
       );
       assert.equal(row.rowCount, 1);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("does not mutate assets, queue, cursor or storage during dry-run", async () => {
+    await prepareDatabase(databaseUrl);
+    const { versionId } = await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки>
+      <Картинка>images/dry-missing.png</Картинка>
+      <Картинка>images/dry-a.png</Картинка>
+      <Картинка>images/dry-b.png</Картинка>
+    </Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "images/dry-a.png"), VALID_PNG);
+    await fs.writeFile(path.join(sourceDir, "images/dry-b.png"), VALID_PNG);
+
+    const client = await pool.connect();
+    try {
+      const applyFirst = await runCatalogImageSync(client, { apply: true, maxFiles: 2 });
+      assert.equal(applyFirst.filesPrepared, 2);
+      const beforeDry = await snapshotQueueState(client, versionId, storageDir);
+
+      const dry = await runCatalogImageSync(client, {
+        apply: false,
+        maxFiles: 5,
+        maxBytes: VALID_PNG.length,
+      });
+      assert.equal(dry.mode, "dry_run");
+      assert.equal(dry.filesFailed, 1);
+      assert.equal(dry.filesSkipped, 1);
+      assert.equal(dry.stoppedByLimit, true);
+      assert.equal(dry.sourceBytesRead, VALID_PNG.length);
+
+      const afterDry = await snapshotQueueState(client, versionId, storageDir);
+      assert.deepEqual(afterDry.assets, beforeDry.assets);
+      assert.deepEqual(afterDry.queue, beforeDry.queue);
+      assert.equal(afterDry.cursor, beforeDry.cursor);
+      assert.equal(afterDry.storageCount, beforeDry.storageCount);
+
+      const applyAfterDry = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes: 4096 });
+      assert.equal(applyAfterDry.queueComplete, true);
+      assert.equal(applyAfterDry.filesSkipped, 2);
+      const afterApply = await snapshotQueueState(client, versionId, storageDir);
+      assert.deepEqual(afterApply.assets, beforeDry.assets);
+      assert.equal(afterApply.cursor, beforeDry.cursor);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("counts verified skip reads in sourceBytesRead and stops within maxBytes budget", async () => {
+    await prepareDatabase(databaseUrl);
+    await applyDistributionXml(
+      databaseUrl,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<Товары>
+  <Товар Код="p1" Группа="g1" Активность="Y" Название="Product one">
+    <Картинки>
+      <Картинка>images/budget-a.png</Картинка>
+      <Картинка>images/budget-b.png</Картинка>
+      <Картинка>images/budget-c.png</Картинка>
+    </Картинки>
+    <Свойства><Свойство Код="type" Название="Тип товара" Значение="Складская"/></Свойства>
+    <Разделы><Раздел Код="s1"/></Разделы>
+  </Товар>
+</Товары>`,
+    );
+    await fs.mkdir(path.join(sourceDir, "images"), { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "images/budget-a.png"), VALID_PNG);
+    await fs.writeFile(path.join(sourceDir, "images/budget-b.png"), VALID_PNG);
+    await fs.writeFile(path.join(sourceDir, "images/budget-c.png"), VALID_PNG);
+
+    const client = await pool.connect();
+    try {
+      const seeded = await runCatalogImageSync(client, { apply: true, maxFiles: 3 });
+      assert.equal(seeded.filesPrepared, 3);
+
+      const perFileBytes = VALID_PNG.length;
+      const maxBytes = perFileBytes * 2;
+      const limited = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes });
+      assert.equal(limited.stoppedByLimit, true);
+      assert.ok(limited.filesSkipped >= 1);
+      assert.ok(limited.sourceBytesRead > 0);
+      assert.ok(limited.sourceBytesRead <= maxBytes);
+
+      const continued = await runCatalogImageSync(client, { apply: true, maxFiles: 5, maxBytes: 1024 });
+      assert.equal(continued.filesSkipped, 3);
+      assert.equal(continued.queueComplete, true);
     } finally {
       client.release();
     }

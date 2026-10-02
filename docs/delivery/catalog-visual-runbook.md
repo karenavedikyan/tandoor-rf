@@ -45,11 +45,12 @@ npm run onec-catalog-image-sync:local -- --apply
 1. Берутся **только** пути из активного снимка каталога (`catalogVersionId` в отчёте). Курсор и очередь привязаны к `catalog_version_id`; смена снимка начинает новую очередь.
 2. Проверяется безопасный path: относительный путь внутри `CATALOG_IMAGE_SOURCE_DIR`, без `..`, URL/абсолютных путей и symlink за пределы source/storage.
 3. Файл читается с лимитом `min(CATALOG_IMAGE_MAX_BYTES, остаток бюджета прогона)`; **sharp** декодирует JPEG/PNG/WebP/GIF (без анимации/мультистраничных), проверяет размеры/пиксели и генерирует WebP-превью.
-4. Dry-run считает `filesPrepared` без записи в storage/БД assets; журнал прогона всё равно создаётся.
-5. Apply: temp-файл → verify hash/format → atomic rename → upsert в `onec_catalog_image_assets` под `pg_advisory_xact_lock` на `source_path`. Публикация обновляет строку только если `source_sha256` совпадает или ещё не задан (старые записи без отпечатка не считаются неизменными).
-6. Skip готового ассета: storage verify + bounded read исходника + сравнение `source_sha256` (не только `source_byte_size`). Skip не расходует `maxFiles`; ошибки чтения/отсутствия файла **не** блокируют очередь — курсор переходит к следующему пути.
-7. `queueComplete: false` + `stoppedByLimit: true` — нужен следующий прогон; `queueComplete: true` — все пути снимка обработаны или пропущены как ready.
-8. Повреждённые/неподдерживаемые файлы отклоняются без записи в БД. При исключении после частичных публикаций CLI возвращает накопленный отчёт (`status: partial`), а не теряет счётчики.
+4. Dry-run **только рассчитывает** результат: не пишет в `onec_catalog_image_assets`, storage, `onec_catalog_image_sync_cursor` или `onec_catalog_image_sync_queue`. Служебный журнал `onec_catalog_image_sync_runs` (CLI) по-прежнему создаётся. Следующий `--apply` продолжает с того же курсора, что и без dry-run.
+5. Apply: temp-файл → verify hash/format → atomic rename → upsert в `onec_catalog_image_assets` под `pg_advisory_xact_lock` на `source_path`. Перед публикацией повторно читается исходник; устаревшая публикация отклоняется, если на диске уже другой `source_sha256`.
+6. Skip готового ассета: storage verify + bounded read исходника + сравнение `source_sha256`. Чтения исходника (skip, обработка, stale-check) суммируются в `sourceBytesRead` и учитывают `CATALOG_IMAGE_SYNC_MAX_BYTES`; при исчерпании бюджета — `stoppedByLimit`, а не ложный «повреждённый файл». Skip не расходует `maxFiles`; ошибки отсутствия файла **не** блокируют очередь.
+7. Статус `ready` в рабочей очереди означает реально опубликованный и проверенный объект (только `--apply`).
+8. `queueComplete: false` + `stoppedByLimit: true` — нужен следующий прогон; `queueComplete: true` — все пути снимка обработаны или пропущены как ready.
+9. Повреждённые/неподдерживаемые файлы отклоняются без записи в БД. При исключении после частичных публикаций CLI возвращает накопленный отчёт (`status: partial`), а не теряет счётчики.
 
 ## Откат
 
