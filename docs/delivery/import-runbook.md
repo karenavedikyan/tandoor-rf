@@ -11,6 +11,7 @@
 - Секреты — только в env TW; не в Git, не в SQL-заданиях, не в HTTP.
 - **Dry-run по умолчанию.** Apply требует `--expected-sha256` (CLI) или `expected_sha256` в задании БД.
 - Apply **не удаляет** отсутствующих клиентов; уменьшение числа записей блокируется (`RECORD_COUNT_DECREASED`); исчезновение ранее известных GUID при том же count — `GUID_SET_SHRINK`.
+- Расширенный `extended_v1` (холдинг boolean, `retail_outlets`, доп. ответственные): dry-run/apply через **тот же** pipeline; migration `024_onec_clients_extended.sql`. ТТ без постоянного GUID сохраняются как read-only snapshot (`extended_snapshot`), **не** как объекты дистрибуции. Legacy-снимок **не очищает** ранее загруженное расширение.
 - Scheduled exchange: два последовательных чтения с совпадающим SHA; apply использует **проверенные байты**, без третьего скачивания.
 - Параллельный apply — advisory lock (`IMPORT_LOCKED` / `STALE_RUNNING_IMPORT`).
 - Ночная синхронизация **не заменяет** отзыв доступа при увольнении — см. [access-rules.md](./access-rules.md).

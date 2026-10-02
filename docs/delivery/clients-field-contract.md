@@ -86,9 +86,35 @@
 
 ---
 
-## 3. Ожидаемое расширение (файл **не получен** — не утверждённый контракт)
+## 3. Расширенный формат `extended_v1` (R1.2-prep)
 
-Отдельный snapshot/структура от 1С; целевой этап **R1.2**. До получения образца — только перечень **кандидатов** из v1.1/прототипа:
+**Статус реализации:** адаптер, диагностика, read-only хранение и UI — **реализовано и проверено на синтетике** (`test/helpers/onec-clients-extended-fixtures.ts`, migration `024_onec_clients_extended.sql`).  
+**Реальный JSON от 1С:** **не получен** — типы вложенности и пустых значений **не считаются проверенными на live**.  
+**Подтверждения 1С (02.10.2026):** см. таблицу ниже (**согласовано 1С**, не live).
+
+| Поле / группа | Смысл | Импорт | UI/API |
+|---------------|-------|--------|--------|
+| `holding` (boolean, клиент) | карточка — холдинг | validate + apply | карточка «Данные» |
+| `guid_holding` (extended) | связь по GUID; `name_holding` **не обязателен** | validate + apply | как раньше |
+| `guid_regional_manager` / `name_regional_manager` | региональный менеджер | validate + apply | «Данные», отдельно от ТТ |
+| `guid_hardware_manager` / `name_hardware_manager` | менеджер по фурнитуре | validate + apply | «Данные» |
+| `guid_head_of_the_sales_department` / `name_head_of_the_sales_department` | РОП | validate + apply | «Данные» |
+| `retail_outlets[]` | вложенные ТТ (read-only snapshot) | validate + apply JSONB | вкладка «Данные» |
+| `retail_outlets[].holding` (string) | **название** холдинга в точке, ≠ boolean клиента | validate | UI |
+| `retail_outlets[].warehouse` | boolean «используется как склад» | validate | UI |
+| `retail_outlets[].address.*` | адреса и направление маршрута | validate | UI |
+| `retail_outlets[].information_loading.*` | дни приёмки + `loading_time` (начало) | validate | UI; **нет** окончания и дней погрузки |
+| `retail_outlets[].managers.*` | ответственные ТТ; пустой GUID → «Не назначен», **без наследования** | validate + apply | UI |
+| `retail_outlets[].contact_information.*` | контакты магазина/бухгалтерии | validate | UI (whitelist) |
+| `retail_outlets[].LPR_information.*` | ЛПР, бонусы | validate (хранение) | **не публикуется** (deny-by-default) |
+| Постоянный GUID ТТ | — | **не реализовано** | блокер production-import ТТ |
+| Статус закрытой ТТ | — | **не реализовано** | UI: «Статус не передан» |
+
+**Определение версии файла:** `extended_v1`, если **хотя бы одна** запись содержит `holding: boolean` и/или массив `retail_outlets`. Иначе — legacy (8 ключей, прежние правила).
+
+**Запрещено:** синтетические GUID ТТ, наследование пустого ответственного ТТ, `outletConfirmed=true` из-за наличия `retail_outlets`, автоматическое расширение прав из полей ответственных.
+
+### 3.1 Кандидаты без подтверждённого live-образца (прежний перечень)
 
 | Группа | Примеры | Связи | Примечание |
 |--------|---------|-------|------------|
@@ -132,4 +158,6 @@
 | `repeat-snapshot.json` | та же нормализованная запись, что первая в `valid-two-records` | ok (**только** validate; не apply/БД) |
 | `valid-uuid-v5.json` | ненулевой UUID версии 5 | ok |
 
-Тесты: `test/unit/onec-clients-synthetic-fixtures.test.ts`.
+**Extended (синтетика, не live):** `test/helpers/onec-clients-extended-fixtures.ts` — holding + outlets, пустой ответственный ТТ, unmatched manager.
+
+Тесты: `test/unit/onec-clients-synthetic-fixtures.test.ts`, `test/unit/onec-clients-extended-validate.test.ts`, `test/integration/onec-clients-extended-import.test.ts`.

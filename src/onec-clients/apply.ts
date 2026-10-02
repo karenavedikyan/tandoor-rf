@@ -11,6 +11,13 @@ import {
 } from "../onec-exchange/state";
 import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
+import {
+  buildExtendedSnapshotJson,
+  isExtendedApplyPayload,
+  loadExistingExtendedSnapshots,
+  loadKnownEmployeeGuids,
+  resolveExtendedRecordsForApply,
+} from "./extended-apply";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -661,6 +668,15 @@ export async function applyClientsImport(options: {
 
           await queryManaged(managed, "BEGIN");
 
+          const extendedApply = isExtendedApplyPayload(options.payload);
+          const knownEmployees = extendedApply
+            ? await loadKnownEmployeeGuids(managed.client)
+            : new Set<string>();
+          const extendedRecords = resolveExtendedRecordsForApply(options.payload, knownEmployees);
+          const previousExtended = extendedApply
+            ? await loadExistingExtendedSnapshots(managed.client)
+            : new Map();
+
           let newCount = 0;
           let changedCount = 0;
           let unchangedCount = 0;
@@ -676,6 +692,16 @@ export async function applyClientsImport(options: {
               changedCount += 1;
             }
 
+            const extendedRecord = extendedRecords.get(record.guid_client);
+            const previousSnapshot = previousExtended.get(record.guid_client)?.extended_snapshot;
+            const extendedSnapshotJson = extendedRecord
+              ? buildExtendedSnapshotJson(
+                  extendedRecord,
+                  previousSnapshot,
+                  options.payload.sha256,
+                )
+              : null;
+
             await queryManaged(
               managed,
               `
@@ -689,12 +715,24 @@ export async function applyClientsImport(options: {
                   address,
                   telephone,
                   source_sha256,
+                  is_holding,
+                  guid_regional_manager,
+                  name_regional_manager,
+                  guid_hardware_manager,
+                  name_hardware_manager,
+                  guid_head_sales,
+                  name_head_sales,
+                  extended_format_version,
+                  extended_source_sha256,
+                  extended_snapshot,
                   first_imported_at,
                   last_imported_at,
                   updated_at
                 )
                 VALUES (
-                  $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NOW(), NOW(), NOW()
+                  $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                  $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb,
+                  NOW(), NOW(), NOW()
                 )
                 ON CONFLICT (guid_client) DO UPDATE SET
                   name_client = EXCLUDED.name_client,
@@ -705,6 +743,37 @@ export async function applyClientsImport(options: {
                   address = EXCLUDED.address,
                   telephone = EXCLUDED.telephone,
                   source_sha256 = EXCLUDED.source_sha256,
+                  is_holding = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.is_holding
+                    ELSE onec_clients.is_holding
+                  END,
+                  guid_regional_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_regional_manager
+                    ELSE onec_clients.guid_regional_manager
+                  END,
+                  name_regional_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_regional_manager
+                    ELSE onec_clients.name_regional_manager
+                  END,
+                  guid_hardware_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_hardware_manager
+                    ELSE onec_clients.guid_hardware_manager
+                  END,
+                  name_hardware_manager = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_hardware_manager
+                    ELSE onec_clients.name_hardware_manager
+                  END,
+                  guid_head_sales = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.guid_head_sales
+                    ELSE onec_clients.guid_head_sales
+                  END,
+                  name_head_sales = CASE
+                    WHEN EXCLUDED.extended_snapshot IS NOT NULL THEN EXCLUDED.name_head_sales
+                    ELSE onec_clients.name_head_sales
+                  END,
+                  extended_format_version = COALESCE(EXCLUDED.extended_format_version, onec_clients.extended_format_version),
+                  extended_source_sha256 = COALESCE(EXCLUDED.extended_source_sha256, onec_clients.extended_source_sha256),
+                  extended_snapshot = COALESCE(EXCLUDED.extended_snapshot, onec_clients.extended_snapshot),
                   last_imported_at = NOW(),
                   updated_at = CASE
                     WHEN onec_clients.name_client IS DISTINCT FROM EXCLUDED.name_client
@@ -714,6 +783,8 @@ export async function applyClientsImport(options: {
                       OR onec_clients.name_manager IS DISTINCT FROM EXCLUDED.name_manager
                       OR onec_clients.address IS DISTINCT FROM EXCLUDED.address
                       OR onec_clients.telephone IS DISTINCT FROM EXCLUDED.telephone
+                      OR (EXCLUDED.extended_snapshot IS NOT NULL
+                        AND onec_clients.extended_snapshot IS DISTINCT FROM EXCLUDED.extended_snapshot)
                     THEN NOW()
                     ELSE onec_clients.updated_at
                   END
@@ -728,6 +799,16 @@ export async function applyClientsImport(options: {
                 record.address,
                 JSON.stringify(record.telephone),
                 options.payload.sha256,
+                extendedRecord?.isHolding ?? null,
+                extendedRecord?.regionalManager.guid ?? null,
+                extendedRecord?.regionalManager.name ?? "",
+                extendedRecord?.hardwareManager.guid ?? null,
+                extendedRecord?.hardwareManager.name ?? "",
+                extendedRecord?.headOfSales.guid ?? null,
+                extendedRecord?.headOfSales.name ?? "",
+                extendedRecord ? "extended_v1" : null,
+                extendedRecord ? options.payload.sha256 : null,
+                extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
               ],
             );
 
@@ -735,6 +816,11 @@ export async function applyClientsImport(options: {
               throw new Error("Simulated apply failure after record write.");
             }
           }
+
+          const extendedDiagnosticsJson = extendedApply && options.payload.extendedDiagnostics
+            ? JSON.stringify(options.payload.extendedDiagnostics)
+            : null;
+          const sourceFormatVersion = options.payload.sourceFormat ?? "legacy";
 
           await queryManaged(
             managed,
@@ -746,10 +832,12 @@ export async function applyClientsImport(options: {
                 new_count = $2,
                 changed_count = $3,
                 unchanged_count = $4,
-                error_code = NULL
+                error_code = NULL,
+                source_format_version = $5,
+                extended_diagnostics = $6::jsonb
               WHERE id = $1
             `,
-            [phase.runId, newCount, changedCount, unchangedCount],
+            [phase.runId, newCount, changedCount, unchangedCount, sourceFormatVersion, extendedDiagnosticsJson],
           );
 
           if (options.syncExchangeState !== false) {

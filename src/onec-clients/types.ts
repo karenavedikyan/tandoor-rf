@@ -70,6 +70,9 @@ export type ValidatedClientsPayload = {
   records: ParsedClientRecord[];
   warnings: ValidationWarning[];
   warningCount: number;
+  sourceFormat?: import("./extended-types").ClientsSourceFormat;
+  extendedRecords?: import("./extended-types").ParsedExtendedClientRecord[];
+  extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";

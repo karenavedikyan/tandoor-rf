@@ -26,6 +26,10 @@ type ClientRow = {
   address: string;
   telephone: unknown;
   last_imported_at: Date;
+  is_holding: boolean | null;
+  extended_format_version: string | null;
+  extended_source_sha256: string | null;
+  extended_snapshot: unknown;
 };
 
 type CountRow = { count: string };
@@ -151,7 +155,11 @@ export async function getClientByGuid(
         name_manager,
         address,
         telephone,
-        last_imported_at
+        last_imported_at,
+        is_holding,
+        extended_format_version,
+        extended_source_sha256,
+        extended_snapshot
       FROM onec_clients
       ${detailFilter.whereSql}
     `,
