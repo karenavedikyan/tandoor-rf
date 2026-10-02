@@ -1,3 +1,4 @@
+import { validateClientsFileBytes } from "../../src/onec-clients/validate";
 import { buildClientsFileBytes, sampleClient, sampleClientTwo } from "./onec-clients-fixtures";
 
 const HOLDING_GUID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -136,4 +137,9 @@ export const EXTENDED_FIXTURE_GUIDS = {
 
 export function legacyOnlyFileBytes(): Buffer {
   return buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+}
+
+/** Test-only: apply extended snapshots with explicitly confirmed synthetic contract. */
+export function validateClientsForApplyTest(bytes: Buffer) {
+  return validateClientsFileBytes(bytes, { extendedContractVerification: "synthetic_confirmed" });
 }

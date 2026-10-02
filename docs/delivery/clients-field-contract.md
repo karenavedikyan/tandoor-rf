@@ -120,7 +120,13 @@
 
 **Актуальность расширения:** колонки `extended_imported_at`, `extended_freshness_state` (`current` | `preserved_from_previous` | `not_provided_in_snapshot`). После legacy-снимка блок помечается как сохранённый из предыдущей выгрузки.
 
-**Сотрудники 1С:** `directory_unverified` / `directory_unverified_account_linked` — справочник 1С не подтверждён; связь с аккаунтом ЛК не расширяет права. `clientExtendedReady=false` до live JSON от специалиста.
+**Присутствие полей в снимке:** отсутствующий ключ ≠ явное пустое назначение. При apply отсутствующие блоки (`holding`, `retail_outlets`, пары ответственных) **сохраняют** предыдущее рабочее значение и помечаются `preserved_from_previous` / `not_provided_in_snapshot` в `blocks.blockFreshness`. Явный пустой GUID снимает ответственного без наследования (`explicit_empty` → «Не назначен»). Для нового клиента отсутствие поля → «Не передано» (`not_provided`), не «Не назначен».
+
+**Сравнение изменений:** `extendedBusinessDataEqual()` сравнивает только бизнес-проекцию (холдинг, ответственные, `currentRetailOutlets`); SHA, `importedAt`, `retailOutletHistory` и технические флаги не влияют на `changedCount`. История ТТ дополняется только при реальном изменении содержания точек.
+
+**Блокировка apply расширения:** production-путь всегда `extendedContractVerification=unverified`. Расширенный блок **не публикуется** в рабочие колонки/`extended_snapshot`, пока контракт не подтверждён; legacy-поля клиента применяются. Результат apply/CLI содержит `extendedApplied`, `extendedBlockReason`, `extendedBlockedCount`. Тесты используют `validateClientsForApplyTest()` с `synthetic_confirmed`.
+
+**Сотрудники 1С:** в снимке хранится `directory_unverified`; связь с аккаунтом ЛК (`directory_unverified_account_linked`) **разрешается при чтении** по актуальным `user_onec_employee_links` (отзыв связи виден без re-import). Справочник 1С не подтверждён; связь не расширяет права. `clientExtendedReady=false` до live JSON от специалиста.
 
 ### 3.1 Кандидаты без подтверждённого live-образца (прежний перечень)
 
@@ -168,4 +174,4 @@
 
 **Extended (синтетика, не live):** `test/helpers/onec-clients-extended-fixtures.ts` — holding + outlets, пустой ответственный ТТ, directory-unverified manager.
 
-Тесты: `test/unit/onec-clients-extended-validate.test.ts`, `test/unit/onec-clients-extended-strict-validate.test.ts`, `test/unit/onec-clients-extended-snapshot-history.test.ts`, `test/integration/onec-clients-extended-import.test.ts`, `test/integration/clients-extended-access.test.ts`, `test/unit/client-card-extended-render.test.ts`.
+Тесты: `test/unit/onec-clients-extended-validate.test.ts`, `test/unit/onec-clients-extended-strict-validate.test.ts`, `test/unit/onec-clients-extended-presence.test.ts`, `test/unit/onec-clients-extended-snapshot-history.test.ts`, `test/integration/onec-clients-extended-import.test.ts`, `test/integration/clients-extended-access.test.ts`, `test/integration/clients-extended-link-read.test.ts`, `test/unit/clients-extended-dto.test.ts`, `test/unit/client-card-extended-render.test.ts`, `test/browser/client-card-extended.browser.test.ts`.

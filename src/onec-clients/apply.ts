@@ -13,12 +13,13 @@ import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
 import {
   buildExtendedSnapshotJson,
-  extendedSnapshotsEqual,
+  extendedBusinessDataEqual,
   isExtendedApplyPayload,
+  isExtendedContractVerified,
   loadExistingExtendedSnapshots,
-  loadLinkedEmployeeGuids,
   readExtendedSnapshot,
   resolveExtendedRecordsForApply,
+  summarizeExtendedFreshness,
 } from "./extended-apply";
 import type { ExtendedSnapshot } from "./extended-types";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
@@ -31,10 +32,17 @@ export type ApplyCounts = {
   newCount: number;
   changedCount: number;
   unchangedCount: number;
+  extendedBlockedCount?: number;
+};
+
+export type ApplyBlockSummary = {
+  legacyApplied: true;
+  extendedApplied: boolean;
+  extendedBlockReason?: string | null;
 };
 
 export type ApplyResult =
-  | { ok: true; runId: string; counts: ApplyCounts; cleanupWarning?: string }
+  | { ok: true; runId: string; counts: ApplyCounts; blockSummary?: ApplyBlockSummary; cleanupWarning?: string }
   | {
       ok: false;
       code:
@@ -127,9 +135,9 @@ function isImportRecordEqual(
   if (!isBusinessDataEqual(existing, incoming)) {
     return false;
   }
+  const previous = readExtendedSnapshot(previousExtendedSnapshot);
   if (nextExtendedSnapshot) {
-    const previous = readExtendedSnapshot(previousExtendedSnapshot);
-    return extendedSnapshotsEqual(previous, nextExtendedSnapshot);
+    return extendedBusinessDataEqual(previous, nextExtendedSnapshot);
   }
   return true;
 }
@@ -691,16 +699,15 @@ export async function applyClientsImport(options: {
           await queryManaged(managed, "BEGIN");
 
           const extendedApply = isExtendedApplyPayload(options.payload);
-          const linkedEmployees = extendedApply
-            ? await loadLinkedEmployeeGuids(managed.client)
-            : new Set<string>();
-          const extendedRecords = resolveExtendedRecordsForApply(options.payload, linkedEmployees);
+          const contractVerified = isExtendedContractVerified(options.payload);
+          const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);
           const importTimestamp = new Date().toISOString();
 
           let newCount = 0;
           let changedCount = 0;
           let unchangedCount = 0;
+          let extendedBlockedCount = 0;
 
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
@@ -708,14 +715,19 @@ export async function applyClientsImport(options: {
             const extendedRecord = extendedRecords.get(record.guid_client);
             const previousRow = previousExtended.get(record.guid_client);
             const previousSnapshot = previousRow?.extended_snapshot;
-            const extendedSnapshotJson = extendedRecord
-              ? buildExtendedSnapshotJson(
-                  extendedRecord,
-                  previousSnapshot,
-                  options.payload.sha256,
-                  importTimestamp,
-                )
-              : null;
+
+            let extendedSnapshotJson: ExtendedSnapshot | null = null;
+            if (extendedRecord && contractVerified) {
+              extendedSnapshotJson = buildExtendedSnapshotJson(
+                extendedRecord,
+                previousSnapshot,
+                options.payload.sha256,
+                importTimestamp,
+                { contractVerified: true },
+              );
+            } else if (extendedRecord && !contractVerified) {
+              extendedBlockedCount += 1;
+            }
 
             if (!current) {
               newCount += 1;
@@ -728,16 +740,14 @@ export async function applyClientsImport(options: {
             }
 
             const hasPreviousExtended = Boolean(previousRow?.extended_snapshot);
-            const sameExtendedSource =
-              extendedRecord &&
-              previousRow?.extended_source_sha256 === options.payload.sha256;
-            const extendedImportedAt = extendedRecord
-              ? sameExtendedSource && previousRow?.extended_imported_at
-                ? previousRow.extended_imported_at.toISOString()
-                : importTimestamp
+            const freshnessFromSnapshot = extendedSnapshotJson
+              ? summarizeExtendedFreshness(extendedSnapshotJson).extendedFreshnessState
               : null;
-            const extendedFreshnessState = extendedRecord
-              ? "current"
+            const extendedImportedAt = extendedSnapshotJson
+              ? extendedSnapshotJson.importedAt
+              : null;
+            const extendedFreshnessState = extendedSnapshotJson
+              ? freshnessFromSnapshot
               : hasPreviousExtended
                 ? "preserved_from_previous"
                 : null;
@@ -847,15 +857,15 @@ export async function applyClientsImport(options: {
                 record.address,
                 JSON.stringify(record.telephone),
                 options.payload.sha256,
-                extendedRecord?.isHolding ?? null,
-                extendedRecord?.regionalManager.guid ?? null,
-                extendedRecord?.regionalManager.name ?? "",
-                extendedRecord?.hardwareManager.guid ?? null,
-                extendedRecord?.hardwareManager.name ?? "",
-                extendedRecord?.headOfSales.guid ?? null,
-                extendedRecord?.headOfSales.name ?? "",
-                extendedRecord ? "extended_v1" : null,
-                extendedRecord ? options.payload.sha256 : null,
+                extendedSnapshotJson?.isHolding ?? null,
+                extendedSnapshotJson?.regionalManager.guid ?? null,
+                extendedSnapshotJson?.regionalManager.name ?? "",
+                extendedSnapshotJson?.hardwareManager.guid ?? null,
+                extendedSnapshotJson?.hardwareManager.name ?? "",
+                extendedSnapshotJson?.headOfSales.guid ?? null,
+                extendedSnapshotJson?.headOfSales.name ?? "",
+                extendedSnapshotJson ? "extended_v1" : null,
+                extendedSnapshotJson ? options.payload.sha256 : null,
                 extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
                 extendedImportedAt,
                 extendedFreshnessState,
@@ -900,7 +910,12 @@ export async function applyClientsImport(options: {
             });
           }
 
-          phase.counts = { newCount, changedCount, unchangedCount };
+          phase.counts = {
+            newCount,
+            changedCount,
+            unchangedCount,
+            ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
+          };
           phase.commitAttempted = true;
           if (options.testHooks?.failCommit) {
             throw new Error("Simulated commit response loss.");
@@ -924,6 +939,15 @@ export async function applyClientsImport(options: {
             ok: true,
             runId: phase.runId!,
             counts: phase.counts,
+            blockSummary: extendedApply
+              ? {
+                  legacyApplied: true,
+                  extendedApplied: contractVerified,
+                  extendedBlockReason: contractVerified
+                    ? null
+                    : "awaiting_live_json_verification",
+                }
+              : undefined,
             cleanupWarning: postCommitCleanupWarning,
           };
           }

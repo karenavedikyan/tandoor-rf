@@ -1,6 +1,6 @@
 import type { AccessContext } from "../access/types";
 import { telHrefFromPhone } from "./phone";
-import { toClientExtendedDto, type ClientExtendedDto } from "./extended-dto";
+import { toClientExtendedDto, type ClientExtendedDto, type ClientExtendedDtoOptions } from "./extended-dto";
 import { shortUuidLabel } from "./uuid-param";
 
 export type ClientListItemDto = {
@@ -165,7 +165,11 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   };
 }
 
-export function toClientDetail(row: ClientRow, context?: AccessContext): ClientDetailDto {
+export function toClientDetail(
+  row: ClientRow,
+  context?: AccessContext,
+  options?: ClientExtendedDtoOptions,
+): ClientDetailDto {
   const telephones = parseTelephones(row.telephone);
   const nonEmptyPhones = telephones.filter((item) => item.trim().length > 0);
   const extended = toClientExtendedDto(
@@ -178,6 +182,7 @@ export function toClientDetail(row: ClientRow, context?: AccessContext): ClientD
       extended_snapshot: row.extended_snapshot,
     },
     context,
+    options,
   );
   return {
     guid: row.guid_client,

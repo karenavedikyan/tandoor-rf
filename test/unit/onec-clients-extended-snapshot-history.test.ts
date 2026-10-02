@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildExtendedSnapshotJson,
-  extendedSnapshotsEqual,
+  extendedBusinessDataEqual,
   readExtendedSnapshot,
 } from "../../src/onec-clients/extended-apply";
+import type { ExtendedRecordFieldPresence, FieldPresenceState } from "../../src/onec-clients/extended-presence";
 import type { ParsedExtendedClientRecord, ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
 
 function outlet(label: string, ordinal: number): ParsedRetailOutlet {
@@ -46,7 +47,17 @@ function outlet(label: string, ordinal: number): ParsedRetailOutlet {
   };
 }
 
-function record(outlets: ParsedRetailOutlet[]): ParsedExtendedClientRecord {
+function defaultPresence(retailOutlets: FieldPresenceState = "present"): ExtendedRecordFieldPresence {
+  return {
+    holding: "present",
+    retailOutlets,
+    regionalManager: "missing",
+    hardwareManager: "missing",
+    headOfSales: "missing",
+  };
+}
+
+function record(outlets: ParsedRetailOutlet[], retailOutletsPresence: FieldPresenceState = "present"): ParsedExtendedClientRecord {
   return {
     guid_client: "11111111-1111-4111-8111-111111111111",
     name_client: "Client",
@@ -63,8 +74,11 @@ function record(outlets: ParsedRetailOutlet[]): ParsedExtendedClientRecord {
     retailOutlets: outlets,
     recordFormat: "extended_v1",
     hasExtendedManagerFields: false,
+    fieldPresence: defaultPresence(retailOutletsPresence),
   };
 }
+
+const buildOpts = { contractVerified: true as const };
 
 describe("extended snapshot history without ordinal merge", () => {
   it("[A,B] -> [B] keeps B current and archives previous snapshot with A and B", () => {
@@ -73,12 +87,14 @@ describe("extended snapshot history without ordinal merge", () => {
       null,
       "sha-first",
       "2026-01-01T00:00:00.000Z",
+      buildOpts,
     );
     const second = buildExtendedSnapshotJson(
       record([outlet("B", 0)]),
       first,
       "sha-second",
       "2026-01-02T00:00:00.000Z",
+      buildOpts,
     );
 
     assert.equal(second.currentRetailOutlets.length, 1);
@@ -97,12 +113,14 @@ describe("extended snapshot history without ordinal merge", () => {
       null,
       "sha-first",
       "2026-01-01T00:00:00.000Z",
+      buildOpts,
     );
     const second = buildExtendedSnapshotJson(
       record([outlet("B", 0), outlet("A", 1)]),
       first,
       "sha-second",
       "2026-01-02T00:00:00.000Z",
+      buildOpts,
     );
 
     assert.deepEqual(
@@ -121,12 +139,14 @@ describe("extended snapshot history without ordinal merge", () => {
       null,
       "sha-first",
       "2026-01-01T00:00:00.000Z",
+      buildOpts,
     );
     const second = buildExtendedSnapshotJson(
-      record([]),
+      record([], "explicit_empty"),
       first,
       "sha-second",
       "2026-01-02T00:00:00.000Z",
+      buildOpts,
     );
 
     assert.equal(second.currentRetailOutlets.length, 0);
@@ -139,13 +159,15 @@ describe("extended snapshot history without ordinal merge", () => {
       null,
       "sha",
       "2026-01-01T00:00:00.000Z",
+      buildOpts,
     );
     const changed = buildExtendedSnapshotJson(
       record([outlet("A-changed", 0)]),
       null,
       "sha",
       "2026-01-02T00:00:00.000Z",
+      buildOpts,
     );
-    assert.equal(extendedSnapshotsEqual(readExtendedSnapshot(base), changed), false);
+    assert.equal(extendedBusinessDataEqual(readExtendedSnapshot(base), readExtendedSnapshot(changed)), false);
   });
 });

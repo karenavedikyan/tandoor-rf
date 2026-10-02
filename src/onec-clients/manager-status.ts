@@ -1,5 +1,81 @@
+import type { FieldPresenceState } from "./extended-presence";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 import type { ManagerAssignmentState, ParsedManagerRef } from "./extended-types";
+
+export type ManagerFieldParseResult =
+  | { ok: true; ref: ParsedManagerRef; presence: FieldPresenceState }
+  | { ok: false; code: "INVALID_TYPE" | "INVALID_UUID" | "INVALID_MANAGER_PAIR" };
+
+export function parseManagerFieldWithPresence(
+  raw: Record<string, unknown>,
+  guidKey: string,
+  nameKey: string,
+): ManagerFieldParseResult {
+  const guidIn = guidKey in raw;
+  const nameIn = nameKey in raw;
+
+  if (!guidIn && !nameIn) {
+    return {
+      ok: true,
+      presence: "missing",
+      ref: { guid: null, name: "", state: "not_provided" },
+    };
+  }
+
+  const guidRaw = guidIn ? raw[guidKey] : undefined;
+  const nameRaw = nameIn ? raw[nameKey] : undefined;
+
+  if (guidIn && guidRaw === null) {
+    return { ok: false, code: "INVALID_TYPE" };
+  }
+  if (nameIn && nameRaw === null) {
+    return { ok: false, code: "INVALID_TYPE" };
+  }
+
+  let name = "";
+  if (nameIn) {
+    if (typeof nameRaw !== "string") {
+      return { ok: false, code: "INVALID_TYPE" };
+    }
+    name = nameRaw.trim();
+  }
+
+  if (!guidIn) {
+    if (name.length > 0) {
+      return { ok: false, code: "INVALID_MANAGER_PAIR" };
+    }
+    return {
+      ok: true,
+      presence: "missing",
+      ref: { guid: null, name: "", state: "not_provided" },
+    };
+  }
+
+  if (typeof guidRaw !== "string") {
+    return { ok: false, code: "INVALID_TYPE" };
+  }
+
+  const guidTrimmed = guidRaw.trim();
+  if (guidTrimmed.length === 0) {
+    return {
+      ok: true,
+      presence: "explicit_empty",
+      ref: { guid: null, name, state: "unassigned" },
+    };
+  }
+  if (!isValidNonZeroUuid(guidTrimmed)) {
+    return { ok: false, code: "INVALID_UUID" };
+  }
+  return {
+    ok: true,
+    presence: "present",
+    ref: {
+      guid: normalizeUuid(guidTrimmed),
+      name,
+      state: "directory_unverified",
+    },
+  };
+}
 
 export function parseManagerRef(
   guidRaw: unknown,
@@ -53,7 +129,7 @@ export function resolveManagerAccountLinks(
   linkedEmployeeGuids: ReadonlySet<string>,
 ): ParsedManagerRef[] {
   return refs.map((ref) => {
-    if (ref.state === "unassigned" || ref.state === "invalid") {
+    if (ref.state === "not_provided" || ref.state === "unassigned" || ref.state === "invalid") {
       return ref;
     }
     if (!ref.guid) {

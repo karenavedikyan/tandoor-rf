@@ -199,6 +199,7 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
         headOfSales: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
       },
       retailOutlets: outletAccess === "granted" ? [outlet, { ...outlet, ordinal: 1 }] : [],
+      retailOutletsTotalCount: outletAccess === "granted" ? 2 : 0,
       retailOutletsTruncated: false,
       retailOutletsAccess: outletAccess,
       retailOutletHistoryCount: 0,

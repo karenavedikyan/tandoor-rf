@@ -133,6 +133,17 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
   };
 }
 
+async function loadActiveLinkedEmployeeGuids(): Promise<Set<string>> {
+  const result = await query<{ employee_id: string }>(
+    `
+      SELECT employee_id::text
+      FROM user_onec_employee_links
+      WHERE revoked_at IS NULL
+    `,
+  );
+  return new Set(result.rows.map((row) => row.employee_id.toLowerCase()));
+}
+
 export async function getClientByGuid(
   context: AccessContext,
   guid: string,
@@ -145,6 +156,8 @@ export async function getClientByGuid(
   if (detailFilter.whereSql === "WHERE FALSE") {
     return null;
   }
+
+  const linkedEmployeeGuids = await loadActiveLinkedEmployeeGuids();
 
   const result = await query<ClientRow>(
     `
@@ -173,7 +186,7 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row, context);
+  return toClientDetail(row, context, { linkedEmployeeGuids });
 }
 
 export async function canReadClientGuid(

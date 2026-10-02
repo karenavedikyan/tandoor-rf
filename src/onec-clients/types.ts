@@ -67,6 +67,8 @@ export type ParsedClientRecord = {
   telephone: string[];
 };
 
+export type ExtendedContractVerification = "synthetic_confirmed" | "unverified";
+
 export type ValidatedClientsPayload = {
   sha256: string;
   byteSize: number;
@@ -77,6 +79,7 @@ export type ValidatedClientsPayload = {
   sourceFormat?: import("./extended-types").ClientsSourceFormat;
   extendedRecords?: import("./extended-types").ParsedExtendedClientRecord[];
   extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary;
+  extendedContractVerification?: ExtendedContractVerification;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";
@@ -103,6 +106,9 @@ export type ClientsImportResult = {
     newCount?: number;
     changedCount?: number;
     unchangedCount?: number;
+    extendedBlockedCount?: number;
+    extendedApplied?: boolean;
+    extendedBlockReason?: string;
   };
   errorCode?: string;
 };

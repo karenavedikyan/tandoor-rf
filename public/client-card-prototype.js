@@ -40,7 +40,8 @@
     if (!loading.days) return false;
     return loading.days.some(function (d) { return d.value !== null; }) ||
       loading.scheduleState === "all_false" ||
-      loading.scheduleState === "has_selected";
+      loading.scheduleState === "has_selected" ||
+      loading.scheduleState === "partial";
   }
 
   function renderOutletBlock(outlet, index) {
@@ -64,8 +65,22 @@
       "</div>";
   }
 
+  function outletTotalCount(ext, visibleCount) {
+    if (!ext) return visibleCount;
+    if (typeof ext.retailOutletsTotalCount === "number") return ext.retailOutletsTotalCount;
+    return visibleCount;
+  }
+
+  function outletCountLabel(ext, visibleCount) {
+    var total = outletTotalCount(ext, visibleCount);
+    if (ext && ext.retailOutletsTruncated && total > visibleCount) {
+      return visibleCount + " из " + total + " (показаны первые " + visibleCount + ")";
+    }
+    return String(total);
+  }
+
   function renderShopCard(ext, outletCount) {
-    if (!ext || ext.retailOutletsAccess === "denied") {
+    if (ext && ext.retailOutletsAccess === "denied") {
       return field("Торговые точки", "Недоступны для вашей роли", true) +
         field("Место поставки", "") +
         field("Приёмка", "") +
@@ -73,7 +88,7 @@
         field("График / направление", "") +
         '<p class="pc-label">Адрес из обмена показан в контактах. Он не считается автоматически торговой точкой или местом доставки.</p>';
     }
-    if (!ext.retailOutlets || outletCount === 0) {
+    if (!ext || !ext.retailOutlets || outletCount === 0) {
       return field("Торговая точка", "") + field("Место поставки", "") +
         field("Приёмка", "") + field("Контакт приёмки", "") +
         field("График / направление", "") +
@@ -88,7 +103,7 @@
         field("График / направление", outlet.addresses.routeDirection, !!outlet.addresses.routeDirection) +
         field("Склад", outlet.warehouseLabel, outlet.warehouse !== null);
     }
-    return field("Торговые точки", outletCount + " точек в текущем снимке. Подробности — в списке ниже.", true) +
+    return field("Торговые точки", outletCountLabel(ext, outletCount) + " точек в текущем снимке. Подробности — в списке ниже.", true) +
       field("Место поставки", "Выберите торговую точку в списке ниже", true) +
       field("Приёмка", "Зависит от выбранной торговой точки", true) +
       field("Контакт приёмки", "") +
@@ -102,10 +117,11 @@
     var holding = client.holding && client.holding.name;
     var outletAccessDenied = ext && ext.retailOutletsAccess === "denied";
     var outletCount = ext && ext.retailOutlets ? ext.retailOutlets.length : 0;
+    var outletTotal = outletTotalCount(ext, outletCount);
     var structureLabel = outletAccessDenied
       ? "данные торговых точек недоступны"
-      : outletCount > 0
-        ? "Торговые точки: " + outletCount + (ext.retailOutletsTruncated ? "+" : "") + " (без постоянного GUID)"
+      : outletTotal > 0
+        ? "Торговые точки: " + outletCountLabel(ext, outletCount) + " (без постоянного GUID)"
         : "данные не переданы";
     var meta = '<div class="pc-meta"><span class="pc-tag">Источник: 1С</span><span>Холдинг: ' +
       esc(holding || "Не указан") + '</span><span>Менеджер: ' + esc(manager || "Не указан") +
@@ -129,8 +145,8 @@
     var holdingCard = ext && ext.holdingCardLabel ? ext.holdingCardLabel + " · " : "";
     var overviewOutlets = outletAccessDenied
       ? "Торговые точки недоступны для вашей роли"
-      : outletCount > 0
-        ? outletCount + " точек из выгрузки 1С (идентификатор не передан)"
+      : outletTotal > 0
+        ? outletCountLabel(ext, outletCount) + " точек из выгрузки 1С (идентификатор не передан)"
         : "Структура торговых точек не передана";
 
     var stats = '<div class="pc-stats">' + [
@@ -149,7 +165,8 @@
         return card("Торговая точка " + (index + 1), '<div class="pc-pad">' + renderOutletBlock(outlet, index) + "</div>", "1С");
       }).join("");
       if (ext.retailOutletsTruncated) {
-        outletCards += '<p class="pc-pad pc-label pc-unavailable">Показаны первые ' + ext.retailOutlets.length + ' торговых точек. Полный список усечён.</p>';
+        outletCards += '<p class="pc-pad pc-label pc-unavailable">Показаны первые ' + ext.retailOutlets.length +
+          " из " + outletTotalCount(ext, ext.retailOutlets.length) + " торговых точек.</p>";
       }
     }
 

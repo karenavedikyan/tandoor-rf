@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { AccessContext } from "../../src/access/types";
 import { toClientExtendedDto } from "../../src/clients/extended-dto";
 import type { ParsedManagerRef, ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
+import { EXTENDED_FIXTURE_GUIDS } from "../helpers/onec-clients-extended-fixtures";
 
 const adminContext: AccessContext = {
   userId: "admin",
@@ -157,6 +158,128 @@ describe("clients extended dto", () => {
     assert.equal(dto!.retailOutlets.length, 0);
     assert.equal(dto!.retailOutletHistoryCount, 0);
     assert.doesNotMatch(JSON.stringify(dto), /secret/);
+  });
+
+  it("labels not_provided separately from unassigned", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: false,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "not_provided_in_snapshot",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: false,
+          regionalManager: { guid: null, name: "", state: "not_provided" },
+          hardwareManager: { guid: null, name: "", state: "not_provided" },
+          headOfSales: { guid: null, name: "", state: "not_provided" },
+          currentRetailOutlets: [],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+    );
+    assert.equal(dto!.managers.regionalManager.assignmentLabel, "Не передано");
+    assert.equal(dto!.managers.hardwareManager.assignmentLabel, "Не передано");
+  });
+
+  it("resolves account link at read time", () => {
+    const linked = new Set([EXTENDED_FIXTURE_GUIDS.REGIONAL.toLowerCase()]);
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: {
+            guid: EXTENDED_FIXTURE_GUIDS.REGIONAL,
+            name: "Regional Lead",
+            state: "directory_unverified",
+          },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: true, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+      { linkedEmployeeGuids: linked },
+    );
+    assert.equal(dto!.managers.regionalManager.assignmentState, "directory_unverified_account_linked");
+  });
+
+  it("marks partial loading schedule when one day is false and others null", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [
+            {
+              ordinal: 0,
+              holdingName: "H",
+              warehouse: null,
+              address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
+              loading: {
+                loadingOnMonday: false,
+                loadingOnTuesday: null,
+                loadingOnWednesday: null,
+                loadingOnThursday: null,
+                loadingOnFriday: null,
+                loadingOnSaturday: null,
+                loadingOnSunday: null,
+                loadingTime: null,
+              },
+              managers: {
+                manager: { guid: null, name: "", state: "unassigned" },
+                regionalManager: { guid: null, name: "", state: "unassigned" },
+                hardwareManager: { guid: null, name: "", state: "unassigned" },
+                headOfSales: { guid: null, name: "", state: "unassigned" },
+              },
+              contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+              lpr: {
+                name: "",
+                post: "",
+                dateOfBirth: null,
+                phone: "",
+                email: "",
+                bonus: "",
+                conditionsBonus: "",
+              },
+              additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+              outletGuidStatus: "not_provided",
+              closureStatus: "not_provided",
+              distributionAllowed: false,
+            },
+          ],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+    );
+    assert.equal(dto!.retailOutlets[0]?.loading.scheduleState, "partial");
   });
 
   it("labels directory-unverified manager separately from unassigned", () => {

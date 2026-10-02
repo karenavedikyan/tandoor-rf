@@ -1,6 +1,7 @@
 export type ClientsSourceFormat = "legacy" | "extended_v1";
 
 export type ManagerAssignmentState =
+  | "not_provided"
   | "unassigned"
   | "invalid"
   | "directory_unverified"
@@ -79,10 +80,19 @@ export type RetailOutletHistoryEntry = {
   retailOutlets: ParsedRetailOutlet[];
 };
 
+export type ExtendedBlockFreshness = {
+  holding: ExtendedFreshnessState;
+  regionalManager: ExtendedFreshnessState;
+  hardwareManager: ExtendedFreshnessState;
+  headOfSales: ExtendedFreshnessState;
+  retailOutlets: ExtendedFreshnessState;
+};
+
 export type ExtendedSnapshotBlocks = {
   clientExtendedReady: boolean;
   outletNormalizedReady: false;
   clientExtendedBlockedReason?: string | null;
+  blockFreshness?: ExtendedBlockFreshness;
 };
 
 export type ExtendedSnapshot = {
@@ -119,6 +129,7 @@ export type ParsedExtendedClientRecord = {
   retailOutlets: ParsedRetailOutlet[];
   recordFormat: "legacy" | "extended_v1";
   hasExtendedManagerFields: boolean;
+  fieldPresence: import("./extended-presence").ExtendedRecordFieldPresence;
 };
 
 export type ExtendedValidationIssueCode =
@@ -183,4 +194,5 @@ export type ValidatedExtendedClientsPayload = {
   warnings: ExtendedValidationWarning[];
   warningCount: number;
   diagnostics: ExtendedDiagnosticsSummary;
+  extendedContractVerification?: import("./types").ExtendedContractVerification;
 };

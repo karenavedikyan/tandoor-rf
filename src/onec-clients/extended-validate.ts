@@ -15,7 +15,8 @@ import {
   readStringField,
 } from "./field-value";
 import { detectClientsSourceFormat, hasExtendedManagerFields, isExtendedClientRecord } from "./format";
-import { parseManagerRef, parseOptionalHoldingGuid } from "./manager-status";
+import type { ExtendedRecordFieldPresence } from "./extended-presence";
+import { parseManagerFieldWithPresence, parseManagerRef, parseOptionalHoldingGuid } from "./manager-status";
 import { sha256Hex } from "./sha256";
 import type {
   ExtendedDiagnosticsSummary,
@@ -826,7 +827,9 @@ function validateExtendedRecord(
 
   const recordExtended = isExtendedClientRecord(raw);
   let isHolding: boolean | null = null;
+  let holdingPresence: ExtendedRecordFieldPresence["holding"] = "missing";
   if ("holding" in raw) {
+    holdingPresence = "present";
     const parsed = readStrictBoolean(raw.holding);
     if (parsed === "invalid") {
       pushIssue(issues, { code: "INVALID_HOLDING_BOOLEAN", field: "holding", index }, issueCount);
@@ -835,36 +838,47 @@ function validateExtendedRecord(
     isHolding = parsed;
   }
 
-  const regional = parseManagerRef(raw.guid_regional_manager, raw.name_regional_manager, {
-    allowMissingKeys: true,
-  });
+  const regional = parseManagerFieldWithPresence(raw, "guid_regional_manager", "name_regional_manager");
   if (!regional.ok) {
     pushIssue(issues, {
-      code: regional.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
+      code:
+        regional.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : regional.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_TYPE",
       field: "guid_regional_manager",
       index,
     }, issueCount);
     return null;
   }
-  const hardware = parseManagerRef(raw.guid_hardware_manager, raw.name_hardware_manager, {
-    allowMissingKeys: true,
-  });
+  const hardware = parseManagerFieldWithPresence(raw, "guid_hardware_manager", "name_hardware_manager");
   if (!hardware.ok) {
     pushIssue(issues, {
-      code: hardware.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
+      code:
+        hardware.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : hardware.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_TYPE",
       field: "guid_hardware_manager",
       index,
     }, issueCount);
     return null;
   }
-  const head = parseManagerRef(
-    raw.guid_head_of_the_sales_department,
-    raw.name_head_of_the_sales_department,
-    { allowMissingKeys: true },
+  const head = parseManagerFieldWithPresence(
+    raw,
+    "guid_head_of_the_sales_department",
+    "name_head_of_the_sales_department",
   );
   if (!head.ok) {
     pushIssue(issues, {
-      code: head.code === "INVALID_UUID" ? "INVALID_MANAGER_GUID" : "INVALID_MANAGER_PAIR",
+      code:
+        head.code === "INVALID_UUID"
+          ? "INVALID_MANAGER_GUID"
+          : head.code === "INVALID_MANAGER_PAIR"
+            ? "INVALID_MANAGER_PAIR"
+            : "INVALID_TYPE",
       field: "guid_head_of_the_sales_department",
       index,
     }, issueCount);
@@ -874,7 +888,15 @@ function validateExtendedRecord(
   const recordHasExtendedManagerFields = hasExtendedManagerFields(raw);
 
   let retailOutlets: ParsedRetailOutlet[] = [];
-  if (recordExtended) {
+  let retailOutletsPresence: ExtendedRecordFieldPresence["retailOutlets"] = "missing";
+  if ("retail_outlets" in raw) {
+    if (raw.retail_outlets === null) {
+      pushIssue(issues, { code: "INVALID_RETAIL_OUTLETS", field: "retail_outlets", index }, issueCount);
+      return null;
+    }
+    retailOutletsPresence = Array.isArray(raw.retail_outlets) && raw.retail_outlets.length === 0
+      ? "explicit_empty"
+      : "present";
     const parsedOutlets = validateRetailOutlets(
       raw.retail_outlets,
       index,
@@ -887,17 +909,28 @@ function validateExtendedRecord(
       return null;
     }
     retailOutlets = parsedOutlets;
+  } else if (recordExtended) {
+    retailOutletsPresence = "missing";
   }
+
+  const fieldPresence: ExtendedRecordFieldPresence = {
+    holding: holdingPresence,
+    retailOutlets: retailOutletsPresence,
+    regionalManager: regional.presence,
+    hardwareManager: hardware.presence,
+    headOfSales: head.presence,
+  };
 
   return {
     ...core,
     isHolding,
-    regionalManager: regional.value,
-    hardwareManager: hardware.value,
-    headOfSales: head.value,
+    regionalManager: regional.ref,
+    hardwareManager: hardware.ref,
+    headOfSales: head.ref,
     retailOutlets,
     recordFormat: recordExtended ? "extended_v1" : "legacy",
     hasExtendedManagerFields: recordHasExtendedManagerFields,
+    fieldPresence,
   };
 }
 
@@ -1019,6 +1052,7 @@ function buildDiagnostics(
 export type ValidateClientsLimits = {
   maxSourceBytes?: number;
   maxSourceRecords?: number;
+  extendedContractVerification?: import("./types").ExtendedContractVerification;
 };
 
 export function validateExtendedClientsFileBytes(
@@ -1107,6 +1141,7 @@ export function validateExtendedClientsFileBytes(
   }
 
   const diagnostics = buildDiagnostics(sourceFormat, records, holdingLinkErrors);
+  const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";
 
   return {
     ok: true,
@@ -1119,6 +1154,7 @@ export function validateExtendedClientsFileBytes(
       warnings,
       warningCount: warningCount.value,
       diagnostics,
+      extendedContractVerification,
     },
   };
 }

@@ -8,6 +8,7 @@ import type {
   RetailOutletHistoryEntry,
 } from "../onec-clients/extended-types";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
+import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import { canReadNestedRetailOutlets, MAX_OUTLETS_IN_DETAIL_RESPONSE } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
 
@@ -75,6 +76,7 @@ export type ClientExtendedDto = {
   holdingCardLabel: string | null;
   managers: ClientExtendedManagersDto;
   retailOutlets: RetailOutletDto[];
+  retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
   retailOutletsAccess: "granted" | "denied";
   retailOutletHistoryCount: number;
@@ -85,6 +87,7 @@ export type ClientExtendedDto = {
 };
 
 type LoadingDayField = Exclude<keyof ParsedRetailOutlet["loading"], "loadingTime">;
+
 function formatMskDateTime(value: Date): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: "Europe/Moscow",
@@ -117,6 +120,9 @@ function freshnessLabel(state: ExtendedFreshnessState | null): string {
 }
 
 function managerAssignmentLabel(ref: ParsedManagerRef): string {
+  if (ref.state === "not_provided") {
+    return "Не передано";
+  }
   if (ref.state === "unassigned") {
     return "Не назначен";
   }
@@ -147,19 +153,21 @@ function toManagerRefDto(ref: ParsedManagerRef): ManagerRefDto {
 
 function resolveLoadingScheduleState(outlet: ParsedRetailOutlet): RetailOutletLoadingDto["scheduleState"] {
   const dayValues = DAY_LABELS.map(([field]) => outlet.loading[field]);
-  const hasAnyDayKey = dayValues.some((value) => value !== null);
+  const hasAnyProvided = dayValues.some((value) => value !== null);
   const hasSelected = dayValues.some((value) => value === true);
-  if (!hasAnyDayKey && !outlet.loading.loadingTime) {
+  const hasNull = dayValues.some((value) => value === null);
+
+  if (!hasAnyProvided && !outlet.loading.loadingTime) {
     return "not_provided";
   }
-  if (hasAnyDayKey && !hasSelected) {
-    return "all_false";
+  if (hasSelected) {
+    return hasNull ? "partial" : "has_selected";
   }
-  if (hasAnyDayKey && hasSelected && dayValues.some((value) => value === null)) {
+  if (hasAnyProvided && hasNull) {
     return "partial";
   }
-  if (hasSelected) {
-    return "has_selected";
+  if (hasAnyProvided && !hasSelected) {
+    return "all_false";
   }
   return "partial";
 }
@@ -231,6 +239,42 @@ function readHistoryCount(snapshot: ExtendedSnapshot | null): number {
   return snapshot.retailOutletHistory.length;
 }
 
+function resolveSnapshotManagerLinks(
+  snapshot: ExtendedSnapshot,
+  linkedEmployeeGuids: ReadonlySet<string>,
+): ExtendedSnapshot {
+  const clientManagers = resolveManagerAccountLinks(
+    [snapshot.regionalManager, snapshot.hardwareManager, snapshot.headOfSales],
+    linkedEmployeeGuids,
+  );
+  return {
+    ...snapshot,
+    regionalManager: clientManagers[0]!,
+    hardwareManager: clientManagers[1]!,
+    headOfSales: clientManagers[2]!,
+    currentRetailOutlets: snapshot.currentRetailOutlets.map((outlet) => {
+      const resolved = resolveManagerAccountLinks(
+        [
+          outlet.managers.manager,
+          outlet.managers.regionalManager,
+          outlet.managers.hardwareManager,
+          outlet.managers.headOfSales,
+        ],
+        linkedEmployeeGuids,
+      );
+      return {
+        ...outlet,
+        managers: {
+          manager: resolved[0]!,
+          regionalManager: resolved[1]!,
+          hardwareManager: resolved[2]!,
+          headOfSales: resolved[3]!,
+        },
+      };
+    }),
+  };
+}
+
 type ExtendedRow = {
   is_holding: boolean | null;
   extended_format_version: string | null;
@@ -240,11 +284,17 @@ type ExtendedRow = {
   extended_snapshot: unknown;
 };
 
+export type ClientExtendedDtoOptions = {
+  linkedEmployeeGuids?: ReadonlySet<string>;
+};
+
 export function toClientExtendedDto(
   row: ExtendedRow,
   context?: AccessContext,
+  options?: ClientExtendedDtoOptions,
 ): ClientExtendedDto | null {
   const outletAccessGranted = context ? canReadNestedRetailOutlets(context) : false;
+  const linkedEmployeeGuids = options?.linkedEmployeeGuids ?? new Set<string>();
 
   if (!row.extended_snapshot || typeof row.extended_snapshot !== "object" || Array.isArray(row.extended_snapshot)) {
     if (row.extended_format_version) {
@@ -259,11 +309,12 @@ export function toClientExtendedDto(
         holdingCardLabel:
           row.is_holding === true ? "Карточка холдинга" : row.is_holding === false ? "Не холдинг" : null,
         managers: {
-          regionalManager: toManagerRefDto({ guid: null, name: "", state: "unassigned" }),
-          hardwareManager: toManagerRefDto({ guid: null, name: "", state: "unassigned" }),
-          headOfSales: toManagerRefDto({ guid: null, name: "", state: "unassigned" }),
+          regionalManager: toManagerRefDto({ guid: null, name: "", state: "not_provided" }),
+          hardwareManager: toManagerRefDto({ guid: null, name: "", state: "not_provided" }),
+          headOfSales: toManagerRefDto({ guid: null, name: "", state: "not_provided" }),
         },
         retailOutlets: [],
+        retailOutletsTotalCount: 0,
         retailOutletsTruncated: false,
         retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
         retailOutletHistoryCount: 0,
@@ -276,18 +327,22 @@ export function toClientExtendedDto(
     return null;
   }
 
-  const snapshot = readExtendedSnapshot(row.extended_snapshot);
+  const rawSnapshot = readExtendedSnapshot(row.extended_snapshot);
+  const snapshot = rawSnapshot
+    ? resolveSnapshotManagerLinks(rawSnapshot, linkedEmployeeGuids)
+    : null;
   const currentOutlets = readCurrentOutlets(snapshot);
   const historyCount = readHistoryCount(snapshot);
 
-  const regionalManager = snapshot?.regionalManager ?? { guid: null, name: "", state: "unassigned" as const };
-  const hardwareManager = snapshot?.hardwareManager ?? { guid: null, name: "", state: "unassigned" as const };
-  const headOfSales = snapshot?.headOfSales ?? { guid: null, name: "", state: "unassigned" as const };
+  const regionalManager = snapshot?.regionalManager ?? { guid: null, name: "", state: "not_provided" as const };
+  const hardwareManager = snapshot?.hardwareManager ?? { guid: null, name: "", state: "not_provided" as const };
+  const headOfSales = snapshot?.headOfSales ?? { guid: null, name: "", state: "not_provided" as const };
 
+  const totalOutletCount = currentOutlets.length;
   const visibleOutlets = outletAccessGranted
     ? currentOutlets.slice(0, MAX_OUTLETS_IN_DETAIL_RESPONSE)
     : [];
-  const truncated = outletAccessGranted && currentOutlets.length > MAX_OUTLETS_IN_DETAIL_RESPONSE;
+  const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
 
@@ -320,6 +375,7 @@ export function toClientExtendedDto(
       headOfSales: toManagerRefDto(headOfSales),
     },
     retailOutlets: visibleOutlets.map(toOutletDto),
+    retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,
     retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
     retailOutletHistoryCount: outletAccessGranted ? historyCount : 0,

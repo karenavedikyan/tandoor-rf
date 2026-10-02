@@ -53,6 +53,7 @@ export function validateClientsFileBytes(
       sourceFormat: payload.sourceFormat,
       extendedRecords: payload.records,
       extendedDiagnostics: payload.diagnostics,
+      extendedContractVerification: payload.extendedContractVerification ?? limits?.extendedContractVerification ?? "unverified",
     },
   };
 }

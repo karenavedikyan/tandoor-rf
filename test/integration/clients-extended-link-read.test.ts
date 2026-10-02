@@ -1,19 +1,16 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import request from "supertest";
+import { Pool } from "pg";
 import { applyClientsImport } from "../../src/onec-clients/apply";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
   buildExtendedClientsFileBytes,
   EXTENDED_FIXTURE_GUIDS,
-  sampleExtendedChild,
   sampleExtendedHolding,
   validateClientsForApplyTest,
 } from "../helpers/onec-clients-extended-fixtures";
-import {
-  grantClientAccess,
-  linkUserToEmployee,
-} from "../helpers/access-db-fixtures";
+import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -53,7 +50,7 @@ async function login(email: string): Promise<string> {
   return cookie.split(";")[0] ?? "";
 }
 
-describe("clients extended nested outlet access", { concurrency: false }, () => {
+describe("clients extended manager link read-time resolution", { concurrency: false }, () => {
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl, ORIGIN);
@@ -72,41 +69,22 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
       fullName: "Admin User",
       role: "admin",
     });
-    const managerA = await createTestUser({
+    const regionalUser = await createTestUser({
       databaseUrl,
-      email: "manager-a@example.com",
+      email: "regional@example.com",
       password: TEST_PASSWORD,
-      fullName: "Manager A",
-      role: "manager",
-    });
-    const director = await createTestUser({
-      databaseUrl,
-      email: "director@example.com",
-      password: TEST_PASSWORD,
-      fullName: "Director User",
+      fullName: "Regional User",
       role: "director",
     });
+
     await linkUserToEmployee({
       databaseUrl,
-      userId: director.id,
+      userId: regionalUser.id,
       employeeId: EXTENDED_FIXTURE_GUIDS.REGIONAL,
       confirmedByUserId: admin.id,
     });
 
-    await linkUserToEmployee({
-      databaseUrl,
-      userId: managerA.id,
-      employeeId: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
-      confirmedByUserId: admin.id,
-    });
-    await grantClientAccess({
-      databaseUrl,
-      userId: managerA.id,
-      objectId: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
-      grantedByUserId: admin.id,
-    });
-
-    const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding(), sampleExtendedChild()]);
+    const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
     const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
@@ -118,23 +96,7 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
     await closePool();
   });
 
-  it("denies nested outlet payload for scoped manager with card access", async () => {
-    const app = await loadApp();
-    const cookie = await login("manager-a@example.com");
-    const res = await request(app)
-      .get(`/api/clients/${EXTENDED_FIXTURE_GUIDS.HOLDING_GUID}`)
-      .set(authHeaders(cookie));
-
-    assert.equal(res.status, 200);
-    assert.ok(res.body.client.extended);
-    assert.equal(res.body.client.extended.retailOutletsAccess, "denied");
-    assert.equal(res.body.client.extended.retailOutlets.length, 0);
-    assert.equal(res.body.client.extended.retailOutletHistoryCount, 0);
-    const serialized = JSON.stringify(res.body.client.extended);
-    assert.doesNotMatch(serialized, /Store 1 street|Delivery dock 1|Child store/i);
-  });
-
-  it("allows admin to read nested outlets", async () => {
+  it("shows account-linked state after import when link exists", async () => {
     const app = await loadApp();
     const cookie = await login("admin@example.com");
     const res = await request(app)
@@ -142,23 +104,34 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
       .set(authHeaders(cookie));
 
     assert.equal(res.status, 200);
-    assert.equal(res.body.client.extended.retailOutletsAccess, "granted");
-    assert.ok(res.body.client.extended.retailOutlets.length >= 1);
-    assert.match(
-      JSON.stringify(res.body.client.extended),
-      /Store 1 street|Delivery dock 1/,
+    assert.equal(
+      res.body.client.extended.managers.regionalManager.assignmentState,
+      "directory_unverified_account_linked",
     );
   });
 
-  it("allows director with fullClientBase to read nested outlets", async () => {
+  it("reflects revoked link on subsequent read without re-import", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      "UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE employee_id = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.REGIONAL],
+    );
+    await pool.end();
+
     const app = await loadApp();
-    const cookie = await login("director@example.com");
+    const cookie = await login("admin@example.com");
     const res = await request(app)
       .get(`/api/clients/${EXTENDED_FIXTURE_GUIDS.HOLDING_GUID}`)
       .set(authHeaders(cookie));
 
     assert.equal(res.status, 200);
-    assert.equal(res.body.client.extended.retailOutletsAccess, "granted");
-    assert.ok(res.body.client.extended.retailOutlets.length >= 1);
+    assert.equal(
+      res.body.client.extended.managers.regionalManager.assignmentState,
+      "directory_unverified",
+    );
+    assert.doesNotMatch(
+      res.body.client.extended.managers.regionalManager.assignmentLabel,
+      /аккаунтом ЛК/,
+    );
   });
 });

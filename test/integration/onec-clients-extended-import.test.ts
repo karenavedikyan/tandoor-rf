@@ -8,6 +8,7 @@ import {
   EXTENDED_FIXTURE_GUIDS,
   sampleExtendedChild,
   sampleExtendedHolding,
+  validateClientsForApplyTest,
 } from "../helpers/onec-clients-extended-fixtures";
 import { sampleClient } from "../helpers/onec-clients-fixtures";
 import {
@@ -35,12 +36,13 @@ describe("onec clients extended import integration", { concurrency: false }, () 
       sampleExtendedHolding(),
       sampleExtendedChild(),
     ]);
-    const validated = validateClientsFileBytes(bytes);
+    const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
     const applied = await applyClientsImport({ databaseUrl, payload: validated.payload });
     assert.equal(applied.ok, true);
+    assert.equal(applied.blockSummary?.extendedApplied, true);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const holdingRow = await pool.query<{
@@ -70,7 +72,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
 
   it("re-applying the same extended snapshot is idempotent", async () => {
     const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding(), sampleExtendedChild()]);
-    const validated = validateClientsFileBytes(bytes);
+    const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
@@ -87,7 +89,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
 
   it("stores directory-unverified manager state without creating employee links", async () => {
     const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
-    const validated = validateClientsFileBytes(bytes);
+    const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
@@ -118,7 +120,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
 
   it("does not clear extended snapshot when legacy-shaped record is imported without extended markers", async () => {
     const extendedBytes = buildExtendedClientsFileBytes([sampleExtendedHolding(), sampleExtendedChild()]);
-    const extendedValidated = validateClientsFileBytes(extendedBytes);
+    const extendedValidated = validateClientsForApplyTest(extendedBytes);
     assert.equal(extendedValidated.ok, true);
     if (!extendedValidated.ok) return;
     const first = await applyClientsImport({ databaseUrl, payload: extendedValidated.payload });
@@ -164,6 +166,107 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     );
     assert.equal(row.rows[0]?.name_client, "Holding Alpha Legacy Pass");
     assert.equal(row.rows[0]?.extended_format_version, "extended_v1");
+    await pool.end();
+  });
+
+  it("blocks extended apply when contract is unverified and preserves working snapshot", async () => {
+    const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
+    const seeded = validateClientsForApplyTest(bytes);
+    assert.equal(seeded.ok, true);
+    if (!seeded.ok) return;
+
+    const seedApply = await applyClientsImport({ databaseUrl, payload: seeded.payload });
+    assert.equal(seedApply.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const before = await pool.query<{ extended_snapshot: { regionalManager: { guid: string | null } } }>(
+      "SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    const beforeGuid = before.rows[0]?.extended_snapshot.regionalManager.guid;
+    assert.ok(beforeGuid);
+
+    const unverified = validateClientsFileBytes(
+      buildExtendedClientsFileBytes([
+        sampleExtendedHolding({
+          name_client: "Holding Alpha Updated Name Only",
+          guid_regional_manager: "",
+          name_regional_manager: "",
+          retail_outlets: [],
+        }),
+      ]),
+    );
+    assert.equal(unverified.ok, true);
+    if (!unverified.ok) return;
+
+    const blockedApply = await applyClientsImport({
+      databaseUrl,
+      payload: unverified.payload,
+      expectedCommittedSha256: seeded.payload.sha256,
+    });
+    assert.equal(blockedApply.ok, true);
+    assert.equal(blockedApply.blockSummary?.extendedApplied, false);
+    assert.equal(blockedApply.blockSummary?.extendedBlockReason, "awaiting_live_json_verification");
+    assert.equal(blockedApply.counts?.extendedBlockedCount, 1);
+
+    const after = await pool.query<{
+      name_client: string;
+      extended_snapshot: { regionalManager: { guid: string | null }; currentRetailOutlets: unknown[] };
+    }>(
+      "SELECT name_client, extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(after.rows[0]?.name_client, "Holding Alpha Updated Name Only");
+    assert.equal(after.rows[0]?.extended_snapshot.regionalManager.guid, beforeGuid);
+    assert.ok((after.rows[0]?.extended_snapshot.currentRetailOutlets.length ?? 0) > 0);
+    await pool.end();
+  });
+
+  it("preserves outlets and regional manager when second snapshot omits extended blocks", async () => {
+    const firstBytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
+    const firstValidated = validateClientsForApplyTest(firstBytes);
+    assert.equal(firstValidated.ok, true);
+    if (!firstValidated.ok) return;
+    const firstApply = await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    assert.equal(firstApply.ok, true);
+
+    const secondBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        guid_regional_manager: undefined,
+        name_regional_manager: undefined,
+        retail_outlets: undefined,
+      }),
+    ]);
+    const secondValidated = validateClientsForApplyTest(secondBytes);
+    assert.equal(secondValidated.ok, true);
+    if (!secondValidated.ok) return;
+
+    const secondApply = await applyClientsImport({
+      databaseUrl,
+      payload: secondValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+    assert.equal(secondApply.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{
+      guid_regional_manager: string | null;
+      extended_freshness_state: string | null;
+      extended_snapshot: {
+        regionalManager: { guid: string | null };
+        currentRetailOutlets: unknown[];
+        blocks: { blockFreshness?: { retailOutlets: string } };
+      };
+    }>(
+      `
+        SELECT guid_regional_manager::text, extended_freshness_state, extended_snapshot
+        FROM onec_clients WHERE guid_client = $1::uuid
+      `,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(row.rows[0]?.guid_regional_manager, EXTENDED_FIXTURE_GUIDS.REGIONAL);
+    assert.ok((row.rows[0]?.extended_snapshot.currentRetailOutlets.length ?? 0) > 0);
+    assert.equal(row.rows[0]?.extended_snapshot.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
     await pool.end();
   });
 });

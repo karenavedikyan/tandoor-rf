@@ -1,8 +1,15 @@
-import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
-import { resolveManagerAccountLinks } from "./manager-status";
+import {
+  blockFreshnessForPresence,
+  extendedBusinessDataEqual,
+  mergeHoldingFlag,
+  mergeManagerField,
+  mergeRetailOutlets,
+  type ExtendedRecordFieldPresence,
+} from "./extended-presence";
 import type {
   ExtendedSnapshot,
+  ExtendedSnapshotBlocks,
   ParsedExtendedClientRecord,
   ParsedRetailOutlet,
   RetailOutletHistoryEntry,
@@ -27,31 +34,6 @@ export async function loadLinkedEmployeeGuids(client: PoolClient): Promise<Set<s
   return new Set(result.rows.map((row) => row.employee_id.toLowerCase()));
 }
 
-function resolveRecordManagers(
-  record: ParsedExtendedClientRecord,
-  linkedEmployees: ReadonlySet<string>,
-): ParsedExtendedClientRecord {
-  const regionalManager = resolveManagerAccountLinks([record.regionalManager], linkedEmployees)[0]!;
-  const hardwareManager = resolveManagerAccountLinks([record.hardwareManager], linkedEmployees)[0]!;
-  const headOfSales = resolveManagerAccountLinks([record.headOfSales], linkedEmployees)[0]!;
-  const retailOutlets = record.retailOutlets.map((outlet) => ({
-    ...outlet,
-    managers: {
-      manager: resolveManagerAccountLinks([outlet.managers.manager], linkedEmployees)[0]!,
-      regionalManager: resolveManagerAccountLinks([outlet.managers.regionalManager], linkedEmployees)[0]!,
-      hardwareManager: resolveManagerAccountLinks([outlet.managers.hardwareManager], linkedEmployees)[0]!,
-      headOfSales: resolveManagerAccountLinks([outlet.managers.headOfSales], linkedEmployees)[0]!,
-    },
-  }));
-  return {
-    ...record,
-    regionalManager,
-    hardwareManager,
-    headOfSales,
-    retailOutlets,
-  };
-}
-
 function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
     return null;
@@ -59,17 +41,22 @@ function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
   return snapshot as ExtendedSnapshot;
 }
 
-function appendHistory(
+function appendHistoryWhenBusinessChanged(
   previous: ExtendedSnapshot | null,
-  sourceSha256: string,
-  capturedAt: string,
+  nextOutlets: ParsedRetailOutlet[],
 ): RetailOutletHistoryEntry[] {
   const history = previous?.retailOutletHistory ? [...previous.retailOutletHistory] : [];
   const previousCurrent = previous?.currentRetailOutlets ?? [];
   if (previousCurrent.length === 0) {
     return history;
   }
-  if (!previous || previous.sourceSha256 === sourceSha256) {
+  if (extendedBusinessDataEqual(previous, {
+    ...previous!,
+    currentRetailOutlets: nextOutlets,
+  })) {
+    return history;
+  }
+  if (!previous) {
     return history;
   }
   history.push({
@@ -80,48 +67,125 @@ function appendHistory(
   return history;
 }
 
+function buildBlockFreshness(
+  presence: ExtendedRecordFieldPresence,
+  hasPrevious: boolean,
+): NonNullable<ExtendedSnapshotBlocks["blockFreshness"]> {
+  return {
+    holding: blockFreshnessForPresence(presence.holding, hasPrevious),
+    regionalManager: blockFreshnessForPresence(presence.regionalManager, hasPrevious),
+    hardwareManager: blockFreshnessForPresence(presence.hardwareManager, hasPrevious),
+    headOfSales: blockFreshnessForPresence(presence.headOfSales, hasPrevious),
+    retailOutlets: blockFreshnessForPresence(presence.retailOutlets, hasPrevious),
+  };
+}
+
+function summarizeRowFreshness(
+  blockFreshness: NonNullable<ExtendedSnapshotBlocks["blockFreshness"]>,
+): "current" | "preserved_from_previous" | "not_provided_in_snapshot" {
+  const values = Object.values(blockFreshness);
+  if (values.every((value) => value === "preserved_from_previous")) {
+    return "preserved_from_previous";
+  }
+  if (values.every((value) => value === "not_provided_in_snapshot")) {
+    return "not_provided_in_snapshot";
+  }
+  if (values.some((value) => value === "current")) {
+    return "current";
+  }
+  return "preserved_from_previous";
+}
+
 export function buildExtendedSnapshotJson(
   record: ParsedExtendedClientRecord,
   previousSnapshot: unknown,
   sourceSha256: string,
   importedAt: string,
+  options: { contractVerified: boolean },
 ): ExtendedSnapshot {
   const previous = readExistingSnapshot(previousSnapshot);
-  const hasExtendedBlock = record.recordFormat === "extended_v1" || record.hasExtendedManagerFields;
-  const effectiveImportedAt =
-    previous?.sourceSha256 === sourceSha256 ? previous.importedAt : importedAt;
-  return {
+  const hasPrevious = previous !== null;
+  const isNewClient = !hasPrevious;
+
+  const isHolding = mergeHoldingFlag(record.isHolding, record.fieldPresence.holding, previous?.isHolding);
+  const regionalManager = mergeManagerField(
+    record.regionalManager,
+    record.fieldPresence.regionalManager,
+    previous?.regionalManager,
+    isNewClient,
+  );
+  const hardwareManager = mergeManagerField(
+    record.hardwareManager,
+    record.fieldPresence.hardwareManager,
+    previous?.hardwareManager,
+    isNewClient,
+  );
+  const headOfSales = mergeManagerField(
+    record.headOfSales,
+    record.fieldPresence.headOfSales,
+    previous?.headOfSales,
+    isNewClient,
+  );
+  const currentRetailOutlets = mergeRetailOutlets(
+    record.retailOutlets,
+    record.fieldPresence.retailOutlets,
+    previous?.currentRetailOutlets,
+  );
+
+  const businessChanged = !extendedBusinessDataEqual(previous, {
     formatVersion: "extended_v1",
-    sourceSha256,
-    importedAt: effectiveImportedAt,
-    isHolding: record.isHolding,
-    regionalManager: record.regionalManager,
-    hardwareManager: record.hardwareManager,
-    headOfSales: record.headOfSales,
-    currentRetailOutlets: record.retailOutlets,
-    retailOutletHistory: appendHistory(previous, sourceSha256, importedAt),
-    blocks: {
+    sourceSha256: previous?.sourceSha256 ?? sourceSha256,
+    importedAt: previous?.importedAt ?? importedAt,
+    isHolding,
+    regionalManager,
+    hardwareManager,
+    headOfSales,
+    currentRetailOutlets,
+    retailOutletHistory: previous?.retailOutletHistory ?? [],
+    blocks: previous?.blocks ?? {
       clientExtendedReady: false,
       outletNormalizedReady: false,
-      clientExtendedBlockedReason: hasExtendedBlock ? "awaiting_live_json_verification" : "extended_block_not_present_in_record",
+    },
+  });
+
+  const effectiveImportedAt =
+    previous && !businessChanged ? previous.importedAt : importedAt;
+  const effectiveSourceSha256 =
+    previous && !businessChanged ? previous.sourceSha256 : sourceSha256;
+
+  const blockFreshness = buildBlockFreshness(record.fieldPresence, hasPrevious);
+
+  return {
+    formatVersion: "extended_v1",
+    sourceSha256: effectiveSourceSha256,
+    importedAt: effectiveImportedAt,
+    isHolding,
+    regionalManager,
+    hardwareManager,
+    headOfSales,
+    currentRetailOutlets,
+    retailOutletHistory: appendHistoryWhenBusinessChanged(previous, currentRetailOutlets),
+    blocks: {
+      clientExtendedReady: options.contractVerified,
+      outletNormalizedReady: false,
+      clientExtendedBlockedReason: options.contractVerified ? null : "awaiting_live_json_verification",
+      blockFreshness,
     },
   };
 }
 
-export function extendedSnapshotsEqual(left: ExtendedSnapshot | null, right: ExtendedSnapshot): boolean {
-  if (!left) {
-    return false;
-  }
-  return isDeepStrictEqual(left, right);
-}
+export { extendedBusinessDataEqual };
 
 export function isExtendedApplyPayload(payload: ValidatedClientsPayload): boolean {
   return payload.sourceFormat === "extended_v1" && Array.isArray(payload.extendedRecords);
 }
 
+export function isExtendedContractVerified(payload: ValidatedClientsPayload): boolean {
+  return payload.extendedContractVerification === "synthetic_confirmed";
+}
+
 export function resolveExtendedRecordsForApply(
   payload: ValidatedClientsPayload,
-  linkedEmployees: ReadonlySet<string>,
 ): Map<string, ParsedExtendedClientRecord> {
   const map = new Map<string, ParsedExtendedClientRecord>();
   if (!isExtendedApplyPayload(payload)) {
@@ -131,9 +195,18 @@ export function resolveExtendedRecordsForApply(
     if (record.recordFormat !== "extended_v1" && !record.hasExtendedManagerFields) {
       continue;
     }
-    map.set(record.guid_client, resolveRecordManagers(record, linkedEmployees));
+    map.set(record.guid_client, record);
   }
   return map;
+}
+
+export function summarizeExtendedFreshness(snapshot: ExtendedSnapshot | null): {
+  extendedFreshnessState: "current" | "preserved_from_previous" | "not_provided_in_snapshot";
+} {
+  if (!snapshot?.blocks.blockFreshness) {
+    return { extendedFreshnessState: "current" };
+  }
+  return { extendedFreshnessState: summarizeRowFreshness(snapshot.blocks.blockFreshness) };
 }
 
 export async function loadExistingExtendedSnapshots(

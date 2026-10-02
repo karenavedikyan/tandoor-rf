@@ -6,6 +6,7 @@ import { createApp } from "../../src/server";
 import {
   SYNTHETIC_CLIENT_GUID,
   resolveMockResponse,
+  syntheticDetailPayload,
   syntheticExtendedDetailPayload,
 } from "./helpers/clients-api-mocks";
 
@@ -83,6 +84,36 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     const text = await page.locator("#pc-panel-data").innerText();
     assert.match(text, /Недоступны для вашей роли/);
     assert.doesNotMatch(text, /Store street/);
+    await context.close();
+  });
+
+  it("does not show role denial when extended block is absent", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticDetailPayload());
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.doesNotMatch(text, /Недоступны для вашей роли/);
+    assert.match(text, /данные не переданы|Данные не переданы/i);
+    await context.close();
+  });
+
+  it("shows preserved freshness label and honest truncated outlet count", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.freshnessLabel =
+      "Сохранено из предыдущей выгрузки (блок не передан в текущем снимке)";
+    detail.client.extended.retailOutletsTotalCount = 25;
+    detail.client.extended.retailOutletsTruncated = true;
+    detail.client.extended.retailOutlets = [detail.client.extended.retailOutlets[0]!];
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /Сохранено из предыдущей выгрузки/);
+    assert.match(text, /1 из 25/);
     await context.close();
   });
 
