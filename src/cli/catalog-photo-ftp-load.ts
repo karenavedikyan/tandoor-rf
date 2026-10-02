@@ -48,6 +48,7 @@ async function main(): Promise<void> {
     temp = await fs.mkdtemp(path.join(os.tmpdir(), "tandoor-photos-"));
     process.env.CATALOG_IMAGE_SOURCE_DIR = temp;
     const started = Date.now();
+    let traversedAll = true;
     for (let i = 0; i < catalog.rows.length; i++) {
       const row = catalog.rows[i]!;
       if (missingOnly && row.status === "ready" && row.storage_path && row.content_sha256 &&
@@ -55,7 +56,7 @@ async function main(): Promise<void> {
         report.skipped++; continue;
       }
       if (report.attempted >= limit || Date.now() - started > 45 * 60 * 1000 ||
-          report.sourceBytes >= 8 * 1024 ** 3) break;
+          report.sourceBytes >= 8 * 1024 ** 3) { traversedAll = false; break; }
       if (ftp.closed) await ftp.access({ host: c.host, port: c.port, user: c.user, password: c.password, secure: false });
       const active = (await db.query("SELECT active_version_id::text AS version FROM onec_catalog_state")).rows[0]?.version;
       if (active !== row.version) throw new Error("Active catalog changed; photo load stopped.");
@@ -95,7 +96,7 @@ async function main(): Promise<void> {
       if (i % 25 === 0) console.log(JSON.stringify({ progress: true, runId,
         attempted: report.attempted, prepared: report.prepared, failed: report.failed }));
     }
-    report.complete = report.attempted + report.skipped >= catalog.rows.length && report.failed === 0;
+    report.complete = traversedAll && report.failed === 0;
   } finally {
     ftp.close();
     if (temp) await fs.rm(temp, { recursive: true, force: true });
