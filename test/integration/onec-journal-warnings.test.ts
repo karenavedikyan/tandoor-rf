@@ -12,6 +12,8 @@ import {
   buildClientsFileSha256,
   sampleClient,
   sampleClientTwo,
+  applyClientsImportVerified,
+  buildImportVerificationFingerprint,
 } from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
@@ -94,7 +96,7 @@ describe("onec journal warnings truncation", { concurrency: false }, () => {
 
   it("truncates manual apply warnings while preserving full warning_count", async () => {
     const payload = payloadWithWarnings(200);
-    const result = await applyClientsImport({ databaseUrl, payload });
+    const result = await applyClientsImportVerified({ databaseUrl, payload });
     assert.equal(result.ok, true);
 
     const journal = await readLatestApplyJournal();
@@ -113,12 +115,12 @@ describe("onec journal warnings truncation", { concurrency: false }, () => {
     if (!validatedTwo.ok) {
       return;
     }
-    await applyClientsImport({ databaseUrl, payload: validatedTwo.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: validatedTwo.payload });
 
     const shrinkPayload = payloadWithWarnings(200);
     shrinkPayload.records = [shrinkPayload.records[0]!];
 
-    const result = await applyClientsImport({ databaseUrl, payload: shrinkPayload });
+    const result = await applyClientsImportVerified({ databaseUrl, payload: shrinkPayload });
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.code, "RECORD_COUNT_DECREASED");
@@ -185,14 +187,15 @@ describe("onec journal warnings truncation", { concurrency: false }, () => {
 
   it("truncates operator job apply warnings", async () => {
     const bytes = buildManyWarningClientsBytes(200);
-    const sha = buildClientsFileSha256(JSON.parse(bytes.toString("utf8")));
+    const clients = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>[];
+    const verificationFingerprint = buildImportVerificationFingerprint(clients);
 
     await pool.query(
       `
         INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)
         VALUES ('apply', $1, NOW() + INTERVAL '1 hour')
       `,
-      [sha],
+      [verificationFingerprint],
     );
 
     const reader = async () => ({

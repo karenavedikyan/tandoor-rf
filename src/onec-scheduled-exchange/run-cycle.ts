@@ -3,6 +3,8 @@ import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { applyClientsImport, DB_CONNECT_TIMEOUT_MS } from "../onec-clients/apply";
+import { DEFAULT_HOLDING_LINK_VALIDATION_POLICY } from "../onec-clients/holding-link-policy";
+import { verificationFingerprintFromPayload } from "../onec-clients/import-verification-fingerprint";
 import { type FtpReader } from "../onec-clients/ftp-read";
 import { tryAcquireImportLock, releaseImportLock } from "../onec-clients/import-lock";
 import { readStableClientsFile } from "../onec-clients/read-stable";
@@ -494,6 +496,9 @@ export async function runScheduledExchangeCycle(
       });
     }
 
+    const holdingLinkValidationPolicy =
+      payload.holdingLinkValidationPolicy ?? DEFAULT_HOLDING_LINK_VALIDATION_POLICY;
+    const employeeRosterSourceSha256 = payload.employeeRosterSourceSha256 ?? null;
     const applied = await applyClientsImport({
       databaseUrl: recoveryDatabaseUrl ?? cycleDatabaseUrl,
       client,
@@ -505,6 +510,13 @@ export async function runScheduledExchangeCycle(
       excludeRunIds: cycleRunId ? [cycleRunId] : [],
       expectedCommittedSha256: committedBeforeRead,
       syncExchangeState: true,
+      expectedVerificationFingerprint: verificationFingerprintFromPayload({
+        payload,
+        holdingLinkValidationPolicy,
+        employeeRosterSourceSha256,
+      }),
+      holdingLinkValidationPolicy,
+      employeeRosterSourceSha256,
     });
     lockHeld = false;
 

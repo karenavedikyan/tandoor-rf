@@ -118,6 +118,11 @@ export type ClientExtendedDto = {
   sensitiveFieldsWithheld: true;
   outletNormalizedReady: boolean;
   clientExtendedReady: boolean;
+  holdingLink?: {
+    state: import("../onec-clients/holding-link-policy").HoldingLinkState;
+    pendingGuid: string | null;
+  };
+  clientManagerRosterState?: import("../onec-clients/extended-types").ClientManagerRosterState;
 };
 
 type ExtendedRow = {
@@ -128,6 +133,9 @@ type ExtendedRow = {
   extended_imported_at: Date | null;
   extended_freshness_state: ExtendedFreshnessState | null;
   extended_snapshot: unknown;
+  holding_link_state?: import("../onec-clients/holding-link-policy").HoldingLinkState;
+  guid_holding_pending?: string | null;
+  manager_roster_state?: import("../onec-clients/extended-types").ClientManagerRosterState;
 };
 
 type LoadingDayField = Exclude<
@@ -679,10 +687,18 @@ export function toClientExtendedDto(
   const outletAccessGranted = context ? canReadNestedRetailOutlets(context) : false;
   const linkedEmployeeGuids = options?.linkedEmployeeGuids ?? new Set<string>();
 
+  const importLinkMetadata = {
+    holdingLink: {
+      state: row.holding_link_state ?? "none",
+      pendingGuid: row.guid_holding_pending ?? null,
+    },
+    clientManagerRosterState: row.manager_roster_state ?? "roster_not_loaded",
+  };
+
   if (!row.extended_snapshot || typeof row.extended_snapshot !== "object" || Array.isArray(row.extended_snapshot)) {
-    if (row.extended_format_version) {
+    if (row.extended_format_version || row.holding_link_state || row.manager_roster_state) {
       return {
-        formatVersion: row.extended_format_version,
+        formatVersion: row.extended_format_version ?? "extended_v1",
         sourceSha256: row.extended_source_sha256,
         importedAt: row.extended_imported_at?.toISOString() ?? null,
         importedAtLabel: row.extended_imported_at ? formatMskDateTime(row.extended_imported_at) : null,
@@ -702,10 +718,14 @@ export function toClientExtendedDto(
         retailOutletsTruncated: false,
         retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
         retailOutletHistoryCount: 0,
-        dataQualityLabel: "Расширенные данные недоступны",
+        dataQualityLabel:
+          row.extended_format_version && !row.extended_snapshot
+            ? "Расширенный блок ожидает проверки контракта"
+            : "Расширенные данные недоступны",
         sensitiveFieldsWithheld: true,
         outletNormalizedReady: false,
         clientExtendedReady: false,
+        ...importLinkMetadata,
       };
     }
     return null;

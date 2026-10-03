@@ -221,6 +221,31 @@ export function resolveConfirmedHoldingForApply(record: {
   return { guid_holding: record.guid_holding, name_holding: record.name_holding };
 }
 
+export function resolveImportLinkMetadata(
+  record: import("./extended-types").ParsedExtendedClientRecord | undefined,
+): {
+  holdingLinkState: import("./extended-types").HoldingLinkState;
+  guidHoldingPending: string | null;
+  managerRosterState: import("./extended-types").ClientManagerRosterState;
+} {
+  if (!record) {
+    return {
+      holdingLinkState: "none",
+      guidHoldingPending: null,
+      managerRosterState: "roster_not_loaded",
+    };
+  }
+  return {
+    holdingLinkState: record.holdingLinkState,
+    guidHoldingPending: record.holdingLinkState === "unresolved" ? record.guid_holding : null,
+    managerRosterState: record.managerRosterState,
+  };
+}
+
+export const MANAGER_ROSTER_SCOPE_ALLOWED_SQL = `
+  COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') <> 'outside_wholesale_roster'
+`;
+
 export function isEmptyHoldingGuid(value: string): boolean {
   return value.trim().length === 0;
 }

@@ -11,7 +11,7 @@ import {
   sampleIdentifiedOutlet,
   validateClientsForApplyTest,
 } from "../helpers/onec-clients-extended-fixtures";
-import { sampleClient } from "../helpers/onec-clients-fixtures";
+import { sampleClient, applyClientsImportVerified } from "../helpers/onec-clients-fixtures";
 import {
   getIntegrationDatabaseUrl,
   prepareDatabase,
@@ -41,7 +41,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const applied = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const applied = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(applied.ok, true);
     assert.equal(applied.blockSummary?.extendedApplied, true);
 
@@ -77,9 +77,9 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const first = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const first = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(first.ok, true);
-    const second = await applyClientsImport({
+    const second = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       expectedCommittedSha256: validated.payload.sha256,
@@ -94,7 +94,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const applied = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const applied = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(applied.ok, true);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -124,7 +124,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const extendedValidated = validateClientsForApplyTest(extendedBytes);
     assert.equal(extendedValidated.ok, true);
     if (!extendedValidated.ok) return;
-    const first = await applyClientsImport({ databaseUrl, payload: extendedValidated.payload });
+    const first = await applyClientsImportVerified({ databaseUrl, payload: extendedValidated.payload });
     assert.equal(first.ok, true);
 
     const legacyShapedBytes = buildExtendedClientsFileBytes([
@@ -153,7 +153,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(legacyValidated.ok, true);
     if (!legacyValidated.ok) return;
 
-    const second = await applyClientsImport({
+    const second = await applyClientsImportVerified({
       databaseUrl,
       payload: legacyValidated.payload,
       expectedCommittedSha256: extendedValidated.payload.sha256,
@@ -176,7 +176,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(seeded.ok, true);
     if (!seeded.ok) return;
 
-    const seedApply = await applyClientsImport({ databaseUrl, payload: seeded.payload });
+    const seedApply = await applyClientsImportVerified({ databaseUrl, payload: seeded.payload });
     assert.equal(seedApply.ok, true);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -200,7 +200,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(unverified.ok, true);
     if (!unverified.ok) return;
 
-    const blockedApply = await applyClientsImport({
+    const blockedApply = await applyClientsImportVerified({
       databaseUrl,
       payload: unverified.payload,
       expectedCommittedSha256: seeded.payload.sha256,
@@ -237,7 +237,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const secondBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -259,7 +259,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
 
-    const secondApply = await applyClientsImport({
+    const secondApply = await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -310,7 +310,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    const firstApply = await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    const firstApply = await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
     assert.equal(firstApply.ok, true);
 
     const secondBytes = buildExtendedClientsFileBytes([
@@ -324,7 +324,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
 
-    const secondApply = await applyClientsImport({
+    const secondApply = await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -372,7 +372,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     const seeded = validateClientsForApplyTest(bytes);
     assert.equal(seeded.ok, true);
     if (!seeded.ok) return;
-    await applyClientsImport({ databaseUrl, payload: seeded.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: seeded.payload });
 
     const unverified = validateClientsFileBytes(
       buildExtendedClientsFileBytes([
@@ -382,7 +382,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(unverified.ok, true);
     if (!unverified.ok) return;
 
-    const applied = await applyClientsImport({
+    const applied = await applyClientsImportVerified({
       databaseUrl,
       payload: unverified.payload,
       expectedCommittedSha256: seeded.payload.sha256,

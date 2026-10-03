@@ -21,6 +21,9 @@ type ClientRow = {
   name_client: string;
   guid_holding: string | null;
   name_holding: string;
+  guid_holding_pending?: string | null;
+  holding_link_state?: import("../onec-clients/holding-link-policy").HoldingLinkState;
+  manager_roster_state?: import("../onec-clients/extended-types").ClientManagerRosterState;
   guid_manager: string;
   name_manager: string;
   address: string;
@@ -167,6 +170,9 @@ export async function getClientByGuid(
         name_client,
         guid_holding::text,
         name_holding,
+        guid_holding_pending::text,
+        holding_link_state,
+        manager_roster_state,
         guid_manager::text,
         name_manager,
         address,

@@ -19,7 +19,10 @@ export type WorkAccessBatch = {
   deniedAllClients: boolean;
   grantedObjectIds: Set<string>;
   publications: Map<string, SummaryPublicationRow>;
+  /** Wall clock for link/cache TTL checks. */
   nowMs: number;
+  /** Injectable clock for deadline grouping (see WORK_QUEUE_FIXED_NOW_MS). */
+  deadlineNowMs: number;
 };
 
 export function publicationKey(

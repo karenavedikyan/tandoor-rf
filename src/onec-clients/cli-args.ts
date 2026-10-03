@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import { MAX_EMPLOYEE_ROSTER_BYTES } from "./employee-roster";
 import {
   DEFAULT_HOLDING_LINK_VALIDATION_POLICY,
   isHoldingLinkValidationPolicy,
@@ -23,6 +24,7 @@ export const CLI_ARGUMENT_ERROR_CODES = [
   "EMPLOYEE_ROSTER_REQUIRES_VALUE",
   "DUPLICATE_EMPLOYEE_ROSTER",
   "EMPLOYEE_ROSTER_UNREADABLE",
+  "EMPLOYEE_ROSTER_FILE_TOO_LARGE",
   "EMPLOYEE_ROSTER_INVALID",
   "APPLY_WITH_WHOLESALE_COMPOSITION_PREP",
 ] as const;
@@ -50,6 +52,7 @@ export const CLI_ARGUMENT_ERROR_MESSAGES: Record<CliArgumentErrorCode, string> =
   EMPLOYEE_ROSTER_REQUIRES_VALUE: "--employee-roster requires a file path.",
   DUPLICATE_EMPLOYEE_ROSTER: "Duplicate --employee-roster argument.",
   EMPLOYEE_ROSTER_UNREADABLE: "--employee-roster file could not be read.",
+  EMPLOYEE_ROSTER_FILE_TOO_LARGE: "--employee-roster file exceeds the maximum allowed size.",
   EMPLOYEE_ROSTER_INVALID: "--employee-roster file is not a valid all_employees.json array.",
   APPLY_WITH_WHOLESALE_COMPOSITION_PREP:
     "--wholesale-composition-prep is dry-run only and cannot be combined with --apply.",
@@ -63,12 +66,44 @@ function readOptionalFlagValue(argv: string[], index: number, flag: string): str
   return value;
 }
 
-export function readEmployeeRosterFileBytes(filePath: string, cwd = process.cwd()): Buffer | null {
+export type EmployeeRosterFileReadResult =
+  | { ok: true; bytes: Buffer }
+  | { ok: false; code: "EMPLOYEE_ROSTER_UNREADABLE" | "EMPLOYEE_ROSTER_FILE_TOO_LARGE" };
+
+export function readEmployeeRosterFileBytes(
+  filePath: string,
+  cwd = process.cwd(),
+): EmployeeRosterFileReadResult {
   const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+  let fd: number;
   try {
-    return readFileSync(resolved);
+    fd = openSync(resolved, "r");
   } catch {
-    return null;
+    return { ok: false, code: "EMPLOYEE_ROSTER_UNREADABLE" };
+  }
+
+  try {
+    const size = fstatSync(fd).size;
+    if (size > MAX_EMPLOYEE_ROSTER_BYTES) {
+      return { ok: false, code: "EMPLOYEE_ROSTER_FILE_TOO_LARGE" };
+    }
+    const bytes = Buffer.alloc(size);
+    let offset = 0;
+    while (offset < size) {
+      const read = readSync(fd, bytes, offset, size - offset, offset);
+      if (read <= 0) {
+        break;
+      }
+      offset += read;
+    }
+    if (offset !== size) {
+      return { ok: false, code: "EMPLOYEE_ROSTER_UNREADABLE" };
+    }
+    return { ok: true, bytes };
+  } catch {
+    return { ok: false, code: "EMPLOYEE_ROSTER_UNREADABLE" };
+  } finally {
+    closeSync(fd);
   }
 }
 

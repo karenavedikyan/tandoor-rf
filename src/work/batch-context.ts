@@ -10,6 +10,7 @@ import type { SummaryPublicationOrigin } from "../bitrix24/tasks/work-repository
 import type { ResponsibleProfileState } from "../bitrix24/tasks/responsible-profile";
 import { isLinkAccessValid } from "../bitrix24/tasks/access";
 import { requirePool } from "../db/pool";
+import { resolveWorkQueueNowMs } from "./clock";
 import {
   hierarchyKey,
   publicationKey,
@@ -65,6 +66,7 @@ export async function loadWorkAccessBatch(input: {
 }): Promise<WorkBatchContext> {
   const db = input.client ?? requirePool();
   const nowMs = Date.now();
+  const deadlineNowMs = resolveWorkQueueNowMs();
   const runtime = loadBitrix24TasksRuntimeConfig();
   const employeeLink = await findEmployeePortalLink(input.context.userId, input.portalId, db);
 
@@ -202,6 +204,7 @@ export async function loadWorkAccessBatch(input: {
     publications,
     responsibles: new Map(),
     nowMs,
+    deadlineNowMs,
   };
 }
 

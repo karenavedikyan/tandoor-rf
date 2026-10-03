@@ -36,3 +36,36 @@ export function verificationFingerprintFromPayload(input: {
     wholesaleCompositionMode: input.payload.wholesaleCompositionMode ?? "standard",
   });
 }
+
+export type ApplyVerificationFingerprintFailure =
+  | { code: "VERIFICATION_FINGERPRINT_REQUIRED"; message: string }
+  | { code: "VERIFICATION_FINGERPRINT_MISMATCH"; message: string; actualFingerprint: string };
+
+export function verifyApplyVerificationFingerprint(input: {
+  expectedVerificationFingerprint: string | undefined;
+  payload: import("./types").ValidatedClientsPayload;
+  holdingLinkValidationPolicy: HoldingLinkValidationPolicy;
+  employeeRosterSourceSha256: string | null;
+}): ApplyVerificationFingerprintFailure | null {
+  if (!input.expectedVerificationFingerprint?.trim()) {
+    return {
+      code: "VERIFICATION_FINGERPRINT_REQUIRED",
+      message: "Apply requires expectedVerificationFingerprint from a verified dry-run.",
+    };
+  }
+  const expected = input.expectedVerificationFingerprint.trim().toLowerCase();
+  const actual = verificationFingerprintFromPayload({
+    payload: input.payload,
+    holdingLinkValidationPolicy: input.holdingLinkValidationPolicy,
+    employeeRosterSourceSha256: input.employeeRosterSourceSha256,
+  });
+  if (expected !== actual) {
+    return {
+      code: "VERIFICATION_FINGERPRINT_MISMATCH",
+      message:
+        "Import verification fingerprint mismatch (clients file, roster, holding policy, or mode changed since verification).",
+      actualFingerprint: actual,
+    };
+  }
+  return null;
+}

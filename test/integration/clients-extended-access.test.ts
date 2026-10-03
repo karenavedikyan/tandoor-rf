@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import request from "supertest";
-import { applyClientsImport } from "../../src/onec-clients/apply";
+import { applyClientsImportVerified } from "../helpers/onec-clients-fixtures";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
   buildExtendedClientsFileBytes,
@@ -110,7 +110,7 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
     const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
-    const applied = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const applied = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(applied.ok, true);
   });
 

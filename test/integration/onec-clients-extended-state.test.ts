@@ -1,28 +1,49 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import request from "supertest";
 import { Pool } from "pg";
-import { applyClientsImport } from "../../src/onec-clients/apply";
+import { canReadClientGuid } from "../../src/clients/repository";
 import { readExtendedSnapshot } from "../../src/onec-clients/extended-apply";
 import { validateClientsFileBytes } from "../../src/onec-clients/validate";
+import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
+import { resetPoolForTests } from "../../src/db/pool";
 import {
   buildExtendedClientsFileBytes,
   sampleExtendedChild,
   sampleExtendedHolding,
 } from "../helpers/onec-clients-extended-fixtures";
-import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
 import { wholesaleRosterWithoutUnknown } from "../helpers/onec-clients-employee-roster-fixtures";
-import { buildImportVerificationFingerprint } from "../helpers/onec-clients-fixtures";
-import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
-import { createTestUser, linkUserToEmployee } from "../helpers/test-db";
+import { applyClientsImportVerified } from "../helpers/onec-clients-fixtures";
+import { loadAccessContext } from "../../src/access/context";
+import { linkUserToEmployee } from "../helpers/access-db-fixtures";
+import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv, createTestUser } from "../helpers/test-db";
 
+const ORIGIN = "http://127.0.0.1:3000";
+const TEST_PASSWORD = "StrongPass123!";
 const databaseUrl = getIntegrationDatabaseUrl();
 const holdingGuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const childGuid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const outsideManagerGuid = "99999999-9999-4999-8999-999999999999";
 
+async function loadApp() {
+  await resetPoolForTests();
+  const { createApp } = await import("../../src/server");
+  return createApp();
+}
+
+async function login(email: string): Promise<string> {
+  const app = await loadApp();
+  const res = await request(app)
+    .post("/api/auth/login")
+    .set({ Origin: ORIGIN, "Content-Type": "application/json" })
+    .send({ email, password: TEST_PASSWORD });
+  assert.equal(res.status, 200);
+  return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+}
+
 describe("onec extended state preservation integration", () => {
   before(async () => {
-    setIntegrationEnv(databaseUrl);
+    setIntegrationEnv(databaseUrl, ORIGIN);
     await prepareDatabase(databaseUrl);
   });
 
@@ -32,8 +53,9 @@ describe("onec extended state preservation integration", () => {
     await pool.end();
   });
 
-  it("preserves unresolved holding and outside roster states through apply and DTO read", async () => {
-    const rosterParse = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithoutUnknown());
+  it("preserves unresolved holding and outside roster through unverified apply, row storage, DTO and access", async () => {
+    const rosterBytes = wholesaleRosterWithoutUnknown();
+    const rosterParse = parseWholesaleEmployeeRosterBytes(rosterBytes);
     assert.equal(rosterParse.ok, true);
     if (!rosterParse.ok) return;
 
@@ -48,18 +70,14 @@ describe("onec extended state preservation integration", () => {
     ]);
     const seedValidated = validateClientsFileBytes(seedBytes, {
       employeeRoster: rosterParse.roster,
-      extendedContractVerification: "synthetic_confirmed",
     });
     assert.equal(seedValidated.ok, true);
     if (!seedValidated.ok) return;
 
-    const seedApply = await applyClientsImport({
+    const seedApply = await applyClientsImportVerified({
       databaseUrl,
       payload: seedValidated.payload,
-      verificationFingerprint: buildImportVerificationFingerprint(
-        JSON.parse(seedBytes.toString("utf8")),
-        { employeeRosterBytes: wholesaleRosterWithoutUnknown() },
-      ),
+      employeeRosterSourceSha256: rosterParse.roster.sourceSha256,
     });
     assert.equal(seedApply.ok, true);
 
@@ -76,7 +94,6 @@ describe("onec extended state preservation integration", () => {
     ]);
     const updateValidated = validateClientsFileBytes(updateBytes, {
       employeeRoster: rosterParse.roster,
-      extendedContractVerification: "synthetic_confirmed",
     });
     assert.equal(updateValidated.ok, true);
     if (!updateValidated.ok) return;
@@ -84,21 +101,17 @@ describe("onec extended state preservation integration", () => {
     assert.equal(childRecord?.holdingLinkState, "unresolved");
     assert.equal(childRecord?.managerRosterState, "outside_wholesale_roster");
 
-    const updateApply = await applyClientsImport({
+    const updateApply = await applyClientsImportVerified({
       databaseUrl,
       payload: updateValidated.payload,
-      verificationFingerprint: buildImportVerificationFingerprint(
-        JSON.parse(updateBytes.toString("utf8")),
-        { employeeRosterBytes: wholesaleRosterWithoutUnknown() },
-      ),
+      employeeRosterSourceSha256: rosterParse.roster.sourceSha256,
     });
     assert.equal(updateApply.ok, true);
 
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const user = await createTestUser({
       databaseUrl,
       email: "linked-outside@example.com",
-      password: "TestPassword123!",
+      password: TEST_PASSWORD,
       fullName: "Linked Outside",
       role: "manager",
     });
@@ -109,12 +122,21 @@ describe("onec extended state preservation integration", () => {
       confirmedByUserId: user.id,
     });
 
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const row = await pool.query<{
       guid_holding: string | null;
+      guid_holding_pending: string | null;
+      holding_link_state: string;
+      manager_roster_state: string;
       extended_snapshot: unknown;
     }>(
       `
-        SELECT guid_holding::text, extended_snapshot
+        SELECT
+          guid_holding::text,
+          guid_holding_pending::text,
+          holding_link_state,
+          manager_roster_state,
+          extended_snapshot
         FROM onec_clients
         WHERE guid_client = $1
       `,
@@ -123,9 +145,45 @@ describe("onec extended state preservation integration", () => {
     await pool.end();
 
     assert.equal(row.rows[0]?.guid_holding, null);
+    assert.equal(row.rows[0]?.guid_holding_pending, unresolvedParentGuid);
+    assert.equal(row.rows[0]?.holding_link_state, "unresolved");
+    assert.equal(row.rows[0]?.manager_roster_state, "outside_wholesale_roster");
+    assert.equal(row.rows[0]?.extended_snapshot, null);
+
+    await resetPoolForTests();
+    const accessContext = await loadAccessContext(user.id, "manager");
+    const canRead = await canReadClientGuid(accessContext, childGuid);
+    assert.equal(canRead, false);
+
+    const cookie = await login("linked-outside@example.com");
+    const app = await loadApp();
+    const apiRes = await request(app)
+      .get(`/api/clients/${childGuid}`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(apiRes.status, 404);
+
+    const admin = await createTestUser({
+      databaseUrl,
+      email: "admin-extended-state@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admin Extended",
+      role: "admin",
+    });
+    const adminCookie = await login("admin-extended-state@example.com");
+    const adminRes = await request(app)
+      .get(`/api/clients/${childGuid}`)
+      .set({ Origin: ORIGIN, Cookie: adminCookie });
+    assert.equal(adminRes.status, 200);
+    assert.equal(adminRes.body.client.holding?.linkState, "unresolved");
+    assert.equal(adminRes.body.client.holding?.pendingId, unresolvedParentGuid);
+    assert.equal(adminRes.body.client.managerRosterState, "outside_wholesale_roster");
+    assert.equal(adminRes.body.client.extended?.holdingLink?.state, "unresolved");
+    assert.equal(adminRes.body.client.extended?.holdingLink?.pendingGuid, unresolvedParentGuid);
+    assert.equal(adminRes.body.client.extended?.clientManagerRosterState, "outside_wholesale_roster");
+    assert.equal(adminRes.body.client.extended?.clientExtendedReady, false);
+
     const snapshot = readExtendedSnapshot(row.rows[0]?.extended_snapshot);
-    assert.equal(snapshot?.holdingLink.state, "unresolved");
-    assert.equal(snapshot?.holdingLink.pendingGuid, unresolvedParentGuid);
-    assert.equal(snapshot?.clientManagerRosterState, "outside_wholesale_roster");
+    assert.equal(snapshot, null);
+    void admin;
   });
 });

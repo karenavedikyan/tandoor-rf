@@ -9,6 +9,8 @@ export type ClientListItemDto = {
   holding: {
     id: string | null;
     name: string;
+    linkState?: "none" | "resolved" | "unresolved";
+    pendingId?: string | null;
   };
   manager: {
     id: string;
@@ -36,9 +38,12 @@ export type ClientDetailDto = {
     telHref: string | null;
   }>;
   holding: {
-    id: string;
+    id: string | null;
     name: string;
+    linkState?: "none" | "resolved" | "unresolved";
+    pendingId?: string | null;
   } | null;
+  managerRosterState?: import("../onec-clients/extended-types").ClientManagerRosterState;
   sourceLabel: string;
   lastImportedAt: string;
   lastImportedAtLabel: string;
@@ -107,6 +112,9 @@ type ClientRow = {
   name_client: string;
   guid_holding: string | null;
   name_holding: string;
+  guid_holding_pending?: string | null;
+  holding_link_state?: import("../onec-clients/holding-link-policy").HoldingLinkState;
+  manager_roster_state?: import("../onec-clients/extended-types").ClientManagerRosterState;
   guid_manager: string;
   name_manager: string;
   address: string;
@@ -120,6 +128,23 @@ type ClientRow = {
   extended_freshness_state?: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
   extended_snapshot?: unknown;
 };
+
+function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
+  if (row.holding_link_state === "unresolved" && row.guid_holding_pending) {
+    return {
+      id: null,
+      name: row.name_holding,
+      linkState: "unresolved",
+      pendingId: row.guid_holding_pending,
+    };
+  }
+  return {
+    id: row.guid_holding,
+    name: row.name_holding,
+    linkState: row.holding_link_state ?? (row.guid_holding ? "resolved" : "none"),
+    pendingId: null,
+  };
+}
 
 export function formatMskDateTime(value: Date): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -152,10 +177,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   return {
     guid: row.guid_client,
     name: row.name_client,
-    holding: {
-      id: row.guid_holding,
-      name: row.name_holding,
-    },
+    holding: holdingDtoFromRow(row),
     manager: {
       id: row.guid_manager,
       name: row.name_manager,
@@ -182,10 +204,14 @@ export function toClientDetail(
       extended_imported_at: row.extended_imported_at ?? null,
       extended_freshness_state: row.extended_freshness_state ?? null,
       extended_snapshot: row.extended_snapshot,
+      holding_link_state: row.holding_link_state ?? "none",
+      guid_holding_pending: row.guid_holding_pending ?? null,
+      manager_roster_state: row.manager_roster_state ?? "roster_not_loaded",
     },
     context,
     options,
   );
+  const holdingList = holdingDtoFromRow(row);
   return {
     guid: row.guid_client,
     name: row.name_client,
@@ -199,12 +225,30 @@ export function toClientDetail(
       value,
       telHref: telHrefFromPhone(value),
     })),
-    holding: row.guid_holding
-      ? {
-          id: row.guid_holding,
-          name: row.name_holding,
-        }
-      : null,
+    holding:
+      holdingList.linkState === "unresolved" && holdingList.pendingId
+        ? {
+            id: holdingList.pendingId,
+            name: holdingList.name,
+            linkState: "unresolved",
+            pendingId: holdingList.pendingId,
+          }
+        : row.guid_holding
+          ? {
+              id: row.guid_holding,
+              name: row.name_holding,
+              linkState: holdingList.linkState ?? "resolved",
+              pendingId: null,
+            }
+          : holdingList.linkState === "unresolved"
+            ? {
+                id: holdingList.pendingId ?? null,
+                name: holdingList.name,
+                linkState: "unresolved",
+                pendingId: holdingList.pendingId ?? null,
+              }
+            : null,
+    managerRosterState: row.manager_roster_state,
     sourceLabel: "Данные из 1С",
     lastImportedAt: row.last_imported_at.toISOString(),
     lastImportedAtLabel: formatMskDateTime(row.last_imported_at),

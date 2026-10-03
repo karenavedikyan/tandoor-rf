@@ -108,7 +108,7 @@ export function resolveWorkTaskIndex(
     task.statusLabel,
     accessLevel === "full" ? task.deadline : null,
     accessLevel === "full",
-    batch.nowMs,
+    batch.deadlineNowMs,
   );
 
   const clientNames = permitted.map((entry) => entry.clientName).join(" ");
@@ -213,7 +213,7 @@ export function assembleWorkTaskDto(input: {
       })
     : { state: "not_loaded" as const };
 
-  const overview = buildTaskOverviewMetadata(task.statusLabel, task.deadline, true, input.batch.nowMs);
+  const overview = buildTaskOverviewMetadata(task.statusLabel, task.deadline, true, input.batch.deadlineNowMs);
 
   return {
     taskId: task.taskId,

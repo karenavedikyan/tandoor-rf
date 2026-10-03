@@ -30,7 +30,9 @@ import {
 import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
-import { resolveConfirmedHoldingForApply } from "./manager-status";
+import { verifyApplyVerificationFingerprint } from "./import-verification-fingerprint";
+import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
+import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -65,9 +67,12 @@ export type ApplyResult =
         | "DATABASE_ERROR"
         | "COMMIT_UNCERTAIN"
         | "SUPERSEDED_BY_NEWER_IMPORT"
-        | "APPLY_BLOCKED";
+        | "APPLY_BLOCKED"
+        | "VERIFICATION_FINGERPRINT_REQUIRED"
+        | "VERIFICATION_FINGERPRINT_MISMATCH";
       message: string;
       runId?: string;
+      actualFingerprint?: string;
     };
 
 export type ApplyTestHooks = {
@@ -637,7 +642,9 @@ export async function applyClientsImport(options: {
   expectedCommittedSha256?: string | null;
   syncExchangeState?: boolean;
   wholesaleCompositionPrep?: boolean;
-  verificationFingerprint?: string;
+  expectedVerificationFingerprint: string;
+  holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
+  employeeRosterSourceSha256?: string | null;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -649,6 +656,30 @@ export async function applyClientsImport(options: {
       ok: false,
       code: prepApplyRejection.code,
       message: prepApplyRejection.message,
+    };
+  }
+
+  const fingerprintFailure = verifyApplyVerificationFingerprint({
+    expectedVerificationFingerprint: options.expectedVerificationFingerprint,
+    payload: options.payload,
+    holdingLinkValidationPolicy:
+      options.holdingLinkValidationPolicy ??
+      options.payload.holdingLinkValidationPolicy ??
+      "tolerant",
+    employeeRosterSourceSha256:
+      options.employeeRosterSourceSha256 !== undefined
+        ? options.employeeRosterSourceSha256
+        : options.payload.employeeRosterSourceSha256 ?? null,
+  });
+  if (fingerprintFailure) {
+    return {
+      ok: false,
+      code: fingerprintFailure.code,
+      message: fingerprintFailure.message,
+      actualFingerprint:
+        fingerprintFailure.code === "VERIFICATION_FINGERPRINT_MISMATCH"
+          ? fingerprintFailure.actualFingerprint
+          : undefined,
     };
   }
 
@@ -836,7 +867,7 @@ export async function applyClientsImport(options: {
               preparedWarnings.warningCount,
               preparedWarnings.warningsJson,
               preparedWarnings.warningsTruncated,
-              options.verificationFingerprint ?? null,
+              options.expectedVerificationFingerprint ?? null,
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
@@ -866,6 +897,7 @@ export async function applyClientsImport(options: {
               ? resolveConfirmedHoldingForApply(extendedRecord)
               : { guid_holding: record.guid_holding, name_holding: record.name_holding };
             const applyRecord = { ...record, ...confirmedHolding };
+            const linkMetadata = resolveImportLinkMetadata(extendedRecord);
             const current = existing.get(applyRecord.guid_client);
             const previousRow = previousExtended.get(record.guid_client);
             const previousSnapshot = previousRow?.extended_snapshot;
@@ -942,6 +974,9 @@ export async function applyClientsImport(options: {
                   extended_snapshot,
                   extended_imported_at,
                   extended_freshness_state,
+                  holding_link_state,
+                  guid_holding_pending,
+                  manager_roster_state,
                   first_imported_at,
                   last_imported_at,
                   updated_at
@@ -949,6 +984,7 @@ export async function applyClientsImport(options: {
                 VALUES (
                   $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
                   $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::timestamptz, $21,
+                  $22, $23::uuid, $24,
                   NOW(), NOW(), NOW()
                 )
                 ON CONFLICT (guid_client) DO UPDATE SET
@@ -997,6 +1033,9 @@ export async function applyClientsImport(options: {
                     ELSE onec_clients.extended_imported_at
                   END,
                   extended_freshness_state = COALESCE(EXCLUDED.extended_freshness_state, onec_clients.extended_freshness_state),
+                  holding_link_state = EXCLUDED.holding_link_state,
+                  guid_holding_pending = EXCLUDED.guid_holding_pending,
+                  manager_roster_state = EXCLUDED.manager_roster_state,
                   last_imported_at = NOW(),
                   updated_at = CASE
                     WHEN onec_clients.name_client IS DISTINCT FROM EXCLUDED.name_client
@@ -1034,6 +1073,9 @@ export async function applyClientsImport(options: {
                 extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
                 extendedImportedAt,
                 extendedFreshnessState,
+                linkMetadata.holdingLinkState,
+                linkMetadata.guidHoldingPending,
+                linkMetadata.managerRosterState,
               ],
             );
 

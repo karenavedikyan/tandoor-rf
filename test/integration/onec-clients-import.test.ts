@@ -13,6 +13,8 @@ import {
   buildImportVerificationFingerprint,
   sampleClient,
   sampleClientTwo,
+  applyClientsImportVerified,
+  expectedVerificationForPayload,
 } from "../helpers/onec-clients-fixtures";
 import {
   getIntegrationDatabaseUrl,
@@ -265,7 +267,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const failed = await applyClientsImport({
+    const failed = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { afterRecordIndex: 1 },
@@ -308,7 +310,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const applied = await applyClientsImport({
+    const applied = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failUnlock: true },
@@ -335,7 +337,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failCommit: true },
@@ -358,7 +360,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: {
@@ -408,7 +410,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failRelease: true },
@@ -427,7 +429,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failPoolEnd: true },
@@ -446,7 +448,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: {
@@ -470,7 +472,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl: "postgres://invalid:5432/nonexistent",
       payload: validated.payload,
     });
@@ -498,7 +500,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     );
     assert.equal(locked.rows[0]?.locked, true);
 
-    const blocked = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const blocked = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(blocked.ok, false);
     if (!blocked.ok) {
       assert.equal(blocked.code, "IMPORT_LOCKED");
@@ -570,6 +572,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     const directApply = await applyClientsImport({
       databaseUrl,
       payload: validatedReduced.payload,
+      expectedVerificationFingerprint: buildImportVerificationFingerprint([sampleClient()]),
     });
     assert.equal(directApply.ok, false);
     if (directApply.ok) return;
@@ -581,6 +584,82 @@ describe("onec clients import integration", { concurrency: false }, () => {
     );
     await poolAfterDirect.end();
     assert.equal(Number(countAfterDirect.rows[0]?.count), 2);
+  });
+
+  it("rejects apply without verification fingerprint before any database writes", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const poolBefore = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countBefore = await poolBefore.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolBefore.end();
+
+    const missing = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: "",
+    });
+    assert.equal(missing.ok, false);
+    if (!missing.ok) {
+      assert.equal(missing.code, "VERIFICATION_FINGERPRINT_REQUIRED");
+    }
+
+    const wrong = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: "0".repeat(64),
+    });
+    assert.equal(wrong.ok, false);
+    if (!wrong.ok) {
+      assert.equal(wrong.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+      assert.ok(wrong.actualFingerprint);
+    }
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countAfter = await poolAfter.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolAfter.end();
+    assert.equal(countAfter.rows[0]?.count, countBefore.rows[0]?.count);
+  });
+
+  it("rejects apply when holding policy or roster no longer matches verified fingerprint", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const fingerprint = expectedVerificationForPayload(validated.payload, {
+      holdingLinkValidationPolicy: "strict",
+    });
+    const policyMismatch = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: fingerprint,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(policyMismatch.ok, false);
+    if (!policyMismatch.ok) {
+      assert.equal(policyMismatch.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+    }
+
+    const rosterFingerprint = buildImportVerificationFingerprint([sampleClient()], {
+      employeeRosterBytes: Buffer.from("[]"),
+    });
+    const rosterMismatch = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: rosterFingerprint,
+      employeeRosterSourceSha256: "a".repeat(64),
+    });
+    assert.equal(rosterMismatch.ok, false);
+    if (!rosterMismatch.ok) {
+      assert.equal(rosterMismatch.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+    }
   });
 
   it("rejects apply while a stale running import exists", async () => {

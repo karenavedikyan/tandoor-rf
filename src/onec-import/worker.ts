@@ -1,8 +1,11 @@
 import type { Pool } from "pg";
+import { EMPLOYEES_RELATIVE_PATH, parseWholesaleEmployeeRosterBytes } from "../onec-clients/employee-roster";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { defaultFtpReader, type FtpReader } from "../onec-clients/ftp-read";
+import { defaultFtpReader, readRemoteFileFromFtp, type FtpReader } from "../onec-clients/ftp-read";
 import { runClientsImport } from "../onec-clients/run-import";
 import type { ClientsImportResult } from "../onec-clients/types";
+import type { HoldingLinkValidationPolicy } from "../onec-clients/holding-link-policy";
+import type { WholesaleCompositionMode } from "../onec-clients/wholesale-composition";
 import {
   IMPORT_JOB_KIND,
   TRUSTED_ONEC_FTP_BASE_PATH,
@@ -13,6 +16,9 @@ type ImportJobRow = {
   id: string;
   mode: "dry_run" | "apply";
   expected_sha256: string | null;
+  holding_link_validation_policy: HoldingLinkValidationPolicy;
+  employee_roster_source_sha256: string | null;
+  wholesale_composition_mode: WholesaleCompositionMode;
 };
 
 function isTrustedFtpConfig(env: NodeJS.ProcessEnv): boolean {
@@ -28,10 +34,31 @@ function isTrustedFtpConfig(env: NodeJS.ProcessEnv): boolean {
 }
 
 function buildImportArgv(job: ImportJobRow): string[] {
-  if (job.mode === "dry_run") {
-    return ["--dry-run"];
+  const argv: string[] = job.mode === "dry_run" ? ["--dry-run"] : ["--apply", "--expected-sha256", job.expected_sha256!];
+  if (job.holding_link_validation_policy !== "tolerant") {
+    argv.push("--holding-link-policy", job.holding_link_validation_policy);
   }
-  return ["--apply", "--expected-sha256", job.expected_sha256!];
+  if (job.wholesale_composition_mode === "replacement_prep") {
+    argv.push("--wholesale-composition-prep");
+  }
+  return argv;
+}
+
+async function readEmployeeRosterFromFtp(env: NodeJS.ProcessEnv): Promise<Buffer | undefined> {
+  const config = loadOnecFtpConfig(env);
+  if (!config.ok) {
+    return undefined;
+  }
+  const rosterPath = `${config.config.basePath.replace(/\/+$/, "")}/${EMPLOYEES_RELATIVE_PATH}`;
+  const result = await readRemoteFileFromFtp(
+    config.config,
+    rosterPath,
+    32 * 1024 * 1024,
+  );
+  if (!result.ok) {
+    return undefined;
+  }
+  return result.bytes;
 }
 
 function extractImportRunId(result: ClientsImportResult): string | null {
@@ -64,7 +91,7 @@ export async function runOneImportJob(
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, mode, expected_sha256
+      RETURNING id, mode, expected_sha256, holding_link_validation_policy, employee_roster_source_sha256, wholesale_composition_mode
     `, [IMPORT_JOB_KIND]);
     const job = claimed.rows[0];
     jobId = job?.id;
@@ -76,11 +103,29 @@ export async function runOneImportJob(
       throw new Error("CONFIG_INVALID");
     }
 
+    let employeeRosterBytes: Buffer | undefined;
+    if (job.employee_roster_source_sha256) {
+      employeeRosterBytes = await readEmployeeRosterFromFtp(env);
+      if (!employeeRosterBytes) {
+        throw new Error("EMPLOYEE_ROSTER_UNREADABLE");
+      }
+      const parsed = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
+      if (!parsed.ok || parsed.roster.sourceSha256 !== job.employee_roster_source_sha256) {
+        throw new Error("EMPLOYEE_ROSTER_MISMATCH");
+      }
+    }
+
     const importResult = await runClientsImport({
       env,
       argv: buildImportArgv(job),
       ftpReader: reader,
       triggerSource: "operator_job",
+      employeeRosterBytes,
+      validationLimits: {
+        holdingLinkValidationPolicy: job.holding_link_validation_policy,
+        wholesaleCompositionMode: job.wholesale_composition_mode,
+        employeeRosterExplicit: job.employee_roster_source_sha256 != null,
+      },
     });
     const serialized = JSON.stringify(importResult);
     const config = loadOnecFtpConfig(env);

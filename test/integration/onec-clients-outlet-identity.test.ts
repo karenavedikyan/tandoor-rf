@@ -3,7 +3,7 @@ import { before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
 import type { AccessContext } from "../../src/access/types";
 import { toClientExtendedDto } from "../../src/clients/extended-dto";
-import { applyClientsImport } from "../../src/onec-clients/apply";
+import { applyClientsImportVerified } from "../helpers/onec-clients-fixtures";
 import {
   buildExtendedClientsFileBytes,
   EXTENDED_FIXTURE_GUIDS,
@@ -37,7 +37,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const secondBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -55,7 +55,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const secondValidated = validateClientsForApplyTest(secondBytes);
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -95,7 +95,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const secondBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -105,7 +105,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const secondValidated = validateClientsForApplyTest(secondBytes);
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
-    const secondApply = await applyClientsImport({
+    const secondApply = await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -162,7 +162,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const secondBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -172,7 +172,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const secondValidated = validateClientsForApplyTest(secondBytes);
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -206,7 +206,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const conflictBytes = buildExtendedClientsFileBytes([
       sampleExtendedChild({
@@ -220,7 +220,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     assert.equal(conflictValidated.ok, true);
     if (!conflictValidated.ok) return;
 
-    const applied = await applyClientsImport({
+    const applied = await applyClientsImportVerified({
       databaseUrl,
       payload: conflictValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -290,7 +290,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
-    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: firstValidated.payload });
 
     const secondBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -305,7 +305,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const secondValidated = validateClientsForApplyTest(secondBytes);
     assert.equal(secondValidated.ok, true);
     if (!secondValidated.ok) return;
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: secondValidated.payload,
       expectedCommittedSha256: firstValidated.payload.sha256,
@@ -371,7 +371,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const validatedA = validateClientsForApplyTest(snapshotA);
     assert.equal(validatedA.ok, true);
     if (!validatedA.ok) return;
-    await applyClientsImport({ databaseUrl, payload: validatedA.payload });
+    await applyClientsImportVerified({ databaseUrl, payload: validatedA.payload });
 
     const ambiguousOutlet = sampleIdentifiedOutlet({
       information_loading: { loading_on_monday: true, loading_time: "0001-01-01T00:00:00" },
@@ -383,7 +383,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
       const validated = validateClientsForApplyTest(bytes);
       assert.equal(validated.ok, true);
       if (!validated.ok) return;
-      const applied = await applyClientsImport({
+      const applied = await applyClientsImportVerified({
         databaseUrl,
         payload: validated.payload,
         expectedCommittedSha256: committedSha,
@@ -423,7 +423,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const validatedD = validateClientsForApplyTest(snapshotD);
     assert.equal(validatedD.ok, true);
     if (!validatedD.ok) return;
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: validatedD.payload,
       expectedCommittedSha256: committedSha,
@@ -480,8 +480,8 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     const validated = validateClientsForApplyTest(bytes);
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
-    const first = await applyClientsImport({ databaseUrl, payload: validated.payload });
-    const second = await applyClientsImport({
+    const first = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
+    const second = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       expectedCommittedSha256: validated.payload.sha256,

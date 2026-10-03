@@ -178,7 +178,7 @@ export async function runClientsImport(
   let employeeRosterBytes = options.employeeRosterBytes;
   if (cliOptions.employeeRosterFile) {
     const rosterFromFile = readEmployeeRosterFileBytes(cliOptions.employeeRosterFile);
-    if (!rosterFromFile) {
+    if (!rosterFromFile.ok) {
       return sanitizeImportResult(
         {
           status: "ARGUMENT_ERROR",
@@ -186,13 +186,13 @@ export async function runClientsImport(
           durationMs: Date.now() - startedAt,
           security: "plain",
           transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-          message: CLI_ARGUMENT_ERROR_MESSAGES.EMPLOYEE_ROSTER_UNREADABLE,
-          errorCode: "EMPLOYEE_ROSTER_UNREADABLE",
+          message: CLI_ARGUMENT_ERROR_MESSAGES[rosterFromFile.code],
+          errorCode: rosterFromFile.code,
         },
         [],
       );
     }
-    employeeRosterBytes = rosterFromFile;
+    employeeRosterBytes = rosterFromFile.bytes;
   }
 
   let parsedEmployeeRoster: WholesaleEmployeeRoster | undefined;
@@ -353,26 +353,6 @@ export async function runClientsImport(
     );
   }
 
-  if (verificationFingerprint !== cliOptions.expectedSha256) {
-    return sanitizeImportResult(
-      {
-        status: "HASH_MISMATCH",
-        mode: "apply",
-        durationMs: Date.now() - startedAt,
-        security: "plain",
-        transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-        sha256: payload.sha256,
-        byteSize: payload.byteSize,
-        recordCount: payload.recordCount,
-        verificationFingerprint,
-        message:
-          "Import verification fingerprint does not match --expected-sha256 (clients file, roster, holding policy, or mode changed since dry-run).",
-        errorCode: "HASH_MISMATCH",
-      },
-      secrets,
-    );
-  }
-
   if (!databaseUrl) {
     return sanitizeImportResult(
       {
@@ -395,12 +375,21 @@ export async function runClientsImport(
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
-    verificationFingerprint,
+    expectedVerificationFingerprint: cliOptions.expectedSha256,
+    holdingLinkValidationPolicy:
+      validationLimits.holdingLinkValidationPolicy ?? payload.holdingLinkValidationPolicy ?? "tolerant",
+    employeeRosterSourceSha256,
   });
   if (!applied.ok) {
+    const mappedErrorCode =
+      applied.code === "VERIFICATION_FINGERPRINT_MISMATCH"
+        ? "HASH_MISMATCH"
+        : applied.code === "VERIFICATION_FINGERPRINT_REQUIRED"
+          ? "ARGUMENT_ERROR"
+          : applied.code;
     return sanitizeImportResult(
       {
-        status: applied.code,
+        status: mappedErrorCode,
         mode: "apply",
         durationMs: Date.now() - startedAt,
         security: "plain",
@@ -409,7 +398,7 @@ export async function runClientsImport(
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
         message: applied.message,
-        errorCode: applied.code,
+        errorCode: mappedErrorCode,
         apply: applied.runId ? { runId: applied.runId } : undefined,
       },
       secrets,

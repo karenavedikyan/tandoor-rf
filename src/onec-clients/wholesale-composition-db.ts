@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import type { ExistingCompositionContext } from "./wholesale-composition";
 
 function mapCountRows(
@@ -12,9 +12,9 @@ function mapCountRows(
 }
 
 export async function loadExistingCompositionContext(
-  client: Pool | PoolClient,
+  client: PoolClient,
 ): Promise<ExistingCompositionContext> {
-  await client.query("BEGIN READ ONLY");
+  await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
   try {
     const [clients, outlets, accessGrants, linkedAccounts, bitrixTasks] = await Promise.all([
       client.query<{ guid_client: string }>("SELECT guid_client::text FROM onec_clients"),
