@@ -267,7 +267,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     await pool.end();
   });
 
-  it("preserves confirmed loading time across ambiguous export and surfaces it in DTO", async () => {
+  it("preserves confirmed loading time across ambiguous export and clears DOB on explicit empty sentinel", async () => {
     const adminContext: AccessContext = {
       userId: "admin",
       role: "admin",
@@ -332,14 +332,14 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
       row.rows[0]?.extended_snapshot as {
         currentRetailOutlets: Array<{
           loading: { loadingTime: string | null; loadingTimeAmbiguousIncomingRaw?: string | null };
-          lpr: { dateOfBirth: string | null; dateOfBirthAmbiguousIncomingRaw?: string | null };
+          lpr: { dateOfBirth: string | null; dateOfBirthExplicitEmpty?: boolean };
         }>;
       }
     ).currentRetailOutlets[0];
     assert.equal(outlet?.loading.loadingTime, "09:00");
     assert.equal(outlet?.loading.loadingTimeAmbiguousIncomingRaw, "0001-01-01T00:00:00");
-    assert.equal(outlet?.lpr.dateOfBirth, "1980-05-01");
-    assert.equal(outlet?.lpr.dateOfBirthAmbiguousIncomingRaw, "0001-01-01T00:00:00");
+    assert.equal(outlet?.lpr.dateOfBirth, null);
+    assert.equal(outlet?.lpr.dateOfBirthExplicitEmpty, true);
 
     const dto = toClientExtendedDto(row.rows[0]!, adminContext);
     assert.equal(dto?.retailOutlets[0]?.loading.loadingTime, "09:00");
@@ -348,7 +348,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     await pool.end();
   });
 
-  it("preserves confirmed values through A→B→C ambiguous exports and updates on D", async () => {
+  it("preserves loading time through A→B→C ambiguous exports, clears DOB sentinel, updates on D", async () => {
     const adminContext: AccessContext = {
       userId: "admin",
       role: "admin",
@@ -406,7 +406,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     );
     const midOutlet = midRow.rows[0]?.extended_snapshot.currentRetailOutlets[0];
     assert.equal(midOutlet?.loading.loadingTime, "09:00");
-    assert.equal(midOutlet?.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(midOutlet?.lpr.dateOfBirth, null);
     assert.equal(midOutlet?.loading.loadingTimeFieldProvenance?.sourceSha256, validatedA.payload.sha256);
     await poolAfterC.end();
 

@@ -80,6 +80,8 @@ export type ValidatedClientsPayload = {
   extendedRecords?: import("./extended-types").ParsedExtendedClientRecord[];
   extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary;
   extendedContractVerification?: ExtendedContractVerification;
+  holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";
@@ -102,6 +104,8 @@ export type ClientsImportResult = {
   issueCodes?: string[];
   warningCodes?: string[];
   extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary | null;
+  wholesaleCompositionPrep?: import("./wholesale-composition").WholesaleCompositionPrepReport;
+  holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
   message: string;
   cleanupWarning?: string;
   apply?: {
@@ -121,4 +125,9 @@ export type ClientsImportResult = {
 export type ClientsImportCliOptions = {
   mode: ClientsImportMode;
   expectedSha256?: string;
+  holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  wholesaleCompositionPrep?: boolean;
+  employeeRosterFile?: string;
 };
+
+export type { WholesaleCompositionPrepReport } from "./wholesale-composition";

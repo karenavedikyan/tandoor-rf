@@ -162,17 +162,34 @@
    ```bash
    node dist/cli/onec-clients-import.js --dry-run
    ```
-2. Review JSON-отчёт: `sha256`, counts, `holdingGuidUnknownCount`, `holdingGuidRejectedCount`, `ambiguousLoadingTimeCount`, `ambiguousDateOfBirthCount`, warnings адаптации форматов.
+2. Review JSON-отчёт: `sha256`, counts, `holdingLinkValidationPolicy`, `holdingGuidUnknownCount`, `holdingLinkUnresolvedCount`, `holdingGuidRejectedCount`, `ambiguousLoadingTimeCount`, `explicitEmptyDateOfBirthCount`, `managersOutsideWholesaleRosterCount`, warnings адаптации форматов.
 3. Убедиться, что **не** ожидается автоматический apply расширения — legacy-поля могут применяться по прежним правилам только после отдельного согласования.
 4. Зафиксировать оставшиеся блокировки: битые ссылки `guid_holding`, отсутствие `guid_store`/`closed`, неподтверждённые GUID сотрудников.
 5. Только после письменного подтверждения контракта 1С — рассмотреть `extendedContractVerification` (отдельный PR/решение; **не** в scope текущей адаптации).
 
+### Политика холдингов и оптовый состав (03.10.2026+)
+
+```bash
+# dry-run с оптовым roster и отчётом подготовки замены (без записи/удаления в prep dry-run)
+node dist/cli/onec-clients-import.js --dry-run \
+  --holding-link-policy=tolerant \
+  --employee-roster /path/to/all_employees.json \
+  --wholesale-composition-prep
+```
+
+- **`tolerant` (default):** отсутствующий родитель `guid_holding` → warning, связь `unresolved`, import не блокируется.
+- **`strict`:** отсутствующий родитель → блокирующая ошибка (для контрольных прогонов).
+- **`--wholesale-composition-prep`:** отчёт add/keep/exclude + зависимости; в apply снимает только `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`, **не** удаляет записи.
+- Roster: `/LC/clients/all_employees.json`, подразделение «Продажи ОПТ»; GUID вне roster → `outside_wholesale_roster`.
+
 ### Что адаптация **не** снимает
 
-- `HOLDING_GUID_UNKNOWN` / `HOLDING_GUID_REJECTED` — apply расширения блокируется.
+- `HOLDING_GUID_REJECTED`, циклы, самоссылки, `HOLDING_TARGET_NOT_HOLDING_CARD` — apply блокируется.
+- В режиме `strict` — также `HOLDING_GUID_UNKNOWN`.
 - Отсутствие `guid_store` — ТТ остаются read-only snapshot без registry.
-- Неоднозначные `0001-01-01T00:00:00` (время/дата рождения) — не публикуются как подтверждённые значения.
-- GUID сотрудников вне `all_employees.json` — `directory_unverified`, без автоматических прав.
+- Неоднозначный `loading_time` sentinel `0001-01-01T00:00:00` — не публикуется как `00:00`.
+- GUID сотрудников вне оптового roster — без автоматических прав и аккаунтов.
+- Production apply расширения — по-прежнему `extendedApplied=false` до live-приёмки.
 
 Подробности форматов: [clients-field-contract.md §3.2](./clients-field-contract.md).
 

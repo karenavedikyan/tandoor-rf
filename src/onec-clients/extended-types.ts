@@ -5,7 +5,15 @@ export type ManagerAssignmentState =
   | "unassigned"
   | "invalid"
   | "directory_unverified"
-  | "directory_unverified_account_linked";
+  | "directory_unverified_account_linked"
+  | "outside_wholesale_roster";
+
+export type ClientManagerRosterState =
+  | "roster_not_loaded"
+  | "in_wholesale_roster"
+  | "outside_wholesale_roster";
+
+export type HoldingLinkState = import("./holding-link-policy").HoldingLinkState;
 
 export type ParsedManagerRef = {
   guid: string | null;
@@ -56,6 +64,8 @@ export type ParsedOutletLpr = {
   dateOfBirth: string | null;
   dateOfBirthSourceRaw?: string | null;
   dateOfBirthAmbiguous?: boolean;
+  /** Sentinel or explicit clear from the current export (`0001-01-01T00:00:00`). */
+  dateOfBirthExplicitEmpty?: boolean;
   dateOfBirthAmbiguousIncomingRaw?: string | null;
   dateOfBirthConfirmedInCurrentExport?: boolean;
   dateOfBirthFieldProvenance?: OutletProvenance;
@@ -191,6 +201,8 @@ export type ParsedExtendedClientRecord = {
   recordFormat: "legacy" | "extended_v1";
   hasExtendedManagerFields: boolean;
   fieldPresence: import("./extended-presence").ExtendedRecordFieldPresence;
+  holdingLinkState: HoldingLinkState;
+  managerRosterState: ClientManagerRosterState;
 };
 
 export type ExtendedValidationIssueCode =
@@ -226,6 +238,9 @@ export type ExtendedValidationWarningCode =
   | "EMPLOYEE_DIRECTORY_UNAVAILABLE"
   | "AMBIGUOUS_LOADING_TIME"
   | "AMBIGUOUS_DATE_OF_BIRTH"
+  | "EXPLICIT_EMPTY_DATE_OF_BIRTH"
+  | "HOLDING_GUID_UNKNOWN"
+  | "MANAGER_OUTSIDE_WHOLESALE_ROSTER"
   | "LOAD_TIME_FORMAT_ADAPTED"
   | "DATE_OF_BIRTH_FORMAT_ADAPTED";
 
@@ -254,12 +269,17 @@ export type ExtendedDiagnosticsSummary = {
   /** null = registry comparison not performed (validate-only path). */
   knownOutletsMissingFromSnapshot: number | null;
   invalidManagerGuidCount: number;
-  employeeDirectoryVerified: false;
+  employeeDirectoryVerified: boolean;
+  wholesaleEmployeeCount: number | null;
+  managersOutsideWholesaleRosterCount: number;
+  holdingLinkValidationPolicy: import("./holding-link-policy").HoldingLinkValidationPolicy;
   holdingLinkErrors: number;
+  holdingLinkUnresolvedCount: number;
   holdingGuidUnknownCount: number;
   holdingGuidRejectedCount: number;
   ambiguousLoadingTimeCount: number;
   ambiguousDateOfBirthCount: number;
+  explicitEmptyDateOfBirthCount: number;
   recordsWithExtendedFields: number;
   legacyOnlyRecords: number;
   blocks: {
@@ -285,4 +305,6 @@ export type ValidatedExtendedClientsPayload = {
   warningCodes?: string[];
   issuesTruncated?: boolean;
   warningsTruncated?: boolean;
+  holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
 };

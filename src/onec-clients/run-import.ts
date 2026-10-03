@@ -1,12 +1,20 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport, type ImportTriggerSource } from "./apply";
-import { CLI_ARGUMENT_ERROR_MESSAGES, parseClientsImportCliArgs } from "./cli-args";
+import { applyClientsImport, createImportPool, type ImportTriggerSource } from "./apply";
+import {
+  CLI_ARGUMENT_ERROR_MESSAGES,
+  parseClientsImportCliArgs,
+  readEmployeeRosterFileBytes,
+} from "./cli-args";
 import { MAX_DETAILED_ERRORS, MAX_DETAILED_WARNINGS } from "./constants";
+import { parseWholesaleEmployeeRosterBytes } from "./employee-roster";
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
+import type { ValidateClientsLimits } from "./validate";
 import type { ClientsImportCliOptions, ClientsImportResult, ValidationIssue } from "./types";
 import { validateClientsFileBytes } from "./validate";
+import { buildWholesaleCompositionPrepReport } from "./wholesale-composition";
+import { loadExistingCompositionContext } from "./wholesale-composition-db";
 
 export function getImportExitCode(status: ClientsImportResult["status"]): number {
   return status === "SUCCESS" ? 0 : 1;
@@ -22,6 +30,7 @@ function validationFailedResult(input: {
   sha256?: string;
   byteSize?: number;
   extendedDiagnostics?: ClientsImportResult["extendedDiagnostics"];
+  holdingLinkValidationPolicy?: ClientsImportResult["holdingLinkValidationPolicy"];
   issueCodes?: string[];
   warningCodes?: string[];
   issuesTruncated?: boolean;
@@ -45,6 +54,7 @@ function validationFailedResult(input: {
     issueCodes: input.issueCodes,
     warningCodes: input.warningCodes,
     extendedDiagnostics: input.extendedDiagnostics,
+    holdingLinkValidationPolicy: input.holdingLinkValidationPolicy,
     message: "Client file validation failed.",
   };
 }
@@ -54,8 +64,72 @@ export type RunClientsImportOptions = {
   argv?: string[];
   ftpReader?: FtpReader;
   fileBytes?: Buffer;
+  employeeRosterBytes?: Buffer;
+  validationLimits?: ValidateClientsLimits;
   triggerSource?: ImportTriggerSource;
 };
+
+function buildValidationLimits(
+  cliOptions: ClientsImportCliOptions,
+  employeeRosterBytes: Buffer | undefined,
+  overrides?: ValidateClientsLimits,
+): ValidateClientsLimits {
+  const employeeRoster =
+    employeeRosterBytes != null ? parseWholesaleEmployeeRosterBytes(employeeRosterBytes) : null;
+  return {
+    ...overrides,
+    holdingLinkValidationPolicy:
+      overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
+    employeeRoster: overrides?.employeeRoster ?? employeeRoster,
+    wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
+      ? "replacement_prep"
+      : overrides?.wholesaleCompositionMode ?? "standard",
+  };
+}
+
+async function buildCompositionPrepReportIfRequested(
+  cliOptions: ClientsImportCliOptions,
+  payload: import("./types").ValidatedClientsPayload,
+  databaseUrl: string | undefined,
+): Promise<ClientsImportResult["wholesaleCompositionPrep"]> {
+  if (!cliOptions.wholesaleCompositionPrep) {
+    return undefined;
+  }
+  if (!databaseUrl) {
+    return buildWholesaleCompositionPrepReport({
+      payload,
+      holdingLinkPolicy: payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
+      employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+      wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
+      existing: {
+        clientGuids: new Set<string>(),
+        linkedAccountsByClient: new Map(),
+        confirmedOutletsByClient: new Map(),
+        bitrixTaskLinksByClient: new Map(),
+      },
+    });
+  }
+
+  const pool = createImportPool(databaseUrl);
+  try {
+    const client = await pool.connect();
+    try {
+      const existing = await loadExistingCompositionContext(client);
+      return buildWholesaleCompositionPrepReport({
+        payload,
+        holdingLinkPolicy:
+          payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
+        employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+        wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
+        existing,
+      });
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+  }
+}
 
 export async function runClientsImport(
   options: RunClientsImportOptions = {},
@@ -97,6 +171,26 @@ export async function runClientsImport(
     );
   }
 
+  let employeeRosterBytes = options.employeeRosterBytes;
+  if (cliOptions.employeeRosterFile) {
+    const rosterFromFile = readEmployeeRosterFileBytes(cliOptions.employeeRosterFile);
+    if (!rosterFromFile) {
+      return sanitizeImportResult(
+        {
+          status: "ARGUMENT_ERROR",
+          mode: cliOptions.mode,
+          durationMs: Date.now() - startedAt,
+          security: "plain",
+          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+          message: CLI_ARGUMENT_ERROR_MESSAGES.EMPLOYEE_ROSTER_UNREADABLE,
+          errorCode: "EMPLOYEE_ROSTER_UNREADABLE",
+        },
+        [],
+      );
+    }
+    employeeRosterBytes = rosterFromFile;
+  }
+
   const secrets = [loadedConfig.config.password];
   let bytes: Buffer;
   if (options.fileBytes) {
@@ -123,7 +217,8 @@ export async function runClientsImport(
     bytes = ftpRead.bytes;
   }
 
-  const validated = validateClientsFileBytes(bytes);
+  const validationLimits = buildValidationLimits(cliOptions, employeeRosterBytes, options.validationLimits);
+  const validated = validateClientsFileBytes(bytes, validationLimits);
   if (!validated.ok) {
     return sanitizeImportResult(
       validationFailedResult({
@@ -134,7 +229,8 @@ export async function runClientsImport(
         totalIssueCount: validated.issueCount,
         totalWarningCount: validated.warningCount,
         byteSize: bytes.length,
-        extendedDiagnostics: validated.extendedDiagnostics,
+        extendedDiagnostics: validated.extendedDiagnostics ?? undefined,
+        holdingLinkValidationPolicy: validationLimits.holdingLinkValidationPolicy,
         issueCodes: validated.issueCodes,
         warningCodes: validated.warningCodes,
         issuesTruncated: validated.issuesTruncated,
@@ -145,8 +241,17 @@ export async function runClientsImport(
   }
 
   const payload = validated.payload;
+  const databaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl() || undefined;
+  const wholesaleCompositionPrep = await buildCompositionPrepReportIfRequested(
+    cliOptions,
+    payload,
+    databaseUrl,
+  );
 
   if (cliOptions.mode === "dry_run") {
+    const prepSuffix = cliOptions.wholesaleCompositionPrep
+      ? " Wholesale composition prep report attached; no database writes."
+      : "";
     return sanitizeImportResult(
       {
         status: "SUCCESS",
@@ -160,7 +265,10 @@ export async function runClientsImport(
         warningCount: payload.warningCount,
         warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
         warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
-        message: "Client file validation succeeded (dry run; no database changes).",
+        extendedDiagnostics: payload.extendedDiagnostics,
+        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+        wholesaleCompositionPrep,
+        message: `Client file validation succeeded (dry run; no database changes).${prepSuffix}`,
       },
       secrets,
     );
@@ -199,7 +307,6 @@ export async function runClientsImport(
     );
   }
 
-  const databaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl();
   if (!databaseUrl) {
     return sanitizeImportResult(
       {
@@ -222,6 +329,7 @@ export async function runClientsImport(
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
+    wholesaleCompositionPrep: cliOptions.wholesaleCompositionPrep === true,
   });
   if (!applied.ok) {
     return sanitizeImportResult(
@@ -270,6 +378,9 @@ export async function runClientsImport(
     applyMessage =
       "Client import applied with legacy fields; some extended records were skipped.";
   }
+  if (cliOptions.wholesaleCompositionPrep) {
+    applyMessage += " Wholesale composition prep mode: shrink guards bypassed; no deletions performed.";
+  }
 
   return sanitizeImportResult(
     {
@@ -284,6 +395,9 @@ export async function runClientsImport(
       warningCount: payload.warningCount,
       warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
       warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
+      extendedDiagnostics: payload.extendedDiagnostics,
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      wholesaleCompositionPrep,
       message: applyMessage,
       cleanupWarning: applied.cleanupWarning,
       apply: {

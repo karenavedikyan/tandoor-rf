@@ -61,11 +61,23 @@ describe("onec clients extended validate", () => {
     }
   });
 
-  it("rejects unknown holding guid references", () => {
+  it("accepts unknown holding guid references in tolerant policy with warning", () => {
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedChild({ guid_holding: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }),
     ]);
     const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.ok(result.payload.warnings.some((warning) => warning.code === "HOLDING_GUID_UNKNOWN"));
+      assert.equal(result.payload.records[0]?.holdingLinkState, "unresolved");
+    }
+  });
+
+  it("rejects unknown holding guid references in strict policy", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedChild({ guid_holding: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.ok(result.issues.some((issue) => issue.code === "HOLDING_GUID_UNKNOWN"));

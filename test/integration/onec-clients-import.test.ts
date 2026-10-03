@@ -508,6 +508,48 @@ describe("onec clients import integration", { concurrency: false }, () => {
     await pool.end();
   });
 
+  it("allows shrink in wholesale composition prep mode without deleting excluded clients", async () => {
+    const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
+    const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", fullHash],
+      fileBytes: fullBytes,
+    });
+
+    const reducedBytes = buildClientsFileBytes([sampleClient()]);
+    const reducedHash = buildClientsFileSha256([sampleClient()]);
+    const prepDryRun = await runClientsImport({
+      env,
+      argv: ["--dry-run", "--wholesale-composition-prep"],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(prepDryRun.status, "SUCCESS");
+    assert.equal(prepDryRun.wholesaleCompositionPrep?.mode, "replacement_prep");
+    assert.ok((prepDryRun.wholesaleCompositionPrep?.clientsToExclude.count ?? 0) >= 1);
+    assert.equal(prepDryRun.wholesaleCompositionPrep?.performsDeletion, false);
+    assert.ok(
+      prepDryRun.wholesaleCompositionPrep?.operationBlockers.includes(
+        "excluded_records_require_separate_cleanup_approval",
+      ),
+    );
+
+    const prepApply = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", reducedHash, "--wholesale-composition-prep"],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(prepApply.status, "SUCCESS");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const clientCount = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await pool.end();
+    assert.equal(Number(clientCount.rows[0]?.count), 2);
+  });
+
   it("rejects apply while a stale running import exists", async () => {
     const bytes = buildClientsFileBytes([sampleClient()]);
     const hash = buildClientsFileSha256([sampleClient()]);

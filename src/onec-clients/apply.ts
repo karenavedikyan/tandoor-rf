@@ -329,9 +329,12 @@ function mergeExtendedDiagnosticsForJournal(
     return null;
   }
   const applyBlocks = buildApplyBlockSummary(extendedApply, contractVerified, stats);
-  const base = payload.extendedDiagnostics ?? {};
+  const base = payload.extendedDiagnostics;
   return JSON.stringify({
-    ...base,
+    ...(base ?? {}),
+    holdingLinkValidationPolicy:
+      payload.holdingLinkValidationPolicy ?? base?.holdingLinkValidationPolicy,
+    wholesaleCompositionMode: payload.wholesaleCompositionMode ?? "standard",
     knownOutletsMissingFromSnapshot: stats.knownOutletsMissingFromSnapshot,
     outletParentLinkConflicts: stats.outletParentLinkConflicts,
     applyBlocks,
@@ -541,7 +544,7 @@ async function releaseAdvisoryLock(
   await queryManaged(managed, "SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
 }
 
-function createImportPool(databaseUrl: string): Pool {
+export function createImportPool(databaseUrl: string): Pool {
   const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
     connectionString: pgOptions.connectionString,
@@ -631,6 +634,7 @@ export async function applyClientsImport(options: {
   excludeRunIds?: string[];
   expectedCommittedSha256?: string | null;
   syncExchangeState?: boolean;
+  wholesaleCompositionPrep?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   let pool: Pool | undefined;
@@ -749,6 +753,7 @@ export async function applyClientsImport(options: {
       } else {
         const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
         if (
+          !options.wholesaleCompositionPrep &&
           lastSuccessfulCount !== null &&
           options.payload.recordCount < lastSuccessfulCount
         ) {
@@ -766,7 +771,7 @@ export async function applyClientsImport(options: {
           };
         } else {
           const existing = await loadExistingClients(managed);
-          if (existing.size > 0) {
+          if (!options.wholesaleCompositionPrep && existing.size > 0) {
             const incomingGuids = new Set(
               options.payload.records.map((record) => record.guid_client),
             );

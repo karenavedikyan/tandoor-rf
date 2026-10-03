@@ -58,9 +58,9 @@ describe("live 1C field parsers", () => {
       });
     });
 
-    it("marks 0001-01-01T00:00:00 ambiguous", () => {
+    it("marks 0001-01-01T00:00:00 explicit empty", () => {
       assert.deepEqual(readDateOfBirthField("0001-01-01T00:00:00"), {
-        kind: "ambiguous",
+        kind: "explicit_empty",
         sourceRaw: "0001-01-01T00:00:00",
       });
     });

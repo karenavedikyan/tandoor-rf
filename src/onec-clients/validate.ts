@@ -64,6 +64,8 @@ export function validateClientsFileBytes(
       extendedRecords: payload.records,
       extendedDiagnostics: payload.diagnostics,
       extendedContractVerification: payload.extendedContractVerification ?? limits?.extendedContractVerification ?? "unverified",
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      wholesaleCompositionMode: payload.wholesaleCompositionMode,
     },
   };
 }

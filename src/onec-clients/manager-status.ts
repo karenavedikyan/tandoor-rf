@@ -1,5 +1,6 @@
 import type { FieldPresenceState } from "./extended-presence";
 import { isEmptyOrValidNonZeroUuid, isNullUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import type { WholesaleEmployeeRoster } from "./employee-roster";
 import type { ManagerAssignmentState, ParsedManagerRef } from "./extended-types";
 
 export type ManagerFieldParseResult =
@@ -141,6 +142,42 @@ export function parseManagerRef(
       state: "directory_unverified",
     },
   };
+}
+
+export function applyWholesaleEmployeeRosterToRef(
+  ref: ParsedManagerRef,
+  roster: WholesaleEmployeeRoster | null | undefined,
+): ParsedManagerRef {
+  if (ref.state === "not_provided" || ref.state === "unassigned" || ref.state === "invalid") {
+    return ref;
+  }
+  if (!ref.guid || !roster) {
+    return ref;
+  }
+  if (!roster.wholesaleGuids.has(ref.guid)) {
+    return { ...ref, state: "outside_wholesale_roster" };
+  }
+  return ref;
+}
+
+export function applyWholesaleEmployeeRosterToRefs(
+  refs: ParsedManagerRef[],
+  roster: WholesaleEmployeeRoster | null | undefined,
+): ParsedManagerRef[] {
+  return refs.map((ref) => applyWholesaleEmployeeRosterToRef(ref, roster));
+}
+
+export function resolveClientManagerRosterState(
+  guidManager: string,
+  roster: WholesaleEmployeeRoster | null | undefined,
+): import("./extended-types").ClientManagerRosterState {
+  if (!roster) {
+    return "roster_not_loaded";
+  }
+  if (roster.wholesaleGuids.has(guidManager.toLowerCase())) {
+    return "in_wholesale_roster";
+  }
+  return "outside_wholesale_roster";
 }
 
 export function resolveManagerAccountLinks(
