@@ -651,6 +651,8 @@ export async function applyClientsImport(options: {
   expectedVerificationFingerprint: string;
   holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
   employeeRosterSourceSha256?: string | null;
+  /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
+  baselineReplacementApply?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -798,47 +800,52 @@ export async function applyClientsImport(options: {
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
       } else {
-        const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
-        if (
-          lastSuccessfulCount !== null &&
-          options.payload.recordCount < lastSuccessfulCount
-        ) {
-          phase.runId = await insertRejectedRunJournal(
-            managed,
-            options.payload,
-            "RECORD_COUNT_DECREASED",
-            journal,
-          );
-          outcome = {
-            ok: false,
-            code: "RECORD_COUNT_DECREASED",
-            message: "Source record count decreased compared to the last successful import.",
-            runId: phase.runId,
-          };
-        } else {
-          const existing = await loadExistingClients(managed);
-          if (existing.size > 0) {
-            const incomingGuids = new Set(
-              options.payload.records.map((record) => record.guid_client),
+        const skipShrinkGuards = options.baselineReplacementApply === true;
+        if (!skipShrinkGuards) {
+          const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
+          if (
+            lastSuccessfulCount !== null &&
+            options.payload.recordCount < lastSuccessfulCount
+          ) {
+            phase.runId = await insertRejectedRunJournal(
+              managed,
+              options.payload,
+              "RECORD_COUNT_DECREASED",
+              journal,
             );
-            const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
-            if (missingGuids.length > 0) {
-              phase.runId = await insertRejectedRunJournal(
-                managed,
-                options.payload,
-                "GUID_SET_SHRINK",
-                journal,
+            outcome = {
+              ok: false,
+              code: "RECORD_COUNT_DECREASED",
+              message: "Source record count decreased compared to the last successful import.",
+              runId: phase.runId,
+            };
+          } else {
+            const existing = await loadExistingClients(managed);
+            if (existing.size > 0) {
+              const incomingGuids = new Set(
+                options.payload.records.map((record) => record.guid_client),
               );
-              outcome = {
-                ok: false,
-                code: "GUID_SET_SHRINK",
-                message: "Incoming snapshot is missing client IDs present in the last successful import.",
-                runId: phase.runId,
-              };
+              const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
+              if (missingGuids.length > 0) {
+                phase.runId = await insertRejectedRunJournal(
+                  managed,
+                  options.payload,
+                  "GUID_SET_SHRINK",
+                  journal,
+                );
+                outcome = {
+                  ok: false,
+                  code: "GUID_SET_SHRINK",
+                  message: "Incoming snapshot is missing client IDs present in the last successful import.",
+                  runId: phase.runId,
+                };
+              }
             }
           }
+        }
 
           if (!outcome) {
+          const existing = await loadExistingClients(managed);
           const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
             managed,
@@ -1217,7 +1224,6 @@ export async function applyClientsImport(options: {
           }
         }
       }
-    }
   } catch (error) {
     if (phase.commitAttempted && !phase.commitConfirmed) {
       outcome = await recoverFromCommitUncertainty(managed, phase, recoveryDatabaseUrl);

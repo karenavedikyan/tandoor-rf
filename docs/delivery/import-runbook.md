@@ -180,7 +180,77 @@ node dist/cli/onec-clients-import.js --dry-run \
 - **`tolerant` (default):** отсутствующий родитель `guid_holding` → warning, связь `unresolved`, import не блокируется.
 - **`strict`:** отсутствующий родитель → блокирующая ошибка (для контрольных прогонов).
 - **`--wholesale-composition-prep`:** **только dry-run**. С `--apply` CLI возвращает ошибку до любых бизнес-записей; прямой вызов apply/worker также отклоняется. Отчёт показывает add/keep/exclude, неразрешённые холдинги, назначения вне roster и зависимости исключаемых записей; сокращение старого состава интерпретируется как **согласованная смена эталона**, а не требование вернуть legacy-записи. **Не** разрешает запись или удаление данных.
-- **Применение нового оптового состава** — отдельная контролируемая процедура после review prep-отчёта; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`.
+- **Применение нового оптового состава** — отдельная контролируемая процедура после review prep-отчёта; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`. См. §8.1.
+
+### 8.1 Карантин + controlled baseline replacement (migration `029`)
+
+**Обязательная миграция перед первым apply:**
+
+```bash
+npm run migrate:local
+# или на сервере: npm run migrate
+```
+
+**Принципы**
+
+- Адресный карантин: оператор задаёт manifest (GUID + expected reason + source SHA). Исходный FTP JSON **не изменяется**.
+- Manifest привязан к SHA `all_clients.json`; fingerprint dry-run/apply включает manifest, accepted composition, DB baseline, roster/policy.
+- Одна подтверждённая ошибка изолируется; другие ошибки / зависимости / исчезнувшая причина → блокировка.
+- `--wholesale-composition-prep` остаётся **dry-run only**. Controlled apply — только `onec-wholesale-baseline-replace`.
+- Старые/карантинные карточки **не удаляются** (`baseline_status = archived_baseline | quarantined`), скрыты из рабочих API/search/my-work даже при grant.
+- Live extended apply: только `operator_confirmed` через controlled CLI; `synthetic_confirmed` — тесты.
+
+**1. Подготовить quarantine manifest** (пример для live 03.10.2026):
+
+```json
+{
+  "v": 1,
+  "sourceSha256": "28e823955065d403aba579207a49fb78c3808dc2d1eb157bb20232e6081257e9",
+  "entries": [
+    {
+      "guidClient": "9bc6fb76-d0d9-11f0-80bf-00155d60ef09",
+      "reason": "HOLDING_TARGET_NOT_HOLDING_CARD",
+      "relatedGuid": "f9ef87e4-1005-11e5-9d8e-5ef3fcb29b00"
+    }
+  ]
+}
+```
+
+**2. Dry-run (план + fingerprint):**
+
+```bash
+npm run onec-wholesale-baseline-replace:local -- --dry-run \
+  --clients-file /path/to/all_clients.json \
+  --employee-roster /path/to/all_employees.json \
+  --quarantine-manifest /path/to/quarantine-manifest.json \
+  --holding-link-policy=tolerant
+```
+
+Review JSON: `plan.operations` (add/update/retain/archive/quarantine), `dependencyReport`, `fingerprint`, `blockers`.
+
+**3. Apply (только после review + backup PostgreSQL):**
+
+```bash
+npm run onec-wholesale-baseline-replace:local -- --apply \
+  --clients-file /path/to/all_clients.json \
+  --employee-roster /path/to/all_employees.json \
+  --quarantine-manifest /path/to/quarantine-manifest.json \
+  --holding-link-policy=tolerant \
+  --expected-fingerprint=<fingerprint-from-dry-run> \
+  --confirm-extended-contract \
+  --operator-reference="ticket-or-audit-id"
+```
+
+**4. Rollback baseline_status (не откатывает import-данные целиком — только видимость/состав):**
+
+```bash
+npm run onec-wholesale-baseline-replace:local -- --rollback
+# или --rollback-run-id=<uuid-from-onec_baseline_replacement_runs>
+```
+
+**Prerequisites rollback:** PostgreSQL backup; нет concurrent import (`IMPORT_LOCKED`); последний успешный apply имеет `pre_apply_status_snapshot`.
+
+**Не делает CLI:** merge/deploy, production DB writes из Cursor, FTP writes, scheduled/job enablement.
 - Roster: `/LC/clients/all_employees.json` (контракт `guid_manager`, `name_manager`, …; файл уже отфильтрован по «Продажи ОПТ»); невалидные записи и дубликаты → ошибка; пустой roster → warning `EMPLOYEE_ROSTER_EMPTY`, не считается подтверждённым составом; GUID вне roster → `outside_wholesale_roster`.
 - `holding-link-policy` и SHA roster фиксируются в payload/diagnostics и одинаково применяются при validation и dry-run.
 

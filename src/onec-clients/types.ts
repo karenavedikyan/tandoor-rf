@@ -67,7 +67,7 @@ export type ParsedClientRecord = {
   telephone: string[];
 };
 
-export type ExtendedContractVerification = "synthetic_confirmed" | "unverified";
+export type ExtendedContractVerification = "synthetic_confirmed" | "operator_confirmed" | "unverified";
 
 export type ValidatedClientsPayload = {
   sha256: string;
