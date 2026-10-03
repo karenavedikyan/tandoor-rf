@@ -514,17 +514,20 @@ describe("onec baseline replacement regressions", { concurrency: false }, () => 
 
     const originalQuery = pg.Client.prototype.query;
     let armed = false;
+    let injected = false;
     pg.Client.prototype.query = function patchedQuery(
       this: pg.Client,
       ...args: Parameters<pg.Client["query"]>
     ) {
       const sql = typeof args[0] === "string" ? args[0] : "";
-      if (/UPDATE\s+onec_baseline_replacement_runs[\s\S]*status\s*=\s*'success'/i.test(sql)) {
+      const values = args[1] as unknown as unknown[] | undefined;
+      if (/UPDATE\s+onec_baseline_replacement_runs/i.test(sql) && values?.[1] === "success") {
         armed = true;
       }
-      if (armed && /^\s*COMMIT/i.test(sql)) {
+      if (armed && !injected && /^\s*COMMIT/i.test(sql)) {
         return originalQuery.apply(this, args).then((result) => {
           armed = false;
+          injected = true;
           const err = new Error("connection lost after COMMIT") as Error & { code: string };
           err.code = "08006";
           throw err;
@@ -543,6 +546,7 @@ describe("onec baseline replacement regressions", { concurrency: false }, () => 
         expectedFingerprint: dryRun.plan.fingerprint,
       });
       assert.equal(apply.ok, true, apply.ok ? "" : `${apply.code}: ${apply.message}`);
+      assert.equal(injected, true, "test must actually lose the COMMIT response");
 
       const pool = new Pool({ connectionString: databaseUrl, max: 1 });
       const activeCount = await pool.query<{ count: string }>(
@@ -614,6 +618,32 @@ describe("onec baseline replacement regressions", { concurrency: false }, () => 
     });
     assert.equal(apply2.ok, true);
     assert.equal(Number(outlets.rows[0]?.count ?? "0"), 1);
+  });
+
+  it("rejects changed policy or roster on retry after a successful apply", async () => {
+    const scenario = buildQuarantineScenario();
+    const options = {
+      databaseUrl,
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant" as const,
+      employeeRosterBytes: wholesaleRosterWithManagers(),
+    };
+    const dry = await runBaselineReplacement({ ...options, mode: "dry_run" });
+    assert.ok(dry.ok && dry.plan);
+    const expectedFingerprint = dry.plan.fingerprint;
+    const first = await runBaselineReplacement({ ...options, mode: "apply", expectedFingerprint });
+    assert.equal(first.ok, true);
+    for (const override of [
+      { holdingLinkValidationPolicy: "strict" as const },
+      { employeeRosterBytes: Buffer.from("[]") },
+    ]) {
+      const retry = await runBaselineReplacement({
+        ...options, ...override, mode: "apply", expectedFingerprint,
+      });
+      assert.equal(retry.ok, false, "old success must not authorize changed inputs");
+      if (!retry.ok) assert.ok(["FINGERPRINT_MISMATCH", "STALE_PLAN"].includes(retry.code));
+    }
   });
 
   it("rejects apply when roster bytes change but fingerprint stays old", async () => {

@@ -528,17 +528,51 @@ async function buildDryRunContext(
   }
 }
 
+const discardedBaselineConnections = new WeakSet<PoolClient>();
+
+async function discardBaselineConnection(client: PoolClient): Promise<void> {
+  if (discardedBaselineConnections.has(client)) return;
+  discardedBaselineConnections.add(client);
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      client.off("end", done);
+      resolve();
+    };
+    const timer = setTimeout(done, 2_000);
+    client.once("end", done);
+    try {
+      // Destroy via the pool, not Client.end(): the latter leaves a checked-out
+      // entry behind and pool.end() can wait forever.
+      client.release(true);
+    } catch {
+      void client.end().then(done, done);
+    }
+  });
+}
+
+function sameBaselineInputs(previous: unknown, current: unknown): boolean {
+  if (!previous || typeof previous !== "object" || !current || typeof current !== "object") {
+    return false;
+  }
+  const a = previous as Record<string, unknown>;
+  const b = current as Record<string, unknown>;
+  for (const key of ["clientsSourceSha256", "rosterSourceSha256",
+    "quarantineManifestSha256", "holdingLinkValidationPolicy"]) {
+    if (a[key] !== b[key]) return false;
+  }
+  const ac = a.extendedContract as { confirmationSha256?: string | null } | undefined;
+  const bc = b.extendedContract as { confirmationSha256?: string | null } | undefined;
+  return (ac?.confirmationSha256 ?? null) === (bc?.confirmationSha256 ?? null);
+}
+
 async function releaseBaselineConnection(
   client: PoolClient,
   pool: ReturnType<typeof createImportPool> | undefined,
   faulted: boolean,
 ): Promise<void> {
-  if (faulted) {
-    try {
-      await client.end();
-    } catch {
-      // ignore
-    }
+  if (faulted || discardedBaselineConnections.has(client)) {
+    await discardBaselineConnection(client);
     if (pool) {
       await pool.end();
     }
@@ -548,11 +582,7 @@ async function releaseBaselineConnection(
     await releaseImportLock(client);
     client.release();
   } catch {
-    try {
-      await client.end();
-    } catch {
-      // ignore
-    }
+    await discardBaselineConnection(client);
     if (pool) {
       await pool.end();
     }
@@ -685,7 +715,7 @@ export async function runBaselineReplacement(
           planFingerprint: expected,
           clientsSourceSha256: context.clientsSourceSha256,
         });
-        if (priorApply) {
+        if (priorApply && sameBaselineInputs(priorApply.plan_json, plan)) {
           idempotentRetry = true;
         } else {
           const dryRunRecord = await findDryRunByFingerprint(classifyPg, {
@@ -823,7 +853,7 @@ export async function runBaselineReplacement(
         planFingerprint: expected,
         clientsSourceSha256: freshContext.clientsSourceSha256,
       });
-      if (priorApply) {
+      if (priorApply && sameBaselineInputs(priorApply.plan_json, freshPlan)) {
         const priorMeta = extractBaselineApplyResultMeta(priorApply.plan_json);
         if (priorMeta) {
           const dependencyContext = await loadArchiveDependencyContext(pg);
@@ -1013,6 +1043,9 @@ export async function runBaselineReplacement(
         } catch {
           // ignore
         }
+        // A surviving session still owns its session advisory lock, even after
+        // ROLLBACK. Dispose of it before fresh-connection reconciliation.
+        await discardBaselineConnection(pg);
         const resolution = await resolveBaselineCommitUncertainFresh(databaseUrl, baselineRunId);
         if (resolution === "committed") {
           const priorMeta = await loadBaselineApplyResultMetaFresh(databaseUrl, baselineRunId);
@@ -1224,6 +1257,7 @@ async function runBaselineRollback(
         } catch {
           // ignore
         }
+        await discardBaselineConnection(pg);
         const resolution = await resolveBaselineCommitUncertainFresh(databaseUrl, rollbackRunId);
         if (resolution === "committed") {
           return {
