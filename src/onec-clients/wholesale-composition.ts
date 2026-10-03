@@ -33,6 +33,7 @@ export type WholesaleCompositionPrepReport = {
   mode: "replacement_prep";
   holdingLinkPolicy: HoldingLinkValidationPolicy;
   employeeRosterLoaded: boolean;
+  employeeRosterSourceSha256: string | null;
   wholesaleEmployeeCount: number | null;
   incomingRecordCount: number;
   existingRecordCount: number;
@@ -54,10 +55,32 @@ export type WholesaleCompositionPrepReport = {
     samples: ExcludedRecordDependencySummary[];
     truncated: boolean;
   };
+  baselineTransition: {
+    excludedFromIncomingBaseline: number;
+    interpretation: "agreed_baseline_change_not_restore_requirement";
+  };
   operationBlockers: string[];
+  applyAllowed: false;
   writesBusinessData: false;
   performsDeletion: false;
 };
+
+export function rejectWholesaleCompositionPrepApply(input: {
+  wholesaleCompositionPrep?: boolean;
+  payload: ValidatedClientsPayload;
+}): { code: "APPLY_BLOCKED"; message: string } | null {
+  if (
+    input.wholesaleCompositionPrep === true ||
+    input.payload.wholesaleCompositionMode === "replacement_prep"
+  ) {
+    return {
+      code: "APPLY_BLOCKED",
+      message:
+        "Wholesale composition prep is dry-run only. Apply the new wholesale baseline requires a separate approved procedure.",
+    };
+  }
+  return null;
+}
 
 const MAX_SAMPLE_GUIDS = 25;
 const MAX_SAMPLE_ROWS = 20;
@@ -101,6 +124,7 @@ export function buildWholesaleCompositionPrepReport(input: {
   payload: ValidatedClientsPayload;
   holdingLinkPolicy: HoldingLinkValidationPolicy;
   employeeRosterLoaded: boolean;
+  employeeRosterSourceSha256: string | null;
   wholesaleEmployeeCount: number | null;
   existing: ExistingCompositionContext;
 }): WholesaleCompositionPrepReport {
@@ -186,10 +210,10 @@ export function buildWholesaleCompositionPrepReport(input: {
     }
   }
 
-  const operationBlockers: string[] = [];
-  if (toExclude.length > 0) {
-    operationBlockers.push("excluded_records_require_separate_cleanup_approval");
-  }
+  const operationBlockers: string[] = [
+    "wholesale_composition_prep_is_dry_run_only",
+    "baseline_apply_requires_separate_approved_procedure",
+  ];
   if (unresolvedCount > 0) {
     operationBlockers.push("unresolved_holding_links_do_not_inherit_access");
   }
@@ -201,6 +225,7 @@ export function buildWholesaleCompositionPrepReport(input: {
     mode: "replacement_prep",
     holdingLinkPolicy: input.holdingLinkPolicy,
     employeeRosterLoaded: input.employeeRosterLoaded,
+    employeeRosterSourceSha256: input.employeeRosterSourceSha256,
     wholesaleEmployeeCount: input.wholesaleEmployeeCount,
     incomingRecordCount: incomingGuids.length,
     existingRecordCount: input.existing.clientGuids.size,
@@ -222,7 +247,12 @@ export function buildWholesaleCompositionPrepReport(input: {
       samples: dependencySamples,
       truncated: toExclude.length > dependencySamples.length,
     },
+    baselineTransition: {
+      excludedFromIncomingBaseline: toExclude.length,
+      interpretation: "agreed_baseline_change_not_restore_requirement",
+    },
     operationBlockers,
+    applyAllowed: false,
     writesBusinessData: false,
     performsDeletion: false,
   };

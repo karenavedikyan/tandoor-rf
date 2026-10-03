@@ -508,7 +508,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     await pool.end();
   });
 
-  it("allows shrink in wholesale composition prep mode without deleting excluded clients", async () => {
+  it("rejects apply in wholesale composition prep mode and keeps shrink guards for normal apply", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
     const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
@@ -527,11 +527,15 @@ describe("onec clients import integration", { concurrency: false }, () => {
     });
     assert.equal(prepDryRun.status, "SUCCESS");
     assert.equal(prepDryRun.wholesaleCompositionPrep?.mode, "replacement_prep");
+    assert.equal(prepDryRun.wholesaleCompositionPrep?.applyAllowed, false);
     assert.ok((prepDryRun.wholesaleCompositionPrep?.clientsToExclude.count ?? 0) >= 1);
-    assert.equal(prepDryRun.wholesaleCompositionPrep?.performsDeletion, false);
+    assert.equal(
+      prepDryRun.wholesaleCompositionPrep?.baselineTransition.interpretation,
+      "agreed_baseline_change_not_restore_requirement",
+    );
     assert.ok(
       prepDryRun.wholesaleCompositionPrep?.operationBlockers.includes(
-        "excluded_records_require_separate_cleanup_approval",
+        "wholesale_composition_prep_is_dry_run_only",
       ),
     );
 
@@ -540,7 +544,15 @@ describe("onec clients import integration", { concurrency: false }, () => {
       argv: ["--apply", "--expected-sha256", reducedHash, "--wholesale-composition-prep"],
       fileBytes: reducedBytes,
     });
-    assert.equal(prepApply.status, "SUCCESS");
+    assert.equal(prepApply.status, "ARGUMENT_ERROR");
+    assert.equal(prepApply.errorCode, "APPLY_WITH_WHOLESALE_COMPOSITION_PREP");
+
+    const normalReducedApply = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", reducedHash],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(normalReducedApply.status, "RECORD_COUNT_DECREASED");
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const clientCount = await pool.query<{ count: string }>(
@@ -548,6 +560,26 @@ describe("onec clients import integration", { concurrency: false }, () => {
     );
     await pool.end();
     assert.equal(Number(clientCount.rows[0]?.count), 2);
+
+    const validatedReduced = validateClientsFileBytes(reducedBytes, {
+      wholesaleCompositionMode: "replacement_prep",
+    });
+    assert.equal(validatedReduced.ok, true);
+    if (!validatedReduced.ok) return;
+    const directApply = await applyClientsImport({
+      databaseUrl,
+      payload: validatedReduced.payload,
+    });
+    assert.equal(directApply.ok, false);
+    if (directApply.ok) return;
+    assert.equal(directApply.code, "APPLY_BLOCKED");
+
+    const poolAfterDirect = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countAfterDirect = await poolAfterDirect.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolAfterDirect.end();
+    assert.equal(Number(countAfterDirect.rows[0]?.count), 2);
   });
 
   it("rejects apply while a stale running import exists", async () => {

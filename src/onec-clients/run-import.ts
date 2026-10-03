@@ -13,7 +13,10 @@ import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
 import type { ValidateClientsLimits } from "./validate";
 import type { ClientsImportCliOptions, ClientsImportResult, ValidationIssue } from "./types";
 import { validateClientsFileBytes } from "./validate";
-import { buildWholesaleCompositionPrepReport } from "./wholesale-composition";
+import {
+  buildWholesaleCompositionPrepReport,
+  rejectWholesaleCompositionPrepApply,
+} from "./wholesale-composition";
 import { loadExistingCompositionContext } from "./wholesale-composition-db";
 
 export function getImportExitCode(status: ClientsImportResult["status"]): number {
@@ -71,16 +74,14 @@ export type RunClientsImportOptions = {
 
 function buildValidationLimits(
   cliOptions: ClientsImportCliOptions,
-  employeeRosterBytes: Buffer | undefined,
+  employeeRoster: ReturnType<typeof parseWholesaleEmployeeRosterBytes> | undefined,
   overrides?: ValidateClientsLimits,
 ): ValidateClientsLimits {
-  const employeeRoster =
-    employeeRosterBytes != null ? parseWholesaleEmployeeRosterBytes(employeeRosterBytes) : null;
   return {
     ...overrides,
     holdingLinkValidationPolicy:
       overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
-    employeeRoster: overrides?.employeeRoster ?? employeeRoster,
+    employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
     wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
       ? "replacement_prep"
       : overrides?.wholesaleCompositionMode ?? "standard",
@@ -100,6 +101,7 @@ async function buildCompositionPrepReportIfRequested(
       payload,
       holdingLinkPolicy: payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
       employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+      employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
       wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
       existing: {
         clientGuids: new Set<string>(),
@@ -120,6 +122,7 @@ async function buildCompositionPrepReportIfRequested(
         holdingLinkPolicy:
           payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
         employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+        employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
         wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
         existing,
       });
@@ -191,6 +194,25 @@ export async function runClientsImport(
     employeeRosterBytes = rosterFromFile;
   }
 
+  let parsedEmployeeRoster: ReturnType<typeof parseWholesaleEmployeeRosterBytes> | undefined;
+  if (employeeRosterBytes != null) {
+    parsedEmployeeRoster = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
+    if (!parsedEmployeeRoster) {
+      return sanitizeImportResult(
+        {
+          status: "ARGUMENT_ERROR",
+          mode: cliOptions.mode,
+          durationMs: Date.now() - startedAt,
+          security: "plain",
+          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+          message: CLI_ARGUMENT_ERROR_MESSAGES.EMPLOYEE_ROSTER_INVALID,
+          errorCode: "EMPLOYEE_ROSTER_INVALID",
+        },
+        [],
+      );
+    }
+  }
+
   const secrets = [loadedConfig.config.password];
   let bytes: Buffer;
   if (options.fileBytes) {
@@ -217,7 +239,7 @@ export async function runClientsImport(
     bytes = ftpRead.bytes;
   }
 
-  const validationLimits = buildValidationLimits(cliOptions, employeeRosterBytes, options.validationLimits);
+  const validationLimits = buildValidationLimits(cliOptions, parsedEmployeeRoster, options.validationLimits);
   const validated = validateClientsFileBytes(bytes, validationLimits);
   if (!validated.ok) {
     return sanitizeImportResult(
@@ -269,6 +291,29 @@ export async function runClientsImport(
         holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
         wholesaleCompositionPrep,
         message: `Client file validation succeeded (dry run; no database changes).${prepSuffix}`,
+      },
+      secrets,
+    );
+  }
+
+  const prepApplyRejection = rejectWholesaleCompositionPrepApply({
+    wholesaleCompositionPrep: cliOptions.wholesaleCompositionPrep,
+    payload,
+  });
+  if (prepApplyRejection) {
+    return sanitizeImportResult(
+      {
+        status: "APPLY_BLOCKED",
+        mode: "apply",
+        durationMs: Date.now() - startedAt,
+        security: "plain",
+        transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+        sha256: payload.sha256,
+        byteSize: payload.byteSize,
+        recordCount: payload.recordCount,
+        message: prepApplyRejection.message,
+        errorCode: prepApplyRejection.code,
+        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
       },
       secrets,
     );
@@ -329,7 +374,6 @@ export async function runClientsImport(
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
-    wholesaleCompositionPrep: cliOptions.wholesaleCompositionPrep === true,
   });
   if (!applied.ok) {
     return sanitizeImportResult(
@@ -378,10 +422,6 @@ export async function runClientsImport(
     applyMessage =
       "Client import applied with legacy fields; some extended records were skipped.";
   }
-  if (cliOptions.wholesaleCompositionPrep) {
-    applyMessage += " Wholesale composition prep mode: shrink guards bypassed; no deletions performed.";
-  }
-
   return sanitizeImportResult(
     {
       status: "SUCCESS",

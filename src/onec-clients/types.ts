@@ -81,6 +81,7 @@ export type ValidatedClientsPayload = {
   extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary;
   extendedContractVerification?: ExtendedContractVerification;
   holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  employeeRosterSourceSha256?: string | null;
   wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
 };
 

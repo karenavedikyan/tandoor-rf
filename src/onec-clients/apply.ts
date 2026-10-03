@@ -30,6 +30,7 @@ import {
 import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
+import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
@@ -637,6 +638,18 @@ export async function applyClientsImport(options: {
   wholesaleCompositionPrep?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
+  const prepApplyRejection = rejectWholesaleCompositionPrepApply({
+    wholesaleCompositionPrep: options.wholesaleCompositionPrep,
+    payload: options.payload,
+  });
+  if (prepApplyRejection) {
+    return {
+      ok: false,
+      code: prepApplyRejection.code,
+      message: prepApplyRejection.message,
+    };
+  }
+
   let pool: Pool | undefined;
   let managed: ManagedClient | undefined;
   let ownsPool = false;
@@ -753,7 +766,6 @@ export async function applyClientsImport(options: {
       } else {
         const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
         if (
-          !options.wholesaleCompositionPrep &&
           lastSuccessfulCount !== null &&
           options.payload.recordCount < lastSuccessfulCount
         ) {
@@ -771,7 +783,7 @@ export async function applyClientsImport(options: {
           };
         } else {
           const existing = await loadExistingClients(managed);
-          if (!options.wholesaleCompositionPrep && existing.size > 0) {
+          if (existing.size > 0) {
             const incomingGuids = new Set(
               options.payload.records.map((record) => record.guid_client),
             );

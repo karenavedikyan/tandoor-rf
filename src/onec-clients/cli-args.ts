@@ -23,6 +23,8 @@ export const CLI_ARGUMENT_ERROR_CODES = [
   "EMPLOYEE_ROSTER_REQUIRES_VALUE",
   "DUPLICATE_EMPLOYEE_ROSTER",
   "EMPLOYEE_ROSTER_UNREADABLE",
+  "EMPLOYEE_ROSTER_INVALID",
+  "APPLY_WITH_WHOLESALE_COMPOSITION_PREP",
 ] as const;
 
 export type CliArgumentErrorCode = (typeof CLI_ARGUMENT_ERROR_CODES)[number];
@@ -46,6 +48,9 @@ export const CLI_ARGUMENT_ERROR_MESSAGES: Record<CliArgumentErrorCode, string> =
   EMPLOYEE_ROSTER_REQUIRES_VALUE: "--employee-roster requires a file path.",
   DUPLICATE_EMPLOYEE_ROSTER: "Duplicate --employee-roster argument.",
   EMPLOYEE_ROSTER_UNREADABLE: "--employee-roster file could not be read.",
+  EMPLOYEE_ROSTER_INVALID: "--employee-roster file is not a valid all_employees.json array.",
+  APPLY_WITH_WHOLESALE_COMPOSITION_PREP:
+    "--wholesale-composition-prep is dry-run only and cannot be combined with --apply.",
 };
 
 function readOptionalFlagValue(argv: string[], index: number, flag: string): string | null {
@@ -141,6 +146,10 @@ export function parseClientsImportCliArgs(argv: string[]): CliArgsParseResult {
 
   if (apply && dryRun) {
     return { ok: false, code: "APPLY_AND_DRY_RUN" };
+  }
+
+  if (apply && wholesaleCompositionPrep) {
+    return { ok: false, code: "APPLY_WITH_WHOLESALE_COMPOSITION_PREP" };
   }
 
   if (apply) {

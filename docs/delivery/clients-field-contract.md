@@ -199,7 +199,7 @@
 
 **Политика связей холдингов:** CLI `--holding-link-policy=tolerant|strict` (default `tolerant`). Dry-run и apply используют **один** снимок и **одну** политику; значение фиксируется в `extendedDiagnostics.holdingLinkValidationPolicy` и журнале apply. Неразрешённые связи (`holdingLinkState=unresolved`) **не** участвуют в наследовании доступа и подтверждённой иерархии.
 
-**Оптовый состав и подготовка замены:** режим `--wholesale-composition-prep` (dry-run/apply) формирует отчёт `wholesaleCompositionPrep` (добавляемые / сохраняемые / исключаемые GUID, неразрешённые холдинги, назначения вне roster, зависимости исключаемых записей). В этом режиме снимаются только guard'ы `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`; **удаление**, каскадная очистка аккаунтов/задач/истории **не** выполняется.
+**Оптовый состав и подготовка замены:** режим `--wholesale-composition-prep` (**только dry-run**) формирует отчёт `wholesaleCompositionPrep` (add/keep/exclude, неразрешённые холдинги, назначения вне roster, зависимости исключаемых записей). С `--apply` отклоняется на CLI и в сервисе apply/worker. Исключения из incoming-файла — **согласованная смена эталона**, не сигнал восстановить legacy-записи. **Запись и удаление не выполняются**; применение нового состава — отдельная процедура; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`.
 
 **Неоднозначные значения:** `loading_time` sentinel `0001-01-01T00:00:00` остаётся `AMBIGUOUS_LOADING_TIME` (сохранение последнего подтверждённого времени A→B→C→D). `date_of_birth` sentinel — явная очистка (`dateOfBirthExplicitEmpty`). Исходное raw сохраняется в `loadingTimeSourceRaw` / `dateOfBirthSourceRaw`.
 

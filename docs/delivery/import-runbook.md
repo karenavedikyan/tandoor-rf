@@ -170,7 +170,7 @@
 ### Политика холдингов и оптовый состав (03.10.2026+)
 
 ```bash
-# dry-run с оптовым roster и отчётом подготовки замены (без записи/удаления в prep dry-run)
+# dry-run с оптовым roster и отчётом подготовки замены (только проверка, без apply)
 node dist/cli/onec-clients-import.js --dry-run \
   --holding-link-policy=tolerant \
   --employee-roster /path/to/all_employees.json \
@@ -179,8 +179,10 @@ node dist/cli/onec-clients-import.js --dry-run \
 
 - **`tolerant` (default):** отсутствующий родитель `guid_holding` → warning, связь `unresolved`, import не блокируется.
 - **`strict`:** отсутствующий родитель → блокирующая ошибка (для контрольных прогонов).
-- **`--wholesale-composition-prep`:** отчёт add/keep/exclude + зависимости; в apply снимает только `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`, **не** удаляет записи.
-- Roster: `/LC/clients/all_employees.json`, подразделение «Продажи ОПТ»; GUID вне roster → `outside_wholesale_roster`.
+- **`--wholesale-composition-prep`:** **только dry-run**. С `--apply` CLI возвращает ошибку до любых бизнес-записей; прямой вызов apply/worker также отклоняется. Отчёт показывает add/keep/exclude, неразрешённые холдинги, назначения вне roster и зависимости исключаемых записей; сокращение старого состава интерпретируется как **согласованная смена эталона**, а не требование вернуть legacy-записи. **Не** разрешает запись или удаление данных.
+- **Применение нового оптового состава** — отдельная контролируемая процедура после review prep-отчёта; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`.
+- Roster: `/LC/clients/all_employees.json`, подразделение «Продажи ОПТ»; явно указанный, но невалидный roster → ошибка; GUID вне roster → `outside_wholesale_roster`.
+- `holding-link-policy` и SHA roster фиксируются в payload/diagnostics и одинаково применяются при validation и dry-run.
 
 ### Что адаптация **не** снимает
 

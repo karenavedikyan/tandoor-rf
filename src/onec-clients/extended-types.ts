@@ -270,6 +270,7 @@ export type ExtendedDiagnosticsSummary = {
   knownOutletsMissingFromSnapshot: number | null;
   invalidManagerGuidCount: number;
   employeeDirectoryVerified: boolean;
+  employeeRosterSourceSha256: string | null;
   wholesaleEmployeeCount: number | null;
   managersOutsideWholesaleRosterCount: number;
   holdingLinkValidationPolicy: import("./holding-link-policy").HoldingLinkValidationPolicy;
@@ -306,5 +307,6 @@ export type ValidatedExtendedClientsPayload = {
   issuesTruncated?: boolean;
   warningsTruncated?: boolean;
   holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  employeeRosterSourceSha256?: string | null;
   wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
 };

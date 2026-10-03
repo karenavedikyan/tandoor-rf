@@ -199,6 +199,7 @@ describe("wholesale 1C exchange rules", () => {
       payload: validated.payload,
       holdingLinkPolicy: "tolerant",
       employeeRosterLoaded: true,
+      employeeRosterSourceSha256: roster?.sourceSha256 ?? null,
       wholesaleEmployeeCount: roster?.wholesaleCount ?? null,
       existing: {
         clientGuids: new Set([EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]),
@@ -209,9 +210,14 @@ describe("wholesale 1C exchange rules", () => {
     });
     assert.equal(report.performsDeletion, false);
     assert.equal(report.writesBusinessData, false);
+    assert.equal(report.applyAllowed, false);
     assert.equal(report.clientsToExclude.count, 1);
     assert.equal(report.unresolvedHoldingLinks.count, 1);
-    assert.ok(report.operationBlockers.includes("excluded_records_require_separate_cleanup_approval"));
+    assert.equal(
+      report.baselineTransition.interpretation,
+      "agreed_baseline_change_not_restore_requirement",
+    );
+    assert.ok(report.operationBlockers.includes("wholesale_composition_prep_is_dry_run_only"));
   });
 
   it("parses wholesale department roster from all_employees.json shape", () => {
