@@ -495,6 +495,77 @@ describe("client catalog outlet distribution integration", { concurrency: false 
     }
   });
 
+  it("rejects marker save when outlet closes while save waits on row lock", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "p1",
+      versionId: catalogVersionId,
+    };
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        `SELECT guid_store FROM onec_retail_outlets WHERE guid_store = $1::uuid FOR UPDATE`,
+        [STORE_ONE],
+      );
+
+      const postPromise = request(app)
+        .post(url)
+        .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+        .send(body);
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      await blocker.query(`UPDATE onec_retail_outlets SET is_closed = TRUE WHERE guid_store = $1::uuid`, [
+        STORE_ONE,
+      ]);
+      await blocker.query("COMMIT");
+
+      const res = await postPromise;
+      assert.equal(res.status, 422, JSON.stringify(res.body));
+      assert.equal(res.body.code, "OUTLET_NOT_WRITABLE");
+    } finally {
+      blocker.release();
+      await pool.end();
+    }
+  });
+
+  it("completes marker save before outlet closure blocks subsequent writes", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "p1",
+      versionId: catalogVersionId,
+    };
+
+    const saved = await request(app)
+      .post(url)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send(body);
+    assert.equal(saved.status, 200);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`UPDATE onec_retail_outlets SET is_closed = TRUE WHERE guid_store = $1::uuid`, [
+      STORE_ONE,
+    ]);
+    await pool.end();
+
+    const blocked = await request(app)
+      .post(url)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send(body);
+    assert.equal(blocked.status, 422);
+    assert.equal(blocked.body.code, "OUTLET_NOT_WRITABLE");
+  });
+
   it("records history on clear without deleting prior fact row", async () => {
     const cookie = await login("admin@example.com");
     const app = await loadApp();

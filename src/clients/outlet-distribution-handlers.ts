@@ -9,6 +9,7 @@ import { canReadClientGuid } from "./repository";
 import {
   assertOutletBelongsToClient,
   assertOutletDistributionWritable,
+  lockOutletDistributionContext,
   loadOutletDistributionOptions,
 } from "./outlet-distribution-readiness";
 import {
@@ -180,12 +181,13 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    if (!(await assertOutletBelongsToClient(client, cardGuid, storeGuid))) {
+    const locked = await lockOutletDistributionContext(client, cardGuid, storeGuid);
+    if (!locked.ok) {
       await client.query("ROLLBACK");
       setNoStore(res);
       res.status(404).json({
-        code: "OUTLET_NOT_FOUND",
-        message: "Торговая точка не найдена для выбранного клиента.",
+        code: locked.code,
+        message: locked.message,
       });
       return;
     }

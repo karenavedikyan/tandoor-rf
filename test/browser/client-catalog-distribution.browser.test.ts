@@ -280,6 +280,60 @@ describe("client catalog distribution writes (browser, mocked API)", { concurren
     await context.close();
   });
 
+  it("finishes load after reload when saved outlet is unavailable", async () => {
+    let metaCalls = 0;
+    const { page, context } = await openDistributionPage(async (url) => {
+      if (url.pathname.endsWith("/catalog/meta")) {
+        metaCalls += 1;
+        const storeGuid = url.searchParams.get("storeGuid") ?? "";
+        const body = metaForStore(storeGuid, false);
+        body.selectedStoreGuid = storeGuid || null;
+        body.outletConfirmed = false;
+        body.distributionEnabled = false;
+        body.futureActionsBlockedReason =
+          "Сохранённая торговая точка недоступна. Выберите другую или продолжите просмотр каталога.";
+        return { status: 200, body };
+      }
+      if (url.pathname.endsWith("/catalog/sections-tree")) {
+        return { status: 200, body: { state: "ready", versionId: VERSION_ID, tree: [] } };
+      }
+      if (url.pathname.endsWith("/catalog/facets")) {
+        return { status: 200, body: { state: "ready", versionId: VERSION_ID, total: 0, facets: [] } };
+      }
+      if (url.pathname.endsWith("/catalog/products")) {
+        return { status: 200, body: syntheticCatalogProductsPayload() };
+      }
+      if (url.pathname.endsWith(`/catalog/outlets/${STORE_A}/distribution`)) {
+        return {
+          status: 404,
+          body: { code: "OUTLET_NOT_FOUND", message: "Торговая точка не найдена или недоступна." },
+        };
+      }
+      return null;
+    });
+
+    await page.evaluate(
+      ({ guid, storeGuid }) => {
+        sessionStorage.setItem("tandoor-catalog-outlet-" + guid, storeGuid);
+      },
+      { guid: SYNTHETIC_CLIENT_GUID, storeGuid: STORE_A },
+    );
+
+    await page.reload();
+    await page.waitForSelector(".pc-catalog-workspace-layout");
+    await page.waitForFunction(() => {
+      var results = document.querySelector("[data-catalog-results]");
+      return results && !/Загрузка каталога/.test(results.textContent || "");
+    });
+    assert.equal(await page.inputValue("[data-catalog-outlet-select]"), "");
+    assert.match(await page.locator("[data-catalog-meta-banner]").textContent(), /недоступна/i);
+    assert.ok(metaCalls >= 1);
+    assert.match(await page.locator("[data-catalog-results]").textContent(), /Product one|Найдено/i);
+
+    await page.close();
+    await context.close();
+  });
+
   it("shows catalog version conflict without repainting another outlet after save", async () => {
     let selected = "";
     const { page, context } = await openDistributionPage(async (url, method) => {

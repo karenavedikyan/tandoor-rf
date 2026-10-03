@@ -193,6 +193,52 @@ export async function assertOutletBelongsToClient(
   return (row.rows[0]?.guid_client ?? "").toLowerCase() === cardGuid.toLowerCase();
 }
 
+/** Locks outlet registry row then client row (fixed order) for consistent marker writes. */
+export async function lockOutletDistributionContext(
+  client: PoolClient,
+  cardGuid: string,
+  storeGuid: string,
+): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  const outletRow = await client.query<RegistryRow>(
+    `
+      SELECT guid_store::text, guid_client::text, is_closed
+      FROM onec_retail_outlets
+      WHERE guid_store = $1::uuid
+      FOR UPDATE
+    `,
+    [storeGuid],
+  );
+  const registry = outletRow.rows[0];
+  if (!registry) {
+    return {
+      ok: false,
+      code: "OUTLET_NOT_FOUND",
+      message: "Торговая точка не найдена для выбранного клиента.",
+    };
+  }
+  if (registry.guid_client.toLowerCase() !== cardGuid.toLowerCase()) {
+    return {
+      ok: false,
+      code: "OUTLET_NOT_FOUND",
+      message: "Торговая точка не найдена для выбранного клиента.",
+    };
+  }
+
+  const clientRow = await client.query<{ guid_client: string }>(
+    `SELECT guid_client::text FROM onec_clients WHERE guid_client = $1::uuid FOR UPDATE`,
+    [cardGuid],
+  );
+  if (!clientRow.rows[0]) {
+    return {
+      ok: false,
+      code: "OUTLET_NOT_FOUND",
+      message: "Торговая точка не найдена для выбранного клиента.",
+    };
+  }
+
+  return { ok: true };
+}
+
 export async function assertOutletDistributionWritable(
   client: PoolClient,
   cardGuid: string,

@@ -877,7 +877,7 @@
         if (isOutletContextCurrent(capture)) {
           state.distributionSummary = { installed: [], planned: [] };
         }
-        return Promise.resolve();
+        return Promise.resolve({ outletCleared: false, stale: false });
       }
       return api
         .apiRequest(
@@ -888,16 +888,18 @@
             "/distribution",
         )
         .then(function (result) {
-          if (!isOutletContextCurrent(capture)) return;
+          if (!isOutletContextCurrent(capture)) {
+            return { outletCleared: false, stale: true };
+          }
           if (result.response.status === 403) {
             handleAccessDenied();
-            return;
+            return { outletCleared: false, stale: false };
           }
           if (result.response.status === 404) {
             clearOutletSelection("Торговая точка не найдена или недоступна.");
             var summaryBanner = root.querySelector("[data-catalog-meta-banner]");
             if (summaryBanner) summaryBanner.innerHTML = renderMetaBanner(state.meta);
-            return;
+            return { outletCleared: true, stale: false };
           }
           if (result.response.status === 200 && result.data) {
             state.distributionSummary = {
@@ -905,11 +907,36 @@
               planned: result.data.planned || [],
             };
           }
+          return { outletCleared: false, stale: false };
         })
         .catch(function () {
-          if (!isOutletContextCurrent(capture)) return;
+          if (!isOutletContextCurrent(capture)) {
+            return { outletCleared: false, stale: true };
+          }
           state.distributionSummary = { installed: [], planned: [] };
+          return { outletCleared: false, stale: false };
         });
+    }
+
+    function continueCatalogLoadAfterSummary(opId, outletCapture, summaryResult, reloadList) {
+      if (!isCurrentOp(opId)) return Promise.resolve();
+      var cleared = summaryResult && summaryResult.outletCleared;
+      if (!cleared && summaryResult && summaryResult.stale) return Promise.resolve();
+      if (!cleared && !isOutletContextCurrent(outletCapture)) return Promise.resolve();
+      if (reloadList === false) {
+        ensureListLayout(
+          renderState(
+            state.outletUnavailableReason || "Выберите торговую точку для работы с дистрибуцией.",
+            "empty",
+          ),
+        );
+        return Promise.resolve();
+      }
+      return fetchSectionsTree(opId).then(function (step) {
+        if (step !== "ok" || !isCurrentOp(opId)) return;
+        if (!cleared && !isOutletContextCurrent(outletCapture)) return;
+        return runCatalogQuery({ includeFacets: true, includeProducts: true });
+      });
     }
 
     function saveDistributionMarker(action, markerKind, productCode) {
@@ -1023,8 +1050,13 @@
           }
           return loadDistributionSummary(outletCapture);
         })
-        .then(function () {
-          if (!isOutletContextCurrent(outletCapture)) return;
+        .then(function (summaryResult) {
+          if (
+            !isOutletContextCurrent(outletCapture) &&
+            !(summaryResult && summaryResult.outletCleared)
+          ) {
+            return;
+          }
           if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
           if (state.distributionPanel === "catalog") {
             runCatalogQuery({ includeFacets: false, includeProducts: true });
@@ -1847,13 +1879,8 @@
             setHtml(renderHeader() + renderMetaBanner(result.data));
             return;
           }
-          return loadDistributionSummary(outletCapture).then(function () {
-            if (!isOutletContextCurrent(outletCapture)) return;
-            if (reloadList === false) return;
-            return fetchSectionsTree(opId).then(function (step) {
-            if (step !== "ok" || !isCurrentOp(opId) || !isOutletContextCurrent(outletCapture)) return;
-            return runCatalogQuery({ includeFacets: true, includeProducts: true });
-            });
+          return loadDistributionSummary(outletCapture).then(function (summaryResult) {
+            return continueCatalogLoadAfterSummary(opId, outletCapture, summaryResult, reloadList);
           });
         })
         .catch(function () {
