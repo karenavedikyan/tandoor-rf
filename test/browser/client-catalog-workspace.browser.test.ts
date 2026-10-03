@@ -100,7 +100,7 @@ describe("client catalog workspace (R3.2 visual, mocked API)", { concurrency: fa
       catalogProductDetail: syntheticCatalogProductDetailPayload(),
     });
 
-    assert.match(await page.locator(".pc-catalog-outlet-notice").textContent(), /Сохранение дистрибуции/);
+    assert.match(await page.locator(".pc-catalog-outlet-picker").textContent(), /Торговая точка/);
     await page.waitForSelector(".pc-catalog-view-modes__btn");
     await page.waitForSelector(".pc-catalog-image--photo img");
     assert.equal(await page.locator(".pc-catalog-image--photo img").count(), 1);

@@ -4,6 +4,7 @@
   var api = window.TandoorRf;
   var MAX_QUERY_LENGTH = 200;
   var VIEW_MODE_KEY = "tandoor-catalog-view-mode";
+  var OUTLET_KEY_PREFIX = "tandoor-catalog-outlet-";
   var VALID_VIEW_MODES = { large: true, compact: true, list: true };
 
   function esc(value) {
@@ -12,6 +13,27 @@
 
   function sessionKey(clientGuid) {
     return "tandoor-catalog-workspace-" + clientGuid;
+  }
+
+  function outletSessionKey(clientGuid) {
+    return OUTLET_KEY_PREFIX + clientGuid;
+  }
+
+  function readSelectedOutlet(clientGuid) {
+    try {
+      return sessionStorage.getItem(outletSessionKey(clientGuid)) || "";
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  function writeSelectedOutlet(clientGuid, storeGuid) {
+    try {
+      if (storeGuid) sessionStorage.setItem(outletSessionKey(clientGuid), storeGuid);
+      else sessionStorage.removeItem(outletSessionKey(clientGuid));
+    } catch (_e) {
+      /* ignore */
+    }
   }
 
   function readViewMode() {
@@ -125,6 +147,7 @@
       pageSize: state.pageSize,
       versionId: state.versionId,
     };
+    if (state.selectedStoreGuid) query.storeGuid = state.selectedStoreGuid;
     Object.keys(state.propertyFilters || {}).forEach(function (key) {
       var values = state.propertyFilters[key];
       if (values && values.length) query[filterParamKey(key)] = values.slice();
@@ -212,6 +235,13 @@
       facetRequestGen: {},
       filtersExpanded: false,
       lightboxReturnFocus: null,
+      outlets: [],
+      selectedStoreGuid: readSelectedOutlet(clientGuid) || null,
+      outletConfirmed: false,
+      distributionEnabled: false,
+      distributionSummary: { installed: [], planned: [] },
+      distributionPanel: "catalog",
+      markerSaving: false,
     };
 
     function serializeCatalogContext() {
@@ -254,15 +284,149 @@
       );
     }
 
-    function renderOutletNotice(meta) {
-      var reason =
-        (meta && meta.futureActionsBlockedReason) ||
-        "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.";
+    function renderDistributionBadges(item) {
+      if (!item.distribution) return "";
+      var parts = [];
+      if (item.distribution.installed) parts.push('<span class="pc-catalog-marker pc-catalog-marker--installed">Установлено</span>');
+      if (item.distribution.planned) parts.push('<span class="pc-catalog-marker pc-catalog-marker--planned">Нужно поставить</span>');
+      return parts.length ? '<div class="pc-catalog-markers">' + parts.join("") + "</div>" : "";
+    }
+
+    function renderDistributionActions(productCode, distribution) {
+      if (!state.distributionEnabled) return "";
+      var dist = distribution || { installed: false, planned: false };
       return (
-        '<div class="pc-catalog-meta pc-catalog-outlet-notice">' +
-        '<p class="pc-label">' +
-        esc(reason) +
-        "</p></div>"
+        '<div class="pc-catalog-distribution-actions">' +
+        '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost' +
+        (dist.installed ? " pc-catalog-btn--active" : "") +
+        '" data-distribution-action="set" data-marker-kind="installed" data-product-code="' +
+        esc(productCode) +
+        '">Установлено</button>' +
+        '<button type="button" class="pc-catalog-btn pc-catalog-btn--ghost' +
+        (dist.planned ? " pc-catalog-btn--active" : "") +
+        '" data-distribution-action="set" data-marker-kind="planned" data-product-code="' +
+        esc(productCode) +
+        '">Нужно поставить</button>' +
+        (dist.installed
+          ? '<button type="button" class="pc-link" data-distribution-action="clear" data-marker-kind="installed" data-product-code="' +
+            esc(productCode) +
+            '">Снять факт</button>'
+          : "") +
+        (dist.planned
+          ? '<button type="button" class="pc-link" data-distribution-action="clear" data-marker-kind="planned" data-product-code="' +
+            esc(productCode) +
+            '">Снять план</button>'
+          : "") +
+        "</div>"
+      );
+    }
+
+    function renderOutletPicker() {
+      if (!state.outlets.length) {
+        return (
+          '<div class="pc-catalog-outlet-picker pc-catalog-outlet-picker--empty">' +
+          '<p class="pc-label">Торговые точки клиента не импортированы из 1С. Сохранение дистрибуции недоступно.</p></div>'
+        );
+      }
+      var options = state.outlets
+        .map(function (outlet) {
+          var selected = state.selectedStoreGuid === outlet.guidStore ? " selected" : "";
+          var blocked = outlet.distributionWritable ? "" : " disabled";
+          var suffix =
+            " · " +
+            esc(outlet.closureStatusLabel) +
+            (outlet.guidStoreShortLabel ? " · " + esc(outlet.guidStoreShortLabel) : "");
+          return (
+            '<option value="' +
+            esc(outlet.guidStore) +
+            '"' +
+            selected +
+            blocked +
+            ">" +
+            esc(outlet.displayName || outlet.storeAddress || outlet.guidStoreShortLabel) +
+            suffix +
+            "</option>"
+          );
+        })
+        .join("");
+      var selectedOutlet = state.outlets.find(function (item) {
+        return item.guidStore === state.selectedStoreGuid;
+      });
+      var notice = selectedOutlet && !selectedOutlet.distributionWritable
+        ? '<p class="pc-catalog-note">' + esc(selectedOutlet.distributionBlockedReason || "") + "</p>"
+        : state.distributionEnabled
+          ? '<p class="pc-label">Выбрана торговая точка. Отметки сохраняются для этой ТТ.</p>'
+          : '<p class="pc-label">Выберите торговую точку для сохранения дистрибуции.</p>';
+      var singleConfirm =
+        state.outlets.length === 1 && !state.outletConfirmed
+          ? '<button type="button" class="pc-catalog-btn" data-catalog-action="confirm-outlet">Подтвердить торговую точку</button>'
+          : "";
+      return (
+        '<div class="pc-catalog-outlet-picker">' +
+        '<label class="pc-catalog-field"><span class="pc-label">Торговая точка</span>' +
+        '<select class="pc-catalog-input" data-catalog-outlet-select aria-label="Выбор торговой точки">' +
+        '<option value="">— выберите торговую точку —</option>' +
+        options +
+        "</select></label>" +
+        singleConfirm +
+        notice +
+        "</div>"
+      );
+    }
+
+    function renderDistributionLists() {
+      if (!state.selectedStoreGuid) {
+        return renderState("Выберите торговую точку, чтобы просмотреть сохранённые отметки.", "info");
+      }
+      var installed = state.distributionSummary.installed || [];
+      var planned = state.distributionSummary.planned || [];
+      function renderRows(items, emptyLabel) {
+        if (!items.length) return '<p class="pc-label">' + esc(emptyLabel) + "</p>";
+        return (
+          '<ul class="pc-catalog-distribution-list">' +
+          items
+            .map(function (row) {
+              var name = row.productName || row.productCode;
+              var stale = row.inCurrentCatalog ? "" : ' <span class="pc-catalog-note">(нет в текущем каталоге)</span>';
+              return (
+                "<li><strong>" +
+                esc(name) +
+                "</strong> · код " +
+                esc(row.productCode) +
+                stale +
+                "</li>"
+              );
+            })
+            .join("") +
+          "</ul>"
+        );
+      }
+      return (
+        '<div class="pc-catalog-distribution-panels">' +
+        '<div class="pc-catalog-view-modes">' +
+        '<button type="button" class="pc-catalog-view-modes__btn' +
+        (state.distributionPanel === "catalog" ? " pc-catalog-view-modes__btn--active" : "") +
+        '" data-distribution-panel="catalog">Каталог</button>' +
+        '<button type="button" class="pc-catalog-view-modes__btn' +
+        (state.distributionPanel === "installed" ? " pc-catalog-view-modes__btn--active" : "") +
+        '" data-distribution-panel="installed">Установлено (' +
+        esc(String(installed.length)) +
+        ")</button>" +
+        '<button type="button" class="pc-catalog-view-modes__btn' +
+        (state.distributionPanel === "planned" ? " pc-catalog-view-modes__btn--active" : "") +
+        '" data-distribution-panel="planned">Нужно поставить (' +
+        esc(String(planned.length)) +
+        ")</button></div>" +
+        (state.distributionPanel === "installed"
+          ? '<section class="pc-card pc-space"><div class="pc-cardhead"><h2>Установлено</h2></div><div class="pc-pad">' +
+            renderRows(installed, "Фактических образцов пока нет.") +
+            "</div></section>"
+          : state.distributionPanel === "planned"
+            ? '<section class="pc-card pc-space"><div class="pc-cardhead"><h2>Нужно поставить</h2></div><div class="pc-pad">' +
+              renderRows(planned, "План установки пока пуст.") +
+              "</div></section>"
+            : "") +
+        "</div>"
       );
     }
 
@@ -274,7 +438,8 @@
         ? '<p class="pc-label">' + esc(meta.message) + "</p>"
         : "";
       return (
-        renderOutletNotice(meta) +
+        renderOutletPicker() +
+        renderDistributionLists() +
         '<div class="pc-catalog-meta">' +
         '<p class="pc-label">Снимок каталога · обновлён ' +
         esc(formatImportedAt(meta.importedAt)) +
@@ -519,6 +684,8 @@
         articleLine +
         renderKeyProperties(item) +
         (groupNote ? '<div class="pc-catalog-note">' + esc(groupNote) + "</div>" : "") +
+        renderDistributionBadges(item) +
+        renderDistributionActions(item.code, item.distribution) +
         '<button type="button" class="pc-link" data-catalog-open="' +
         esc(item.code) +
         '">Подробнее</button></div></article>'
@@ -649,7 +816,118 @@
       if (!setResultsHtml(html)) ensureListLayout(html);
     }
 
+    function applyMetaDistribution(meta) {
+      state.outlets = meta.outlets || state.outlets || [];
+      if (meta.selectedStoreGuid !== undefined) state.selectedStoreGuid = meta.selectedStoreGuid;
+      state.outletConfirmed = !!meta.outletConfirmed;
+      state.distributionEnabled = !!meta.distributionEnabled;
+    }
+
+    function loadDistributionSummary() {
+      if (!state.selectedStoreGuid) {
+        state.distributionSummary = { installed: [], planned: [] };
+        return Promise.resolve();
+      }
+      return api
+        .apiRequest(
+          "/api/clients/" +
+            encodeURIComponent(state.clientGuid) +
+            "/catalog/outlets/" +
+            encodeURIComponent(state.selectedStoreGuid) +
+            "/distribution",
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data) {
+            state.distributionSummary = {
+              installed: result.data.installed || [],
+              planned: result.data.planned || [],
+            };
+          }
+        });
+    }
+
+    function saveDistributionMarker(action, markerKind, productCode) {
+      if (!state.distributionEnabled || !state.selectedStoreGuid || state.markerSaving) return Promise.resolve();
+      state.markerSaving = true;
+      return api
+        .apiRequest(
+          "/api/clients/" +
+            encodeURIComponent(state.clientGuid) +
+            "/catalog/outlets/" +
+            encodeURIComponent(state.selectedStoreGuid) +
+            "/distribution/markers",
+          {
+            method: "POST",
+            body: {
+              action: action,
+              markerKind: markerKind,
+              productCode: productCode,
+              versionId: state.versionId,
+            },
+          },
+        )
+        .then(function (result) {
+          state.markerSaving = false;
+          if (result.response.status === 409 && result.data) {
+            handleVersionConflict(result.data.message);
+            return;
+          }
+          if (result.response.status === 422 || result.response.status === 404) {
+            alert(result.data && result.data.message ? result.data.message : "Сохранение недоступно.");
+            return;
+          }
+          if (result.response.status !== 200) {
+            alert("Не удалось сохранить отметку.");
+            return;
+          }
+          return loadDistributionSummary().then(function () {
+            if (state.view === "detail" && state.selectedCode === productCode) {
+              loadDetail(productCode);
+            } else {
+              runCatalogQuery({ includeFacets: false, includeProducts: true });
+            }
+            var metaBanner = root.querySelector("[data-catalog-meta-banner]");
+            if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
+          });
+        })
+        .catch(function () {
+          state.markerSaving = false;
+          alert("Ошибка сети при сохранении.");
+        });
+    }
+
+    function selectOutlet(storeGuid) {
+      state.selectedStoreGuid = storeGuid || null;
+      writeSelectedOutlet(state.clientGuid, state.selectedStoreGuid || "");
+      state.page = 1;
+      persistState();
+      var metaBanner = root.querySelector("[data-catalog-meta-banner]");
+      if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
+      return api
+        .apiRequest(
+          buildApiUrl(state.clientGuid, "meta", state.selectedStoreGuid ? { storeGuid: state.selectedStoreGuid } : null),
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data) {
+            state.meta = result.data;
+            applyMetaDistribution(result.data);
+            if (result.data.versionId) applySnapshotVersion(result.data.versionId);
+          }
+          return loadDistributionSummary();
+        })
+        .then(function () {
+          if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
+          if (state.distributionPanel === "catalog") {
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
+          }
+        });
+    }
+
     function renderListResult(body) {
+      if (state.distributionPanel !== "catalog") {
+        setResultsHtml(renderDistributionLists());
+        return;
+      }
       state.lastTotal = body.total || 0;
       updateResultsCount(body.total);
       if (body.state === "empty") {
@@ -774,12 +1052,11 @@
           images +
           '</div></section></div><section class="pc-card pc-space"><div class="pc-cardhead"><h2>Характеристики</h2></div><div class="pc-pad">' +
           properties +
-          '</div></section><div class="pc-catalog-future"><p class="pc-label">' +
-          esc(
-            metaNote ||
-              "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
-          ) +
-          "</p></div>",
+          '</div></section>' +
+          renderDistributionActions(product.code, product.distribution) +
+          (metaNote
+            ? '<div class="pc-catalog-future"><p class="pc-label">' + esc(metaNote) + "</p></div>"
+            : ""),
       );
     }
 
@@ -850,11 +1127,40 @@
         runCatalogQuery({ includeFacets: true, includeProducts: true });
       });
 
+      root.addEventListener("change", function (event) {
+        var select = event.target.closest("[data-catalog-outlet-select]");
+        if (!select || !root.contains(select)) return;
+        selectOutlet(select.value || null);
+      });
+
       root.addEventListener("click", function (event) {
         var target = event.target.closest(
-          "[data-section-code], [data-view-mode], [data-clear-filter], [data-catalog-action], [data-catalog-page-nav], [data-catalog-open], [data-catalog-zoom], [data-catalog-back], [data-catalog-refresh]",
+          "[data-section-code], [data-view-mode], [data-clear-filter], [data-catalog-action], [data-catalog-page-nav], [data-catalog-open], [data-catalog-zoom], [data-catalog-back], [data-catalog-refresh], [data-distribution-action], [data-distribution-panel]",
         );
         if (!target || !root.contains(target)) return;
+
+        var distributionPanel = target.getAttribute("data-distribution-panel");
+        if (distributionPanel) {
+          state.distributionPanel = distributionPanel;
+          if (distributionPanel === "catalog") {
+            runCatalogQuery({ includeFacets: false, includeProducts: true });
+          } else {
+            loadDistributionSummary().then(function () {
+              setResultsHtml(renderDistributionLists());
+              var metaBanner = root.querySelector("[data-catalog-meta-banner]");
+              if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
+            });
+          }
+          return;
+        }
+
+        var distAction = target.getAttribute("data-distribution-action");
+        if (distAction) {
+          var productCode = target.getAttribute("data-product-code") || "";
+          var markerKind = target.getAttribute("data-marker-kind") || "";
+          if (productCode && markerKind) saveDistributionMarker(distAction, markerKind, productCode);
+          return;
+        }
 
         if (target.hasAttribute("data-section-code")) {
           state.sectionCode = target.getAttribute("data-section-code") || "";
@@ -920,6 +1226,9 @@
           if (action === "toggle-filters") {
             state.filtersExpanded = !state.filtersExpanded;
             refreshFilterChrome();
+          }
+          if (action === "confirm-outlet" && state.outlets.length === 1) {
+            selectOutlet(state.outlets[0].guidStore);
           }
           return;
         }
@@ -1336,9 +1645,7 @@
       renderDetailShell(renderState("Загрузка товара…", "loading"));
       return api
         .apiRequest(
-          buildApiUrl(state.clientGuid, "products/" + encodeURIComponent(code), {
-            versionId: state.versionId,
-          }),
+          buildApiUrl(state.clientGuid, "products/" + encodeURIComponent(code), buildListQuery(state)),
         )
         .then(function (result) {
           if (!isDetailResponseCurrent(detailLoadId, code)) return;
@@ -1404,15 +1711,18 @@
             return;
           }
           state.meta = result.data;
+          applyMetaDistribution(result.data);
           applySnapshotVersion(result.data.versionId);
           if (result.data.state !== "ready") {
             setHtml(renderHeader() + renderMetaBanner(result.data));
             return;
           }
-          if (reloadList === false) return;
-          return fetchSectionsTree(opId).then(function (step) {
+          return loadDistributionSummary().then(function () {
+            if (reloadList === false) return;
+            return fetchSectionsTree(opId).then(function (step) {
             if (step !== "ok" || !isCurrentOp(opId)) return;
             return runCatalogQuery({ includeFacets: true, includeProducts: true });
+            });
           });
         })
         .catch(function () {
@@ -1431,7 +1741,7 @@
   function renderShowcaseEntry(clientGuid) {
     return (
       '<div class="pc-catalog-workspace-entry">' +
-      '<p class="pc-label">Для выбора образцов откройте расширенный каталог с фильтрами и режимами отображения.</p>' +
+      '<p class="pc-label">Выберите торговую точку и отметьте образцы «Установлено» / «Нужно поставить» в расширенном каталоге.</p>' +
       '<a class="pc-catalog-btn" href="/clients/' +
       encodeURIComponent(clientGuid) +
       '/catalog">Открыть каталог образцов</a></div>'

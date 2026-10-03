@@ -24,6 +24,82 @@ import { getPool } from "../db/pool";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
 import { canReadClientGuid } from "./repository";
+import {
+  assertOutletBelongsToClient,
+  assertOutletDistributionWritable,
+  loadOutletDistributionOptions,
+} from "./outlet-distribution-readiness";
+import {
+  attachDistributionToCatalogItems,
+  loadProductDistributionMap,
+  listDistributionMarkers,
+} from "./outlet-distribution-repository";
+
+type CatalogDistributionContext = {
+  storeGuid: string | null;
+  outletConfirmed: boolean;
+  selectionPersisted: boolean;
+  distributionEnabled: boolean;
+  futureActionsBlockedReason: string | null;
+};
+
+async function resolveCatalogDistributionContext(
+  client: import("pg").PoolClient,
+  cardGuid: string,
+  storeGuidParam: unknown,
+): Promise<CatalogDistributionContext> {
+  const defaultBlocked =
+    "Выберите торговую точку, чтобы сохранять дистрибуцию по образцам.";
+  if (typeof storeGuidParam !== "string" || !storeGuidParam.trim()) {
+    return {
+      storeGuid: null,
+      outletConfirmed: false,
+      selectionPersisted: false,
+      distributionEnabled: false,
+      futureActionsBlockedReason: defaultBlocked,
+    };
+  }
+  const storeGuid = storeGuidParam.trim();
+  if (!isValidUuidParam(storeGuid)) {
+    return {
+      storeGuid: null,
+      outletConfirmed: false,
+      selectionPersisted: false,
+      distributionEnabled: false,
+      futureActionsBlockedReason: "Некорректный идентификатор торговой точки.",
+    };
+  }
+  if (!(await assertOutletBelongsToClient(client, cardGuid, storeGuid))) {
+    return {
+      storeGuid,
+      outletConfirmed: false,
+      selectionPersisted: false,
+      distributionEnabled: false,
+      futureActionsBlockedReason: "Торговая точка не принадлежит выбранному клиенту.",
+    };
+  }
+  const writable = await assertOutletDistributionWritable(client, cardGuid, storeGuid);
+  if (!writable.ok) {
+    return {
+      storeGuid,
+      outletConfirmed: false,
+      selectionPersisted: false,
+      distributionEnabled: false,
+      futureActionsBlockedReason: writable.message,
+    };
+  }
+  const markers = await listDistributionMarkers(client, {
+    storeGuid,
+    activeCatalogVersionId: null,
+  });
+  return {
+    storeGuid,
+    outletConfirmed: true,
+    selectionPersisted: markers.length > 0,
+    distributionEnabled: true,
+    futureActionsBlockedReason: null,
+  };
+}
 
 async function assertClientCatalogAccess(
   req: AccessRequest,
@@ -82,13 +158,22 @@ export async function getClientCatalogMetaHandler(req: AccessRequest, res: Respo
     const meta = await loadCatalogSnapshotMeta(client);
     const sections =
       meta.versionId !== null ? await listCatalogSections(client, meta.versionId) : [];
+    const distribution = await resolveCatalogDistributionContext(
+      client,
+      cardGuid,
+      req.query.storeGuid,
+    );
+    const outlets = await loadOutletDistributionOptions(client, cardGuid);
     setNoStore(res);
     res.status(200).json({
       ...meta,
       sections,
-      outletConfirmed: false,
-      futureActionsBlockedReason:
-        "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
+      outlets,
+      selectedStoreGuid: distribution.storeGuid,
+      outletConfirmed: distribution.outletConfirmed,
+      selectionPersisted: distribution.selectionPersisted,
+      distributionEnabled: distribution.distributionEnabled,
+      futureActionsBlockedReason: distribution.futureActionsBlockedReason,
     });
   } finally {
     client.release();
@@ -160,10 +245,24 @@ export async function getClientCatalogProductsHandler(
 
     try {
       const result = await searchCatalogProducts(client, meta.versionId, parsed.value);
+      const distribution = await resolveCatalogDistributionContext(
+        client,
+        cardGuid,
+        req.query.storeGuid,
+      );
+      let items = result.items;
+      if (distribution.storeGuid && distribution.distributionEnabled) {
+        const distributionMap = await loadProductDistributionMap(client, distribution.storeGuid);
+        items = attachDistributionToCatalogItems(result.items, distributionMap);
+      }
       setNoStore(res);
       res.status(200).json({
         state: "ready",
         ...result,
+        items,
+        selectedStoreGuid: distribution.storeGuid,
+        outletConfirmed: distribution.outletConfirmed,
+        distributionEnabled: distribution.distributionEnabled,
       });
     } catch (error) {
       if (error instanceof CatalogFilterUnavailableError) {
@@ -468,14 +567,29 @@ export async function getClientCatalogProductHandler(req: AccessRequest, res: Re
       return;
     }
 
+    const distribution = await resolveCatalogDistributionContext(
+      client,
+      cardGuid,
+      req.query.storeGuid,
+    );
+    let product = detail;
+    if (distribution.storeGuid && distribution.distributionEnabled) {
+      const distributionMap = await loadProductDistributionMap(client, distribution.storeGuid);
+      const markerState = distributionMap.get(detail.code.toLowerCase()) ?? {
+        installed: false,
+        planned: false,
+      };
+      product = { ...detail, distribution: markerState };
+    }
     setNoStore(res);
     res.status(200).json({
       state: "ready",
-      product: detail,
-      outletConfirmed: false,
-      selectionPersisted: false,
-      futureActionsBlockedReason:
-        "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
+      product,
+      selectedStoreGuid: distribution.storeGuid,
+      outletConfirmed: distribution.outletConfirmed,
+      selectionPersisted: distribution.selectionPersisted,
+      distributionEnabled: distribution.distributionEnabled,
+      futureActionsBlockedReason: distribution.futureActionsBlockedReason,
     });
   } finally {
     client.release();
