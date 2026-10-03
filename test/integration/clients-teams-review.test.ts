@@ -7,7 +7,11 @@ import {
   insertSuccessfulImportRun,
   insertSyntheticClients,
 } from "../helpers/clients-db-fixtures";
-import { addRopTeamMember, linkUserToEmployee } from "../helpers/access-db-fixtures";
+import {
+  addRopTeamMember,
+  denyClientAccess,
+  linkUserToEmployee,
+} from "../helpers/access-db-fixtures";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -378,6 +382,171 @@ describe("clients teams and review integration", { concurrency: false }, () => {
       .get("/api/clients?view=review")
       .set(authHeaders(managerCookie));
     assert.equal(managerReviewList.status, 403);
+  });
+
+  it("combines review filters with search without SQL placeholder errors", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({ reviewState: "in_progress", expectedVersion: null });
+
+    const filtered = await request(app)
+      .get("/api/clients?view=review&q=%D0%90%D0%BB%D1%8C%D1%84%D0%B0&reviewState=in_progress")
+      .set(authHeaders(adminCookie));
+    assert.equal(filtered.status, 200, JSON.stringify(filtered.body));
+    assert.equal(filtered.body.total, 1);
+    assert.equal(filtered.body.items[0].guid, CLIENT_ONE);
+  });
+
+  it("limits teams view by ROP without manager filter", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    const scoped = await request(app)
+      .get(`/api/clients?view=teams&rop=${ropUserId}`)
+      .set(authHeaders(adminCookie));
+    assert.equal(scoped.status, 200);
+    assert.equal(scoped.body.total, 3);
+    assert.equal(scoped.body.items.length, 3);
+  });
+
+  it("aligns team counters with access denials", async () => {
+    const adminCookie = await login("admin@example.com");
+    const ropCookie = await login("rop@example.com");
+    const app = await loadApp();
+
+    await denyClientAccess({
+      databaseUrl,
+      userId: ropUserId,
+      scopeType: "client",
+      objectId: CLIENT_ONE,
+      deniedByUserId: adminUserId,
+    });
+
+    const managers = await request(app)
+      .get(`/api/clients/teams/${ropUserId}/managers`)
+      .set(authHeaders(ropCookie));
+    assert.equal(managers.status, 200);
+    const teamManager = managers.body.items.find(
+      (item: { employeeGuid: string }) => item.employeeGuid === MANAGER_A,
+    );
+    assert.ok(teamManager);
+    assert.equal(teamManager.clientCount, 1);
+
+    const list = await request(app)
+      .get(`/api/clients?view=teams&rop=${ropUserId}&manager=${MANAGER_A}`)
+      .set(authHeaders(ropCookie));
+    assert.equal(list.status, 200);
+    assert.equal(list.body.total, 1);
+    assert.equal(list.body.items[0].guid, CLIENT_THREE);
+  });
+
+  it("rejects null expectedVersion overwrite and same-manager transfer confirmation", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    const created = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_B,
+        expectedVersion: null,
+      });
+    assert.equal(created.status, 200);
+
+    const overwrite = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({ reviewState: "in_progress", expectedVersion: null });
+    assert.equal(overwrite.status, 409);
+
+    const transferProposed = await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_A,
+        expectedVersion: null,
+      });
+    assert.equal(transferProposed.status, 200);
+    assert.equal(transferProposed.body.review.transferStatus, "proposed");
+
+    const sameManager = await request(app)
+      .put(`/api/clients/${CLIENT_THREE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_A,
+        expectedVersion: null,
+      });
+    assert.equal(sameManager.status, 400);
+  });
+
+  it("recheck clears stale state after import and preserves history", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    const initial = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        comment: "Первичное основание",
+        expectedVersion: null,
+      });
+    assert.equal(initial.status, 200);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE onec_clients SET address = 'Новый адрес' WHERE guid_client = $1::uuid`,
+      [CLIENT_ONE],
+    );
+    await pool.end();
+
+    const stale = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(stale.status, 200);
+    assert.equal(stale.body.review.reviewState, "needs_recheck");
+    assert.equal(stale.body.review.isStale, true);
+
+    const recheck = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        comment: "Повторное подтверждение после импорта",
+        expectedVersion: stale.body.review.version,
+        recheckConfirmed: true,
+      });
+    assert.equal(recheck.status, 200);
+    assert.equal(recheck.body.review.isStale, false);
+    assert.equal(recheck.body.review.reviewState, "completed");
+
+    const history = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review/history`)
+      .set(authHeaders(adminCookie));
+    assert.equal(history.status, 200);
+    assert.ok(history.body.items.some((item: { changeType: string }) => item.changeType === "recheck"));
+  });
+
+  it("denies admin review data to manager via review API", async () => {
+    const managerCookie = await login("manager-a@example.com");
+    const app = await loadApp();
+
+    const review = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(managerCookie));
+    assert.equal(review.status, 403);
   });
 
   it("excludes archived baseline clients from working lists", async () => {

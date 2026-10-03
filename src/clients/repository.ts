@@ -1,4 +1,4 @@
-import { combineScopeAndFilter } from "../access/combine-filters";
+import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { getPool, query } from "../db/pool";
@@ -6,6 +6,7 @@ import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
 import {
   assertManagerInTeamScope,
+  buildTeamRopFilter,
   TeamAccessError,
 } from "./teams/repository";
 import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
@@ -93,7 +94,14 @@ async function resolveScopedFilter(
   if (input.unassignedCategory) {
     const summary = await buildUnassignedSummary({ category: input.unassignedCategory });
     const employeeGuids = summary.employees.map((e) => e.employeeGuid);
-    userFilter = combineScopeAndFilter(userFilter, buildUnassignedCategoryFilter(input.unassignedCategory, employeeGuids));
+    userFilter = combineScopeAndFilter(
+      userFilter,
+      buildUnassignedCategoryFilter(input.unassignedCategory, employeeGuids),
+    );
+  }
+
+  if (input.view === "teams" && input.ropUserId && !input.managerId) {
+    userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));
   }
 
   const reviewJoin = buildReviewStateFilter(
@@ -101,14 +109,7 @@ async function resolveScopedFilter(
     input.reviewDecision,
   );
   if (reviewJoin.whereClauses.length > 0) {
-    const combinedClauses = [
-      userFilter.whereSql ? userFilter.whereSql.replace(/^WHERE\s+/, "") : "",
-      ...reviewJoin.whereClauses,
-    ].filter(Boolean);
-    userFilter = {
-      whereSql: combinedClauses.length > 0 ? `WHERE ${combinedClauses.join(" AND ")}` : "",
-      params: [...userFilter.params, ...reviewJoin.params],
-    };
+    userFilter = mergeSqlFilters(userFilter, reviewJoin.whereClauses, reviewJoin.params);
   }
 
   const combined = combineScopeAndFilter(scope, userFilter);
@@ -142,6 +143,7 @@ async function resolveScopedFilter(
         , crr.review_decision
         , crr.stale_reason AS review_stale_reason
         , crr.basis_manager_guid::text AS review_basis_manager_guid
+        , crr.basis_data_fingerprint AS review_basis_data_fingerprint
         , crr.proposed_manager_guid::text AS review_proposed_manager_guid
       `
       : "",

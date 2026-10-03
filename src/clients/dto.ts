@@ -7,6 +7,7 @@ import {
   type ReviewDecision,
   type ReviewState,
 } from "./review/constants";
+import { computeClientReviewFingerprint } from "./review/fingerprint";
 import { shortUuidLabel } from "./uuid-param";
 
 export type ClientListItemDto = {
@@ -151,6 +152,7 @@ type ClientRow = {
   review_decision?: ReviewDecision | null;
   review_stale_reason?: string | null;
   review_basis_manager_guid?: string | null;
+  review_basis_data_fingerprint?: string | null;
   review_proposed_manager_guid?: string | null;
   team_label?: string | null;
   unassigned_reason?: string | null;
@@ -205,14 +207,39 @@ function reviewTransferStatusFromRow(
   if (row.review_decision !== "propose_transfer" || !row.review_proposed_manager_guid) {
     return "none";
   }
-  if (
-    row.review_basis_manager_guid &&
-    row.guid_manager.toLowerCase() === row.review_proposed_manager_guid.toLowerCase() &&
-    !row.review_stale_reason
-  ) {
+  const proposedMatchesCurrent =
+    row.guid_manager.toLowerCase() === row.review_proposed_manager_guid.toLowerCase();
+  const basisDiffersFromCurrent =
+    row.review_basis_manager_guid != null &&
+    row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase();
+  if (proposedMatchesCurrent && basisDiffersFromCurrent && !row.review_stale_reason) {
     return "confirmed_in_1c";
   }
   return "proposed";
+}
+
+function isReviewStaleFromRow(row: ClientRow): boolean {
+  if (row.review_stale_reason) {
+    return true;
+  }
+  if (
+    row.review_basis_manager_guid &&
+    row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase()
+  ) {
+    return true;
+  }
+  if (row.review_basis_data_fingerprint) {
+    const currentFingerprint = computeClientReviewFingerprint({
+      guidManager: row.guid_manager,
+      nameClient: row.name_client,
+      guidHolding: row.guid_holding,
+      guidHoldingPending: row.guid_holding_pending ?? null,
+      address: row.address,
+      nameManager: row.name_manager,
+    });
+    return currentFingerprint !== row.review_basis_data_fingerprint;
+  }
+  return false;
 }
 
 export function toClientListItem(row: ClientRow): ClientListItemDto {
@@ -243,11 +270,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   }
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
-    const isStale = Boolean(
-      row.review_stale_reason ||
-        (row.review_basis_manager_guid &&
-          row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase()),
-    );
+    const isStale = isReviewStaleFromRow(row);
     const effectiveState =
       isStale && reviewState === "completed" ? "needs_recheck" : reviewState;
     item.review = {

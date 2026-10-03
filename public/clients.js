@@ -49,6 +49,7 @@
   var holdingCombobox = null;
   var currentUser = null;
   var teamContext = { rops: [], managers: [], ropName: "", managerName: "" };
+  var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
 
   function readStateFromUrl() {
     return logic.readStateFromSearch(window.location.search);
@@ -409,9 +410,16 @@
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
     teamsPanelEl.classList.toggle("clients-hidden", !isTeams || Boolean(state.manager));
+    var reviewEmployeePick = isReview && Boolean(state.unassignedCategory) && !state.manager;
     unassignedPanelEl.classList.toggle("clients-hidden", !isReview);
-    resultsContentEl.classList.toggle("clients-hidden", isTeams && !state.manager);
-    paginationEl.classList.toggle("clients-hidden", isTeams && !state.manager);
+    resultsContentEl.classList.toggle(
+      "clients-hidden",
+      (isTeams && !state.manager) || reviewEmployeePick,
+    );
+    paginationEl.classList.toggle(
+      "clients-hidden",
+      (isTeams && !state.manager) || reviewEmployeePick,
+    );
     renderBreadcrumbs(state);
   }
 
@@ -435,6 +443,16 @@
       }
     } else if (state.view === "review") {
       parts.push({ label: "Ревизия", href: "/clients?view=review" });
+      if (state.unassignedCategory) {
+        parts.push({
+          label: unassignedContext.categoryLabel || "Категория",
+          href:
+            "/clients?view=review&unassignedCategory=" + encodeURIComponent(state.unassignedCategory),
+        });
+      }
+      if (state.manager && state.unassignedCategory) {
+        parts.push({ label: unassignedContext.employeeName || "Ответственный", href: null });
+      }
     }
     breadcrumbsEl.innerHTML = parts
       .map(function (part, index) {
@@ -526,11 +544,61 @@
     });
   }
 
-  function renderUnassignedPanel(summary) {
+  function renderUnassignedPanel(summary, state) {
     if (!summary) {
       unassignedPanelEl.innerHTML = "";
       return;
     }
+    unassignedContext.summary = summary;
+
+    if (state && state.unassignedCategory && !state.manager) {
+      var employees = (summary.employees || []).filter(function (item) {
+        return item.category === state.unassignedCategory;
+      });
+      var categoryMeta = (summary.categories || []).find(function (item) {
+        return item.category === state.unassignedCategory;
+      });
+      unassignedContext.categoryLabel = categoryMeta ? categoryMeta.label : state.unassignedCategory;
+      unassignedPanelEl.innerHTML =
+        '<p class="clients-unassigned-note">' +
+        shell.escapeHtml(unassignedContext.categoryLabel) +
+        " · выберите ответственного</p>" +
+        '<div class="clients-unassigned-grid">' +
+        employees
+          .map(function (employee) {
+            return (
+              '<button type="button" class="clients-team-card" data-employee="' +
+              shell.escapeHtml(employee.employeeGuid) +
+              '">' +
+              "<strong>" +
+              shell.escapeHtml(employee.name + " · " + employee.shortId) +
+              "</strong>" +
+              '<span class="clients-phone-muted">' +
+              employee.clientCount +
+              " клиентов</span>" +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>";
+      unassignedPanelEl.querySelectorAll("[data-employee]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var employeeGuid = btn.getAttribute("data-employee") || "";
+          var match = employees.find(function (item) {
+            return item.employeeGuid === employeeGuid;
+          });
+          unassignedContext.employeeName = match ? match.name : "";
+          navigateState(
+            Object.assign({}, currentStateFromForm(), {
+              manager: employeeGuid,
+              page: 1,
+            }),
+          );
+        });
+      });
+      return;
+    }
+
     unassignedPanelEl.innerHTML =
       '<p class="clients-unassigned-note">' +
       shell.escapeHtml(summary.limitationNote || "") +
@@ -558,7 +626,13 @@
     unassignedPanelEl.querySelectorAll("[data-category]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         unassignedFilter.value = btn.getAttribute("data-category") || "";
-        navigateState(Object.assign({}, currentStateFromForm(), { unassignedCategory: unassignedFilter.value, page: 1 }));
+        navigateState(
+          Object.assign({}, currentStateFromForm(), {
+            unassignedCategory: unassignedFilter.value,
+            manager: "",
+            page: 1,
+          }),
+        );
       });
     });
   }
@@ -603,7 +677,7 @@
       if (result.response.status !== 200 || !result.data) {
         return { ok: false };
       }
-      renderUnassignedPanel(result.data);
+      renderUnassignedPanel(result.data, currentStateFromForm());
       if (unassignedFilter.options.length <= 1) {
         (result.data.categories || []).forEach(function (cat) {
           var opt = document.createElement("option");
@@ -683,6 +757,36 @@
     writeStateToUrl(state, replaceHistory);
     showAppShell();
 
+    if (state.view === "review" && state.unassignedCategory && !state.manager) {
+      showResultsState("loading", "Загрузка нераспределённых…", "", "");
+      return loadUnassignedSummary().then(function (ctx) {
+        if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
+          return;
+        }
+        if (!ctx.ok) {
+          showResultsState(
+            "error",
+            "Не удалось загрузить категорию",
+            "Повторите попытку.",
+            '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
+          );
+          document.getElementById("retry-load")?.addEventListener("click", function () {
+            loadList(state, true);
+          });
+          return;
+        }
+        renderUnassignedPanel(unassignedContext.summary, state);
+        updateViewChrome(state);
+        showResultsState(
+          "empty",
+          "Выберите ответственного",
+          "Клиенты загружаются после выбора сотрудника в категории.",
+          "",
+        );
+        resultCountEl.textContent = "Ответственные без команды";
+      });
+    }
+
     if (state.view === "teams" && !state.manager) {
       showResultsState("loading", "Загрузка команд…", "", "");
       return loadTeamsContext(state).then(function (ctx) {
@@ -729,6 +833,7 @@
           return null;
         }
         renderTeamsPanel(state);
+        renderUnassignedPanel(unassignedContext.summary, state);
         return api.apiRequest("/api/clients?" + buildQueryString(state));
       })
       .then(function (result) {

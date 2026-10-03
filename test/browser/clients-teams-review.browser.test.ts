@@ -38,13 +38,19 @@ describe("clients teams and review browser", { concurrency: false }, () => {
     });
   });
 
-  it("shows team navigation and review tab for admin", async () => {
+  it("navigates teams, unassigned drill-down, and admin review form", async () => {
     const page = await browser.newPage();
     const state = { listCalls: 0, catalogProductsCalls: 0 };
     const options: MockOptions = { role: "admin" };
+    let reviewPutCount = 0;
+
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      const mock = resolveMockResponse(url, options, state, route.request().method());
+      const method = route.request().method();
+      if (url.pathname.endsWith("/review") && method === "PUT") {
+        reviewPutCount += 1;
+      }
+      const mock = resolveMockResponse(url, options, state, method);
       await route.fulfill(
         mock ?? {
           status: 404,
@@ -57,15 +63,32 @@ describe("clients teams and review browser", { concurrency: false }, () => {
     await page.goto(`${baseUrl}/clients?view=teams`, { waitUntil: "networkidle" });
     await page.waitForSelector("#view-switcher");
     assert.ok(await page.locator('[data-view="review"]').isVisible());
-    await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "clients-teams-view.png"),
-      fullPage: true,
-    });
 
     await page.click('[data-view="review"]');
     await page.waitForSelector("#unassigned-panel");
+    await page.click('[data-category="opt_without_rop_team"]');
+    await page.waitForSelector('[data-employee]');
+    await page.click('[data-employee="55555555-5555-4555-8555-555555555555"]');
+    await page.waitForSelector("#clients-table-body tr");
+    assert.ok(state.listCalls >= 1);
+
+    await page.goto(`${baseUrl}/clients/${encodeURIComponent("11111111-1111-4111-8111-111111111111")}`, {
+      waitUntil: "networkidle",
+    });
+    await page.waitForSelector("#client-review-form");
+    await page.selectOption("#client-review-state", "completed");
+    await page.selectOption("#client-review-decision", "confirm_current_manager");
+    await page.fill("#client-review-comment", "Browser acceptance review");
+    await page.click("#client-review-save");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("сохранена");
+    });
+    assert.equal(reviewPutCount, 1);
+
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "clients-review-view.png"),
+      path: path.join(SCREENSHOT_DIR, "clients-review-mobile-detail.png"),
       fullPage: true,
     });
 

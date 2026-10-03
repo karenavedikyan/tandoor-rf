@@ -619,3 +619,60 @@
 .clients-tag--ok {
   background: color-mix(in srgb, #15803d 15%, var(--rf-surface));
 }
+
+.client-review-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+}
+
+.client-review-panel__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.client-review-panel__subtitle {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.client-review-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.client-review-comment {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.client-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.client-review-message {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.client-review-message--error {
+  color: #b91c1c;
+}
+
+.client-review-message--success {
+  color: #15803d;
+}
+
+.client-review-message--warn {
+  color: #c2410c;
+}
+
+.client-review-history-item pre {
+  overflow: auto;
+  font-size: 0.75rem;
+  max-height: 12rem;
+}

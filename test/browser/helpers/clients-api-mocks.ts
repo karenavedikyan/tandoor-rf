@@ -402,19 +402,64 @@ export function resolveMockResponse(
         {
           category: "opt_without_rop_team",
           label: "Сотрудники ОПТ без команды РОП",
-          uniqueClientCount: 0,
-          employeeCount: 0,
+          uniqueClientCount: 1,
+          employeeCount: 1,
         },
       ],
-      employees: [],
+      employees: [
+        {
+          employeeGuid: "55555555-5555-4555-8555-555555555555",
+          name: "Менеджер Петров",
+          shortId: "55555555",
+          clientCount: 1,
+          category: "opt_without_rop_team",
+          categoryLabel: "Сотрудники ОПТ без команды РОП",
+        },
+      ],
     });
   }
 
   if (path === "/api/clients/review/options") {
     return jsonResponse(200, {
-      states: [{ id: "unreviewed", label: "Не проверен" }],
+      states: [
+        { id: "unreviewed", label: "Не проверен" },
+        { id: "in_progress", label: "В работе" },
+        { id: "completed", label: "Завершён" },
+      ],
       decisions: [{ id: "confirm_current_manager", label: "Подтвердить текущего ответственного" }],
+      commentMaxLength: 2000,
     });
+  }
+
+  if (path === "/api/clients/review/eligible-managers") {
+    return jsonResponse(200, {
+      items: [
+        {
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+        },
+      ],
+    });
+  }
+
+  const reviewMatch = path.match(/^\/api\/clients\/([^/]+)\/review(?:\/history)?$/);
+  if (reviewMatch) {
+    if (path.endsWith("/history")) {
+      return jsonResponse(200, { items: [] });
+    }
+    if (method === "PUT") {
+      return jsonResponse(200, {
+        review: {
+          reviewState: "completed",
+          reviewDecision: "confirm_current_manager",
+          version: 1,
+          isStale: false,
+          transferStatus: "none",
+        },
+      });
+    }
+    return jsonResponse(200, { review: null });
   }
 
   if (path === "/api/clients") {

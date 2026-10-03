@@ -14,6 +14,8 @@ import {
 import {
   getClientReview,
   listClientReviewHistory,
+  listEligibleReviewManagers,
+  REVIEW_COMMENT_MAX_LENGTH,
   ReviewServiceError,
   upsertClientReview,
 } from "./repository";
@@ -138,6 +140,26 @@ export async function upsertClientReviewHandler(req: AccessRequest, res: Respons
     assignedReviewerUserId = body.assignedReviewerUserId.trim().toLowerCase();
   }
 
+  const commentRaw = typeof body.comment === "string" ? body.comment.trim() : null;
+  if (commentRaw != null && commentRaw.length > REVIEW_COMMENT_MAX_LENGTH) {
+    setNoStore(res);
+    res.status(400).json(
+      apiError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `Комментарий не может быть длиннее ${REVIEW_COMMENT_MAX_LENGTH} символов.`,
+      ),
+    );
+    return;
+  }
+
+  if (body.expectedVersion !== undefined && body.expectedVersion !== null) {
+    if (typeof body.expectedVersion !== "number" && typeof body.expectedVersion !== "string") {
+      setNoStore(res);
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректная версия записи."));
+      return;
+    }
+  }
+
   const expectedVersion =
     body.expectedVersion === undefined || body.expectedVersion === null
       ? null
@@ -148,6 +170,8 @@ export async function upsertClientReviewHandler(req: AccessRequest, res: Respons
     return;
   }
 
+  const recheckConfirmed = body.recheckConfirmed === true;
+
   try {
     const review = await upsertClientReview(req.accessContext!, {
       actorUserId: req.authUser!.id,
@@ -155,10 +179,11 @@ export async function upsertClientReviewHandler(req: AccessRequest, res: Respons
       expectedVersion,
       reviewState: reviewState as ReviewState,
       reviewDecision,
-      comment: typeof body.comment === "string" ? body.comment.trim() || null : null,
+      comment: commentRaw || null,
       proposedManagerGuid,
       assignedReviewerUserId,
       dueAt: typeof body.dueAt === "string" ? body.dueAt : null,
+      recheckConfirmed,
     });
     setNoStore(res);
     res.status(200).json({ review });
@@ -172,6 +197,11 @@ export async function upsertClientReviewHandler(req: AccessRequest, res: Respons
 }
 
 export async function reviewOptionsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (req.accessContext!.role !== "admin") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Настройки ревизии доступны только администратору."));
+    return;
+  }
   setNoStore(res);
   res.status(200).json({
     states: REVIEW_STATES.map((state) => ({ id: state, label: REVIEW_STATE_LABELS[state] })),
@@ -179,5 +209,17 @@ export async function reviewOptionsHandler(req: AccessRequest, res: Response): P
       id: decision,
       label: REVIEW_DECISION_LABELS[decision],
     })),
+    commentMaxLength: REVIEW_COMMENT_MAX_LENGTH,
   });
+}
+
+export async function eligibleReviewManagersHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (req.accessContext!.role !== "admin") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Список менеджеров ревизии доступен только администратору."));
+    return;
+  }
+  const items = await listEligibleReviewManagers();
+  setNoStore(res);
+  res.status(200).json({ items });
 }

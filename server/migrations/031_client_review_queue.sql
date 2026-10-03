@@ -1,4 +1,7 @@
 -- Client assignment review queue (separate from baseline_status and business status).
+-- Numbered 031 to avoid collision with 030_outlet_distribution_markers (parallel PR).
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS client_review_records (
   guid_client UUID PRIMARY KEY REFERENCES onec_clients (guid_client) ON DELETE CASCADE,
@@ -29,6 +32,7 @@ CREATE TABLE IF NOT EXISTS client_review_records (
   version INTEGER NOT NULL DEFAULT 1,
   basis_manager_guid UUID NOT NULL,
   basis_source_sha256 TEXT,
+  basis_data_fingerprint TEXT,
   basis_imported_at TIMESTAMPTZ,
   stale_reason TEXT,
   created_by_user_id UUID NOT NULL REFERENCES users (id),

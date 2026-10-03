@@ -1,6 +1,29 @@
 import type { SqlFilter } from "../clients/query";
 import type { ClientScopeSql } from "./types";
 
+export function rebaseSqlPlaceholders(clause: string, offset: number): string {
+  if (offset <= 0) {
+    return clause;
+  }
+  return clause.replace(/\$(\d+)/g, (_match, index) => `$${Number(index) + offset}`);
+}
+
+export function mergeSqlFilters(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {
+  if (extraClauses.length === 0) {
+    return base;
+  }
+  const offset = base.params.length;
+  const rebasedClauses = extraClauses.map((clause) => rebaseSqlPlaceholders(clause, offset));
+  const combinedClauses = [
+    base.whereSql ? base.whereSql.replace(/^WHERE\s+/, "") : "",
+    ...rebasedClauses,
+  ].filter(Boolean);
+  return {
+    whereSql: combinedClauses.length > 0 ? `WHERE ${combinedClauses.join(" AND ")}` : "",
+    params: [...base.params, ...extraParams],
+  };
+}
+
 export function intersectClientScopes(
   primary: ClientScopeSql,
   secondary: ClientScopeSql,

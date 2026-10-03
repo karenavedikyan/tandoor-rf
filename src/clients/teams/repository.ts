@@ -81,33 +81,40 @@ async function loadActiveRopRows(): Promise<
   return result.rows;
 }
 
-async function countDistinctClientsForEmployeeGuids(employeeGuids: string[]): Promise<number> {
+async function countDistinctClientsForEmployeeGuids(
+  context: AccessContext,
+  employeeGuids: string[],
+): Promise<number> {
   if (employeeGuids.length === 0) {
     return 0;
   }
+  const scope = buildClientScopeSql(context);
+  const filter = combineScopeAndFilter(scope, {
+    whereSql: `WHERE guid_manager = ANY($1::uuid[]) AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}`,
+    params: [employeeGuids],
+  });
+  if (filter.whereSql === "WHERE FALSE") {
+    return 0;
+  }
   const result = await query<{ count: string }>(
-    `
-      SELECT COUNT(DISTINCT guid_client)::text AS count
-      FROM onec_clients
-      WHERE guid_manager = ANY($1::uuid[])
-        AND ${ACTIVE_BASELINE_CLIENT_SQL.trim()}
-        AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
-    `,
-    [employeeGuids],
+    `SELECT COUNT(DISTINCT guid_client)::text AS count FROM onec_clients ${filter.whereSql}`,
+    filter.params,
   );
   return Number(result.rows[0]?.count ?? "0");
 }
 
-async function countClientsForEmployee(employeeGuid: string): Promise<number> {
+async function countClientsForEmployee(context: AccessContext, employeeGuid: string): Promise<number> {
+  const scope = buildClientScopeSql(context);
+  const filter = combineScopeAndFilter(scope, {
+    whereSql: `WHERE guid_manager = $1::uuid AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}`,
+    params: [employeeGuid],
+  });
+  if (filter.whereSql === "WHERE FALSE") {
+    return 0;
+  }
   const result = await query<{ count: string }>(
-    `
-      SELECT COUNT(*)::text AS count
-      FROM onec_clients
-      WHERE guid_manager = $1::uuid
-        AND ${ACTIVE_BASELINE_CLIENT_SQL.trim()}
-        AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
-    `,
-    [employeeGuid],
+    `SELECT COUNT(*)::text AS count FROM onec_clients ${filter.whereSql}`,
+    filter.params,
   );
   return Number(result.rows[0]?.count ?? "0");
 }
@@ -177,7 +184,7 @@ export async function listTeamRops(context: AccessContext): Promise<TeamRopSumma
       ropEmployeeName: rop.employee_name,
       ropEmployeeShortId: rop.employee_id ? shortUuidLabel(rop.employee_id) : null,
       managerCount: members.length,
-      uniqueClientCount: await countDistinctClientsForEmployeeGuids(uniqueGuids),
+      uniqueClientCount: await countDistinctClientsForEmployeeGuids(context, uniqueGuids),
     });
   }
   return summaries;
@@ -210,7 +217,7 @@ export async function listTeamManagers(
       employeeGuid: member.employee_id,
       name: member.member_name,
       shortId: shortUuidLabel(member.employee_id),
-      clientCount: await countClientsForEmployee(member.employee_id),
+      clientCount: await countClientsForEmployee(context, member.employee_id),
     });
   }
 
@@ -239,7 +246,7 @@ export async function listTeamManagers(
       employeeGuid: ropEmployee.employee_id,
       name: ropEmployee.name_manager ?? "Собственные клиенты РОП",
       shortId: shortUuidLabel(ropEmployee.employee_id),
-      clientCount: await countClientsForEmployee(ropEmployee.employee_id),
+      clientCount: await countClientsForEmployee(context, ropEmployee.employee_id),
     });
   }
 
@@ -267,4 +274,33 @@ export function buildTeamManagerFilter(
     whereSql: "WHERE guid_manager = $1::uuid",
     params: [managerEmployeeGuid.toLowerCase()],
   });
+}
+
+export async function loadTeamEmployeeGuids(ropUserId: string): Promise<string[]> {
+  const members = await loadTeamMemberEmployeeGuids(ropUserId);
+  const guids = members.map((member) => member.employee_id);
+  const ropLink = await query<{ employee_id: string }>(
+    `
+      SELECT employee_id::text
+      FROM user_onec_employee_links
+      WHERE user_id = $1::uuid AND revoked_at IS NULL
+    `,
+    [ropUserId],
+  );
+  const ropEmployee = ropLink.rows[0];
+  if (ropEmployee) {
+    guids.push(ropEmployee.employee_id);
+  }
+  return [...new Set(guids.map((guid) => guid.toLowerCase()))];
+}
+
+export async function buildTeamRopFilter(ropUserId: string): Promise<{ whereSql: string; params: unknown[] }> {
+  const employeeGuids = await loadTeamEmployeeGuids(ropUserId);
+  if (employeeGuids.length === 0) {
+    return { whereSql: "WHERE FALSE", params: [] };
+  }
+  return {
+    whereSql: `WHERE guid_manager = ANY($1::uuid[])`,
+    params: [employeeGuids],
+  };
 }
