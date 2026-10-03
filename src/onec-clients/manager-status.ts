@@ -174,6 +174,9 @@ export function resolveClientManagerRosterState(
   if (!roster) {
     return "roster_not_loaded";
   }
+  if (roster.isEmpty) {
+    return "outside_wholesale_roster";
+  }
   if (roster.wholesaleGuids.has(guidManager.toLowerCase())) {
     return "in_wholesale_roster";
   }
@@ -188,6 +191,9 @@ export function resolveManagerAccountLinks(
     if (ref.state === "not_provided" || ref.state === "unassigned" || ref.state === "invalid") {
       return ref;
     }
+    if (ref.state === "outside_wholesale_roster") {
+      return ref;
+    }
     if (!ref.guid) {
       return { ...ref, state: "unassigned" };
     }
@@ -199,6 +205,20 @@ export function resolveManagerAccountLinks(
     }
     return { ...ref, state: "directory_unverified" };
   });
+}
+
+export function resolveConfirmedHoldingForApply(record: {
+  guid_holding: string | null;
+  name_holding: string;
+  holdingLinkState: import("./extended-types").HoldingLinkState;
+}): { guid_holding: string | null; name_holding: string } {
+  if (record.holdingLinkState === "unresolved") {
+    return { guid_holding: null, name_holding: "" };
+  }
+  if (record.holdingLinkState === "resolved") {
+    return { guid_holding: record.guid_holding, name_holding: record.name_holding };
+  }
+  return { guid_holding: record.guid_holding, name_holding: record.name_holding };
 }
 
 export function isEmptyHoldingGuid(value: string): boolean {

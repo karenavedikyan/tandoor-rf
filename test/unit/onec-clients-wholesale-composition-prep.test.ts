@@ -66,8 +66,10 @@ describe("wholesale composition prep dry-run only", () => {
   });
 
   it("keeps holding policy and roster sha on validated payload", () => {
-    const roster = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithManagers());
-    assert.ok(roster);
+    const rosterParse = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithManagers());
+    assert.equal(rosterParse.ok, true);
+    if (!rosterParse.ok) return;
+    const roster = rosterParse.roster;
     const bytes = buildClientsFileBytes([sampleClient()]);
     const validated = validateClientsFileBytes(bytes, {
       holdingLinkValidationPolicy: "strict",
@@ -77,11 +79,11 @@ describe("wholesale composition prep dry-run only", () => {
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
     assert.equal(validated.payload.holdingLinkValidationPolicy, "strict");
-    assert.equal(validated.payload.employeeRosterSourceSha256, roster?.sourceSha256);
+    assert.equal(validated.payload.employeeRosterSourceSha256, roster.sourceSha256);
     assert.equal(validated.payload.extendedDiagnostics?.holdingLinkValidationPolicy, "strict");
     assert.equal(
       validated.payload.extendedDiagnostics?.employeeRosterSourceSha256,
-      roster?.sourceSha256,
+      roster.sourceSha256,
     );
   });
 

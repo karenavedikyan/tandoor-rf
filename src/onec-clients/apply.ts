@@ -30,6 +30,7 @@ import {
 import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
+import { resolveConfirmedHoldingForApply } from "./manager-status";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -636,6 +637,7 @@ export async function applyClientsImport(options: {
   expectedCommittedSha256?: string | null;
   syncExchangeState?: boolean;
   wholesaleCompositionPrep?: boolean;
+  verificationFingerprint?: string;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -819,9 +821,10 @@ export async function applyClientsImport(options: {
                 source_record_count,
                 warning_count,
                 warnings,
-                warnings_truncated
+                warnings_truncated,
+                verification_fingerprint
               )
-              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8)
+              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8, $9)
               RETURNING id::text
             `,
             [
@@ -833,6 +836,7 @@ export async function applyClientsImport(options: {
               preparedWarnings.warningCount,
               preparedWarnings.warningsJson,
               preparedWarnings.warningsTruncated,
+              options.verificationFingerprint ?? null,
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
@@ -857,8 +861,12 @@ export async function applyClientsImport(options: {
 
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
-            const current = existing.get(record.guid_client);
             const extendedRecord = extendedRecords.get(record.guid_client);
+            const confirmedHolding = extendedRecord
+              ? resolveConfirmedHoldingForApply(extendedRecord)
+              : { guid_holding: record.guid_holding, name_holding: record.name_holding };
+            const applyRecord = { ...record, ...confirmedHolding };
+            const current = existing.get(applyRecord.guid_client);
             const previousRow = previousExtended.get(record.guid_client);
             const previousSnapshot = previousRow?.extended_snapshot;
 
@@ -889,7 +897,7 @@ export async function applyClientsImport(options: {
             if (!current) {
               newCount += 1;
             } else if (
-              isImportRecordEqual(current, record, previousSnapshot, extendedSnapshotJson)
+              isImportRecordEqual(current, applyRecord, previousSnapshot, extendedSnapshotJson)
             ) {
               unchangedCount += 1;
             } else {
@@ -1005,13 +1013,13 @@ export async function applyClientsImport(options: {
                   END
               `,
               [
-                record.guid_client,
-                record.name_client,
-                record.guid_holding,
-                record.name_holding,
-                record.guid_manager,
-                record.name_manager,
-                record.address,
+                applyRecord.guid_client,
+                applyRecord.name_client,
+                applyRecord.guid_holding,
+                applyRecord.name_holding,
+                applyRecord.guid_manager,
+                applyRecord.name_manager,
+                applyRecord.address,
                 JSON.stringify(record.telephone),
                 options.payload.sha256,
                 extendedSnapshotJson?.isHolding ?? null,

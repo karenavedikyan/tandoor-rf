@@ -107,6 +107,7 @@ export type ClientsImportResult = {
   extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary | null;
   wholesaleCompositionPrep?: import("./wholesale-composition").WholesaleCompositionPrepReport;
   holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
+  verificationFingerprint?: string;
   message: string;
   cleanupWarning?: string;
   apply?: {

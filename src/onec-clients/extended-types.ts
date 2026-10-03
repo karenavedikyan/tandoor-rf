@@ -158,6 +158,12 @@ export type ExtendedBlockProvenance = {
   retailOutlets: ExtendedBlockProvenanceEntry;
 };
 
+export type ExtendedSnapshotHoldingLink = {
+  state: HoldingLinkState;
+  /** Incoming unresolved parent GUID; not a confirmed hierarchy link. */
+  pendingGuid: string | null;
+};
+
 export type ExtendedSnapshotBlocks = {
   clientExtendedReady: boolean;
   outletNormalizedReady: boolean;
@@ -171,6 +177,8 @@ export type ExtendedSnapshot = {
   sourceSha256: string;
   importedAt: string;
   isHolding: boolean | null;
+  holdingLink: ExtendedSnapshotHoldingLink;
+  clientManagerRosterState: ClientManagerRosterState;
   regionalManager: ParsedManagerRef;
   hardwareManager: ParsedManagerRef;
   headOfSales: ParsedManagerRef;
@@ -241,6 +249,7 @@ export type ExtendedValidationWarningCode =
   | "EXPLICIT_EMPTY_DATE_OF_BIRTH"
   | "HOLDING_GUID_UNKNOWN"
   | "MANAGER_OUTSIDE_WHOLESALE_ROSTER"
+  | "EMPLOYEE_ROSTER_EMPTY"
   | "LOAD_TIME_FORMAT_ADAPTED"
   | "DATE_OF_BIRTH_FORMAT_ADAPTED";
 

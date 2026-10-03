@@ -7,7 +7,8 @@ import {
   readEmployeeRosterFileBytes,
 } from "./cli-args";
 import { MAX_DETAILED_ERRORS, MAX_DETAILED_WARNINGS } from "./constants";
-import { parseWholesaleEmployeeRosterBytes } from "./employee-roster";
+import { parseWholesaleEmployeeRosterBytes, type WholesaleEmployeeRoster } from "./employee-roster";
+import { verificationFingerprintFromPayload } from "./import-verification-fingerprint";
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
 import type { ValidateClientsLimits } from "./validate";
@@ -17,7 +18,10 @@ import {
   buildWholesaleCompositionPrepReport,
   rejectWholesaleCompositionPrepApply,
 } from "./wholesale-composition";
-import { loadExistingCompositionContext } from "./wholesale-composition-db";
+import {
+  loadExistingCompositionContext,
+  unavailableCompositionContext,
+} from "./wholesale-composition-db";
 
 export function getImportExitCode(status: ClientsImportResult["status"]): number {
   return status === "SUCCESS" ? 0 : 1;
@@ -74,14 +78,16 @@ export type RunClientsImportOptions = {
 
 function buildValidationLimits(
   cliOptions: ClientsImportCliOptions,
-  employeeRoster: ReturnType<typeof parseWholesaleEmployeeRosterBytes> | undefined,
-  overrides?: ValidateClientsLimits,
+  employeeRoster: WholesaleEmployeeRoster | null | undefined,
+  overrides: ValidateClientsLimits | undefined,
+  employeeRosterExplicit: boolean,
 ): ValidateClientsLimits {
   return {
     ...overrides,
     holdingLinkValidationPolicy:
       overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
     employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
+    employeeRosterExplicit: overrides?.employeeRosterExplicit ?? employeeRosterExplicit,
     wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
       ? "replacement_prep"
       : overrides?.wholesaleCompositionMode ?? "standard",
@@ -103,12 +109,7 @@ async function buildCompositionPrepReportIfRequested(
       employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
       employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
       wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
-      existing: {
-        clientGuids: new Set<string>(),
-        linkedAccountsByClient: new Map(),
-        confirmedOutletsByClient: new Map(),
-        bitrixTaskLinksByClient: new Map(),
-      },
+      existing: unavailableCompositionContext(),
     });
   }
 
@@ -194,10 +195,10 @@ export async function runClientsImport(
     employeeRosterBytes = rosterFromFile;
   }
 
-  let parsedEmployeeRoster: ReturnType<typeof parseWholesaleEmployeeRosterBytes> | undefined;
+  let parsedEmployeeRoster: WholesaleEmployeeRoster | undefined;
   if (employeeRosterBytes != null) {
-    parsedEmployeeRoster = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
-    if (!parsedEmployeeRoster) {
+    const rosterParse = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
+    if (!rosterParse.ok) {
       return sanitizeImportResult(
         {
           status: "ARGUMENT_ERROR",
@@ -205,12 +206,13 @@ export async function runClientsImport(
           durationMs: Date.now() - startedAt,
           security: "plain",
           transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-          message: CLI_ARGUMENT_ERROR_MESSAGES.EMPLOYEE_ROSTER_INVALID,
+          message: rosterParse.message,
           errorCode: "EMPLOYEE_ROSTER_INVALID",
         },
         [],
       );
     }
+    parsedEmployeeRoster = rosterParse.roster;
   }
 
   const secrets = [loadedConfig.config.password];
@@ -239,7 +241,12 @@ export async function runClientsImport(
     bytes = ftpRead.bytes;
   }
 
-  const validationLimits = buildValidationLimits(cliOptions, parsedEmployeeRoster, options.validationLimits);
+  const validationLimits = buildValidationLimits(
+    cliOptions,
+    parsedEmployeeRoster,
+    options.validationLimits,
+    employeeRosterBytes != null || cliOptions.employeeRosterFile != null,
+  );
   const validated = validateClientsFileBytes(bytes, validationLimits);
   if (!validated.ok) {
     return sanitizeImportResult(
@@ -263,7 +270,18 @@ export async function runClientsImport(
   }
 
   const payload = validated.payload;
-  const databaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl() || undefined;
+  const employeeRosterSourceSha256 =
+    parsedEmployeeRoster?.sourceSha256 ?? payload.employeeRosterSourceSha256 ?? null;
+  const verificationFingerprint = verificationFingerprintFromPayload({
+    payload,
+    holdingLinkValidationPolicy:
+      validationLimits.holdingLinkValidationPolicy ?? payload.holdingLinkValidationPolicy ?? "tolerant",
+    employeeRosterSourceSha256,
+  });
+  const databaseUrl =
+    env.DATABASE_URL !== undefined
+      ? env.DATABASE_URL.trim() || undefined
+      : getDatabaseUrl() || undefined;
   const wholesaleCompositionPrep = await buildCompositionPrepReportIfRequested(
     cliOptions,
     payload,
@@ -289,6 +307,7 @@ export async function runClientsImport(
         warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
         extendedDiagnostics: payload.extendedDiagnostics,
         holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+        verificationFingerprint,
         wholesaleCompositionPrep,
         message: `Client file validation succeeded (dry run; no database changes).${prepSuffix}`,
       },
@@ -334,7 +353,7 @@ export async function runClientsImport(
     );
   }
 
-  if (payload.sha256 !== cliOptions.expectedSha256) {
+  if (verificationFingerprint !== cliOptions.expectedSha256) {
     return sanitizeImportResult(
       {
         status: "HASH_MISMATCH",
@@ -345,7 +364,9 @@ export async function runClientsImport(
         sha256: payload.sha256,
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
-        message: "Source file SHA-256 does not match --expected-sha256.",
+        verificationFingerprint,
+        message:
+          "Import verification fingerprint does not match --expected-sha256 (clients file, roster, holding policy, or mode changed since dry-run).",
         errorCode: "HASH_MISMATCH",
       },
       secrets,
@@ -374,6 +395,7 @@ export async function runClientsImport(
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
+    verificationFingerprint,
   });
   if (!applied.ok) {
     return sanitizeImportResult(

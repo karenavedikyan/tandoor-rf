@@ -38,8 +38,10 @@ export const CLI_ARGUMENT_ERROR_MESSAGES: Record<CliArgumentErrorCode, string> =
   UNEXPECTED_POSITIONAL: "Unexpected positional CLI argument.",
   EXPECTED_SHA256_REQUIRES_VALUE: "--expected-sha256 requires a value.",
   DUPLICATE_EXPECTED_SHA256: "Duplicate --expected-sha256 argument.",
-  APPLY_REQUIRES_EXPECTED_SHA256: "--apply requires --expected-sha256.",
-  INVALID_EXPECTED_SHA256: "--expected-sha256 must be a 64-character hex SHA-256 hash.",
+  APPLY_REQUIRES_EXPECTED_SHA256:
+    "--apply requires --expected-sha256 (verification fingerprint from dry-run).",
+  INVALID_EXPECTED_SHA256:
+    "--expected-sha256 must be a 64-character hex verification fingerprint from dry-run.",
   APPLY_AND_DRY_RUN: "Use either --apply or --dry-run, not both.",
   EXPECTED_SHA256_WITHOUT_APPLY: "--expected-sha256 is only valid with --apply.",
   HOLDING_LINK_POLICY_REQUIRES_VALUE: "--holding-link-policy requires a value.",

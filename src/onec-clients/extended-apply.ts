@@ -12,11 +12,13 @@ import {
   outletsAreIdentical,
 } from "./outlet-identity";
 import type {
+  ClientManagerRosterState,
   ExtendedBlockFreshness,
   ExtendedBlockProvenance,
   ExtendedBlockProvenanceEntry,
   ExtendedSnapshot,
   ExtendedSnapshotBlocks,
+  ExtendedSnapshotHoldingLink,
   ParsedExtendedClientRecord,
   ParsedRetailOutlet,
   RetailOutletHistoryEntry,
@@ -45,7 +47,12 @@ function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
     return null;
   }
-  return snapshot as ExtendedSnapshot;
+  const raw = snapshot as ExtendedSnapshot;
+  return {
+    ...raw,
+    holdingLink: raw.holdingLink ?? { state: "none", pendingGuid: null },
+    clientManagerRosterState: raw.clientManagerRosterState ?? "roster_not_loaded",
+  };
 }
 
 function findNextOutletForHistory(
@@ -296,6 +303,32 @@ export function summarizeRowFreshness(
   return "not_provided_in_snapshot";
 }
 
+function mergeHoldingLinkForSnapshot(
+  record: ParsedExtendedClientRecord,
+  previous: ExtendedSnapshot | null,
+): ExtendedSnapshotHoldingLink {
+  if (record.holdingLinkState === "unresolved") {
+    return { state: "unresolved", pendingGuid: record.guid_holding };
+  }
+  if (record.holdingLinkState === "resolved") {
+    return { state: "resolved", pendingGuid: null };
+  }
+  if (record.holdingLinkState === "none") {
+    return { state: "none", pendingGuid: null };
+  }
+  return previous?.holdingLink ?? { state: "none", pendingGuid: null };
+}
+
+function mergeClientManagerRosterState(
+  record: ParsedExtendedClientRecord,
+  previous: ExtendedSnapshot | null,
+): ClientManagerRosterState {
+  if (record.managerRosterState !== "roster_not_loaded") {
+    return record.managerRosterState;
+  }
+  return previous?.clientManagerRosterState ?? "roster_not_loaded";
+}
+
 export function buildExtendedSnapshotJson(
   record: ParsedExtendedClientRecord,
   previousSnapshot: unknown,
@@ -308,6 +341,8 @@ export function buildExtendedSnapshotJson(
   const isNewClient = !hasPrevious;
 
   const isHolding = mergeHoldingFlag(record.isHolding, record.fieldPresence.holding, previous?.isHolding);
+  const holdingLink = mergeHoldingLinkForSnapshot(record, previous);
+  const clientManagerRosterState = mergeClientManagerRosterState(record, previous);
   const regionalManager = mergeManagerField(
     record.regionalManager,
     record.fieldPresence.regionalManager,
@@ -343,6 +378,8 @@ export function buildExtendedSnapshotJson(
     sourceSha256: previous?.sourceSha256 ?? sourceSha256,
     importedAt: previous?.importedAt ?? importedAt,
     isHolding,
+    holdingLink,
+    clientManagerRosterState,
     regionalManager,
     hardwareManager,
     headOfSales,
@@ -371,6 +408,8 @@ export function buildExtendedSnapshotJson(
     sourceSha256,
     importedAt: effectiveImportedAt,
     isHolding,
+    holdingLink,
+    clientManagerRosterState,
     regionalManager,
     hardwareManager,
     headOfSales,

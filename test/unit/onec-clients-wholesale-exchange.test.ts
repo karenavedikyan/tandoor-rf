@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseWholesaleEmployeeRosterBytes, WHOLESALE_DEPARTMENT_NAME } from "../../src/onec-clients/employee-roster";
+import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
 import { validateExtendedClientsFileBytes } from "../../src/onec-clients/extended-validate";
 import { mergeRetailOutletsWithIdentity } from "../../src/onec-clients/outlet-identity";
 import { buildWholesaleCompositionPrepReport } from "../../src/onec-clients/wholesale-composition";
@@ -13,6 +13,7 @@ import {
 } from "../helpers/onec-clients-extended-fixtures";
 import {
   buildEmployeeRosterBytes,
+  buildEmployeeRosterEntry,
   wholesaleRosterWithManagers,
   wholesaleRosterWithoutUnknown,
 } from "../helpers/onec-clients-employee-roster-fixtures";
@@ -93,8 +94,10 @@ describe("wholesale 1C exchange rules", () => {
   });
 
   it("marks manager GUID outside wholesale roster without creating account semantics", () => {
-    const roster = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithoutUnknown());
-    assert.ok(roster);
+    const rosterParse = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithoutUnknown());
+    assert.equal(rosterParse.ok, true);
+    if (!rosterParse.ok) return;
+    const roster = rosterParse.roster;
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
         retail_outlets: [
@@ -182,7 +185,10 @@ describe("wholesale 1C exchange rules", () => {
   });
 
   it("builds replacement prep report without deletion flags", () => {
-    const roster = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithManagers());
+    const rosterParse = parseWholesaleEmployeeRosterBytes(wholesaleRosterWithManagers());
+    assert.equal(rosterParse.ok, true);
+    if (!rosterParse.ok) return;
+    const roster = rosterParse.roster;
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding(),
       sampleExtendedChild({
@@ -199,13 +205,15 @@ describe("wholesale 1C exchange rules", () => {
       payload: validated.payload,
       holdingLinkPolicy: "tolerant",
       employeeRosterLoaded: true,
-      employeeRosterSourceSha256: roster?.sourceSha256 ?? null,
-      wholesaleEmployeeCount: roster?.wholesaleCount ?? null,
+      employeeRosterSourceSha256: roster.sourceSha256,
+      wholesaleEmployeeCount: roster.wholesaleCount,
       existing: {
+        baselineAvailability: "loaded",
         clientGuids: new Set([EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]),
-        linkedAccountsByClient: new Map([[EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, 2]]),
+        activeAccessGrantCountByClient: new Map([[EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, 2]]),
+        linkedEmployeeAccountCountByClient: new Map([[EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, 1]]),
         confirmedOutletsByClient: new Map([[EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, 1]]),
-        bitrixTaskLinksByClient: new Map(),
+        bitrixTaskCountByClient: new Map(),
       },
     });
     assert.equal(report.performsDeletion, false);
@@ -220,14 +228,26 @@ describe("wholesale 1C exchange rules", () => {
     assert.ok(report.operationBlockers.includes("wholesale_composition_prep_is_dry_run_only"));
   });
 
-  it("parses wholesale department roster from all_employees.json shape", () => {
+  it("parses wholesale roster from real all_employees.json contract shape", () => {
     const bytes = buildEmployeeRosterBytes([
-      { guid: EXTENDED_FIXTURE_GUIDS.MANAGER_A, department: WHOLESALE_DEPARTMENT_NAME },
-      { guid: EXTENDED_FIXTURE_GUIDS.UNKNOWN, department: "Other Dept" },
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_A),
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.REGIONAL),
     ]);
-    const roster = parseWholesaleEmployeeRosterBytes(bytes);
-    assert.ok(roster);
-    assert.equal(roster.wholesaleCount, 1);
-    assert.ok(roster.wholesaleGuids.has(EXTENDED_FIXTURE_GUIDS.MANAGER_A));
+    const parsed = parseWholesaleEmployeeRosterBytes(bytes);
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(parsed.roster.wholesaleCount, 2);
+    assert.ok(parsed.roster.wholesaleGuids.has(EXTENDED_FIXTURE_GUIDS.MANAGER_A));
+  });
+
+  it("rejects invalid roster records instead of silently skipping them", () => {
+    const bytes = Buffer.from(
+      JSON.stringify([{}, 123, { guid_employee: "not-a-guid" }]),
+      "utf8",
+    );
+    const parsed = parseWholesaleEmployeeRosterBytes(bytes);
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) return;
+    assert.equal(parsed.code, "INVALID_RECORD");
   });
 });

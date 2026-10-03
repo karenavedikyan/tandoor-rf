@@ -5,7 +5,7 @@ import type { ValidatedClientsPayload } from "./types";
 export type WholesaleCompositionMode = "standard" | "replacement_prep";
 
 export type WholesaleCompositionClientBucket = {
-  count: number;
+  count: number | null;
   sampleGuids: string[];
   truncated: boolean;
 };
@@ -23,9 +23,10 @@ export type OutOfRosterManagerSample = {
 
 export type ExcludedRecordDependencySummary = {
   guidClient: string;
-  linkedAccountCount: number;
-  confirmedOutletCount: number;
-  bitrixTaskLinkCount: number;
+  activeAccessGrantCount: number | null;
+  linkedEmployeeAccountCount: number | null;
+  confirmedOutletCount: number | null;
+  bitrixTaskCount: number | null;
   deletionBlockedReasons: string[];
 };
 
@@ -35,8 +36,9 @@ export type WholesaleCompositionPrepReport = {
   employeeRosterLoaded: boolean;
   employeeRosterSourceSha256: string | null;
   wholesaleEmployeeCount: number | null;
+  baselineAvailability: "loaded" | "unavailable";
   incomingRecordCount: number;
-  existingRecordCount: number;
+  existingRecordCount: number | null;
   clientsToAdd: WholesaleCompositionClientBucket;
   clientsToKeep: WholesaleCompositionClientBucket;
   clientsToExclude: WholesaleCompositionClientBucket;
@@ -51,12 +53,12 @@ export type WholesaleCompositionPrepReport = {
     truncated: boolean;
   };
   excludedDependencies: {
-    count: number;
+    count: number | null;
     samples: ExcludedRecordDependencySummary[];
     truncated: boolean;
   };
   baselineTransition: {
-    excludedFromIncomingBaseline: number;
+    excludedFromIncomingBaseline: number | null;
     interpretation: "agreed_baseline_change_not_restore_requirement";
   };
   operationBlockers: string[];
@@ -93,6 +95,17 @@ function sampleGuids(guids: string[]): WholesaleCompositionClientBucket {
   };
 }
 
+function emptyBucket(): WholesaleCompositionClientBucket {
+  return { count: null, sampleGuids: [], truncated: false };
+}
+
+function incomingClientGuids(payload: ValidatedClientsPayload): string[] {
+  if (payload.extendedRecords && payload.extendedRecords.length > 0) {
+    return payload.extendedRecords.map((record) => record.guid_client);
+  }
+  return payload.records.map((record) => record.guid_client);
+}
+
 function collectManagerRefs(record: ParsedExtendedClientRecord): Array<{ field: string; ref: ParsedManagerRef }> {
   const refs: Array<{ field: string; ref: ParsedManagerRef }> = [
     { field: "guid_regional_manager", ref: record.regionalManager },
@@ -114,11 +127,24 @@ function collectManagerRefs(record: ParsedExtendedClientRecord): Array<{ field: 
 }
 
 export type ExistingCompositionContext = {
+  baselineAvailability: "loaded" | "unavailable";
   clientGuids: ReadonlySet<string>;
-  linkedAccountsByClient: ReadonlyMap<string, number>;
+  activeAccessGrantCountByClient: ReadonlyMap<string, number>;
+  linkedEmployeeAccountCountByClient: ReadonlyMap<string, number>;
   confirmedOutletsByClient: ReadonlyMap<string, number>;
-  bitrixTaskLinksByClient: ReadonlyMap<string, number>;
+  bitrixTaskCountByClient: ReadonlyMap<string, number>;
 };
+
+function dependencyCount(
+  map: ReadonlyMap<string, number>,
+  guid: string,
+  baselineLoaded: boolean,
+): number | null {
+  if (!baselineLoaded) {
+    return null;
+  }
+  return map.get(guid.toLowerCase()) ?? 0;
+}
 
 export function buildWholesaleCompositionPrepReport(input: {
   payload: ValidatedClientsPayload;
@@ -128,13 +154,21 @@ export function buildWholesaleCompositionPrepReport(input: {
   wholesaleEmployeeCount: number | null;
   existing: ExistingCompositionContext;
 }): WholesaleCompositionPrepReport {
-  const extendedRecords = input.payload.extendedRecords ?? [];
-  const incomingGuids = extendedRecords.map((record) => record.guid_client);
-  const incomingSet = new Set(incomingGuids);
+  const baselineLoaded = input.existing.baselineAvailability === "loaded";
+  const incomingGuids = incomingClientGuids(input.payload);
+  const incomingSet = new Set(incomingGuids.map((guid) => guid.toLowerCase()));
 
-  const toAdd = incomingGuids.filter((guid) => !input.existing.clientGuids.has(guid));
-  const toKeep = incomingGuids.filter((guid) => input.existing.clientGuids.has(guid));
-  const toExclude = [...input.existing.clientGuids].filter((guid) => !incomingSet.has(guid));
+  const toAdd = baselineLoaded
+    ? incomingGuids.filter((guid) => !input.existing.clientGuids.has(guid.toLowerCase()))
+    : [];
+  const toKeep = baselineLoaded
+    ? incomingGuids.filter((guid) => input.existing.clientGuids.has(guid.toLowerCase()))
+    : [];
+  const toExclude = baselineLoaded
+    ? [...input.existing.clientGuids].filter((guid) => !incomingSet.has(guid))
+    : [];
+
+  const extendedRecords = input.payload.extendedRecords ?? [];
 
   const unresolvedSamples: UnresolvedHoldingLinkSample[] = [];
   for (const record of extendedRecords) {
@@ -183,28 +217,43 @@ export function buildWholesaleCompositionPrepReport(input: {
 
   const dependencySamples: ExcludedRecordDependencySummary[] = [];
   for (const guid of toExclude) {
-    const linkedAccountCount = input.existing.linkedAccountsByClient.get(guid) ?? 0;
-    const confirmedOutletCount = input.existing.confirmedOutletsByClient.get(guid) ?? 0;
-    const bitrixTaskLinkCount = input.existing.bitrixTaskLinksByClient.get(guid) ?? 0;
-    const deletionBlockedReasons: string[] = [
-      "automatic_deletion_disabled_in_replacement_prep",
-    ];
-    if (linkedAccountCount > 0) {
-      deletionBlockedReasons.push("linked_user_accounts_present");
+    const activeAccessGrantCount = dependencyCount(
+      input.existing.activeAccessGrantCountByClient,
+      guid,
+      baselineLoaded,
+    );
+    const linkedEmployeeAccountCount = dependencyCount(
+      input.existing.linkedEmployeeAccountCountByClient,
+      guid,
+      baselineLoaded,
+    );
+    const confirmedOutletCount = dependencyCount(
+      input.existing.confirmedOutletsByClient,
+      guid,
+      baselineLoaded,
+    );
+    const bitrixTaskCount = dependencyCount(input.existing.bitrixTaskCountByClient, guid, baselineLoaded);
+    const deletionBlockedReasons: string[] = ["automatic_deletion_disabled_in_replacement_prep"];
+    if (activeAccessGrantCount != null && activeAccessGrantCount > 0) {
+      deletionBlockedReasons.push("active_access_grants_present");
     }
-    if (confirmedOutletCount > 0) {
+    if (linkedEmployeeAccountCount != null && linkedEmployeeAccountCount > 0) {
+      deletionBlockedReasons.push("linked_employee_accounts_present");
+    }
+    if (confirmedOutletCount != null && confirmedOutletCount > 0) {
       deletionBlockedReasons.push("confirmed_outlets_present");
     }
-    if (bitrixTaskLinkCount > 0) {
-      deletionBlockedReasons.push("bitrix_task_links_present");
+    if (bitrixTaskCount != null && bitrixTaskCount > 0) {
+      deletionBlockedReasons.push("bitrix_tasks_present");
     }
 
     if (dependencySamples.length < MAX_SAMPLE_ROWS) {
       dependencySamples.push({
         guidClient: guid,
-        linkedAccountCount,
+        activeAccessGrantCount,
+        linkedEmployeeAccountCount,
         confirmedOutletCount,
-        bitrixTaskLinkCount,
+        bitrixTaskCount,
         deletionBlockedReasons,
       });
     }
@@ -214,6 +263,9 @@ export function buildWholesaleCompositionPrepReport(input: {
     "wholesale_composition_prep_is_dry_run_only",
     "baseline_apply_requires_separate_approved_procedure",
   ];
+  if (!baselineLoaded) {
+    operationBlockers.push("database_baseline_unavailable");
+  }
   if (unresolvedCount > 0) {
     operationBlockers.push("unresolved_holding_links_do_not_inherit_access");
   }
@@ -227,11 +279,12 @@ export function buildWholesaleCompositionPrepReport(input: {
     employeeRosterLoaded: input.employeeRosterLoaded,
     employeeRosterSourceSha256: input.employeeRosterSourceSha256,
     wholesaleEmployeeCount: input.wholesaleEmployeeCount,
+    baselineAvailability: input.existing.baselineAvailability,
     incomingRecordCount: incomingGuids.length,
-    existingRecordCount: input.existing.clientGuids.size,
-    clientsToAdd: sampleGuids(toAdd),
-    clientsToKeep: sampleGuids(toKeep),
-    clientsToExclude: sampleGuids(toExclude),
+    existingRecordCount: baselineLoaded ? input.existing.clientGuids.size : null,
+    clientsToAdd: baselineLoaded ? sampleGuids(toAdd) : emptyBucket(),
+    clientsToKeep: baselineLoaded ? sampleGuids(toKeep) : emptyBucket(),
+    clientsToExclude: baselineLoaded ? sampleGuids(toExclude) : emptyBucket(),
     unresolvedHoldingLinks: {
       count: unresolvedCount,
       samples: unresolvedSamples,
@@ -243,12 +296,12 @@ export function buildWholesaleCompositionPrepReport(input: {
       truncated: outOfRosterCount > outOfRosterSamples.length,
     },
     excludedDependencies: {
-      count: toExclude.length,
+      count: baselineLoaded ? toExclude.length : null,
       samples: dependencySamples,
-      truncated: toExclude.length > dependencySamples.length,
+      truncated: baselineLoaded && toExclude.length > dependencySamples.length,
     },
     baselineTransition: {
-      excludedFromIncomingBaseline: toExclude.length,
+      excludedFromIncomingBaseline: baselineLoaded ? toExclude.length : null,
       interpretation: "agreed_baseline_change_not_restore_requirement",
     },
     operationBlockers,

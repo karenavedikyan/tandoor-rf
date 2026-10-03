@@ -10,6 +10,7 @@ import { runClientsImport } from "../../src/onec-clients/run-import";
 import {
   buildClientsFileBytes,
   buildClientsFileSha256,
+  buildImportVerificationFingerprint,
   sampleClient,
   sampleClientTwo,
 } from "../helpers/onec-clients-fixtures";
@@ -114,7 +115,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
 
   it("imports, upserts without duplicates, and keeps missing clients", async () => {
     const initialBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const hash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const hash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
 
     const first = await runClientsImport({
@@ -138,7 +139,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       sampleClient({ name_client: "Client Alpha Updated" }),
       sampleClientTwo(),
     ]);
-    const changedHash = buildClientsFileSha256([
+    const changedHash = buildImportVerificationFingerprint([
       sampleClient({ name_client: "Client Alpha Updated" }),
       sampleClientTwo(),
     ]);
@@ -156,7 +157,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
         name_client: "Client Gamma",
       }),
     ]);
-    const replacedHash = buildClientsFileSha256(JSON.parse(replacedBytes.toString("utf8")));
+    const replacedHash = buildImportVerificationFingerprint(JSON.parse(replacedBytes.toString("utf8")));
     const replaced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", replacedHash],
@@ -173,7 +174,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("blocks apply when record count decreases and writes a journal entry", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", fullHash],
@@ -181,7 +182,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     });
 
     const reducedBytes = buildClientsFileBytes([sampleClient()]);
-    const reducedHash = buildClientsFileSha256([sampleClient()]);
+    const reducedHash = buildImportVerificationFingerprint([sampleClient()]);
     const reduced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", reducedHash],
@@ -212,7 +213,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("blocks apply when existing client GUID disappears with same record count", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", fullHash],
@@ -226,7 +227,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
         name_client: "Client Gamma",
       }),
     ]);
-    const replacedHash = buildClientsFileSha256(JSON.parse(replacedBytes.toString("utf8")));
+    const replacedHash = buildImportVerificationFingerprint(JSON.parse(replacedBytes.toString("utf8")));
     const replaced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", replacedHash],
@@ -246,7 +247,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("rolls back client changes on database failure before cleanup", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const seedBytes = buildClientsFileBytes([sampleClient()]);
-    const seedHash = buildClientsFileSha256([sampleClient()]);
+    const seedHash = buildImportVerificationFingerprint([sampleClient()]);
     const seeded = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", seedHash],
@@ -511,7 +512,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("rejects apply in wholesale composition prep mode and keeps shrink guards for normal apply", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", fullHash],
@@ -519,7 +520,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     });
 
     const reducedBytes = buildClientsFileBytes([sampleClient()]);
-    const reducedHash = buildClientsFileSha256([sampleClient()]);
+    const reducedHash = buildImportVerificationFingerprint([sampleClient()]);
     const prepDryRun = await runClientsImport({
       env,
       argv: ["--dry-run", "--wholesale-composition-prep"],
@@ -584,7 +585,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
 
   it("rejects apply while a stale running import exists", async () => {
     const bytes = buildClientsFileBytes([sampleClient()]);
-    const hash = buildClientsFileSha256([sampleClient()]);
+    const hash = buildImportVerificationFingerprint([sampleClient()]);
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
       `

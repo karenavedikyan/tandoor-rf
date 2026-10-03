@@ -18,7 +18,7 @@ import {
 } from "../helpers/test-db";
 import {
   buildClientsFileBytes,
-  buildClientsFileSha256,
+  buildImportVerificationFingerprint,
   sampleClient,
   sampleClientTwo,
 } from "../helpers/onec-clients-fixtures";
@@ -57,7 +57,7 @@ function ftpEnv(databaseUrl: string): NodeJS.ProcessEnv {
 
 async function applyBytes(databaseUrl: string, clients: Record<string, unknown>[]) {
   const bytes = buildClientsFileBytes(clients);
-  const hash = buildClientsFileSha256(clients);
+  const hash = buildImportVerificationFingerprint(clients);
   const result = await runClientsImport({
     env: ftpEnv(databaseUrl),
     argv: ["--apply", "--expected-sha256", hash],

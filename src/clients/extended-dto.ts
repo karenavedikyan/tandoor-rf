@@ -335,6 +335,11 @@ function managerAssignmentLabel(ref: ParsedManagerRef): string {
       ? `${ref.name.trim()} · Связь с аккаунтом ЛК (справочник 1С не проверен)`
       : "Связь с аккаунтом ЛК (справочник 1С не проверен)";
   }
+  if (ref.state === "outside_wholesale_roster") {
+    return ref.name.trim().length > 0
+      ? `${ref.name.trim()} · Вне оптового roster (доступ не выдаётся автоматически)`
+      : "Вне оптового roster (доступ не выдаётся автоматически)";
+  }
   return ref.name.trim().length > 0 ? ref.name.trim() : "—";
 }
 

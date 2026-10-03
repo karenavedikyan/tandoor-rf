@@ -1507,7 +1507,7 @@ function buildDiagnostics(
     outletParentLinkConflicts: outletGuidStats.outletParentLinkConflicts,
     knownOutletsMissingFromSnapshot: null,
     invalidManagerGuidCount,
-    employeeDirectoryVerified: employeeRoster != null,
+    employeeDirectoryVerified: employeeRoster != null && !employeeRoster.isEmpty,
     employeeRosterSourceSha256: employeeRoster?.sourceSha256 ?? null,
     wholesaleEmployeeCount: employeeRoster?.wholesaleCount ?? null,
     managersOutsideWholesaleRosterCount,
@@ -1536,6 +1536,7 @@ export type ValidateClientsLimits = {
   extendedContractVerification?: import("./types").ExtendedContractVerification;
   holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
   employeeRoster?: WholesaleEmployeeRoster | null;
+  employeeRosterExplicit?: boolean;
   wholesaleCompositionMode?: WholesaleCompositionMode;
 };
 
@@ -1715,6 +1716,9 @@ export function validateExtendedClientsFileBytes(
 
   if (sourceFormat === "extended_v1" && employeeRoster == null) {
     pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
+  }
+  if (limits?.employeeRosterExplicit === true && employeeRoster?.isEmpty === true) {
+    pushWarning(warnings, { code: "EMPLOYEE_ROSTER_EMPTY" }, warningCount);
   }
 
   const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";

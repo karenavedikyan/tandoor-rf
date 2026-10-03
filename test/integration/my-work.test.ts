@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import { classifyDeadlineGroup, getMskTodayKey } from "../../src/work/deadline-groups";
 import request from "supertest";
 import { Pool } from "pg";
 import type { Pool as PgPool } from "pg";
@@ -404,12 +405,15 @@ describe("my work queue integration", { concurrency: false }, () => {
       employeeId: MANAGER_A,
       confirmedByUserId: manager.id,
     });
-    const todayKey = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Moscow",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const nowMs = Date.now();
+    const todayKey = getMskTodayKey(nowMs);
+    let todayDeadline = `${todayKey}T23:30:00+03:00`;
+    if (classifyDeadlineGroup("open", todayDeadline, nowMs) !== "today") {
+      const aheadMs = nowMs + 3 * 60 * 60 * 1000;
+      todayDeadline = new Date(aheadMs).toISOString();
+    }
+    assert.equal(classifyDeadlineGroup("open", todayDeadline, nowMs), "today");
+
     await seedTask({
       taskId: "91003",
       title: "Overdue task",
@@ -422,7 +426,7 @@ describe("my work queue integration", { concurrency: false }, () => {
       title: "Today task",
       responsibleBitrixUserId: "42",
       responsibleUserId: manager.id,
-      deadline: `${todayKey}T18:00:00+03:00`,
+      deadline: todayDeadline,
     });
     await seedTask({
       taskId: "91004b",
