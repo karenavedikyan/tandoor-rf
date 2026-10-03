@@ -17,6 +17,11 @@ import {
 } from "./baseline-replacement-fingerprint";
 import { buildBaselineReplacementPlan } from "./baseline-replacement-plan";
 import {
+  buildExcludedArchiveDependencyReport,
+  checkBaselineReplacementMigrationReadiness,
+  loadArchiveDependencyContext,
+} from "./baseline-replacement-preflight";
+import {
   buildExtendedContractConfirmation,
   extendedContractConfirmationSha256 as computeExtendedContractConfirmationSha256,
   resolveExtendedContractVerificationForBaseline,
@@ -167,6 +172,9 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
       dbBaselineSha256: string;
       extendedContractStatus: "unverified" | "operator_confirmed";
       extendedContractConfirmationSha256: string | null;
+      migrationReadiness: import("./baseline-replacement-preflight").MigrationReadiness;
+      excludedArchiveDependencies: import("./baseline-replacement-plan").BaselineReplacementPlan["excludedArchiveDependencies"];
+      acceptedProjection: import("./baseline-replacement-plan").BaselineReplacementPlan["acceptedProjection"];
     }
 > {
   const manifestParsed = parseQuarantineManifestBytes(input.quarantineManifestBytes);
@@ -207,8 +215,23 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
   const pool = createImportPool(databaseUrl);
   const pg = await pool.connect();
   try {
-    const existingActiveGuids = await loadActiveBaselineGuids(pg);
-    const snapshot = await loadClientBaselineSnapshot(pg);
+    const migrationReadiness = await checkBaselineReplacementMigrationReadiness(pg);
+    const hasBaselineStatus = !migrationReadiness.missing.some(
+      (item) => item.description === "onec_clients.baseline_status",
+    );
+
+    let existingActiveGuids: Set<string>;
+    let snapshot: Map<string, string>;
+    if (hasBaselineStatus) {
+      existingActiveGuids = await loadActiveBaselineGuids(pg);
+      snapshot = await loadClientBaselineSnapshot(pg);
+    } else {
+      const allClients = await pg.query<{ guid_client: string }>(
+        `SELECT guid_client::text FROM onec_clients`,
+      );
+      existingActiveGuids = new Set(allClients.rows.map((row) => row.guid_client.toLowerCase()));
+      snapshot = new Map(allClients.rows.map((row) => [row.guid_client.toLowerCase(), "active"]));
+    }
     const existingAllGuids = new Set(snapshot.keys());
     const dbBaselineSha256 = computeDbBaselineSha256(existingActiveGuids);
 
@@ -239,6 +262,25 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
       extendedContractConfirmationSha256 = storedConfirmationSha;
     }
 
+    const archiveCandidates: string[] = [];
+    for (const guid of existingActiveGuids) {
+      if (
+        !projection.quarantine.acceptedGuids.has(guid) &&
+        !projection.quarantine.quarantinedGuids.has(guid)
+      ) {
+        archiveCandidates.push(guid);
+      }
+    }
+    const quarantineInDb = [...projection.quarantine.quarantinedGuids].filter((guid) =>
+      existingAllGuids.has(guid),
+    );
+    const dependencyGuids = [...archiveCandidates, ...quarantineInDb];
+    const dependencyContext = await loadArchiveDependencyContext(pg);
+    const excludedArchiveDependencies = buildExcludedArchiveDependencyReport({
+      guidsToArchive: dependencyGuids,
+      dependencyContext,
+    });
+
     return {
       ok: true,
       clientsSourceSha256: projection.sourceSha256,
@@ -255,6 +297,14 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
       dbBaselineSha256,
       extendedContractStatus,
       extendedContractConfirmationSha256,
+      migrationReadiness,
+      excludedArchiveDependencies,
+      acceptedProjection: {
+        validationOk: true,
+        recordCount: projection.payload.recordCount,
+        nestedOutletCount: projection.payload.extendedDiagnostics?.nestedOutletCount ?? null,
+        sourceSha256: projection.sourceSha256,
+      },
     };
   } finally {
     pg.release();
@@ -312,6 +362,9 @@ export async function runBaselineReplacement(
     existingAllGuids: context.existingAllGuids,
     fingerprint,
     dependencyReport: context.dependencyReport,
+    acceptedProjection: context.acceptedProjection,
+    migrationReadiness: context.migrationReadiness,
+    excludedArchiveDependencies: context.excludedArchiveDependencies,
     extendedContractStatus: context.extendedContractStatus,
     extendedContractConfirmationSha256: context.extendedContractConfirmationSha256,
     confirmExtendedContractRequested: options.confirmExtendedContract === true,

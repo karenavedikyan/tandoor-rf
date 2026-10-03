@@ -182,14 +182,40 @@ node dist/cli/onec-clients-import.js --dry-run \
 - **`--wholesale-composition-prep`:** **только dry-run**. С `--apply` CLI возвращает ошибку до любых бизнес-записей; прямой вызов apply/worker также отклоняется. Отчёт показывает add/keep/exclude, неразрешённые холдинги, назначения вне roster и зависимости исключаемых записей; сокращение старого состава интерпретируется как **согласованная смена эталона**, а не требование вернуть legacy-записи. **Не** разрешает запись или удаление данных.
 - **Применение нового оптового состава** — отдельная контролируемая процедура после review prep-отчёта; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`. См. §8.1.
 
-### 8.1 Карантин + controlled baseline replacement (migration `029`)
+### 8.1 Карантин + controlled baseline replacement (migrations `026`–`029`)
 
-**Обязательная миграция перед первым apply:**
+**Обязательная подготовка схемы перед первым apply**
+
+Production на `ffa4ab3` **может не иметь** migrations `027`–`029` и таблицы `onec_retail_outlets` (`026`). Без них dry-run покажет `migrationReadiness.missing` и `applyAllowed=false`; **нельзя** интерпретировать отсутствующие dependency-запросы как «0 grants / 0 tasks / 0 outlets».
+
+| Migration | Объекты | Зачем |
+|-----------|---------|-------|
+| `026` | `onec_retail_outlets` | confirmed outlet dependency counts |
+| `027` | `onec_client_import_runs.verification_fingerprint` | bind apply к verified dry-run |
+| `028` | `onec_clients.holding_link_state`, `manager_roster_state` | link/roster metadata при apply |
+| `029` | `baseline_status`, quarantine/replacement runs, contract confirmations | controlled baseline + archive |
+
+**Проверка после migrate:**
 
 ```bash
-npm run migrate:local
-# или на сервере: npm run migrate
+npm run migrate:local   # dev/test
+# production: npm run migrate — только оператором после review PR
+
+# SQL smoke (все строки должны вернуть exists = t):
+# SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='onec_client_import_runs' AND column_name='verification_fingerprint');
+# SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='onec_clients' AND column_name='holding_link_state');
+# SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='onec_clients' AND column_name='baseline_status');
+# SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='onec_retail_outlets');
+# SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='onec_baseline_replacement_runs');
 ```
+
+CLI dry-run JSON: `plan.migrationReadiness.ready === true` и `plan.excludedArchiveDependencies.availability === "loaded"` — **обязательные** условия перед apply. При `"partial"` / `"unavailable"` counts в samples будут `null` для недоступных измерений — это **не** ноль.
+
+**Live readonly preflight (03.10.2026 21:49 МСК, без изменения FTP JSON):**
+
+- Исходник: 3087 клиентов; accepted projection после карантина одного GUID → `validateClientsFileBytes ok=true`, **3086** клиентов, **472** ТТ.
+- Карантинируемая карточка `9bc6fb76-d0d9-11f0-80bf-00155d60ef09`: 0 своих ТТ, 0 входящих ссылок в файле; в рабочей БД существует, 0 child_clients, 0 active grants, 0 confirmed Bitrix bindings (readonly SQL; на prod без `026` outlet/task counts могли быть недоступны).
+- Ожидаемый состав операций: **8** новых в accepted, **746** прежних вывести из активного (**745** вне оптовой основы + **1** карантин). Fingerprint для apply в этой симуляции **не** выдавался — только после CLI dry-run на подготовленной БД.
 
 **Принципы**
 
@@ -226,7 +252,7 @@ npm run onec-wholesale-baseline-replace:local -- --dry-run \
   --holding-link-policy=tolerant
 ```
 
-Review JSON: `plan.operations` (add/update/retain/archive/quarantine), `dependencyReport`, `fingerprint`, `blockers`.
+Review JSON: `plan.acceptedProjection` (record/outlet counts), `plan.operations` (add/update/retain/archive/quarantine), `plan.dependencyReport` (quarantine holding links), `plan.excludedArchiveDependencies` (grants/tasks/outlets/child links — **null = unknown, not zero**), `plan.migrationReadiness`, `fingerprint`, `blockers`.
 
 **3. Apply (только после review + backup PostgreSQL):**
 
@@ -251,8 +277,10 @@ npm run onec-wholesale-baseline-replace:local -- --rollback
 **Prerequisites rollback:** PostgreSQL backup; нет concurrent import (`IMPORT_LOCKED`); последний успешный apply имеет `pre_apply_status_snapshot`.
 
 **Не делает CLI:** merge/deploy, production DB writes из Cursor, FTP writes, scheduled/job enablement.
-- Roster: `/LC/clients/all_employees.json` (контракт `guid_manager`, `name_manager`, …; файл уже отфильтрован по «Продажи ОПТ»); невалидные записи и дубликаты → ошибка; пустой roster → warning `EMPLOYEE_ROSTER_EMPTY`, не считается подтверждённым составом; GUID вне roster → `outside_wholesale_roster`.
-- `holding-link-policy` и SHA roster фиксируются в payload/diagnostics и одинаково применяются при validation и dry-run.
+
+Roster: `/LC/clients/all_employees.json` (контракт `guid_manager`, `name_manager`, …; файл уже отфильтрован по «Продажи ОПТ»); невалидные записи и дубликаты → ошибка; пустой roster → warning `EMPLOYEE_ROSTER_EMPTY`, не считается подтверждённым составом; GUID вне roster → `outside_wholesale_roster`.
+
+`holding-link-policy` и SHA roster фиксируются в payload/diagnostics и одинаково применяются при validation и dry-run.
 
 ### Что адаптация **не** снимает
 

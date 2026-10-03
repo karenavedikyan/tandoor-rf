@@ -96,6 +96,9 @@ describe("onec baseline replacement integration", { concurrency: false }, () => 
     if (!dryRun.ok || !dryRun.plan) return;
     assert.equal(dryRun.plan.quarantinedRecordCount, 1);
     assert.ok(dryRun.plan.operations.archive.count >= 1);
+    assert.equal(dryRun.plan.migrationReadiness.ready, true);
+    assert.equal(dryRun.plan.excludedArchiveDependencies.availability, "loaded");
+    assert.equal(dryRun.plan.acceptedProjection.recordCount, 1);
     assert.equal(dryRun.plan.applyAllowed, true);
 
     const apply = await runBaselineReplacement({

@@ -1,3 +1,7 @@
+import type {
+  ExcludedArchiveDependencySample,
+  MigrationReadiness,
+} from "./baseline-replacement-preflight";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import type { QuarantineDependencySample } from "./quarantine-validation";
 
@@ -36,6 +40,21 @@ export type BaselineReplacementPlan = {
     quarantine: BaselineReplacementOperationBucket;
   };
   dependencyReport: QuarantineDependencySample[];
+  acceptedProjection: {
+    validationOk: true;
+    recordCount: number;
+    nestedOutletCount: number | null;
+    sourceSha256: string;
+  };
+  migrationReadiness: MigrationReadiness;
+  excludedArchiveDependencies: {
+    availability: "loaded" | "partial" | "unavailable";
+    unavailableDimensions: string[];
+    count: number | null;
+    samples: ExcludedArchiveDependencySample[];
+    truncated: boolean;
+    anyUnknownDependency: boolean;
+  };
   extendedContract: {
     status: "unverified" | "operator_confirmed";
     confirmationRequired: boolean;
@@ -58,6 +77,9 @@ export function buildBaselineReplacementPlan(input: {
   existingAllGuids: Set<string>;
   fingerprint: string;
   dependencyReport: QuarantineDependencySample[];
+  acceptedProjection: BaselineReplacementPlan["acceptedProjection"];
+  migrationReadiness: MigrationReadiness;
+  excludedArchiveDependencies: BaselineReplacementPlan["excludedArchiveDependencies"];
   extendedContractStatus: "unverified" | "operator_confirmed";
   extendedContractConfirmationSha256: string | null;
   confirmExtendedContractRequested: boolean;
@@ -94,6 +116,12 @@ export function buildBaselineReplacementPlan(input: {
   ) {
     blockers.push("missing_operator_reference");
   }
+  if (!input.migrationReadiness.ready) {
+    blockers.push("migrations_not_ready");
+  }
+  if (input.excludedArchiveDependencies.anyUnknownDependency) {
+    blockers.push("archive_dependency_baseline_incomplete");
+  }
 
   return {
     mode: input.mode,
@@ -114,6 +142,9 @@ export function buildBaselineReplacementPlan(input: {
       quarantine: bucket(quarantine),
     },
     dependencyReport: input.dependencyReport,
+    acceptedProjection: input.acceptedProjection,
+    migrationReadiness: input.migrationReadiness,
+    excludedArchiveDependencies: input.excludedArchiveDependencies,
     extendedContract: {
       status: input.extendedContractStatus,
       confirmationRequired,
