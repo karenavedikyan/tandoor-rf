@@ -651,6 +651,12 @@ export async function applyClientsImport(options: {
   expectedVerificationFingerprint: string;
   holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
   employeeRosterSourceSha256?: string | null;
+  /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
+  baselineReplacementApply?: boolean;
+  /** Original full clients file SHA256 for baseline extended-contract gate (not accepted projection SHA). */
+  originalClientsSourceSha256?: string;
+  /** When true, caller owns BEGIN/COMMIT; apply must not commit or rollback the connection. */
+  participatingTransaction?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -798,30 +804,40 @@ export async function applyClientsImport(options: {
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
       } else {
-        const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
-        if (
-          lastSuccessfulCount !== null &&
-          options.payload.recordCount < lastSuccessfulCount
-        ) {
-          phase.runId = await insertRejectedRunJournal(
-            managed,
-            options.payload,
-            "RECORD_COUNT_DECREASED",
-            journal,
-          );
-          outcome = {
-            ok: false,
-            code: "RECORD_COUNT_DECREASED",
-            message: "Source record count decreased compared to the last successful import.",
-            runId: phase.runId,
-          };
-        } else {
-          const existing = await loadExistingClients(managed);
-          if (existing.size > 0) {
+        const skipShrinkGuards = options.baselineReplacementApply === true;
+        if (!skipShrinkGuards) {
+          const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
+          if (
+            lastSuccessfulCount !== null &&
+            options.payload.recordCount < lastSuccessfulCount
+          ) {
+            phase.runId = await insertRejectedRunJournal(
+              managed,
+              options.payload,
+              "RECORD_COUNT_DECREASED",
+              journal,
+            );
+            outcome = {
+              ok: false,
+              code: "RECORD_COUNT_DECREASED",
+              message: "Source record count decreased compared to the last successful import.",
+              runId: phase.runId,
+            };
+          } else {
             const incomingGuids = new Set(
               options.payload.records.map((record) => record.guid_client),
             );
-            const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
+            const activeExisting = await queryManaged<{ guid_client: string }>(
+              managed,
+              `
+                SELECT guid_client::text
+                FROM onec_clients
+                WHERE COALESCE(baseline_status, 'active') = 'active'
+              `,
+            );
+            const missingGuids = activeExisting.rows
+              .map((row) => row.guid_client)
+              .filter((guid) => !incomingGuids.has(guid));
             if (missingGuids.length > 0) {
               phase.runId = await insertRejectedRunJournal(
                 managed,
@@ -837,8 +853,10 @@ export async function applyClientsImport(options: {
               };
             }
           }
+        }
 
-          if (!outcome) {
+        if (!outcome) {
+          const existing = await loadExistingClients(managed);
           const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
             managed,
@@ -873,10 +891,23 @@ export async function applyClientsImport(options: {
           );
           phase.runId = runInsert.rows[0]?.id;
 
-          await queryManaged(managed, "BEGIN");
+          const participating = options.participatingTransaction === true;
+          if (!participating) {
+            await queryManaged(managed, "BEGIN");
+          }
 
           const extendedApply = isExtendedApplyPayload(options.payload);
-          const contractVerified = isExtendedContractVerified(options.payload);
+          let contractVerified = false;
+          if (options.baselineReplacementApply && options.originalClientsSourceSha256) {
+            const { resolveBaselineExtendedContractVerified } = await import("./baseline-extended-contract");
+            contractVerified = await resolveBaselineExtendedContractVerified({
+              client: managed.client,
+              payload: options.payload,
+              clientsSourceSha256: options.originalClientsSourceSha256,
+            });
+          } else {
+            contractVerified = isExtendedContractVerified(options.payload);
+          }
           const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);
           const outletRegistry = await loadOutletGuidRegistry(managed.client);
@@ -1184,13 +1215,15 @@ export async function applyClientsImport(options: {
             unchangedCount,
             ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
           };
-          phase.commitAttempted = true;
-          if (options.testHooks?.failCommit) {
-            throw new Error("Simulated commit response loss.");
-          }
+          if (!participating) {
+            phase.commitAttempted = true;
+            if (options.testHooks?.failCommit) {
+              throw new Error("Simulated commit response loss.");
+            }
 
-          await queryManaged(managed, "COMMIT");
-          phase.commitConfirmed = true;
+            await queryManaged(managed, "COMMIT");
+            phase.commitConfirmed = true;
+          }
 
           if (options.testHooks?.failAfterCommitConfirm) {
             throw new ClientConnectionFault();
@@ -1217,14 +1250,13 @@ export async function applyClientsImport(options: {
           }
         }
       }
-    }
   } catch (error) {
     if (phase.commitAttempted && !phase.commitConfirmed) {
       outcome = await recoverFromCommitUncertainty(managed, phase, recoveryDatabaseUrl);
     } else if (isConnectionFault(error, managed)) {
       outcome = resolveConnectionFault(phase);
     } else {
-      if (managed && !managed.faulted()) {
+      if (managed && !managed.faulted() && options.participatingTransaction !== true) {
         try {
           await managed.client.query("ROLLBACK");
         } catch {

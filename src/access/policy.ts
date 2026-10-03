@@ -34,7 +34,7 @@ export async function isClientInScope(
       return false;
     }
     const exists = await query(
-      "SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid LIMIT 1",
+      `SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid AND COALESCE(baseline_status, 'active') = 'active' LIMIT 1`,
       [guidClient],
     );
     return exists.rows.length > 0;

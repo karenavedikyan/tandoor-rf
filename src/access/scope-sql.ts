@@ -1,3 +1,8 @@
+import {
+  ACTIVE_BASELINE_CLIENT_SQL,
+  ACTIVE_BASELINE_OC_SQL,
+  appendActiveBaselineFilter,
+} from "../onec-clients/baseline-active-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
 import type { ClientScopeSql } from "./types";
@@ -51,7 +56,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
   }
 
   if (context.fullClientBase) {
-    return appendUserDenials({ whereSql: "", params: [] }, context.userId);
+    return appendActiveBaselineFilter(appendUserDenials({ whereSql: "", params: [] }, context.userId));
   }
 
   if (!context.hasScopedClientAccess || context.employeeLinkConflict || !context.hasEmployeeLink) {
@@ -69,6 +74,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
           FROM onec_clients
           WHERE guid_manager = $1::uuid
             AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
+            AND ${ACTIVE_BASELINE_CLIENT_SQL.trim()}
         `,
         [context.employeeId!],
       );
@@ -81,6 +87,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
           SELECT oc.guid_client
           FROM onec_clients oc
           WHERE ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL.replaceAll("onec_clients.", "oc.")}
+            AND ${ACTIVE_BASELINE_OC_SQL.trim()}
             AND oc.guid_manager IN (
             SELECT uoel.employee_id
             FROM rop_team_members rtm
@@ -99,11 +106,13 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
     case "regional_manager":
       scope = scopedWhere(
         `
-          SELECT object_id AS guid_client
-          FROM access_grants
-          WHERE user_id = $1::uuid
-            AND grant_type = 'client'
-            AND revoked_at IS NULL
+          SELECT g.object_id AS guid_client
+          FROM access_grants g
+          JOIN onec_clients oc ON oc.guid_client = g.object_id
+          WHERE g.user_id = $1::uuid
+            AND g.grant_type = 'client'
+            AND g.revoked_at IS NULL
+            AND ${ACTIVE_BASELINE_OC_SQL.trim()}
         `,
         [userParam],
       );
@@ -136,6 +145,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
               JOIN users delegator ON delegator.id = d.delegator_user_id
               WHERE oc.guid_client = dc.guid_client
                 AND oc.guid_manager = uoel.employee_id
+                AND ${ACTIVE_BASELINE_OC_SQL.trim()}
                 AND COALESCE(oc.manager_roster_state, 'in_wholesale_roster') <> 'outside_wholesale_roster'
                 AND delegator.status = 'active'
                 AND delegator.role IN ('manager', 'rop')
@@ -159,5 +169,5 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
       return DENY_SCOPE;
   }
 
-  return appendUserDenials(scope, context.userId);
+  return appendActiveBaselineFilter(appendUserDenials(scope, context.userId));
 }
