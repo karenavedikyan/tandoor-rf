@@ -42,7 +42,9 @@ type CountRow = { count: string };
 type OptionRow = { id: string; name: string };
 
 export async function countAllClients(): Promise<number> {
-  const result = await query<CountRow>("SELECT COUNT(*)::text AS count FROM onec_clients");
+  const result = await query<CountRow>(
+    `SELECT COUNT(*)::text AS count FROM onec_clients WHERE COALESCE(baseline_status, 'active') = 'active'`,
+  );
   return Number(result.rows[0]?.count ?? "0");
 }
 

@@ -63,6 +63,9 @@ export type ExtendedValidationFailure = {
   warningCodes: string[];
   issuesTruncated: boolean;
   warningsTruncated: boolean;
+  /** Present when parse completed but business rules failed; used for quarantine projection. */
+  parsedRecords?: ParsedExtendedClientRecord[];
+  sourceSha256?: string;
 };
 
 export type ExtendedValidationResult =
@@ -1703,15 +1706,19 @@ export function validateExtendedClientsFileBytes(
   );
 
   if (issueCount.value > 0) {
-    return buildValidationFailure(
-      issues,
-      warnings,
-      issueCount.value,
-      warningCount.value,
-      diagnostics,
-      issueCodes,
-      warningCodes,
-    );
+    return {
+      ...buildValidationFailure(
+        issues,
+        warnings,
+        issueCount.value,
+        warningCount.value,
+        diagnostics,
+        issueCodes,
+        warningCodes,
+      ),
+      parsedRecords: records,
+      sourceSha256: sha256Hex(bytes),
+    };
   }
 
   if (sourceFormat === "extended_v1" && employeeRoster == null) {
