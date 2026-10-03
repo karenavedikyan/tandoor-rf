@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildExtendedSnapshotJson } from "../../src/onec-clients/extended-apply";
 import {
+  countKnownOutletsMissingFromSnapshot,
   dedupeIdenticalOutlets,
   mergeRetailOutletsWithIdentity,
   outletBusinessProjection,
@@ -215,7 +216,63 @@ describe("outlet identity merge", () => {
     );
     assert.equal(second.currentRetailOutlets.length, 1);
     assert.equal(second.currentRetailOutlets[0]?.outletGuidStatus, "confirmed");
+    assert.equal(second.retailOutletHistory.length, 1);
+    assert.equal(second.retailOutletHistory[0]?.sourceSha256, "sha-a");
+    assert.equal(second.retailOutletHistory[0]?.archivedAt, "2026-01-02T00:00:00.000Z");
     assert.ok(second.retailOutletHistory.some((entry) => entry.retailOutlets[0]?.outletGuidStatus === "not_provided"));
+  });
+
+  it("marks all outlets absent when retail_outlets block is missing", () => {
+    const previous = [
+      outlet({
+        provenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    ];
+    const merged = mergeRetailOutletsWithIdentity([], "missing", previous, {
+      sourceSha256: "sha-b",
+      importedAt: "2026-01-02T00:00:00.000Z",
+    });
+    assert.equal(merged.outlets.length, 1);
+    assert.equal(merged.outlets[0]?.provenance.freshness, "absent_from_current_export");
+    assert.equal(merged.outlets[0]?.provenance.sourceSha256, "sha-a");
+    assert.equal(merged.outlets[0]?.closureConfirmedInCurrentExport, false);
+    assert.equal(merged.outletsInCurrentExport.length, 0);
+  });
+
+  it("counts missing outlets from source guids before merge restoration", () => {
+    const registry = new Map([
+      [
+        EXTENDED_FIXTURE_GUIDS.STORE_ONE.toLowerCase(),
+        {
+          guid_store: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+          guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+          is_closed: false,
+          last_source_sha256: "sha-a",
+          last_imported_at: "2026-01-01T00:00:00.000Z",
+          closure_history: [],
+        },
+      ],
+      [
+        EXTENDED_FIXTURE_GUIDS.STORE_TWO.toLowerCase(),
+        {
+          guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+          is_closed: false,
+          last_source_sha256: "sha-a",
+          last_imported_at: "2026-01-01T00:00:00.000Z",
+          closure_history: [],
+        },
+      ],
+    ]);
+    const sourceGuids = new Set([EXTENDED_FIXTURE_GUIDS.STORE_TWO.toLowerCase()]);
+    assert.equal(
+      countKnownOutletsMissingFromSnapshot(EXTENDED_FIXTURE_GUIDS.HOLDING_GUID, sourceGuids, registry),
+      1,
+    );
   });
 
   it("compares full business projection including managers and contacts", () => {

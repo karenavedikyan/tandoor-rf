@@ -135,6 +135,19 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
       )?.provenance.freshness,
       "absent_from_current_export",
     );
+
+    const journal = await pool.query<{
+      extended_diagnostics: { knownOutletsMissingFromSnapshot?: number | null } | null;
+    }>(
+      `
+        SELECT extended_diagnostics
+        FROM onec_client_import_runs
+        WHERE status = 'success'
+        ORDER BY finished_at DESC
+        LIMIT 1
+      `,
+    );
+    assert.equal(journal.rows[0]?.extended_diagnostics?.knownOutletsMissingFromSnapshot, 1);
     await pool.end();
   });
 

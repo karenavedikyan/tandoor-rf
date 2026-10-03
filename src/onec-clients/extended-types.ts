@@ -105,8 +105,12 @@ export type ParsedRetailOutlet = {
 };
 
 export type RetailOutletHistoryEntry = {
+  /** SHA of the export that originally contained the archived outlet data. */
   sourceSha256: string;
+  /** Import timestamp of the export that originally contained the archived outlet data. */
   capturedAt: string;
+  /** When the snapshot was moved to history (may differ from capturedAt). */
+  archivedAt?: string;
   retailOutlets: ParsedRetailOutlet[];
 };
 

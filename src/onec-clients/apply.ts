@@ -22,7 +22,12 @@ import {
   summarizeExtendedFreshness,
 } from "./extended-apply";
 import type { ExtendedSnapshot } from "./extended-types";
-import { countKnownOutletsMissingFromSnapshot, detectRegistryParentConflicts } from "./outlet-identity";
+import {
+  countKnownOutletsMissingFromSnapshot,
+  detectRegistryParentConflicts,
+  extractConfirmedOutletGuidsFromSource,
+} from "./outlet-identity";
+import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
@@ -1016,12 +1021,25 @@ export async function applyClientsImport(options: {
                 record.guid_client,
                 outletsInCurrentExport,
               );
-              missingOutletsChecked = true;
-              knownOutletsMissingFromSnapshot += countKnownOutletsMissingFromSnapshot(
-                record.guid_client,
-                extendedSnapshotJson.currentRetailOutlets,
-                outletRegistry,
-              );
+              const retailOutletsPresence = extendedRecord?.fieldPresence.retailOutlets as
+                | FieldPresenceState
+                | undefined;
+              if (
+                retailOutletsPresence === "present" ||
+                retailOutletsPresence === "missing" ||
+                retailOutletsPresence === "explicit_null"
+              ) {
+                missingOutletsChecked = true;
+                const guidsInCurrentExport =
+                  retailOutletsPresence === "present" && extendedRecord
+                    ? extractConfirmedOutletGuidsFromSource(extendedRecord.retailOutlets)
+                    : new Set<string>();
+                knownOutletsMissingFromSnapshot += countKnownOutletsMissingFromSnapshot(
+                  record.guid_client,
+                  guidsInCurrentExport,
+                  outletRegistry,
+                );
+              }
               for (const outlet of outletsInCurrentExport) {
                 if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
                   outletRegistry.set(outlet.guidStore.toLowerCase(), {

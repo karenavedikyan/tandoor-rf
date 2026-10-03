@@ -110,18 +110,34 @@ function currentProvenance(context: OutletMergeContext): OutletProvenance {
   };
 }
 
-function preservedProvenance(previous: ParsedRetailOutlet | undefined, context: OutletMergeContext): OutletProvenance {
-  if (previous?.provenance) {
+function preservedProvenance(previous: ParsedRetailOutlet | undefined): OutletProvenance {
+  if (previous?.provenance?.sourceSha256) {
     return {
       freshness: "absent_from_current_export",
       sourceSha256: previous.provenance.sourceSha256,
       importedAt: previous.provenance.importedAt,
     };
   }
+  if (previous?.provenance) {
+    return {
+      freshness: "preserved_from_previous",
+      sourceSha256: previous.provenance.sourceSha256,
+      importedAt: previous.provenance.importedAt,
+    };
+  }
   return {
-    freshness: "absent_from_current_export",
-    sourceSha256: context.sourceSha256,
-    importedAt: context.importedAt,
+    freshness: "preserved_from_previous",
+    sourceSha256: "",
+    importedAt: "",
+  };
+}
+
+function preserveOutletFromAbsentExport(previous: ParsedRetailOutlet): ParsedRetailOutlet {
+  return {
+    ...previous,
+    provenance: preservedProvenance(previous),
+    closureConfirmedInCurrentExport: false,
+    distributionAllowed: false,
   };
 }
 
@@ -187,15 +203,8 @@ function mergeConfirmedOutlet(
   };
 }
 
-function mergePreservedConfirmedOutlet(
-  previous: ParsedRetailOutlet,
-  context: OutletMergeContext,
-): ParsedRetailOutlet {
-  return {
-    ...previous,
-    provenance: preservedProvenance(previous, context),
-    distributionAllowed: false,
-  };
+function mergePreservedConfirmedOutlet(previous: ParsedRetailOutlet): ParsedRetailOutlet {
+  return preserveOutletFromAbsentExport(previous);
 }
 
 function mergeAnonymousOutlet(incoming: ParsedRetailOutlet, context: OutletMergeContext): ParsedRetailOutlet {
@@ -213,9 +222,11 @@ function archiveAnonymousOutlets(
   if (previousAnonymous.length === 0) {
     return null;
   }
+  const origin = previousAnonymous[0]?.provenance;
   return {
-    sourceSha256: context.sourceSha256,
-    capturedAt: context.importedAt,
+    sourceSha256: origin?.sourceSha256 || context.sourceSha256,
+    capturedAt: origin?.importedAt || context.importedAt,
+    archivedAt: context.importedAt,
     retailOutlets: previousAnonymous.map((outlet) => ({ ...outlet })),
   };
 }
@@ -228,7 +239,7 @@ export function mergeRetailOutletsWithIdentity(
 ): OutletMergeResult {
   if (presence === "missing" && previous) {
     return {
-      outlets: previous,
+      outlets: previous.map((outlet) => preserveOutletFromAbsentExport(outlet)),
       historyEntries: [],
       outletsInCurrentExport: [],
     };
@@ -273,7 +284,7 @@ export function mergeRetailOutletsWithIdentity(
   for (const previousOutlet of previousOutlets) {
     if (previousOutlet.outletGuidStatus === "confirmed" && previousOutlet.guidStore) {
       if (!incomingGuidSet.has(previousOutlet.guidStore.toLowerCase())) {
-        result.push(mergePreservedConfirmedOutlet(previousOutlet, context));
+        result.push(mergePreservedConfirmedOutlet(previousOutlet));
       }
     }
   }
@@ -309,7 +320,7 @@ export function deriveRetailOutletsBlockFreshness(
   if (presence === "explicit_null") {
     return "not_provided_in_snapshot";
   }
-  const freshValues = outlets.map((outlet) => outlet.provenance.freshness);
+  const freshValues = outlets.map((outlet) => outlet.provenance?.freshness ?? "preserved_from_previous");
   if (freshValues.every((value) => value === "current")) {
     return "current";
   }
@@ -342,19 +353,26 @@ export function detectRegistryParentConflicts(
   return conflicts;
 }
 
+export function extractConfirmedOutletGuidsFromSource(
+  outlets: ParsedRetailOutlet[],
+): ReadonlySet<string> {
+  const guids = new Set<string>();
+  for (const outlet of outlets) {
+    if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+      guids.add(outlet.guidStore.toLowerCase());
+    }
+  }
+  return guids;
+}
+
 export function countKnownOutletsMissingFromSnapshot(
   clientGuid: string,
-  currentOutlets: ParsedRetailOutlet[],
+  guidsInCurrentExport: ReadonlySet<string>,
   registry: ReadonlyMap<string, OutletGuidRegistryRow>,
 ): number {
-  const currentGuids = new Set(
-    currentOutlets
-      .filter((outlet) => outlet.outletGuidStatus === "confirmed" && outlet.guidStore)
-      .map((outlet) => outlet.guidStore!.toLowerCase()),
-  );
   let missing = 0;
   for (const [guid, row] of registry) {
-    if (row.guid_client.toLowerCase() === clientGuid.toLowerCase() && !currentGuids.has(guid)) {
+    if (row.guid_client.toLowerCase() === clientGuid.toLowerCase() && !guidsInCurrentExport.has(guid)) {
       missing += 1;
     }
   }

@@ -251,7 +251,10 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory: appendHistoryWhenBusinessChanged(previous, currentRetailOutlets, retailOutletHistory),
+    retailOutletHistory:
+      outletMerge.historyEntries.length > 0
+        ? retailOutletHistory
+        : appendHistoryWhenBusinessChanged(previous, currentRetailOutlets, retailOutletHistory),
     blocks: {
       clientExtendedReady: options.contractVerified,
       outletNormalizedReady: false,

@@ -172,6 +172,31 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     await context.close();
   });
 
+  it("shows preserved outlet source and unconfirmed closure in UI", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.retailOutlets = [
+      syntheticOutletMock({
+        guidStore: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        identityLabel: "Торговая точка 1С · eeee…eeee",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта (статус сохранён; не подтверждён текущей выгрузкой)",
+        presentInCurrentExport: false,
+        dataSourceLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле",
+        freshnessLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле (01.01.2026, 13:00)",
+      }),
+    ];
+    detail.client.extended.retailOutletsTotalCount = 1;
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /отсутствует в текущем файле/);
+    assert.match(text, /не подтверждён текущей выгрузкой/);
+    await context.close();
+  });
+
   it("does not duplicate archived anonymous outlet in current count", async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
