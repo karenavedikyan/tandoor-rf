@@ -271,8 +271,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);
-    const effectiveState =
-      isStale && reviewState === "completed" ? "needs_recheck" : reviewState;
+    const effectiveState = isStale ? "needs_recheck" : reviewState;
     item.review = {
       state: effectiveState,
       stateLabel: REVIEW_STATE_LABELS[effectiveState],

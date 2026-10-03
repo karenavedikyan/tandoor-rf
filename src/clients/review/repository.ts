@@ -56,6 +56,12 @@ export type EligibleReviewManager = {
   shortId: string;
 };
 
+export type EligibleReviewer = {
+  userId: string;
+  name: string;
+  shortId: string;
+};
+
 export class ReviewServiceError extends Error {
   code: "NOT_FOUND" | "FORBIDDEN" | "CONFLICT" | "VALIDATION";
 
@@ -133,7 +139,7 @@ export function reviewEffectiveStateSql(clientsAlias = "onec_clients"): string {
   return `
     CASE
       WHEN crr.guid_client IS NULL THEN 'unreviewed'
-      WHEN ${staleSql} AND crr.review_state = 'completed' THEN 'needs_recheck'
+      WHEN ${staleSql} THEN 'needs_recheck'
       ELSE crr.review_state
     END
   `;
@@ -186,7 +192,7 @@ function toReviewRecord(row: ReviewRow): ClientReviewRecord {
 
   return {
     guidClient: row.guid_client,
-    reviewState: isStale && row.review_state === "completed" ? "needs_recheck" : row.review_state,
+    reviewState: isStale ? "needs_recheck" : row.review_state,
     reviewDecision: row.review_decision,
     comment: row.comment,
     proposedManagerGuid: row.proposed_manager_guid,
@@ -322,6 +328,23 @@ async function assertReviewerEligible(reviewerUserId: string): Promise<void> {
       "VALIDATION",
     );
   }
+}
+
+export async function listEligibleReviewers(): Promise<EligibleReviewer[]> {
+  const result = await query<{ user_id: string; full_name: string }>(
+    `
+      SELECT id::text AS user_id, full_name
+      FROM users
+      WHERE status = 'active'
+        AND role = 'admin'
+      ORDER BY full_name ASC, id ASC
+    `,
+  );
+  return result.rows.map((row) => ({
+    userId: row.user_id,
+    name: row.full_name,
+    shortId: shortUuidLabel(row.user_id),
+  }));
 }
 
 export async function listEligibleReviewManagers(): Promise<EligibleReviewManager[]> {
@@ -554,7 +577,7 @@ export async function upsertClientReview(
     if (isRecheck) {
       if (!before || !before.isStale) {
         throw new ReviewServiceError(
-          "Повторная проверка доступна только для устаревшей завершённой ревизии.",
+          "Повторная проверка доступна только для устаревшей ревизии.",
           "VALIDATION",
         );
       }

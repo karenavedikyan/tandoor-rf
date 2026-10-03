@@ -340,6 +340,7 @@ export function resolveMockResponse(
   options: MockOptions,
   state: { listCalls: number; catalogProductsCalls: number },
   method = "GET",
+  requestBody?: string,
 ): { status: number; contentType: string; body: string } | null {
   const path = url.pathname;
 
@@ -443,12 +444,35 @@ export function resolveMockResponse(
     });
   }
 
+  if (path === "/api/clients/review/eligible-reviewers") {
+    return jsonResponse(200, {
+      items: [
+        {
+          userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Synthetic Admin",
+          shortId: "aaaaaaaa",
+        },
+      ],
+    });
+  }
+
   const reviewMatch = path.match(/^\/api\/clients\/([^/]+)\/review(?:\/history)?$/);
   if (reviewMatch) {
     if (path.endsWith("/history")) {
       return jsonResponse(200, { items: [] });
     }
     if (method === "PUT") {
+      let parsedBody: unknown = null;
+      try {
+        parsedBody = JSON.parse(requestBody ?? "{}");
+      } catch {
+        parsedBody = null;
+      }
+      if (typeof parsedBody === "string") {
+        return jsonResponse(400, {
+          error: { message: "Expected JSON object body." },
+        });
+      }
       return jsonResponse(200, {
         review: {
           reviewState: "completed",
@@ -456,6 +480,14 @@ export function resolveMockResponse(
           version: 1,
           isStale: false,
           transferStatus: "none",
+          assignedReviewerUserId:
+            parsedBody && typeof parsedBody === "object" && parsedBody !== null
+              ? (parsedBody as { assignedReviewerUserId?: string }).assignedReviewerUserId ?? null
+              : null,
+          dueAt:
+            parsedBody && typeof parsedBody === "object" && parsedBody !== null
+              ? (parsedBody as { dueAt?: string | null }).dueAt ?? null
+              : null,
         },
       });
     }

@@ -15,6 +15,7 @@ import {
   getClientReview,
   listClientReviewHistory,
   listEligibleReviewManagers,
+  listEligibleReviewers,
   REVIEW_COMMENT_MAX_LENGTH,
   ReviewServiceError,
   upsertClientReview,
@@ -220,6 +221,17 @@ export async function eligibleReviewManagersHandler(req: AccessRequest, res: Res
     return;
   }
   const items = await listEligibleReviewManagers();
+  setNoStore(res);
+  res.status(200).json({ items });
+}
+
+export async function eligibleReviewersHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (req.accessContext!.role !== "admin") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Список проверяющих доступен только администратору."));
+    return;
+  }
+  const items = await listEligibleReviewers();
   setNoStore(res);
   res.status(200).json({ items });
 }

@@ -63,6 +63,16 @@ async function resolveScopedFilter(
     throw new ListClientsError("Очередь ревизии доступна только администратору.", "FORBIDDEN");
   }
 
+  const hasReviewFilter =
+    (input.reviewState && input.reviewState !== "any") ||
+    (input.reviewDecision && input.reviewDecision !== "any");
+  if (hasReviewFilter && context.role !== "admin") {
+    throw new ListClientsError(
+      "Фильтры ревизии доступны только администратору.",
+      "FORBIDDEN",
+    );
+  }
+
   if (input.unassignedCategory && context.role !== "admin") {
     throw new ListClientsError(
       "Фильтр нераспределённых назначений доступен только администратору.",
@@ -114,7 +124,9 @@ async function resolveScopedFilter(
 
   const combined = combineScopeAndFilter(scope, userFilter);
 
-  const includeReview = input.view === "review" || input.reviewState || input.reviewDecision;
+  const includeReview =
+    context.role === "admin" &&
+    (input.view === "review" || input.reviewState || input.reviewDecision);
   const includeTeamContext = input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
 
   const joinSql = [
@@ -145,6 +157,8 @@ async function resolveScopedFilter(
         , crr.basis_manager_guid::text AS review_basis_manager_guid
         , crr.basis_data_fingerprint AS review_basis_data_fingerprint
         , crr.proposed_manager_guid::text AS review_proposed_manager_guid
+        , onec_clients.guid_holding_pending::text
+        , onec_clients.holding_link_state
       `
       : "",
     includeTeamContext

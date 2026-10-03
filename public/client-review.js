@@ -1,6 +1,41 @@
 (function (root) {
   "use strict";
 
+  function isoToDatetimeLocal(isoString) {
+    if (!isoString) {
+      return "";
+    }
+    var date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    var pad = function (value) {
+      return String(value).padStart(2, "0");
+    };
+    return (
+      date.getFullYear() +
+      "-" +
+      pad(date.getMonth() + 1) +
+      "-" +
+      pad(date.getDate()) +
+      "T" +
+      pad(date.getHours()) +
+      ":" +
+      pad(date.getMinutes())
+    );
+  }
+
+  function datetimeLocalToIso(value) {
+    if (!value) {
+      return null;
+    }
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return date.toISOString();
+  }
+
   function createReviewPanel(deps) {
     var api = deps.api;
     var shell = deps.shell;
@@ -11,6 +46,7 @@
     var reviewState = null;
     var options = { states: [], decisions: [], commentMaxLength: 2000 };
     var eligibleManagers = [];
+    var eligibleReviewers = [];
     var historyItems = [];
     var saveRequestId = 0;
 
@@ -32,6 +68,14 @@
         return item.employeeGuid === id;
       });
       return match ? logic.optionLabel({ id: match.employeeGuid, name: match.name, shortId: match.shortId }) : id;
+    }
+
+    function reviewerLabel(userId) {
+      if (!userId) return "";
+      var match = eligibleReviewers.find(function (item) {
+        return item.userId === userId;
+      });
+      return match ? match.name + " · " + match.shortId : userId;
     }
 
     function renderHistory() {
@@ -59,6 +103,40 @@
           );
         })
         .join("");
+    }
+
+    function fillReviewerSelect(reviewerSelect) {
+      if (!reviewerSelect) return;
+      var optionsHtml =
+        '<option value="">—</option>' +
+        eligibleReviewers
+          .map(function (item) {
+            return (
+              '<option value="' +
+              escapeHtml(item.userId) +
+              '">' +
+              escapeHtml(item.name + " · " + item.shortId) +
+              "</option>"
+            );
+          })
+          .join("");
+
+      var assignedId = reviewState ? reviewState.assignedReviewerUserId : null;
+      if (
+        assignedId &&
+        !eligibleReviewers.some(function (item) {
+          return item.userId === assignedId;
+        })
+      ) {
+        optionsHtml +=
+          '<option value="' +
+          escapeHtml(assignedId) +
+          '" disabled>Недоступный проверяющий · ' +
+          escapeHtml(assignedId.slice(0, 8)) +
+          "</option>";
+      }
+
+      reviewerSelect.innerHTML = optionsHtml;
     }
 
     function fillForm() {
@@ -100,21 +178,7 @@
             })
             .join("");
       }
-      if (reviewerSelect) {
-        reviewerSelect.innerHTML =
-          '<option value="">—</option>' +
-          eligibleManagers
-            .map(function (item) {
-              return (
-                '<option value="' +
-                escapeHtml(item.employeeGuid) +
-                '">' +
-                escapeHtml(item.name + " · " + item.shortId) +
-                "</option>"
-              );
-            })
-            .join("");
-      }
+      fillReviewerSelect(reviewerSelect);
 
       if (!reviewState) {
         if (stateSelect) stateSelect.value = "unreviewed";
@@ -134,8 +198,18 @@
       if (commentInput) commentInput.value = reviewState.comment || "";
       if (managerHidden) managerHidden.value = reviewState.proposedManagerGuid || "";
       if (managerInput) managerInput.value = managerLabel(reviewState.proposedManagerGuid);
-      if (reviewerSelect) reviewerSelect.value = reviewState.assignedReviewerUserId || "";
-      if (dueInput) dueInput.value = reviewState.dueAt ? reviewState.dueAt.slice(0, 16) : "";
+      if (reviewerSelect) {
+        reviewerSelect.value = reviewState.assignedReviewerUserId || "";
+        if (
+          reviewState.assignedReviewerUserId &&
+          !eligibleReviewers.some(function (item) {
+            return item.userId === reviewState.assignedReviewerUserId;
+          })
+        ) {
+          reviewerSelect.value = "";
+        }
+      }
+      if (dueInput) dueInput.value = isoToDatetimeLocal(reviewState.dueAt);
       if (versionEl) versionEl.textContent = String(reviewState.version);
       if (basisEl) {
         basisEl.textContent =
@@ -143,9 +217,24 @@
           (reviewState.isStale ? " · требуется повторная проверка" : "");
       }
 
+      var unavailableReviewerNote = container.querySelector("#client-review-reviewer-unavailable");
+      if (unavailableReviewerNote) {
+        var reviewerUnavailable =
+          reviewState.assignedReviewerUserId &&
+          !eligibleReviewers.some(function (item) {
+            return item.userId === reviewState.assignedReviewerUserId;
+          });
+        unavailableReviewerNote.hidden = !reviewerUnavailable;
+        unavailableReviewerNote.textContent = reviewerUnavailable
+          ? "Ранее назначенный проверяющий (" +
+            reviewerLabel(reviewState.assignedReviewerUserId) +
+            ") больше недоступен. Выберите действующего администратора."
+          : "";
+      }
+
       var recheckBtn = container.querySelector("#client-review-recheck");
       if (recheckBtn) {
-        recheckBtn.hidden = !(reviewState.isStale && reviewState.reviewState === "needs_recheck");
+        recheckBtn.hidden = !reviewState.isStale;
       }
       var staleNote = container.querySelector("#client-review-stale-note");
       if (staleNote) {
@@ -176,6 +265,7 @@
         '<textarea id="client-review-comment" class="clients-field__input client-review-comment" rows="3"></textarea></label>' +
         '<label class="clients-field"><span class="clients-field__label">Проверяющий</span>' +
         '<select id="client-review-reviewer" class="clients-field__select"></select></label>' +
+        '<p id="client-review-reviewer-unavailable" class="client-review-message client-review-message--warn" hidden></p>' +
         '<label class="clients-field"><span class="clients-field__label">Срок проверки</span>' +
         '<input id="client-review-due" class="clients-field__input" type="datetime-local" /></label>' +
         '<p class="clients-phone-muted">Версия записи: <span id="client-review-version">0</span></p>' +
@@ -219,6 +309,7 @@
       return Promise.all([
         api.apiRequest("/api/clients/review/options"),
         api.apiRequest("/api/clients/review/eligible-managers"),
+        api.apiRequest("/api/clients/review/eligible-reviewers"),
         api.apiRequest("/api/clients/" + encodeURIComponent(guid) + "/review"),
         api.apiRequest("/api/clients/" + encodeURIComponent(guid) + "/review/history"),
       ]).then(function (results) {
@@ -228,13 +319,16 @@
         if (results[1].response.status === 200 && results[1].data) {
           eligibleManagers = results[1].data.items || [];
         }
-        if (results[2].response.status === 200) {
-          reviewState = results[2].data ? results[2].data.review : null;
-        } else if (results[2].response.status === 403) {
+        if (results[2].response.status === 200 && results[2].data) {
+          eligibleReviewers = results[2].data.items || [];
+        }
+        if (results[3].response.status === 200) {
+          reviewState = results[3].data ? results[3].data.review : null;
+        } else if (results[3].response.status === 403) {
           throw new Error("forbidden");
         }
-        if (results[3].response.status === 200 && results[3].data) {
-          historyItems = results[3].data.items || [];
+        if (results[4].response.status === 200 && results[4].data) {
+          historyItems = results[4].data.items || [];
         }
       });
     }
@@ -252,13 +346,19 @@
       var dueInput = container.querySelector("#client-review-due");
       var saveBtn = container.querySelector("#client-review-save");
 
+      var dueAt = datetimeLocalToIso(dueInput.value);
+      if (dueInput.value && dueAt == null) {
+        renderFormMessage("error", "Некорректная дата срока проверки.");
+        return Promise.resolve();
+      }
+
       var body = {
         reviewState: stateSelect.value,
         reviewDecision: decisionSelect.value || null,
         comment: commentInput.value.trim() || null,
         proposedManagerGuid: managerHidden.value || null,
         assignedReviewerUserId: reviewerSelect.value || null,
-        dueAt: dueInput.value ? new Date(dueInput.value).toISOString() : null,
+        dueAt: dueAt,
         expectedVersion: reviewState ? reviewState.version : 0,
         recheckConfirmed: recheckConfirmed,
       };
@@ -268,7 +368,7 @@
       return api
         .apiRequest("/api/clients/" + encodeURIComponent(guid) + "/review", {
           method: "PUT",
-          body: JSON.stringify(body),
+          body: body,
         })
         .then(function (result) {
           if (requestId !== saveRequestId) return;
@@ -298,6 +398,13 @@
               renderHistory();
             });
         })
+        .catch(function (err) {
+          if (requestId !== saveRequestId) return;
+          renderFormMessage(
+            "error",
+            api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+          );
+        })
         .finally(function () {
           if (saveBtn) saveBtn.disabled = false;
         });
@@ -318,6 +425,8 @@
               '<p class="client-review-message client-review-message--error">Не удалось загрузить ревизию.</p>';
           });
       },
+      isoToDatetimeLocal: isoToDatetimeLocal,
+      datetimeLocalToIso: datetimeLocalToIso,
     };
   }
 

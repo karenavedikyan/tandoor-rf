@@ -31,6 +31,7 @@ import {
 } from "./handlers";
 import {
   eligibleReviewManagersHandler,
+  eligibleReviewersHandler,
   getClientReviewHandler,
   listClientReviewHistoryHandler,
   reviewOptionsHandler,
@@ -75,6 +76,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/review/eligible-managers", ...readChain, (req, res, next) => {
     void eligibleReviewManagersHandler(req, res).catch(next);
+  });
+
+  router.get("/review/eligible-reviewers", ...readChain, (req, res, next) => {
+    void eligibleReviewersHandler(req, res).catch(next);
   });
 
   router.get("/", ...readChain, (req, res, next) => {
