@@ -221,6 +221,39 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     await context.close();
   });
 
+  it("shows preserved loading time ambiguity note in outlet block", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.retailOutlets = [
+      syntheticOutletMock({
+        guidStore: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+        identityLabel: "Торговая точка 1С · cccc…ccc1",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта",
+        dataSourceLabel:
+          "Частично подтверждено текущей выгрузкой (отдельные поля сохранены из предыдущей)",
+        loading: {
+          days: [{ key: "mon", label: "Пн", value: true }],
+          loadingTime: "09:00",
+          loadingTimeNote:
+            "Сохранено из предыдущей выгрузки. В текущем файле передано неоднозначное значение времени приёмки.",
+          loadingEndTime: null,
+          scheduleState: "has_selected",
+        },
+      }),
+    ];
+    detail.client.extended.retailOutletsTotalCount = 1;
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /09:00/);
+    assert.match(text, /неоднозначное значение времени приёмки/);
+    assert.match(text, /Частично подтверждено текущей выгрузкой/);
+    await context.close();
+  });
+
   it("renders extended data tab in dark theme on mobile", async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();

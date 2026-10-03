@@ -99,6 +99,9 @@ export type ClientsImportResult = {
   warnings?: ValidationWarning[];
   errorsTruncated?: boolean;
   warningsTruncated?: boolean;
+  issueCodes?: string[];
+  warningCodes?: string[];
+  extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary | null;
   message: string;
   cleanupWarning?: string;
   apply?: {

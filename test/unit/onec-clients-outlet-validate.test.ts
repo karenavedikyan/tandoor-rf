@@ -92,6 +92,28 @@ describe("outlet guid_store and closed validation", () => {
     }
   });
 
+  it("dedupes duplicate guid rows with equivalent loading time formats", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_time: "09:00" },
+          }),
+          sampleIdentifiedOutlet({
+            information_loading: { loading_time: "0001-01-01T09:00:00" },
+          }),
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.ok(result.payload.warnings.some((warning) => warning.code === "DUPLICATE_OUTLET_GUID_ROW"));
+      assert.equal(result.payload.diagnostics.duplicateOutletGuidCount, 1);
+    }
+  });
+
   it("treats duplicate guid rows with different managers as conflict", () => {
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({

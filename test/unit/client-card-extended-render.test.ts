@@ -123,6 +123,47 @@ describe("client card extended render", () => {
     assert.doesNotMatch(label, /не переданы/i);
   });
 
+  it("shows loading time ambiguity note without redesign", () => {
+    const html = prototype.render({
+      guid: "11111111-1111-4111-8111-111111111111",
+      name: "Client",
+      manager: { name: "Manager" },
+      holding: { name: "Holding" },
+      address: "HQ",
+      phones: [],
+      extended: {
+        formatVersion: "extended_v1",
+        retailOutletsAccess: "granted",
+        retailOutletsTruncated: false,
+        retailOutlets: [
+          {
+            ordinal: 0,
+            identityLabel: "Торговая точка 1С · cccc…ccc1",
+            closureStatusLabel: "Открыта",
+            warehouseLabel: "Не используется как склад",
+            warehouse: false,
+            addresses: { storeAddress: "Store", deliveryAddress: "", routeDirection: "" },
+            loading: {
+              days: [{ value: true, label: "Пн" }],
+              loadingTime: "09:00",
+              loadingTimeNote:
+                "Сохранено из предыдущей выгрузки. В текущем файле передано неоднозначное значение времени приёмки.",
+            },
+            managers: { manager: { assignmentLabel: "Mgr" } },
+            contacts: { storePhone: "" },
+            dataSourceLabel:
+              "Частично подтверждено текущей выгрузкой (отдельные поля сохранены из предыдущей)",
+          },
+        ],
+        dataQualityLabel: "Частично подключено",
+        sensitiveFieldsWithheld: true,
+      },
+    });
+    assert.match(html, /09:00/);
+    assert.match(html, /неоднозначное значение времени приёмки/);
+    assert.match(html, /Частично подтверждено текущей выгрузкой/);
+  });
+
   it("shows loading time when days are not provided", () => {
     const label = prototype.loadingDaysLabel({
       days: [

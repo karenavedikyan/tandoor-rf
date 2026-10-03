@@ -20,6 +20,8 @@ export type ExtendedStructureReport = {
     warningCount: number;
     issueCodes: string[];
     warningCodes: string[];
+    issuesTruncated: boolean;
+    warningsTruncated: boolean;
   };
 };
 
@@ -36,11 +38,11 @@ export function buildExtendedStructureReport(bytes: Buffer): ExtendedStructureRe
   const sourceFormat = detectClientsSourceFormat(parsed);
   const validated = validateExtendedClientsFileBytes(bytes);
   const issueCodes = validated.ok
-    ? []
-    : [...new Set(validated.issues.map((issue) => issue.code))].sort();
+    ? (validated.payload.issueCodes ?? [])
+    : validated.issueCodes;
   const warningCodes = validated.ok
-    ? [...new Set(validated.payload.warnings.map((warning) => warning.code))].sort()
-    : [...new Set(validated.warnings.map((warning) => warning.code))].sort();
+    ? (validated.payload.warningCodes ?? [])
+    : validated.warningCodes;
 
   const report: ExtendedStructureReport = {
     schemaVersion: 2,
@@ -51,13 +53,17 @@ export function buildExtendedStructureReport(bytes: Buffer): ExtendedStructureRe
     bytes: bytes.length,
     records: parsed.length,
     sourceFormat,
-    diagnostics: validated.ok ? validated.payload.diagnostics : null,
+    diagnostics: validated.ok ? validated.payload.diagnostics : validated.diagnostics,
     validation: {
       ok: validated.ok,
       issueCount: validated.ok ? 0 : validated.issueCount,
       warningCount: validated.ok ? validated.payload.warningCount : validated.warningCount,
       issueCodes,
       warningCodes,
+      issuesTruncated: validated.ok ? false : validated.issuesTruncated,
+      warningsTruncated: validated.ok
+        ? (validated.payload.warningsTruncated ?? false)
+        : validated.warningsTruncated,
     },
   };
 

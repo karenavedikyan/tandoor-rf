@@ -78,11 +78,18 @@ export function buildIdentitySnapshot(bytes: Buffer) {
     managers: [...managers.values()].sort((a, b) => a.guid.localeCompare(b.guid))
       .map(m => ({ ...m, names: [...m.names].sort() })),
     assignments,
-    extendedSummary: extendedValidation.ok ? extendedValidation.payload.diagnostics : {
-      validationOk: false,
-      issueCount: extendedValidation.issueCount,
-      warningCount: extendedValidation.warningCount,
-    },
+    extendedSummary: extendedValidation.ok
+      ? extendedValidation.payload.diagnostics
+      : {
+          validationOk: false,
+          issueCount: extendedValidation.issueCount,
+          warningCount: extendedValidation.warningCount,
+          ...(extendedValidation.diagnostics ?? {}),
+          issueCodes: extendedValidation.issueCodes,
+          warningCodes: extendedValidation.warningCodes,
+          issuesTruncated: extendedValidation.issuesTruncated,
+          warningsTruncated: extendedValidation.warningsTruncated,
+        },
   };
   if (Buffer.byteLength(JSON.stringify(result)) > 2_000_000) throw new Error("REPORT_TOO_LARGE");
   return result;

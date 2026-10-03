@@ -37,15 +37,22 @@ import type { ValidationIssue, ValidationWarning } from "./types";
 import { countOutletGuidRowStats, outletsAreIdentical, outletsFieldsComplete } from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
+export type ExtendedValidationFailure = {
+  ok: false;
+  issues: ExtendedValidationIssue[];
+  warnings: ExtendedValidationWarning[];
+  issueCount: number;
+  warningCount: number;
+  diagnostics: ExtendedDiagnosticsSummary | null;
+  issueCodes: string[];
+  warningCodes: string[];
+  issuesTruncated: boolean;
+  warningsTruncated: boolean;
+};
+
 export type ExtendedValidationResult =
   | { ok: true; payload: ValidatedExtendedClientsPayload }
-  | {
-      ok: false;
-      issues: ExtendedValidationIssue[];
-      warnings: ExtendedValidationWarning[];
-      issueCount: number;
-      warningCount: number;
-    };
+  | ExtendedValidationFailure;
 
 function stripUtf8Bom(bytes: Buffer): Buffer {
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
@@ -66,12 +73,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+let activeIssueCodes: Set<string> | null = null;
+let activeWarningCodes: Set<string> | null = null;
+
 function pushIssue(
   issues: ExtendedValidationIssue[],
   issue: ExtendedValidationIssue,
   issueCount: { value: number },
 ): void {
   issueCount.value += 1;
+  activeIssueCodes?.add(issue.code);
   if (issues.length < MAX_DETAILED_ERRORS) {
     issues.push(issue);
   }
@@ -83,9 +94,33 @@ function pushWarning(
   warningCount: { value: number },
 ): void {
   warningCount.value += 1;
+  activeWarningCodes?.add(warning.code);
   if (warnings.length < MAX_DETAILED_WARNINGS) {
     warnings.push(warning);
   }
+}
+
+function buildValidationFailure(
+  issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
+  issueCount: number,
+  warningCount: number,
+  diagnostics: ExtendedDiagnosticsSummary | null,
+  issueCodes: Set<string>,
+  warningCodes: Set<string>,
+): ExtendedValidationFailure {
+  return {
+    ok: false,
+    issues,
+    warnings,
+    issueCount,
+    warningCount,
+    diagnostics,
+    issueCodes: [...issueCodes].sort(),
+    warningCodes: [...warningCodes].sort(),
+    issuesTruncated: issueCount > issues.length,
+    warningsTruncated: warningCount > warnings.length,
+  };
 }
 
 function validateTelephone(
@@ -457,7 +492,12 @@ function parseOutletLoading(
   }
   type LoadingDayField = Exclude<
     keyof ParsedOutletLoading,
-    "loadingTime" | "loadingTimeSourceRaw" | "loadingTimeAmbiguous"
+    | "loadingTime"
+    | "loadingTimeSourceRaw"
+    | "loadingTimeAmbiguous"
+    | "loadingTimeAmbiguousIncomingRaw"
+    | "loadingTimeConfirmedInCurrentExport"
+    | "loadingTimeFieldProvenance"
   >;
   const dayKeys: Array<[LoadingDayField, string]> = [
     ["loadingOnMonday", "loading_on_monday"],
@@ -499,6 +539,7 @@ function parseOutletLoading(
       loading.loadingTime = null;
       loading.loadingTimeSourceRaw = parsedTime.sourceRaw ?? null;
       loading.loadingTimeAmbiguous = true;
+      loading.loadingTimeConfirmedInCurrentExport = false;
       pushWarning(warnings, {
         code: "AMBIGUOUS_LOADING_TIME",
         field: "retail_outlets.information_loading.loading_time",
@@ -508,6 +549,7 @@ function parseOutletLoading(
     } else if (parsedTime.kind === "value") {
       loading.loadingTime = parsedTime.value;
       loading.loadingTimeSourceRaw = parsedTime.sourceRaw ?? parsedTime.value;
+      loading.loadingTimeConfirmedInCurrentExport = true;
       if (parsedTime.sourceRaw !== undefined && parsedTime.sourceRaw !== parsedTime.value) {
         pushWarning(warnings, {
           code: "LOAD_TIME_FORMAT_ADAPTED",
@@ -660,6 +702,7 @@ function parseOutletLpr(
       result.dateOfBirth = null;
       result.dateOfBirthSourceRaw = dob.sourceRaw ?? null;
       result.dateOfBirthAmbiguous = true;
+      result.dateOfBirthConfirmedInCurrentExport = false;
       pushWarning(warnings, {
         code: "AMBIGUOUS_DATE_OF_BIRTH",
         field: "retail_outlets.LPR_information.date_of_birth",
@@ -669,6 +712,7 @@ function parseOutletLpr(
     } else if (dob.kind === "value") {
       result.dateOfBirth = dob.value;
       result.dateOfBirthSourceRaw = dob.sourceRaw ?? dob.value;
+      result.dateOfBirthConfirmedInCurrentExport = true;
       if (dob.sourceRaw !== undefined && dob.sourceRaw !== dob.value) {
         pushWarning(warnings, {
           code: "DATE_OF_BIRTH_FORMAT_ADAPTED",
@@ -1373,16 +1417,37 @@ export function validateExtendedClientsFileBytes(
   const warnings: ExtendedValidationWarning[] = [];
   const issueCount = { value: 0 };
   const warningCount = { value: 0 };
+  const issueCodes = new Set<string>();
+  const warningCodes = new Set<string>();
+  activeIssueCodes = issueCodes;
+  activeWarningCodes = warningCodes;
 
+  try {
   if (bytes.length > maxSourceBytes) {
     pushIssue(issues, { code: "FILE_TOO_LARGE" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   const text = decodeUtf8(stripUtf8Bom(bytes));
   if (text === null) {
     pushIssue(issues, { code: "INVALID_UTF8" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   let parsed: unknown;
@@ -1390,22 +1455,54 @@ export function validateExtendedClientsFileBytes(
     parsed = JSON.parse(text);
   } catch {
     pushIssue(issues, { code: "INVALID_JSON" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (!Array.isArray(parsed)) {
     pushIssue(issues, { code: "INVALID_ROOT" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (parsed.length === 0) {
     pushIssue(issues, { code: "EMPTY_ARRAY" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (parsed.length > maxSourceRecords) {
     pushIssue(issues, { code: "TOO_MANY_RECORDS" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   const sourceFormat = detectClientsSourceFormat(parsed);
@@ -1448,14 +1545,6 @@ export function validateExtendedClientsFileBytes(
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
-  if (issueCount.value > 0) {
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
-  }
-
-  if (sourceFormat === "extended_v1") {
-    pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
-  }
-
   const diagnostics = buildDiagnostics(
     sourceFormat,
     records,
@@ -1463,6 +1552,23 @@ export function validateExtendedClientsFileBytes(
     holdingGuidStats,
     outletGuidStats,
   );
+
+  if (issueCount.value > 0) {
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      diagnostics,
+      issueCodes,
+      warningCodes,
+    );
+  }
+
+  if (sourceFormat === "extended_v1") {
+    pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
+  }
+
   const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";
 
   return {
@@ -1477,8 +1583,16 @@ export function validateExtendedClientsFileBytes(
       warningCount: warningCount.value,
       diagnostics,
       extendedContractVerification,
+      issueCodes: [...issueCodes].sort(),
+      warningCodes: [...warningCodes].sort(),
+      issuesTruncated: false,
+      warningsTruncated: warningCount.value > warnings.length,
     },
   };
+  } finally {
+    activeIssueCodes = null;
+    activeWarningCodes = null;
+  }
 }
 
 /** Legacy-only path: delegates shape to extended validator and strips extended-only fields. */

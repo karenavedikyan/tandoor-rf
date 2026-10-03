@@ -110,6 +110,19 @@ export function isValidLocalTime(value: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(value);
 }
 
+/** Canonical HH:mm for business comparison; HH:mm:00 collapses to HH:mm. */
+export function normalizeLocalTimeForComparison(value: string): string {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(value);
+  if (!match) {
+    return value;
+  }
+  const seconds = match[3];
+  if (seconds === undefined || seconds === "00") {
+    return `${match[1]}:${match[2]}`;
+  }
+  return `${match[1]}:${match[2]}:${seconds}`;
+}
+
 export function readLocalTimeField(value: unknown): FieldPresence<string> {
   if (value === undefined) {
     return { kind: "missing" };

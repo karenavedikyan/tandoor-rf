@@ -30,6 +30,11 @@ export type ParsedOutletLoading = {
   loadingTime: string | null;
   loadingTimeSourceRaw?: string | null;
   loadingTimeAmbiguous?: boolean;
+  /** Raw ambiguous value from the current export when a prior value was preserved. */
+  loadingTimeAmbiguousIncomingRaw?: string | null;
+  /** Whether loadingTime was explicitly confirmed in the current export row. */
+  loadingTimeConfirmedInCurrentExport?: boolean;
+  loadingTimeFieldProvenance?: OutletProvenance;
 };
 
 export type ParsedOutletManagers = {
@@ -51,6 +56,9 @@ export type ParsedOutletLpr = {
   dateOfBirth: string | null;
   dateOfBirthSourceRaw?: string | null;
   dateOfBirthAmbiguous?: boolean;
+  dateOfBirthAmbiguousIncomingRaw?: string | null;
+  dateOfBirthConfirmedInCurrentExport?: boolean;
+  dateOfBirthFieldProvenance?: OutletProvenance;
   phone: string;
   email: string;
   bonus: string;
@@ -273,4 +281,8 @@ export type ValidatedExtendedClientsPayload = {
   warningCount: number;
   diagnostics: ExtendedDiagnosticsSummary;
   extendedContractVerification?: import("./types").ExtendedContractVerification;
+  issueCodes?: string[];
+  warningCodes?: string[];
+  issuesTruncated?: boolean;
+  warningsTruncated?: boolean;
 };

@@ -876,6 +876,89 @@ describe("clients extended dto", () => {
     assert.match(dto!.retailOutlets[0]?.dataSourceLabel, /Сохранено из предыдущей выгрузки/);
   });
 
+  it("shows preserved loading time with ambiguous incoming note without claiming current confirmation", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "sha-b",
+        extended_imported_at: new Date("2026-01-02T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "sha-b",
+          importedAt: "2026-01-02T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [
+            {
+              ordinal: 0,
+              guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+              holdingName: "H1",
+              warehouse: true,
+              address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
+              loading: {
+                loadingOnMonday: true,
+                loadingOnTuesday: null,
+                loadingOnWednesday: null,
+                loadingOnThursday: null,
+                loadingOnFriday: null,
+                loadingOnSaturday: null,
+                loadingOnSunday: null,
+                loadingTime: "09:00",
+                loadingTimeSourceRaw: "09:00",
+                loadingTimeAmbiguousIncomingRaw: "0001-01-01T00:00:00",
+                loadingTimeConfirmedInCurrentExport: false,
+                loadingTimeFieldProvenance: {
+                  freshness: "preserved_from_previous",
+                  sourceSha256: "sha-a",
+                  importedAt: "2026-01-01T10:00:00.000Z",
+                },
+              },
+              managers: {
+                manager: { guid: null, name: "", state: "unassigned" },
+                regionalManager: { guid: null, name: "", state: "unassigned" },
+                hardwareManager: { guid: null, name: "", state: "unassigned" },
+                headOfSales: { guid: null, name: "", state: "unassigned" },
+              },
+              contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+              lpr: {
+                name: "",
+                post: "",
+                dateOfBirth: null,
+                phone: "",
+                email: "",
+                bonus: "",
+                conditionsBonus: "",
+              },
+              additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+              outletGuidStatus: "confirmed",
+              closed: false,
+              closureStatus: "open",
+              closureConfirmedInCurrentExport: true,
+              closureHistory: [],
+              provenance: {
+                freshness: "current",
+                sourceSha256: "sha-b",
+                importedAt: "2026-01-02T10:00:00.000Z",
+              },
+              distributionAllowed: false,
+            },
+          ],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+    );
+    assert.equal(dto!.retailOutlets[0]?.loading.loadingTime, "09:00");
+    assert.match(dto!.retailOutlets[0]?.loading.loadingTimeNote ?? "", /неоднозначное значение/);
+    assert.match(dto!.retailOutlets[0]?.dataSourceLabel ?? "", /Частично подтверждено/);
+    assert.equal(dto!.retailOutlets[0]?.presentInCurrentExport, true);
+  });
+
   it("labels directory-unverified manager separately from unassigned", () => {
     const dto = toClientExtendedDto(
       {

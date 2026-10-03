@@ -36,6 +36,7 @@ export type RetailOutletAddressDto = {
 export type RetailOutletLoadingDto = {
   days: Array<{ key: string; label: string; value: boolean | null }>;
   loadingTime: string | null;
+  loadingTimeNote: string | null;
   loadingEndTime: null;
   scheduleState: "not_provided" | "partial" | "all_false" | "has_selected";
 };
@@ -131,7 +132,12 @@ type ExtendedRow = {
 
 type LoadingDayField = Exclude<
   keyof ParsedRetailOutlet["loading"],
-  "loadingTime" | "loadingTimeSourceRaw" | "loadingTimeAmbiguous"
+  | "loadingTime"
+  | "loadingTimeSourceRaw"
+  | "loadingTimeAmbiguous"
+  | "loadingTimeAmbiguousIncomingRaw"
+  | "loadingTimeConfirmedInCurrentExport"
+  | "loadingTimeFieldProvenance"
 >;
 
 function formatMskDateTime(value: Date): string {
@@ -362,14 +368,48 @@ function resolveLoadingScheduleState(outlet: ParsedRetailOutlet): RetailOutletLo
   return "partial";
 }
 
+function loadingTimePresentation(outlet: ParsedRetailOutlet): {
+  loadingTime: string | null;
+  loadingTimeNote: string | null;
+} {
+  const loading = outlet.loading;
+  if (loading.loadingTimeAmbiguousIncomingRaw) {
+    if (loading.loadingTime != null && loading.loadingTimeConfirmedInCurrentExport === false) {
+      const importedAtLabel = formatImportedAtLabel(
+        loading.loadingTimeFieldProvenance?.importedAt ?? null,
+      );
+      const base = "Сохранено из предыдущей выгрузки";
+      return {
+        loadingTime: loading.loadingTime,
+        loadingTimeNote: importedAtLabel
+          ? `${base} (${importedAtLabel}). В текущем файле передано неоднозначное значение времени приёмки.`
+          : `${base}. В текущем файле передано неоднозначное значение времени приёмки.`,
+      };
+    }
+    return {
+      loadingTime: null,
+      loadingTimeNote: "В текущем файле передано неоднозначное значение времени приёмки.",
+    };
+  }
+  if (loading.loadingTimeAmbiguous && !loading.loadingTime) {
+    return {
+      loadingTime: null,
+      loadingTimeNote: "В текущем файле передано неоднозначное значение времени приёмки.",
+    };
+  }
+  return { loadingTime: loading.loadingTime, loadingTimeNote: null };
+}
+
 function toLoadingDto(outlet: ParsedRetailOutlet): RetailOutletLoadingDto {
+  const loadingTime = loadingTimePresentation(outlet);
   return {
     days: DAY_LABELS.map(([field, key, label]) => ({
       key,
       label,
       value: outlet.loading[field],
     })),
-    loadingTime: outlet.loading.loadingTime,
+    loadingTime: loadingTime.loadingTime,
+    loadingTimeNote: loadingTime.loadingTimeNote,
     loadingEndTime: null,
     scheduleState: resolveLoadingScheduleState(outlet),
   };
@@ -447,7 +487,17 @@ function resolveEffectiveOutletPresentation(
   };
 }
 
-function outletDataSourceLabel(provenance: OutletProvenance): string {
+function outletHasPreservedAmbiguousFields(outlet: ParsedRetailOutlet): boolean {
+  return (
+    (outlet.loading.loadingTime != null && outlet.loading.loadingTimeConfirmedInCurrentExport === false) ||
+    (outlet.lpr.dateOfBirth != null && outlet.lpr.dateOfBirthConfirmedInCurrentExport === false)
+  );
+}
+
+function outletDataSourceLabel(provenance: OutletProvenance, outlet?: ParsedRetailOutlet): string {
+  if (outlet && provenance.freshness === "current" && outletHasPreservedAmbiguousFields(outlet)) {
+    return "Частично подтверждено текущей выгрузкой (отдельные поля сохранены из предыдущей)";
+  }
   if (provenance.freshness === "current") {
     return "Подтверждено текущей выгрузкой";
   }
@@ -460,9 +510,9 @@ function outletDataSourceLabel(provenance: OutletProvenance): string {
   return "Источник не подтверждён";
 }
 
-function outletFreshnessLabel(provenance: OutletProvenance): string {
+function outletFreshnessLabel(provenance: OutletProvenance, outlet?: ParsedRetailOutlet): string {
   const importedAtLabel = formatImportedAtLabel(provenance.importedAt);
-  const base = outletDataSourceLabel(provenance);
+  const base = outletDataSourceLabel(provenance, outlet);
   if (importedAtLabel) {
     return `${base} (${importedAtLabel})`;
   }
@@ -553,8 +603,8 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
     distributionAllowed: false,
     distributionNote: outletDistributionNote(outlet),
     presentInCurrentExport: effective.provenance.freshness === "current",
-    dataSourceLabel: outletDataSourceLabel(effective.provenance),
-    freshnessLabel: outletFreshnessLabel(effective.provenance),
+    dataSourceLabel: outletDataSourceLabel(effective.provenance, outlet),
+    freshnessLabel: outletFreshnessLabel(effective.provenance, outlet),
   };
 }
 
