@@ -1,5 +1,5 @@
 import type { FieldPresenceState } from "./extended-presence";
-import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import { isEmptyOrValidNonZeroUuid, isNullUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 import type { ManagerAssignmentState, ParsedManagerRef } from "./extended-types";
 
 export type ManagerFieldParseResult =
@@ -63,6 +63,16 @@ export function parseManagerFieldWithPresence(
       ref: { guid: null, name, state: "unassigned" },
     };
   }
+  if (isNullUuid(guidTrimmed)) {
+    if (name.length > 0) {
+      return { ok: false, code: "INVALID_MANAGER_PAIR" };
+    }
+    return {
+      ok: true,
+      presence: "explicit_empty",
+      ref: { guid: null, name, state: "unassigned" },
+    };
+  }
   if (!isValidNonZeroUuid(guidTrimmed)) {
     return { ok: false, code: "INVALID_UUID" };
   }
@@ -106,6 +116,15 @@ export function parseManagerRef(
 
   const guidTrimmed = guidRaw.trim();
   if (guidTrimmed.length === 0) {
+    return {
+      ok: true,
+      value: { guid: null, name, state: "unassigned" },
+    };
+  }
+  if (isNullUuid(guidTrimmed)) {
+    if (name.length > 0) {
+      return { ok: false, code: "INVALID_UUID" };
+    }
     return {
       ok: true,
       value: { guid: null, name, state: "unassigned" },

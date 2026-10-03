@@ -7,6 +7,10 @@ export function normalizeUuid(value: string): string {
   return value.trim().toLowerCase();
 }
 
+export function isNullUuid(value: string): boolean {
+  return normalizeUuid(value) === NULL_UUID;
+}
+
 export function isValidNonZeroUuid(value: string): boolean {
   const normalized = normalizeUuid(value);
   if (normalized === NULL_UUID) {

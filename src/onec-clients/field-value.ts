@@ -129,3 +129,134 @@ export function readLocalTimeField(value: unknown): FieldPresence<string> {
   }
   return { kind: "value", value: trimmed };
 }
+
+export type LoadingTimeFieldPresence =
+  | { kind: "missing" }
+  | { kind: "null_value" }
+  | { kind: "empty" }
+  | { kind: "value"; value: string; sourceRaw?: string }
+  | { kind: "ambiguous"; sourceRaw?: string }
+  | { kind: "invalid_type" };
+
+const LOADING_TIME_ISO_PREFIX = /^0001-01-01T(\d{2}):(\d{2}):(\d{2})$/;
+
+export function readLoadingTimeField(value: unknown): LoadingTimeFieldPresence {
+  if (value === undefined) {
+    return { kind: "missing" };
+  }
+  if (value === null) {
+    return { kind: "null_value" };
+  }
+  if (typeof value !== "string") {
+    return { kind: "invalid_type" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { kind: "empty" };
+  }
+  const sourceRaw = trimmed;
+
+  if (isValidLocalTime(trimmed)) {
+    return { kind: "value", value: trimmed, sourceRaw };
+  }
+
+  const isoMatch = LOADING_TIME_ISO_PREFIX.exec(trimmed);
+  if (isoMatch) {
+    const hours = isoMatch[1]!;
+    const minutes = isoMatch[2]!;
+    const seconds = isoMatch[3]!;
+    if (hours === "00" && minutes === "00" && seconds === "00") {
+      return { kind: "ambiguous", sourceRaw };
+    }
+    const timeValue = seconds === "00" ? `${hours}:${minutes}` : `${hours}:${minutes}:${seconds}`;
+    if (!isValidLocalTime(timeValue)) {
+      return { kind: "invalid_type" };
+    }
+    return { kind: "value", value: timeValue, sourceRaw };
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    return { kind: "invalid_type" };
+  }
+
+  return { kind: "invalid_type" };
+}
+
+export type DateOfBirthFieldPresence =
+  | { kind: "missing" }
+  | { kind: "null_value" }
+  | { kind: "empty" }
+  | { kind: "value"; value: string; sourceRaw?: string }
+  | { kind: "ambiguous"; sourceRaw?: string }
+  | { kind: "invalid_type" };
+
+const DATE_OF_BIRTH_MIDNIGHT = /^(\d{4}-\d{2}-\d{2})T00:00:00$/;
+
+export function readDateOfBirthField(value: unknown): DateOfBirthFieldPresence {
+  if (value === undefined) {
+    return { kind: "missing" };
+  }
+  if (value === null) {
+    return { kind: "null_value" };
+  }
+  if (typeof value !== "string") {
+    return { kind: "invalid_type" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { kind: "empty" };
+  }
+  const sourceRaw = trimmed;
+
+  if (trimmed === "0001-01-01T00:00:00") {
+    return { kind: "ambiguous", sourceRaw };
+  }
+
+  if (/[Zz]$/.test(trimmed) || /[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    return { kind: "invalid_type" };
+  }
+
+  const midnightMatch = DATE_OF_BIRTH_MIDNIGHT.exec(trimmed);
+  if (midnightMatch) {
+    const datePart = midnightMatch[1]!;
+    if (!isValidCalendarDate(datePart)) {
+      return { kind: "invalid_type" };
+    }
+    return { kind: "value", value: datePart, sourceRaw };
+  }
+
+  if (trimmed.includes("T")) {
+    return { kind: "invalid_type" };
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return { kind: "invalid_type" };
+  }
+  if (!isValidCalendarDate(trimmed)) {
+    return { kind: "invalid_type" };
+  }
+  return { kind: "value", value: trimmed, sourceRaw };
+}
+
+export function readBonusField(value: unknown): FieldPresence<string> {
+  if (value === undefined) {
+    return { kind: "missing" };
+  }
+  if (value === null) {
+    return { kind: "null_value" };
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return { kind: "empty" };
+    }
+    return { kind: "value", value: trimmed };
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return { kind: "invalid_type" };
+    }
+    return { kind: "value", value: String(value) };
+  }
+  return { kind: "invalid_type" };
+}
