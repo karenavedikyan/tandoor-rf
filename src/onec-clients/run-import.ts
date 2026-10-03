@@ -270,14 +270,7 @@ export async function runClientsImport(
   }
 
   const payload = validated.payload;
-  const employeeRosterSourceSha256 =
-    parsedEmployeeRoster?.sourceSha256 ?? payload.employeeRosterSourceSha256 ?? null;
-  const verificationFingerprint = verificationFingerprintFromPayload({
-    payload,
-    holdingLinkValidationPolicy:
-      validationLimits.holdingLinkValidationPolicy ?? payload.holdingLinkValidationPolicy ?? "tolerant",
-    employeeRosterSourceSha256,
-  });
+  const verificationFingerprint = verificationFingerprintFromPayload({ payload });
   const databaseUrl =
     env.DATABASE_URL !== undefined
       ? env.DATABASE_URL.trim() || undefined
@@ -376,15 +369,13 @@ export async function runClientsImport(
     payload,
     triggerSource: options.triggerSource ?? "manual",
     expectedVerificationFingerprint: cliOptions.expectedSha256,
-    holdingLinkValidationPolicy:
-      validationLimits.holdingLinkValidationPolicy ?? payload.holdingLinkValidationPolicy ?? "tolerant",
-    employeeRosterSourceSha256,
   });
   if (!applied.ok) {
     const mappedErrorCode =
       applied.code === "VERIFICATION_FINGERPRINT_MISMATCH"
         ? "HASH_MISMATCH"
-        : applied.code === "VERIFICATION_FINGERPRINT_REQUIRED"
+        : applied.code === "VERIFICATION_FINGERPRINT_REQUIRED" ||
+            applied.code === "VERIFICATION_PARAMETERS_MISMATCH"
           ? "ARGUMENT_ERROR"
           : applied.code;
     return sanitizeImportResult(

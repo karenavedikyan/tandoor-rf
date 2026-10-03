@@ -30,7 +30,10 @@ import {
 import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
-import { verifyApplyVerificationFingerprint } from "./import-verification-fingerprint";
+import {
+  verificationFingerprintFromPayload,
+  verifyApplyVerification,
+} from "./import-verification-fingerprint";
 import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
@@ -69,7 +72,8 @@ export type ApplyResult =
         | "SUPERSEDED_BY_NEWER_IMPORT"
         | "APPLY_BLOCKED"
         | "VERIFICATION_FINGERPRINT_REQUIRED"
-        | "VERIFICATION_FINGERPRINT_MISMATCH";
+        | "VERIFICATION_FINGERPRINT_MISMATCH"
+        | "VERIFICATION_PARAMETERS_MISMATCH";
       message: string;
       runId?: string;
       actualFingerprint?: string;
@@ -93,6 +97,7 @@ type ExistingClientRow = {
   name_holding: string;
   guid_manager: string;
   name_manager: string;
+  manager_roster_state: import("./extended-types").ClientManagerRosterState | null;
   address: string;
   telephone: string[];
 };
@@ -474,6 +479,7 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
         name_holding,
         guid_manager::text,
         name_manager,
+        manager_roster_state,
         address,
         telephone
       FROM onec_clients
@@ -659,29 +665,24 @@ export async function applyClientsImport(options: {
     };
   }
 
-  const fingerprintFailure = verifyApplyVerificationFingerprint({
+  const verificationFailure = verifyApplyVerification({
     expectedVerificationFingerprint: options.expectedVerificationFingerprint,
     payload: options.payload,
-    holdingLinkValidationPolicy:
-      options.holdingLinkValidationPolicy ??
-      options.payload.holdingLinkValidationPolicy ??
-      "tolerant",
-    employeeRosterSourceSha256:
-      options.employeeRosterSourceSha256 !== undefined
-        ? options.employeeRosterSourceSha256
-        : options.payload.employeeRosterSourceSha256 ?? null,
+    holdingLinkValidationPolicy: options.holdingLinkValidationPolicy,
+    employeeRosterSourceSha256: options.employeeRosterSourceSha256,
   });
-  if (fingerprintFailure) {
+  if (verificationFailure) {
     return {
       ok: false,
-      code: fingerprintFailure.code,
-      message: fingerprintFailure.message,
+      code: verificationFailure.code,
+      message: verificationFailure.message,
       actualFingerprint:
-        fingerprintFailure.code === "VERIFICATION_FINGERPRINT_MISMATCH"
-          ? fingerprintFailure.actualFingerprint
+        verificationFailure.code === "VERIFICATION_FINGERPRINT_MISMATCH"
+          ? verificationFailure.actualFingerprint
           : undefined,
     };
   }
+  const verifiedFingerprint = verificationFingerprintFromPayload({ payload: options.payload });
 
   let pool: Pool | undefined;
   let managed: ManagedClient | undefined;
@@ -867,7 +868,7 @@ export async function applyClientsImport(options: {
               preparedWarnings.warningCount,
               preparedWarnings.warningsJson,
               preparedWarnings.warningsTruncated,
-              options.expectedVerificationFingerprint ?? null,
+              verifiedFingerprint,
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
@@ -897,8 +898,14 @@ export async function applyClientsImport(options: {
               ? resolveConfirmedHoldingForApply(extendedRecord)
               : { guid_holding: record.guid_holding, name_holding: record.name_holding };
             const applyRecord = { ...record, ...confirmedHolding };
-            const linkMetadata = resolveImportLinkMetadata(extendedRecord);
             const current = existing.get(applyRecord.guid_client);
+            const rosterLoadedInPayload = options.payload.employeeRosterSourceSha256 != null;
+            const linkMetadata = resolveImportLinkMetadata(extendedRecord, {
+              incomingManagerGuid: applyRecord.guid_manager,
+              previousManagerGuid: current?.guid_manager ?? null,
+              previousManagerRosterState: current?.manager_roster_state ?? null,
+              rosterLoadedInPayload,
+            });
             const previousRow = previousExtended.get(record.guid_client);
             const previousSnapshot = previousRow?.extended_snapshot;
 

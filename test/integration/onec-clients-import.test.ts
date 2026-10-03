@@ -627,39 +627,92 @@ describe("onec clients import integration", { concurrency: false }, () => {
     assert.equal(countAfter.rows[0]?.count, countBefore.rows[0]?.count);
   });
 
-  it("rejects apply when holding policy or roster no longer matches verified fingerprint", async () => {
+  it("rejects apply when holding policy override disagrees with validated payload", async () => {
     const bytes = buildClientsFileBytes([sampleClient()]);
     const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const fingerprint = expectedVerificationForPayload(validated.payload, {
-      holdingLinkValidationPolicy: "strict",
-    });
     const policyMismatch = await applyClientsImport({
       databaseUrl,
       payload: validated.payload,
-      expectedVerificationFingerprint: fingerprint,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
       holdingLinkValidationPolicy: "tolerant",
     });
     assert.equal(policyMismatch.ok, false);
     if (!policyMismatch.ok) {
-      assert.equal(policyMismatch.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+      assert.equal(policyMismatch.code, "VERIFICATION_PARAMETERS_MISMATCH");
     }
 
-    const rosterFingerprint = buildImportVerificationFingerprint([sampleClient()], {
-      employeeRosterBytes: Buffer.from("[]"),
-    });
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const count = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients");
+    await pool.end();
+    assert.equal(Number(count.rows[0]?.count ?? "0"), 0);
+  });
+
+  it("rejects apply when roster SHA override disagrees with validated payload", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
     const rosterMismatch = await applyClientsImport({
       databaseUrl,
       payload: validated.payload,
-      expectedVerificationFingerprint: rosterFingerprint,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
       employeeRosterSourceSha256: "a".repeat(64),
     });
     assert.equal(rosterMismatch.ok, false);
     if (!rosterMismatch.ok) {
-      assert.equal(rosterMismatch.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+      assert.equal(rosterMismatch.code, "VERIFICATION_PARAMETERS_MISMATCH");
     }
+  });
+
+  it("rejects strict apply fingerprint on tolerant-validated payload with unresolved holding", async () => {
+    const holdingGuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const childGuid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const unresolvedGuid = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+    const { buildExtendedClientsFileBytes, sampleExtendedChild, sampleExtendedHolding } =
+      await import("../helpers/onec-clients-extended-fixtures");
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({ guid_client: holdingGuid }),
+      sampleExtendedChild({
+        guid_client: childGuid,
+        guid_holding: unresolvedGuid,
+        name_holding: "Missing",
+      }),
+    ]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "tolerant" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const strictFingerprint = buildImportVerificationFingerprint(JSON.parse(bytes.toString("utf8")), {
+      holdingLinkValidationPolicy: "strict",
+    });
+    const substituted = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: strictFingerprint,
+      holdingLinkValidationPolicy: "strict",
+    });
+    assert.equal(substituted.ok, false);
+    if (!substituted.ok) {
+      assert.equal(substituted.code, "VERIFICATION_PARAMETERS_MISMATCH");
+    }
+  });
+
+  it("accepts apply when fingerprint matches validated payload parameters", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
+    });
+    assert.equal(applied.ok, true);
   });
 
   it("rejects apply while a stale running import exists", async () => {

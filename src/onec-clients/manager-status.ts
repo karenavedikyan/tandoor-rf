@@ -221,24 +221,66 @@ export function resolveConfirmedHoldingForApply(record: {
   return { guid_holding: record.guid_holding, name_holding: record.name_holding };
 }
 
+export function resolveManagerRosterStateForApply(input: {
+  incomingState: import("./extended-types").ClientManagerRosterState;
+  incomingManagerGuid: string;
+  previousManagerRosterState: import("./extended-types").ClientManagerRosterState | null;
+  previousManagerGuid: string | null;
+  rosterLoadedInPayload: boolean;
+}): import("./extended-types").ClientManagerRosterState {
+  if (input.rosterLoadedInPayload && input.incomingState !== "roster_not_loaded") {
+    return input.incomingState;
+  }
+
+  const managerChanged =
+    input.previousManagerGuid != null &&
+    input.previousManagerGuid.toLowerCase() !== input.incomingManagerGuid.toLowerCase();
+
+  if (managerChanged) {
+    return "outside_wholesale_roster";
+  }
+
+  if (input.previousManagerRosterState === "outside_wholesale_roster") {
+    return "outside_wholesale_roster";
+  }
+
+  return input.incomingState;
+}
+
 export function resolveImportLinkMetadata(
   record: import("./extended-types").ParsedExtendedClientRecord | undefined,
+  options?: {
+    incomingManagerGuid?: string;
+    previousManagerGuid?: string | null;
+    previousManagerRosterState?: import("./extended-types").ClientManagerRosterState | null;
+    rosterLoadedInPayload?: boolean;
+  },
 ): {
   holdingLinkState: import("./extended-types").HoldingLinkState;
   guidHoldingPending: string | null;
   managerRosterState: import("./extended-types").ClientManagerRosterState;
 } {
+  const incomingManagerGuid = options?.incomingManagerGuid ?? record?.guid_manager ?? "";
+  const incomingRosterState = record?.managerRosterState ?? "roster_not_loaded";
+  const managerRosterState = resolveManagerRosterStateForApply({
+    incomingState: incomingRosterState,
+    incomingManagerGuid,
+    previousManagerRosterState: options?.previousManagerRosterState ?? null,
+    previousManagerGuid: options?.previousManagerGuid ?? null,
+    rosterLoadedInPayload: options?.rosterLoadedInPayload === true,
+  });
+
   if (!record) {
     return {
       holdingLinkState: "none",
       guidHoldingPending: null,
-      managerRosterState: "roster_not_loaded",
+      managerRosterState,
     };
   }
   return {
     holdingLinkState: record.holdingLinkState,
     guidHoldingPending: record.holdingLinkState === "unresolved" ? record.guid_holding : null,
-    managerRosterState: record.managerRosterState,
+    managerRosterState,
   };
 }
 

@@ -45,24 +45,8 @@ export function buildClientsFileSha256(clients: Record<string, unknown>[]): stri
   return sha256Hex(buildClientsFileBytes(clients));
 }
 
-export function expectedVerificationForPayload(
-  payload: ValidatedClientsPayload,
-  options?: {
-    holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
-    employeeRosterSourceSha256?: string | null;
-  },
-): string {
-  return verificationFingerprintFromPayload({
-    payload,
-    holdingLinkValidationPolicy:
-      options?.holdingLinkValidationPolicy ??
-      payload.holdingLinkValidationPolicy ??
-      DEFAULT_HOLDING_LINK_VALIDATION_POLICY,
-    employeeRosterSourceSha256:
-      options?.employeeRosterSourceSha256 !== undefined
-        ? options.employeeRosterSourceSha256
-        : payload.employeeRosterSourceSha256 ?? null,
-  });
+export function expectedVerificationForPayload(payload: ValidatedClientsPayload): string {
+  return verificationFingerprintFromPayload({ payload });
 }
 
 export type ApplyClientsImportVerifiedOptions = Omit<
@@ -73,25 +57,11 @@ export type ApplyClientsImportVerifiedOptions = Omit<
 };
 
 export async function applyClientsImportVerified(options: ApplyClientsImportVerifiedOptions) {
-  const holdingLinkValidationPolicy =
-    options.holdingLinkValidationPolicy ??
-    options.payload.holdingLinkValidationPolicy ??
-    DEFAULT_HOLDING_LINK_VALIDATION_POLICY;
-  const employeeRosterSourceSha256 =
-    options.employeeRosterSourceSha256 !== undefined
-      ? options.employeeRosterSourceSha256
-      : options.payload.employeeRosterSourceSha256 ?? null;
   const { expectedVerificationFingerprint: explicitFingerprint, ...rest } = options;
   return applyClientsImport({
     ...rest,
     expectedVerificationFingerprint:
-      explicitFingerprint ??
-      expectedVerificationForPayload(options.payload, {
-        holdingLinkValidationPolicy,
-        employeeRosterSourceSha256,
-      }),
-    holdingLinkValidationPolicy,
-    employeeRosterSourceSha256,
+      explicitFingerprint ?? verificationFingerprintFromPayload({ payload: options.payload }),
   });
 }
 

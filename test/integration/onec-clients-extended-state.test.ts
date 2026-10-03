@@ -77,7 +77,6 @@ describe("onec extended state preservation integration", () => {
     const seedApply = await applyClientsImportVerified({
       databaseUrl,
       payload: seedValidated.payload,
-      employeeRosterSourceSha256: rosterParse.roster.sourceSha256,
     });
     assert.equal(seedApply.ok, true);
 
@@ -104,7 +103,6 @@ describe("onec extended state preservation integration", () => {
     const updateApply = await applyClientsImportVerified({
       databaseUrl,
       payload: updateValidated.payload,
-      employeeRosterSourceSha256: rosterParse.roster.sourceSha256,
     });
     assert.equal(updateApply.ok, true);
 
