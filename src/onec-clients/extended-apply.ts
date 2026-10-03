@@ -6,7 +6,11 @@ import {
   mergeManagerField,
   type ExtendedRecordFieldPresence,
 } from "./extended-presence";
-import { deriveRetailOutletsBlockFreshness, mergeRetailOutletsWithIdentity } from "./outlet-identity";
+import {
+  deriveRetailOutletsBlockFreshness,
+  mergeRetailOutletsWithIdentity,
+  outletsAreIdentical,
+} from "./outlet-identity";
 import type {
   ExtendedBlockFreshness,
   ExtendedBlockProvenance,
@@ -44,30 +48,84 @@ function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
   return snapshot as ExtendedSnapshot;
 }
 
+function findNextOutletForHistory(
+  previousOutlet: ParsedRetailOutlet,
+  nextOutlets: ParsedRetailOutlet[],
+): ParsedRetailOutlet | undefined {
+  if (previousOutlet.outletGuidStatus === "confirmed" && previousOutlet.guidStore) {
+    const key = previousOutlet.guidStore.toLowerCase();
+    return nextOutlets.find(
+      (outlet) =>
+        outlet.outletGuidStatus === "confirmed" &&
+        outlet.guidStore?.toLowerCase() === key,
+    );
+  }
+  return nextOutlets.find((outlet) => outletsAreIdentical(outlet, previousOutlet));
+}
+
+function outletAlreadyArchivedInMerge(
+  outlet: ParsedRetailOutlet,
+  mergeHistoryEntries: RetailOutletHistoryEntry[],
+): boolean {
+  return mergeHistoryEntries.some((entry) =>
+    entry.retailOutlets.some((archived) => outletsAreIdentical(archived, outlet)),
+  );
+}
+
 function appendHistoryWhenBusinessChanged(
   previous: ExtendedSnapshot | null,
   nextOutlets: ParsedRetailOutlet[],
   baseHistory: RetailOutletHistoryEntry[],
+  mergeHistoryEntries: RetailOutletHistoryEntry[],
+  archivedAt: string,
 ): RetailOutletHistoryEntry[] {
   const history = [...baseHistory];
   const previousCurrent = previous?.currentRetailOutlets ?? [];
   if (previousCurrent.length === 0) {
     return history;
   }
-  if (extendedBusinessDataEqual(previous, {
-    ...previous!,
-    currentRetailOutlets: nextOutlets,
-  })) {
+  if (
+    extendedBusinessDataEqual(previous, {
+      ...previous!,
+      currentRetailOutlets: nextOutlets,
+    })
+  ) {
     return history;
   }
   if (!previous) {
     return history;
   }
+
+  const outletsToArchive = previousCurrent.filter((previousOutlet) => {
+    if (outletAlreadyArchivedInMerge(previousOutlet, mergeHistoryEntries)) {
+      return false;
+    }
+    const nextOutlet = findNextOutletForHistory(previousOutlet, nextOutlets);
+    if (!nextOutlet) {
+      return true;
+    }
+    return !outletsAreIdentical(previousOutlet, nextOutlet);
+  });
+
+  const orderOnlyChange =
+    outletsToArchive.length === 0 &&
+    previousCurrent.length === nextOutlets.length &&
+    previousCurrent.length > 0 &&
+    previousCurrent.every((previousOutlet) => {
+      const nextOutlet = findNextOutletForHistory(previousOutlet, nextOutlets);
+      return nextOutlet && outletsAreIdentical(previousOutlet, nextOutlet);
+    });
+
+  if (outletsToArchive.length === 0 && !orderOnlyChange) {
+    return history;
+  }
+
   const previousOutletProvenance = previous.blocks?.blockProvenance?.retailOutlets;
   history.push({
     sourceSha256: previousOutletProvenance?.sourceSha256 ?? previous.sourceSha256,
     capturedAt: previousOutletProvenance?.importedAt ?? previous.importedAt,
-    retailOutlets: previousCurrent,
+    archivedAt,
+    retailOutlets: orderOnlyChange ? previousCurrent : outletsToArchive,
   });
   return history;
 }
@@ -251,10 +309,13 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory:
-      outletMerge.historyEntries.length > 0
-        ? retailOutletHistory
-        : appendHistoryWhenBusinessChanged(previous, currentRetailOutlets, retailOutletHistory),
+    retailOutletHistory: appendHistoryWhenBusinessChanged(
+      previous,
+      currentRetailOutlets,
+      retailOutletHistory,
+      outletMerge.historyEntries,
+      importedAt,
+    ),
     blocks: {
       clientExtendedReady: options.contractVerified,
       outletNormalizedReady: false,

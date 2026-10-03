@@ -100,10 +100,10 @@ describe("extended snapshot history without ordinal merge", () => {
     assert.equal(second.currentRetailOutlets.length, 1);
     assert.equal(second.currentRetailOutlets[0]?.address.storeAddress, "B");
     assert.equal(second.retailOutletHistory.length, 1);
-    assert.equal(second.retailOutletHistory[0]?.retailOutlets.length, 2);
+    assert.equal(second.retailOutletHistory[0]?.retailOutlets.length, 1);
     assert.deepEqual(
       second.retailOutletHistory[0]?.retailOutlets.map((item) => item.address.storeAddress),
-      ["A", "B"],
+      ["A"],
     );
   });
 

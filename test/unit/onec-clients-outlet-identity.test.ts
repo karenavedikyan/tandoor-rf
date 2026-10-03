@@ -275,6 +275,106 @@ describe("outlet identity merge", () => {
     );
   });
 
+  it("archives changed identified outlet while deduplicating anonymous merge history", () => {
+    const anonymous = outlet({
+      guidStore: null,
+      outletGuidStatus: "not_provided",
+      closureStatus: "not_provided",
+      closed: null,
+      closureConfirmedInCurrentExport: false,
+      provenance: {
+        freshness: "current",
+        sourceSha256: "sha-a",
+        importedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const identified = outlet({
+      address: { storeAddress: "Old identified", deliveryAddress: "", routeDirection: "" },
+      provenance: {
+        freshness: "current",
+        sourceSha256: "sha-a",
+        importedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const first = buildExtendedSnapshotJson(
+      {
+        guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+        name_client: "Holding",
+        guid_holding: null,
+        name_holding: "",
+        guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+        name_manager: "Manager",
+        address: "Addr",
+        telephone: [],
+        isHolding: true,
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        hardwareManager: { guid: null, name: "", state: "not_provided" },
+        headOfSales: { guid: null, name: "", state: "not_provided" },
+        retailOutlets: [anonymous, identified],
+        recordFormat: "extended_v1",
+        hasExtendedManagerFields: true,
+        fieldPresence: {
+          holding: "present",
+          retailOutlets: "present",
+          regionalManager: "missing",
+          hardwareManager: "missing",
+          headOfSales: "missing",
+        },
+      },
+      null,
+      "sha-a",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      {
+        guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+        name_client: "Holding",
+        guid_holding: null,
+        name_holding: "",
+        guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+        name_manager: "Manager",
+        address: "Addr",
+        telephone: [],
+        isHolding: true,
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        hardwareManager: { guid: null, name: "", state: "not_provided" },
+        headOfSales: { guid: null, name: "", state: "not_provided" },
+        retailOutlets: [
+          outlet({
+            address: { storeAddress: "New identified", deliveryAddress: "", routeDirection: "" },
+          }),
+        ],
+        recordFormat: "extended_v1",
+        hasExtendedManagerFields: true,
+        fieldPresence: {
+          holding: "present",
+          retailOutlets: "present",
+          regionalManager: "missing",
+          hardwareManager: "missing",
+          headOfSales: "missing",
+        },
+      },
+      first,
+      "sha-b",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    assert.equal(second.currentRetailOutlets.length, 1);
+    assert.equal(second.retailOutletHistory.length, 2);
+    assert.equal(second.retailOutletHistory[0]?.sourceSha256, "sha-a");
+    assert.ok(
+      second.retailOutletHistory[0]?.retailOutlets.every(
+        (item) => item.outletGuidStatus === "not_provided",
+      ),
+    );
+    assert.equal(second.retailOutletHistory[1]?.sourceSha256, "sha-a");
+    assert.equal(
+      second.retailOutletHistory[1]?.retailOutlets[0]?.address.storeAddress,
+      "Old identified",
+    );
+  });
+
   it("compares full business projection including managers and contacts", () => {
     const left = outlet();
     const right = outlet({

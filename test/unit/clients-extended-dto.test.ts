@@ -483,6 +483,133 @@ describe("clients extended dto", () => {
     assert.match(dto!.retailOutlets[0]?.distributionNote, /закрытой/);
   });
 
+  it("keeps per-outlet current labels when block freshness is mixed", () => {
+    const absentOutlet: ParsedRetailOutlet = {
+      ordinal: 0,
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+      holdingName: "H",
+      warehouse: null,
+      address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
+      loading: {
+        loadingOnMonday: null,
+        loadingOnTuesday: null,
+        loadingOnWednesday: null,
+        loadingOnThursday: null,
+        loadingOnFriday: null,
+        loadingOnSaturday: null,
+        loadingOnSunday: null,
+        loadingTime: null,
+      },
+      managers: {
+        manager: { guid: null, name: "", state: "unassigned" },
+        regionalManager: { guid: null, name: "", state: "unassigned" },
+        hardwareManager: { guid: null, name: "", state: "unassigned" },
+        headOfSales: { guid: null, name: "", state: "unassigned" },
+      },
+      contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+      lpr: {
+        name: "",
+        post: "",
+        dateOfBirth: null,
+        phone: "",
+        email: "",
+        bonus: "",
+        conditionsBonus: "",
+      },
+      additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+      outletGuidStatus: "confirmed",
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: false,
+      closureHistory: [],
+      provenance: {
+        freshness: "absent_from_current_export",
+        sourceSha256: "sha-a",
+        importedAt: "2026-01-01T10:00:00.000Z",
+      },
+      distributionAllowed: false,
+    };
+    const currentOutlet: ParsedRetailOutlet = {
+      ...absentOutlet,
+      ordinal: 1,
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+      closed: true,
+      closureStatus: "closed",
+      closureConfirmedInCurrentExport: true,
+      provenance: {
+        freshness: "current",
+        sourceSha256: "sha-b",
+        importedAt: "2026-01-02T10:00:00.000Z",
+      },
+    };
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        source_sha256: "sha-b",
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "sha-b",
+        extended_imported_at: new Date("2026-01-02T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "sha-b",
+          importedAt: "2026-01-02T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [absentOutlet, currentOutlet],
+          retailOutletHistory: [],
+          blocks: {
+            clientExtendedReady: true,
+            outletNormalizedReady: false,
+            blockFreshness: {
+              holding: "current",
+              regionalManager: "preserved_from_previous",
+              hardwareManager: "preserved_from_previous",
+              headOfSales: "preserved_from_previous",
+              retailOutlets: "preserved_from_previous",
+            },
+            blockProvenance: {
+              holding: {
+                freshness: "current",
+                sourceSha256: "sha-b",
+                importedAt: "2026-01-02T10:00:00.000Z",
+              },
+              regionalManager: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-a",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+              hardwareManager: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-a",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+              headOfSales: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-a",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+              retailOutlets: {
+                freshness: "preserved_from_previous",
+                sourceSha256: "sha-a",
+                importedAt: "2026-01-01T10:00:00.000Z",
+              },
+            },
+          },
+        },
+      },
+      adminContext,
+    );
+    assert.equal(dto!.retailOutlets[0]?.presentInCurrentExport, false);
+    assert.match(dto!.retailOutlets[0]?.dataSourceLabel, /отсутствует в текущем файле/);
+    assert.match(dto!.retailOutlets[0]?.closureStatusLabel, /не подтверждён текущей выгрузкой/);
+    assert.equal(dto!.retailOutlets[1]?.presentInCurrentExport, true);
+    assert.equal(dto!.retailOutlets[1]?.dataSourceLabel, "Подтверждено текущей выгрузкой");
+    assert.equal(dto!.retailOutlets[1]?.closureStatusLabel, "Закрыта");
+  });
+
   it("does not mark preserved outlets as confirmed by current export when block is missing", () => {
     const dto = toClientExtendedDto(
       {
@@ -537,10 +664,10 @@ describe("clients extended dto", () => {
               outletGuidStatus: "confirmed",
               closed: false,
               closureStatus: "open",
-              closureConfirmedInCurrentExport: true,
+              closureConfirmedInCurrentExport: false,
               closureHistory: [],
               provenance: {
-                freshness: "current",
+                freshness: "absent_from_current_export",
                 sourceSha256: "sha-a",
                 importedAt: "2026-01-01T10:00:00.000Z",
               },
@@ -591,7 +718,7 @@ describe("clients extended dto", () => {
       adminContext,
     );
     assert.equal(dto!.retailOutlets[0]?.presentInCurrentExport, false);
-    assert.match(dto!.retailOutlets[0]?.dataSourceLabel, /Сохранено из предыдущей выгрузки/);
+    assert.match(dto!.retailOutlets[0]?.dataSourceLabel, /отсутствует в текущем файле/);
     assert.match(dto!.retailOutlets[0]?.closureStatusLabel, /не подтверждён текущей выгрузкой/);
   });
 

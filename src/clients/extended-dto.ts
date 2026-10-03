@@ -409,10 +409,7 @@ function resolveEffectiveOutletPresentation(
         sourceSha256: storedProvenance.sourceSha256,
         importedAt: storedProvenance.importedAt,
       };
-    } else if (
-      storedProvenance.freshness === "current" &&
-      (blockNotCurrent || extendedNotUpdated)
-    ) {
+    } else if (storedProvenance.freshness === "current" && extendedNotUpdated) {
       provenance = {
         freshness: "preserved_from_previous",
         sourceSha256:
@@ -438,8 +435,7 @@ function resolveEffectiveOutletPresentation(
     };
   }
 
-  const presentInCurrentExport =
-    provenance.freshness === "current" && !blockNotCurrent && !extendedNotUpdated;
+  const presentInCurrentExport = provenance.freshness === "current" && !extendedNotUpdated;
 
   return {
     provenance,

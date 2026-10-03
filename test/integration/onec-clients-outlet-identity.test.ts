@@ -151,6 +151,47 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     await pool.end();
   });
 
+  it("counts missing outlets when retail_outlets is an explicit empty array", async () => {
+    const firstBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_ONE })],
+      }),
+    ]);
+    const firstValidated = validateClientsForApplyTest(firstBytes);
+    assert.equal(firstValidated.ok, true);
+    if (!firstValidated.ok) return;
+    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+
+    const secondBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [],
+      }),
+    ]);
+    const secondValidated = validateClientsForApplyTest(secondBytes);
+    assert.equal(secondValidated.ok, true);
+    if (!secondValidated.ok) return;
+    await applyClientsImport({
+      databaseUrl,
+      payload: secondValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const journal = await pool.query<{
+      extended_diagnostics: { knownOutletsMissingFromSnapshot?: number | null } | null;
+    }>(
+      `
+        SELECT extended_diagnostics
+        FROM onec_client_import_runs
+        WHERE status = 'success'
+        ORDER BY finished_at DESC
+        LIMIT 1
+      `,
+    );
+    assert.equal(journal.rows[0]?.extended_diagnostics?.knownOutletsMissingFromSnapshot, 1);
+    await pool.end();
+  });
+
   it("reports registry parent conflict in apply result and journal without claiming full extended apply", async () => {
     const firstBytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({

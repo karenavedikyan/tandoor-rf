@@ -1027,6 +1027,7 @@ export async function applyClientsImport(options: {
               if (
                 retailOutletsPresence === "present" ||
                 retailOutletsPresence === "missing" ||
+                retailOutletsPresence === "explicit_empty" ||
                 retailOutletsPresence === "explicit_null"
               ) {
                 missingOutletsChecked = true;
