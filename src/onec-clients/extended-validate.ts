@@ -17,7 +17,18 @@ import {
 } from "./field-value";
 import { detectClientsSourceFormat, hasExtendedManagerFields, isExtendedClientRecord } from "./format";
 import type { ExtendedRecordFieldPresence } from "./extended-presence";
-import { parseManagerFieldWithPresence, parseOptionalHoldingGuid } from "./manager-status";
+import type { WholesaleEmployeeRoster } from "./employee-roster";
+import {
+  DEFAULT_HOLDING_LINK_VALIDATION_POLICY,
+  type HoldingLinkValidationPolicy,
+} from "./holding-link-policy";
+import {
+  applyWholesaleEmployeeRosterToRef,
+  parseManagerFieldWithPresence,
+  parseOptionalHoldingGuid,
+  resolveClientManagerRosterState,
+} from "./manager-status";
+import type { WholesaleCompositionMode } from "./wholesale-composition";
 import { sha256Hex } from "./sha256";
 import type {
   ExtendedDiagnosticsSummary,
@@ -702,7 +713,19 @@ function parseOutletLpr(
       }, issueCount);
       return null;
     }
-    if (dob.kind === "ambiguous") {
+    if (dob.kind === "explicit_empty") {
+      result.dateOfBirth = null;
+      result.dateOfBirthSourceRaw = dob.sourceRaw ?? null;
+      result.dateOfBirthExplicitEmpty = true;
+      result.dateOfBirthAmbiguous = false;
+      result.dateOfBirthConfirmedInCurrentExport = true;
+      pushWarning(warnings, {
+        code: "EXPLICIT_EMPTY_DATE_OF_BIRTH",
+        field: "retail_outlets.LPR_information.date_of_birth",
+        index: clientIndex,
+        outletIndex,
+      }, warningCount);
+    } else if (dob.kind === "ambiguous") {
       result.dateOfBirth = null;
       result.dateOfBirthSourceRaw = dob.sourceRaw ?? null;
       result.dateOfBirthAmbiguous = true;
@@ -1218,7 +1241,79 @@ function validateExtendedRecord(
     recordFormat: recordExtended ? "extended_v1" : "legacy",
     hasExtendedManagerFields: recordHasExtendedManagerFields,
     fieldPresence,
+    holdingLinkState: "none",
+    managerRosterState: "roster_not_loaded",
   };
+}
+
+function annotateHoldingLinkStates(records: ParsedExtendedClientRecord[]): void {
+  const byGuid = new Map(records.map((record) => [record.guid_client, record]));
+  for (const record of records) {
+    if (!record.guid_holding) {
+      record.holdingLinkState = "none";
+      continue;
+    }
+    const target = byGuid.get(record.guid_holding);
+    if (target?.isHolding === true) {
+      record.holdingLinkState = "resolved";
+    } else {
+      record.holdingLinkState = "unresolved";
+    }
+  }
+}
+
+function applyEmployeeRosterToRecords(
+  records: ParsedExtendedClientRecord[],
+  roster: WholesaleEmployeeRoster | null | undefined,
+  warnings: ExtendedValidationWarning[],
+  warningCount: { value: number },
+): void {
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    record.managerRosterState = resolveClientManagerRosterState(record.guid_manager, roster);
+    record.regionalManager = applyWholesaleEmployeeRosterToRef(record.regionalManager, roster);
+    record.hardwareManager = applyWholesaleEmployeeRosterToRef(record.hardwareManager, roster);
+    record.headOfSales = applyWholesaleEmployeeRosterToRef(record.headOfSales, roster);
+
+    if (
+      record.managerRosterState === "outside_wholesale_roster" &&
+      warningCount.value < MAX_DETAILED_WARNINGS + 10_000
+    ) {
+      pushWarning(warnings, {
+        code: "MANAGER_OUTSIDE_WHOLESALE_ROSTER",
+        field: "guid_manager",
+        index,
+      }, warningCount);
+    }
+
+    record.retailOutlets = record.retailOutlets.map((outlet, outletIndex) => {
+      const managers = {
+        manager: applyWholesaleEmployeeRosterToRef(outlet.managers.manager, roster),
+        regionalManager: applyWholesaleEmployeeRosterToRef(outlet.managers.regionalManager, roster),
+        hardwareManager: applyWholesaleEmployeeRosterToRef(outlet.managers.hardwareManager, roster),
+        headOfSales: applyWholesaleEmployeeRosterToRef(outlet.managers.headOfSales, roster),
+      };
+      for (const [field, ref] of [
+        ["retail_outlets.managers.guid_manager", managers.manager],
+        ["retail_outlets.managers.guid_regional_manager", managers.regionalManager],
+        ["retail_outlets.managers.guid_hardware_manager", managers.hardwareManager],
+        [
+          "retail_outlets.managers.guid_head_of_the_sales_department",
+          managers.headOfSales,
+        ],
+      ] as const) {
+        if (ref.state === "outside_wholesale_roster") {
+          pushWarning(warnings, {
+            code: "MANAGER_OUTSIDE_WHOLESALE_ROSTER",
+            field,
+            index,
+            outletIndex,
+          }, warningCount);
+        }
+      }
+      return { ...outlet, managers };
+    });
+  }
 }
 
 function validateHoldingTargets(
@@ -1260,8 +1355,11 @@ function extractRejectedClientGuid(raw: unknown): string | null {
 function detectHoldingCycles(
   records: ParsedExtendedClientRecord[],
   rejectedClientGuids: ReadonlySet<string>,
+  policy: HoldingLinkValidationPolicy,
   issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
   issueCount: { value: number },
+  warningCount: { value: number },
   holdingGuidStats: { holdingGuidUnknownCount: number; holdingGuidRejectedCount: number },
 ): void {
   const byGuid = new Map(records.map((record) => [record.guid_client, record]));
@@ -1274,11 +1372,15 @@ function detectHoldingCycles(
       continue;
     }
     if (!byGuid.has(record.guid_holding)) {
+      const recordIndex = records.indexOf(record);
       if (rejectedClientGuids.has(record.guid_holding)) {
-        pushIssue(issues, { code: "HOLDING_GUID_REJECTED", index: records.indexOf(record) }, issueCount);
+        pushIssue(issues, { code: "HOLDING_GUID_REJECTED", index: recordIndex }, issueCount);
         holdingGuidStats.holdingGuidRejectedCount += 1;
+      } else if (policy === "tolerant") {
+        pushWarning(warnings, { code: "HOLDING_GUID_UNKNOWN", index: recordIndex }, warningCount);
+        holdingGuidStats.holdingGuidUnknownCount += 1;
       } else {
-        pushIssue(issues, { code: "HOLDING_GUID_UNKNOWN", index: records.indexOf(record) }, issueCount);
+        pushIssue(issues, { code: "HOLDING_GUID_UNKNOWN", index: recordIndex }, issueCount);
         holdingGuidStats.holdingGuidUnknownCount += 1;
       }
       continue;
@@ -1300,6 +1402,8 @@ function detectHoldingCycles(
 function buildDiagnostics(
   sourceFormat: "legacy" | "extended_v1",
   records: ParsedExtendedClientRecord[],
+  holdingLinkPolicy: HoldingLinkValidationPolicy,
+  employeeRoster: WholesaleEmployeeRoster | null | undefined,
   holdingLinkErrors: number,
   holdingGuidStats: { holdingGuidUnknownCount: number; holdingGuidRejectedCount: number },
   outletGuidStats: { duplicateOutletGuidCount: number; outletParentLinkConflicts: number },
@@ -1317,8 +1421,17 @@ function buildDiagnostics(
   let invalidManagerGuidCount = 0;
   let ambiguousLoadingTimeCount = 0;
   let ambiguousDateOfBirthCount = 0;
+  let explicitEmptyDateOfBirthCount = 0;
+  let holdingLinkUnresolvedCount = 0;
+  let managersOutsideWholesaleRosterCount = 0;
 
   for (const record of records) {
+    if (record.holdingLinkState === "unresolved") {
+      holdingLinkUnresolvedCount += 1;
+    }
+    if (record.managerRosterState === "outside_wholesale_roster") {
+      managersOutsideWholesaleRosterCount += 1;
+    }
     if (record.isHolding === true) {
       holdingCardCount += 1;
     }
@@ -1345,6 +1458,9 @@ function buildDiagnostics(
       if (outlet.lpr.dateOfBirthAmbiguous) {
         ambiguousDateOfBirthCount += 1;
       }
+      if (outlet.lpr.dateOfBirthExplicitEmpty) {
+        explicitEmptyDateOfBirthCount += 1;
+      }
     }
     if (record.recordFormat === "extended_v1" || record.hasExtendedManagerFields) {
       recordsWithExtendedFields += 1;
@@ -1364,6 +1480,9 @@ function buildDiagnostics(
     ]) {
       if (manager.state === "invalid") {
         invalidManagerGuidCount += 1;
+      }
+      if (manager.state === "outside_wholesale_roster") {
+        managersOutsideWholesaleRosterCount += 1;
       }
     }
   }
@@ -1388,12 +1507,18 @@ function buildDiagnostics(
     outletParentLinkConflicts: outletGuidStats.outletParentLinkConflicts,
     knownOutletsMissingFromSnapshot: null,
     invalidManagerGuidCount,
-    employeeDirectoryVerified: false,
+    employeeDirectoryVerified: employeeRoster != null && !employeeRoster.isEmpty,
+    employeeRosterSourceSha256: employeeRoster?.sourceSha256 ?? null,
+    wholesaleEmployeeCount: employeeRoster?.wholesaleCount ?? null,
+    managersOutsideWholesaleRosterCount,
+    holdingLinkValidationPolicy: holdingLinkPolicy,
     holdingLinkErrors,
+    holdingLinkUnresolvedCount,
     holdingGuidUnknownCount: holdingGuidStats.holdingGuidUnknownCount,
     holdingGuidRejectedCount: holdingGuidStats.holdingGuidRejectedCount,
     ambiguousLoadingTimeCount,
     ambiguousDateOfBirthCount,
+    explicitEmptyDateOfBirthCount,
     recordsWithExtendedFields,
     legacyOnlyRecords,
     blocks: {
@@ -1409,6 +1534,10 @@ export type ValidateClientsLimits = {
   maxSourceBytes?: number;
   maxSourceRecords?: number;
   extendedContractVerification?: import("./types").ExtendedContractVerification;
+  holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
+  employeeRoster?: WholesaleEmployeeRoster | null;
+  employeeRosterExplicit?: boolean;
+  wholesaleCompositionMode?: WholesaleCompositionMode;
 };
 
 export function validateExtendedClientsFileBytes(
@@ -1417,6 +1546,9 @@ export function validateExtendedClientsFileBytes(
 ): ExtendedValidationResult {
   const maxSourceBytes = limits?.maxSourceBytes ?? MAX_SOURCE_BYTES;
   const maxSourceRecords = limits?.maxSourceRecords ?? MAX_SOURCE_RECORDS;
+  const holdingLinkPolicy = limits?.holdingLinkValidationPolicy ?? DEFAULT_HOLDING_LINK_VALIDATION_POLICY;
+  const employeeRoster = limits?.employeeRoster ?? null;
+  const wholesaleCompositionMode = limits?.wholesaleCompositionMode ?? "standard";
   const issues: ExtendedValidationIssue[] = [];
   const warnings: ExtendedValidationWarning[] = [];
   const issueCount = { value: 0 };
@@ -1543,15 +1675,28 @@ export function validateExtendedClientsFileBytes(
   const holdingGuidStats = { holdingGuidUnknownCount: 0, holdingGuidRejectedCount: 0 };
   let outletGuidStats = { duplicateOutletGuidCount: 0, outletParentLinkConflicts: 0 };
   if (sourceFormat === "extended_v1") {
-    detectHoldingCycles(records, rejectedClientGuids, issues, issueCount, holdingGuidStats);
+    detectHoldingCycles(
+      records,
+      rejectedClientGuids,
+      holdingLinkPolicy,
+      issues,
+      warnings,
+      issueCount,
+      warningCount,
+      holdingGuidStats,
+    );
     validateHoldingTargets(records, issues, issueCount);
     outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
+    applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
+    annotateHoldingLinkStates(records);
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
   const diagnostics = buildDiagnostics(
     sourceFormat,
     records,
+    holdingLinkPolicy,
+    employeeRoster,
     holdingLinkErrors,
     holdingGuidStats,
     outletGuidStats,
@@ -1569,8 +1714,11 @@ export function validateExtendedClientsFileBytes(
     );
   }
 
-  if (sourceFormat === "extended_v1") {
+  if (sourceFormat === "extended_v1" && employeeRoster == null) {
     pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
+  }
+  if (limits?.employeeRosterExplicit === true && employeeRoster?.isEmpty === true) {
+    pushWarning(warnings, { code: "EMPLOYEE_ROSTER_EMPTY" }, warningCount);
   }
 
   const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";
@@ -1587,6 +1735,9 @@ export function validateExtendedClientsFileBytes(
       warningCount: warningCount.value,
       diagnostics,
       extendedContractVerification,
+      holdingLinkValidationPolicy: holdingLinkPolicy,
+      employeeRosterSourceSha256: employeeRoster?.sourceSha256 ?? null,
+      wholesaleCompositionMode,
       issueCodes: [...issueCodes].sort(),
       warningCodes: [...warningCodes].sort(),
       issuesTruncated: false,

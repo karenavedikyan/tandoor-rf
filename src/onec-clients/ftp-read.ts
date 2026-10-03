@@ -104,3 +104,41 @@ export async function readClientsFileFromFtp(
 ): Promise<FtpReadResult> {
   return reader(config, context);
 }
+
+export async function readRemoteFileFromFtp(
+  config: OnecFtpConfig,
+  remotePath: string,
+  maxBytes: number,
+  readDeadlineMs = FTP_READ_DEADLINE_MS,
+): Promise<FtpReadResult> {
+  const client = new Client(config.timeoutMs);
+  client.ftp.verbose = false;
+  try {
+    return await withReadDeadline(
+      (async () => {
+        await client.access({
+          host: config.host,
+          port: config.port,
+          user: config.user,
+          password: config.password,
+          secure: false,
+        });
+        const sink = new SizeLimitedBuffer(maxBytes);
+        await client.downloadTo(sink, remotePath);
+        return { ok: true as const, bytes: sink.toBuffer(), remotePath };
+      })(),
+      readDeadlineMs,
+    );
+  } catch (error) {
+    if (error instanceof ReadDeadlineError) {
+      return { ok: false, code: "TIMEOUT", message: "FTP read timed out." };
+    }
+    const message = error instanceof Error ? error.message : "FTP read failed.";
+    if (/FILE_TOO_LARGE/i.test(message)) {
+      return { ok: false, code: "FILE_TOO_LARGE", message: "Source file exceeds the allowed size limit." };
+    }
+    return { ok: false, code: "FTP_ERROR", message: "FTP read failed." };
+  } finally {
+    client.close();
+  }
+}

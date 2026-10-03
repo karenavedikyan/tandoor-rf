@@ -30,6 +30,13 @@ import {
 import type { FieldPresenceState } from "./extended-presence";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
+import {
+  verificationFingerprintFromPayload,
+  verifyApplyVerification,
+} from "./import-verification-fingerprint";
+import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
+import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
+import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
@@ -63,9 +70,13 @@ export type ApplyResult =
         | "DATABASE_ERROR"
         | "COMMIT_UNCERTAIN"
         | "SUPERSEDED_BY_NEWER_IMPORT"
-        | "APPLY_BLOCKED";
+        | "APPLY_BLOCKED"
+        | "VERIFICATION_FINGERPRINT_REQUIRED"
+        | "VERIFICATION_FINGERPRINT_MISMATCH"
+        | "VERIFICATION_PARAMETERS_MISMATCH";
       message: string;
       runId?: string;
+      actualFingerprint?: string;
     };
 
 export type ApplyTestHooks = {
@@ -86,6 +97,7 @@ type ExistingClientRow = {
   name_holding: string;
   guid_manager: string;
   name_manager: string;
+  manager_roster_state: import("./extended-types").ClientManagerRosterState | null;
   address: string;
   telephone: string[];
 };
@@ -329,9 +341,12 @@ function mergeExtendedDiagnosticsForJournal(
     return null;
   }
   const applyBlocks = buildApplyBlockSummary(extendedApply, contractVerified, stats);
-  const base = payload.extendedDiagnostics ?? {};
+  const base = payload.extendedDiagnostics;
   return JSON.stringify({
-    ...base,
+    ...(base ?? {}),
+    holdingLinkValidationPolicy:
+      payload.holdingLinkValidationPolicy ?? base?.holdingLinkValidationPolicy,
+    wholesaleCompositionMode: payload.wholesaleCompositionMode ?? "standard",
     knownOutletsMissingFromSnapshot: stats.knownOutletsMissingFromSnapshot,
     outletParentLinkConflicts: stats.outletParentLinkConflicts,
     applyBlocks,
@@ -464,6 +479,7 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
         name_holding,
         guid_manager::text,
         name_manager,
+        manager_roster_state,
         address,
         telephone
       FROM onec_clients
@@ -541,7 +557,7 @@ async function releaseAdvisoryLock(
   await queryManaged(managed, "SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
 }
 
-function createImportPool(databaseUrl: string): Pool {
+export function createImportPool(databaseUrl: string): Pool {
   const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
     connectionString: pgOptions.connectionString,
@@ -631,8 +647,43 @@ export async function applyClientsImport(options: {
   excludeRunIds?: string[];
   expectedCommittedSha256?: string | null;
   syncExchangeState?: boolean;
+  wholesaleCompositionPrep?: boolean;
+  expectedVerificationFingerprint: string;
+  holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
+  employeeRosterSourceSha256?: string | null;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
+  const prepApplyRejection = rejectWholesaleCompositionPrepApply({
+    wholesaleCompositionPrep: options.wholesaleCompositionPrep,
+    payload: options.payload,
+  });
+  if (prepApplyRejection) {
+    return {
+      ok: false,
+      code: prepApplyRejection.code,
+      message: prepApplyRejection.message,
+    };
+  }
+
+  const verificationFailure = verifyApplyVerification({
+    expectedVerificationFingerprint: options.expectedVerificationFingerprint,
+    payload: options.payload,
+    holdingLinkValidationPolicy: options.holdingLinkValidationPolicy,
+    employeeRosterSourceSha256: options.employeeRosterSourceSha256,
+  });
+  if (verificationFailure) {
+    return {
+      ok: false,
+      code: verificationFailure.code,
+      message: verificationFailure.message,
+      actualFingerprint:
+        verificationFailure.code === "VERIFICATION_FINGERPRINT_MISMATCH"
+          ? verificationFailure.actualFingerprint
+          : undefined,
+    };
+  }
+  const verifiedFingerprint = verificationFingerprintFromPayload({ payload: options.payload });
+
   let pool: Pool | undefined;
   let managed: ManagedClient | undefined;
   let ownsPool = false;
@@ -802,9 +853,10 @@ export async function applyClientsImport(options: {
                 source_record_count,
                 warning_count,
                 warnings,
-                warnings_truncated
+                warnings_truncated,
+                verification_fingerprint
               )
-              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8)
+              VALUES ('running', 'apply', $1, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8, $9)
               RETURNING id::text
             `,
             [
@@ -816,6 +868,7 @@ export async function applyClientsImport(options: {
               preparedWarnings.warningCount,
               preparedWarnings.warningsJson,
               preparedWarnings.warningsTruncated,
+              verifiedFingerprint,
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
@@ -840,8 +893,19 @@ export async function applyClientsImport(options: {
 
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
-            const current = existing.get(record.guid_client);
             const extendedRecord = extendedRecords.get(record.guid_client);
+            const confirmedHolding = extendedRecord
+              ? resolveConfirmedHoldingForApply(extendedRecord)
+              : { guid_holding: record.guid_holding, name_holding: record.name_holding };
+            const applyRecord = { ...record, ...confirmedHolding };
+            const current = existing.get(applyRecord.guid_client);
+            const rosterLoadedInPayload = options.payload.employeeRosterSourceSha256 != null;
+            const linkMetadata = resolveImportLinkMetadata(extendedRecord, {
+              incomingManagerGuid: applyRecord.guid_manager,
+              previousManagerGuid: current?.guid_manager ?? null,
+              previousManagerRosterState: current?.manager_roster_state ?? null,
+              rosterLoadedInPayload,
+            });
             const previousRow = previousExtended.get(record.guid_client);
             const previousSnapshot = previousRow?.extended_snapshot;
 
@@ -872,7 +936,7 @@ export async function applyClientsImport(options: {
             if (!current) {
               newCount += 1;
             } else if (
-              isImportRecordEqual(current, record, previousSnapshot, extendedSnapshotJson)
+              isImportRecordEqual(current, applyRecord, previousSnapshot, extendedSnapshotJson)
             ) {
               unchangedCount += 1;
             } else {
@@ -917,6 +981,9 @@ export async function applyClientsImport(options: {
                   extended_snapshot,
                   extended_imported_at,
                   extended_freshness_state,
+                  holding_link_state,
+                  guid_holding_pending,
+                  manager_roster_state,
                   first_imported_at,
                   last_imported_at,
                   updated_at
@@ -924,6 +991,7 @@ export async function applyClientsImport(options: {
                 VALUES (
                   $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
                   $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::timestamptz, $21,
+                  $22, $23::uuid, $24,
                   NOW(), NOW(), NOW()
                 )
                 ON CONFLICT (guid_client) DO UPDATE SET
@@ -972,6 +1040,9 @@ export async function applyClientsImport(options: {
                     ELSE onec_clients.extended_imported_at
                   END,
                   extended_freshness_state = COALESCE(EXCLUDED.extended_freshness_state, onec_clients.extended_freshness_state),
+                  holding_link_state = EXCLUDED.holding_link_state,
+                  guid_holding_pending = EXCLUDED.guid_holding_pending,
+                  manager_roster_state = EXCLUDED.manager_roster_state,
                   last_imported_at = NOW(),
                   updated_at = CASE
                     WHEN onec_clients.name_client IS DISTINCT FROM EXCLUDED.name_client
@@ -988,13 +1059,13 @@ export async function applyClientsImport(options: {
                   END
               `,
               [
-                record.guid_client,
-                record.name_client,
-                record.guid_holding,
-                record.name_holding,
-                record.guid_manager,
-                record.name_manager,
-                record.address,
+                applyRecord.guid_client,
+                applyRecord.name_client,
+                applyRecord.guid_holding,
+                applyRecord.name_holding,
+                applyRecord.guid_manager,
+                applyRecord.name_manager,
+                applyRecord.address,
                 JSON.stringify(record.telephone),
                 options.payload.sha256,
                 extendedSnapshotJson?.isHolding ?? null,
@@ -1009,6 +1080,9 @@ export async function applyClientsImport(options: {
                 extendedSnapshotJson ? JSON.stringify(extendedSnapshotJson) : null,
                 extendedImportedAt,
                 extendedFreshnessState,
+                linkMetadata.holdingLinkState,
+                linkMetadata.guidHoldingPending,
+                linkMetadata.managerRosterState,
               ],
             );
 

@@ -10,8 +10,11 @@ import { runClientsImport } from "../../src/onec-clients/run-import";
 import {
   buildClientsFileBytes,
   buildClientsFileSha256,
+  buildImportVerificationFingerprint,
   sampleClient,
   sampleClientTwo,
+  applyClientsImportVerified,
+  expectedVerificationForPayload,
 } from "../helpers/onec-clients-fixtures";
 import {
   getIntegrationDatabaseUrl,
@@ -114,7 +117,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
 
   it("imports, upserts without duplicates, and keeps missing clients", async () => {
     const initialBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const hash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const hash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
 
     const first = await runClientsImport({
@@ -138,7 +141,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       sampleClient({ name_client: "Client Alpha Updated" }),
       sampleClientTwo(),
     ]);
-    const changedHash = buildClientsFileSha256([
+    const changedHash = buildImportVerificationFingerprint([
       sampleClient({ name_client: "Client Alpha Updated" }),
       sampleClientTwo(),
     ]);
@@ -156,7 +159,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
         name_client: "Client Gamma",
       }),
     ]);
-    const replacedHash = buildClientsFileSha256(JSON.parse(replacedBytes.toString("utf8")));
+    const replacedHash = buildImportVerificationFingerprint(JSON.parse(replacedBytes.toString("utf8")));
     const replaced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", replacedHash],
@@ -173,7 +176,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("blocks apply when record count decreases and writes a journal entry", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", fullHash],
@@ -181,7 +184,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     });
 
     const reducedBytes = buildClientsFileBytes([sampleClient()]);
-    const reducedHash = buildClientsFileSha256([sampleClient()]);
+    const reducedHash = buildImportVerificationFingerprint([sampleClient()]);
     const reduced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", reducedHash],
@@ -212,7 +215,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("blocks apply when existing client GUID disappears with same record count", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
-    const fullHash = buildClientsFileSha256([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
     await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", fullHash],
@@ -226,7 +229,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
         name_client: "Client Gamma",
       }),
     ]);
-    const replacedHash = buildClientsFileSha256(JSON.parse(replacedBytes.toString("utf8")));
+    const replacedHash = buildImportVerificationFingerprint(JSON.parse(replacedBytes.toString("utf8")));
     const replaced = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", replacedHash],
@@ -246,7 +249,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
   it("rolls back client changes on database failure before cleanup", async () => {
     const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
     const seedBytes = buildClientsFileBytes([sampleClient()]);
-    const seedHash = buildClientsFileSha256([sampleClient()]);
+    const seedHash = buildImportVerificationFingerprint([sampleClient()]);
     const seeded = await runClientsImport({
       env,
       argv: ["--apply", "--expected-sha256", seedHash],
@@ -264,7 +267,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const failed = await applyClientsImport({
+    const failed = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { afterRecordIndex: 1 },
@@ -307,7 +310,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const applied = await applyClientsImport({
+    const applied = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failUnlock: true },
@@ -334,7 +337,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failCommit: true },
@@ -357,7 +360,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: {
@@ -407,7 +410,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failRelease: true },
@@ -426,7 +429,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: { failPoolEnd: true },
@@ -445,7 +448,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload: validated.payload,
       testHooks: {
@@ -469,7 +472,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
       return;
     }
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl: "postgres://invalid:5432/nonexistent",
       payload: validated.payload,
     });
@@ -497,7 +500,7 @@ describe("onec clients import integration", { concurrency: false }, () => {
     );
     assert.equal(locked.rows[0]?.locked, true);
 
-    const blocked = await applyClientsImport({ databaseUrl, payload: validated.payload });
+    const blocked = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
     assert.equal(blocked.ok, false);
     if (!blocked.ok) {
       assert.equal(blocked.code, "IMPORT_LOCKED");
@@ -508,9 +511,213 @@ describe("onec clients import integration", { concurrency: false }, () => {
     await pool.end();
   });
 
+  it("rejects apply in wholesale composition prep mode and keeps shrink guards for normal apply", async () => {
+    const env = { ...ftpEnv(), DATABASE_URL: databaseUrl };
+    const fullBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    const fullHash = buildImportVerificationFingerprint([sampleClient(), sampleClientTwo()]);
+    await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", fullHash],
+      fileBytes: fullBytes,
+    });
+
+    const reducedBytes = buildClientsFileBytes([sampleClient()]);
+    const reducedHash = buildImportVerificationFingerprint([sampleClient()]);
+    const prepDryRun = await runClientsImport({
+      env,
+      argv: ["--dry-run", "--wholesale-composition-prep"],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(prepDryRun.status, "SUCCESS");
+    assert.equal(prepDryRun.wholesaleCompositionPrep?.mode, "replacement_prep");
+    assert.equal(prepDryRun.wholesaleCompositionPrep?.applyAllowed, false);
+    assert.ok((prepDryRun.wholesaleCompositionPrep?.clientsToExclude.count ?? 0) >= 1);
+    assert.equal(
+      prepDryRun.wholesaleCompositionPrep?.baselineTransition.interpretation,
+      "agreed_baseline_change_not_restore_requirement",
+    );
+    assert.ok(
+      prepDryRun.wholesaleCompositionPrep?.operationBlockers.includes(
+        "wholesale_composition_prep_is_dry_run_only",
+      ),
+    );
+
+    const prepApply = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", reducedHash, "--wholesale-composition-prep"],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(prepApply.status, "ARGUMENT_ERROR");
+    assert.equal(prepApply.errorCode, "APPLY_WITH_WHOLESALE_COMPOSITION_PREP");
+
+    const normalReducedApply = await runClientsImport({
+      env,
+      argv: ["--apply", "--expected-sha256", reducedHash],
+      fileBytes: reducedBytes,
+    });
+    assert.equal(normalReducedApply.status, "RECORD_COUNT_DECREASED");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const clientCount = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await pool.end();
+    assert.equal(Number(clientCount.rows[0]?.count), 2);
+
+    const validatedReduced = validateClientsFileBytes(reducedBytes, {
+      wholesaleCompositionMode: "replacement_prep",
+    });
+    assert.equal(validatedReduced.ok, true);
+    if (!validatedReduced.ok) return;
+    const directApply = await applyClientsImport({
+      databaseUrl,
+      payload: validatedReduced.payload,
+      expectedVerificationFingerprint: buildImportVerificationFingerprint([sampleClient()]),
+    });
+    assert.equal(directApply.ok, false);
+    if (directApply.ok) return;
+    assert.equal(directApply.code, "APPLY_BLOCKED");
+
+    const poolAfterDirect = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countAfterDirect = await poolAfterDirect.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolAfterDirect.end();
+    assert.equal(Number(countAfterDirect.rows[0]?.count), 2);
+  });
+
+  it("rejects apply without verification fingerprint before any database writes", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const poolBefore = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countBefore = await poolBefore.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolBefore.end();
+
+    const missing = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: "",
+    });
+    assert.equal(missing.ok, false);
+    if (!missing.ok) {
+      assert.equal(missing.code, "VERIFICATION_FINGERPRINT_REQUIRED");
+    }
+
+    const wrong = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: "0".repeat(64),
+    });
+    assert.equal(wrong.ok, false);
+    if (!wrong.ok) {
+      assert.equal(wrong.code, "VERIFICATION_FINGERPRINT_MISMATCH");
+      assert.ok(wrong.actualFingerprint);
+    }
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const countAfter = await poolAfter.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM onec_clients",
+    );
+    await poolAfter.end();
+    assert.equal(countAfter.rows[0]?.count, countBefore.rows[0]?.count);
+  });
+
+  it("rejects apply when holding policy override disagrees with validated payload", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const policyMismatch = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(policyMismatch.ok, false);
+    if (!policyMismatch.ok) {
+      assert.equal(policyMismatch.code, "VERIFICATION_PARAMETERS_MISMATCH");
+    }
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const count = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients");
+    await pool.end();
+    assert.equal(Number(count.rows[0]?.count ?? "0"), 0);
+  });
+
+  it("rejects apply when roster SHA override disagrees with validated payload", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const rosterMismatch = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
+      employeeRosterSourceSha256: "a".repeat(64),
+    });
+    assert.equal(rosterMismatch.ok, false);
+    if (!rosterMismatch.ok) {
+      assert.equal(rosterMismatch.code, "VERIFICATION_PARAMETERS_MISMATCH");
+    }
+  });
+
+  it("rejects strict apply fingerprint on tolerant-validated payload with unresolved holding", async () => {
+    const holdingGuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const childGuid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const unresolvedGuid = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+    const { buildExtendedClientsFileBytes, sampleExtendedChild, sampleExtendedHolding } =
+      await import("../helpers/onec-clients-extended-fixtures");
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({ guid_client: holdingGuid }),
+      sampleExtendedChild({
+        guid_client: childGuid,
+        guid_holding: unresolvedGuid,
+        name_holding: "Missing",
+      }),
+    ]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "tolerant" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const strictFingerprint = buildImportVerificationFingerprint(JSON.parse(bytes.toString("utf8")), {
+      holdingLinkValidationPolicy: "strict",
+    });
+    const substituted = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: strictFingerprint,
+      holdingLinkValidationPolicy: "strict",
+    });
+    assert.equal(substituted.ok, false);
+    if (!substituted.ok) {
+      assert.equal(substituted.code, "VERIFICATION_PARAMETERS_MISMATCH");
+    }
+  });
+
+  it("accepts apply when fingerprint matches validated payload parameters", async () => {
+    const bytes = buildClientsFileBytes([sampleClient()]);
+    const validated = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "strict" });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: expectedVerificationForPayload(validated.payload),
+    });
+    assert.equal(applied.ok, true);
+  });
+
   it("rejects apply while a stale running import exists", async () => {
     const bytes = buildClientsFileBytes([sampleClient()]);
-    const hash = buildClientsFileSha256([sampleClient()]);
+    const hash = buildImportVerificationFingerprint([sampleClient()]);
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
       `

@@ -3,6 +3,7 @@ import { getDatabaseUrl } from "../config";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { applyClientsImport, DB_CONNECT_TIMEOUT_MS } from "../onec-clients/apply";
+import { verificationFingerprintFromPayload } from "../onec-clients/import-verification-fingerprint";
 import { type FtpReader } from "../onec-clients/ftp-read";
 import { tryAcquireImportLock, releaseImportLock } from "../onec-clients/import-lock";
 import { readStableClientsFile } from "../onec-clients/read-stable";
@@ -505,6 +506,7 @@ export async function runScheduledExchangeCycle(
       excludeRunIds: cycleRunId ? [cycleRunId] : [],
       expectedCommittedSha256: committedBeforeRead,
       syncExchangeState: true,
+      expectedVerificationFingerprint: verificationFingerprintFromPayload({ payload }),
     });
     lockHeld = false;
 

@@ -1,12 +1,27 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport, type ImportTriggerSource } from "./apply";
-import { CLI_ARGUMENT_ERROR_MESSAGES, parseClientsImportCliArgs } from "./cli-args";
+import { applyClientsImport, createImportPool, type ImportTriggerSource } from "./apply";
+import {
+  CLI_ARGUMENT_ERROR_MESSAGES,
+  parseClientsImportCliArgs,
+  readEmployeeRosterFileBytes,
+} from "./cli-args";
 import { MAX_DETAILED_ERRORS, MAX_DETAILED_WARNINGS } from "./constants";
+import { parseWholesaleEmployeeRosterBytes, type WholesaleEmployeeRoster } from "./employee-roster";
+import { verificationFingerprintFromPayload } from "./import-verification-fingerprint";
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
+import type { ValidateClientsLimits } from "./validate";
 import type { ClientsImportCliOptions, ClientsImportResult, ValidationIssue } from "./types";
 import { validateClientsFileBytes } from "./validate";
+import {
+  buildWholesaleCompositionPrepReport,
+  rejectWholesaleCompositionPrepApply,
+} from "./wholesale-composition";
+import {
+  loadExistingCompositionContext,
+  unavailableCompositionContext,
+} from "./wholesale-composition-db";
 
 export function getImportExitCode(status: ClientsImportResult["status"]): number {
   return status === "SUCCESS" ? 0 : 1;
@@ -22,6 +37,7 @@ function validationFailedResult(input: {
   sha256?: string;
   byteSize?: number;
   extendedDiagnostics?: ClientsImportResult["extendedDiagnostics"];
+  holdingLinkValidationPolicy?: ClientsImportResult["holdingLinkValidationPolicy"];
   issueCodes?: string[];
   warningCodes?: string[];
   issuesTruncated?: boolean;
@@ -45,6 +61,7 @@ function validationFailedResult(input: {
     issueCodes: input.issueCodes,
     warningCodes: input.warningCodes,
     extendedDiagnostics: input.extendedDiagnostics,
+    holdingLinkValidationPolicy: input.holdingLinkValidationPolicy,
     message: "Client file validation failed.",
   };
 }
@@ -54,8 +71,69 @@ export type RunClientsImportOptions = {
   argv?: string[];
   ftpReader?: FtpReader;
   fileBytes?: Buffer;
+  employeeRosterBytes?: Buffer;
+  validationLimits?: ValidateClientsLimits;
   triggerSource?: ImportTriggerSource;
 };
+
+function buildValidationLimits(
+  cliOptions: ClientsImportCliOptions,
+  employeeRoster: WholesaleEmployeeRoster | null | undefined,
+  overrides: ValidateClientsLimits | undefined,
+  employeeRosterExplicit: boolean,
+): ValidateClientsLimits {
+  return {
+    ...overrides,
+    holdingLinkValidationPolicy:
+      overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
+    employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
+    employeeRosterExplicit: overrides?.employeeRosterExplicit ?? employeeRosterExplicit,
+    wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
+      ? "replacement_prep"
+      : overrides?.wholesaleCompositionMode ?? "standard",
+  };
+}
+
+async function buildCompositionPrepReportIfRequested(
+  cliOptions: ClientsImportCliOptions,
+  payload: import("./types").ValidatedClientsPayload,
+  databaseUrl: string | undefined,
+): Promise<ClientsImportResult["wholesaleCompositionPrep"]> {
+  if (!cliOptions.wholesaleCompositionPrep) {
+    return undefined;
+  }
+  if (!databaseUrl) {
+    return buildWholesaleCompositionPrepReport({
+      payload,
+      holdingLinkPolicy: payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
+      employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+      employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
+      wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
+      existing: unavailableCompositionContext(),
+    });
+  }
+
+  const pool = createImportPool(databaseUrl);
+  try {
+    const client = await pool.connect();
+    try {
+      const existing = await loadExistingCompositionContext(client);
+      return buildWholesaleCompositionPrepReport({
+        payload,
+        holdingLinkPolicy:
+          payload.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy ?? "tolerant",
+        employeeRosterLoaded: payload.extendedDiagnostics?.employeeDirectoryVerified === true,
+        employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
+        wholesaleEmployeeCount: payload.extendedDiagnostics?.wholesaleEmployeeCount ?? null,
+        existing,
+      });
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+  }
+}
 
 export async function runClientsImport(
   options: RunClientsImportOptions = {},
@@ -97,6 +175,46 @@ export async function runClientsImport(
     );
   }
 
+  let employeeRosterBytes = options.employeeRosterBytes;
+  if (cliOptions.employeeRosterFile) {
+    const rosterFromFile = readEmployeeRosterFileBytes(cliOptions.employeeRosterFile);
+    if (!rosterFromFile.ok) {
+      return sanitizeImportResult(
+        {
+          status: "ARGUMENT_ERROR",
+          mode: cliOptions.mode,
+          durationMs: Date.now() - startedAt,
+          security: "plain",
+          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+          message: CLI_ARGUMENT_ERROR_MESSAGES[rosterFromFile.code],
+          errorCode: rosterFromFile.code,
+        },
+        [],
+      );
+    }
+    employeeRosterBytes = rosterFromFile.bytes;
+  }
+
+  let parsedEmployeeRoster: WholesaleEmployeeRoster | undefined;
+  if (employeeRosterBytes != null) {
+    const rosterParse = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
+    if (!rosterParse.ok) {
+      return sanitizeImportResult(
+        {
+          status: "ARGUMENT_ERROR",
+          mode: cliOptions.mode,
+          durationMs: Date.now() - startedAt,
+          security: "plain",
+          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+          message: rosterParse.message,
+          errorCode: "EMPLOYEE_ROSTER_INVALID",
+        },
+        [],
+      );
+    }
+    parsedEmployeeRoster = rosterParse.roster;
+  }
+
   const secrets = [loadedConfig.config.password];
   let bytes: Buffer;
   if (options.fileBytes) {
@@ -123,7 +241,13 @@ export async function runClientsImport(
     bytes = ftpRead.bytes;
   }
 
-  const validated = validateClientsFileBytes(bytes);
+  const validationLimits = buildValidationLimits(
+    cliOptions,
+    parsedEmployeeRoster,
+    options.validationLimits,
+    employeeRosterBytes != null || cliOptions.employeeRosterFile != null,
+  );
+  const validated = validateClientsFileBytes(bytes, validationLimits);
   if (!validated.ok) {
     return sanitizeImportResult(
       validationFailedResult({
@@ -134,7 +258,8 @@ export async function runClientsImport(
         totalIssueCount: validated.issueCount,
         totalWarningCount: validated.warningCount,
         byteSize: bytes.length,
-        extendedDiagnostics: validated.extendedDiagnostics,
+        extendedDiagnostics: validated.extendedDiagnostics ?? undefined,
+        holdingLinkValidationPolicy: validationLimits.holdingLinkValidationPolicy,
         issueCodes: validated.issueCodes,
         warningCodes: validated.warningCodes,
         issuesTruncated: validated.issuesTruncated,
@@ -145,8 +270,21 @@ export async function runClientsImport(
   }
 
   const payload = validated.payload;
+  const verificationFingerprint = verificationFingerprintFromPayload({ payload });
+  const databaseUrl =
+    env.DATABASE_URL !== undefined
+      ? env.DATABASE_URL.trim() || undefined
+      : getDatabaseUrl() || undefined;
+  const wholesaleCompositionPrep = await buildCompositionPrepReportIfRequested(
+    cliOptions,
+    payload,
+    databaseUrl,
+  );
 
   if (cliOptions.mode === "dry_run") {
+    const prepSuffix = cliOptions.wholesaleCompositionPrep
+      ? " Wholesale composition prep report attached; no database writes."
+      : "";
     return sanitizeImportResult(
       {
         status: "SUCCESS",
@@ -160,7 +298,34 @@ export async function runClientsImport(
         warningCount: payload.warningCount,
         warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
         warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
-        message: "Client file validation succeeded (dry run; no database changes).",
+        extendedDiagnostics: payload.extendedDiagnostics,
+        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+        verificationFingerprint,
+        wholesaleCompositionPrep,
+        message: `Client file validation succeeded (dry run; no database changes).${prepSuffix}`,
+      },
+      secrets,
+    );
+  }
+
+  const prepApplyRejection = rejectWholesaleCompositionPrepApply({
+    wholesaleCompositionPrep: cliOptions.wholesaleCompositionPrep,
+    payload,
+  });
+  if (prepApplyRejection) {
+    return sanitizeImportResult(
+      {
+        status: "APPLY_BLOCKED",
+        mode: "apply",
+        durationMs: Date.now() - startedAt,
+        security: "plain",
+        transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+        sha256: payload.sha256,
+        byteSize: payload.byteSize,
+        recordCount: payload.recordCount,
+        message: prepApplyRejection.message,
+        errorCode: prepApplyRejection.code,
+        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
       },
       secrets,
     );
@@ -181,25 +346,6 @@ export async function runClientsImport(
     );
   }
 
-  if (payload.sha256 !== cliOptions.expectedSha256) {
-    return sanitizeImportResult(
-      {
-        status: "HASH_MISMATCH",
-        mode: "apply",
-        durationMs: Date.now() - startedAt,
-        security: "plain",
-        transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-        sha256: payload.sha256,
-        byteSize: payload.byteSize,
-        recordCount: payload.recordCount,
-        message: "Source file SHA-256 does not match --expected-sha256.",
-        errorCode: "HASH_MISMATCH",
-      },
-      secrets,
-    );
-  }
-
-  const databaseUrl = env.DATABASE_URL?.trim() || getDatabaseUrl();
   if (!databaseUrl) {
     return sanitizeImportResult(
       {
@@ -222,11 +368,19 @@ export async function runClientsImport(
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
+    expectedVerificationFingerprint: cliOptions.expectedSha256,
   });
   if (!applied.ok) {
+    const mappedErrorCode =
+      applied.code === "VERIFICATION_FINGERPRINT_MISMATCH"
+        ? "HASH_MISMATCH"
+        : applied.code === "VERIFICATION_FINGERPRINT_REQUIRED" ||
+            applied.code === "VERIFICATION_PARAMETERS_MISMATCH"
+          ? "ARGUMENT_ERROR"
+          : applied.code;
     return sanitizeImportResult(
       {
-        status: applied.code,
+        status: mappedErrorCode,
         mode: "apply",
         durationMs: Date.now() - startedAt,
         security: "plain",
@@ -235,7 +389,7 @@ export async function runClientsImport(
         byteSize: payload.byteSize,
         recordCount: payload.recordCount,
         message: applied.message,
-        errorCode: applied.code,
+        errorCode: mappedErrorCode,
         apply: applied.runId ? { runId: applied.runId } : undefined,
       },
       secrets,
@@ -270,7 +424,6 @@ export async function runClientsImport(
     applyMessage =
       "Client import applied with legacy fields; some extended records were skipped.";
   }
-
   return sanitizeImportResult(
     {
       status: "SUCCESS",
@@ -284,6 +437,9 @@ export async function runClientsImport(
       warningCount: payload.warningCount,
       warnings: payload.warnings.slice(0, MAX_DETAILED_WARNINGS),
       warningsTruncated: payload.warningCount > MAX_DETAILED_WARNINGS,
+      extendedDiagnostics: payload.extendedDiagnostics,
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      wholesaleCompositionPrep,
       message: applyMessage,
       cleanupWarning: applied.cleanupWarning,
       apply: {

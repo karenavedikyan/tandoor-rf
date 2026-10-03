@@ -148,6 +148,9 @@ function loadingTimeImportState(loading: ParsedOutletLoading): string {
 }
 
 function dateOfBirthImportState(lpr: ParsedOutletLpr): string {
+  if (lpr.dateOfBirthExplicitEmpty) {
+    return "explicit_empty";
+  }
   if (lpr.dateOfBirthAmbiguous) {
     return "ambiguous";
   }
@@ -350,6 +353,18 @@ function mergeLprField(
   previousOutlet: ParsedRetailOutlet | undefined,
   context: OutletMergeContext,
 ): ParsedOutletLpr {
+  if (incoming.dateOfBirthExplicitEmpty) {
+    return {
+      ...incoming,
+      dateOfBirth: null,
+      dateOfBirthAmbiguous: false,
+      dateOfBirthExplicitEmpty: true,
+      dateOfBirthAmbiguousIncomingRaw: null,
+      dateOfBirthConfirmedInCurrentExport: true,
+      dateOfBirthFieldProvenance: currentProvenance(context),
+    };
+  }
+
   if (incoming.dateOfBirthAmbiguous) {
     if (previousDateOfBirthHasConfirmedValue(previous)) {
       return {

@@ -200,6 +200,7 @@ export type DateOfBirthFieldPresence =
   | { kind: "null_value" }
   | { kind: "empty" }
   | { kind: "value"; value: string; sourceRaw?: string }
+  | { kind: "explicit_empty"; sourceRaw?: string }
   | { kind: "ambiguous"; sourceRaw?: string }
   | { kind: "invalid_type" };
 
@@ -222,7 +223,7 @@ export function readDateOfBirthField(value: unknown): DateOfBirthFieldPresence {
   const sourceRaw = trimmed;
 
   if (trimmed === "0001-01-01T00:00:00") {
-    return { kind: "ambiguous", sourceRaw };
+    return { kind: "explicit_empty", sourceRaw };
   }
 
   if (/[Zz]$/.test(trimmed) || /[+-]\d{2}:\d{2}$/.test(trimmed)) {

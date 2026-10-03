@@ -21,8 +21,23 @@ function buildManyUnknownHoldingLinks(count: number) {
 }
 
 describe("extended validation diagnostics on failure", () => {
-  it("returns full aggregates and codes when issue examples are truncated", () => {
+  it("returns full warning aggregates and codes when tolerant examples are truncated", () => {
     const result = validateExtendedClientsFileBytes(buildManyUnknownHoldingLinks(60));
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.ok(result.payload.warningCount > MAX_DETAILED_WARNINGS);
+    assert.equal(result.payload.warnings.length, MAX_DETAILED_WARNINGS);
+    assert.equal(result.payload.warningsTruncated, true);
+    assert.equal(result.payload.diagnostics?.holdingGuidUnknownCount, 60);
+    assert.equal(result.payload.diagnostics?.holdingLinkUnresolvedCount, 60);
+    assert.ok(result.payload.warningCodes?.includes("HOLDING_GUID_UNKNOWN"));
+    assert.ok(result.payload.warningCodes?.includes("EMPLOYEE_DIRECTORY_UNAVAILABLE"));
+  });
+
+  it("returns full issue aggregates under strict holding policy", () => {
+    const result = validateExtendedClientsFileBytes(buildManyUnknownHoldingLinks(60), {
+      holdingLinkValidationPolicy: "strict",
+    });
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.issueCount, 60);
@@ -62,17 +77,17 @@ describe("extended validation diagnostics on failure", () => {
     assert.equal(result.payload.warnings.length, MAX_DETAILED_WARNINGS);
     assert.equal(result.payload.warningsTruncated, true);
     assert.ok(result.payload.warningCodes?.includes("AMBIGUOUS_LOADING_TIME"));
-    assert.ok(result.payload.warningCodes?.includes("AMBIGUOUS_DATE_OF_BIRTH"));
+    assert.ok(result.payload.warningCodes?.includes("EXPLICIT_EMPTY_DATE_OF_BIRTH"));
     assert.ok(result.payload.warningCodes?.includes("OUTLETS_NOT_NORMALIZED"));
   });
 
-  it("exposes diagnostics through readonly extended structure report on failed validation", () => {
+  it("exposes strict-policy diagnostics through readonly extended structure report", () => {
     const bytes = buildManyUnknownHoldingLinks(55);
     const report = buildExtendedStructureReport(bytes);
-    assert.equal(report.validation.ok, false);
-    assert.equal(report.validation.issueCount, 55);
-    assert.equal(report.validation.issuesTruncated, true);
+    assert.equal(report.validation.ok, true);
+    assert.ok(report.validation.warningCount > MAX_DETAILED_WARNINGS);
     assert.equal(report.diagnostics?.holdingGuidUnknownCount, 55);
-    assert.deepEqual(report.validation.issueCodes, ["HOLDING_GUID_UNKNOWN"]);
+    assert.equal(report.diagnostics?.holdingLinkValidationPolicy, "tolerant");
+    assert.ok(report.validation.warningCodes.includes("HOLDING_GUID_UNKNOWN"));
   });
 });

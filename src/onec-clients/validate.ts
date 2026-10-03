@@ -52,7 +52,13 @@ export function validateClientsFileBytes(
   if (payload.sourceFormat === "legacy") {
     return {
       ok: true,
-      payload: toLegacyValidatedPayload(payload),
+      payload: {
+        ...toLegacyValidatedPayload(payload),
+        extendedDiagnostics: payload.diagnostics,
+        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+        employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
+        wholesaleCompositionMode: payload.wholesaleCompositionMode,
+      },
     };
   }
 
@@ -64,6 +70,9 @@ export function validateClientsFileBytes(
       extendedRecords: payload.records,
       extendedDiagnostics: payload.diagnostics,
       extendedContractVerification: payload.extendedContractVerification ?? limits?.extendedContractVerification ?? "unverified",
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
+      wholesaleCompositionMode: payload.wholesaleCompositionMode,
     },
   };
 }

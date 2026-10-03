@@ -48,6 +48,20 @@ describe("onec clients cli args", () => {
     }
   });
 
+  it("rejects apply with wholesale composition prep", () => {
+    const hash = buildClientsFileSha256([sampleClient()]);
+    const parsed = parseClientsImportCliArgs([
+      "--apply",
+      "--expected-sha256",
+      hash,
+      "--wholesale-composition-prep",
+    ]);
+    assert.equal(parsed.ok, false);
+    if (!parsed.ok) {
+      assert.equal(parsed.code, "APPLY_WITH_WHOLESALE_COMPOSITION_PREP");
+    }
+  });
+
   it("accepts apply with valid sha256", () => {
     const hash = buildClientsFileSha256([sampleClient()]);
     const parsed = parseClientsImportCliArgs(["--apply", "--expected-sha256", hash]);

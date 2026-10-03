@@ -8,8 +8,7 @@ import { getCommittedSnapshotSha } from "../../src/onec-exchange/state";
 import {
   buildClientsFileBytes,
   buildClientsFileSha256,
-  sampleClient,
-} from "../helpers/onec-clients-fixtures";
+  sampleClient, applyClientsImportVerified} from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 function validatedPayload(bytes: Buffer) {
@@ -73,7 +72,7 @@ describe("onec exchange apply atomicity", { concurrency: false }, () => {
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "Atomic Client" })]);
     const payload = validatedPayload(bytes);
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl,
       payload,
       testHooks: { failExchangeStateUpdate: true },
@@ -105,9 +104,9 @@ describe("onec exchange apply atomicity", { concurrency: false }, () => {
     const shaB = buildClientsFileSha256(JSON.parse(bytesB.toString("utf8")));
     const payloadA = validatedPayload(bytesA);
 
-    await applyClientsImport({ databaseUrl, payload: payloadA });
+    await applyClientsImportVerified({ databaseUrl, payload: payloadA });
 
-    const uncertain = await applyClientsImport({
+    const uncertain = await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesB),
       expectedCommittedSha256: shaA,
@@ -123,7 +122,7 @@ describe("onec exchange apply atomicity", { concurrency: false }, () => {
     );
     assert.equal(blocked.rows[0]?.apply_blocked, true);
 
-    const blockedApply = await applyClientsImport({
+    const blockedApply = await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesB),
       expectedCommittedSha256: shaA,
@@ -153,7 +152,7 @@ describe("onec exchange apply atomicity", { concurrency: false }, () => {
       client.release();
     }
 
-    const recovered = await applyClientsImport({
+    const recovered = await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesB),
       expectedCommittedSha256: shaA,
@@ -184,7 +183,7 @@ describe("onec exchange apply atomicity", { concurrency: false }, () => {
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "Aligned Snapshot" })]);
     const payload = validatedPayload(bytes);
 
-    const result = await applyClientsImport({ databaseUrl, payload });
+    const result = await applyClientsImportVerified({ databaseUrl, payload });
     assert.equal(result.ok, true);
 
     const client = await pool.connect();

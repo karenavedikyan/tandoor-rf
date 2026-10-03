@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import { classifyDeadlineGroup, getMskTodayKey } from "../../src/work/deadline-groups";
 import request from "supertest";
 import { Pool } from "pg";
 import type { Pool as PgPool } from "pg";
@@ -30,6 +31,10 @@ const CLIENT_TWO = "22222222-2222-4222-8222-222222222222";
 const MANAGER_A = "33333333-3333-4333-8333-333333333333";
 const MANAGER_B = "44444444-4444-4444-8444-444444444444";
 const ASSISTANT_EMP = "55555555-5555-4555-8555-555555555555";
+/** Noon MSK on the current calendar day — stable deadline grouping near midnight. */
+function fixedWorkQueueNoonMskMs(): number {
+  return Date.parse(`${getMskTodayKey()}T12:00:00+03:00`);
+}
 
 function authHeaders(cookie?: string): Record<string, string> {
   const headers: Record<string, string> = { Origin: ORIGIN };
@@ -130,6 +135,7 @@ describe("my work queue integration", { concurrency: false }, () => {
 
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
+    delete process.env.WORK_QUEUE_FIXED_NOW_MS;
     process.env.BITRIX24_ENABLED = "true";
     process.env.BITRIX24_WEBHOOK_URL = sampleWebhookConfig().webhookBaseUrl;
     process.env.BITRIX24_CACHE_PUBLISH_ENABLED = "true";
@@ -391,6 +397,8 @@ describe("my work queue integration", { concurrency: false }, () => {
   });
 
   it("keeps all five deadline counters with open list and completed chip", async () => {
+    const previousFixedNow = process.env.WORK_QUEUE_FIXED_NOW_MS;
+    process.env.WORK_QUEUE_FIXED_NOW_MS = String(fixedWorkQueueNoonMskMs());
     const manager = await createTestUser({
       databaseUrl,
       email: "mgr-counts@example.com",
@@ -404,12 +412,11 @@ describe("my work queue integration", { concurrency: false }, () => {
       employeeId: MANAGER_A,
       confirmedByUserId: manager.id,
     });
-    const todayKey = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Moscow",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const nowMs = fixedWorkQueueNoonMskMs();
+    const todayKey = getMskTodayKey(nowMs);
+    const todayDeadline = `${todayKey}T15:00:00+03:00`;
+    assert.equal(classifyDeadlineGroup("open", todayDeadline, nowMs), "today");
+
     await seedTask({
       taskId: "91003",
       title: "Overdue task",
@@ -422,7 +429,7 @@ describe("my work queue integration", { concurrency: false }, () => {
       title: "Today task",
       responsibleBitrixUserId: "42",
       responsibleUserId: manager.id,
-      deadline: `${todayKey}T18:00:00+03:00`,
+      deadline: todayDeadline,
     });
     await seedTask({
       taskId: "91004b",
@@ -452,6 +459,12 @@ describe("my work queue integration", { concurrency: false }, () => {
     const backOpen = await request(app).get("/api/work/tasks?status=open").set(authHeaders(cookie));
     assert.equal(backOpen.body.counts.completed, 1);
     assert.equal(backOpen.body.total, 2);
+
+    if (previousFixedNow === undefined) {
+      delete process.env.WORK_QUEUE_FIXED_NOW_MS;
+    } else {
+      process.env.WORK_QUEUE_FIXED_NOW_MS = previousFixedNow;
+    }
   });
 
   it("paginates with stable ordering", async () => {

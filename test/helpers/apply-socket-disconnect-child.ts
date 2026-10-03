@@ -1,6 +1,5 @@
-import { applyClientsImport } from "../../src/onec-clients/apply";
 import { validateClientsFileBytes } from "../../src/onec-clients/validate";
-import { buildClientsFileBytes, sampleClient, sampleClientTwo } from "./onec-clients-fixtures";
+import { buildClientsFileBytes, sampleClient, sampleClientTwo, applyClientsImportVerified } from "./onec-clients-fixtures";
 
 process.on("uncaughtException", () => {
   process.exit(2);
@@ -28,7 +27,7 @@ async function main(): Promise<void> {
     process.exit(5);
   }
 
-  const result = await applyClientsImport({
+  const result = await applyClientsImportVerified({
     databaseUrl,
     payload: validated.payload,
     testHooks: {

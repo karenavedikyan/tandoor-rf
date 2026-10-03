@@ -544,7 +544,7 @@ describe("outlet identity merge", () => {
     assert.notDeepEqual(outletBusinessProjection(left), outletBusinessProjection(right));
   });
 
-  it("preserves confirmed loading time and date of birth when incoming values are ambiguous", () => {
+  it("preserves confirmed loading time on ambiguous sentinel but clears DOB on explicit empty sentinel", () => {
     const previous = outlet({
       loading: {
         ...outlet().loading,
@@ -581,8 +581,9 @@ describe("outlet identity merge", () => {
         ...outlet().lpr,
         dateOfBirth: null,
         dateOfBirthSourceRaw: "0001-01-01T00:00:00",
-        dateOfBirthAmbiguous: true,
-        dateOfBirthConfirmedInCurrentExport: false,
+        dateOfBirthExplicitEmpty: true,
+        dateOfBirthAmbiguous: false,
+        dateOfBirthConfirmedInCurrentExport: true,
       },
     });
     const merged = mergeRetailOutletsWithIdentity([incoming], "present", [previous], {
@@ -595,13 +596,13 @@ describe("outlet identity merge", () => {
     assert.equal(result?.loading.loadingTimeConfirmedInCurrentExport, false);
     assert.equal(result?.loading.loadingTimeFieldProvenance?.sourceSha256, "sha-a");
     assert.equal(result?.loading.loadingTimeFieldProvenance?.freshness, "preserved_from_previous");
-    assert.equal(result?.lpr.dateOfBirth, "1980-05-01");
-    assert.equal(result?.lpr.dateOfBirthAmbiguousIncomingRaw, "0001-01-01T00:00:00");
-    assert.equal(result?.lpr.dateOfBirthConfirmedInCurrentExport, false);
-    assert.equal(result?.lpr.dateOfBirthFieldProvenance?.freshness, "preserved_from_previous");
+    assert.equal(result?.lpr.dateOfBirth, null);
+    assert.equal(result?.lpr.dateOfBirthExplicitEmpty, true);
+    assert.equal(result?.lpr.dateOfBirthConfirmedInCurrentExport, true);
+    assert.equal(result?.lpr.dateOfBirthFieldProvenance?.freshness, "current");
   });
 
-  it("preserves confirmed values through repeated ambiguous snapshots A→B→C and accepts D", () => {
+  it("preserves loading time through A→B→C ambiguous snapshots, clears DOB on explicit empty, accepts D", () => {
     const confirmed = outlet({
       loading: {
         ...outlet().loading,
@@ -637,7 +638,9 @@ describe("outlet identity merge", () => {
         ...outlet().lpr,
         dateOfBirth: null,
         dateOfBirthSourceRaw: "0001-01-01T00:00:00",
-        dateOfBirthAmbiguous: true,
+        dateOfBirthExplicitEmpty: true,
+        dateOfBirthAmbiguous: false,
+        dateOfBirthConfirmedInCurrentExport: true,
       },
     });
     const afterB = mergeRetailOutletsWithIdentity([ambiguous], "present", [confirmed], {
@@ -649,9 +652,10 @@ describe("outlet identity merge", () => {
       importedAt: "2026-01-03T00:00:00.000Z",
     }).outlets[0]!;
     assert.equal(afterC.loading.loadingTime, "09:00");
-    assert.equal(afterC.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(afterC.lpr.dateOfBirth, null);
+    assert.equal(afterC.lpr.dateOfBirthExplicitEmpty, true);
     assert.equal(afterC.loading.loadingTimeFieldProvenance?.sourceSha256, "sha-a");
-    assert.equal(afterC.lpr.dateOfBirthFieldProvenance?.sourceSha256, "sha-a");
+    assert.equal(afterC.lpr.dateOfBirthFieldProvenance?.sourceSha256, "sha-c");
     assert.equal(afterC.loading.loadingTimeFieldProvenance?.freshness, "preserved_from_previous");
 
     const updated = outlet({
@@ -697,7 +701,12 @@ describe("outlet identity merge", () => {
     });
     const explicitEmpty = outlet({
       loading: { ...outlet().loading, loadingTime: null, loadingTimeAmbiguous: false },
-      lpr: { ...outlet().lpr, dateOfBirth: null, dateOfBirthAmbiguous: false },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: null,
+        dateOfBirthAmbiguous: false,
+        dateOfBirthExplicitEmpty: true,
+      },
     });
     assert.equal(outletDuplicateRowsEquivalent(ambiguous, explicitEmpty), false);
     assert.equal(outletsAreIdentical(ambiguous, explicitEmpty), true);

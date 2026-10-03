@@ -8,8 +8,7 @@ import { validateClientsFileBytes } from "../../src/onec-clients/validate";
 import {
   buildClientsFileBytes,
   buildClientsFileSha256,
-  sampleClient,
-} from "../helpers/onec-clients-fixtures";
+  sampleClient, applyClientsImportVerified} from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 const env = {
@@ -79,7 +78,7 @@ describe("scheduled exchange concurrency", { concurrency: false }, () => {
     const reader = async () => {
       reads += 1;
       if (reads === 2) {
-        const manual = await applyClientsImport({
+        const manual = await applyClientsImportVerified({
           databaseUrl,
           payload: payloadB,
           triggerSource: "manual",
@@ -108,12 +107,12 @@ describe("scheduled exchange concurrency", { concurrency: false }, () => {
     const bytesC = buildClientsFileBytes([sampleClient({ name_client: "Snapshot C" })]);
     const shaB = buildClientsFileSha256(JSON.parse(bytesB.toString("utf8")));
 
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesB),
       triggerSource: "manual",
     });
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesC),
       triggerSource: "manual",
@@ -122,7 +121,7 @@ describe("scheduled exchange concurrency", { concurrency: false }, () => {
     const client = await pool.connect();
     assert.equal(await tryAcquireImportLock(client), true);
     try {
-      const result = await applyClientsImport({
+      const result = await applyClientsImportVerified({
         client,
         payload: validatedPayload(bytesA),
         lockAlreadyHeld: true,
@@ -150,12 +149,12 @@ describe("scheduled exchange concurrency", { concurrency: false }, () => {
     const shaA = buildClientsFileSha256(JSON.parse(bytesA.toString("utf8")));
     const shaB = buildClientsFileSha256(JSON.parse(bytesB.toString("utf8")));
 
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesA),
       triggerSource: "manual",
     });
-    await applyClientsImport({
+    await applyClientsImportVerified({
       databaseUrl,
       payload: validatedPayload(bytesB),
       triggerSource: "manual",

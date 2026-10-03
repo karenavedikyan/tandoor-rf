@@ -1,4 +1,13 @@
+import { applyClientsImport } from "../../src/onec-clients/apply";
+import { DEFAULT_HOLDING_LINK_VALIDATION_POLICY } from "../../src/onec-clients/holding-link-policy";
+import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
+import {
+  computeImportVerificationFingerprint,
+  verificationFingerprintFromPayload,
+} from "../../src/onec-clients/import-verification-fingerprint";
 import { sha256Hex } from "../../src/onec-clients/sha256";
+import type { ValidatedClientsPayload } from "../../src/onec-clients/types";
+import type { HoldingLinkValidationPolicy } from "../../src/onec-clients/holding-link-policy";
 
 export function sampleClient(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -34,4 +43,48 @@ export function buildClientsFileBytes(clients: Record<string, unknown>[]): Buffe
 
 export function buildClientsFileSha256(clients: Record<string, unknown>[]): string {
   return sha256Hex(buildClientsFileBytes(clients));
+}
+
+export function expectedVerificationForPayload(payload: ValidatedClientsPayload): string {
+  return verificationFingerprintFromPayload({ payload });
+}
+
+export type ApplyClientsImportVerifiedOptions = Omit<
+  Parameters<typeof applyClientsImport>[0],
+  "expectedVerificationFingerprint"
+> & {
+  expectedVerificationFingerprint?: string;
+};
+
+export async function applyClientsImportVerified(options: ApplyClientsImportVerifiedOptions) {
+  const { expectedVerificationFingerprint: explicitFingerprint, ...rest } = options;
+  return applyClientsImport({
+    ...rest,
+    expectedVerificationFingerprint:
+      explicitFingerprint ?? verificationFingerprintFromPayload({ payload: options.payload }),
+  });
+}
+
+export function buildImportVerificationFingerprint(
+  clients: Record<string, unknown>[],
+  options?: {
+    holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
+    employeeRosterBytes?: Buffer;
+    wholesaleCompositionPrep?: boolean;
+  },
+): string {
+  let employeeRosterSourceSha256: string | null = null;
+  if (options?.employeeRosterBytes) {
+    const parsed = parseWholesaleEmployeeRosterBytes(options.employeeRosterBytes);
+    if (parsed.ok) {
+      employeeRosterSourceSha256 = parsed.roster.sourceSha256;
+    }
+  }
+  return computeImportVerificationFingerprint({
+    clientsSha256: buildClientsFileSha256(clients),
+    holdingLinkValidationPolicy:
+      options?.holdingLinkValidationPolicy ?? DEFAULT_HOLDING_LINK_VALIDATION_POLICY,
+    employeeRosterSourceSha256,
+    wholesaleCompositionMode: options?.wholesaleCompositionPrep ? "replacement_prep" : "standard",
+  });
 }

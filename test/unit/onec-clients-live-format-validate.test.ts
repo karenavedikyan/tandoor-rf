@@ -42,10 +42,10 @@ describe("live 1C clients format validation", () => {
     assert.equal(outlet?.loading.loadingTimeSourceRaw, "0001-01-01T09:30:00");
     assert.equal(outlet?.lpr.bonus, "12.5");
     assert.equal(outlet?.lpr.dateOfBirth, null);
-    assert.equal(outlet?.lpr.dateOfBirthAmbiguous, true);
-    assert.equal(result.payload.diagnostics.ambiguousDateOfBirthCount, 1);
+    assert.equal(outlet?.lpr.dateOfBirthExplicitEmpty, true);
+    assert.equal(result.payload.diagnostics.explicitEmptyDateOfBirthCount, 1);
     assert.ok(result.payload.warnings.some((w) => w.code === "LOAD_TIME_FORMAT_ADAPTED"));
-    assert.ok(result.payload.warnings.some((w) => w.code === "AMBIGUOUS_DATE_OF_BIRTH"));
+    assert.ok(result.payload.warnings.some((w) => w.code === "EXPLICIT_EMPTY_DATE_OF_BIRTH"));
   });
 
   it("treats null UUID with empty name as unassigned on outlet managers", () => {
@@ -102,10 +102,19 @@ describe("live 1C clients format validation", () => {
         guid_holding: "99999999-9999-4999-8999-999999999999",
       }),
     ]);
-    const unknown = validateExtendedClientsFileBytes(unknownBytes);
-    assert.equal(unknown.ok, false);
-    if (!unknown.ok) {
-      assert.ok(unknown.issues.some((issue) => issue.code === "HOLDING_GUID_UNKNOWN"));
+    const unknownTolerant = validateExtendedClientsFileBytes(unknownBytes);
+    assert.equal(unknownTolerant.ok, true);
+    if (unknownTolerant.ok) {
+      assert.ok(unknownTolerant.payload.warnings.some((warning) => warning.code === "HOLDING_GUID_UNKNOWN"));
+      assert.equal(unknownTolerant.payload.records[1]?.holdingLinkState, "unresolved");
+    }
+
+    const unknownStrict = validateExtendedClientsFileBytes(unknownBytes, {
+      holdingLinkValidationPolicy: "strict",
+    });
+    assert.equal(unknownStrict.ok, false);
+    if (!unknownStrict.ok) {
+      assert.ok(unknownStrict.issues.some((issue) => issue.code === "HOLDING_GUID_UNKNOWN"));
     }
 
     const rejectedBytes = buildExtendedClientsFileBytes([

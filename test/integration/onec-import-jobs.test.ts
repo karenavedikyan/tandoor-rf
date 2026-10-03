@@ -4,7 +4,7 @@ import { Pool } from "pg";
 import type { FtpReader } from "../onec-clients/ftp-read";
 import {
   buildClientsFileBytes,
-  buildClientsFileSha256,
+  buildImportVerificationFingerprint,
   sampleClient,
 } from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
@@ -108,7 +108,7 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
 
     reads = 0;
     await pool.query("TRUNCATE onec_import_jobs RESTART IDENTITY CASCADE");
-    const validSha = buildClientsFileSha256([sampleClient()]);
+    const validSha = buildImportVerificationFingerprint([sampleClient()]);
     await pool.query(
       `
         INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)

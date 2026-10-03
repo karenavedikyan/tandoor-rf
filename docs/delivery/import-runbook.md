@@ -10,7 +10,7 @@
 - Источник — **только** согласованный plain FTP `gw.toopatch.ru`, базовый путь `/LC`, файл `clients/all_clients.json`.
 - Максимальный размер файла — **32 MiB** по фактически прочитанным байтам (не только размер из FTP LIST); прежний лимит 10 MiB блокировал live-выгрузку ~21 MiB (03.10.2026).
 - Секреты — только в env TW; не в Git, не в SQL-заданиях, не в HTTP.
-- **Dry-run по умолчанию.** Apply требует `--expected-sha256` (CLI) или `expected_sha256` в задании БД.
+- **Dry-run по умолчанию.** Apply требует `--expected-sha256` — **verification fingerprint** из dry-run (clients SHA + roster SHA или явное отсутствие roster + holding policy + режим), не только hash файла клиентов.
 - Apply **не удаляет** отсутствующих клиентов; уменьшение числа записей блокируется (`RECORD_COUNT_DECREASED`); исчезновение ранее известных GUID при том же count — `GUID_SET_SHRINK`.
 - Расширенный `extended_v1` (холдинг boolean, `retail_outlets`, доп. ответственные): dry-run/apply через **тот же** pipeline; migrations `024`–`026` (`onec_retail_outlets` для подтверждённых `guid_store`). ТТ без `guid_store` — read-only snapshot; с `guid_store`+`closed` — registry и UI статусов, **без** записи дистрибуции. Перед production-import: dry-run + extended structure report; live JSON ещё не подтверждён — `extendedApplied=false`. Legacy-снимок **не очищает** расширение; выставляет `extended_freshness_state=preserved_from_previous`. Сопоставление ТТ между выгрузками по ordinal **запрещено**. Отсутствующие ключи в новом снимке **не очищают** ранее применённые блоки. Production apply публикует только legacy-поля, пока live JSON не подтверждён (`extendedApplied=false`, `extendedBlockReason=awaiting_live_json_verification`); синтетические тесты — `validateClientsForApplyTest()`.
 - Scheduled exchange: два последовательных чтения с совпадающим SHA; apply использует **проверенные байты**, без третьего скачивания.
@@ -62,7 +62,7 @@
 2. Оператор сохраняет `sha256` из JSON-отчёта.
 3. **Apply** (только после review и резервной копии):
    ```bash
-   node dist/cli/onec-clients-import.js --apply --expected-sha256 <64-char-hex>
+   node dist/cli/onec-clients-import.js --apply --expected-sha256 <verification-fingerprint-from-dry-run>
    ```
 4. Проверка журнала:
    ```sql
@@ -162,17 +162,36 @@
    ```bash
    node dist/cli/onec-clients-import.js --dry-run
    ```
-2. Review JSON-отчёт: `sha256`, counts, `holdingGuidUnknownCount`, `holdingGuidRejectedCount`, `ambiguousLoadingTimeCount`, `ambiguousDateOfBirthCount`, warnings адаптации форматов.
+2. Review JSON-отчёт: `sha256`, counts, `holdingLinkValidationPolicy`, `holdingGuidUnknownCount`, `holdingLinkUnresolvedCount`, `holdingGuidRejectedCount`, `ambiguousLoadingTimeCount`, `explicitEmptyDateOfBirthCount`, `managersOutsideWholesaleRosterCount`, warnings адаптации форматов.
 3. Убедиться, что **не** ожидается автоматический apply расширения — legacy-поля могут применяться по прежним правилам только после отдельного согласования.
 4. Зафиксировать оставшиеся блокировки: битые ссылки `guid_holding`, отсутствие `guid_store`/`closed`, неподтверждённые GUID сотрудников.
 5. Только после письменного подтверждения контракта 1С — рассмотреть `extendedContractVerification` (отдельный PR/решение; **не** в scope текущей адаптации).
 
+### Политика холдингов и оптовый состав (03.10.2026+)
+
+```bash
+# dry-run с оптовым roster и отчётом подготовки замены (только проверка, без apply)
+node dist/cli/onec-clients-import.js --dry-run \
+  --holding-link-policy=tolerant \
+  --employee-roster /path/to/all_employees.json \
+  --wholesale-composition-prep
+```
+
+- **`tolerant` (default):** отсутствующий родитель `guid_holding` → warning, связь `unresolved`, import не блокируется.
+- **`strict`:** отсутствующий родитель → блокирующая ошибка (для контрольных прогонов).
+- **`--wholesale-composition-prep`:** **только dry-run**. С `--apply` CLI возвращает ошибку до любых бизнес-записей; прямой вызов apply/worker также отклоняется. Отчёт показывает add/keep/exclude, неразрешённые холдинги, назначения вне roster и зависимости исключаемых записей; сокращение старого состава интерпретируется как **согласованная смена эталона**, а не требование вернуть legacy-записи. **Не** разрешает запись или удаление данных.
+- **Применение нового оптового состава** — отдельная контролируемая процедура после review prep-отчёта; обычный apply сохраняет `RECORD_COUNT_DECREASED` / `GUID_SET_SHRINK`.
+- Roster: `/LC/clients/all_employees.json` (контракт `guid_manager`, `name_manager`, …; файл уже отфильтрован по «Продажи ОПТ»); невалидные записи и дубликаты → ошибка; пустой roster → warning `EMPLOYEE_ROSTER_EMPTY`, не считается подтверждённым составом; GUID вне roster → `outside_wholesale_roster`.
+- `holding-link-policy` и SHA roster фиксируются в payload/diagnostics и одинаково применяются при validation и dry-run.
+
 ### Что адаптация **не** снимает
 
-- `HOLDING_GUID_UNKNOWN` / `HOLDING_GUID_REJECTED` — apply расширения блокируется.
+- `HOLDING_GUID_REJECTED`, циклы, самоссылки, `HOLDING_TARGET_NOT_HOLDING_CARD` — apply блокируется.
+- В режиме `strict` — также `HOLDING_GUID_UNKNOWN`.
 - Отсутствие `guid_store` — ТТ остаются read-only snapshot без registry.
-- Неоднозначные `0001-01-01T00:00:00` (время/дата рождения) — не публикуются как подтверждённые значения.
-- GUID сотрудников вне `all_employees.json` — `directory_unverified`, без автоматических прав.
+- Неоднозначный `loading_time` sentinel `0001-01-01T00:00:00` — не публикуется как `00:00`.
+- GUID сотрудников вне оптового roster — без автоматических прав и аккаунтов.
+- Production apply расширения — по-прежнему `extendedApplied=false` до live-приёмки.
 
 Подробности форматов: [clients-field-contract.md §3.2](./clients-field-contract.md).
 

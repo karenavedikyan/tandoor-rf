@@ -1,3 +1,4 @@
+import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
 import type { ClientScopeSql } from "./types";
 
@@ -67,6 +68,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
           SELECT guid_client
           FROM onec_clients
           WHERE guid_manager = $1::uuid
+            AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
         `,
         [context.employeeId!],
       );
@@ -78,7 +80,8 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
         `
           SELECT oc.guid_client
           FROM onec_clients oc
-          WHERE oc.guid_manager IN (
+          WHERE ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL.replaceAll("onec_clients.", "oc.")}
+            AND oc.guid_manager IN (
             SELECT uoel.employee_id
             FROM rop_team_members rtm
             JOIN user_onec_employee_links uoel
@@ -133,6 +136,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
               JOIN users delegator ON delegator.id = d.delegator_user_id
               WHERE oc.guid_client = dc.guid_client
                 AND oc.guid_manager = uoel.employee_id
+                AND COALESCE(oc.manager_roster_state, 'in_wholesale_roster') <> 'outside_wholesale_roster'
                 AND delegator.status = 'active'
                 AND delegator.role IN ('manager', 'rop')
                 AND NOT EXISTS (

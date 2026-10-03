@@ -8,8 +8,7 @@ import { getCommittedSnapshotSha } from "../../src/onec-exchange/state";
 import {
   buildClientsFileBytes,
   buildClientsFileSha256,
-  sampleClient,
-} from "../helpers/onec-clients-fixtures";
+  sampleClient, applyClientsImportVerified} from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 function validatedPayload(bytes: Buffer) {
@@ -75,7 +74,7 @@ describe("onec exchange state bootstrap on existing database", { concurrency: fa
     const shaA = buildClientsFileSha256(JSON.parse(bytesA.toString("utf8")));
     const shaB = buildClientsFileSha256(JSON.parse(bytesB.toString("utf8")));
 
-    await applyClientsImport({ databaseUrl, payload: validatedPayload(bytesA) });
+    await applyClientsImportVerified({ databaseUrl, payload: validatedPayload(bytesA) });
 
     await pool.query(`
       UPDATE onec_exchange_state

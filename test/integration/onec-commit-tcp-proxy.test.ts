@@ -10,6 +10,8 @@ import {
   buildClientsFileBytes,
   buildClientsFileSha256,
   sampleClient,
+  applyClientsImportVerified,
+  buildImportVerificationFingerprint,
 } from "../helpers/onec-clients-fixtures";
 import {
   buildProxiedDatabaseUrl,
@@ -94,7 +96,7 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "TCP Commit Success" })]);
     const payload = validatedPayload(bytes);
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl: proxiedUrl,
       payload,
     });
@@ -132,7 +134,7 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "TCP Commit Lost" })]);
     const payload = validatedPayload(bytes);
 
-    const result = await applyClientsImport({
+    const result = await applyClientsImportVerified({
       databaseUrl: proxiedUrl,
       payload,
     });
@@ -252,7 +254,9 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
   it("propagates TCP commit-response recovery through operator apply job via proxied env", async () => {
     const proxiedUrl = await startProxy("drop_commit_response");
     const bytes = buildClientsFileBytes([sampleClient({ name_client: "Operator TCP Success" })]);
-    const sha = buildClientsFileSha256(JSON.parse(bytes.toString("utf8")));
+    const clients = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>[];
+    const sha = buildClientsFileSha256(clients);
+    const verificationFingerprint = buildImportVerificationFingerprint(clients);
 
     const jobPool = new Pool({ connectionString: proxiedUrl, max: 1 });
     try {
@@ -261,7 +265,7 @@ describe("commit TCP proxy recovery", { concurrency: false }, () => {
           INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)
           VALUES ('apply', $1, NOW() + INTERVAL '1 hour')
         `,
-        [sha],
+        [verificationFingerprint],
       );
 
       const reader = async () => ({

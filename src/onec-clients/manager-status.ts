@@ -1,5 +1,6 @@
 import type { FieldPresenceState } from "./extended-presence";
 import { isEmptyOrValidNonZeroUuid, isNullUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import type { WholesaleEmployeeRoster } from "./employee-roster";
 import type { ManagerAssignmentState, ParsedManagerRef } from "./extended-types";
 
 export type ManagerFieldParseResult =
@@ -143,12 +144,54 @@ export function parseManagerRef(
   };
 }
 
+export function applyWholesaleEmployeeRosterToRef(
+  ref: ParsedManagerRef,
+  roster: WholesaleEmployeeRoster | null | undefined,
+): ParsedManagerRef {
+  if (ref.state === "not_provided" || ref.state === "unassigned" || ref.state === "invalid") {
+    return ref;
+  }
+  if (!ref.guid || !roster) {
+    return ref;
+  }
+  if (!roster.wholesaleGuids.has(ref.guid)) {
+    return { ...ref, state: "outside_wholesale_roster" };
+  }
+  return ref;
+}
+
+export function applyWholesaleEmployeeRosterToRefs(
+  refs: ParsedManagerRef[],
+  roster: WholesaleEmployeeRoster | null | undefined,
+): ParsedManagerRef[] {
+  return refs.map((ref) => applyWholesaleEmployeeRosterToRef(ref, roster));
+}
+
+export function resolveClientManagerRosterState(
+  guidManager: string,
+  roster: WholesaleEmployeeRoster | null | undefined,
+): import("./extended-types").ClientManagerRosterState {
+  if (!roster) {
+    return "roster_not_loaded";
+  }
+  if (roster.isEmpty) {
+    return "outside_wholesale_roster";
+  }
+  if (roster.wholesaleGuids.has(guidManager.toLowerCase())) {
+    return "in_wholesale_roster";
+  }
+  return "outside_wholesale_roster";
+}
+
 export function resolveManagerAccountLinks(
   refs: ParsedManagerRef[],
   linkedEmployeeGuids: ReadonlySet<string>,
 ): ParsedManagerRef[] {
   return refs.map((ref) => {
     if (ref.state === "not_provided" || ref.state === "unassigned" || ref.state === "invalid") {
+      return ref;
+    }
+    if (ref.state === "outside_wholesale_roster") {
       return ref;
     }
     if (!ref.guid) {
@@ -163,6 +206,87 @@ export function resolveManagerAccountLinks(
     return { ...ref, state: "directory_unverified" };
   });
 }
+
+export function resolveConfirmedHoldingForApply(record: {
+  guid_holding: string | null;
+  name_holding: string;
+  holdingLinkState: import("./extended-types").HoldingLinkState;
+}): { guid_holding: string | null; name_holding: string } {
+  if (record.holdingLinkState === "unresolved") {
+    return { guid_holding: null, name_holding: "" };
+  }
+  if (record.holdingLinkState === "resolved") {
+    return { guid_holding: record.guid_holding, name_holding: record.name_holding };
+  }
+  return { guid_holding: record.guid_holding, name_holding: record.name_holding };
+}
+
+export function resolveManagerRosterStateForApply(input: {
+  incomingState: import("./extended-types").ClientManagerRosterState;
+  incomingManagerGuid: string;
+  previousManagerRosterState: import("./extended-types").ClientManagerRosterState | null;
+  previousManagerGuid: string | null;
+  rosterLoadedInPayload: boolean;
+}): import("./extended-types").ClientManagerRosterState {
+  if (input.rosterLoadedInPayload && input.incomingState !== "roster_not_loaded") {
+    return input.incomingState;
+  }
+
+  const managerChanged =
+    input.previousManagerGuid != null &&
+    input.previousManagerGuid.toLowerCase() !== input.incomingManagerGuid.toLowerCase();
+
+  if (managerChanged) {
+    return "outside_wholesale_roster";
+  }
+
+  if (input.previousManagerRosterState === "outside_wholesale_roster") {
+    return "outside_wholesale_roster";
+  }
+
+  return input.incomingState;
+}
+
+export function resolveImportLinkMetadata(
+  record: import("./extended-types").ParsedExtendedClientRecord | undefined,
+  options?: {
+    incomingManagerGuid?: string;
+    previousManagerGuid?: string | null;
+    previousManagerRosterState?: import("./extended-types").ClientManagerRosterState | null;
+    rosterLoadedInPayload?: boolean;
+  },
+): {
+  holdingLinkState: import("./extended-types").HoldingLinkState;
+  guidHoldingPending: string | null;
+  managerRosterState: import("./extended-types").ClientManagerRosterState;
+} {
+  const incomingManagerGuid = options?.incomingManagerGuid ?? record?.guid_manager ?? "";
+  const incomingRosterState = record?.managerRosterState ?? "roster_not_loaded";
+  const managerRosterState = resolveManagerRosterStateForApply({
+    incomingState: incomingRosterState,
+    incomingManagerGuid,
+    previousManagerRosterState: options?.previousManagerRosterState ?? null,
+    previousManagerGuid: options?.previousManagerGuid ?? null,
+    rosterLoadedInPayload: options?.rosterLoadedInPayload === true,
+  });
+
+  if (!record) {
+    return {
+      holdingLinkState: "none",
+      guidHoldingPending: null,
+      managerRosterState,
+    };
+  }
+  return {
+    holdingLinkState: record.holdingLinkState,
+    guidHoldingPending: record.holdingLinkState === "unresolved" ? record.guid_holding : null,
+    managerRosterState,
+  };
+}
+
+export const MANAGER_ROSTER_SCOPE_ALLOWED_SQL = `
+  COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') <> 'outside_wholesale_roster'
+`;
 
 export function isEmptyHoldingGuid(value: string): boolean {
   return value.trim().length === 0;
