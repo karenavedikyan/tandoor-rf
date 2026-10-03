@@ -3,7 +3,7 @@ import { getDatabaseUrl } from "../config";
 import { applyClientsImport, createImportPool } from "./apply";
 import {
   archiveClientsNotInAccepted,
-  countActiveBaselineClients,
+  extractBaselineApplyResultMeta,
   findDryRunByFingerprint,
   findSuccessfulBaselineApplyByFingerprint,
   loadActiveBaselineGuids,
@@ -11,6 +11,7 @@ import {
   storeExtendedContractConfirmation,
   upsertQuarantineRecords,
 } from "./baseline-replacement-db";
+import { resolveBaselineCommitUncertainFresh } from "./baseline-replacement-commit-recovery";
 import {
   captureDbBaselineStateConsistent,
   captureDbBaselineStateWithDependencies,
@@ -21,9 +22,9 @@ import {
   computeBaselineReplacementFingerprint,
 } from "./baseline-replacement-fingerprint";
 import {
-  capturePreApplySnapshotV2,
-  isPreApplySnapshotV2,
-  restorePreApplySnapshotV2,
+  capturePreApplySnapshotV3,
+  isPreApplySnapshotV3,
+  restorePreApplySnapshotV3,
 } from "./baseline-replacement-snapshot";
 import { updateExchangeStateAfterApplyInTxn } from "../onec-exchange/state";
 import { buildBaselineReplacementPlan } from "./baseline-replacement-plan";
@@ -84,7 +85,29 @@ export type RunBaselineReplacementOptions = {
   operatorReference?: string;
   operatorNote?: string;
   rollbackRunId?: string;
+  testHooks?: {
+    failCommit?: boolean;
+    failAfterCommitConfirm?: boolean;
+  };
 };
+
+class BaselineConnectionFault extends Error {
+  constructor(message = "Baseline database connection fault.") {
+    super(message);
+    this.name = "BaselineConnectionFault";
+  }
+}
+
+function isBaselineConnectionFault(error: unknown): boolean {
+  if (error instanceof BaselineConnectionFault) {
+    return true;
+  }
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as { code: string }).code);
+    return code === "08006" || code === "57P01" || code === "ECONNRESET";
+  }
+  return false;
+}
 
 const BASELINE_IMPORT_ERROR_CODES = new Set([
   "IMPORT_LOCKED",
@@ -159,16 +182,103 @@ async function finishBaselineRun(
   client: PoolClient,
   runId: string,
   status: string,
-  errorCode?: string | null,
+  options?: { errorCode?: string | null; planJson?: unknown },
 ): Promise<void> {
   await client.query(
     `
       UPDATE onec_baseline_replacement_runs
-      SET status = $2, finished_at = NOW(), error_code = COALESCE($3, error_code)
+      SET
+        status = $2,
+        finished_at = NOW(),
+        error_code = COALESCE($3, error_code),
+        plan_json = CASE WHEN $4::jsonb IS NOT NULL THEN $4::jsonb ELSE plan_json END
       WHERE id = $1::uuid
     `,
-    [runId, status, errorCode ?? null],
+    [
+      runId,
+      status,
+      options?.errorCode ?? null,
+      options?.planJson ? JSON.stringify(options.planJson) : null,
+    ],
   );
+}
+
+async function loadBaselineApplyResultMetaFresh(
+  databaseUrl: string,
+  baselineRunId: string,
+): Promise<import("./baseline-replacement-db").BaselineApplyResultMeta | null> {
+  const pool = createImportPool(databaseUrl);
+  const client = await pool.connect();
+  try {
+    const row = await client.query<{ plan_json: unknown }>(
+      `SELECT plan_json FROM onec_baseline_replacement_runs WHERE id = $1::uuid`,
+      [baselineRunId],
+    );
+    return extractBaselineApplyResultMeta(row.rows[0]?.plan_json);
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+async function assertRollbackNotSuperseded(
+  client: PoolClient,
+  run: { id: string; finished_at: Date | null; plan_json: unknown },
+): Promise<void> {
+  const finishedAt = run.finished_at ?? new Date(0);
+
+  const newerBaseline = await client.query<{ id: string }>(
+    `
+      SELECT id::text
+      FROM onec_baseline_replacement_runs
+      WHERE mode IN ('apply', 'rollback')
+        AND status = 'success'
+        AND finished_at > $1
+        AND id <> $2::uuid
+      LIMIT 1
+    `,
+    [finishedAt, run.id],
+  );
+  if (newerBaseline.rows[0]) {
+    throw Object.assign(new Error("A newer baseline replacement run exists."), {
+      code: "ROLLBACK_SUPERSEDED",
+    });
+  }
+
+  const meta = extractBaselineApplyResultMeta(run.plan_json);
+  const newerImport = await client.query<{ id: string }>(
+    meta?.clientsImportRunId
+      ? `
+          SELECT id::text
+          FROM onec_client_import_runs
+          WHERE status = 'success'
+            AND finished_at > $1
+            AND id <> $2::uuid
+          LIMIT 1
+        `
+      : `
+          SELECT id::text
+          FROM onec_client_import_runs
+          WHERE status = 'success'
+            AND finished_at > $1
+          LIMIT 1
+        `,
+    meta?.clientsImportRunId ? [finishedAt, meta.clientsImportRunId] : [finishedAt],
+  );
+  if (newerImport.rows[0]) {
+    throw Object.assign(new Error("A newer clients import exists."), { code: "ROLLBACK_SUPERSEDED" });
+  }
+
+  if (meta) {
+    const dependencyContext = await loadArchiveDependencyContext(client);
+    const capture = await captureDbBaselineStateWithDependencies(client, dependencyContext);
+    const digest = computeDbBaselineStateSha256(capture);
+    if (digest !== meta.postApplyStateSha256) {
+      throw Object.assign(new Error("Database state changed since target apply."), {
+        code: "ROLLBACK_SUPERSEDED",
+      });
+    }
+  }
 }
 
 async function hasRunningBaselineReplacement(client: PoolClient): Promise<boolean> {
@@ -261,6 +371,8 @@ async function buildDryRunContext(
       let existingAllGuids: Set<string>;
       let dbBaselineSha256 = computeDbBaselineStateSha256({
         clients: [],
+        outlets: [],
+        exchange: null,
         dependencyStateSha256: null,
       });
       if (!migrationReadiness.ready) {
@@ -286,6 +398,9 @@ async function buildDryRunContext(
         confirmedOutletsByClient: new Map<string, number>(),
         bitrixTaskCountByClient: new Map<string, number>(),
         childHoldingLinkCountByClient: new Map<string, number>(),
+        activeAccessGrants: [],
+        employeeLinks: [],
+        bitrixTaskBindings: [],
       };
       if (migrationReadiness.ready) {
         dependencyContext = await loadArchiveDependencyContext(pg);
@@ -431,10 +546,18 @@ async function releaseBaselineConnection(
   }
   try {
     await releaseImportLock(client);
+    client.release();
   } catch {
-    // ignore
+    try {
+      await client.end();
+    } catch {
+      // ignore
+    }
+    if (pool) {
+      await pool.end();
+    }
+    return;
   }
-  client.release();
   if (pool) {
     await pool.end();
   }
@@ -569,7 +692,11 @@ export async function runBaselineReplacement(
             planFingerprint: expected,
             clientsSourceSha256: context.clientsSourceSha256,
           });
-          stalePlan = dryRunRecord != null;
+          stalePlan =
+            dryRunRecord != null &&
+            (dryRunRecord.roster_source_sha256 ?? null) === (context.rosterSourceSha256 ?? null) &&
+            (dryRunRecord.quarantine_manifest_sha256 ?? null) ===
+              (context.quarantineManifestSha256 ?? null);
         }
       } finally {
         classifyPg.release();
@@ -643,6 +770,8 @@ export async function runBaselineReplacement(
     }
 
     await pg.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+    let commitAttempted = false;
+    let commitConfirmed = false;
     try {
       const freshContext = await buildDryRunContext(options, pg);
       if (!freshContext.ok) {
@@ -695,21 +824,35 @@ export async function runBaselineReplacement(
         clientsSourceSha256: freshContext.clientsSourceSha256,
       });
       if (priorApply) {
-        const activeCount = await countActiveBaselineClients(pg);
-        const expectedActive = freshContext.acceptedGuids.size;
-        if (activeCount === expectedActive) {
+        const priorMeta = extractBaselineApplyResultMeta(priorApply.plan_json);
+        if (priorMeta) {
+          const dependencyContext = await loadArchiveDependencyContext(pg);
+          const currentDigest = computeDbBaselineStateSha256(
+            await captureDbBaselineStateWithDependencies(pg, dependencyContext),
+          );
+          if (currentDigest === priorMeta.postApplyStateSha256) {
+            await pg.query("ROLLBACK");
+            return {
+              ok: true,
+              mode,
+              durationMs: Date.now() - startedAt,
+              plan: freshPlan,
+              apply: {
+                runId: priorApply.id,
+                archivedCount: 0,
+                quarantinedCount: 0,
+                importRunId: priorMeta.clientsImportRunId,
+              },
+            };
+          }
           await pg.query("ROLLBACK");
           return {
-            ok: true,
+            ok: false,
             mode,
             durationMs: Date.now() - startedAt,
+            code: "STALE_PLAN",
+            message: "Post-apply database state changed since prior successful apply.",
             plan: freshPlan,
-            apply: {
-              runId: priorApply.id,
-              archivedCount: 0,
-              quarantinedCount: 0,
-              importRunId: priorApply.id,
-            },
           };
         }
       }
@@ -736,7 +879,7 @@ export async function runBaselineReplacement(
         };
       }
 
-      const preSnapshot = await capturePreApplySnapshotV2(pg);
+      const preSnapshot = await capturePreApplySnapshotV3(pg);
       baselineRunId = await insertBaselineRun(pg, {
         mode: "apply",
         status: "running",
@@ -757,11 +900,7 @@ export async function runBaselineReplacement(
         extendedContractVerification: "unverified",
       };
 
-      if (
-        options.confirmExtendedContract &&
-        options.operatorReference?.trim() &&
-        freshContext.extendedContractStatus !== "operator_confirmed"
-      ) {
+      if (options.confirmExtendedContract && options.operatorReference?.trim()) {
         const confirmation = buildExtendedContractConfirmation({
           clientsSourceSha256: freshContext.clientsSourceSha256,
           payload: applyPayload,
@@ -810,8 +949,29 @@ export async function runBaselineReplacement(
         acceptedBaselineSha256: freshContext.clientsSourceSha256,
       });
 
-      await finishBaselineRun(pg, baselineRunId, "success");
+      const postDependencyContext = await loadArchiveDependencyContext(pg);
+      const postApplyStateSha256 = computeDbBaselineStateSha256(
+        await captureDbBaselineStateWithDependencies(pg, postDependencyContext),
+      );
+      const finalPlanJson = {
+        ...freshPlan,
+        applyResult: {
+          postApplyStateSha256,
+          clientsImportRunId: importResult.runId,
+        },
+      };
+
+      await finishBaselineRun(pg, baselineRunId, "success", { planJson: finalPlanJson });
+      commitAttempted = true;
+      if (options.testHooks?.failCommit) {
+        throw Object.assign(new Error("Simulated commit failure."), { code: "08006" });
+      }
       await pg.query("COMMIT");
+      commitConfirmed = true;
+      if (options.testHooks?.failAfterCommitConfirm) {
+        connectionFaulted = true;
+        throw new BaselineConnectionFault();
+      }
 
       return {
         ok: true,
@@ -826,13 +986,77 @@ export async function runBaselineReplacement(
         },
       };
     } catch (error) {
+      if (isBaselineConnectionFault(error)) {
+        connectionFaulted = true;
+      }
+
+      if (commitConfirmed && baselineRunId) {
+        const priorMeta = await loadBaselineApplyResultMetaFresh(databaseUrl, baselineRunId);
+        return {
+          ok: true,
+          mode,
+          durationMs: Date.now() - startedAt,
+          plan,
+          apply: {
+            runId: baselineRunId,
+            archivedCount: 0,
+            quarantinedCount: 0,
+            importRunId: priorMeta?.clientsImportRunId ?? baselineRunId,
+          },
+        };
+      }
+
+      if (commitAttempted && !commitConfirmed && baselineRunId) {
+        connectionFaulted = true;
+        try {
+          await pg.query("ROLLBACK");
+        } catch {
+          // ignore
+        }
+        const resolution = await resolveBaselineCommitUncertainFresh(databaseUrl, baselineRunId);
+        if (resolution === "committed") {
+          const priorMeta = await loadBaselineApplyResultMetaFresh(databaseUrl, baselineRunId);
+          return {
+            ok: true,
+            mode,
+            durationMs: Date.now() - startedAt,
+            plan,
+            apply: {
+              runId: baselineRunId,
+              archivedCount: 0,
+              quarantinedCount: 0,
+              importRunId: priorMeta?.clientsImportRunId ?? baselineRunId,
+            },
+          };
+        }
+        if (resolution === "still_uncertain") {
+          return {
+            ok: false,
+            mode,
+            durationMs: Date.now() - startedAt,
+            code: "COMMIT_UNCERTAIN",
+            message:
+              "Baseline replacement commit outcome is unknown; inspect the baseline run journal before retrying.",
+            plan,
+          };
+        }
+        return {
+          ok: false,
+          mode,
+          durationMs: Date.now() - startedAt,
+          code: "DATABASE_ERROR",
+          message: "Baseline replacement apply failed.",
+          plan,
+        };
+      }
+
       try {
         await pg.query("ROLLBACK");
       } catch {
         connectionFaulted = true;
       }
       if (baselineRunId && !connectionFaulted) {
-        await finishBaselineRun(pg, baselineRunId, "failed", "DATABASE_ERROR");
+        await finishBaselineRun(pg, baselineRunId, "failed", { errorCode: "DATABASE_ERROR" });
       }
       return {
         ok: false,
@@ -878,59 +1102,6 @@ async function runBaselineRollback(
   let connectionFaulted = false;
   let rollbackRunId = "";
   try {
-    const targetRunId = options.rollbackRunId?.trim();
-    const runQuery = targetRunId
-      ? await pg.query<{ id: string; finished_at: Date | null; pre_apply_status_snapshot: unknown }>(
-          `
-            SELECT id::text, finished_at, pre_apply_status_snapshot
-            FROM onec_baseline_replacement_runs
-            WHERE id = $1::uuid AND mode = 'apply' AND status = 'success'
-          `,
-          [targetRunId],
-        )
-      : await pg.query<{ id: string; finished_at: Date | null; pre_apply_status_snapshot: unknown }>(
-          `
-            SELECT id::text, finished_at, pre_apply_status_snapshot
-            FROM onec_baseline_replacement_runs
-            WHERE mode = 'apply' AND status = 'success'
-            ORDER BY finished_at DESC NULLS LAST
-            LIMIT 1
-          `,
-        );
-
-    const run = runQuery.rows[0];
-    if (!run?.pre_apply_status_snapshot || !isPreApplySnapshotV2(run.pre_apply_status_snapshot)) {
-      return {
-        ok: false,
-        mode: "rollback",
-        durationMs: Date.now() - startedAt,
-        code: "ROLLBACK_TARGET_NOT_FOUND",
-        message: "No successful baseline replacement apply with v2 snapshot found.",
-      };
-    }
-
-    const newerApply = await pg.query<{ id: string }>(
-      `
-        SELECT id::text
-        FROM onec_baseline_replacement_runs
-        WHERE mode = 'apply'
-          AND status = 'success'
-          AND finished_at > $1
-          AND id <> $2::uuid
-        LIMIT 1
-      `,
-      [run.finished_at, run.id],
-    );
-    if (newerApply.rows[0]) {
-      return {
-        ok: false,
-        mode: "rollback",
-        durationMs: Date.now() - startedAt,
-        code: "ROLLBACK_SUPERSEDED",
-        message: "A newer baseline replacement apply exists; rollback of older run is blocked.",
-      };
-    }
-
     const lockHeld = await tryAcquireImportLock(pg);
     if (!lockHeld) {
       return {
@@ -942,48 +1113,166 @@ async function runBaselineRollback(
       };
     }
 
+    let commitAttempted = false;
+    let commitConfirmed = false;
+
     await pg.query("BEGIN");
-    rollbackRunId = await insertBaselineRun(pg, {
-      mode: "rollback",
-      status: "running",
-      operatorNote: options.operatorNote ?? null,
-    });
-
-    const restoredCount = await restorePreApplySnapshotV2(pg, run.pre_apply_status_snapshot);
-    await finishBaselineRun(pg, rollbackRunId, "success");
-    await pg.query("COMMIT");
-
-    return {
-      ok: true,
-      mode: "rollback",
-      durationMs: Date.now() - startedAt,
-      apply: {
-        runId: rollbackRunId,
-        archivedCount: 0,
-        quarantinedCount: 0,
-        importRunId: run.id,
-        restoredCount,
-      },
-    };
-  } catch {
     try {
-      await pg.query("ROLLBACK");
-    } catch {
-      connectionFaulted = true;
-    }
-    if (rollbackRunId && !connectionFaulted) {
+      const targetRunId = options.rollbackRunId?.trim();
+      const runQuery = targetRunId
+        ? await pg.query<{
+            id: string;
+            finished_at: Date | null;
+            pre_apply_status_snapshot: unknown;
+            plan_json: unknown;
+          }>(
+            `
+              SELECT id::text, finished_at, pre_apply_status_snapshot, plan_json
+              FROM onec_baseline_replacement_runs
+              WHERE id = $1::uuid AND mode = 'apply' AND status = 'success'
+            `,
+            [targetRunId],
+          )
+        : await pg.query<{
+            id: string;
+            finished_at: Date | null;
+            pre_apply_status_snapshot: unknown;
+            plan_json: unknown;
+          }>(
+            `
+              SELECT id::text, finished_at, pre_apply_status_snapshot, plan_json
+              FROM onec_baseline_replacement_runs
+              WHERE mode = 'apply' AND status = 'success'
+              ORDER BY finished_at DESC NULLS LAST
+              LIMIT 1
+            `,
+          );
+
+      const run = runQuery.rows[0];
+      if (!run?.pre_apply_status_snapshot || !isPreApplySnapshotV3(run.pre_apply_status_snapshot)) {
+        await pg.query("ROLLBACK");
+        return {
+          ok: false,
+          mode: "rollback",
+          durationMs: Date.now() - startedAt,
+          code: "ROLLBACK_UNSUPPORTED",
+          message: "Rollback requires a v3 pre-apply snapshot with exchange state.",
+        };
+      }
+
+      await assertRollbackNotSuperseded(pg, run);
+
+      rollbackRunId = await insertBaselineRun(pg, {
+        mode: "rollback",
+        status: "running",
+        operatorNote: options.operatorNote ?? null,
+      });
+
+      const restoredCount = await restorePreApplySnapshotV3(pg, run.pre_apply_status_snapshot);
+      await finishBaselineRun(pg, rollbackRunId, "success");
+      commitAttempted = true;
+      if (options.testHooks?.failCommit) {
+        throw Object.assign(new Error("Simulated rollback commit failure."), { code: "08006" });
+      }
+      await pg.query("COMMIT");
+      commitConfirmed = true;
+      if (options.testHooks?.failAfterCommitConfirm) {
+        connectionFaulted = true;
+        throw new BaselineConnectionFault();
+      }
+
+      return {
+        ok: true,
+        mode: "rollback",
+        durationMs: Date.now() - startedAt,
+        apply: {
+          runId: rollbackRunId,
+          archivedCount: 0,
+          quarantinedCount: 0,
+          importRunId: run.id,
+          restoredCount,
+        },
+      };
+    } catch (error) {
+      if (isBaselineConnectionFault(error)) {
+        connectionFaulted = true;
+      }
+
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code: string }).code)
+          : "DATABASE_ERROR";
+
+      if (commitConfirmed && rollbackRunId) {
+        return {
+          ok: true,
+          mode: "rollback",
+          durationMs: Date.now() - startedAt,
+          apply: {
+            runId: rollbackRunId,
+            archivedCount: 0,
+            quarantinedCount: 0,
+            importRunId: rollbackRunId,
+          },
+        };
+      }
+
+      if (commitAttempted && !commitConfirmed && rollbackRunId) {
+        connectionFaulted = true;
+        try {
+          await pg.query("ROLLBACK");
+        } catch {
+          // ignore
+        }
+        const resolution = await resolveBaselineCommitUncertainFresh(databaseUrl, rollbackRunId);
+        if (resolution === "committed") {
+          return {
+            ok: true,
+            mode: "rollback",
+            durationMs: Date.now() - startedAt,
+            apply: {
+              runId: rollbackRunId,
+              archivedCount: 0,
+              quarantinedCount: 0,
+              importRunId: rollbackRunId,
+            },
+          };
+        }
+        if (resolution === "still_uncertain") {
+          return {
+            ok: false,
+            mode: "rollback",
+            durationMs: Date.now() - startedAt,
+            code: "COMMIT_UNCERTAIN",
+            message: "Rollback commit outcome is unknown; inspect the rollback run journal before retrying.",
+          };
+        }
+      }
+
       try {
-        await finishBaselineRun(pg, rollbackRunId, "failed", "DATABASE_ERROR");
+        await pg.query("ROLLBACK");
       } catch {
         connectionFaulted = true;
       }
+      if (rollbackRunId && !connectionFaulted) {
+        await finishBaselineRun(pg, rollbackRunId, "failed", { errorCode: "DATABASE_ERROR" });
+      }
+      return {
+        ok: false,
+        mode: "rollback",
+        durationMs: Date.now() - startedAt,
+        code: code === "ROLLBACK_SUPERSEDED" ? code : "DATABASE_ERROR",
+        message: error instanceof Error ? error.message : "Baseline rollback failed.",
+      };
     }
+  } catch (error) {
+    connectionFaulted = true;
     return {
       ok: false,
       mode: "rollback",
       durationMs: Date.now() - startedAt,
       code: "DATABASE_ERROR",
-      message: "Baseline rollback failed.",
+      message: error instanceof Error ? error.message : "Baseline rollback failed.",
     };
   } finally {
     await releaseBaselineConnection(pg, pool, connectionFaulted);

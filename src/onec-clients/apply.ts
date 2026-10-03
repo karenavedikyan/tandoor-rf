@@ -827,22 +827,17 @@ export async function applyClientsImport(options: {
             const incomingGuids = new Set(
               options.payload.records.map((record) => record.guid_client),
             );
-            const activeExisting = await queryManaged<{ guid_client: string; source_sha256: string | null }>(
+            const activeExisting = await queryManaged<{ guid_client: string }>(
               managed,
               `
-                SELECT guid_client::text, source_sha256
+                SELECT guid_client::text
                 FROM onec_clients
                 WHERE COALESCE(baseline_status, 'active') = 'active'
               `,
             );
-            const incomingSourceSha = options.payload.sha256.toLowerCase();
             const missingGuids = activeExisting.rows
-              .filter(
-                (row) =>
-                  !incomingGuids.has(row.guid_client) &&
-                  row.source_sha256?.toLowerCase() === incomingSourceSha,
-              )
-              .map((row) => row.guid_client);
+              .map((row) => row.guid_client)
+              .filter((guid) => !incomingGuids.has(guid));
             if (missingGuids.length > 0) {
               phase.runId = await insertRejectedRunJournal(
                 managed,

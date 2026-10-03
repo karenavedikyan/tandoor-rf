@@ -25,6 +25,9 @@ export type ArchiveDependencyContext = {
   confirmedOutletsByClient: Map<string, number>;
   bitrixTaskCountByClient: Map<string, number>;
   childHoldingLinkCountByClient: Map<string, number>;
+  activeAccessGrants: Array<{ objectId: string; userId: string }>;
+  employeeLinks: Array<{ employeeId: string; userId: string }>;
+  bitrixTaskBindings: Array<{ cardGuid: string; taskId: string }>;
 };
 
 export type ExcludedArchiveDependencySample = {
@@ -160,21 +163,24 @@ export async function loadArchiveDependencyContext(
   const confirmedOutletsByClient = new Map<string, number>();
   const bitrixTaskCountByClient = new Map<string, number>();
   const childHoldingLinkCountByClient = new Map<string, number>();
+  const activeAccessGrants: Array<{ objectId: string; userId: string }> = [];
+  const employeeLinks: Array<{ employeeId: string; userId: string }> = [];
+  const bitrixTaskBindings: Array<{ cardGuid: string; taskId: string }> = [];
 
   try {
-    const accessGrants = await client.query<{ object_id: string; count: string }>(
+    const accessGrants = await client.query<{ object_id: string; user_id: string }>(
       `
-        SELECT object_id::text, COUNT(*)::text AS count
+        SELECT object_id::text, user_id::text
         FROM access_grants
         WHERE grant_type = 'client'
           AND revoked_at IS NULL
-        GROUP BY object_id
+        ORDER BY object_id, user_id
       `,
     );
-    for (const [key, value] of mapCountRows(
-      accessGrants.rows.map((row) => ({ key: row.object_id, count: row.count })),
-    )) {
-      activeAccessGrantCountByClient.set(key, value);
+    for (const row of accessGrants.rows) {
+      activeAccessGrants.push({ objectId: row.object_id, userId: row.user_id });
+      const key = row.object_id.toLowerCase();
+      activeAccessGrantCountByClient.set(key, (activeAccessGrantCountByClient.get(key) ?? 0) + 1);
     }
   } catch {
     unavailableDimensions.push("active_access_grants");
@@ -195,6 +201,17 @@ export async function loadArchiveDependencyContext(
       linkedAccounts.rows.map((row) => ({ key: row.guid_client, count: row.count })),
     )) {
       linkedEmployeeAccountCountByClient.set(key, value);
+    }
+    const links = await client.query<{ employee_id: string; user_id: string }>(
+      `
+        SELECT employee_id::text, user_id::text
+        FROM user_onec_employee_links
+        WHERE revoked_at IS NULL
+        ORDER BY employee_id, user_id
+      `,
+    );
+    for (const row of links.rows) {
+      employeeLinks.push({ employeeId: row.employee_id, userId: row.user_id });
     }
   } catch {
     unavailableDimensions.push("linked_employee_accounts");
@@ -218,21 +235,21 @@ export async function loadArchiveDependencyContext(
   }
 
   try {
-    const bitrixTasks = await client.query<{ card_guid: string; count: string }>(
+    const bitrixTasks = await client.query<{ card_guid: string; task_id: string }>(
       `
-        SELECT cco.card_guid::text, COUNT(DISTINCT tb.task_id)::text AS count
+        SELECT cco.card_guid::text, tb.task_id::text
         FROM bitrix24_client_card_objects cco
         JOIN bitrix24_task_bindings tb
           ON tb.object_type = cco.object_type
          AND tb.object_guid = cco.object_guid
          AND tb.binding_status = 'confirmed'
-        GROUP BY cco.card_guid
+        ORDER BY cco.card_guid, tb.task_id
       `,
     );
-    for (const [key, value] of mapCountRows(
-      bitrixTasks.rows.map((row) => ({ key: row.card_guid, count: row.count })),
-    )) {
-      bitrixTaskCountByClient.set(key, value);
+    for (const row of bitrixTasks.rows) {
+      bitrixTaskBindings.push({ cardGuid: row.card_guid, taskId: row.task_id });
+      const key = row.card_guid.toLowerCase();
+      bitrixTaskCountByClient.set(key, (bitrixTaskCountByClient.get(key) ?? 0) + 1);
     }
   } catch {
     unavailableDimensions.push("confirmed_bitrix_tasks");
@@ -271,6 +288,9 @@ export async function loadArchiveDependencyContext(
     confirmedOutletsByClient,
     bitrixTaskCountByClient,
     childHoldingLinkCountByClient,
+    activeAccessGrants,
+    employeeLinks,
+    bitrixTaskBindings,
   };
 }
 

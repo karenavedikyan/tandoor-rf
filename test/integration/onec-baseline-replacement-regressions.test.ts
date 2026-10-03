@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import pg from "pg";
 import { Pool } from "pg";
 import { getClientByGuid } from "../../src/clients/repository";
 import type { AccessContext } from "../../src/access/types";
@@ -21,6 +22,7 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+import { wholesaleRosterWithManagers } from "../helpers/onec-clients-employee-roster-fixtures";
 
 function adminContext(userId: string): AccessContext {
   return {
@@ -416,5 +418,227 @@ describe("onec baseline replacement regressions", { concurrency: false }, () => 
     const mgrCtx = managerContext(manager.id, EXTENDED_FIXTURE_GUIDS.MANAGER_A);
     assert.equal(await getClientByGuid(mgrCtx, orphanGuid), null);
     assert.ok(await getClientByGuid(adminContext(admin.id), scenario.holdingGuid));
+  });
+
+  it("fingerprint changes when client address changes after dry-run", async () => {
+    const scenario = buildQuarantineScenario();
+    const seedValidated = validateClientsForApplyTest(
+      buildExtendedClientsFileBytes([
+        sampleExtendedHolding({ guid_client: scenario.holdingGuid, holding: false }),
+      ]),
+    );
+    assert.equal(seedValidated.ok, true);
+    if (!seedValidated.ok) return;
+    await applyClientsImportVerified({ databaseUrl, payload: seedValidated.payload });
+
+    const dryRun1 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(dryRun1.ok, true);
+    if (!dryRun1.ok || !dryRun1.plan) return;
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`UPDATE onec_clients SET address = address || '-changed' WHERE guid_client = $1::uuid`, [
+      scenario.holdingGuid,
+    ]);
+    await pool.end();
+
+    const dryRun2 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(dryRun2.ok, true);
+    if (!dryRun2.ok || !dryRun2.plan) return;
+    assert.notEqual(dryRun2.plan.fingerprint, dryRun1.plan.fingerprint);
+  });
+
+  it("rejects idempotent retry when post-apply client data changed", async () => {
+    const scenario = buildQuarantineScenario();
+    const dryRun = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(dryRun.ok, true);
+    if (!dryRun.ok || !dryRun.plan) return;
+
+    const apply1 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "apply",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      expectedFingerprint: dryRun.plan.fingerprint,
+    });
+    assert.equal(apply1.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`UPDATE onec_clients SET name_client = 'changed after apply' WHERE guid_client = $1::uuid`, [
+      scenario.holdingGuid,
+    ]);
+    await pool.end();
+
+    const apply2 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "apply",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      expectedFingerprint: dryRun.plan.fingerprint,
+    });
+    assert.equal(apply2.ok, false);
+    if (apply2.ok) return;
+    assert.equal(apply2.code, "STALE_PLAN");
+  });
+
+  it("recovers committed baseline apply after COMMIT response loss", async () => {
+    const scenario = buildQuarantineScenario();
+    const dryRun = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(dryRun.ok, true);
+    if (!dryRun.ok || !dryRun.plan) return;
+
+    const originalQuery = pg.Client.prototype.query;
+    let armed = false;
+    pg.Client.prototype.query = function patchedQuery(
+      this: pg.Client,
+      ...args: Parameters<pg.Client["query"]>
+    ) {
+      const sql = typeof args[0] === "string" ? args[0] : "";
+      if (/UPDATE\s+onec_baseline_replacement_runs[\s\S]*status\s*=\s*'success'/i.test(sql)) {
+        armed = true;
+      }
+      if (armed && /^\s*COMMIT/i.test(sql)) {
+        return originalQuery.apply(this, args).then((result) => {
+          armed = false;
+          const err = new Error("connection lost after COMMIT") as Error & { code: string };
+          err.code = "08006";
+          throw err;
+        });
+      }
+      return originalQuery.apply(this, args);
+    };
+
+    try {
+      const apply = await runBaselineReplacement({
+        databaseUrl,
+        mode: "apply",
+        clientsBytes: scenario.clientsBytes,
+        quarantineManifestBytes: scenario.manifestBytes,
+        holdingLinkValidationPolicy: "tolerant",
+        expectedFingerprint: dryRun.plan.fingerprint,
+      });
+      assert.equal(apply.ok, true, apply.ok ? "" : `${apply.code}: ${apply.message}`);
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const activeCount = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM onec_clients WHERE COALESCE(baseline_status, 'active') = 'active'`,
+      );
+      const runStatus = await pool.query<{ status: string }>(
+        `SELECT status FROM onec_baseline_replacement_runs WHERE mode = 'apply' ORDER BY finished_at DESC NULLS LAST LIMIT 1`,
+      );
+      await pool.end();
+      assert.equal(Number(activeCount.rows[0]?.count ?? "0"), 1);
+      assert.equal(runStatus.rows[0]?.status, "success");
+    } finally {
+      pg.Client.prototype.query = originalQuery;
+    }
+  });
+
+  it("apply with extended contract confirmation stores snapshot and supports idempotent retry", async () => {
+    const scenario = buildQuarantineScenario();
+    const clientsBytes = scenario.clientsBytes;
+    const manifestBytes = scenario.manifestBytes;
+    const holdingGuid = scenario.holdingGuid;
+
+    const dryRun = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes,
+      employeeRosterBytes: wholesaleRosterWithManagers(),
+      quarantineManifestBytes: manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      confirmExtendedContract: true,
+      operatorReference: "audit-live-contract-42",
+    });
+    assert.equal(dryRun.ok, true);
+    if (!dryRun.ok || !dryRun.plan) return;
+    assert.equal(dryRun.plan.extendedContract.status, "operator_confirmed");
+
+    const apply1 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "apply",
+      clientsBytes,
+      employeeRosterBytes: wholesaleRosterWithManagers(),
+      quarantineManifestBytes: manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      confirmExtendedContract: true,
+      operatorReference: "audit-live-contract-42",
+      expectedFingerprint: dryRun.plan.fingerprint,
+    });
+    assert.equal(apply1.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holding = await pool.query<{ extended_snapshot: unknown }>(
+      `SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid`,
+      [holdingGuid],
+    );
+    const outlets = await pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM onec_retail_outlets`);
+    await pool.end();
+    assert.ok(holding.rows[0]?.extended_snapshot);
+
+    const apply2 = await runBaselineReplacement({
+      databaseUrl,
+      mode: "apply",
+      clientsBytes,
+      employeeRosterBytes: wholesaleRosterWithManagers(),
+      quarantineManifestBytes: manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      confirmExtendedContract: true,
+      operatorReference: "audit-live-contract-42",
+      expectedFingerprint: dryRun.plan.fingerprint,
+    });
+    assert.equal(apply2.ok, true);
+    assert.equal(Number(outlets.rows[0]?.count ?? "0"), 1);
+  });
+
+  it("rejects apply when roster bytes change but fingerprint stays old", async () => {
+    const scenario = buildQuarantineScenario();
+    const dryRun = await runBaselineReplacement({
+      databaseUrl,
+      mode: "dry_run",
+      clientsBytes: scenario.clientsBytes,
+      employeeRosterBytes: wholesaleRosterWithManagers(),
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(dryRun.ok, true);
+    if (!dryRun.ok || !dryRun.plan) return;
+
+    const apply = await runBaselineReplacement({
+      databaseUrl,
+      mode: "apply",
+      clientsBytes: scenario.clientsBytes,
+      quarantineManifestBytes: scenario.manifestBytes,
+      holdingLinkValidationPolicy: "tolerant",
+      expectedFingerprint: dryRun.plan.fingerprint,
+    });
+    assert.equal(apply.ok, false);
+    if (apply.ok) return;
+    assert.equal(apply.code, "FINGERPRINT_MISMATCH");
   });
 });

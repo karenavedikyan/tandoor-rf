@@ -74,10 +74,18 @@ export async function upsertQuarantineRecords(
 export async function findDryRunByFingerprint(
   client: PoolClient,
   input: { planFingerprint: string; clientsSourceSha256: string },
-): Promise<{ id: string } | null> {
-  const row = await client.query<{ id: string }>(
+): Promise<{
+  id: string;
+  roster_source_sha256: string | null;
+  quarantine_manifest_sha256: string | null;
+} | null> {
+  const row = await client.query<{
+    id: string;
+    roster_source_sha256: string | null;
+    quarantine_manifest_sha256: string | null;
+  }>(
     `
-      SELECT id::text
+      SELECT id::text, roster_source_sha256, quarantine_manifest_sha256
       FROM onec_baseline_replacement_runs
       WHERE mode = 'dry_run'
         AND status = 'success'
@@ -89,6 +97,30 @@ export async function findDryRunByFingerprint(
     [input.planFingerprint, input.clientsSourceSha256],
   );
   return row.rows[0] ?? null;
+}
+
+export type BaselineApplyResultMeta = {
+  postApplyStateSha256: string;
+  clientsImportRunId: string;
+};
+
+export function extractBaselineApplyResultMeta(planJson: unknown): BaselineApplyResultMeta | null {
+  if (!planJson || typeof planJson !== "object" || Array.isArray(planJson)) {
+    return null;
+  }
+  const applyResult = (planJson as { applyResult?: BaselineApplyResultMeta }).applyResult;
+  if (
+    !applyResult?.postApplyStateSha256 ||
+    !applyResult.clientsImportRunId ||
+    applyResult.postApplyStateSha256.length !== 64 ||
+    !/^[0-9a-f]+$/i.test(applyResult.postApplyStateSha256)
+  ) {
+    return null;
+  }
+  return {
+    postApplyStateSha256: applyResult.postApplyStateSha256.toLowerCase(),
+    clientsImportRunId: applyResult.clientsImportRunId,
+  };
 }
 
 export async function findSuccessfulBaselineApplyByFingerprint(

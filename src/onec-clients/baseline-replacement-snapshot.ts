@@ -1,4 +1,6 @@
 import type { PoolClient } from "pg";
+import { loadExchangeState } from "../onec-exchange/state";
+import type { DbExchangeStateCapture } from "./baseline-replacement-db-state";
 
 export type PreApplyClientRow = {
   guid_client: string;
@@ -23,6 +25,9 @@ export type PreApplyClientRow = {
   holding_link_state: string | null;
   guid_holding_pending: string | null;
   manager_roster_state: string | null;
+  first_imported_at: string | null;
+  last_imported_at: string | null;
+  updated_at: string | null;
 };
 
 export type PreApplyOutletRow = {
@@ -32,17 +37,21 @@ export type PreApplyOutletRow = {
   first_source_sha256: string | null;
   last_source_sha256: string | null;
   closure_history: unknown;
+  first_imported_at: string | null;
+  last_imported_at: string | null;
+  updated_at: string | null;
 };
 
-export type PreApplySnapshotV2 = {
-  v: 2;
+export type PreApplySnapshotV3 = {
+  v: 3;
   clients: PreApplyClientRow[];
   outlets: PreApplyOutletRow[];
   quarantineRecordIds: string[];
   contractConfirmationIds: string[];
+  exchangeState: DbExchangeStateCapture;
 };
 
-export async function capturePreApplySnapshotV2(client: PoolClient): Promise<PreApplySnapshotV2> {
+export async function capturePreApplySnapshotV3(client: PoolClient): Promise<PreApplySnapshotV3> {
   const clients = await client.query<PreApplyClientRow>(
     `
       SELECT
@@ -67,62 +76,59 @@ export async function capturePreApplySnapshotV2(client: PoolClient): Promise<Pre
         extended_freshness_state,
         holding_link_state,
         guid_holding_pending::text,
-        manager_roster_state
+        manager_roster_state,
+        first_imported_at::text,
+        last_imported_at::text,
+        updated_at::text
       FROM onec_clients
     `,
   );
 
-  let outlets: PreApplyOutletRow[] = [];
-  try {
-    const outletResult = await client.query<PreApplyOutletRow>(
-      `
-        SELECT
-          guid_store::text,
-          guid_client::text,
-          is_closed,
-          first_source_sha256,
-          last_source_sha256,
-          closure_history
-        FROM onec_retail_outlets
-      `,
-    );
-    outlets = outletResult.rows;
-  } catch {
-    outlets = [];
-  }
+  const outletResult = await client.query<PreApplyOutletRow>(
+    `
+      SELECT
+        guid_store::text,
+        guid_client::text,
+        is_closed,
+        first_source_sha256,
+        last_source_sha256,
+        closure_history,
+        first_imported_at::text,
+        last_imported_at::text,
+        updated_at::text
+      FROM onec_retail_outlets
+    `,
+  );
 
-  let quarantineRecordIds: string[] = [];
-  try {
-    const quarantine = await client.query<{ id: string }>(
-      `SELECT id::text FROM onec_client_quarantine_records WHERE superseded_at IS NULL`,
-    );
-    quarantineRecordIds = quarantine.rows.map((row) => row.id);
-  } catch {
-    quarantineRecordIds = [];
-  }
+  const quarantine = await client.query<{ id: string }>(
+    `SELECT id::text FROM onec_client_quarantine_records WHERE superseded_at IS NULL`,
+  );
 
-  let contractConfirmationIds: string[] = [];
-  try {
-    const confirmations = await client.query<{ id: string }>(
-      `SELECT id::text FROM onec_extended_contract_confirmations WHERE superseded_at IS NULL`,
-    );
-    contractConfirmationIds = confirmations.rows.map((row) => row.id);
-  } catch {
-    contractConfirmationIds = [];
-  }
+  const confirmations = await client.query<{ id: string }>(
+    `SELECT id::text FROM onec_extended_contract_confirmations WHERE superseded_at IS NULL`,
+  );
+
+  const exchange = await loadExchangeState(client);
 
   return {
-    v: 2,
+    v: 3,
     clients: clients.rows,
-    outlets,
-    quarantineRecordIds,
-    contractConfirmationIds,
+    outlets: outletResult.rows,
+    quarantineRecordIds: quarantine.rows.map((row) => row.id),
+    contractConfirmationIds: confirmations.rows.map((row) => row.id),
+    exchangeState: {
+      last_successful_apply_sha256: exchange.last_successful_apply_sha256,
+      accepted_baseline_sha256: exchange.accepted_baseline_sha256,
+      last_verified_sha256: exchange.last_verified_sha256,
+      apply_blocked: exchange.apply_blocked,
+      apply_blocked_reason: exchange.apply_blocked_reason,
+    },
   };
 }
 
-export async function restorePreApplySnapshotV2(
+export async function restorePreApplySnapshotV3(
   client: PoolClient,
-  snapshot: PreApplySnapshotV2,
+  snapshot: PreApplySnapshotV3,
 ): Promise<number> {
   const snapshotGuids = new Set(snapshot.clients.map((row) => row.guid_client.toLowerCase()));
 
@@ -151,7 +157,7 @@ export async function restorePreApplySnapshotV2(
         VALUES (
           $1::uuid, $2, $3::uuid, $4, $5::uuid, $6, $7, $8::jsonb, $9, $10,
           $11::timestamptz, $12, $13, $14, $15, $16, $17::jsonb, $18::timestamptz, $19,
-          $20, $21::uuid, $22, NOW(), NOW(), NOW()
+          $20, $21::uuid, $22, $23::timestamptz, $24::timestamptz, $25::timestamptz
         )
         ON CONFLICT (guid_client) DO UPDATE SET
           name_client = EXCLUDED.name_client,
@@ -175,7 +181,9 @@ export async function restorePreApplySnapshotV2(
           holding_link_state = EXCLUDED.holding_link_state,
           guid_holding_pending = EXCLUDED.guid_holding_pending,
           manager_roster_state = EXCLUDED.manager_roster_state,
-          updated_at = NOW()
+          first_imported_at = EXCLUDED.first_imported_at,
+          last_imported_at = EXCLUDED.last_imported_at,
+          updated_at = EXCLUDED.updated_at
       `,
       [
         row.guid_client,
@@ -200,79 +208,106 @@ export async function restorePreApplySnapshotV2(
         row.holding_link_state,
         row.guid_holding_pending,
         row.manager_roster_state,
+        row.first_imported_at,
+        row.last_imported_at,
+        row.updated_at,
       ],
     );
   }
 
-  try {
-    await client.query(`DELETE FROM onec_retail_outlets WHERE NOT (guid_store = ANY($1::uuid[]))`, [
-      snapshot.outlets.map((row) => row.guid_store),
-    ]);
-    for (const outlet of snapshot.outlets) {
-      await client.query(
-        `
-          INSERT INTO onec_retail_outlets (
-            guid_store, guid_client, is_closed, first_source_sha256, last_source_sha256,
-            closure_history, first_imported_at, last_imported_at, updated_at
-          )
-          VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, NOW(), NOW(), NOW())
-          ON CONFLICT (guid_store) DO UPDATE SET
-            guid_client = EXCLUDED.guid_client,
-            is_closed = EXCLUDED.is_closed,
-            first_source_sha256 = EXCLUDED.first_source_sha256,
-            last_source_sha256 = EXCLUDED.last_source_sha256,
-            closure_history = EXCLUDED.closure_history,
-            updated_at = NOW()
-        `,
-        [
-          outlet.guid_store,
-          outlet.guid_client,
-          outlet.is_closed,
-          outlet.first_source_sha256,
-          outlet.last_source_sha256,
-          JSON.stringify(outlet.closure_history ?? []),
-        ],
-      );
-    }
-  } catch {
-    // outlet table may be absent on older schemas
+  await client.query(`DELETE FROM onec_retail_outlets WHERE NOT (guid_store = ANY($1::uuid[]))`, [
+    snapshot.outlets.map((row) => row.guid_store),
+  ]);
+  for (const outlet of snapshot.outlets) {
+    await client.query(
+      `
+        INSERT INTO onec_retail_outlets (
+          guid_store, guid_client, is_closed, first_source_sha256, last_source_sha256,
+          closure_history, first_imported_at, last_imported_at, updated_at
+        )
+        VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7::timestamptz, $8::timestamptz, $9::timestamptz)
+        ON CONFLICT (guid_store) DO UPDATE SET
+          guid_client = EXCLUDED.guid_client,
+          is_closed = EXCLUDED.is_closed,
+          first_source_sha256 = EXCLUDED.first_source_sha256,
+          last_source_sha256 = EXCLUDED.last_source_sha256,
+          closure_history = EXCLUDED.closure_history,
+          first_imported_at = EXCLUDED.first_imported_at,
+          last_imported_at = EXCLUDED.last_imported_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        outlet.guid_store,
+        outlet.guid_client,
+        outlet.is_closed,
+        outlet.first_source_sha256,
+        outlet.last_source_sha256,
+        JSON.stringify(outlet.closure_history ?? []),
+        outlet.first_imported_at,
+        outlet.last_imported_at,
+        outlet.updated_at,
+      ],
+    );
   }
 
-  try {
-    await client.query(
-      `UPDATE onec_client_quarantine_records SET superseded_at = NOW() WHERE superseded_at IS NULL AND NOT (id = ANY($1::uuid[]))`,
-      [snapshot.quarantineRecordIds],
-    );
+  await client.query(
+    `UPDATE onec_client_quarantine_records SET superseded_at = NOW() WHERE superseded_at IS NULL AND NOT (id = ANY($1::uuid[]))`,
+    [snapshot.quarantineRecordIds],
+  );
+  if (snapshot.quarantineRecordIds.length > 0) {
     await client.query(
       `UPDATE onec_client_quarantine_records SET superseded_at = NULL WHERE id = ANY($1::uuid[])`,
       [snapshot.quarantineRecordIds],
     );
-  } catch {
-    // optional
   }
 
-  try {
-    await client.query(
-      `UPDATE onec_extended_contract_confirmations SET superseded_at = NOW() WHERE superseded_at IS NULL AND NOT (id = ANY($1::uuid[]))`,
-      [snapshot.contractConfirmationIds],
-    );
+  await client.query(
+    `UPDATE onec_extended_contract_confirmations SET superseded_at = NOW() WHERE superseded_at IS NULL AND NOT (id = ANY($1::uuid[]))`,
+    [snapshot.contractConfirmationIds],
+  );
+  if (snapshot.contractConfirmationIds.length > 0) {
     await client.query(
       `UPDATE onec_extended_contract_confirmations SET superseded_at = NULL WHERE id = ANY($1::uuid[])`,
       [snapshot.contractConfirmationIds],
     );
-  } catch {
-    // optional
   }
+
+  await client.query(
+    `
+      UPDATE onec_exchange_state
+      SET
+        last_successful_apply_sha256 = $1,
+        accepted_baseline_sha256 = $2,
+        last_verified_sha256 = $3,
+        apply_blocked = $4,
+        apply_blocked_reason = $5,
+        updated_at = NOW()
+      WHERE id = 1
+    `,
+    [
+      snapshot.exchangeState.last_successful_apply_sha256,
+      snapshot.exchangeState.accepted_baseline_sha256,
+      snapshot.exchangeState.last_verified_sha256,
+      snapshot.exchangeState.apply_blocked,
+      snapshot.exchangeState.apply_blocked_reason,
+    ],
+  );
 
   return snapshotGuids.size;
 }
 
-export function isPreApplySnapshotV2(value: unknown): value is PreApplySnapshotV2 {
+export function isPreApplySnapshotV3(value: unknown): value is PreApplySnapshotV3 {
   return (
     !!value &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    (value as PreApplySnapshotV2).v === 2 &&
-    Array.isArray((value as PreApplySnapshotV2).clients)
+    (value as PreApplySnapshotV3).v === 3 &&
+    Array.isArray((value as PreApplySnapshotV3).clients) &&
+    !!(value as PreApplySnapshotV3).exchangeState
   );
+}
+
+/** @deprecated Use isPreApplySnapshotV3 */
+export function isPreApplySnapshotV2(value: unknown): value is PreApplySnapshotV3 {
+  return isPreApplySnapshotV3(value);
 }

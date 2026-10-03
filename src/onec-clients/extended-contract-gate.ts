@@ -59,9 +59,12 @@ export function resolveExtendedContractVerificationForBaseline(input: {
     input.confirmation.clientsSourceSha256.toLowerCase() !==
       input.clientsSourceSha256.toLowerCase() ||
     input.confirmation.verificationFingerprint.toLowerCase() !==
-      expectedFingerprint.toLowerCase() ||
-    expected !== (input.storedConfirmationSha256?.toLowerCase() ?? "")
+      expectedFingerprint.toLowerCase()
   ) {
+    return "unverified";
+  }
+  const stored = input.storedConfirmationSha256?.toLowerCase() ?? null;
+  if (stored && stored !== expected) {
     return "unverified";
   }
   return "operator_confirmed";
