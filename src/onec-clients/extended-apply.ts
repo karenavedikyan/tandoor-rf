@@ -72,6 +72,76 @@ function outletAlreadyArchivedInMerge(
   );
 }
 
+function outletHistoryStateChanged(
+  previousOutlet: ParsedRetailOutlet,
+  nextOutlet: ParsedRetailOutlet | undefined,
+): boolean {
+  if (!nextOutlet) {
+    return true;
+  }
+  if (!outletsAreIdentical(previousOutlet, nextOutlet)) {
+    return true;
+  }
+  if (previousOutlet.provenance?.freshness !== nextOutlet.provenance?.freshness) {
+    return true;
+  }
+  if (previousOutlet.closureConfirmedInCurrentExport !== nextOutlet.closureConfirmedInCurrentExport) {
+    return true;
+  }
+  return false;
+}
+
+function resolveArchiveOrigin(
+  outlet: ParsedRetailOutlet,
+  previous: ExtendedSnapshot,
+): { sourceSha256: string; capturedAt: string } {
+  if (outlet.provenance?.sourceSha256) {
+    return {
+      sourceSha256: outlet.provenance.sourceSha256,
+      capturedAt: outlet.provenance.importedAt,
+    };
+  }
+  const blockProvenance = previous.blocks?.blockProvenance?.retailOutlets;
+  return {
+    sourceSha256: blockProvenance?.sourceSha256 ?? previous.sourceSha256,
+    capturedAt: blockProvenance?.importedAt ?? previous.importedAt,
+  };
+}
+
+function appendOutletsToHistoryByOrigin(
+  history: RetailOutletHistoryEntry[],
+  outlets: ParsedRetailOutlet[],
+  previous: ExtendedSnapshot,
+  archivedAt: string,
+): void {
+  const grouped = new Map<
+    string,
+    { sourceSha256: string; capturedAt: string; retailOutlets: ParsedRetailOutlet[] }
+  >();
+  for (const outlet of outlets) {
+    const origin = resolveArchiveOrigin(outlet, previous);
+    const key = `${origin.sourceSha256}\0${origin.capturedAt}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.retailOutlets.push(outlet);
+      continue;
+    }
+    grouped.set(key, {
+      sourceSha256: origin.sourceSha256,
+      capturedAt: origin.capturedAt,
+      retailOutlets: [outlet],
+    });
+  }
+  for (const entry of grouped.values()) {
+    history.push({
+      sourceSha256: entry.sourceSha256,
+      capturedAt: entry.capturedAt,
+      archivedAt,
+      retailOutlets: entry.retailOutlets,
+    });
+  }
+}
+
 function appendHistoryWhenBusinessChanged(
   previous: ExtendedSnapshot | null,
   nextOutlets: ParsedRetailOutlet[],
@@ -101,10 +171,7 @@ function appendHistoryWhenBusinessChanged(
       return false;
     }
     const nextOutlet = findNextOutletForHistory(previousOutlet, nextOutlets);
-    if (!nextOutlet) {
-      return true;
-    }
-    return !outletsAreIdentical(previousOutlet, nextOutlet);
+    return outletHistoryStateChanged(previousOutlet, nextOutlet);
   });
 
   const orderOnlyChange =
@@ -120,13 +187,12 @@ function appendHistoryWhenBusinessChanged(
     return history;
   }
 
-  const previousOutletProvenance = previous.blocks?.blockProvenance?.retailOutlets;
-  history.push({
-    sourceSha256: previousOutletProvenance?.sourceSha256 ?? previous.sourceSha256,
-    capturedAt: previousOutletProvenance?.importedAt ?? previous.importedAt,
+  appendOutletsToHistoryByOrigin(
+    history,
+    orderOnlyChange ? previousCurrent : outletsToArchive,
+    previous,
     archivedAt,
-    retailOutlets: orderOnlyChange ? previousCurrent : outletsToArchive,
-  });
+  );
   return history;
 }
 

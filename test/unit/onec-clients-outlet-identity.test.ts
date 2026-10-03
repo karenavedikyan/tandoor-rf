@@ -375,6 +375,163 @@ describe("outlet identity merge", () => {
     );
   });
 
+  function holdingRecord(retailOutlets: ParsedRetailOutlet[]) {
+    return {
+      guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+      name_client: "Holding",
+      guid_holding: null,
+      name_holding: "",
+      guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+      name_manager: "Manager",
+      address: "Addr",
+      telephone: [],
+      isHolding: true,
+      regionalManager: { guid: null, name: "", state: "not_provided" as const },
+      hardwareManager: { guid: null, name: "", state: "not_provided" as const },
+      headOfSales: { guid: null, name: "", state: "not_provided" as const },
+      retailOutlets,
+      recordFormat: "extended_v1" as const,
+      hasExtendedManagerFields: true,
+      fieldPresence: {
+        holding: "present" as const,
+        retailOutlets: "present" as const,
+        regionalManager: "missing" as const,
+        hardwareManager: "missing" as const,
+        headOfSales: "missing" as const,
+      },
+    };
+  }
+
+  it("archives TT2 closed=true state with export B origin on A -> B -> C", () => {
+    const tt1 = outlet({
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+    });
+    const tt2 = outlet({
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+    });
+    const snapshotA = buildExtendedSnapshotJson(
+      holdingRecord([tt1, tt2]),
+      null,
+      "sha-a",
+      "2026-10-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const snapshotB = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          closed: true,
+          closureStatus: "closed",
+          closureConfirmedInCurrentExport: true,
+        }),
+      ]),
+      snapshotA,
+      "sha-b",
+      "2026-10-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const snapshotC = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          closed: false,
+          closureStatus: "open",
+          closureConfirmedInCurrentExport: true,
+        }),
+      ]),
+      snapshotB,
+      "sha-c",
+      "2026-10-03T00:00:00.000Z",
+      { contractVerified: true },
+    );
+
+    const closedArchive = snapshotC.retailOutletHistory.find((entry) =>
+      entry.retailOutlets.some(
+        (item) =>
+          item.guidStore === EXTENDED_FIXTURE_GUIDS.STORE_TWO && item.closed === true,
+      ),
+    );
+    assert.ok(closedArchive);
+    assert.equal(closedArchive?.sourceSha256, "sha-b");
+    assert.equal(closedArchive?.capturedAt, "2026-10-02T00:00:00.000Z");
+    assert.equal(closedArchive?.archivedAt, "2026-10-03T00:00:00.000Z");
+    assert.equal(
+      closedArchive?.retailOutlets[0]?.provenance.sourceSha256,
+      "sha-b",
+    );
+  });
+
+  it("splits history entries when archiving outlets of different provenance together", () => {
+    const tt1 = outlet({
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+    });
+    const tt2 = outlet({
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+    });
+    const snapshotA = buildExtendedSnapshotJson(
+      holdingRecord([tt1, tt2]),
+      null,
+      "sha-a",
+      "2026-10-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const snapshotB = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          closed: true,
+          closureStatus: "closed",
+          closureConfirmedInCurrentExport: true,
+        }),
+      ]),
+      snapshotA,
+      "sha-b",
+      "2026-10-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const snapshotC = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+          closed: false,
+          closureStatus: "open",
+          closureConfirmedInCurrentExport: true,
+        }),
+        outlet({
+          guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          closed: false,
+          closureStatus: "open",
+          closureConfirmedInCurrentExport: true,
+        }),
+      ]),
+      snapshotB,
+      "sha-c",
+      "2026-10-03T00:00:00.000Z",
+      { contractVerified: true },
+    );
+
+    const newEntries = snapshotC.retailOutletHistory.slice(snapshotB.retailOutletHistory.length);
+    assert.equal(newEntries.length, 2);
+    const origins = newEntries.map((entry) => `${entry.sourceSha256}|${entry.capturedAt}`).sort();
+    assert.deepEqual(origins, [
+      "sha-a|2026-10-01T00:00:00.000Z",
+      "sha-b|2026-10-02T00:00:00.000Z",
+    ]);
+    assert.equal(newEntries.every((entry) => entry.archivedAt === "2026-10-03T00:00:00.000Z"), true);
+  });
+
   it("compares full business projection including managers and contacts", () => {
     const left = outlet();
     const right = outlet({
