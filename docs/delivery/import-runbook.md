@@ -8,6 +8,7 @@
 ## 1. Принципы безопасности
 
 - Источник — **только** согласованный plain FTP `gw.toopatch.ru`, базовый путь `/LC`, файл `clients/all_clients.json`.
+- Максимальный размер файла — **32 MiB** по фактически прочитанным байтам (не только размер из FTP LIST); прежний лимит 10 MiB блокировал live-выгрузку ~21 MiB (03.10.2026).
 - Секреты — только в env TW; не в Git, не в SQL-заданиях, не в HTTP.
 - **Dry-run по умолчанию.** Apply требует `--expected-sha256` (CLI) или `expected_sha256` в задании БД.
 - Apply **не удаляет** отсутствующих клиентов; уменьшение числа записей блокируется (`RECORD_COUNT_DECREASED`); исчезновение ранее известных GUID при том же count — `GUID_SET_SHRINK`.
@@ -151,7 +152,33 @@
 
 ---
 
-## 8. Что runbook не делает
+## 8. Live-проверка расширенного контракта клиентов (после адаптации форматов)
+
+**Статус (03.10.2026):** форматы времени приёмки, даты рождения, числового бонуса и null UUID ответственных адаптированы на синтетике; реальный JSON проверен read-only (SHA `52307bbde…`). Production apply расширения **заблокирован** (`extendedApplied=false`, `extendedBlockReason=awaiting_live_json_verification`).
+
+### Порядок следующей live-приёмки
+
+1. **Dry-run** (CLI или scheduled check-only):
+   ```bash
+   node dist/cli/onec-clients-import.js --dry-run
+   ```
+2. Review JSON-отчёт: `sha256`, counts, `holdingGuidUnknownCount`, `holdingGuidRejectedCount`, `ambiguousLoadingTimeCount`, `ambiguousDateOfBirthCount`, warnings адаптации форматов.
+3. Убедиться, что **не** ожидается автоматический apply расширения — legacy-поля могут применяться по прежним правилам только после отдельного согласования.
+4. Зафиксировать оставшиеся блокировки: битые ссылки `guid_holding`, отсутствие `guid_store`/`closed`, неподтверждённые GUID сотрудников.
+5. Только после письменного подтверждения контракта 1С — рассмотреть `extendedContractVerification` (отдельный PR/решение; **не** в scope текущей адаптации).
+
+### Что адаптация **не** снимает
+
+- `HOLDING_GUID_UNKNOWN` / `HOLDING_GUID_REJECTED` — apply расширения блокируется.
+- Отсутствие `guid_store` — ТТ остаются read-only snapshot без registry.
+- Неоднозначные `0001-01-01T00:00:00` (время/дата рождения) — не публикуются как подтверждённые значения.
+- GUID сотрудников вне `all_employees.json` — `directory_unverified`, без автоматических прав.
+
+Подробности форматов: [clients-field-contract.md §3.2](./clients-field-contract.md).
+
+---
+
+## 9. Что runbook не делает
 
 - Не создаёт и не меняет `users`, `user_onec_employee_links`, `access_grants`, `rop_team_members`.
 - Не включает production-расписание сам по себе — cron/TW настраивает оператор после приёмки PR.
@@ -159,7 +186,7 @@
 
 ---
 
-## 9. Каталог 1С (R3.1)
+## 10. Каталог 1С (R3.1)
 
 **Назначение:** безопасный импорт XML `/LC/catalog/` в PostgreSQL **без UI** и **без** изменения клиентского snapshot.
 

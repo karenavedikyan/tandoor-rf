@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { MAX_SOURCE_BYTES } from "../../src/onec-clients/constants";
 import { buildIdentitySnapshot } from "../../src/onec-diagnostics/snapshot";
 
 const a = "0d714501-be78-11ee-812e-00155d0a0a4e";
@@ -32,7 +33,7 @@ test("same GUID with conflicting names is preserved for manual review", () => {
   assert.equal(r.managers[0].names.length, 2);
 });
 test("rejects invalid JSON, invalid UTF8, wrong root and oversized source", () => {
-  for (const bytes of [Buffer.from("{"), Buffer.from([0xff]), encode({}), Buffer.alloc(10 * 1024 * 1024 + 1)]) {
+  for (const bytes of [Buffer.from("{"), Buffer.from([0xff]), encode({}), Buffer.alloc(MAX_SOURCE_BYTES + 1)]) {
     assert.throws(() => buildIdentitySnapshot(bytes));
   }
 });

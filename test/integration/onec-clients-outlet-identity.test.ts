@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
+import type { AccessContext } from "../../src/access/types";
+import { toClientExtendedDto } from "../../src/clients/extended-dto";
 import { applyClientsImport } from "../../src/onec-clients/apply";
 import {
   buildExtendedClientsFileBytes,
@@ -262,6 +264,214 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
       journal.rows[0]?.extended_diagnostics?.applyBlocks?.extendedBlockReason,
       "outlet_parent_link_conflict",
     );
+    await pool.end();
+  });
+
+  it("preserves confirmed loading time across ambiguous export and surfaces it in DTO", async () => {
+    const adminContext: AccessContext = {
+      userId: "admin",
+      role: "admin",
+      status: "active",
+      fullClientBase: true,
+      employeeId: null,
+      teamIds: [],
+    };
+
+    const firstBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_on_monday: true, loading_time: "09:00" },
+            LPR_information: { date_of_birth: "1980-05-01", bonus: 10 },
+          }),
+        ],
+      }),
+    ]);
+    const firstValidated = validateClientsForApplyTest(firstBytes);
+    assert.equal(firstValidated.ok, true);
+    if (!firstValidated.ok) return;
+    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+
+    const secondBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_on_monday: true, loading_time: "0001-01-01T00:00:00" },
+            LPR_information: { date_of_birth: "0001-01-01T00:00:00", bonus: 10 },
+          }),
+        ],
+      }),
+    ]);
+    const secondValidated = validateClientsForApplyTest(secondBytes);
+    assert.equal(secondValidated.ok, true);
+    if (!secondValidated.ok) return;
+    await applyClientsImport({
+      databaseUrl,
+      payload: secondValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{
+      is_holding: boolean;
+      extended_format_version: string;
+      extended_source_sha256: string;
+      extended_imported_at: Date;
+      extended_freshness_state: string;
+      extended_snapshot: unknown;
+    }>(
+      `
+        SELECT is_holding, extended_format_version, extended_source_sha256,
+               extended_imported_at, extended_freshness_state, extended_snapshot
+        FROM onec_clients
+        WHERE guid_client = $1::uuid
+      `,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    const outlet = (
+      row.rows[0]?.extended_snapshot as {
+        currentRetailOutlets: Array<{
+          loading: { loadingTime: string | null; loadingTimeAmbiguousIncomingRaw?: string | null };
+          lpr: { dateOfBirth: string | null; dateOfBirthAmbiguousIncomingRaw?: string | null };
+        }>;
+      }
+    ).currentRetailOutlets[0];
+    assert.equal(outlet?.loading.loadingTime, "09:00");
+    assert.equal(outlet?.loading.loadingTimeAmbiguousIncomingRaw, "0001-01-01T00:00:00");
+    assert.equal(outlet?.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(outlet?.lpr.dateOfBirthAmbiguousIncomingRaw, "0001-01-01T00:00:00");
+
+    const dto = toClientExtendedDto(row.rows[0]!, adminContext);
+    assert.equal(dto?.retailOutlets[0]?.loading.loadingTime, "09:00");
+    assert.match(dto?.retailOutlets[0]?.loading.loadingTimeNote ?? "", /неоднозначное значение/);
+    assert.match(dto?.retailOutlets[0]?.dataSourceLabel ?? "", /Частично подтверждено/);
+    await pool.end();
+  });
+
+  it("preserves confirmed values through A→B→C ambiguous exports and updates on D", async () => {
+    const adminContext: AccessContext = {
+      userId: "admin",
+      role: "admin",
+      status: "active",
+      fullClientBase: true,
+      employeeId: null,
+      teamIds: [],
+    };
+
+    const snapshotA = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_on_monday: true, loading_time: "09:00" },
+            LPR_information: { date_of_birth: "1980-05-01", bonus: 10 },
+          }),
+        ],
+      }),
+    ]);
+    const validatedA = validateClientsForApplyTest(snapshotA);
+    assert.equal(validatedA.ok, true);
+    if (!validatedA.ok) return;
+    await applyClientsImport({ databaseUrl, payload: validatedA.payload });
+
+    const ambiguousOutlet = sampleIdentifiedOutlet({
+      information_loading: { loading_on_monday: true, loading_time: "0001-01-01T00:00:00" },
+      LPR_information: { date_of_birth: "0001-01-01T00:00:00", bonus: 10 },
+    });
+    let committedSha = validatedA.payload.sha256;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding({ retail_outlets: [ambiguousOutlet] })]);
+      const validated = validateClientsForApplyTest(bytes);
+      assert.equal(validated.ok, true);
+      if (!validated.ok) return;
+      const applied = await applyClientsImport({
+        databaseUrl,
+        payload: validated.payload,
+        expectedCommittedSha256: committedSha,
+      });
+      assert.equal(applied.ok, true);
+      committedSha = validated.payload.sha256;
+    }
+
+    const poolAfterC = new Pool({ connectionString: databaseUrl, max: 1 });
+    const midRow = await poolAfterC.query<{
+      extended_snapshot: {
+        currentRetailOutlets: Array<{
+          loading: { loadingTime: string | null; loadingTimeFieldProvenance?: { sourceSha256: string } };
+          lpr: { dateOfBirth: string | null; dateOfBirthFieldProvenance?: { sourceSha256: string } };
+        }>;
+      };
+    }>(
+      "SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    const midOutlet = midRow.rows[0]?.extended_snapshot.currentRetailOutlets[0];
+    assert.equal(midOutlet?.loading.loadingTime, "09:00");
+    assert.equal(midOutlet?.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(midOutlet?.loading.loadingTimeFieldProvenance?.sourceSha256, validatedA.payload.sha256);
+    await poolAfterC.end();
+
+    const snapshotD = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_on_monday: true, loading_time: "10:30" },
+            LPR_information: { date_of_birth: "1985-06-20", bonus: 12 },
+          }),
+        ],
+      }),
+    ]);
+    const validatedD = validateClientsForApplyTest(snapshotD);
+    assert.equal(validatedD.ok, true);
+    if (!validatedD.ok) return;
+    await applyClientsImport({
+      databaseUrl,
+      payload: validatedD.payload,
+      expectedCommittedSha256: committedSha,
+    });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{
+      extended_source_sha256: string;
+      extended_snapshot: {
+        currentRetailOutlets: Array<{
+          loading: {
+            loadingTime: string | null;
+            loadingTimeFieldProvenance?: { sourceSha256: string; freshness: string };
+          };
+          lpr: {
+            dateOfBirth: string | null;
+            dateOfBirthFieldProvenance?: { sourceSha256: string; freshness: string };
+          };
+        }>;
+        retailOutletHistory: unknown[];
+      };
+    }>(
+      `
+        SELECT extended_source_sha256, extended_snapshot
+        FROM onec_clients
+        WHERE guid_client = $1::uuid
+      `,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    const outletRow = row.rows[0]?.extended_snapshot.currentRetailOutlets[0];
+    assert.equal(outletRow?.loading.loadingTime, "10:30");
+    assert.equal(outletRow?.lpr.dateOfBirth, "1985-06-20");
+    assert.equal(outletRow?.loading.loadingTimeFieldProvenance?.sourceSha256, validatedD.payload.sha256);
+    assert.equal(outletRow?.loading.loadingTimeFieldProvenance?.freshness, "current");
+
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: row.rows[0]!.extended_source_sha256,
+        extended_imported_at: new Date("2026-01-04T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: row.rows[0]!.extended_snapshot,
+      },
+      adminContext,
+    );
+    assert.equal(dto?.retailOutlets[0]?.loading.loadingTime, "10:30");
+    assert.equal(dto?.retailOutlets[0]?.loading.loadingTimeNote, null);
     await pool.end();
   });
 

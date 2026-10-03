@@ -6,6 +6,7 @@ import {
   dedupeIdenticalOutlets,
   mergeRetailOutletsWithIdentity,
   outletBusinessProjection,
+  outletDuplicateRowsEquivalent,
   outletsAreIdentical,
 } from "../../src/onec-clients/outlet-identity";
 import type { ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
@@ -541,5 +542,341 @@ describe("outlet identity merge", () => {
       },
     });
     assert.notDeepEqual(outletBusinessProjection(left), outletBusinessProjection(right));
+  });
+
+  it("preserves confirmed loading time and date of birth when incoming values are ambiguous", () => {
+    const previous = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: "09:00",
+        loadingTimeSourceRaw: "09:00",
+        loadingTimeConfirmedInCurrentExport: true,
+        loadingTimeFieldProvenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: "1980-05-01",
+        dateOfBirthSourceRaw: "1980-05-01",
+        dateOfBirthConfirmedInCurrentExport: true,
+        dateOfBirthFieldProvenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+    const incoming = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: null,
+        loadingTimeSourceRaw: "0001-01-01T00:00:00",
+        loadingTimeAmbiguous: true,
+        loadingTimeConfirmedInCurrentExport: false,
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: null,
+        dateOfBirthSourceRaw: "0001-01-01T00:00:00",
+        dateOfBirthAmbiguous: true,
+        dateOfBirthConfirmedInCurrentExport: false,
+      },
+    });
+    const merged = mergeRetailOutletsWithIdentity([incoming], "present", [previous], {
+      sourceSha256: "sha-b",
+      importedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const result = merged.outlets[0];
+    assert.equal(result?.loading.loadingTime, "09:00");
+    assert.equal(result?.loading.loadingTimeAmbiguousIncomingRaw, "0001-01-01T00:00:00");
+    assert.equal(result?.loading.loadingTimeConfirmedInCurrentExport, false);
+    assert.equal(result?.loading.loadingTimeFieldProvenance?.sourceSha256, "sha-a");
+    assert.equal(result?.loading.loadingTimeFieldProvenance?.freshness, "preserved_from_previous");
+    assert.equal(result?.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(result?.lpr.dateOfBirthAmbiguousIncomingRaw, "0001-01-01T00:00:00");
+    assert.equal(result?.lpr.dateOfBirthConfirmedInCurrentExport, false);
+    assert.equal(result?.lpr.dateOfBirthFieldProvenance?.freshness, "preserved_from_previous");
+  });
+
+  it("preserves confirmed values through repeated ambiguous snapshots A→B→C and accepts D", () => {
+    const confirmed = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: "09:00",
+        loadingTimeSourceRaw: "09:00",
+        loadingTimeConfirmedInCurrentExport: true,
+        loadingTimeFieldProvenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: "1980-05-01",
+        dateOfBirthSourceRaw: "1980-05-01",
+        dateOfBirthConfirmedInCurrentExport: true,
+        dateOfBirthFieldProvenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+    const ambiguous = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: null,
+        loadingTimeSourceRaw: "0001-01-01T00:00:00",
+        loadingTimeAmbiguous: true,
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: null,
+        dateOfBirthSourceRaw: "0001-01-01T00:00:00",
+        dateOfBirthAmbiguous: true,
+      },
+    });
+    const afterB = mergeRetailOutletsWithIdentity([ambiguous], "present", [confirmed], {
+      sourceSha256: "sha-b",
+      importedAt: "2026-01-02T00:00:00.000Z",
+    }).outlets[0]!;
+    const afterC = mergeRetailOutletsWithIdentity([ambiguous], "present", [afterB], {
+      sourceSha256: "sha-c",
+      importedAt: "2026-01-03T00:00:00.000Z",
+    }).outlets[0]!;
+    assert.equal(afterC.loading.loadingTime, "09:00");
+    assert.equal(afterC.lpr.dateOfBirth, "1980-05-01");
+    assert.equal(afterC.loading.loadingTimeFieldProvenance?.sourceSha256, "sha-a");
+    assert.equal(afterC.lpr.dateOfBirthFieldProvenance?.sourceSha256, "sha-a");
+    assert.equal(afterC.loading.loadingTimeFieldProvenance?.freshness, "preserved_from_previous");
+
+    const updated = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: "10:30",
+        loadingTimeSourceRaw: "10:30",
+        loadingTimeConfirmedInCurrentExport: true,
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: "1985-06-20",
+        dateOfBirthSourceRaw: "1985-06-20",
+        dateOfBirthConfirmedInCurrentExport: true,
+      },
+    });
+    const afterD = mergeRetailOutletsWithIdentity([updated], "present", [afterC], {
+      sourceSha256: "sha-d",
+      importedAt: "2026-01-04T00:00:00.000Z",
+    }).outlets[0]!;
+    assert.equal(afterD.loading.loadingTime, "10:30");
+    assert.equal(afterD.lpr.dateOfBirth, "1985-06-20");
+    assert.equal(afterD.loading.loadingTimeAmbiguousIncomingRaw, null);
+    assert.equal(afterD.loading.loadingTimeConfirmedInCurrentExport, true);
+    assert.equal(afterD.loading.loadingTimeFieldProvenance?.sourceSha256, "sha-d");
+    assert.equal(afterD.loading.loadingTimeFieldProvenance?.freshness, "current");
+  });
+
+  it("treats ambiguous and explicit null duplicate rows as incompatible", () => {
+    const ambiguous = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: null,
+        loadingTimeAmbiguous: true,
+        loadingTimeSourceRaw: "0001-01-01T00:00:00",
+      },
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: null,
+        dateOfBirthAmbiguous: true,
+        dateOfBirthSourceRaw: "0001-01-01T00:00:00",
+      },
+    });
+    const explicitEmpty = outlet({
+      loading: { ...outlet().loading, loadingTime: null, loadingTimeAmbiguous: false },
+      lpr: { ...outlet().lpr, dateOfBirth: null, dateOfBirthAmbiguous: false },
+    });
+    assert.equal(outletDuplicateRowsEquivalent(ambiguous, explicitEmpty), false);
+    assert.equal(outletsAreIdentical(ambiguous, explicitEmpty), true);
+  });
+
+  it("leaves ambiguous loading time unknown for new outlets without prior confirmation", () => {
+    const incoming = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: null,
+        loadingTimeSourceRaw: "0001-01-01T00:00:00",
+        loadingTimeAmbiguous: true,
+      },
+    });
+    const merged = mergeRetailOutletsWithIdentity([incoming], "present", [], {
+      sourceSha256: "sha-a",
+      importedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(merged.outlets[0]?.loading.loadingTime, null);
+    assert.equal(merged.outlets[0]?.loading.loadingTimeAmbiguous, true);
+    assert.equal(merged.outlets[0]?.loading.loadingTimeConfirmedInCurrentExport, false);
+  });
+
+  it("treats equivalent loading time formats as identical business values", () => {
+    const plain = outlet({
+      loading: { ...outlet().loading, loadingTime: "09:00", loadingTimeSourceRaw: "09:00" },
+    });
+    const iso = outlet({
+      loading: {
+        ...outlet().loading,
+        loadingTime: "09:00",
+        loadingTimeSourceRaw: "0001-01-01T09:00:00",
+      },
+    });
+    assert.equal(outletsAreIdentical(plain, iso), true);
+    assert.equal(dedupeIdenticalOutlets([plain, iso]).length, 1);
+  });
+
+  it("does not treat raw-only differences as business changes for midnight date of birth", () => {
+    const plain = outlet({
+      lpr: { ...outlet().lpr, dateOfBirth: "1980-05-01", dateOfBirthSourceRaw: "1980-05-01" },
+    });
+    const midnight = outlet({
+      lpr: {
+        ...outlet().lpr,
+        dateOfBirth: "1980-05-01",
+        dateOfBirthSourceRaw: "1980-05-01T00:00:00",
+      },
+    });
+    assert.equal(outletsAreIdentical(plain, midnight), true);
+  });
+
+  it("does not append history on repeated ambiguous snapshots after confirmed values", () => {
+    const holdingRecord = (outlets: ParsedRetailOutlet[]) => ({
+      guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+      name_client: "Holding",
+      guid_holding: null,
+      name_holding: "",
+      guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+      name_manager: "Manager",
+      address: "Addr",
+      telephone: [] as string[],
+      isHolding: true,
+      regionalManager: { guid: null, name: "", state: "not_provided" as const },
+      hardwareManager: { guid: null, name: "", state: "not_provided" as const },
+      headOfSales: { guid: null, name: "", state: "not_provided" as const },
+      retailOutlets: outlets,
+      recordFormat: "extended_v1" as const,
+      hasExtendedManagerFields: true,
+      fieldPresence: {
+        holding: "present" as const,
+        retailOutlets: "present" as const,
+        regionalManager: "missing" as const,
+        hardwareManager: "missing" as const,
+        headOfSales: "missing" as const,
+      },
+    });
+    const ambiguousOutlet = () =>
+      outlet({
+        loading: {
+          ...outlet().loading,
+          loadingTime: null,
+          loadingTimeSourceRaw: "0001-01-01T00:00:00",
+          loadingTimeAmbiguous: true,
+        },
+      });
+    const first = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          loading: {
+            ...outlet().loading,
+            loadingTime: "09:00",
+            loadingTimeSourceRaw: "09:00",
+            loadingTimeConfirmedInCurrentExport: true,
+          },
+        }),
+      ]),
+      null,
+      "sha-a",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      holdingRecord([ambiguousOutlet()]),
+      first,
+      "sha-b",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const third = buildExtendedSnapshotJson(
+      holdingRecord([ambiguousOutlet()]),
+      second,
+      "sha-c",
+      "2026-01-03T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    assert.equal(second.retailOutletHistory.length, first.retailOutletHistory.length);
+    assert.equal(third.retailOutletHistory.length, first.retailOutletHistory.length);
+    assert.equal(third.currentRetailOutlets[0]?.loading.loadingTime, "09:00");
+  });
+
+  it("does not append history when only loading time source format changes", () => {
+    const holdingRecord = (outlets: ParsedRetailOutlet[]) => ({
+      guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+      name_client: "Holding",
+      guid_holding: null,
+      name_holding: "",
+      guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+      name_manager: "Manager",
+      address: "Addr",
+      telephone: [] as string[],
+      isHolding: true,
+      regionalManager: { guid: null, name: "", state: "not_provided" as const },
+      hardwareManager: { guid: null, name: "", state: "not_provided" as const },
+      headOfSales: { guid: null, name: "", state: "not_provided" as const },
+      retailOutlets: outlets,
+      recordFormat: "extended_v1" as const,
+      hasExtendedManagerFields: true,
+      fieldPresence: {
+        holding: "present" as const,
+        retailOutlets: "present" as const,
+        regionalManager: "missing" as const,
+        hardwareManager: "missing" as const,
+        headOfSales: "missing" as const,
+      },
+    });
+
+    const first = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          loading: {
+            ...outlet().loading,
+            loadingTime: "09:00",
+            loadingTimeSourceRaw: "09:00",
+            loadingTimeConfirmedInCurrentExport: true,
+          },
+        }),
+      ]),
+      null,
+      "sha-a",
+      "2026-01-01T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    const second = buildExtendedSnapshotJson(
+      holdingRecord([
+        outlet({
+          loading: {
+            ...outlet().loading,
+            loadingTime: "09:00",
+            loadingTimeSourceRaw: "0001-01-01T09:00:00",
+            loadingTimeConfirmedInCurrentExport: true,
+          },
+        }),
+      ]),
+      first,
+      "sha-b",
+      "2026-01-02T00:00:00.000Z",
+      { contractVerified: true },
+    );
+    assert.equal(second.retailOutletHistory.length, first.retailOutletHistory.length);
   });
 });

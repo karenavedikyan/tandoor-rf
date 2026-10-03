@@ -28,6 +28,13 @@ export type ParsedOutletLoading = {
   loadingOnSaturday: boolean | null;
   loadingOnSunday: boolean | null;
   loadingTime: string | null;
+  loadingTimeSourceRaw?: string | null;
+  loadingTimeAmbiguous?: boolean;
+  /** Raw ambiguous value from the current export when a prior value was preserved. */
+  loadingTimeAmbiguousIncomingRaw?: string | null;
+  /** Whether loadingTime was explicitly confirmed in the current export row. */
+  loadingTimeConfirmedInCurrentExport?: boolean;
+  loadingTimeFieldProvenance?: OutletProvenance;
 };
 
 export type ParsedOutletManagers = {
@@ -47,6 +54,11 @@ export type ParsedOutletLpr = {
   name: string;
   post: string;
   dateOfBirth: string | null;
+  dateOfBirthSourceRaw?: string | null;
+  dateOfBirthAmbiguous?: boolean;
+  dateOfBirthAmbiguousIncomingRaw?: string | null;
+  dateOfBirthConfirmedInCurrentExport?: boolean;
+  dateOfBirthFieldProvenance?: OutletProvenance;
   phone: string;
   email: string;
   bonus: string;
@@ -193,6 +205,7 @@ export type ExtendedValidationIssueCode =
   | "INVALID_MANAGER_PAIR"
   | "INVALID_MANAGER_GUID"
   | "HOLDING_GUID_UNKNOWN"
+  | "HOLDING_GUID_REJECTED"
   | "HOLDING_TARGET_NOT_HOLDING_CARD"
   | "HOLDING_SELF_REFERENCE"
   | "HOLDING_CYCLE"
@@ -210,7 +223,11 @@ export type ExtendedValidationWarningCode =
   | "UNCONFIRMED_CLOSURE_STATUS"
   | "OUTLETS_NOT_NORMALIZED"
   | "DUPLICATE_OUTLET_GUID_ROW"
-  | "EMPLOYEE_DIRECTORY_UNAVAILABLE";
+  | "EMPLOYEE_DIRECTORY_UNAVAILABLE"
+  | "AMBIGUOUS_LOADING_TIME"
+  | "AMBIGUOUS_DATE_OF_BIRTH"
+  | "LOAD_TIME_FORMAT_ADAPTED"
+  | "DATE_OF_BIRTH_FORMAT_ADAPTED";
 
 export type ExtendedValidationWarning = {
   code: ExtendedValidationWarningCode | import("./types").ValidationWarningCode;
@@ -239,6 +256,10 @@ export type ExtendedDiagnosticsSummary = {
   invalidManagerGuidCount: number;
   employeeDirectoryVerified: false;
   holdingLinkErrors: number;
+  holdingGuidUnknownCount: number;
+  holdingGuidRejectedCount: number;
+  ambiguousLoadingTimeCount: number;
+  ambiguousDateOfBirthCount: number;
   recordsWithExtendedFields: number;
   legacyOnlyRecords: number;
   blocks: {
@@ -260,4 +281,8 @@ export type ValidatedExtendedClientsPayload = {
   warningCount: number;
   diagnostics: ExtendedDiagnosticsSummary;
   extendedContractVerification?: import("./types").ExtendedContractVerification;
+  issueCodes?: string[];
+  warningCodes?: string[];
+  issuesTruncated?: boolean;
+  warningsTruncated?: boolean;
 };

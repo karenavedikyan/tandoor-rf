@@ -21,6 +21,11 @@ export type ValidationResult =
       warnings: ValidationWarning[];
       issueCount: number;
       warningCount: number;
+      extendedDiagnostics?: import("./extended-types").ExtendedDiagnosticsSummary | null;
+      issueCodes?: string[];
+      warningCodes?: string[];
+      issuesTruncated?: boolean;
+      warningsTruncated?: boolean;
     };
 
 export function validateClientsFileBytes(
@@ -35,6 +40,11 @@ export function validateClientsFileBytes(
       warnings: extended.warnings as ValidationWarning[],
       issueCount: extended.issueCount,
       warningCount: extended.warningCount,
+      extendedDiagnostics: extended.diagnostics,
+      issueCodes: extended.issueCodes,
+      warningCodes: extended.warningCodes,
+      issuesTruncated: extended.issuesTruncated,
+      warningsTruncated: extended.warningsTruncated,
     };
   }
 

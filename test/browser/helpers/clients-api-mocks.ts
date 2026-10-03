@@ -180,6 +180,7 @@ export function syntheticOutletMock(
         { key: "sun", label: "Вс", value: false },
       ],
       loadingTime: "09:00",
+      loadingTimeNote: null,
       loadingEndTime: null,
       scheduleState: "all_false" as const,
     },

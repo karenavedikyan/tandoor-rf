@@ -92,6 +92,102 @@ describe("outlet guid_store and closed validation", () => {
     }
   });
 
+  it("rejects duplicate guid rows when ambiguous sentinel conflicts with explicit null", () => {
+    const buildBytes = (sentinelFirst: boolean) =>
+      buildExtendedClientsFileBytes([
+        sampleExtendedHolding({
+          retail_outlets: sentinelFirst
+            ? [
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "0001-01-01T00:00:00" },
+                  LPR_information: { date_of_birth: "0001-01-01T00:00:00", bonus: 1 },
+                }),
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: null },
+                  LPR_information: { date_of_birth: null, bonus: 1 },
+                }),
+              ]
+            : [
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: null },
+                  LPR_information: { date_of_birth: null, bonus: 1 },
+                }),
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "0001-01-01T00:00:00" },
+                  LPR_information: { date_of_birth: "0001-01-01T00:00:00", bonus: 1 },
+                }),
+              ],
+        }),
+      ]);
+
+    for (const bytes of [buildBytes(true), buildBytes(false)]) {
+      const result = validateExtendedClientsFileBytes(bytes);
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.ok(result.issues.some((issue) => issue.code === "DUPLICATE_OUTLET_GUID"));
+      }
+    }
+  });
+
+  it("dedupes equivalent duplicate guid rows regardless of row order", () => {
+    const buildBytes = (isoFirst: boolean) =>
+      buildExtendedClientsFileBytes([
+        sampleExtendedHolding({
+          retail_outlets: isoFirst
+            ? [
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "0001-01-01T09:00:00" },
+                  LPR_information: { date_of_birth: "1980-05-01T00:00:00", bonus: 1 },
+                }),
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "09:00" },
+                  LPR_information: { date_of_birth: "1980-05-01", bonus: 1 },
+                }),
+              ]
+            : [
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "09:00" },
+                  LPR_information: { date_of_birth: "1980-05-01", bonus: 1 },
+                }),
+                sampleIdentifiedOutlet({
+                  information_loading: { loading_time: "0001-01-01T09:00:00" },
+                  LPR_information: { date_of_birth: "1980-05-01T00:00:00", bonus: 1 },
+                }),
+              ],
+        }),
+      ]);
+
+    for (const bytes of [buildBytes(true), buildBytes(false)]) {
+      const result = validateExtendedClientsFileBytes(bytes);
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.ok(result.payload.warnings.some((warning) => warning.code === "DUPLICATE_OUTLET_GUID_ROW"));
+      }
+    }
+  });
+
+  it("dedupes duplicate guid rows with equivalent loading time formats", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({
+            information_loading: { loading_time: "09:00" },
+          }),
+          sampleIdentifiedOutlet({
+            information_loading: { loading_time: "0001-01-01T09:00:00" },
+          }),
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.ok(result.payload.warnings.some((warning) => warning.code === "DUPLICATE_OUTLET_GUID_ROW"));
+      assert.equal(result.payload.diagnostics.duplicateOutletGuidCount, 1);
+    }
+  });
+
   it("treats duplicate guid rows with different managers as conflict", () => {
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({

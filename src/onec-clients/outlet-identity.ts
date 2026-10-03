@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
+import { normalizeLocalTimeForComparison } from "./field-value";
 import type {
   OutletProvenance,
   ParsedManagerRef,
+  ParsedOutletLoading,
+  ParsedOutletLpr,
   ParsedRetailOutlet,
   RetailOutletClosureHistoryEntry,
   RetailOutletHistoryEntry,
@@ -36,12 +39,33 @@ export type OutletMergeResult = {
 
 type ManagerBusinessRef = Pick<ParsedManagerRef, "guid" | "name" | "state">;
 
+export type OutletBusinessLoading = {
+  loadingOnMonday: boolean | null;
+  loadingOnTuesday: boolean | null;
+  loadingOnWednesday: boolean | null;
+  loadingOnThursday: boolean | null;
+  loadingOnFriday: boolean | null;
+  loadingOnSaturday: boolean | null;
+  loadingOnSunday: boolean | null;
+  loadingTime: string | null;
+};
+
+export type OutletBusinessLpr = {
+  name: string;
+  post: string;
+  dateOfBirth: string | null;
+  phone: string;
+  email: string;
+  bonus: string;
+  conditionsBonus: string;
+};
+
 export type OutletBusinessProjection = {
   guidStore: string | null;
   holdingName: string;
   warehouse: boolean | null;
   address: ParsedRetailOutlet["address"];
-  loading: ParsedRetailOutlet["loading"];
+  loading: OutletBusinessLoading;
   managers: {
     manager: ManagerBusinessRef;
     regionalManager: ManagerBusinessRef;
@@ -49,7 +73,7 @@ export type OutletBusinessProjection = {
     headOfSales: ManagerBusinessRef;
   };
   contacts: ParsedRetailOutlet["contacts"];
-  lpr: ParsedRetailOutlet["lpr"];
+  lpr: OutletBusinessLpr;
   additional: ParsedRetailOutlet["additional"];
   closed: boolean | null;
   closureStatus: ParsedRetailOutlet["closureStatus"];
@@ -59,13 +83,41 @@ function managerBusinessRef(ref: ParsedManagerRef): ManagerBusinessRef {
   return { guid: ref.guid, name: ref.name, state: ref.state };
 }
 
+function canonicalLoadingForBusiness(loading: ParsedOutletLoading): OutletBusinessLoading {
+  return {
+    loadingOnMonday: loading.loadingOnMonday,
+    loadingOnTuesday: loading.loadingOnTuesday,
+    loadingOnWednesday: loading.loadingOnWednesday,
+    loadingOnThursday: loading.loadingOnThursday,
+    loadingOnFriday: loading.loadingOnFriday,
+    loadingOnSaturday: loading.loadingOnSaturday,
+    loadingOnSunday: loading.loadingOnSunday,
+    loadingTime:
+      loading.loadingTime != null
+        ? normalizeLocalTimeForComparison(loading.loadingTime)
+        : null,
+  };
+}
+
+function canonicalLprForBusiness(lpr: ParsedOutletLpr): OutletBusinessLpr {
+  return {
+    name: lpr.name,
+    post: lpr.post,
+    dateOfBirth: lpr.dateOfBirth,
+    phone: lpr.phone,
+    email: lpr.email,
+    bonus: lpr.bonus,
+    conditionsBonus: lpr.conditionsBonus,
+  };
+}
+
 export function outletBusinessProjection(outlet: ParsedRetailOutlet): OutletBusinessProjection {
   return {
     guidStore: outlet.guidStore,
     holdingName: outlet.holdingName,
     warehouse: outlet.warehouse,
     address: outlet.address,
-    loading: outlet.loading,
+    loading: canonicalLoadingForBusiness(outlet.loading),
     managers: {
       manager: managerBusinessRef(outlet.managers.manager),
       regionalManager: managerBusinessRef(outlet.managers.regionalManager),
@@ -73,7 +125,7 @@ export function outletBusinessProjection(outlet: ParsedRetailOutlet): OutletBusi
       headOfSales: managerBusinessRef(outlet.managers.headOfSales),
     },
     contacts: outlet.contacts,
-    lpr: outlet.lpr,
+    lpr: canonicalLprForBusiness(outlet.lpr),
     additional: outlet.additional,
     closed: outlet.closed,
     closureStatus: outlet.closureStatus,
@@ -82,6 +134,42 @@ export function outletBusinessProjection(outlet: ParsedRetailOutlet): OutletBusi
 
 export function outletsAreIdentical(left: ParsedRetailOutlet, right: ParsedRetailOutlet): boolean {
   return isDeepStrictEqual(outletBusinessProjection(left), outletBusinessProjection(right));
+}
+
+/** Import-state for duplicate-row checks within one file (not business-history equality). */
+function loadingTimeImportState(loading: ParsedOutletLoading): string {
+  if (loading.loadingTimeAmbiguous) {
+    return "ambiguous";
+  }
+  if (loading.loadingTime != null) {
+    return `value:${normalizeLocalTimeForComparison(loading.loadingTime)}`;
+  }
+  return "explicit_empty";
+}
+
+function dateOfBirthImportState(lpr: ParsedOutletLpr): string {
+  if (lpr.dateOfBirthAmbiguous) {
+    return "ambiguous";
+  }
+  if (lpr.dateOfBirth != null) {
+    return `value:${lpr.dateOfBirth}`;
+  }
+  return "explicit_empty";
+}
+
+export function outletDuplicateRowsEquivalent(
+  left: ParsedRetailOutlet,
+  right: ParsedRetailOutlet,
+): boolean {
+  if (loadingTimeImportState(left.loading) !== loadingTimeImportState(right.loading)) {
+    return false;
+  }
+  if (dateOfBirthImportState(left.lpr) !== dateOfBirthImportState(right.lpr)) {
+    return false;
+  }
+  const leftBusiness = outletBusinessProjection(left);
+  const rightBusiness = outletBusinessProjection(right);
+  return isDeepStrictEqual(leftBusiness, rightBusiness);
 }
 
 export function dedupeIdenticalOutlets(outlets: ParsedRetailOutlet[]): ParsedRetailOutlet[] {
@@ -170,6 +258,144 @@ function appendClosureHistory(
   return history;
 }
 
+/** Whether a prior snapshot already established a usable business value (any export). */
+function previousLoadingHasConfirmedValue(previous: ParsedOutletLoading | undefined): boolean {
+  return previous?.loadingTime != null && previous.loadingTimeAmbiguous !== true;
+}
+
+function previousDateOfBirthHasConfirmedValue(previous: ParsedOutletLpr | undefined): boolean {
+  return previous?.dateOfBirth != null && previous.dateOfBirthAmbiguous !== true;
+}
+
+function preservedFieldProvenance(
+  fieldProvenance: OutletProvenance | undefined,
+  previousOutlet: ParsedRetailOutlet | undefined,
+): OutletProvenance {
+  if (fieldProvenance?.sourceSha256) {
+    return {
+      freshness: "preserved_from_previous",
+      sourceSha256: fieldProvenance.sourceSha256,
+      importedAt: fieldProvenance.importedAt,
+    };
+  }
+  if (previousOutlet?.provenance?.sourceSha256) {
+    return {
+      freshness: "preserved_from_previous",
+      sourceSha256: previousOutlet.provenance.sourceSha256,
+      importedAt: previousOutlet.provenance.importedAt,
+    };
+  }
+  return {
+    freshness: "preserved_from_previous",
+    sourceSha256: "",
+    importedAt: "",
+  };
+}
+
+function mergeLoadingField(
+  incoming: ParsedOutletLoading,
+  previous: ParsedOutletLoading | undefined,
+  previousOutlet: ParsedRetailOutlet | undefined,
+  context: OutletMergeContext,
+): ParsedOutletLoading {
+  if (incoming.loadingTimeAmbiguous) {
+    if (previousLoadingHasConfirmedValue(previous)) {
+      return {
+        ...incoming,
+        loadingTime: previous!.loadingTime,
+        loadingTimeSourceRaw: previous!.loadingTimeSourceRaw ?? null,
+        loadingTimeAmbiguous: false,
+        loadingTimeAmbiguousIncomingRaw: incoming.loadingTimeSourceRaw ?? null,
+        loadingTimeConfirmedInCurrentExport: false,
+        loadingTimeFieldProvenance: preservedFieldProvenance(
+          previous!.loadingTimeFieldProvenance,
+          previousOutlet,
+        ),
+      };
+    }
+    return {
+      ...incoming,
+      loadingTime: null,
+      loadingTimeAmbiguous: true,
+      loadingTimeAmbiguousIncomingRaw: incoming.loadingTimeSourceRaw ?? null,
+      loadingTimeConfirmedInCurrentExport: false,
+      loadingTimeFieldProvenance: {
+        freshness: "not_provided_in_snapshot",
+        sourceSha256: "",
+        importedAt: "",
+      },
+    };
+  }
+
+  if (incoming.loadingTime != null) {
+    return {
+      ...incoming,
+      loadingTimeAmbiguous: false,
+      loadingTimeAmbiguousIncomingRaw: null,
+      loadingTimeConfirmedInCurrentExport: true,
+      loadingTimeFieldProvenance: currentProvenance(context),
+    };
+  }
+
+  return {
+    ...incoming,
+    loadingTimeConfirmedInCurrentExport: false,
+    loadingTimeFieldProvenance: previous?.loadingTimeFieldProvenance,
+  };
+}
+
+function mergeLprField(
+  incoming: ParsedOutletLpr,
+  previous: ParsedOutletLpr | undefined,
+  previousOutlet: ParsedRetailOutlet | undefined,
+  context: OutletMergeContext,
+): ParsedOutletLpr {
+  if (incoming.dateOfBirthAmbiguous) {
+    if (previousDateOfBirthHasConfirmedValue(previous)) {
+      return {
+        ...incoming,
+        dateOfBirth: previous!.dateOfBirth,
+        dateOfBirthSourceRaw: previous!.dateOfBirthSourceRaw ?? null,
+        dateOfBirthAmbiguous: false,
+        dateOfBirthAmbiguousIncomingRaw: incoming.dateOfBirthSourceRaw ?? null,
+        dateOfBirthConfirmedInCurrentExport: false,
+        dateOfBirthFieldProvenance: preservedFieldProvenance(
+          previous!.dateOfBirthFieldProvenance,
+          previousOutlet,
+        ),
+      };
+    }
+    return {
+      ...incoming,
+      dateOfBirth: null,
+      dateOfBirthAmbiguous: true,
+      dateOfBirthAmbiguousIncomingRaw: incoming.dateOfBirthSourceRaw ?? null,
+      dateOfBirthConfirmedInCurrentExport: false,
+      dateOfBirthFieldProvenance: {
+        freshness: "not_provided_in_snapshot",
+        sourceSha256: "",
+        importedAt: "",
+      },
+    };
+  }
+
+  if (incoming.dateOfBirth != null) {
+    return {
+      ...incoming,
+      dateOfBirthAmbiguous: false,
+      dateOfBirthAmbiguousIncomingRaw: null,
+      dateOfBirthConfirmedInCurrentExport: true,
+      dateOfBirthFieldProvenance: currentProvenance(context),
+    };
+  }
+
+  return {
+    ...incoming,
+    dateOfBirthConfirmedInCurrentExport: false,
+    dateOfBirthFieldProvenance: previous?.dateOfBirthFieldProvenance,
+  };
+}
+
 function mergeConfirmedOutlet(
   incoming: ParsedRetailOutlet,
   previous: ParsedRetailOutlet | undefined,
@@ -185,8 +411,13 @@ function mergeConfirmedOutlet(
       ? incoming.closed
       : previous?.closed ?? incoming.closed;
 
+  const loading = mergeLoadingField(incoming.loading, previous?.loading, previous, context);
+  const lpr = mergeLprField(incoming.lpr, previous?.lpr, previous, context);
+
   return {
     ...incoming,
+    loading,
+    lpr,
     closureStatus,
     closed,
     closureConfirmedInCurrentExport,

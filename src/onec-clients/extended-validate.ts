@@ -7,8 +7,9 @@ import {
   type KnownClientKey,
 } from "./constants";
 import {
-  readCalendarDateField,
-  readLocalTimeField,
+  readBonusField,
+  readDateOfBirthField,
+  readLoadingTimeField,
   readOptionalStringField,
   readScalarField,
   readStrictBooleanField,
@@ -33,18 +34,29 @@ import type {
   ValidatedExtendedClientsPayload,
 } from "./extended-types";
 import type { ValidationIssue, ValidationWarning } from "./types";
-import { countOutletGuidRowStats, outletsAreIdentical, outletsFieldsComplete } from "./outlet-identity";
+import {
+  countOutletGuidRowStats,
+  outletDuplicateRowsEquivalent,
+  outletsFieldsComplete,
+} from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
+
+export type ExtendedValidationFailure = {
+  ok: false;
+  issues: ExtendedValidationIssue[];
+  warnings: ExtendedValidationWarning[];
+  issueCount: number;
+  warningCount: number;
+  diagnostics: ExtendedDiagnosticsSummary | null;
+  issueCodes: string[];
+  warningCodes: string[];
+  issuesTruncated: boolean;
+  warningsTruncated: boolean;
+};
 
 export type ExtendedValidationResult =
   | { ok: true; payload: ValidatedExtendedClientsPayload }
-  | {
-      ok: false;
-      issues: ExtendedValidationIssue[];
-      warnings: ExtendedValidationWarning[];
-      issueCount: number;
-      warningCount: number;
-    };
+  | ExtendedValidationFailure;
 
 function stripUtf8Bom(bytes: Buffer): Buffer {
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
@@ -65,12 +77,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+let activeIssueCodes: Set<string> | null = null;
+let activeWarningCodes: Set<string> | null = null;
+
 function pushIssue(
   issues: ExtendedValidationIssue[],
   issue: ExtendedValidationIssue,
   issueCount: { value: number },
 ): void {
   issueCount.value += 1;
+  activeIssueCodes?.add(issue.code);
   if (issues.length < MAX_DETAILED_ERRORS) {
     issues.push(issue);
   }
@@ -82,9 +98,33 @@ function pushWarning(
   warningCount: { value: number },
 ): void {
   warningCount.value += 1;
+  activeWarningCodes?.add(warning.code);
   if (warnings.length < MAX_DETAILED_WARNINGS) {
     warnings.push(warning);
   }
+}
+
+function buildValidationFailure(
+  issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
+  issueCount: number,
+  warningCount: number,
+  diagnostics: ExtendedDiagnosticsSummary | null,
+  issueCodes: Set<string>,
+  warningCodes: Set<string>,
+): ExtendedValidationFailure {
+  return {
+    ok: false,
+    issues,
+    warnings,
+    issueCount,
+    warningCount,
+    diagnostics,
+    issueCodes: [...issueCodes].sort(),
+    warningCodes: [...warningCodes].sort(),
+    issuesTruncated: issueCount > issues.length,
+    warningsTruncated: warningCount > warnings.length,
+  };
 }
 
 function validateTelephone(
@@ -426,7 +466,9 @@ function parseOutletLoading(
   clientIndex: number,
   outletIndex: number,
   issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
   issueCount: { value: number },
+  warningCount: { value: number },
 ): ParsedOutletLoading | null {
   const loading: ParsedOutletLoading = {
     loadingOnMonday: null,
@@ -437,6 +479,8 @@ function parseOutletLoading(
     loadingOnSaturday: null,
     loadingOnSunday: null,
     loadingTime: null,
+    loadingTimeSourceRaw: null,
+    loadingTimeAmbiguous: false,
   };
   if (raw === undefined || raw === null) {
     return loading;
@@ -450,7 +494,15 @@ function parseOutletLoading(
     }, issueCount);
     return null;
   }
-  type LoadingDayField = Exclude<keyof ParsedOutletLoading, "loadingTime">;
+  type LoadingDayField = Exclude<
+    keyof ParsedOutletLoading,
+    | "loadingTime"
+    | "loadingTimeSourceRaw"
+    | "loadingTimeAmbiguous"
+    | "loadingTimeAmbiguousIncomingRaw"
+    | "loadingTimeConfirmedInCurrentExport"
+    | "loadingTimeFieldProvenance"
+  >;
   const dayKeys: Array<[LoadingDayField, string]> = [
     ["loadingOnMonday", "loading_on_monday"],
     ["loadingOnTuesday", "loading_on_tuesday"],
@@ -477,7 +529,7 @@ function parseOutletLoading(
     loading[target] = parsed.kind === "value" ? parsed.value : null;
   }
   if ("loading_time" in raw) {
-    const parsedTime = readLocalTimeField(raw.loading_time);
+    const parsedTime = readLoadingTimeField(raw.loading_time);
     if (parsedTime.kind === "invalid_type") {
       pushIssue(issues, {
         code: "INVALID_OUTLET_FIELD",
@@ -487,7 +539,33 @@ function parseOutletLoading(
       }, issueCount);
       return null;
     }
-    loading.loadingTime = parsedTime.kind === "value" ? parsedTime.value : null;
+    if (parsedTime.kind === "ambiguous") {
+      loading.loadingTime = null;
+      loading.loadingTimeSourceRaw = parsedTime.sourceRaw ?? null;
+      loading.loadingTimeAmbiguous = true;
+      loading.loadingTimeConfirmedInCurrentExport = false;
+      pushWarning(warnings, {
+        code: "AMBIGUOUS_LOADING_TIME",
+        field: "retail_outlets.information_loading.loading_time",
+        index: clientIndex,
+        outletIndex,
+      }, warningCount);
+    } else if (parsedTime.kind === "value") {
+      loading.loadingTime = parsedTime.value;
+      loading.loadingTimeSourceRaw = parsedTime.sourceRaw ?? parsedTime.value;
+      loading.loadingTimeConfirmedInCurrentExport = true;
+      if (parsedTime.sourceRaw !== undefined && parsedTime.sourceRaw !== parsedTime.value) {
+        pushWarning(warnings, {
+          code: "LOAD_TIME_FORMAT_ADAPTED",
+          field: "retail_outlets.information_loading.loading_time",
+          index: clientIndex,
+          outletIndex,
+        }, warningCount);
+      }
+    } else {
+      loading.loadingTime = null;
+      loading.loadingTimeSourceRaw = null;
+    }
   }
   return loading;
 }
@@ -541,7 +619,9 @@ function parseOutletLpr(
   clientIndex: number,
   outletIndex: number,
   issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
   issueCount: { value: number },
+  warningCount: { value: number },
 ): ParsedOutletLpr | null {
   if (raw === undefined || raw === null) {
     return {
@@ -563,18 +643,20 @@ function parseOutletLpr(
     }, issueCount);
     return null;
   }
-  const stringFields: Array<[keyof ParsedOutletLpr, string]> = [
+  type LprStringField = "name" | "post" | "phone" | "email" | "conditionsBonus";
+  const stringFields: Array<[LprStringField, string]> = [
     ["name", "name"],
     ["post", "post"],
     ["phone", "phone"],
     ["email", "email"],
-    ["bonus", "bonus"],
     ["conditionsBonus", "conditions_bonus"],
   ];
   const result: ParsedOutletLpr = {
     name: "",
     post: "",
     dateOfBirth: null,
+    dateOfBirthSourceRaw: null,
+    dateOfBirthAmbiguous: false,
     phone: "",
     email: "",
     bonus: "",
@@ -594,12 +676,23 @@ function parseOutletLpr(
       }, issueCount);
       return null;
     }
-    if (target !== "dateOfBirth") {
-      result[target] = parsed.kind === "value" ? parsed.value : "";
+    result[target] = parsed.kind === "value" ? parsed.value : "";
+  }
+  if ("bonus" in raw) {
+    const bonus = readBonusField(raw.bonus);
+    if (bonus.kind === "invalid_type") {
+      pushIssue(issues, {
+        code: "INVALID_OUTLET_FIELD",
+        field: "retail_outlets.LPR_information.bonus",
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+      return null;
     }
+    result.bonus = bonus.kind === "value" ? bonus.value : "";
   }
   if ("date_of_birth" in raw) {
-    const dob = readCalendarDateField(raw.date_of_birth);
+    const dob = readDateOfBirthField(raw.date_of_birth);
     if (dob.kind === "invalid_type") {
       pushIssue(issues, {
         code: "INVALID_OUTLET_FIELD",
@@ -609,7 +702,33 @@ function parseOutletLpr(
       }, issueCount);
       return null;
     }
-    result.dateOfBirth = dob.kind === "value" ? dob.value : null;
+    if (dob.kind === "ambiguous") {
+      result.dateOfBirth = null;
+      result.dateOfBirthSourceRaw = dob.sourceRaw ?? null;
+      result.dateOfBirthAmbiguous = true;
+      result.dateOfBirthConfirmedInCurrentExport = false;
+      pushWarning(warnings, {
+        code: "AMBIGUOUS_DATE_OF_BIRTH",
+        field: "retail_outlets.LPR_information.date_of_birth",
+        index: clientIndex,
+        outletIndex,
+      }, warningCount);
+    } else if (dob.kind === "value") {
+      result.dateOfBirth = dob.value;
+      result.dateOfBirthSourceRaw = dob.sourceRaw ?? dob.value;
+      result.dateOfBirthConfirmedInCurrentExport = true;
+      if (dob.sourceRaw !== undefined && dob.sourceRaw !== dob.value) {
+        pushWarning(warnings, {
+          code: "DATE_OF_BIRTH_FORMAT_ADAPTED",
+          field: "retail_outlets.LPR_information.date_of_birth",
+          index: clientIndex,
+          outletIndex,
+        }, warningCount);
+      }
+    } else {
+      result.dateOfBirth = null;
+      result.dateOfBirthSourceRaw = null;
+    }
   }
   return result;
 }
@@ -732,7 +851,9 @@ function validateRetailOutlets(
       clientIndex,
       outletIndex,
       issues,
+      warnings,
       issueCount,
+      warningCount,
     );
     if (loading === null) {
       return null;
@@ -808,7 +929,15 @@ function validateRetailOutlets(
     if (contacts === null) {
       return null;
     }
-    const lpr = parseOutletLpr(item.LPR_information, clientIndex, outletIndex, issues, issueCount);
+    const lpr = parseOutletLpr(
+      item.LPR_information,
+      clientIndex,
+      outletIndex,
+      issues,
+      warnings,
+      issueCount,
+      warningCount,
+    );
     if (lpr === null) {
       return null;
     }
@@ -922,7 +1051,7 @@ function validateOutletGuidsAcrossFile(
         continue;
       }
 
-      if (outletsAreIdentical(previous.outlet, outlet)) {
+      if (outletDuplicateRowsEquivalent(previous.outlet, outlet)) {
         pushWarning(warnings, {
           code: "DUPLICATE_OUTLET_GUID_ROW",
           index: clientIndex,
@@ -1113,10 +1242,27 @@ function validateHoldingTargets(
   }
 }
 
+function extractRejectedClientGuid(raw: unknown): string | null {
+  if (!isPlainObject(raw)) {
+    return null;
+  }
+  const guidRaw = raw.guid_client;
+  if (typeof guidRaw !== "string") {
+    return null;
+  }
+  const trimmed = guidRaw.trim();
+  if (!isValidNonZeroUuid(trimmed)) {
+    return null;
+  }
+  return normalizeUuid(trimmed);
+}
+
 function detectHoldingCycles(
   records: ParsedExtendedClientRecord[],
+  rejectedClientGuids: ReadonlySet<string>,
   issues: ExtendedValidationIssue[],
   issueCount: { value: number },
+  holdingGuidStats: { holdingGuidUnknownCount: number; holdingGuidRejectedCount: number },
 ): void {
   const byGuid = new Map(records.map((record) => [record.guid_client, record]));
   for (const record of records) {
@@ -1128,7 +1274,13 @@ function detectHoldingCycles(
       continue;
     }
     if (!byGuid.has(record.guid_holding)) {
-      pushIssue(issues, { code: "HOLDING_GUID_UNKNOWN", index: records.indexOf(record) }, issueCount);
+      if (rejectedClientGuids.has(record.guid_holding)) {
+        pushIssue(issues, { code: "HOLDING_GUID_REJECTED", index: records.indexOf(record) }, issueCount);
+        holdingGuidStats.holdingGuidRejectedCount += 1;
+      } else {
+        pushIssue(issues, { code: "HOLDING_GUID_UNKNOWN", index: records.indexOf(record) }, issueCount);
+        holdingGuidStats.holdingGuidUnknownCount += 1;
+      }
       continue;
     }
     const visited = new Set<string>([record.guid_client]);
@@ -1149,6 +1301,7 @@ function buildDiagnostics(
   sourceFormat: "legacy" | "extended_v1",
   records: ParsedExtendedClientRecord[],
   holdingLinkErrors: number,
+  holdingGuidStats: { holdingGuidUnknownCount: number; holdingGuidRejectedCount: number },
   outletGuidStats: { duplicateOutletGuidCount: number; outletParentLinkConflicts: number },
 ): ExtendedDiagnosticsSummary {
   let holdingCardCount = 0;
@@ -1162,6 +1315,8 @@ function buildDiagnostics(
   let recordsWithExtendedFields = 0;
   let legacyOnlyRecords = 0;
   let invalidManagerGuidCount = 0;
+  let ambiguousLoadingTimeCount = 0;
+  let ambiguousDateOfBirthCount = 0;
 
   for (const record of records) {
     if (record.isHolding === true) {
@@ -1183,6 +1338,12 @@ function buildDiagnostics(
         outletsClosed += 1;
       } else {
         outletsUnknownClosure += 1;
+      }
+      if (outlet.loading.loadingTimeAmbiguous) {
+        ambiguousLoadingTimeCount += 1;
+      }
+      if (outlet.lpr.dateOfBirthAmbiguous) {
+        ambiguousDateOfBirthCount += 1;
       }
     }
     if (record.recordFormat === "extended_v1" || record.hasExtendedManagerFields) {
@@ -1229,6 +1390,10 @@ function buildDiagnostics(
     invalidManagerGuidCount,
     employeeDirectoryVerified: false,
     holdingLinkErrors,
+    holdingGuidUnknownCount: holdingGuidStats.holdingGuidUnknownCount,
+    holdingGuidRejectedCount: holdingGuidStats.holdingGuidRejectedCount,
+    ambiguousLoadingTimeCount,
+    ambiguousDateOfBirthCount,
     recordsWithExtendedFields,
     legacyOnlyRecords,
     blocks: {
@@ -1256,16 +1421,37 @@ export function validateExtendedClientsFileBytes(
   const warnings: ExtendedValidationWarning[] = [];
   const issueCount = { value: 0 };
   const warningCount = { value: 0 };
+  const issueCodes = new Set<string>();
+  const warningCodes = new Set<string>();
+  activeIssueCodes = issueCodes;
+  activeWarningCodes = warningCodes;
 
+  try {
   if (bytes.length > maxSourceBytes) {
     pushIssue(issues, { code: "FILE_TOO_LARGE" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   const text = decodeUtf8(stripUtf8Bom(bytes));
   if (text === null) {
     pushIssue(issues, { code: "INVALID_UTF8" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   let parsed: unknown;
@@ -1273,27 +1459,60 @@ export function validateExtendedClientsFileBytes(
     parsed = JSON.parse(text);
   } catch {
     pushIssue(issues, { code: "INVALID_JSON" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (!Array.isArray(parsed)) {
     pushIssue(issues, { code: "INVALID_ROOT" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (parsed.length === 0) {
     pushIssue(issues, { code: "EMPTY_ARRAY" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (parsed.length > maxSourceRecords) {
     pushIssue(issues, { code: "TOO_MANY_RECORDS" }, issueCount);
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      null,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   const sourceFormat = detectClientsSourceFormat(parsed);
   const records: ParsedExtendedClientRecord[] = [];
   const seenClients = new Set<string>();
+  const rejectedClientGuids = new Set<string>();
 
   for (let index = 0; index < parsed.length; index += 1) {
     const record = validateExtendedRecord(
@@ -1306,6 +1525,10 @@ export function validateExtendedClientsFileBytes(
       warningCount,
     );
     if (record === null) {
+      const rejectedGuid = extractRejectedClientGuid(parsed[index]);
+      if (rejectedGuid) {
+        rejectedClientGuids.add(rejectedGuid);
+      }
       continue;
     }
     if (seenClients.has(record.guid_client)) {
@@ -1317,23 +1540,39 @@ export function validateExtendedClientsFileBytes(
   }
 
   const holdingErrorsBefore = issueCount.value;
+  const holdingGuidStats = { holdingGuidUnknownCount: 0, holdingGuidRejectedCount: 0 };
   let outletGuidStats = { duplicateOutletGuidCount: 0, outletParentLinkConflicts: 0 };
   if (sourceFormat === "extended_v1") {
-    detectHoldingCycles(records, issues, issueCount);
+    detectHoldingCycles(records, rejectedClientGuids, issues, issueCount, holdingGuidStats);
     validateHoldingTargets(records, issues, issueCount);
     outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
+  const diagnostics = buildDiagnostics(
+    sourceFormat,
+    records,
+    holdingLinkErrors,
+    holdingGuidStats,
+    outletGuidStats,
+  );
+
   if (issueCount.value > 0) {
-    return { ok: false, issues, warnings, issueCount: issueCount.value, warningCount: warningCount.value };
+    return buildValidationFailure(
+      issues,
+      warnings,
+      issueCount.value,
+      warningCount.value,
+      diagnostics,
+      issueCodes,
+      warningCodes,
+    );
   }
 
   if (sourceFormat === "extended_v1") {
     pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
   }
 
-  const diagnostics = buildDiagnostics(sourceFormat, records, holdingLinkErrors, outletGuidStats);
   const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";
 
   return {
@@ -1348,8 +1587,16 @@ export function validateExtendedClientsFileBytes(
       warningCount: warningCount.value,
       diagnostics,
       extendedContractVerification,
+      issueCodes: [...issueCodes].sort(),
+      warningCodes: [...warningCodes].sort(),
+      issuesTruncated: false,
+      warningsTruncated: warningCount.value > warnings.length,
     },
   };
+  } finally {
+    activeIssueCodes = null;
+    activeWarningCodes = null;
+  }
 }
 
 /** Legacy-only path: delegates shape to extended validator and strips extended-only fields. */

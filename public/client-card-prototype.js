@@ -55,6 +55,7 @@
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
       field("Направление маршрута", outlet.addresses && outlet.addresses.routeDirection, !!(outlet.addresses && outlet.addresses.routeDirection)) +
       field("Приёмка", loadingDaysLabel(outlet.loading), loadingFieldKnown(outlet.loading)) +
+      (outlet.loading && outlet.loading.loadingTimeNote ? '<p class="pc-label">' + esc(outlet.loading.loadingTimeNote) + "</p>" : "") +
       field("Склад", outlet.warehouseLabel, outlet.warehouse !== null && outlet.warehouse !== undefined) +
       field("Менеджер ТТ", managerLabel(outlet.managers && outlet.managers.manager), !!(outlet.managers && outlet.managers.manager)) +
       field("Региональный менеджер ТТ", managerLabel(outlet.managers && outlet.managers.regionalManager), !!(outlet.managers && outlet.managers.regionalManager && outlet.managers.regionalManager.assignmentState !== "unassigned")) +
@@ -101,6 +102,7 @@
       return field("Торговая точка", outlet.identityLabel, true) +
         field("Место поставки", outlet.addresses.deliveryAddress, !!outlet.addresses.deliveryAddress) +
         field("Приёмка", loadingDaysLabel(outlet.loading), loadingFieldKnown(outlet.loading)) +
+      (outlet.loading && outlet.loading.loadingTimeNote ? '<p class="pc-label">' + esc(outlet.loading.loadingTimeNote) + "</p>" : "") +
         field("Контакт приёмки", outlet.contacts.storePhone, !!outlet.contacts.storePhone) +
         field("График / направление", outlet.addresses.routeDirection, !!outlet.addresses.routeDirection) +
         field("Склад", outlet.warehouseLabel, outlet.warehouse !== null);

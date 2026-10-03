@@ -21,6 +21,11 @@ function validationFailedResult(input: {
   totalWarningCount: number;
   sha256?: string;
   byteSize?: number;
+  extendedDiagnostics?: ClientsImportResult["extendedDiagnostics"];
+  issueCodes?: string[];
+  warningCodes?: string[];
+  issuesTruncated?: boolean;
+  warningsTruncated?: boolean;
 }): ClientsImportResult {
   return {
     status: "VALIDATION_FAILED",
@@ -35,8 +40,11 @@ function validationFailedResult(input: {
     warningCount: input.totalWarningCount,
     errors: input.issues.slice(0, MAX_DETAILED_ERRORS),
     warnings: input.warnings?.slice(0, MAX_DETAILED_WARNINGS),
-    errorsTruncated: input.totalIssueCount > MAX_DETAILED_ERRORS,
-    warningsTruncated: input.totalWarningCount > MAX_DETAILED_WARNINGS,
+    errorsTruncated: input.issuesTruncated ?? input.totalIssueCount > MAX_DETAILED_ERRORS,
+    warningsTruncated: input.warningsTruncated ?? input.totalWarningCount > MAX_DETAILED_WARNINGS,
+    issueCodes: input.issueCodes,
+    warningCodes: input.warningCodes,
+    extendedDiagnostics: input.extendedDiagnostics,
     message: "Client file validation failed.",
   };
 }
@@ -126,6 +134,11 @@ export async function runClientsImport(
         totalIssueCount: validated.issueCount,
         totalWarningCount: validated.warningCount,
         byteSize: bytes.length,
+        extendedDiagnostics: validated.extendedDiagnostics,
+        issueCodes: validated.issueCodes,
+        warningCodes: validated.warningCodes,
+        issuesTruncated: validated.issuesTruncated,
+        warningsTruncated: validated.warningsTruncated,
       }),
       secrets,
     );

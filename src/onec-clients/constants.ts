@@ -1,6 +1,6 @@
 export const CLIENTS_RELATIVE_PATH = "clients/all_clients.json";
 
-export const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
+export const MAX_SOURCE_BYTES = 32 * 1024 * 1024;
 export const MAX_SOURCE_RECORDS = 50_000;
 export const FTP_READ_DEADLINE_MS = 60_000;
 export const MAX_DETAILED_ERRORS = 50;
