@@ -3,18 +3,29 @@ import { getDatabaseUrl } from "../config";
 import { applyClientsImport, createImportPool } from "./apply";
 import {
   archiveClientsNotInAccepted,
+  countActiveBaselineClients,
+  findDryRunByFingerprint,
+  findSuccessfulBaselineApplyByFingerprint,
   loadActiveBaselineGuids,
   loadActiveExtendedContractConfirmationSha256,
-  loadClientBaselineSnapshot,
-  restoreBaselineSnapshot,
   storeExtendedContractConfirmation,
   upsertQuarantineRecords,
 } from "./baseline-replacement-db";
 import {
+  captureDbBaselineStateConsistent,
+  captureDbBaselineStateWithDependencies,
+  computeDbBaselineStateSha256,
+} from "./baseline-replacement-db-state";
+import {
   computeAcceptedCompositionSha256,
   computeBaselineReplacementFingerprint,
-  computeDbBaselineSha256,
 } from "./baseline-replacement-fingerprint";
+import {
+  capturePreApplySnapshotV2,
+  isPreApplySnapshotV2,
+  restorePreApplySnapshotV2,
+} from "./baseline-replacement-snapshot";
+import { updateExchangeStateAfterApplyInTxn } from "../onec-exchange/state";
 import { buildBaselineReplacementPlan } from "./baseline-replacement-plan";
 import {
   buildExcludedArchiveDependencyReport,
@@ -74,6 +85,27 @@ export type RunBaselineReplacementOptions = {
   operatorNote?: string;
   rollbackRunId?: string;
 };
+
+const BASELINE_IMPORT_ERROR_CODES = new Set([
+  "IMPORT_LOCKED",
+  "STALE_RUNNING_IMPORT",
+  "APPLY_BLOCKED",
+  "SUPERSEDED_BY_NEWER_IMPORT",
+  "RECORD_COUNT_DECREASED",
+  "GUID_SET_SHRINK",
+  "VERIFICATION_FINGERPRINT_MISMATCH",
+  "COMMIT_UNCERTAIN",
+]);
+
+function resolveBaselineApplyErrorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as { code: string }).code);
+    if (BASELINE_IMPORT_ERROR_CODES.has(code)) {
+      return code;
+    }
+  }
+  return "DATABASE_ERROR";
+}
 
 async function insertBaselineRun(
   client: PoolClient,
@@ -150,7 +182,10 @@ async function hasRunningBaselineReplacement(client: PoolClient): Promise<boolea
   return Number(result.rows[0]?.count ?? "0") > 0;
 }
 
-async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise<
+async function buildDryRunContext(
+  input: RunBaselineReplacementOptions,
+  existingClient?: PoolClient,
+): Promise<
   | {
       ok: false;
       code: string;
@@ -212,74 +247,138 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
     return { ok: false, code: "DATABASE_ERROR", message: "Database configuration failed." };
   }
 
-  const pool = createImportPool(databaseUrl);
-  const pg = await pool.connect();
+  const ownsPool = !existingClient;
+  const pool = ownsPool ? createImportPool(databaseUrl) : undefined;
+  const pg = existingClient ?? (await pool!.connect());
   try {
-    const migrationReadiness = await checkBaselineReplacementMigrationReadiness(pg);
-    const hasBaselineStatus = !migrationReadiness.missing.some(
-      (item) => item.description === "onec_clients.baseline_status",
-    );
-
-    let existingActiveGuids: Set<string>;
-    let snapshot: Map<string, string>;
-    if (hasBaselineStatus) {
-      existingActiveGuids = await loadActiveBaselineGuids(pg);
-      snapshot = await loadClientBaselineSnapshot(pg);
-    } else {
-      const allClients = await pg.query<{ guid_client: string }>(
-        `SELECT guid_client::text FROM onec_clients`,
+    const readSnapshot = async () => {
+      const migrationReadiness = await checkBaselineReplacementMigrationReadiness(pg);
+      const hasBaselineStatus = !migrationReadiness.missing.some(
+        (item) => item.description === "onec_clients.baseline_status",
       );
-      existingActiveGuids = new Set(allClients.rows.map((row) => row.guid_client.toLowerCase()));
-      snapshot = new Map(allClients.rows.map((row) => [row.guid_client.toLowerCase(), "active"]));
-    }
-    const existingAllGuids = new Set(snapshot.keys());
-    const dbBaselineSha256 = computeDbBaselineSha256(existingActiveGuids);
 
-    let extendedContractStatus: "unverified" | "operator_confirmed" = "unverified";
-    let extendedContractConfirmationSha256: string | null = null;
-
-    const storedConfirmationSha = await loadActiveExtendedContractConfirmationSha256(
-      pg,
-      projection.sourceSha256,
-    );
-    const confirmation = input.confirmExtendedContract
-      ? buildExtendedContractConfirmation({
-          payload: projection.payload,
-          operatorReference: input.operatorReference?.trim() ?? "",
-        })
-      : null;
-
-    if (confirmation && input.operatorReference?.trim()) {
-      extendedContractConfirmationSha256 = computeExtendedContractConfirmationSha256(
-        confirmation,
-      );
-      extendedContractStatus = resolveExtendedContractVerificationForBaseline({
-        payload: projection.payload,
-        confirmation,
-        storedConfirmationSha256: storedConfirmationSha,
+      let existingActiveGuids: Set<string>;
+      let existingAllGuids: Set<string>;
+      let dbBaselineSha256 = computeDbBaselineStateSha256({
+        clients: [],
+        dependencyStateSha256: null,
       });
-    } else if (storedConfirmationSha) {
-      extendedContractConfirmationSha256 = storedConfirmationSha;
-    }
-
-    const archiveCandidates: string[] = [];
-    for (const guid of existingActiveGuids) {
-      if (
-        !projection.quarantine.acceptedGuids.has(guid) &&
-        !projection.quarantine.quarantinedGuids.has(guid)
-      ) {
-        archiveCandidates.push(guid);
+      if (!migrationReadiness.ready) {
+        existingActiveGuids = new Set();
+        existingAllGuids = new Set();
+      } else if (hasBaselineStatus) {
+        existingActiveGuids = await loadActiveBaselineGuids(pg);
+        const allRows = await pg.query<{ guid_client: string }>(`SELECT guid_client::text FROM onec_clients`);
+        existingAllGuids = new Set(allRows.rows.map((row) => row.guid_client.toLowerCase()));
+      } else {
+        const allClients = await pg.query<{ guid_client: string }>(
+          `SELECT guid_client::text FROM onec_clients`,
+        );
+        existingActiveGuids = new Set(allClients.rows.map((row) => row.guid_client.toLowerCase()));
+        existingAllGuids = existingActiveGuids;
       }
-    }
-    const quarantineInDb = [...projection.quarantine.quarantinedGuids].filter((guid) =>
-      existingAllGuids.has(guid),
-    );
-    const dependencyGuids = [...archiveCandidates, ...quarantineInDb];
-    const dependencyContext = await loadArchiveDependencyContext(pg);
-    const excludedArchiveDependencies = buildExcludedArchiveDependencyReport({
-      guidsToArchive: dependencyGuids,
-      dependencyContext,
-    });
+
+      let dependencyContext: import("./baseline-replacement-preflight").ArchiveDependencyContext = {
+        availability: "unavailable",
+        unavailableDimensions: [],
+        activeAccessGrantCountByClient: new Map<string, number>(),
+        linkedEmployeeAccountCountByClient: new Map<string, number>(),
+        confirmedOutletsByClient: new Map<string, number>(),
+        bitrixTaskCountByClient: new Map<string, number>(),
+        childHoldingLinkCountByClient: new Map<string, number>(),
+      };
+      if (migrationReadiness.ready) {
+        dependencyContext = await loadArchiveDependencyContext(pg);
+        const dbCapture = existingClient
+          ? await captureDbBaselineStateWithDependencies(pg, dependencyContext)
+          : await captureDbBaselineStateConsistent(pg, dependencyContext);
+        dbBaselineSha256 = computeDbBaselineStateSha256(dbCapture);
+      }
+
+      let extendedContractStatus: "unverified" | "operator_confirmed" = "unverified";
+      let extendedContractConfirmationSha256: string | null = null;
+      let storedConfirmationSha: string | null = null;
+      if (migrationReadiness.ready) {
+        storedConfirmationSha = await loadActiveExtendedContractConfirmationSha256(
+          pg,
+          projection.sourceSha256,
+        );
+      }
+      const confirmation =
+        input.confirmExtendedContract && input.operatorReference?.trim()
+          ? buildExtendedContractConfirmation({
+              clientsSourceSha256: projection.sourceSha256,
+              payload: projection.payload,
+              operatorReference: input.operatorReference.trim(),
+            })
+          : null;
+
+      if (confirmation && migrationReadiness.ready) {
+        extendedContractConfirmationSha256 = computeExtendedContractConfirmationSha256(
+          confirmation,
+        );
+        extendedContractStatus = resolveExtendedContractVerificationForBaseline({
+          payload: projection.payload,
+          clientsSourceSha256: projection.sourceSha256,
+          confirmation,
+          storedConfirmationSha256: storedConfirmationSha,
+        });
+      } else if (storedConfirmationSha) {
+        extendedContractConfirmationSha256 = storedConfirmationSha;
+      }
+
+      const archiveCandidates: string[] = [];
+      for (const guid of existingActiveGuids) {
+        if (
+          !projection.quarantine.acceptedGuids.has(guid) &&
+          !projection.quarantine.quarantinedGuids.has(guid)
+        ) {
+          archiveCandidates.push(guid);
+        }
+      }
+      const quarantineInDb = [...projection.quarantine.quarantinedGuids].filter((guid) =>
+        existingAllGuids.has(guid),
+      );
+      const dependencyGuids = [...archiveCandidates, ...quarantineInDb];
+      const excludedArchiveDependencies = buildExcludedArchiveDependencyReport({
+        guidsToArchive: dependencyGuids,
+        dependencyContext,
+      });
+
+      return {
+        migrationReadiness,
+        existingActiveGuids,
+        existingAllGuids,
+        dbBaselineSha256,
+        extendedContractStatus,
+        extendedContractConfirmationSha256,
+        excludedArchiveDependencies,
+      };
+    };
+
+    const snapshotData = existingClient
+      ? await readSnapshot()
+      : await (async () => {
+          await pg.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          try {
+            const data = await readSnapshot();
+            await pg.query("COMMIT");
+            return data;
+          } catch (error) {
+            await pg.query("ROLLBACK");
+            throw error;
+          }
+        })();
+
+    const {
+      migrationReadiness,
+      existingActiveGuids,
+      existingAllGuids,
+      dbBaselineSha256,
+      extendedContractStatus,
+      extendedContractConfirmationSha256,
+      excludedArchiveDependencies,
+    } = snapshotData;
 
     return {
       ok: true,
@@ -307,7 +406,36 @@ async function buildDryRunContext(input: RunBaselineReplacementOptions): Promise
       },
     };
   } finally {
-    pg.release();
+    if (ownsPool) {
+      pg.release();
+      await pool!.end();
+    }
+  }
+}
+
+async function releaseBaselineConnection(
+  client: PoolClient,
+  pool: ReturnType<typeof createImportPool> | undefined,
+  faulted: boolean,
+): Promise<void> {
+  if (faulted) {
+    try {
+      await client.end();
+    } catch {
+      // ignore
+    }
+    if (pool) {
+      await pool.end();
+    }
+    return;
+  }
+  try {
+    await releaseImportLock(client);
+  } catch {
+    // ignore
+  }
+  client.release();
+  if (pool) {
     await pool.end();
   }
 }
@@ -372,6 +500,37 @@ export async function runBaselineReplacement(
   });
 
   if (mode === "dry_run") {
+    const dryRunDatabaseUrl = options.databaseUrl ?? getDatabaseUrl();
+    if (dryRunDatabaseUrl && plan.migrationReadiness.ready) {
+      const dryRunPool = createImportPool(dryRunDatabaseUrl);
+      const dryRunPg = await dryRunPool.connect();
+      try {
+        await dryRunPg.query("BEGIN");
+        const dryRunRecordId = await insertBaselineRun(dryRunPg, {
+          mode: "dry_run",
+          status: "running",
+          planFingerprint: fingerprint,
+          clientsSourceSha256: context.clientsSourceSha256,
+          rosterSourceSha256: context.rosterSourceSha256,
+          quarantineManifestSha256: context.quarantineManifestSha256,
+          acceptedCompositionSha256: acceptedCompositionSha256,
+          dbBaselineSha256: context.dbBaselineSha256,
+          extendedContractConfirmationSha256: context.extendedContractConfirmationSha256,
+          planJson: plan,
+        });
+        await finishBaselineRun(dryRunPg, dryRunRecordId, "success");
+        await dryRunPg.query("COMMIT");
+      } catch {
+        try {
+          await dryRunPg.query("ROLLBACK");
+        } catch {
+          // ignore
+        }
+      } finally {
+        dryRunPg.release();
+        await dryRunPool.end();
+      }
+    }
     return {
       ok: true,
       mode,
@@ -392,15 +551,44 @@ export async function runBaselineReplacement(
     };
   }
   if (expected !== fingerprint.toLowerCase()) {
-    return {
-      ok: false,
-      mode,
-      durationMs: Date.now() - startedAt,
-      code: "FINGERPRINT_MISMATCH",
-      message: "Baseline replacement fingerprint mismatch since dry-run.",
-      actualFingerprint: fingerprint,
-      plan,
-    };
+    const classifyDatabaseUrl = options.databaseUrl ?? getDatabaseUrl();
+    let idempotentRetry = false;
+    let stalePlan = false;
+    if (classifyDatabaseUrl) {
+      const classifyPool = createImportPool(classifyDatabaseUrl);
+      const classifyPg = await classifyPool.connect();
+      try {
+        const priorApply = await findSuccessfulBaselineApplyByFingerprint(classifyPg, {
+          planFingerprint: expected,
+          clientsSourceSha256: context.clientsSourceSha256,
+        });
+        if (priorApply) {
+          idempotentRetry = true;
+        } else {
+          const dryRunRecord = await findDryRunByFingerprint(classifyPg, {
+            planFingerprint: expected,
+            clientsSourceSha256: context.clientsSourceSha256,
+          });
+          stalePlan = dryRunRecord != null;
+        }
+      } finally {
+        classifyPg.release();
+        await classifyPool.end();
+      }
+    }
+    if (!idempotentRetry) {
+      return {
+        ok: false,
+        mode,
+        durationMs: Date.now() - startedAt,
+        code: stalePlan ? "STALE_PLAN" : "FINGERPRINT_MISMATCH",
+        message: stalePlan
+          ? "Database baseline or inputs changed since dry-run; re-run dry-run."
+          : "Baseline replacement fingerprint mismatch since dry-run.",
+        actualFingerprint: fingerprint,
+        plan,
+      };
+    }
   }
 
   if (!plan.applyAllowed) {
@@ -429,6 +617,7 @@ export async function runBaselineReplacement(
   const pool = createImportPool(databaseUrl);
   const pg = await pool.connect();
   let baselineRunId = "";
+  let connectionFaulted = false;
   try {
     if (await hasRunningBaselineReplacement(pg)) {
       return {
@@ -453,156 +642,219 @@ export async function runBaselineReplacement(
       };
     }
 
-    const freshContext = await buildDryRunContext(options);
-    if (!freshContext.ok) {
-      return {
-        ok: false,
-        mode,
-        durationMs: Date.now() - startedAt,
-        code: freshContext.code,
-        message: freshContext.message,
-        plan,
-      };
-    }
-
-    const freshFingerprint = computeBaselineReplacementFingerprint({
-      clientsSha256: freshContext.clientsSourceSha256,
-      rosterSha256: freshContext.rosterSourceSha256,
-      holdingLinkValidationPolicy: freshContext.holdingLinkValidationPolicy,
-      quarantineManifestSha256: freshContext.quarantineManifestSha256,
-      acceptedCompositionSha256: computeAcceptedCompositionSha256(freshContext.acceptedGuids),
-      dbBaselineSha256: freshContext.dbBaselineSha256,
-      extendedContractConfirmationSha256: freshContext.extendedContractConfirmationSha256,
-    });
-    if (freshFingerprint.toLowerCase() !== expected) {
-      return {
-        ok: false,
-        mode,
-        durationMs: Date.now() - startedAt,
-        code: "STALE_PLAN",
-        message: "Database baseline or inputs changed since dry-run; re-run dry-run.",
-        actualFingerprint: freshFingerprint,
-        plan,
-      };
-    }
-
-    const preSnapshot = Object.fromEntries(await loadClientBaselineSnapshot(pg));
-    baselineRunId = await insertBaselineRun(pg, {
-      mode: "apply",
-      status: "running",
-      planFingerprint: fingerprint,
-      clientsSourceSha256: context.clientsSourceSha256,
-      rosterSourceSha256: context.rosterSourceSha256,
-      quarantineManifestSha256: context.quarantineManifestSha256,
-      acceptedCompositionSha256,
-      dbBaselineSha256: context.dbBaselineSha256,
-      extendedContractConfirmationSha256: context.extendedContractConfirmationSha256,
-      planJson: plan,
-      preApplySnapshot: preSnapshot,
-      operatorNote: options.operatorNote ?? null,
-    });
-
-    const applyPayload: ValidatedClientsPayload = {
-      ...freshContext.payload,
-      extendedContractVerification:
-        freshContext.extendedContractStatus === "operator_confirmed"
-          ? "operator_confirmed"
-          : "unverified",
-    };
-
-    await pg.query("BEGIN");
-
-    if (
-      options.confirmExtendedContract &&
-      options.operatorReference?.trim() &&
-      freshContext.extendedContractStatus !== "operator_confirmed"
-    ) {
-      const confirmation = buildExtendedContractConfirmation({
-        payload: applyPayload,
-        operatorReference: options.operatorReference.trim(),
-      });
-      await storeExtendedContractConfirmation(pg, {
-        clientsSourceSha256: context.clientsSourceSha256,
-        verificationFingerprint: verificationFingerprintFromPayload({ payload: applyPayload }),
-        operatorReference: options.operatorReference.trim(),
-        confirmationSha256: computeExtendedContractConfirmationSha256(confirmation),
-      });
-      applyPayload.extendedContractVerification = "operator_confirmed";
-    }
-
-    const importResult = await applyClientsImport({
-      databaseUrl,
-      payload: applyPayload,
-      client: pg,
-      lockAlreadyHeld: true,
-      retainLock: true,
-      baselineReplacementApply: true,
-      expectedVerificationFingerprint: verificationFingerprintFromPayload({ payload: applyPayload }),
-      holdingLinkValidationPolicy: freshContext.holdingLinkValidationPolicy,
-      employeeRosterSourceSha256: freshContext.rosterSourceSha256,
-    });
-
-    if (!importResult.ok) {
-      await pg.query("ROLLBACK");
-      await finishBaselineRun(pg, baselineRunId, "failed", importResult.code);
-      return {
-        ok: false,
-        mode,
-        durationMs: Date.now() - startedAt,
-        code: importResult.code,
-        message: importResult.message,
-        actualFingerprint: importResult.actualFingerprint,
-        plan,
-      };
-    }
-
-    const archiveResult = await archiveClientsNotInAccepted(pg, {
-      acceptedGuids: freshContext.acceptedGuids,
-      quarantinedGuids: freshContext.quarantinedGuids,
-      sourceSha256: context.clientsSourceSha256,
-    });
-
-    await upsertQuarantineRecords(pg, {
-      manifest: freshContext.manifest,
-      supersedePrevious: true,
-    });
-
-    await pg.query("COMMIT");
-    await finishBaselineRun(pg, baselineRunId, "success");
-
-    return {
-      ok: true,
-      mode,
-      durationMs: Date.now() - startedAt,
-      plan,
-      apply: {
-        runId: baselineRunId,
-        archivedCount: archiveResult.archivedCount,
-        quarantinedCount: archiveResult.quarantinedCount,
-        importRunId: importResult.runId,
-      },
-    };
-  } catch {
+    await pg.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     try {
-      await pg.query("ROLLBACK");
-    } catch {
-      // ignore rollback failure
+      const freshContext = await buildDryRunContext(options, pg);
+      if (!freshContext.ok) {
+        await pg.query("ROLLBACK");
+        return {
+          ok: false,
+          mode,
+          durationMs: Date.now() - startedAt,
+          code: freshContext.code,
+          message: freshContext.message,
+          plan,
+        };
+      }
+
+      const freshPlan = buildBaselineReplacementPlan({
+        mode: "apply",
+        clientsSourceSha256: freshContext.clientsSourceSha256,
+        rosterSourceSha256: freshContext.rosterSourceSha256,
+        quarantineManifestSha256: freshContext.quarantineManifestSha256,
+        holdingLinkValidationPolicy: freshContext.holdingLinkValidationPolicy,
+        acceptedGuids: freshContext.acceptedGuids,
+        quarantinedGuids: freshContext.quarantinedGuids,
+        incomingGuids: new Set([...freshContext.acceptedGuids, ...freshContext.quarantinedGuids]),
+        existingActiveGuids: freshContext.existingActiveGuids,
+        existingAllGuids: freshContext.existingAllGuids,
+        fingerprint: expected,
+        dependencyReport: freshContext.dependencyReport,
+        acceptedProjection: freshContext.acceptedProjection,
+        migrationReadiness: freshContext.migrationReadiness,
+        excludedArchiveDependencies: freshContext.excludedArchiveDependencies,
+        extendedContractStatus: freshContext.extendedContractStatus,
+        extendedContractConfirmationSha256: freshContext.extendedContractConfirmationSha256,
+        confirmExtendedContractRequested: options.confirmExtendedContract === true,
+        operatorReferenceProvided: Boolean(options.operatorReference?.trim()),
+      });
+      if (!freshPlan.applyAllowed) {
+        await pg.query("ROLLBACK");
+        return {
+          ok: false,
+          mode,
+          durationMs: Date.now() - startedAt,
+          code: "APPLY_BLOCKED",
+          message: `Apply blocked: ${freshPlan.blockers.join(", ")}.`,
+          plan: freshPlan,
+        };
+      }
+
+      const priorApply = await findSuccessfulBaselineApplyByFingerprint(pg, {
+        planFingerprint: expected,
+        clientsSourceSha256: freshContext.clientsSourceSha256,
+      });
+      if (priorApply) {
+        const activeCount = await countActiveBaselineClients(pg);
+        const expectedActive = freshContext.acceptedGuids.size;
+        if (activeCount === expectedActive) {
+          await pg.query("ROLLBACK");
+          return {
+            ok: true,
+            mode,
+            durationMs: Date.now() - startedAt,
+            plan: freshPlan,
+            apply: {
+              runId: priorApply.id,
+              archivedCount: 0,
+              quarantinedCount: 0,
+              importRunId: priorApply.id,
+            },
+          };
+        }
+      }
+
+      const freshFingerprint = computeBaselineReplacementFingerprint({
+        clientsSha256: freshContext.clientsSourceSha256,
+        rosterSha256: freshContext.rosterSourceSha256,
+        holdingLinkValidationPolicy: freshContext.holdingLinkValidationPolicy,
+        quarantineManifestSha256: freshContext.quarantineManifestSha256,
+        acceptedCompositionSha256: computeAcceptedCompositionSha256(freshContext.acceptedGuids),
+        dbBaselineSha256: freshContext.dbBaselineSha256,
+        extendedContractConfirmationSha256: freshContext.extendedContractConfirmationSha256,
+      });
+      if (freshFingerprint.toLowerCase() !== expected) {
+        await pg.query("ROLLBACK");
+        return {
+          ok: false,
+          mode,
+          durationMs: Date.now() - startedAt,
+          code: "STALE_PLAN",
+          message: "Database baseline or inputs changed since dry-run; re-run dry-run.",
+          actualFingerprint: freshFingerprint,
+          plan: freshPlan,
+        };
+      }
+
+      const preSnapshot = await capturePreApplySnapshotV2(pg);
+      baselineRunId = await insertBaselineRun(pg, {
+        mode: "apply",
+        status: "running",
+        planFingerprint: expected,
+        clientsSourceSha256: freshContext.clientsSourceSha256,
+        rosterSourceSha256: freshContext.rosterSourceSha256,
+        quarantineManifestSha256: freshContext.quarantineManifestSha256,
+        acceptedCompositionSha256: computeAcceptedCompositionSha256(freshContext.acceptedGuids),
+        dbBaselineSha256: freshContext.dbBaselineSha256,
+        extendedContractConfirmationSha256: freshContext.extendedContractConfirmationSha256,
+        planJson: freshPlan,
+        preApplySnapshot: preSnapshot,
+        operatorNote: options.operatorNote ?? null,
+      });
+
+      const applyPayload: ValidatedClientsPayload = {
+        ...freshContext.payload,
+        extendedContractVerification: "unverified",
+      };
+
+      if (
+        options.confirmExtendedContract &&
+        options.operatorReference?.trim() &&
+        freshContext.extendedContractStatus !== "operator_confirmed"
+      ) {
+        const confirmation = buildExtendedContractConfirmation({
+          clientsSourceSha256: freshContext.clientsSourceSha256,
+          payload: applyPayload,
+          operatorReference: options.operatorReference.trim(),
+        });
+        await storeExtendedContractConfirmation(pg, {
+          clientsSourceSha256: freshContext.clientsSourceSha256,
+          verificationFingerprint: verificationFingerprintFromPayload({ payload: applyPayload }),
+          operatorReference: options.operatorReference.trim(),
+          confirmationSha256: computeExtendedContractConfirmationSha256(confirmation),
+        });
+      }
+
+      const importResult = await applyClientsImport({
+        databaseUrl,
+        payload: applyPayload,
+        client: pg,
+        lockAlreadyHeld: true,
+        retainLock: true,
+        participatingTransaction: true,
+        syncExchangeState: false,
+        baselineReplacementApply: true,
+        originalClientsSourceSha256: freshContext.clientsSourceSha256,
+        expectedVerificationFingerprint: verificationFingerprintFromPayload({ payload: applyPayload }),
+        holdingLinkValidationPolicy: freshContext.holdingLinkValidationPolicy,
+        employeeRosterSourceSha256: freshContext.rosterSourceSha256,
+      });
+
+      if (!importResult.ok) {
+        throw Object.assign(new Error(importResult.message), { code: importResult.code });
+      }
+
+      const archiveResult = await archiveClientsNotInAccepted(pg, {
+        acceptedGuids: freshContext.acceptedGuids,
+        quarantinedGuids: freshContext.quarantinedGuids,
+        sourceSha256: freshContext.clientsSourceSha256,
+      });
+
+      await upsertQuarantineRecords(pg, {
+        manifest: freshContext.manifest,
+        supersedePrevious: true,
+      });
+
+      await updateExchangeStateAfterApplyInTxn(pg, {
+        sha256: applyPayload.sha256,
+        acceptedBaselineSha256: freshContext.clientsSourceSha256,
+      });
+
+      await finishBaselineRun(pg, baselineRunId, "success");
+      await pg.query("COMMIT");
+
+      return {
+        ok: true,
+        mode,
+        durationMs: Date.now() - startedAt,
+        plan: freshPlan,
+        apply: {
+          runId: baselineRunId,
+          archivedCount: archiveResult.archivedCount,
+          quarantinedCount: archiveResult.quarantinedCount,
+          importRunId: importResult.runId,
+        },
+      };
+    } catch (error) {
+      try {
+        await pg.query("ROLLBACK");
+      } catch {
+        connectionFaulted = true;
+      }
+      if (baselineRunId && !connectionFaulted) {
+        await finishBaselineRun(pg, baselineRunId, "failed", "DATABASE_ERROR");
+      }
+      return {
+        ok: false,
+        mode,
+        durationMs: Date.now() - startedAt,
+        code: resolveBaselineApplyErrorCode(error),
+        message: error instanceof Error ? error.message : "Baseline replacement apply failed.",
+        plan,
+      };
     }
-    if (baselineRunId) {
-      await finishBaselineRun(pg, baselineRunId, "failed", "DATABASE_ERROR");
-    }
+  } catch (error) {
+    connectionFaulted = true;
     return {
       ok: false,
       mode,
       durationMs: Date.now() - startedAt,
       code: "DATABASE_ERROR",
-      message: "Baseline replacement apply failed.",
+      message: error instanceof Error ? error.message : "Baseline replacement apply failed.",
       plan,
     };
   } finally {
-    await releaseImportLock(pg);
-    pg.release();
-    await pool.end();
+    await releaseBaselineConnection(pg, pool, connectionFaulted);
   }
 }
 
@@ -623,20 +875,22 @@ async function runBaselineRollback(
 
   const pool = createImportPool(databaseUrl);
   const pg = await pool.connect();
+  let connectionFaulted = false;
+  let rollbackRunId = "";
   try {
     const targetRunId = options.rollbackRunId?.trim();
     const runQuery = targetRunId
-      ? await pg.query<{ id: string; pre_apply_status_snapshot: Record<string, string> | null }>(
+      ? await pg.query<{ id: string; finished_at: Date | null; pre_apply_status_snapshot: unknown }>(
           `
-            SELECT id::text, pre_apply_status_snapshot
+            SELECT id::text, finished_at, pre_apply_status_snapshot
             FROM onec_baseline_replacement_runs
             WHERE id = $1::uuid AND mode = 'apply' AND status = 'success'
           `,
           [targetRunId],
         )
-      : await pg.query<{ id: string; pre_apply_status_snapshot: Record<string, string> | null }>(
+      : await pg.query<{ id: string; finished_at: Date | null; pre_apply_status_snapshot: unknown }>(
           `
-            SELECT id::text, pre_apply_status_snapshot
+            SELECT id::text, finished_at, pre_apply_status_snapshot
             FROM onec_baseline_replacement_runs
             WHERE mode = 'apply' AND status = 'success'
             ORDER BY finished_at DESC NULLS LAST
@@ -645,13 +899,35 @@ async function runBaselineRollback(
         );
 
     const run = runQuery.rows[0];
-    if (!run?.pre_apply_status_snapshot) {
+    if (!run?.pre_apply_status_snapshot || !isPreApplySnapshotV2(run.pre_apply_status_snapshot)) {
       return {
         ok: false,
         mode: "rollback",
         durationMs: Date.now() - startedAt,
         code: "ROLLBACK_TARGET_NOT_FOUND",
-        message: "No successful baseline replacement apply with snapshot found.",
+        message: "No successful baseline replacement apply with v2 snapshot found.",
+      };
+    }
+
+    const newerApply = await pg.query<{ id: string }>(
+      `
+        SELECT id::text
+        FROM onec_baseline_replacement_runs
+        WHERE mode = 'apply'
+          AND status = 'success'
+          AND finished_at > $1
+          AND id <> $2::uuid
+        LIMIT 1
+      `,
+      [run.finished_at, run.id],
+    );
+    if (newerApply.rows[0]) {
+      return {
+        ok: false,
+        mode: "rollback",
+        durationMs: Date.now() - startedAt,
+        code: "ROLLBACK_SUPERSEDED",
+        message: "A newer baseline replacement apply exists; rollback of older run is blocked.",
       };
     }
 
@@ -666,16 +942,16 @@ async function runBaselineRollback(
       };
     }
 
-    const rollbackRunId = await insertBaselineRun(pg, {
+    await pg.query("BEGIN");
+    rollbackRunId = await insertBaselineRun(pg, {
       mode: "rollback",
       status: "running",
       operatorNote: options.operatorNote ?? null,
     });
 
-    await pg.query("BEGIN");
-    const restoredCount = await restoreBaselineSnapshot(pg, run.pre_apply_status_snapshot);
-    await pg.query("COMMIT");
+    const restoredCount = await restorePreApplySnapshotV2(pg, run.pre_apply_status_snapshot);
     await finishBaselineRun(pg, rollbackRunId, "success");
+    await pg.query("COMMIT");
 
     return {
       ok: true,
@@ -690,6 +966,18 @@ async function runBaselineRollback(
       },
     };
   } catch {
+    try {
+      await pg.query("ROLLBACK");
+    } catch {
+      connectionFaulted = true;
+    }
+    if (rollbackRunId && !connectionFaulted) {
+      try {
+        await finishBaselineRun(pg, rollbackRunId, "failed", "DATABASE_ERROR");
+      } catch {
+        connectionFaulted = true;
+      }
+    }
     return {
       ok: false,
       mode: "rollback",
@@ -698,9 +986,7 @@ async function runBaselineRollback(
       message: "Baseline rollback failed.",
     };
   } finally {
-    await releaseImportLock(pg);
-    pg.release();
-    await pool.end();
+    await releaseBaselineConnection(pg, pool, connectionFaulted);
   }
 }
 

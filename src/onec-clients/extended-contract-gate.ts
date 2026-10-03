@@ -9,11 +9,12 @@ export type ExtendedContractConfirmation = {
 };
 
 export function buildExtendedContractConfirmation(input: {
+  clientsSourceSha256: string;
   payload: ValidatedClientsPayload;
   operatorReference: string;
 }): ExtendedContractConfirmation {
   return {
-    clientsSourceSha256: input.payload.sha256.toLowerCase(),
+    clientsSourceSha256: input.clientsSourceSha256.toLowerCase(),
     verificationFingerprint: verificationFingerprintFromPayload({ payload: input.payload }),
     operatorReference: input.operatorReference.trim(),
   };
@@ -45,6 +46,7 @@ export function isExtendedContractConfirmedForPayload(input: {
 /** Production apply gate: never synthetic_confirmed; requires operator confirmation record. */
 export function resolveExtendedContractVerificationForBaseline(input: {
   payload: ValidatedClientsPayload;
+  clientsSourceSha256: string;
   confirmation: ExtendedContractConfirmation | null;
   storedConfirmationSha256: string | null;
 }): "unverified" | "operator_confirmed" {
@@ -52,8 +54,12 @@ export function resolveExtendedContractVerificationForBaseline(input: {
     return "unverified";
   }
   const expected = extendedContractConfirmationSha256(input.confirmation);
+  const expectedFingerprint = verificationFingerprintFromPayload({ payload: input.payload });
   if (
-    input.confirmation.clientsSourceSha256.toLowerCase() !== input.payload.sha256.toLowerCase() ||
+    input.confirmation.clientsSourceSha256.toLowerCase() !==
+      input.clientsSourceSha256.toLowerCase() ||
+    input.confirmation.verificationFingerprint.toLowerCase() !==
+      expectedFingerprint.toLowerCase() ||
     expected !== (input.storedConfirmationSha256?.toLowerCase() ?? "")
   ) {
     return "unverified";

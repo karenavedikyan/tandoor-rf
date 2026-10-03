@@ -30,15 +30,18 @@ describe("extended contract gate", () => {
     assert.equal(isExtendedContractVerified(payload), false);
   });
 
-  it("accepts operator_confirmed for controlled baseline apply", () => {
+  it("rejects spoofed operator_confirmed enum on standard apply gate", () => {
     const payload = samplePayload("aa".repeat(32));
     payload.extendedContractVerification = "operator_confirmed";
-    assert.equal(isExtendedContractVerified(payload), true);
+    assert.equal(isExtendedContractVerified(payload), false);
   });
 
-  it("requires stored confirmation sha to match for operator_confirmed resolution", () => {
-    const payload = samplePayload("bb".repeat(32));
+  it("requires original source sha and stored confirmation for baseline resolution", () => {
+    const sourceSha = "bb".repeat(32);
+    const acceptedSha = "cc".repeat(32);
+    const payload = samplePayload(acceptedSha);
     const confirmation = buildExtendedContractConfirmation({
+      clientsSourceSha256: sourceSha,
       payload,
       operatorReference: "audit-42",
     });
@@ -46,6 +49,7 @@ describe("extended contract gate", () => {
     assert.equal(
       resolveExtendedContractVerificationForBaseline({
         payload,
+        clientsSourceSha256: sourceSha,
         confirmation,
         storedConfirmationSha256: sha,
       }),
@@ -54,8 +58,13 @@ describe("extended contract gate", () => {
     assert.equal(
       resolveExtendedContractVerificationForBaseline({
         payload,
-        confirmation,
-        storedConfirmationSha256: "cc".repeat(32),
+        clientsSourceSha256: sourceSha,
+        confirmation: buildExtendedContractConfirmation({
+          clientsSourceSha256: acceptedSha,
+          payload,
+          operatorReference: "audit-42",
+        }),
+        storedConfirmationSha256: sha,
       }),
       "unverified",
     );

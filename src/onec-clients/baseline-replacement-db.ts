@@ -44,6 +44,21 @@ export async function upsertQuarantineRecords(
     );
   }
   for (const entry of input.manifest.entries) {
+    const existing = await client.query<{ id: string }>(
+      `
+        SELECT id::text
+        FROM onec_client_quarantine_records
+        WHERE guid_client = $1::uuid
+          AND source_sha256 = $2
+          AND manifest_sha256 = $3
+          AND superseded_at IS NULL
+        LIMIT 1
+      `,
+      [entry.guidClient, input.manifest.sourceSha256, manifestSha],
+    );
+    if (existing.rows[0]) {
+      continue;
+    }
     await client.query(
       `
         INSERT INTO onec_client_quarantine_records (
@@ -54,6 +69,53 @@ export async function upsertQuarantineRecords(
       [entry.guidClient, input.manifest.sourceSha256, entry.reason, entry.relatedGuid ?? null, manifestSha],
     );
   }
+}
+
+export async function findDryRunByFingerprint(
+  client: PoolClient,
+  input: { planFingerprint: string; clientsSourceSha256: string },
+): Promise<{ id: string } | null> {
+  const row = await client.query<{ id: string }>(
+    `
+      SELECT id::text
+      FROM onec_baseline_replacement_runs
+      WHERE mode = 'dry_run'
+        AND status = 'success'
+        AND plan_fingerprint = $1
+        AND clients_source_sha256 = $2
+      ORDER BY finished_at DESC NULLS LAST
+      LIMIT 1
+    `,
+    [input.planFingerprint, input.clientsSourceSha256],
+  );
+  return row.rows[0] ?? null;
+}
+
+export async function findSuccessfulBaselineApplyByFingerprint(
+  client: PoolClient,
+  input: { planFingerprint: string; clientsSourceSha256: string },
+): Promise<{ id: string; plan_json: unknown } | null> {
+  const row = await client.query<{ id: string; plan_json: unknown }>(
+    `
+      SELECT id::text, plan_json
+      FROM onec_baseline_replacement_runs
+      WHERE mode = 'apply'
+        AND status = 'success'
+        AND plan_fingerprint = $1
+        AND clients_source_sha256 = $2
+      ORDER BY finished_at DESC NULLS LAST
+      LIMIT 1
+    `,
+    [input.planFingerprint, input.clientsSourceSha256],
+  );
+  return row.rows[0] ?? null;
+}
+
+export async function countActiveBaselineClients(client: PoolClient): Promise<number> {
+  const result = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM onec_clients WHERE COALESCE(baseline_status, 'active') = 'active'`,
+  );
+  return Number(result.rows[0]?.count ?? "0");
 }
 
 export async function storeExtendedContractConfirmation(
@@ -88,26 +150,8 @@ export async function loadActiveExtendedContractConfirmationSha256(
   client: PoolClient,
   clientsSourceSha256: string,
 ): Promise<string | null> {
-  const row = await client.query<{ verification_fingerprint: string; operator_reference: string }>(
-    `
-      SELECT verification_fingerprint, operator_reference
-      FROM onec_extended_contract_confirmations
-      WHERE clients_source_sha256 = $1 AND superseded_at IS NULL
-      ORDER BY confirmed_at DESC
-      LIMIT 1
-    `,
-    [clientsSourceSha256],
-  );
-  const stored = row.rows[0];
-  if (!stored) {
-    return null;
-  }
-  const { extendedContractConfirmationSha256 } = await import("./extended-contract-gate");
-  return extendedContractConfirmationSha256({
-    clientsSourceSha256: clientsSourceSha256.toLowerCase(),
-    verificationFingerprint: stored.verification_fingerprint,
-    operatorReference: stored.operator_reference,
-  });
+  const { loadStoredExtendedContractConfirmationSha256 } = await import("./baseline-extended-contract");
+  return loadStoredExtendedContractConfirmationSha256(client, clientsSourceSha256);
 }
 
 export async function archiveClientsNotInAccepted(
@@ -126,33 +170,51 @@ export async function archiveClientsNotInAccepted(
   for (const row of all.rows) {
     const guid = row.guid_client.toLowerCase();
     if (input.quarantinedGuids.has(guid)) {
-      await client.query(
+      const updated = await client.query(
         `
           UPDATE onec_clients
           SET baseline_status = 'quarantined',
-              baseline_archived_at = NOW(),
+              baseline_archived_at = CASE
+                WHEN baseline_status IS DISTINCT FROM 'quarantined' THEN NOW()
+                ELSE baseline_archived_at
+              END,
               baseline_archive_reason = 'quarantine_manifest',
               baseline_archive_source_sha256 = $2
           WHERE guid_client = $1::uuid
+            AND (
+              baseline_status IS DISTINCT FROM 'quarantined'
+              OR baseline_archive_source_sha256 IS DISTINCT FROM $2
+            )
         `,
         [row.guid_client, input.sourceSha256],
       );
-      quarantinedCount += 1;
+      if ((updated.rowCount ?? 0) > 0) {
+        quarantinedCount += 1;
+      }
       continue;
     }
     if (!input.acceptedGuids.has(guid)) {
-      await client.query(
+      const updated = await client.query(
         `
           UPDATE onec_clients
           SET baseline_status = 'archived_baseline',
-              baseline_archived_at = NOW(),
+              baseline_archived_at = CASE
+                WHEN baseline_status IS DISTINCT FROM 'archived_baseline' THEN NOW()
+                ELSE baseline_archived_at
+              END,
               baseline_archive_reason = 'not_in_accepted_baseline',
               baseline_archive_source_sha256 = $2
           WHERE guid_client = $1::uuid
+            AND (
+              baseline_status IS DISTINCT FROM 'archived_baseline'
+              OR baseline_archive_source_sha256 IS DISTINCT FROM $2
+            )
         `,
         [row.guid_client, input.sourceSha256],
       );
-      archivedCount += 1;
+      if ((updated.rowCount ?? 0) > 0) {
+        archivedCount += 1;
+      }
       continue;
     }
     await client.query(
@@ -163,6 +225,7 @@ export async function archiveClientsNotInAccepted(
             baseline_archive_reason = NULL,
             baseline_archive_source_sha256 = NULL
         WHERE guid_client = $1::uuid
+          AND baseline_status IS DISTINCT FROM 'active'
       `,
       [row.guid_client],
     );

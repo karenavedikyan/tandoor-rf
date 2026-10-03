@@ -18,6 +18,7 @@ export function computeAcceptedCompositionSha256(acceptedGuids: Iterable<string>
   return createHash("sha256").update(JSON.stringify(sorted), "utf8").digest("hex");
 }
 
+/** @deprecated Use computeDbBaselineStateSha256 from baseline-replacement-db-state */
 export function computeDbBaselineSha256(activeGuids: Iterable<string>): string {
   const sorted = [...activeGuids].map((guid) => guid.toLowerCase()).sort();
   return createHash("sha256")
@@ -25,16 +26,18 @@ export function computeDbBaselineSha256(activeGuids: Iterable<string>): string {
     .digest("hex");
 }
 
+export { computeDbBaselineStateSha256 } from "./baseline-replacement-db-state";
+
 export function computeBaselineReplacementFingerprint(input: BaselineReplacementFingerprintInput): string {
   const canonical = JSON.stringify({
-    v: 2,
+    v: 3,
     kind: "wholesale_baseline_replacement",
     clientsSha256: input.clientsSha256.toLowerCase(),
     rosterSha256: input.rosterSha256?.toLowerCase() ?? ROSTER_ABSENT,
     holdingLinkValidationPolicy: input.holdingLinkValidationPolicy,
     quarantineManifestSha256: input.quarantineManifestSha256?.toLowerCase() ?? null,
     acceptedCompositionSha256: input.acceptedCompositionSha256.toLowerCase(),
-    dbBaselineSha256: input.dbBaselineSha256.toLowerCase(),
+    dbBaselineStateSha256: input.dbBaselineSha256.toLowerCase(),
     extendedContractConfirmationSha256: input.extendedContractConfirmationSha256?.toLowerCase() ?? null,
   });
   return createHash("sha256").update(canonical, "utf8").digest("hex");

@@ -653,6 +653,10 @@ export async function applyClientsImport(options: {
   employeeRosterSourceSha256?: string | null;
   /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
   baselineReplacementApply?: boolean;
+  /** Original full clients file SHA256 for baseline extended-contract gate (not accepted projection SHA). */
+  originalClientsSourceSha256?: string;
+  /** When true, caller owns BEGIN/COMMIT; apply must not commit or rollback the connection. */
+  participatingTransaction?: boolean;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -820,31 +824,43 @@ export async function applyClientsImport(options: {
               runId: phase.runId,
             };
           } else {
-            const existing = await loadExistingClients(managed);
-            if (existing.size > 0) {
-              const incomingGuids = new Set(
-                options.payload.records.map((record) => record.guid_client),
+            const incomingGuids = new Set(
+              options.payload.records.map((record) => record.guid_client),
+            );
+            const activeExisting = await queryManaged<{ guid_client: string; source_sha256: string | null }>(
+              managed,
+              `
+                SELECT guid_client::text, source_sha256
+                FROM onec_clients
+                WHERE COALESCE(baseline_status, 'active') = 'active'
+              `,
+            );
+            const incomingSourceSha = options.payload.sha256.toLowerCase();
+            const missingGuids = activeExisting.rows
+              .filter(
+                (row) =>
+                  !incomingGuids.has(row.guid_client) &&
+                  row.source_sha256?.toLowerCase() === incomingSourceSha,
+              )
+              .map((row) => row.guid_client);
+            if (missingGuids.length > 0) {
+              phase.runId = await insertRejectedRunJournal(
+                managed,
+                options.payload,
+                "GUID_SET_SHRINK",
+                journal,
               );
-              const missingGuids = [...existing.keys()].filter((guid) => !incomingGuids.has(guid));
-              if (missingGuids.length > 0) {
-                phase.runId = await insertRejectedRunJournal(
-                  managed,
-                  options.payload,
-                  "GUID_SET_SHRINK",
-                  journal,
-                );
-                outcome = {
-                  ok: false,
-                  code: "GUID_SET_SHRINK",
-                  message: "Incoming snapshot is missing client IDs present in the last successful import.",
-                  runId: phase.runId,
-                };
-              }
+              outcome = {
+                ok: false,
+                code: "GUID_SET_SHRINK",
+                message: "Incoming snapshot is missing client IDs present in the last successful import.",
+                runId: phase.runId,
+              };
             }
           }
         }
 
-          if (!outcome) {
+        if (!outcome) {
           const existing = await loadExistingClients(managed);
           const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
@@ -880,10 +896,23 @@ export async function applyClientsImport(options: {
           );
           phase.runId = runInsert.rows[0]?.id;
 
-          await queryManaged(managed, "BEGIN");
+          const participating = options.participatingTransaction === true;
+          if (!participating) {
+            await queryManaged(managed, "BEGIN");
+          }
 
           const extendedApply = isExtendedApplyPayload(options.payload);
-          const contractVerified = isExtendedContractVerified(options.payload);
+          let contractVerified = false;
+          if (options.baselineReplacementApply && options.originalClientsSourceSha256) {
+            const { resolveBaselineExtendedContractVerified } = await import("./baseline-extended-contract");
+            contractVerified = await resolveBaselineExtendedContractVerified({
+              client: managed.client,
+              payload: options.payload,
+              clientsSourceSha256: options.originalClientsSourceSha256,
+            });
+          } else {
+            contractVerified = isExtendedContractVerified(options.payload);
+          }
           const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);
           const outletRegistry = await loadOutletGuidRegistry(managed.client);
@@ -1191,13 +1220,15 @@ export async function applyClientsImport(options: {
             unchangedCount,
             ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
           };
-          phase.commitAttempted = true;
-          if (options.testHooks?.failCommit) {
-            throw new Error("Simulated commit response loss.");
-          }
+          if (!participating) {
+            phase.commitAttempted = true;
+            if (options.testHooks?.failCommit) {
+              throw new Error("Simulated commit response loss.");
+            }
 
-          await queryManaged(managed, "COMMIT");
-          phase.commitConfirmed = true;
+            await queryManaged(managed, "COMMIT");
+            phase.commitConfirmed = true;
+          }
 
           if (options.testHooks?.failAfterCommitConfirm) {
             throw new ClientConnectionFault();
@@ -1230,7 +1261,7 @@ export async function applyClientsImport(options: {
     } else if (isConnectionFault(error, managed)) {
       outcome = resolveConnectionFault(phase);
     } else {
-      if (managed && !managed.faulted()) {
+      if (managed && !managed.faulted() && options.participatingTransaction !== true) {
         try {
           await managed.client.query("ROLLBACK");
         } catch {

@@ -97,6 +97,12 @@ export async function checkBaselineReplacementMigrationReadiness(
       description: "onec_clients.manager_roster_state",
     });
   }
+  if (!(await tableExists(client, "onec_clients"))) {
+    missing.push({
+      id: "002",
+      description: "onec_clients",
+    });
+  }
   if (!(await columnExists(client, "onec_clients", "baseline_status"))) {
     missing.push({
       id: "029",
@@ -119,6 +125,18 @@ export async function checkBaselineReplacementMigrationReadiness(
     missing.push({
       id: "026",
       description: "onec_retail_outlets (required for confirmed outlet dependency counts)",
+    });
+  }
+  if (!(await columnExists(client, "onec_clients", "guid_holding_pending"))) {
+    missing.push({
+      id: "028",
+      description: "onec_clients.guid_holding_pending",
+    });
+  }
+  if (!(await tableExists(client, "onec_extended_contract_confirmations"))) {
+    missing.push({
+      id: "029",
+      description: "onec_extended_contract_confirmations",
     });
   }
 

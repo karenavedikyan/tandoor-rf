@@ -438,10 +438,7 @@ export function isExtendedApplyPayload(payload: ValidatedClientsPayload): boolea
 }
 
 export function isExtendedContractVerified(payload: ValidatedClientsPayload): boolean {
-  return (
-    payload.extendedContractVerification === "synthetic_confirmed" ||
-    payload.extendedContractVerification === "operator_confirmed"
-  );
+  return payload.extendedContractVerification === "synthetic_confirmed";
 }
 
 export function resolveExtendedRecordsForApply(
