@@ -455,7 +455,10 @@ function parseOutletLoading(
     }, issueCount);
     return null;
   }
-  type LoadingDayField = Exclude<keyof ParsedOutletLoading, "loadingTime">;
+  type LoadingDayField = Exclude<
+    keyof ParsedOutletLoading,
+    "loadingTime" | "loadingTimeSourceRaw" | "loadingTimeAmbiguous"
+  >;
   const dayKeys: Array<[LoadingDayField, string]> = [
     ["loadingOnMonday", "loading_on_monday"],
     ["loadingOnTuesday", "loading_on_tuesday"],
@@ -594,7 +597,8 @@ function parseOutletLpr(
     }, issueCount);
     return null;
   }
-  const stringFields: Array<[keyof ParsedOutletLpr, string]> = [
+  type LprStringField = "name" | "post" | "phone" | "email" | "conditionsBonus";
+  const stringFields: Array<[LprStringField, string]> = [
     ["name", "name"],
     ["post", "post"],
     ["phone", "phone"],
@@ -1199,7 +1203,7 @@ function extractRejectedClientGuid(raw: unknown): string | null {
     return null;
   }
   const trimmed = guidRaw.trim();
-  if (trimmed.length === 0) {
+  if (!isValidNonZeroUuid(trimmed)) {
     return null;
   }
   return normalizeUuid(trimmed);

@@ -129,7 +129,10 @@ type ExtendedRow = {
   extended_snapshot: unknown;
 };
 
-type LoadingDayField = Exclude<keyof ParsedRetailOutlet["loading"], "loadingTime">;
+type LoadingDayField = Exclude<
+  keyof ParsedRetailOutlet["loading"],
+  "loadingTime" | "loadingTimeSourceRaw" | "loadingTimeAmbiguous"
+>;
 
 function formatMskDateTime(value: Date): string {
   return new Intl.DateTimeFormat("ru-RU", {

@@ -180,4 +180,27 @@
 
 **Extended (синтетика, не live):** `test/helpers/onec-clients-extended-fixtures.ts` — holding + outlets, пустой ответственный ТТ, directory-unverified manager.
 
-Тесты: `test/unit/onec-clients-extended-validate.test.ts`, `test/unit/onec-clients-extended-strict-validate.test.ts`, `test/unit/onec-clients-extended-presence.test.ts`, `test/unit/onec-clients-extended-snapshot-history.test.ts`, `test/integration/onec-clients-extended-import.test.ts`, `test/integration/clients-extended-access.test.ts`, `test/integration/clients-extended-link-read.test.ts`, `test/unit/clients-extended-dto.test.ts`, `test/unit/client-card-extended-render.test.ts`, `test/browser/client-card-extended.browser.test.ts`.
+**Live-форматы (03.10.2026, обезличенные фикстуры):** `test/helpers/onec-clients-live-fixtures.ts` — воспроизводит наблюдаемые формы без PII.
+
+### 3.2 Live-наблюдения и поддержанные адаптации (03.10.2026)
+
+**Проверено на реальном `/LC/clients/all_clients.json` (не в репозитории):** ~20,9 MiB, 3087 клиентов, 473 вложенные ТТ, SHA256 `52307bbde0dbb1f076b8eee9dd56c3a4a2134bd19ffb8164e885a2f55d690b10`.
+
+| Аспект | Наблюдение live | Поддержка в коде | Блокировки / диагностика |
+|--------|-----------------|------------------|--------------------------|
+| Размер файла | ~21 MiB | лимит **32 MiB** по прочитанным байтам (FTP stream, local, CLI, worker, diagnostics) | `FILE_TOO_LARGE` при превышении; лимит записей и таймауты без изменений |
+| `loading_time` | `0001-01-01THH:mm:ss` (473 ТТ) | HH:mm, HH:mm:ss; ISO-префикс `0001-01-01T` → локальное время **без** TZ-сдвига | `0001-01-01T00:00:00` → `AMBIGUOUS_LOADING_TIME`, не публикуется как `00:00`; произвольные даты/TZ → `INVALID_OUTLET_FIELD` |
+| Ответственные ТТ | null UUID + пустое имя (207 полей) | «Не назначен» (`unassigned`) | null UUID + непустое имя → `INVALID_MANAGER_PAIR`; `guid_manager` клиента — строго ненулевой UUID |
+| `LPR_information.bonus` | JSON number | string **или** конечное number → string без округления | object/array/boolean → ошибка; пустое ≠ 0 |
+| `date_of_birth` | `0001-01-01T00:00:00` (460) + `YYYY-MM-DDT00:00:00` (13) | `YYYY-MM-DD`; midnight timestamp → календарная дата без UTC-сдвига | sentinel → `AMBIGUOUS_DATE_OF_BIRTH`; ненулевое время/TZ → ошибка |
+| `guid_store`, `closed` | **отсутствуют** во всём файле | отсутствие ≠ `false` / подстановка GUID | `outletGuidStatus=not_provided`; merge сохраняет прежнее; `outletNormalizedReady=false` |
+| `guid_holding` | 471 ссылка на отсутствующую карточку; 1 на карточку без `holding=true` | — | `HOLDING_GUID_UNKNOWN` vs `HOLDING_GUID_REJECTED` (карточка отвергнута парсером по другой причине) |
+| Справочник сотрудников | 149 GUID ответственных не в `all_employees.json` | `directory_unverified` | **не** считать ошибкой; **не** выдавать права автоматически |
+
+**Неоднозначные значения:** исходное сырое значение сохраняется в снимке (`loadingTimeSourceRaw`, `dateOfBirthSourceRaw`); флаги `loadingTimeAmbiguous` / `dateOfBirthAmbiguous`. При apply отсутствие подтверждённого значения **не** затирает ранее подтверждённое время/дату молча.
+
+**Production:** `extendedContractVerification=unverified`; расширенный блок не публикуется до отдельной live-приёмки. `synthetic_confirmed` — только тесты.
+
+**Следующая live-проверка:** dry-run на FTP → review diagnostics (counts, holding links, ambiguous fields) → **не** apply расширения до подтверждения контракта; legacy apply по прежним правилам.
+
+Тесты: `test/unit/onec-clients-field-value-live.test.ts`, `test/unit/onec-clients-live-format-validate.test.ts`, `test/unit/onec-clients-extended-validate.test.ts`, `test/unit/onec-clients-extended-strict-validate.test.ts`, `test/unit/onec-clients-extended-presence.test.ts`, `test/unit/onec-clients-extended-snapshot-history.test.ts`, `test/integration/onec-clients-extended-import.test.ts`, `test/integration/clients-extended-access.test.ts`, `test/integration/clients-extended-link-read.test.ts`, `test/unit/clients-extended-dto.test.ts`, `test/unit/client-card-extended-render.test.ts`, `test/browser/client-card-extended.browser.test.ts`.
