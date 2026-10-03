@@ -446,6 +446,50 @@ type EffectiveOutletPresentation = {
   closureConfirmedInCurrentExport: boolean;
 };
 
+export type OutletDistributionGateRow = {
+  extended_freshness_state: ExtendedFreshnessState | null;
+  source_sha256: string | null;
+  extended_source_sha256: string | null;
+};
+
+function resolveRetailOutletsBlockFreshnessForGate(
+  row: OutletDistributionGateRow,
+  snapshot: ExtendedSnapshot | null,
+): ExtendedFreshnessState | null {
+  const raw = snapshot?.blocks?.blockFreshness?.retailOutlets ?? null;
+  if (raw == null) {
+    return null;
+  }
+  if (
+    row.extended_freshness_state === "preserved_from_previous" &&
+    extendedNotUpdatedOnLastImport(row as ExtendedRow) &&
+    raw === "current"
+  ) {
+    return "preserved_from_previous";
+  }
+  return raw;
+}
+
+export function assessOutletExportFreshness(
+  outlet: ParsedRetailOutlet | null,
+  row: OutletDistributionGateRow,
+  snapshot: ExtendedSnapshot | null,
+): { presentInCurrentExport: boolean; exportFreshness: OutletProvenance["freshness"] | null } {
+  if (!outlet) {
+    return { presentInCurrentExport: false, exportFreshness: null };
+  }
+  const context: OutletPresentationContext = {
+    retailOutletsBlockFreshness: resolveRetailOutletsBlockFreshnessForGate(row, snapshot),
+    retailOutletsBlockProvenance: snapshot?.blocks?.blockProvenance?.retailOutlets ?? null,
+    row: row as ExtendedRow,
+  };
+  const effective = resolveEffectiveOutletPresentation(outlet, context);
+  return {
+    presentInCurrentExport: effective.provenance.freshness === "current",
+    exportFreshness: effective.provenance.freshness,
+  };
+}
+
 function resolveEffectiveOutletPresentation(
   outlet: ParsedRetailOutlet,
   context: OutletPresentationContext,

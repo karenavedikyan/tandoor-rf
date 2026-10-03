@@ -211,6 +211,7 @@
     var saved = readSessionState(clientGuid);
     var state = {
       opId: 0,
+      outletContextGen: 0,
       detailLoadId: 0,
       delegationBound: false,
       layoutReady: false,
@@ -352,11 +353,13 @@
       var selectedOutlet = state.outlets.find(function (item) {
         return item.guidStore === state.selectedStoreGuid;
       });
-      var notice = selectedOutlet && !selectedOutlet.distributionWritable
-        ? '<p class="pc-catalog-note">' + esc(selectedOutlet.distributionBlockedReason || "") + "</p>"
-        : state.distributionEnabled
-          ? '<p class="pc-label">Выбрана торговая точка. Отметки сохраняются для этой ТТ.</p>'
-          : '<p class="pc-label">Выберите торговую точку для сохранения дистрибуции.</p>';
+      var notice = state.outletUnavailableReason
+        ? '<p class="pc-catalog-note">' + esc(state.outletUnavailableReason) + "</p>"
+        : selectedOutlet && !selectedOutlet.distributionWritable
+          ? '<p class="pc-catalog-note">' + esc(selectedOutlet.distributionBlockedReason || "") + "</p>"
+          : state.distributionEnabled
+            ? '<p class="pc-label">Выбрана торговая точка. Отметки сохраняются для этой ТТ.</p>'
+            : '<p class="pc-label">Выберите торговую точку для сохранения дистрибуции.</p>';
       var singleConfirm =
         state.outlets.length === 1 && !state.outletConfirmed
           ? '<button type="button" class="pc-catalog-btn" data-catalog-action="confirm-outlet">Подтвердить торговую точку</button>'
@@ -816,16 +819,64 @@
       if (!setResultsHtml(html)) ensureListLayout(html);
     }
 
-    function applyMetaDistribution(meta) {
-      state.outlets = meta.outlets || state.outlets || [];
-      if (meta.selectedStoreGuid !== undefined) state.selectedStoreGuid = meta.selectedStoreGuid;
-      state.outletConfirmed = !!meta.outletConfirmed;
-      state.distributionEnabled = !!meta.distributionEnabled;
+    function captureOutletContext() {
+      return {
+        gen: state.outletContextGen,
+        storeGuid: state.selectedStoreGuid || "",
+      };
     }
 
-    function loadDistributionSummary() {
-      if (!state.selectedStoreGuid) {
-        state.distributionSummary = { installed: [], planned: [] };
+    function isOutletContextCurrent(capture) {
+      return (
+        capture.gen === state.outletContextGen &&
+        capture.storeGuid === (state.selectedStoreGuid || "") &&
+        root.isConnected
+      );
+    }
+
+    function beginOutletContext(storeGuid) {
+      state.outletContextGen += 1;
+      state.selectedStoreGuid = storeGuid || null;
+      state.outletConfirmed = false;
+      state.distributionEnabled = false;
+      state.distributionSummary = { installed: [], planned: [] };
+      state.markerSaving = false;
+      writeSelectedOutlet(state.clientGuid, state.selectedStoreGuid || "");
+      return state.outletContextGen;
+    }
+
+    function clearOutletSelection(reason) {
+      beginOutletContext(null);
+      if (reason) state.outletUnavailableReason = reason;
+      else delete state.outletUnavailableReason;
+    }
+
+    function applyMetaDistribution(meta, outletCapture) {
+      state.outlets = meta.outlets || state.outlets || [];
+      if (meta.selectedStoreGuid !== undefined) {
+        state.selectedStoreGuid = meta.selectedStoreGuid;
+      }
+      state.outletConfirmed = !!meta.outletConfirmed;
+      state.distributionEnabled = !!meta.distributionEnabled;
+      if (meta.outletConfirmed && meta.selectedStoreGuid) {
+        writeSelectedOutlet(state.clientGuid, meta.selectedStoreGuid);
+        delete state.outletUnavailableReason;
+      } else if (outletCapture && outletCapture.storeGuid) {
+        writeSelectedOutlet(state.clientGuid, "");
+        if (meta.futureActionsBlockedReason) {
+          state.outletUnavailableReason = meta.futureActionsBlockedReason;
+        }
+      } else if (!meta.selectedStoreGuid) {
+        writeSelectedOutlet(state.clientGuid, "");
+      }
+    }
+
+    function loadDistributionSummary(outletCapture) {
+      var capture = outletCapture || captureOutletContext();
+      if (!capture.storeGuid) {
+        if (isOutletContextCurrent(capture)) {
+          state.distributionSummary = { installed: [], planned: [] };
+        }
         return Promise.resolve();
       }
       return api
@@ -833,28 +884,47 @@
           "/api/clients/" +
             encodeURIComponent(state.clientGuid) +
             "/catalog/outlets/" +
-            encodeURIComponent(state.selectedStoreGuid) +
+            encodeURIComponent(capture.storeGuid) +
             "/distribution",
         )
         .then(function (result) {
+          if (!isOutletContextCurrent(capture)) return;
+          if (result.response.status === 403) {
+            handleAccessDenied();
+            return;
+          }
+          if (result.response.status === 404) {
+            clearOutletSelection("Торговая точка не найдена или недоступна.");
+            var summaryBanner = root.querySelector("[data-catalog-meta-banner]");
+            if (summaryBanner) summaryBanner.innerHTML = renderMetaBanner(state.meta);
+            return;
+          }
           if (result.response.status === 200 && result.data) {
             state.distributionSummary = {
               installed: result.data.installed || [],
               planned: result.data.planned || [],
             };
           }
+        })
+        .catch(function () {
+          if (!isOutletContextCurrent(capture)) return;
+          state.distributionSummary = { installed: [], planned: [] };
         });
     }
 
     function saveDistributionMarker(action, markerKind, productCode) {
-      if (!state.distributionEnabled || !state.selectedStoreGuid || state.markerSaving) return Promise.resolve();
+      var outletCapture = captureOutletContext();
+      var versionId = state.versionId;
+      if (!state.distributionEnabled || !outletCapture.storeGuid || state.markerSaving) {
+        return Promise.resolve();
+      }
       state.markerSaving = true;
       return api
         .apiRequest(
           "/api/clients/" +
             encodeURIComponent(state.clientGuid) +
             "/catalog/outlets/" +
-            encodeURIComponent(state.selectedStoreGuid) +
+            encodeURIComponent(outletCapture.storeGuid) +
             "/distribution/markers",
           {
             method: "POST",
@@ -862,17 +932,36 @@
               action: action,
               markerKind: markerKind,
               productCode: productCode,
-              versionId: state.versionId,
+              versionId: versionId,
             },
           },
         )
         .then(function (result) {
+          if (!isOutletContextCurrent(outletCapture)) {
+            state.markerSaving = false;
+            return;
+          }
           state.markerSaving = false;
           if (result.response.status === 409 && result.data) {
             handleVersionConflict(result.data.message);
             return;
           }
-          if (result.response.status === 422 || result.response.status === 404) {
+          if (result.response.status === 403) {
+            handleAccessDenied();
+            return;
+          }
+          if (result.response.status === 404) {
+            clearOutletSelection(
+              result.data && result.data.message
+                ? result.data.message
+                : "Торговая точка не найдена или недоступна.",
+            );
+            alert(result.data && result.data.message ? result.data.message : "Сохранение недоступно.");
+            var saveBanner = root.querySelector("[data-catalog-meta-banner]");
+            if (saveBanner) saveBanner.innerHTML = renderMetaBanner(state.meta);
+            return;
+          }
+          if (result.response.status === 422) {
             alert(result.data && result.data.message ? result.data.message : "Сохранение недоступно.");
             return;
           }
@@ -880,9 +969,10 @@
             alert("Не удалось сохранить отметку.");
             return;
           }
-          return loadDistributionSummary().then(function () {
+          return loadDistributionSummary(outletCapture).then(function () {
+            if (!isOutletContextCurrent(outletCapture)) return;
             if (state.view === "detail" && state.selectedCode === productCode) {
-              loadDetail(productCode);
+              loadDetail(productCode, outletCapture);
             } else {
               runCatalogQuery({ includeFacets: false, includeProducts: true });
             }
@@ -891,35 +981,61 @@
           });
         })
         .catch(function () {
+          if (!isOutletContextCurrent(outletCapture)) return;
           state.markerSaving = false;
           alert("Ошибка сети при сохранении.");
         });
     }
 
     function selectOutlet(storeGuid) {
-      state.selectedStoreGuid = storeGuid || null;
-      writeSelectedOutlet(state.clientGuid, state.selectedStoreGuid || "");
+      var requested = storeGuid || null;
+      if (requested === state.selectedStoreGuid && state.outletConfirmed) {
+        return Promise.resolve();
+      }
+      var outletCapture = {
+        gen: beginOutletContext(requested),
+        storeGuid: requested || "",
+      };
+      beginOperation();
       state.page = 1;
       persistState();
       var metaBanner = root.querySelector("[data-catalog-meta-banner]");
       if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
       return api
         .apiRequest(
-          buildApiUrl(state.clientGuid, "meta", state.selectedStoreGuid ? { storeGuid: state.selectedStoreGuid } : null),
+          buildApiUrl(
+            state.clientGuid,
+            "meta",
+            outletCapture.storeGuid ? { storeGuid: outletCapture.storeGuid } : null,
+          ),
         )
         .then(function (result) {
+          if (!isOutletContextCurrent(outletCapture)) return;
+          if (result.response.status === 403 || result.response.status === 404) {
+            clearOutletSelection("Торговая точка недоступна для этой карточки.");
+            handleAccessDenied();
+            return;
+          }
           if (result.response.status === 200 && result.data) {
             state.meta = result.data;
-            applyMetaDistribution(result.data);
+            applyMetaDistribution(result.data, outletCapture);
             if (result.data.versionId) applySnapshotVersion(result.data.versionId);
           }
-          return loadDistributionSummary();
+          return loadDistributionSummary(outletCapture);
         })
         .then(function () {
+          if (!isOutletContextCurrent(outletCapture)) return;
           if (metaBanner) metaBanner.innerHTML = renderMetaBanner(state.meta);
           if (state.distributionPanel === "catalog") {
             runCatalogQuery({ includeFacets: false, includeProducts: true });
           }
+        })
+        .catch(function () {
+          if (!isOutletContextCurrent(outletCapture)) return;
+          clearOutletSelection(null);
+          showListMessage("Ошибка сети при переключении торговой точки.", "error", [
+            { id: "retry-meta", label: "Повторить", ghost: false },
+          ]);
         });
     }
 
@@ -1339,11 +1455,12 @@
       state.view = "list";
     }
 
-    function isDetailResponseCurrent(detailLoadId, code) {
+    function isDetailResponseCurrent(detailLoadId, code, outletCapture) {
       return (
         detailLoadId === state.detailLoadId &&
         state.view === "detail" &&
         state.selectedCode === code &&
+        (!outletCapture || isOutletContextCurrent(outletCapture)) &&
         root.isConnected
       );
     }
@@ -1367,6 +1484,7 @@
     function clearProtectedState() {
       closeLightbox();
       clearSessionState(clientGuid);
+      writeSelectedOutlet(clientGuid, "");
       invalidateFacetRequests();
       state.meta = null;
       state.versionId = null;
@@ -1413,13 +1531,15 @@
     }
 
     function confirmCatalogAccess(detailLoadId) {
-      return api.apiRequest(buildApiUrl(state.clientGuid, "meta")).then(function (metaResult) {
+      var metaQuery = state.selectedStoreGuid ? { storeGuid: state.selectedStoreGuid } : null;
+      return api.apiRequest(buildApiUrl(state.clientGuid, "meta", metaQuery)).then(function (metaResult) {
         if (detailLoadId !== state.detailLoadId || !root.isConnected) return { kind: "stale" };
         if (metaResult.response.status === 403 || metaResult.response.status === 404) {
           return { kind: "denied" };
         }
         if (metaResult.response.status === 200 && metaResult.data) {
           state.meta = metaResult.data;
+          applyMetaDistribution(metaResult.data, captureOutletContext());
           if (metaResult.data.versionId) state.versionId = metaResult.data.versionId;
           return { kind: "allowed" };
         }
@@ -1638,20 +1758,23 @@
       return chain;
     }
 
-    function loadDetail(code) {
+    function loadDetail(code, outletCapture) {
       var detailLoadId = ++state.detailLoadId;
+      var capture = outletCapture || captureOutletContext();
       state.view = "detail";
       state.selectedCode = code;
       renderDetailShell(renderState("Загрузка товара…", "loading"));
+      var listQuery = buildListQuery(state);
+      if (capture.storeGuid) listQuery.storeGuid = capture.storeGuid;
       return api
         .apiRequest(
-          buildApiUrl(state.clientGuid, "products/" + encodeURIComponent(code), buildListQuery(state)),
+          buildApiUrl(state.clientGuid, "products/" + encodeURIComponent(code), listQuery),
         )
         .then(function (result) {
-          if (!isDetailResponseCurrent(detailLoadId, code)) return;
+          if (!isDetailResponseCurrent(detailLoadId, code, capture)) return;
           if (result.response.status === 403 || result.response.status === 404) {
             return confirmCatalogAccess(detailLoadId).then(function (access) {
-              if (!isDetailResponseCurrent(detailLoadId, code)) return;
+              if (!isDetailResponseCurrent(detailLoadId, code, capture)) return;
               if (access.kind === "denied") {
                 handleAccessDenied();
                 return;
@@ -1679,10 +1802,11 @@
             return;
           }
           applySnapshotVersion(result.data.product.versionId);
+          if (!isDetailResponseCurrent(detailLoadId, code, capture)) return;
           renderDetail(result.data.product, result.data.futureActionsBlockedReason);
         })
         .catch(function () {
-          if (!isDetailResponseCurrent(detailLoadId, code)) return;
+          if (!isDetailResponseCurrent(detailLoadId, code, capture)) return;
           renderDetailShell(
             renderState("Ошибка сети при загрузке товара.", "error") +
               '<div class="pc-catalog-actions"><button type="button" class="pc-catalog-btn" data-catalog-action="retry-detail">Повторить</button></div>',
@@ -1692,12 +1816,18 @@
 
     function loadAll(reloadList) {
       var opId = beginOperation();
+      var savedOutlet = readSelectedOutlet(clientGuid) || "";
+      if (savedOutlet && !state.selectedStoreGuid) {
+        state.selectedStoreGuid = savedOutlet;
+      }
+      var outletCapture = captureOutletContext();
+      var metaQuery = outletCapture.storeGuid ? { storeGuid: outletCapture.storeGuid } : null;
       state.layoutReady = false;
       setHtml(renderHeader() + renderState("Загрузка каталога…", "loading"));
       return api
-        .apiRequest(buildApiUrl(state.clientGuid, "meta"))
+        .apiRequest(buildApiUrl(state.clientGuid, "meta", metaQuery))
         .then(function (result) {
-          if (!isCurrentOp(opId)) return;
+          if (!isCurrentOp(opId) || !isOutletContextCurrent(outletCapture)) return;
           if (result.response.status === 403 || result.response.status === 404) {
             handleAccessDenied();
             return;
@@ -1711,16 +1841,17 @@
             return;
           }
           state.meta = result.data;
-          applyMetaDistribution(result.data);
+          applyMetaDistribution(result.data, outletCapture);
           applySnapshotVersion(result.data.versionId);
           if (result.data.state !== "ready") {
             setHtml(renderHeader() + renderMetaBanner(result.data));
             return;
           }
-          return loadDistributionSummary().then(function () {
+          return loadDistributionSummary(outletCapture).then(function () {
+            if (!isOutletContextCurrent(outletCapture)) return;
             if (reloadList === false) return;
             return fetchSectionsTree(opId).then(function (step) {
-            if (step !== "ok" || !isCurrentOp(opId)) return;
+            if (step !== "ok" || !isCurrentOp(opId) || !isOutletContextCurrent(outletCapture)) return;
             return runCatalogQuery({ includeFacets: true, includeProducts: true });
             });
           });

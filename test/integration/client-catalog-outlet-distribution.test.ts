@@ -11,6 +11,11 @@ import {
   catalogDistributionEntriesFromXmlSet,
 } from "../helpers/onec-catalog-fixtures";
 import { applyClientsImportVerified } from "../helpers/onec-clients-fixtures";
+import { validateClientsFileBytes } from "../../src/onec-clients/validate";
+import {
+  buildClientsFileBytes,
+  sampleClient,
+} from "../helpers/onec-clients-fixtures";
 import {
   buildExtendedClientsFileBytes,
   EXTENDED_FIXTURE_GUIDS,
@@ -310,6 +315,184 @@ describe("client catalog outlet distribution integration", { concurrency: false 
     assert.equal(summary.body.installed.length, 1);
     assert.equal(summary.body.installed[0].productCode, "p1");
     assert.equal(summary.body.installed[0].inCurrentCatalog, false);
+  });
+
+  it("revalidates saved outlet selection via meta storeGuid", async () => {
+    const cookie = await login("manager@example.com");
+    const app = await loadApp();
+    const meta = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/catalog/meta?storeGuid=${STORE_ONE}`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(meta.status, 200);
+    assert.equal(meta.body.selectedStoreGuid, STORE_ONE);
+    assert.equal(meta.body.outletConfirmed, true);
+    assert.equal(meta.body.distributionEnabled, true);
+  });
+
+  it("blocks marker write when extended snapshot is stale after baseline-only reimport", async () => {
+    const baselineBytes = buildClientsFileBytes([
+      sampleClient({
+        guid_client: CLIENT_ONE,
+        name_client: "Client Alpha Baseline Refresh",
+      }),
+      sampleClient({
+        guid_client: FOREIGN_CLIENT,
+        name_client: "Foreign",
+        guid_manager: MANAGER_A,
+        name_manager: "Manager",
+      }),
+    ]);
+    const validated = validateClientsFileBytes(baselineBytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    const applied = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
+    assert.equal(applied.ok, true, applied.ok ? "" : `${applied.code}: ${applied.message}`);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row = await pool.query<{
+      source_sha256: string;
+      extended_source_sha256: string | null;
+      extended_freshness_state: string | null;
+    }>(
+      `
+        SELECT source_sha256, extended_source_sha256, extended_freshness_state
+        FROM onec_clients
+        WHERE guid_client = $1::uuid
+      `,
+      [CLIENT_ONE],
+    );
+    await pool.end();
+    assert.notEqual(row.rows[0]?.source_sha256, row.rows[0]?.extended_source_sha256);
+    assert.equal(row.rows[0]?.extended_freshness_state, "preserved_from_previous");
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await request(app)
+      .post(`/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send({
+        action: "set",
+        markerKind: "installed",
+        productCode: "p1",
+        versionId: catalogVersionId,
+      });
+    assert.equal(res.status, 422);
+    assert.equal(res.body.code, "OUTLET_NOT_WRITABLE");
+  });
+
+  it("serializes concurrent identical marker sets without duplicate events", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "p1",
+      versionId: catalogVersionId,
+    };
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        request(app)
+          .post(url)
+          .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+          .send(body),
+      ),
+    );
+    assert.ok(
+      results.every((row) => row.status === 200),
+      results.map((row) => `${row.status}:${row.body?.code ?? ""}`).join(", "),
+    );
+    assert.equal(results.filter((row) => row.body.changed).length, 1);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const events = await pool.query<{ n: number }>(
+      `
+        SELECT COUNT(*)::int AS n
+        FROM outlet_distribution_marker_events
+        WHERE product_code = 'p1' AND event_kind = 'set'
+      `,
+    );
+    await pool.end();
+    assert.equal(events.rows[0]?.n, 1);
+  });
+
+  it("serializes concurrent clears and set/clear races", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    await request(app)
+      .post(url)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send({
+        action: "set",
+        markerKind: "planned",
+        productCode: "p2",
+        versionId: catalogVersionId,
+      });
+
+    const clears = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        request(app)
+          .post(url)
+          .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+          .send({
+            action: "clear",
+            markerKind: "planned",
+            productCode: "p2",
+            versionId: catalogVersionId,
+          }),
+      ),
+    );
+    assert.equal(clears.filter((row) => row.status === 200 && row.body.changed).length, 1);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const afterClears = await pool.query<{ is_active: boolean }>(
+      `SELECT is_active FROM outlet_distribution_markers WHERE product_code = 'p2' AND marker_kind = 'planned'`,
+    );
+    assert.equal(afterClears.rows[0]?.is_active, false);
+
+    const race = await Promise.all([
+      request(app)
+        .post(url)
+        .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+        .send({
+          action: "set",
+          markerKind: "planned",
+          productCode: "p2",
+          versionId: catalogVersionId,
+        }),
+      request(app)
+        .post(url)
+        .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+        .send({
+          action: "clear",
+          markerKind: "planned",
+          productCode: "p2",
+          versionId: catalogVersionId,
+        }),
+    ]);
+    assert.ok(race.every((row) => row.status === 200));
+    const changedCount = race.filter((row) => row.body.changed).length;
+    assert.ok(changedCount >= 1 && changedCount <= 2);
+
+    const events = await pool.query<{ event_kind: string }>(
+      `
+        SELECT event_kind
+        FROM outlet_distribution_marker_events
+        WHERE product_code = 'p2'
+        ORDER BY occurred_at
+      `,
+    );
+    const active = await pool.query<{ is_active: boolean }>(
+      `SELECT is_active FROM outlet_distribution_markers WHERE product_code = 'p2' AND marker_kind = 'planned'`,
+    );
+    await pool.end();
+    assert.ok(events.rows.length >= 2);
+    if (active.rows[0]?.is_active) {
+      assert.equal(events.rows.at(-1)?.event_kind, "set");
+    } else {
+      assert.equal(events.rows.at(-1)?.event_kind, "clear");
+    }
   });
 
   it("records history on clear without deleting prior fact row", async () => {

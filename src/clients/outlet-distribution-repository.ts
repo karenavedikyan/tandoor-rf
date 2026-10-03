@@ -106,6 +106,22 @@ export async function listDistributionMarkers(
   }));
 }
 
+async function lockMarkerRow(
+  client: PoolClient,
+  storeGuid: string,
+  productCode: string,
+  markerKind: DistributionMarkerKind,
+): Promise<void> {
+  await client.query(
+    `
+      SELECT pg_advisory_xact_lock(
+        hashtext($1::text || '|' || $2 || '|' || $3)
+      )
+    `,
+    [storeGuid, productCode, markerKind],
+  );
+}
+
 export async function upsertDistributionMarker(
   client: PoolClient,
   input: {
@@ -118,6 +134,8 @@ export async function upsertDistributionMarker(
   },
 ): Promise<{ changed: boolean; markerId: string }> {
   const productCode = normalizeProductCode(input.productCode);
+  await lockMarkerRow(client, input.storeGuid, productCode, input.markerKind);
+
   const existing = await client.query<{ id: string; is_active: boolean }>(
     `
       SELECT id::text, is_active
@@ -125,40 +143,51 @@ export async function upsertDistributionMarker(
       WHERE guid_store = $1::uuid
         AND product_code = $2
         AND marker_kind = $3
-      LIMIT 1
+      FOR UPDATE
     `,
     [input.storeGuid, productCode, input.markerKind],
   );
-  const row = existing.rows[0];
-  if (row?.is_active) {
-    return { changed: false, markerId: row.id };
+  const current = existing.rows[0];
+  if (current?.is_active) {
+    return { changed: false, markerId: current.id };
   }
 
-  const upsert = await client.query<{ id: string }>(
-    `
-      INSERT INTO outlet_distribution_markers (
-        guid_store, guid_client, product_code, marker_kind, is_active,
-        marked_by_user_id, marked_at, catalog_version_id
-      )
-      VALUES ($1::uuid, $2::uuid, $3, $4, TRUE, $5::uuid, NOW(), $6::uuid)
-      ON CONFLICT (guid_store, product_code, marker_kind)
-      DO UPDATE SET
-        is_active = TRUE,
-        marked_by_user_id = EXCLUDED.marked_by_user_id,
-        marked_at = NOW(),
-        catalog_version_id = EXCLUDED.catalog_version_id
-      RETURNING id::text
-    `,
-    [
-      input.storeGuid,
-      input.cardGuid,
-      productCode,
-      input.markerKind,
-      input.actorUserId,
-      input.catalogVersionId,
-    ],
-  );
-  const markerId = upsert.rows[0]!.id;
+  let markerId = current?.id;
+  if (markerId) {
+    await client.query(
+      `
+        UPDATE outlet_distribution_markers
+        SET
+          is_active = TRUE,
+          marked_by_user_id = $2::uuid,
+          marked_at = NOW(),
+          catalog_version_id = $3::uuid
+        WHERE id = $1::uuid
+      `,
+      [markerId, input.actorUserId, input.catalogVersionId],
+    );
+  } else {
+    const inserted = await client.query<{ id: string }>(
+      `
+        INSERT INTO outlet_distribution_markers (
+          guid_store, guid_client, product_code, marker_kind, is_active,
+          marked_by_user_id, marked_at, catalog_version_id
+        )
+        VALUES ($1::uuid, $2::uuid, $3, $4, TRUE, $5::uuid, NOW(), $6::uuid)
+        RETURNING id::text
+      `,
+      [
+        input.storeGuid,
+        input.cardGuid,
+        productCode,
+        input.markerKind,
+        input.actorUserId,
+        input.catalogVersionId,
+      ],
+    );
+    markerId = inserted.rows[0]!.id;
+  }
+
   await client.query(
     `
       INSERT INTO outlet_distribution_marker_events (
@@ -177,7 +206,7 @@ export async function upsertDistributionMarker(
       input.actorUserId,
     ],
   );
-  return { changed: true, markerId };
+  return { changed: true, markerId: markerId! };
 }
 
 export async function clearDistributionMarker(
@@ -192,22 +221,24 @@ export async function clearDistributionMarker(
   },
 ): Promise<{ changed: boolean }> {
   const productCode = normalizeProductCode(input.productCode);
-  const existing = await client.query<{ id: string }>(
+  await lockMarkerRow(client, input.storeGuid, productCode, input.markerKind);
+
+  const existing = await client.query<{ id: string; is_active: boolean }>(
     `
-      SELECT id::text
+      SELECT id::text, is_active
       FROM outlet_distribution_markers
       WHERE guid_store = $1::uuid
         AND product_code = $2
         AND marker_kind = $3
-        AND is_active = TRUE
-      LIMIT 1
+      FOR UPDATE
     `,
     [input.storeGuid, productCode, input.markerKind],
   );
   const markerId = existing.rows[0]?.id;
-  if (!markerId) {
+  if (!markerId || !existing.rows[0]?.is_active) {
     return { changed: false };
   }
+
   await client.query(
     `
       UPDATE outlet_distribution_markers

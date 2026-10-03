@@ -1,6 +1,10 @@
 import type { PoolClient } from "pg";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
-import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
+import type { ExtendedSnapshot, ParsedRetailOutlet } from "../onec-clients/extended-types";
+import {
+  assessOutletExportFreshness,
+  type OutletDistributionGateRow,
+} from "./extended-dto";
 import { shortUuidLabel } from "./uuid-param";
 
 export type OutletDistributionReadiness = {
@@ -20,6 +24,10 @@ type RegistryRow = {
   guid_store: string;
   guid_client: string;
   is_closed: boolean | null;
+};
+
+type ClientExtendedRow = OutletDistributionGateRow & {
+  extended_snapshot: unknown;
 };
 
 function readCurrentOutletsFromSnapshot(snapshot: unknown): ParsedRetailOutlet[] {
@@ -44,6 +52,8 @@ function assessWritable(
   registry: RegistryRow,
   cardGuid: string,
   snapshotOutlet: ParsedRetailOutlet | null,
+  row: ClientExtendedRow,
+  snapshot: ExtendedSnapshot | null,
 ): { writable: boolean; reason: string | null; presentInCurrentExport: boolean } {
   if (registry.guid_client.toLowerCase() !== cardGuid.toLowerCase()) {
     return {
@@ -53,10 +63,11 @@ function assessWritable(
     };
   }
   if (registry.is_closed === true) {
+    const exportState = assessOutletExportFreshness(snapshotOutlet, row, snapshot);
     return {
       writable: false,
       reason: "Запись дистрибуции недоступна для закрытой торговой точки.",
-      presentInCurrentExport: snapshotOutlet?.provenance.freshness === "current",
+      presentInCurrentExport: exportState.presentInCurrentExport,
     };
   }
   if (!snapshotOutlet) {
@@ -73,7 +84,9 @@ function assessWritable(
       presentInCurrentExport: false,
     };
   }
-  if (snapshotOutlet.provenance.freshness !== "current") {
+
+  const exportState = assessOutletExportFreshness(snapshotOutlet, row, snapshot);
+  if (!exportState.presentInCurrentExport) {
     return {
       writable: false,
       reason: "Торговая точка отсутствует в текущей выгрузке 1С.",
@@ -101,11 +114,26 @@ export async function loadOutletDistributionOptions(
   client: PoolClient,
   cardGuid: string,
 ): Promise<OutletDistributionReadiness[]> {
-  const clientRow = await client.query<{ extended_snapshot: unknown }>(
-    `SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid`,
+  const clientRow = await client.query<ClientExtendedRow>(
+    `
+      SELECT
+        extended_snapshot,
+        extended_freshness_state,
+        source_sha256,
+        extended_source_sha256
+      FROM onec_clients
+      WHERE guid_client = $1::uuid
+    `,
     [cardGuid],
   );
-  const snapshotOutlets = readCurrentOutletsFromSnapshot(clientRow.rows[0]?.extended_snapshot);
+  const row = clientRow.rows[0] ?? {
+    extended_snapshot: null,
+    extended_freshness_state: null,
+    source_sha256: null,
+    extended_source_sha256: null,
+  };
+  const snapshot = readExtendedSnapshot(row.extended_snapshot);
+  const snapshotOutlets = readCurrentOutletsFromSnapshot(row.extended_snapshot);
   const snapshotByStore = new Map<string, ParsedRetailOutlet>();
   for (const outlet of snapshotOutlets) {
     if (outlet.guidStore) {
@@ -125,7 +153,7 @@ export async function loadOutletDistributionOptions(
 
   return registryRows.rows.map((registry) => {
     const snapshotOutlet = snapshotByStore.get(registry.guid_store.toLowerCase()) ?? null;
-    const assessed = assessWritable(registry, cardGuid, snapshotOutlet);
+    const assessed = assessWritable(registry, cardGuid, snapshotOutlet, row, snapshot);
     const closureStatus =
       registry.is_closed === true || snapshotOutlet?.closureStatus === "closed"
         ? "closed"
