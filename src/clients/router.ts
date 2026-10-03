@@ -29,6 +29,14 @@ import {
   getClientHandler,
   listClientsHandler,
 } from "./handlers";
+import {
+  getClientReviewHandler,
+  listClientReviewHistoryHandler,
+  reviewOptionsHandler,
+  upsertClientReviewHandler,
+} from "./review/handlers";
+import { listTeamManagersHandler, listTeamRopsHandler } from "./teams/handlers";
+import { unassignedSummaryHandler } from "./unassigned/handlers";
 
 export function createClientsRouter(): express.Router {
   const router = express.Router();
@@ -46,6 +54,22 @@ export function createClientsRouter(): express.Router {
 
   router.get("/options", ...readChain, (req, res, next) => {
     void clientOptionsHandler(req, res).catch(next);
+  });
+
+  router.get("/teams", ...readChain, (req, res, next) => {
+    void listTeamRopsHandler(req, res).catch(next);
+  });
+
+  router.get("/teams/:ropUserId/managers", ...readChain, (req, res, next) => {
+    void listTeamManagersHandler(req, res).catch(next);
+  });
+
+  router.get("/unassigned/summary", ...readChain, (req, res, next) => {
+    void unassignedSummaryHandler(req, res).catch(next);
+  });
+
+  router.get("/review/options", ...readChain, (req, res, next) => {
+    void reviewOptionsHandler(req, res).catch(next);
   });
 
   router.get("/", ...readChain, (req, res, next) => {
@@ -102,6 +126,18 @@ export function createClientsRouter(): express.Router {
 
   router.put("/:guid/bitrix24/tasks/:taskId/contact", csrfProtection, ...readChain, (req, res, next) => {
     void putClientBitrix24TaskContactHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/review/history", ...readChain, (req, res, next) => {
+    void listClientReviewHistoryHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/review", ...readChain, (req, res, next) => {
+    void getClientReviewHandler(req, res).catch(next);
+  });
+
+  router.put("/:guid/review", csrfProtection, ...readChain, (req, res, next) => {
+    void upsertClientReviewHandler(req, res).catch(next);
   });
 
   router.get("/:guid", ...readChain, (req, res, next) => {

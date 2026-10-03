@@ -364,6 +364,59 @@ export function resolveMockResponse(
     return jsonResponse(200, syntheticSyncStatusPayload());
   }
 
+  if (path === "/api/clients/teams") {
+    return jsonResponse(200, {
+      items: [
+        {
+          ropUserId: "99999999-9999-4999-8999-999999999999",
+          ropName: "Synthetic ROP",
+          ropEmployeeGuid: SYNTHETIC_MANAGER_A,
+          ropEmployeeName: "Менеджер Иванов",
+          ropEmployeeShortId: "22222222",
+          managerCount: 1,
+          uniqueClientCount: 2,
+        },
+      ],
+    });
+  }
+
+  if (path.match(/^\/api\/clients\/teams\/[^/]+\/managers$/)) {
+    return jsonResponse(200, {
+      items: [
+        {
+          kind: "team_member",
+          userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+          clientCount: 2,
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/unassigned/summary") {
+    return jsonResponse(200, {
+      limitationNote: "Полноценный справочник сотрудников ОПТ в БД недоступен.",
+      categories: [
+        {
+          category: "opt_without_rop_team",
+          label: "Сотрудники ОПТ без команды РОП",
+          uniqueClientCount: 0,
+          employeeCount: 0,
+        },
+      ],
+      employees: [],
+    });
+  }
+
+  if (path === "/api/clients/review/options") {
+    return jsonResponse(200, {
+      states: [{ id: "unreviewed", label: "Не проверен" }],
+      decisions: [{ id: "confirm_current_manager", label: "Подтвердить текущего ответственного" }],
+    });
+  }
+
   if (path === "/api/clients") {
     state.listCalls += 1;
     if (options.failListOnce && state.listCalls === 1) {

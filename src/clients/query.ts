@@ -1,14 +1,24 @@
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SEARCH_LENGTH, MIN_PAGE } from "./constants";
 import { escapeIlikePattern, normalizePhoneForSearch } from "./phone";
+import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
+import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
 import { isValidUuidParam } from "./uuid-param";
 
 export type PhoneFilter = "all" | "yes" | "no";
+export type OutletsFilter = "all" | "yes" | "no";
+export type ClientsViewMode = "all" | "teams" | "review";
 
 export type ClientsListQuery = {
+  view: ClientsViewMode;
   q: string;
   managerId?: string;
   holdingId?: string;
   phone: PhoneFilter;
+  ropUserId?: string;
+  unassignedCategory?: UnassignedCategory;
+  reviewState?: ReviewState | "any";
+  reviewDecision?: ReviewDecision | "any";
+  hasOutlets: OutletsFilter;
   page: number;
   pageSize: number;
 };
@@ -122,13 +132,70 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр холдинга." };
   }
 
+  const viewRaw = parseScalarString(input.view, "all") ?? "all";
+  if (viewRaw !== "all" && viewRaw !== "teams" && viewRaw !== "review") {
+    return { ok: false, message: "Некорректный режим просмотра." };
+  }
+
+  const ropUserId = parseOptionalUuid(input.rop, "РОП");
+  if (ropUserId === null) {
+    return { ok: false, message: "Некорректный фильтр РОП." };
+  }
+
+  let unassignedCategory: UnassignedCategory | undefined;
+  if (input.unassignedCategory !== undefined && input.unassignedCategory !== null && input.unassignedCategory !== "") {
+    if (rejectNonScalar(input.unassignedCategory)) {
+      return { ok: false, message: "Некорректная категория нераспределённого назначения." };
+    }
+    const raw = String(input.unassignedCategory).trim();
+    if (!(UNASSIGNED_CATEGORIES as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректная категория нераспределённого назначения." };
+    }
+    unassignedCategory = raw as UnassignedCategory;
+  }
+
+  let reviewState: ReviewState | "any" | undefined;
+  if (input.reviewState !== undefined && input.reviewState !== null && input.reviewState !== "") {
+    if (rejectNonScalar(input.reviewState)) {
+      return { ok: false, message: "Некорректное состояние ревизии." };
+    }
+    const raw = String(input.reviewState).trim();
+    if (raw !== "any" && !(REVIEW_STATES as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректное состояние ревизии." };
+    }
+    reviewState = raw as ReviewState | "any";
+  }
+
+  let reviewDecision: ReviewDecision | "any" | undefined;
+  if (input.reviewDecision !== undefined && input.reviewDecision !== null && input.reviewDecision !== "") {
+    if (rejectNonScalar(input.reviewDecision)) {
+      return { ok: false, message: "Некорректное решение ревизии." };
+    }
+    const raw = String(input.reviewDecision).trim();
+    if (raw !== "any" && !(REVIEW_DECISIONS as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректное решение ревизии." };
+    }
+    reviewDecision = raw as ReviewDecision | "any";
+  }
+
+  const outletsRaw = parseScalarString(input.hasOutlets, "all") ?? "all";
+  if (outletsRaw !== "all" && outletsRaw !== "yes" && outletsRaw !== "no") {
+    return { ok: false, message: "Некорректный фильтр торговых точек." };
+  }
+
   return {
     ok: true,
     query: {
+      view: viewRaw as ClientsViewMode,
       q: rawQ,
       managerId,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
+      ropUserId,
+      unassignedCategory,
+      reviewState,
+      reviewDecision,
+      hasOutlets: outletsRaw as OutletsFilter,
       page,
       pageSize,
     },
@@ -152,30 +219,48 @@ function phonePresenceSql(mode: PhoneFilter): string {
   return "TRUE";
 }
 
+function outletsPresenceSql(mode: OutletsFilter): string {
+  const hasOutlets = `
+    EXISTS (
+      SELECT 1
+      FROM onec_retail_outlets oro
+      WHERE oro.guid_client = onec_clients.guid_client
+    )
+  `;
+  if (mode === "yes") {
+    return hasOutlets;
+  }
+  if (mode === "no") {
+    return `NOT ${hasOutlets}`;
+  }
+  return "TRUE";
+}
+
 export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   const clauses: string[] = [];
   const params: unknown[] = [];
 
   if (query.managerId) {
     params.push(query.managerId);
-    clauses.push(`guid_manager = $${params.length}::uuid`);
+    clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }
 
   if (query.holdingId) {
     params.push(query.holdingId);
-    clauses.push(`guid_holding = $${params.length}::uuid`);
+    clauses.push(`onec_clients.guid_holding = $${params.length}::uuid`);
   }
 
   clauses.push(phonePresenceSql(query.phone));
+  clauses.push(outletsPresenceSql(query.hasOutlets));
 
   if (query.q.length > 0) {
     params.push(`%${escapeIlikePattern(query.q)}%`);
     const textParam = `$${params.length}`;
     const textClauses = [
-      `name_client ILIKE ${textParam} ESCAPE '\\'`,
-      `name_holding ILIKE ${textParam} ESCAPE '\\'`,
-      `name_manager ILIKE ${textParam} ESCAPE '\\'`,
-      `address ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_client ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_holding ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_manager ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.address ILIKE ${textParam} ESCAPE '\\'`,
     ];
 
     const normalizedPhone = normalizePhoneForSearch(query.q);

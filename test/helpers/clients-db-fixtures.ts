@@ -11,6 +11,8 @@ export type SyntheticClientInput = {
   address?: string;
   telephone?: string[];
   last_imported_at?: string;
+  manager_roster_state?: "roster_not_loaded" | "in_wholesale_roster" | "outside_wholesale_roster";
+  baseline_status?: "active" | "archived_baseline" | "quarantined";
 };
 
 export async function insertSyntheticClients(
@@ -32,9 +34,11 @@ export async function insertSyntheticClients(
           address,
           telephone,
           source_sha256,
-          last_imported_at
+          last_imported_at,
+          manager_roster_state,
+          baseline_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, COALESCE($10::timestamptz, NOW()))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, COALESCE($10::timestamptz, NOW()), $11, $12)
       `,
       [
         client.guid_client,
@@ -47,6 +51,8 @@ export async function insertSyntheticClients(
         JSON.stringify(client.telephone ?? []),
         "0".repeat(64),
         client.last_imported_at ?? null,
+        client.manager_roster_state ?? "in_wholesale_roster",
+        client.baseline_status ?? "active",
       ],
     );
   }

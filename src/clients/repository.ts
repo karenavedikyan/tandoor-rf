@@ -3,6 +3,12 @@ import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { getPool, query } from "../db/pool";
 import { getCommittedSnapshotSha } from "../onec-exchange/state";
+import { buildReviewStateFilter } from "./review/repository";
+import {
+  assertManagerInTeamScope,
+  TeamAccessError,
+} from "./teams/repository";
+import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
 import {
@@ -48,19 +54,147 @@ export async function countAllClients(): Promise<number> {
   return Number(result.rows[0]?.count ?? "0");
 }
 
-function resolveScopedFilter(context: AccessContext, input: ClientsListQuery): ReturnType<typeof buildClientsFilter> {
-  const userFilter = buildClientsFilter(input);
+async function resolveScopedFilter(
+  context: AccessContext,
+  input: ClientsListQuery,
+): Promise<{ whereSql: string; params: unknown[]; joinSql: string; extraSelect: string }> {
+  if (input.view === "review" && context.role !== "admin") {
+    throw new ListClientsError("Очередь ревизии доступна только администратору.", "FORBIDDEN");
+  }
+
+  if (input.unassignedCategory && context.role !== "admin") {
+    throw new ListClientsError(
+      "Фильтр нераспределённых назначений доступен только администратору.",
+      "FORBIDDEN",
+    );
+  }
+
+  if (input.ropUserId && input.managerId) {
+    try {
+      await assertManagerInTeamScope(context, input.ropUserId, input.managerId);
+    } catch (error) {
+      if (error instanceof TeamAccessError) {
+        throw new ListClientsError(error.message, error.code);
+      }
+      throw error;
+    }
+  } else if (input.ropUserId && input.view === "teams") {
+    if (context.role !== "admin" && context.role !== "rop") {
+      throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
+    }
+    if (context.role === "rop" && context.userId !== input.ropUserId) {
+      throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
+    }
+  }
+
+  let userFilter = buildClientsFilter(input);
   const scope = buildClientScopeSql(context);
-  return combineScopeAndFilter(scope, userFilter);
+
+  if (input.unassignedCategory) {
+    const summary = await buildUnassignedSummary({ category: input.unassignedCategory });
+    const employeeGuids = summary.employees.map((e) => e.employeeGuid);
+    userFilter = combineScopeAndFilter(userFilter, buildUnassignedCategoryFilter(input.unassignedCategory, employeeGuids));
+  }
+
+  const reviewJoin = buildReviewStateFilter(
+    input.reviewState ?? (input.view === "review" ? "any" : "any"),
+    input.reviewDecision,
+  );
+  if (reviewJoin.whereClauses.length > 0) {
+    const combinedClauses = [
+      userFilter.whereSql ? userFilter.whereSql.replace(/^WHERE\s+/, "") : "",
+      ...reviewJoin.whereClauses,
+    ].filter(Boolean);
+    userFilter = {
+      whereSql: combinedClauses.length > 0 ? `WHERE ${combinedClauses.join(" AND ")}` : "",
+      params: [...userFilter.params, ...reviewJoin.params],
+    };
+  }
+
+  const combined = combineScopeAndFilter(scope, userFilter);
+
+  const includeReview = input.view === "review" || input.reviewState || input.reviewDecision;
+  const includeTeamContext = input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
+
+  const joinSql = [
+    includeReview ? reviewJoin.joinSql : "",
+    includeTeamContext
+      ? `
+        LEFT JOIN LATERAL (
+          SELECT u.full_name AS rop_name
+          FROM rop_team_members rtm
+          JOIN user_onec_employee_links uoel
+            ON uoel.user_id = rtm.member_user_id AND uoel.revoked_at IS NULL
+          JOIN users u ON u.id = rtm.rop_user_id
+          WHERE rtm.revoked_at IS NULL
+            AND uoel.employee_id = onec_clients.guid_manager
+          ORDER BY rtm.created_at ASC
+          LIMIT 1
+        ) team_ctx ON TRUE
+      `
+      : "",
+  ].join("\n");
+
+  const extraSelect = [
+    includeReview
+      ? `
+        , crr.review_state
+        , crr.review_decision
+        , crr.stale_reason AS review_stale_reason
+        , crr.basis_manager_guid::text AS review_basis_manager_guid
+        , crr.proposed_manager_guid::text AS review_proposed_manager_guid
+      `
+      : "",
+    includeTeamContext
+      ? `
+        , team_ctx.rop_name AS team_label
+        , CASE
+            WHEN COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') = 'outside_wholesale_roster'
+              THEN 'Вне списка ОПТ'
+            WHEN COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') = 'roster_not_loaded'
+              THEN 'Roster не загружен'
+            WHEN team_ctx.rop_name IS NULL
+              THEN 'Без команды РОП'
+            ELSE NULL
+          END AS unassigned_reason
+      `
+      : "",
+    input.hasOutlets !== "all" || input.view !== "all"
+      ? `
+        , (
+            SELECT COUNT(*)::text
+            FROM onec_retail_outlets oro
+            WHERE oro.guid_client = onec_clients.guid_client
+          ) AS outlets_count
+        `
+      : "",
+  ].join("\n");
+
+  return {
+    whereSql: combined.whereSql,
+    params: combined.params,
+    joinSql,
+    extraSelect,
+  };
+}
+
+export class ListClientsError extends Error {
+  code: "FORBIDDEN" | "NOT_FOUND";
+
+  constructor(message: string, code: "FORBIDDEN" | "NOT_FOUND") {
+    super(message);
+    this.code = code;
+  }
 }
 
 export async function listClients(
   context: AccessContext,
   input: ClientsListQuery,
 ): Promise<ClientsListResponse> {
-  const filter = resolveScopedFilter(context, input);
+  const filter = await resolveScopedFilter(context, input);
+  const fromSql = `FROM onec_clients ${filter.joinSql}`;
   const totalResult = await query<CountRow>(
-    `SELECT COUNT(*)::text AS count FROM onec_clients ${filter.whereSql}`,
+    `SELECT COUNT(*)::text AS count ${fromSql} ${filter.whereSql}`,
     filter.params,
   );
   const total = Number(totalResult.rows[0]?.count ?? "0");
@@ -74,18 +208,19 @@ export async function listClients(
   const rows = await query<ClientRow>(
     `
       SELECT
-        guid_client::text,
-        name_client,
-        guid_holding::text,
-        name_holding,
-        guid_manager::text,
-        name_manager,
-        address,
-        telephone,
-        last_imported_at
-      FROM onec_clients
+        onec_clients.guid_client::text,
+        onec_clients.name_client,
+        onec_clients.guid_holding::text,
+        onec_clients.name_holding,
+        onec_clients.guid_manager::text,
+        onec_clients.name_manager,
+        onec_clients.address,
+        onec_clients.telephone,
+        onec_clients.last_imported_at
+        ${filter.extraSelect}
+      ${fromSql}
       ${filter.whereSql}
-      ORDER BY name_client ASC, guid_client ASC
+      ORDER BY onec_clients.name_client ASC, onec_clients.guid_client ASC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `,

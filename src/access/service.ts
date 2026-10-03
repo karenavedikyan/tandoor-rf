@@ -1496,8 +1496,10 @@ export async function listClientsForDelegator(input: {
     }
   }
   return listDelegatorClientsPicker(effectiveScope, {
+    view: "all",
     q: input.q ?? "",
     phone: "all",
+    hasOutlets: "all",
     page: input.page,
     pageSize: input.pageSize,
   });

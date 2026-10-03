@@ -23,6 +23,19 @@
           <div id="init-panel" class="clients-hidden" role="alert"></div>
 
           <div id="clients-app" class="clients-hidden">
+            <nav id="view-switcher" class="clients-view-switcher" aria-label="Режим просмотра">
+              <button type="button" class="clients-view-switcher__btn" data-view="all">Все клиенты</button>
+              <button type="button" class="clients-view-switcher__btn" data-view="teams">По командам</button>
+              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
+                Ревизия
+              </button>
+            </nav>
+
+            <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация"></nav>
+
+            <div id="teams-panel" class="clients-teams-panel clients-hidden"></div>
+            <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
+
             <div class="clients-toolbar">
               <label class="clients-field">
                 <span class="clients-field__label">Поиск</span>
@@ -79,6 +92,32 @@
                     <option value="no">Нет</option>
                   </select>
                 </label>
+                <label class="clients-field clients-hidden" id="outlets-filter-wrap">
+                  <span class="clients-field__label">Торговые точки</span>
+                  <select id="outlets-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="yes">Есть</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="review-state-filter-wrap">
+                  <span class="clients-field__label">Состояние ревизии</span>
+                  <select id="review-state-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="review-decision-filter-wrap">
+                  <span class="clients-field__label">Решение ревизии</span>
+                  <select id="review-decision-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="unassigned-filter-wrap">
+                  <span class="clients-field__label">Нераспределённое</span>
+                  <select id="unassigned-filter" class="clients-field__select">
+                    <option value="">Все категории</option>
+                  </select>
+                </label>
                 <button id="reset-filters" type="button" class="workspace-button workspace-button--ghost">
                   Сбросить
                 </button>
@@ -96,10 +135,12 @@
                 <div class="clients-table-wrap">
                   <table class="clients-table" aria-label="Список клиентов">
                     <thead>
-                      <tr>
+                      <tr id="clients-table-head-row">
                         <th scope="col">Клиент</th>
                         <th scope="col">Холдинг</th>
                         <th scope="col">Менеджер</th>
+                        <th scope="col" data-col="team" class="clients-hidden">Команда</th>
+                        <th scope="col" data-col="review" class="clients-hidden">Ревизия</th>
                         <th scope="col">Адрес</th>
                         <th scope="col">Телефон</th>
                       </tr>

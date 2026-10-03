@@ -1,6 +1,12 @@
 import type { AccessContext } from "../access/types";
 import { telHrefFromPhone } from "./phone";
 import { toClientExtendedDto, type ClientExtendedDto, type ClientExtendedDtoOptions } from "./extended-dto";
+import {
+  REVIEW_DECISION_LABELS,
+  REVIEW_STATE_LABELS,
+  type ReviewDecision,
+  type ReviewState,
+} from "./review/constants";
 import { shortUuidLabel } from "./uuid-param";
 
 export type ClientListItemDto = {
@@ -21,6 +27,19 @@ export type ClientListItemDto = {
   phonePreview: {
     primary: string | null;
     extraCount: number;
+  };
+  teamContext?: {
+    label: string | null;
+    unassignedReason: string | null;
+  };
+  outletsCount?: number;
+  review?: {
+    state: string;
+    stateLabel: string;
+    decision: string | null;
+    decisionLabel: string | null;
+    isStale: boolean;
+    transferStatus: "none" | "proposed" | "confirmed_in_1c";
   };
 };
 
@@ -127,6 +146,14 @@ type ClientRow = {
   extended_imported_at?: Date | null;
   extended_freshness_state?: import("../onec-clients/extended-types").ExtendedFreshnessState | null;
   extended_snapshot?: unknown;
+  outlets_count?: string | number | null;
+  review_state?: ReviewState | null;
+  review_decision?: ReviewDecision | null;
+  review_stale_reason?: string | null;
+  review_basis_manager_guid?: string | null;
+  review_proposed_manager_guid?: string | null;
+  team_label?: string | null;
+  unassigned_reason?: string | null;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -172,9 +199,26 @@ function phonePreviewFromTelephones(telephones: string[]): ClientListItemDto["ph
   };
 }
 
+function reviewTransferStatusFromRow(
+  row: ClientRow,
+): "none" | "proposed" | "confirmed_in_1c" {
+  if (row.review_decision !== "propose_transfer" || !row.review_proposed_manager_guid) {
+    return "none";
+  }
+  if (
+    row.review_basis_manager_guid &&
+    row.guid_manager.toLowerCase() === row.review_proposed_manager_guid.toLowerCase() &&
+    !row.review_stale_reason
+  ) {
+    return "confirmed_in_1c";
+  }
+  return "proposed";
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
-  return {
+  const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
+  const item: ClientListItemDto = {
     guid: row.guid_client,
     name: row.name_client,
     holding: holdingDtoFromRow(row),
@@ -186,6 +230,37 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
     address: row.address,
     phonePreview: phonePreviewFromTelephones(telephones),
   };
+
+  if (row.team_label != null || row.unassigned_reason != null) {
+    item.teamContext = {
+      label: row.team_label ?? null,
+      unassignedReason: row.unassigned_reason ?? null,
+    };
+  }
+
+  if (row.outlets_count != null) {
+    item.outletsCount = Number(row.outlets_count);
+  }
+
+  if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
+    const isStale = Boolean(
+      row.review_stale_reason ||
+        (row.review_basis_manager_guid &&
+          row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase()),
+    );
+    const effectiveState =
+      isStale && reviewState === "completed" ? "needs_recheck" : reviewState;
+    item.review = {
+      state: effectiveState,
+      stateLabel: REVIEW_STATE_LABELS[effectiveState],
+      decision: row.review_decision ?? null,
+      decisionLabel: row.review_decision ? REVIEW_DECISION_LABELS[row.review_decision] : null,
+      isStale,
+      transferStatus: reviewTransferStatusFromRow(row),
+    };
+  }
+
+  return item;
 }
 
 export function toClientDetail(

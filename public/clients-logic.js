@@ -7,23 +7,53 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  var LIST_QUERY_KEYS = [
+    "view",
+    "q",
+    "manager",
+    "holding",
+    "phone",
+    "rop",
+    "unassignedCategory",
+    "reviewState",
+    "reviewDecision",
+    "hasOutlets",
+    "page",
+  ];
+
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
+    var view = params.get("view") || "all";
+    if (view !== "all" && view !== "teams" && view !== "review") {
+      view = "all";
+    }
     return {
+      view: view,
       q: params.get("q") || "",
       manager: params.get("manager") || "",
       holding: params.get("holding") || "",
       phone: params.get("phone") || "all",
+      rop: params.get("rop") || "",
+      unassignedCategory: params.get("unassignedCategory") || "",
+      reviewState: params.get("reviewState") || "",
+      reviewDecision: params.get("reviewDecision") || "",
+      hasOutlets: params.get("hasOutlets") || "all",
       page: Math.max(1, Number(params.get("page") || "1") || 1),
     };
   }
 
   function buildListQueryString(state) {
     var params = new URLSearchParams();
+    if (state.view && state.view !== "all") params.set("view", state.view);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
+    if (state.rop) params.set("rop", state.rop);
+    if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
+    if (state.reviewState) params.set("reviewState", state.reviewState);
+    if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
+    if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
     if (state.page > 1) params.set("page", String(state.page));
     return params.toString();
   }
@@ -41,7 +71,7 @@
       var probe = new URLSearchParams(value.slice(1));
       if (
         Array.from(probe.keys()).some(function (key) {
-          return key !== "q" && key !== "manager" && key !== "holding" && key !== "phone" && key !== "page";
+          return LIST_QUERY_KEYS.indexOf(key) === -1;
         })
       ) {
         return "";

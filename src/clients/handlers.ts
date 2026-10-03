@@ -11,6 +11,7 @@ import {
   getClientOptions,
   getClientsSyncStatus,
   listClients,
+  ListClientsError,
 } from "./repository";
 
 function sendValidationError(res: Response, message: string): void {
@@ -29,12 +30,29 @@ export async function listClientsHandler(
     return;
   }
 
-  const result = await listClients(context, parsed.query);
+  let result;
+  try {
+    result = await listClients(context, parsed.query);
+  } catch (error) {
+    if (error instanceof ListClientsError) {
+      setNoStore(res);
+      const status = error.code === "FORBIDDEN" ? 403 : 404;
+      res.status(status).json(apiError(error.code === "FORBIDDEN" ? ERROR_CODES.FORBIDDEN : ERROR_CODES.NOT_FOUND, error.message));
+      return;
+    }
+    throw error;
+  }
   const hasFilters = Boolean(
     parsed.query.q ||
       parsed.query.managerId ||
       parsed.query.holdingId ||
-      parsed.query.phone !== "all",
+      parsed.query.phone !== "all" ||
+      parsed.query.view !== "all" ||
+      parsed.query.ropUserId ||
+      parsed.query.unassignedCategory ||
+      parsed.query.reviewState ||
+      parsed.query.reviewDecision ||
+      parsed.query.hasOutlets !== "all",
   );
   if (!hasFilters && result.total === 0 && context.fullClientBase) {
     result.isEmptyDatabase = (await countAllClients()) === 0;
