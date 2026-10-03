@@ -4,9 +4,9 @@ import {
   extendedBusinessDataEqual,
   mergeHoldingFlag,
   mergeManagerField,
-  mergeRetailOutlets,
   type ExtendedRecordFieldPresence,
 } from "./extended-presence";
+import { mergeRetailOutletsWithIdentity } from "./outlet-identity";
 import type {
   ExtendedBlockFreshness,
   ExtendedBlockProvenance,
@@ -201,10 +201,11 @@ export function buildExtendedSnapshotJson(
     previous?.headOfSales,
     isNewClient,
   );
-  const currentRetailOutlets = mergeRetailOutlets(
+  const currentRetailOutlets = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
     previous?.currentRetailOutlets,
+    { sourceSha256, importedAt },
   );
 
   const businessChanged = !extendedBusinessDataEqual(previous, {

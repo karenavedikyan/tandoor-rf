@@ -31,7 +31,8 @@ describe("onec clients extended validate", () => {
       assert.equal(result.payload.sourceFormat, "extended_v1");
       assert.equal(result.payload.diagnostics.holdingCardCount, 1);
       assert.equal(result.payload.diagnostics.nestedOutletCount, 2);
-      assert.equal(result.payload.diagnostics.outletsWithoutGuid, 2);
+      assert.equal(result.payload.diagnostics.outletsWithGuid, 1);
+      assert.equal(result.payload.diagnostics.outletsWithoutGuid, 1);
       assert.equal(result.payload.diagnostics.blocks.outletNormalizedReady, false);
     }
   });
@@ -168,13 +169,14 @@ describe("onec clients extended validate", () => {
     }
   });
 
-  it("does not treat outlet presence as normalized business id", () => {
+  it("keeps distribution disabled even when guid_store is confirmed synthetically", () => {
     const bytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
     const result = validateExtendedClientsFileBytes(bytes);
     assert.equal(result.ok, true);
     if (result.ok) {
       const outlet = result.payload.records[0]?.retailOutlets[0];
-      assert.equal(outlet?.outletGuidStatus, "not_provided");
+      assert.equal(outlet?.outletGuidStatus, "confirmed");
+      assert.equal(outlet?.closureStatus, "open");
       assert.equal(outlet?.distributionAllowed, false);
     }
   });

@@ -22,6 +22,8 @@ import {
   summarizeExtendedFreshness,
 } from "./extended-apply";
 import type { ExtendedSnapshot } from "./extended-types";
+import { detectRegistryParentConflicts } from "./outlet-identity";
+import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
@@ -779,6 +781,7 @@ export async function applyClientsImport(options: {
           const contractVerified = isExtendedContractVerified(options.payload);
           const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);
+          const outletRegistry = await loadOutletGuidRegistry(managed.client);
           const importTimestamp = new Date().toISOString();
 
           let newCount = 0;
@@ -795,13 +798,22 @@ export async function applyClientsImport(options: {
 
             let extendedSnapshotJson: ExtendedSnapshot | null = null;
             if (extendedRecord && contractVerified) {
-              extendedSnapshotJson = buildExtendedSnapshotJson(
-                extendedRecord,
-                previousSnapshot,
-                options.payload.sha256,
-                importTimestamp,
-                { contractVerified: true },
+              const parentConflicts = detectRegistryParentConflicts(
+                record.guid_client,
+                extendedRecord.retailOutlets,
+                outletRegistry,
               );
+              if (parentConflicts.length > 0) {
+                extendedBlockedCount += 1;
+              } else {
+                extendedSnapshotJson = buildExtendedSnapshotJson(
+                  extendedRecord,
+                  previousSnapshot,
+                  options.payload.sha256,
+                  importTimestamp,
+                  { contractVerified: true },
+                );
+              }
             } else if (extendedRecord && !contractVerified) {
               extendedBlockedCount += 1;
             }
@@ -948,6 +960,26 @@ export async function applyClientsImport(options: {
                 extendedFreshnessState,
               ],
             );
+
+            if (extendedSnapshotJson) {
+              await upsertOutletRegistryEntries(
+                managed.client,
+                record.guid_client,
+                extendedSnapshotJson.currentRetailOutlets,
+                options.payload.sha256,
+                importTimestamp,
+              );
+              for (const outlet of extendedSnapshotJson.currentRetailOutlets) {
+                if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+                  outletRegistry.set(outlet.guidStore.toLowerCase(), {
+                    guid_store: outlet.guidStore,
+                    guid_client: record.guid_client,
+                    is_closed: outlet.closed,
+                    closure_history: outlet.closureHistory,
+                  });
+                }
+              }
+            }
 
             if (options.testHooks?.afterRecordIndex === index) {
               throw new Error("Simulated apply failure after record write.");

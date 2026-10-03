@@ -53,9 +53,13 @@ export type RetailOutletContactsDto = {
 
 export type RetailOutletDto = {
   ordinal: number;
+  guidStore: string | null;
+  guidStoreShortLabel: string | null;
   holdingName: string;
   identityLabel: string;
+  closureStatus: "open" | "closed" | "not_provided" | "invalid";
   closureStatusLabel: string;
+  closureNote: string | null;
   warehouse: boolean | null;
   warehouseLabel: string;
   addresses: RetailOutletAddressDto;
@@ -63,6 +67,7 @@ export type RetailOutletDto = {
   managers: RetailOutletManagersDto;
   contacts: RetailOutletContactsDto;
   distributionAllowed: false;
+  distributionNote: string;
 };
 
 export type ClientExtendedManagersDto = {
@@ -105,7 +110,7 @@ export type ClientExtendedDto = {
   retailOutletHistoryCount: number;
   dataQualityLabel: string;
   sensitiveFieldsWithheld: true;
-  outletNormalizedReady: false;
+  outletNormalizedReady: boolean;
   clientExtendedReady: boolean;
 };
 
@@ -352,6 +357,47 @@ function toLoadingDto(outlet: ParsedRetailOutlet): RetailOutletLoadingDto {
   };
 }
 
+function outletIdentityLabel(outlet: ParsedRetailOutlet): string {
+  if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+    return `Торговая точка 1С · ${shortUuidLabel(outlet.guidStore)}`;
+  }
+  return "Точка из выгрузки 1С. Идентификатор ещё не передан";
+}
+
+function outletClosurePresentation(outlet: ParsedRetailOutlet): {
+  status: RetailOutletDto["closureStatus"];
+  label: string;
+  note: string | null;
+} {
+  if (outlet.closureStatus === "open") {
+    return { status: "open", label: "Открыта", note: null };
+  }
+  if (outlet.closureStatus === "closed") {
+    return {
+      status: "closed",
+      label: "Закрыта",
+      note: "Точка остаётся доступной для просмотра и истории. Новые записи дистрибуции недоступны.",
+    };
+  }
+  if (outlet.closureStatus === "invalid") {
+    return { status: "invalid", label: "Статус не передан", note: null };
+  }
+  return { status: "not_provided", label: "Статус не передан", note: null };
+}
+
+function outletDistributionNote(outlet: ParsedRetailOutlet): string {
+  if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore) {
+    return "Запись дистрибуции недоступна без подтверждённого идентификатора торговой точки.";
+  }
+  if (outlet.closureStatus === "closed") {
+    return "Запись дистрибуции недоступна для закрытой торговой точки.";
+  }
+  if (outlet.closureStatus !== "open") {
+    return "Запись дистрибуции недоступна без подтверждённого статуса торговой точки.";
+  }
+  return "Запись дистрибуции будет доступна на следующем этапе.";
+}
+
 function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
   const warehouseLabel =
     outlet.warehouse === true
@@ -359,12 +405,17 @@ function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
       : outlet.warehouse === false
         ? "Не используется как склад"
         : "Признак склада не передан";
+  const closure = outletClosurePresentation(outlet);
 
   return {
     ordinal: outlet.ordinal,
+    guidStore: outlet.guidStore,
+    guidStoreShortLabel: outlet.guidStore ? shortUuidLabel(outlet.guidStore) : null,
     holdingName: outlet.holdingName,
-    identityLabel: "Точка из выгрузки 1С. Идентификатор ещё не передан",
-    closureStatusLabel: "Статус не передан",
+    identityLabel: outletIdentityLabel(outlet),
+    closureStatus: closure.status,
+    closureStatusLabel: closure.label,
+    closureNote: closure.note,
     warehouse: outlet.warehouse,
     warehouseLabel,
     addresses: {
@@ -385,6 +436,7 @@ function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
       accountantEmail: outlet.contacts.accountantEmail,
     },
     distributionAllowed: false,
+    distributionNote: outletDistributionNote(outlet),
   };
 }
 
@@ -514,6 +566,7 @@ export function toClientExtendedDto(
   const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
+  const outletNormalizedReady = snapshot?.blocks?.outletNormalizedReady === true;
   const rawBlockProvenance = snapshot?.blocks?.blockProvenance ?? null;
   const effectiveBlockProvenance = rawBlockProvenance
     ? applyRowFreshnessOverride(rawBlockProvenance, row)
@@ -561,7 +614,7 @@ export function toClientExtendedDto(
     retailOutletHistoryCount: outletAccessGranted ? historyCount : 0,
     dataQualityLabel,
     sensitiveFieldsWithheld: true,
-    outletNormalizedReady: false,
+    outletNormalizedReady,
     clientExtendedReady,
   };
 }

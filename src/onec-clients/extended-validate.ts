@@ -33,6 +33,7 @@ import type {
   ValidatedExtendedClientsPayload,
 } from "./extended-types";
 import type { ValidationIssue, ValidationWarning } from "./types";
+import { outletsAreIdentical } from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
 export type ExtendedValidationResult =
@@ -737,16 +738,59 @@ function validateRetailOutlets(
       return null;
     }
 
-    pushWarning(warnings, {
-      code: "UNCONFIRMED_OUTLET_GUID",
-      index: clientIndex,
-      outletIndex,
-    }, warningCount);
-    pushWarning(warnings, {
-      code: "UNCONFIRMED_CLOSURE_STATUS",
-      index: clientIndex,
-      outletIndex,
-    }, warningCount);
+    let guidStore: string | null = null;
+    let outletGuidStatus: ParsedRetailOutlet["outletGuidStatus"] = "not_provided";
+    if ("guid_store" in item) {
+      if (typeof item.guid_store !== "string" || !isValidNonZeroUuid(item.guid_store)) {
+        pushIssue(issues, {
+          code: "INVALID_OUTLET_GUID",
+          field: "retail_outlets.guid_store",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        return null;
+      }
+      guidStore = normalizeUuid(item.guid_store);
+      outletGuidStatus = "confirmed";
+    } else {
+      pushWarning(warnings, {
+        code: "UNCONFIRMED_OUTLET_GUID",
+        index: clientIndex,
+        outletIndex,
+      }, warningCount);
+    }
+
+    let closed: boolean | null = null;
+    let closureStatus: ParsedRetailOutlet["closureStatus"] = "not_provided";
+    if ("closed" in item) {
+      const parsedClosed = readStrictBoolean(item.closed);
+      if (parsedClosed === "invalid") {
+        pushIssue(issues, {
+          code: "INVALID_OUTLET_CLOSED",
+          field: "retail_outlets.closed",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        return null;
+      }
+      if (parsedClosed === null) {
+        pushIssue(issues, {
+          code: "INVALID_OUTLET_CLOSED",
+          field: "retail_outlets.closed",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        return null;
+      }
+      closed = parsedClosed;
+      closureStatus = parsedClosed ? "closed" : "open";
+    } else {
+      pushWarning(warnings, {
+        code: "UNCONFIRMED_CLOSURE_STATUS",
+        index: clientIndex,
+        outletIndex,
+      }, warningCount);
+    }
 
     const address = parseOutletAddress(item.address, clientIndex, outletIndex, issues, issueCount);
     if (address === null) {
@@ -798,6 +842,7 @@ function validateRetailOutlets(
 
     outlets.push({
       ordinal: outletIndex,
+      guidStore,
       holdingName,
       warehouse,
       address,
@@ -806,17 +851,105 @@ function validateRetailOutlets(
       contacts,
       lpr,
       additional,
-      outletGuidStatus: "not_provided",
-      closureStatus: "not_provided",
+      outletGuidStatus,
+      closed,
+      closureStatus,
+      closureHistory: [],
       distributionAllowed: false,
     });
   }
 
-  if (outlets.length > 0) {
+  if (outlets.some((outlet) => outlet.outletGuidStatus !== "confirmed")) {
     pushWarning(warnings, { code: "OUTLETS_NOT_NORMALIZED", index: clientIndex }, warningCount);
   }
 
   return outlets;
+}
+
+type OutletGuidOccurrence = {
+  clientGuid: string;
+  clientIndex: number;
+  outletIndex: number;
+  outlet: ParsedRetailOutlet;
+};
+
+function validateOutletGuidsAcrossFile(
+  records: ParsedExtendedClientRecord[],
+  issues: ExtendedValidationIssue[],
+  warnings: ExtendedValidationWarning[],
+  issueCount: { value: number },
+  warningCount: { value: number },
+): { duplicateOutletGuidCount: number; outletParentLinkConflicts: number } {
+  const seen = new Map<string, OutletGuidOccurrence>();
+  let duplicateOutletGuidCount = 0;
+  let outletParentLinkConflicts = 0;
+
+  for (let clientIndex = 0; clientIndex < records.length; clientIndex += 1) {
+    const record = records[clientIndex]!;
+    for (let outletIndex = 0; outletIndex < record.retailOutlets.length; outletIndex += 1) {
+      const outlet = record.retailOutlets[outletIndex]!;
+      if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore) {
+        continue;
+      }
+      const key = outlet.guidStore.toLowerCase();
+      const previous = seen.get(key);
+      if (!previous) {
+        seen.set(key, {
+          clientGuid: record.guid_client,
+          clientIndex,
+          outletIndex,
+          outlet,
+        });
+        continue;
+      }
+
+      if (previous.clientGuid !== record.guid_client) {
+        pushIssue(issues, {
+          code: "OUTLET_GUID_CONFLICT",
+          field: "retail_outlets.guid_store",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        outletParentLinkConflicts += 1;
+        continue;
+      }
+
+      if (outletsAreIdentical(previous.outlet, outlet)) {
+        pushWarning(warnings, {
+          code: "DUPLICATE_OUTLET_GUID_ROW",
+          index: clientIndex,
+          outletIndex,
+        }, warningCount);
+        duplicateOutletGuidCount += 1;
+        continue;
+      }
+
+      const previousClosed = previous.outlet.closureStatus;
+      const nextClosed = outlet.closureStatus;
+      if (
+        (previousClosed === "open" || previousClosed === "closed") &&
+        (nextClosed === "open" || nextClosed === "closed") &&
+        previous.outlet.closed !== outlet.closed
+      ) {
+        pushIssue(issues, {
+          code: "OUTLET_GUID_CONFLICT",
+          field: "retail_outlets.closed",
+          index: clientIndex,
+          outletIndex,
+        }, issueCount);
+        continue;
+      }
+
+      pushIssue(issues, {
+        code: "DUPLICATE_OUTLET_GUID",
+        field: "retail_outlets.guid_store",
+        index: clientIndex,
+        outletIndex,
+      }, issueCount);
+    }
+  }
+
+  return { duplicateOutletGuidCount, outletParentLinkConflicts };
 }
 
 function validateExtendedRecord(
@@ -1008,10 +1141,16 @@ function buildDiagnostics(
   sourceFormat: "legacy" | "extended_v1",
   records: ParsedExtendedClientRecord[],
   holdingLinkErrors: number,
+  outletGuidStats: { duplicateOutletGuidCount: number; outletParentLinkConflicts: number },
 ): ExtendedDiagnosticsSummary {
   let holdingCardCount = 0;
   let childHoldingLinkCount = 0;
   let nestedOutletCount = 0;
+  let outletsWithGuid = 0;
+  let outletsWithoutGuid = 0;
+  let outletsOpen = 0;
+  let outletsClosed = 0;
+  let outletsUnknownClosure = 0;
   let recordsWithExtendedFields = 0;
   let legacyOnlyRecords = 0;
   let invalidManagerGuidCount = 0;
@@ -1024,6 +1163,20 @@ function buildDiagnostics(
       childHoldingLinkCount += 1;
     }
     nestedOutletCount += record.retailOutlets.length;
+    for (const outlet of record.retailOutlets) {
+      if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+        outletsWithGuid += 1;
+      } else {
+        outletsWithoutGuid += 1;
+      }
+      if (outlet.closureStatus === "open") {
+        outletsOpen += 1;
+      } else if (outlet.closureStatus === "closed") {
+        outletsClosed += 1;
+      } else {
+        outletsUnknownClosure += 1;
+      }
+    }
     if (record.recordFormat === "extended_v1" || record.hasExtendedManagerFields) {
       recordsWithExtendedFields += 1;
     } else {
@@ -1046,13 +1199,29 @@ function buildDiagnostics(
     }
   }
 
+  const allOutlets = records.flatMap((record) => record.retailOutlets);
+  const outletNormalizedReady =
+    allOutlets.length > 0 &&
+    allOutlets.every(
+      (outlet) =>
+        outlet.outletGuidStatus === "confirmed" &&
+        outlet.guidStore &&
+        (outlet.closureStatus === "open" || outlet.closureStatus === "closed"),
+    );
+
   return {
     sourceFormat,
     holdingCardCount,
     childHoldingLinkCount,
     nestedOutletCount,
-    outletsWithoutGuid: nestedOutletCount,
-    unconfirmedClosureStatusCount: nestedOutletCount,
+    outletsWithGuid,
+    outletsWithoutGuid,
+    outletsOpen,
+    outletsClosed,
+    outletsUnknownClosure,
+    duplicateOutletGuidCount: outletGuidStats.duplicateOutletGuidCount,
+    outletParentLinkConflicts: outletGuidStats.outletParentLinkConflicts,
+    knownOutletsMissingFromSnapshot: 0,
     invalidManagerGuidCount,
     employeeDirectoryVerified: false,
     holdingLinkErrors,
@@ -1061,7 +1230,7 @@ function buildDiagnostics(
     blocks: {
       legacyImportReady: true,
       clientExtendedReady: false,
-      outletNormalizedReady: false,
+      outletNormalizedReady,
     },
   };
 }
@@ -1143,9 +1312,11 @@ export function validateExtendedClientsFileBytes(
   }
 
   const holdingErrorsBefore = issueCount.value;
+  let outletGuidStats = { duplicateOutletGuidCount: 0, outletParentLinkConflicts: 0 };
   if (sourceFormat === "extended_v1") {
     detectHoldingCycles(records, issues, issueCount);
     validateHoldingTargets(records, issues, issueCount);
+    outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
@@ -1157,7 +1328,7 @@ export function validateExtendedClientsFileBytes(
     pushWarning(warnings, { code: "EMPLOYEE_DIRECTORY_UNAVAILABLE" }, warningCount);
   }
 
-  const diagnostics = buildDiagnostics(sourceFormat, records, holdingLinkErrors);
+  const diagnostics = buildDiagnostics(sourceFormat, records, holdingLinkErrors, outletGuidStats);
   const extendedContractVerification = limits?.extendedContractVerification ?? "unverified";
 
   return {

@@ -59,8 +59,11 @@ function outlet(label: string): ParsedRetailOutlet {
       conditionsBonus: "",
     },
     additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+    guidStore: null,
     outletGuidStatus: "not_provided",
+    closed: null,
     closureStatus: "not_provided",
+    closureHistory: [],
     distributionAllowed: false,
   };
 }

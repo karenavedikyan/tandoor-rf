@@ -400,6 +400,74 @@ describe("clients extended dto", () => {
     assert.equal(dto!.retailOutlets[0]?.loading.scheduleState, "partial");
   });
 
+  it("shows confirmed outlet identity and closure labels", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [
+            {
+              ordinal: 0,
+              guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+              holdingName: "H",
+              warehouse: null,
+              address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
+              loading: {
+                loadingOnMonday: null,
+                loadingOnTuesday: null,
+                loadingOnWednesday: null,
+                loadingOnThursday: null,
+                loadingOnFriday: null,
+                loadingOnSaturday: null,
+                loadingOnSunday: null,
+                loadingTime: null,
+              },
+              managers: {
+                manager: { guid: null, name: "", state: "unassigned" },
+                regionalManager: { guid: null, name: "", state: "unassigned" },
+                hardwareManager: { guid: null, name: "", state: "unassigned" },
+                headOfSales: { guid: null, name: "", state: "unassigned" },
+              },
+              contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+              lpr: {
+                name: "",
+                post: "",
+                dateOfBirth: null,
+                phone: "",
+                email: "",
+                bonus: "",
+                conditionsBonus: "",
+              },
+              additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+              outletGuidStatus: "confirmed",
+              closed: true,
+              closureStatus: "closed",
+              closureHistory: [],
+              distributionAllowed: false,
+            },
+          ],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: true, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+    );
+    assert.match(dto!.retailOutlets[0]?.identityLabel, /Торговая точка 1С/);
+    assert.equal(dto!.retailOutlets[0]?.closureStatusLabel, "Закрыта");
+    assert.match(dto!.retailOutlets[0]?.distributionNote, /закрытой/);
+  });
+
   it("labels directory-unverified manager separately from unassigned", () => {
     const dto = toClientExtendedDto(
       {

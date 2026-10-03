@@ -58,9 +58,21 @@ export type ParsedOutletAdditional = {
   bonusTandoorClub: string;
 };
 
+export type OutletGuidStatus = "confirmed" | "not_provided" | "invalid";
+
+export type OutletClosureStatus = "open" | "closed" | "not_provided" | "invalid";
+
+export type RetailOutletClosureHistoryEntry = {
+  closed: boolean;
+  sourceSha256: string;
+  capturedAt: string;
+};
+
 export type ParsedRetailOutlet = {
-  /** Position in the current source array; not a stable business id. */
+  /** Position in the current source array; display order only when guid_store absent. */
   ordinal: number;
+  /** Stable 1C identity when guid_store is confirmed in the source file. */
+  guidStore: string | null;
   holdingName: string;
   warehouse: boolean | null;
   address: ParsedOutletAddress;
@@ -69,8 +81,11 @@ export type ParsedRetailOutlet = {
   contacts: ParsedOutletContacts;
   lpr: ParsedOutletLpr;
   additional: ParsedOutletAdditional;
-  outletGuidStatus: "not_provided";
-  closureStatus: "not_provided";
+  outletGuidStatus: OutletGuidStatus;
+  /** Confirmed closure value when closureStatus is open/closed. */
+  closed: boolean | null;
+  closureStatus: OutletClosureStatus;
+  closureHistory: RetailOutletClosureHistoryEntry[];
   distributionAllowed: false;
 };
 
@@ -104,7 +119,7 @@ export type ExtendedBlockProvenance = {
 
 export type ExtendedSnapshotBlocks = {
   clientExtendedReady: boolean;
-  outletNormalizedReady: false;
+  outletNormalizedReady: boolean;
   clientExtendedBlockedReason?: string | null;
   blockFreshness?: ExtendedBlockFreshness;
   blockProvenance?: ExtendedBlockProvenance;
@@ -152,6 +167,10 @@ export type ExtendedValidationIssueCode =
   | "INVALID_RETAIL_OUTLETS"
   | "INVALID_OUTLET_SHAPE"
   | "INVALID_OUTLET_FIELD"
+  | "INVALID_OUTLET_GUID"
+  | "INVALID_OUTLET_CLOSED"
+  | "DUPLICATE_OUTLET_GUID"
+  | "OUTLET_GUID_CONFLICT"
   | "INVALID_MANAGER_PAIR"
   | "INVALID_MANAGER_GUID"
   | "HOLDING_GUID_UNKNOWN"
@@ -171,6 +190,7 @@ export type ExtendedValidationWarningCode =
   | "UNCONFIRMED_OUTLET_GUID"
   | "UNCONFIRMED_CLOSURE_STATUS"
   | "OUTLETS_NOT_NORMALIZED"
+  | "DUPLICATE_OUTLET_GUID_ROW"
   | "EMPLOYEE_DIRECTORY_UNAVAILABLE";
 
 export type ExtendedValidationWarning = {
@@ -186,8 +206,14 @@ export type ExtendedDiagnosticsSummary = {
   holdingCardCount: number;
   childHoldingLinkCount: number;
   nestedOutletCount: number;
+  outletsWithGuid: number;
   outletsWithoutGuid: number;
-  unconfirmedClosureStatusCount: number;
+  outletsOpen: number;
+  outletsClosed: number;
+  outletsUnknownClosure: number;
+  duplicateOutletGuidCount: number;
+  outletParentLinkConflicts: number;
+  knownOutletsMissingFromSnapshot: number;
   invalidManagerGuidCount: number;
   employeeDirectoryVerified: false;
   holdingLinkErrors: number;
@@ -196,7 +222,7 @@ export type ExtendedDiagnosticsSummary = {
   blocks: {
     legacyImportReady: boolean;
     clientExtendedReady: boolean;
-    outletNormalizedReady: false;
+    outletNormalizedReady: boolean;
   };
 };
 

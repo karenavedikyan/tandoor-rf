@@ -48,6 +48,7 @@
     return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
       field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
+      (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
       field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
       field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
@@ -61,7 +62,7 @@
       field("Телефон магазина", outlet.contacts && outlet.contacts.storePhone, !!(outlet.contacts && outlet.contacts.storePhone)) +
       field("Телефон бухгалтерии", outlet.contacts && outlet.contacts.accountantPhone, !!(outlet.contacts && outlet.contacts.accountantPhone)) +
       field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail)) +
-      '<p class="pc-label pc-unavailable">Запись дистрибуции недоступна без идентификатора торговой точки.</p>' +
+      '<p class="pc-label pc-unavailable">' + esc(outlet.distributionNote || "Запись дистрибуции недоступна без идентификатора торговой точки.") + "</p>" +
       "</div>";
   }
 
