@@ -48,6 +48,7 @@
     return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
       field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
+      field("Источник данных", outlet.dataSourceLabel || outlet.freshnessLabel, true) +
       (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
       field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
       field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +

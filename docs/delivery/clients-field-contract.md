@@ -120,7 +120,7 @@
 
 **Политика дублей `guid_store` в одном файле:** идентичные повторы одной строки — предупреждение `DUPLICATE_OUTLET_GUID_ROW`, в apply учитывается одна ТТ; противоречивые повторы (разные клиенты, `closed`, адрес) — ошибка `OUTLET_GUID_CONFLICT` / `DUPLICATE_OUTLET_GUID`, apply блокируется.
 
-**Диагностика (агрегаты, без PII):** `outletsWithGuid`, `outletsWithoutGuid`, `outletsOpen`, `outletsClosed`, `outletsUnknownClosure`, `duplicateOutletGuidCount`, `outletParentLinkConflicts`, `knownOutletsMissingFromSnapshot` (на apply).
+**Диагностика (агрегаты, без PII):** `outletSourceRowCount`, `outletUniqueGuidCount`, `outletsWithGuid`, `outletsWithoutGuid`, `outletsOpen`, `outletsClosed`, `outletsUnknownClosure`, `duplicateOutletGuidCount`, `outletParentLinkConflicts`, `knownOutletsMissingFromSnapshot` (`null` = не проверено, число = проверено на apply). `blocks.outletFieldsComplete` — полнота входных полей (`guid_store` + `closed` на всех строках); `blocks.outletNormalizedReady` — **всегда false** до live-подтверждения контракта, не путать с полнотой полей.
 
 **Актуальность расширения:** колонки `extended_imported_at`, `extended_freshness_state` (`current` | `preserved_from_previous` | `not_provided_in_snapshot`). После legacy-снимка блок помечается как сохранённый из предыдущей выгрузки.
 

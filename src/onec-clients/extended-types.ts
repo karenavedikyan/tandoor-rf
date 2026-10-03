@@ -68,6 +68,18 @@ export type RetailOutletClosureHistoryEntry = {
   capturedAt: string;
 };
 
+export type OutletFreshnessState =
+  | "current"
+  | "preserved_from_previous"
+  | "absent_from_current_export"
+  | "not_provided_in_snapshot";
+
+export type OutletProvenance = {
+  freshness: OutletFreshnessState;
+  sourceSha256: string;
+  importedAt: string;
+};
+
 export type ParsedRetailOutlet = {
   /** Position in the current source array; display order only when guid_store absent. */
   ordinal: number;
@@ -85,7 +97,10 @@ export type ParsedRetailOutlet = {
   /** Confirmed closure value when closureStatus is open/closed. */
   closed: boolean | null;
   closureStatus: OutletClosureStatus;
+  /** Whether closed was explicitly present in the current source row. */
+  closureConfirmedInCurrentExport: boolean;
   closureHistory: RetailOutletClosureHistoryEntry[];
+  provenance: OutletProvenance;
   distributionAllowed: false;
 };
 
@@ -211,9 +226,12 @@ export type ExtendedDiagnosticsSummary = {
   outletsOpen: number;
   outletsClosed: number;
   outletsUnknownClosure: number;
+  outletSourceRowCount: number;
+  outletUniqueGuidCount: number;
   duplicateOutletGuidCount: number;
   outletParentLinkConflicts: number;
-  knownOutletsMissingFromSnapshot: number;
+  /** null = registry comparison not performed (validate-only path). */
+  knownOutletsMissingFromSnapshot: number | null;
   invalidManagerGuidCount: number;
   employeeDirectoryVerified: false;
   holdingLinkErrors: number;
@@ -222,6 +240,8 @@ export type ExtendedDiagnosticsSummary = {
   blocks: {
     legacyImportReady: boolean;
     clientExtendedReady: boolean;
+    /** All parsed outlets have guid_store and closed; does not imply live/production readiness. */
+    outletFieldsComplete: boolean;
     outletNormalizedReady: boolean;
   };
 };

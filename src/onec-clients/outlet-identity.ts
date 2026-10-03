@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
+  OutletProvenance,
+  ParsedManagerRef,
   ParsedRetailOutlet,
   RetailOutletClosureHistoryEntry,
+  RetailOutletHistoryEntry,
 } from "./extended-types";
 import type { FieldPresenceState } from "./extended-presence";
 
@@ -9,6 +12,8 @@ export type OutletGuidRegistryRow = {
   guid_store: string;
   guid_client: string;
   is_closed: boolean | null;
+  last_source_sha256: string | null;
+  last_imported_at: string | null;
   closure_history: RetailOutletClosureHistoryEntry[];
 };
 
@@ -23,19 +28,60 @@ export type OutletMergeContext = {
   importedAt: string;
 };
 
-function outletBusinessFingerprint(outlet: ParsedRetailOutlet): string {
-  return JSON.stringify({
+export type OutletMergeResult = {
+  outlets: ParsedRetailOutlet[];
+  historyEntries: RetailOutletHistoryEntry[];
+  outletsInCurrentExport: ParsedRetailOutlet[];
+};
+
+type ManagerBusinessRef = Pick<ParsedManagerRef, "guid" | "name" | "state">;
+
+export type OutletBusinessProjection = {
+  guidStore: string | null;
+  holdingName: string;
+  warehouse: boolean | null;
+  address: ParsedRetailOutlet["address"];
+  loading: ParsedRetailOutlet["loading"];
+  managers: {
+    manager: ManagerBusinessRef;
+    regionalManager: ManagerBusinessRef;
+    hardwareManager: ManagerBusinessRef;
+    headOfSales: ManagerBusinessRef;
+  };
+  contacts: ParsedRetailOutlet["contacts"];
+  lpr: ParsedRetailOutlet["lpr"];
+  additional: ParsedRetailOutlet["additional"];
+  closed: boolean | null;
+  closureStatus: ParsedRetailOutlet["closureStatus"];
+};
+
+function managerBusinessRef(ref: ParsedManagerRef): ManagerBusinessRef {
+  return { guid: ref.guid, name: ref.name, state: ref.state };
+}
+
+export function outletBusinessProjection(outlet: ParsedRetailOutlet): OutletBusinessProjection {
+  return {
     guidStore: outlet.guidStore,
     holdingName: outlet.holdingName,
     warehouse: outlet.warehouse,
     address: outlet.address,
+    loading: outlet.loading,
+    managers: {
+      manager: managerBusinessRef(outlet.managers.manager),
+      regionalManager: managerBusinessRef(outlet.managers.regionalManager),
+      hardwareManager: managerBusinessRef(outlet.managers.hardwareManager),
+      headOfSales: managerBusinessRef(outlet.managers.headOfSales),
+    },
+    contacts: outlet.contacts,
+    lpr: outlet.lpr,
+    additional: outlet.additional,
     closed: outlet.closed,
     closureStatus: outlet.closureStatus,
-  });
+  };
 }
 
 export function outletsAreIdentical(left: ParsedRetailOutlet, right: ParsedRetailOutlet): boolean {
-  return outletBusinessFingerprint(left) === outletBusinessFingerprint(right);
+  return isDeepStrictEqual(outletBusinessProjection(left), outletBusinessProjection(right));
 }
 
 export function dedupeIdenticalOutlets(outlets: ParsedRetailOutlet[]): ParsedRetailOutlet[] {
@@ -56,13 +102,40 @@ export function dedupeIdenticalOutlets(outlets: ParsedRetailOutlet[]): ParsedRet
   return result;
 }
 
+function currentProvenance(context: OutletMergeContext): OutletProvenance {
+  return {
+    freshness: "current",
+    sourceSha256: context.sourceSha256,
+    importedAt: context.importedAt,
+  };
+}
+
+function preservedProvenance(previous: ParsedRetailOutlet | undefined, context: OutletMergeContext): OutletProvenance {
+  if (previous?.provenance) {
+    return {
+      freshness: "absent_from_current_export",
+      sourceSha256: previous.provenance.sourceSha256,
+      importedAt: previous.provenance.importedAt,
+    };
+  }
+  return {
+    freshness: "absent_from_current_export",
+    sourceSha256: context.sourceSha256,
+    importedAt: context.importedAt,
+  };
+}
+
 function appendClosureHistory(
   previous: ParsedRetailOutlet | undefined,
   nextClosed: boolean | null,
   nextClosureStatus: ParsedRetailOutlet["closureStatus"],
+  closureConfirmedInCurrentExport: boolean,
   context: OutletMergeContext,
 ): RetailOutletClosureHistoryEntry[] {
   const history = previous?.closureHistory ? [...previous.closureHistory] : [];
+  if (!closureConfirmedInCurrentExport) {
+    return history;
+  }
   if (nextClosureStatus !== "open" && nextClosureStatus !== "closed") {
     return history;
   }
@@ -86,12 +159,13 @@ function mergeConfirmedOutlet(
   previous: ParsedRetailOutlet | undefined,
   context: OutletMergeContext,
 ): ParsedRetailOutlet {
+  const closureConfirmedInCurrentExport = incoming.closureConfirmedInCurrentExport;
   const closureStatus =
     incoming.closureStatus === "not_provided" || incoming.closureStatus === "invalid"
       ? previous?.closureStatus ?? incoming.closureStatus
       : incoming.closureStatus;
   const closed =
-    incoming.closureStatus === "open" || incoming.closureStatus === "closed"
+    closureConfirmedInCurrentExport
       ? incoming.closed
       : previous?.closed ?? incoming.closed;
 
@@ -99,16 +173,50 @@ function mergeConfirmedOutlet(
     ...incoming,
     closureStatus,
     closed,
-    closureHistory: appendClosureHistory(previous, closed, closureStatus, context),
+    closureConfirmedInCurrentExport,
+    closureHistory: appendClosureHistory(
+      previous,
+      closed,
+      closureStatus,
+      closureConfirmedInCurrentExport,
+      context,
+    ),
     outletGuidStatus: "confirmed",
+    provenance: currentProvenance(context),
     distributionAllowed: false,
   };
 }
 
-function mergeAnonymousOutlet(incoming: ParsedRetailOutlet): ParsedRetailOutlet {
+function mergePreservedConfirmedOutlet(
+  previous: ParsedRetailOutlet,
+  context: OutletMergeContext,
+): ParsedRetailOutlet {
+  return {
+    ...previous,
+    provenance: preservedProvenance(previous, context),
+    distributionAllowed: false,
+  };
+}
+
+function mergeAnonymousOutlet(incoming: ParsedRetailOutlet, context: OutletMergeContext): ParsedRetailOutlet {
   return {
     ...incoming,
+    provenance: currentProvenance(context),
     distributionAllowed: false,
+  };
+}
+
+function archiveAnonymousOutlets(
+  previousAnonymous: ParsedRetailOutlet[],
+  context: OutletMergeContext,
+): RetailOutletHistoryEntry | null {
+  if (previousAnonymous.length === 0) {
+    return null;
+  }
+  return {
+    sourceSha256: context.sourceSha256,
+    capturedAt: context.importedAt,
+    retailOutlets: previousAnonymous.map((outlet) => ({ ...outlet })),
   };
 }
 
@@ -117,12 +225,16 @@ export function mergeRetailOutletsWithIdentity(
   presence: FieldPresenceState,
   previous: ParsedRetailOutlet[] | undefined,
   context: OutletMergeContext,
-): ParsedRetailOutlet[] {
+): OutletMergeResult {
   if (presence === "missing" && previous) {
-    return previous;
+    return {
+      outlets: previous,
+      historyEntries: [],
+      outletsInCurrentExport: [],
+    };
   }
   if (presence === "explicit_null") {
-    return [];
+    return { outlets: [], historyEntries: [], outletsInCurrentExport: [] };
   }
 
   const previousOutlets = previous ?? [];
@@ -144,35 +256,67 @@ export function mergeRetailOutletsWithIdentity(
     incomingConfirmed.map((outlet) => outlet.guidStore!.toLowerCase()),
   );
 
+  const previousAnonymous = previousOutlets.filter(
+    (outlet) => outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore,
+  );
+  const historyEntries: RetailOutletHistoryEntry[] = [];
+  if (incomingConfirmed.length > 0 && previousAnonymous.length > 0) {
+    const archived = archiveAnonymousOutlets(previousAnonymous, context);
+    if (archived) {
+      historyEntries.push(archived);
+    }
+  }
+
   const result: ParsedRetailOutlet[] = [];
+  const outletsInCurrentExport: ParsedRetailOutlet[] = [];
 
   for (const previousOutlet of previousOutlets) {
     if (previousOutlet.outletGuidStatus === "confirmed" && previousOutlet.guidStore) {
       if (!incomingGuidSet.has(previousOutlet.guidStore.toLowerCase())) {
-        result.push(previousOutlet);
+        result.push(mergePreservedConfirmedOutlet(previousOutlet, context));
       }
     }
   }
 
   for (const outlet of incomingConfirmed) {
     const previousOutlet = previousByGuid.get(outlet.guidStore!.toLowerCase());
-    result.push(mergeConfirmedOutlet(outlet, previousOutlet, context));
+    const merged = mergeConfirmedOutlet(outlet, previousOutlet, context);
+    result.push(merged);
+    outletsInCurrentExport.push(merged);
   }
 
   for (const outlet of incomingAnonymous) {
-    result.push(mergeAnonymousOutlet(outlet));
+    const merged = mergeAnonymousOutlet(outlet, context);
+    result.push(merged);
+    outletsInCurrentExport.push(merged);
   }
 
-  const previousAnonymous = previousOutlets.filter(
-    (outlet) => outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore,
-  );
-  if (incomingAnonymous.length === 0 && incomingConfirmed.length > 0) {
-    for (const outlet of previousAnonymous) {
-      result.push(outlet);
-    }
-  }
+  return {
+    outlets: result.map((outlet, index) => ({ ...outlet, ordinal: index })),
+    historyEntries,
+    outletsInCurrentExport,
+  };
+}
 
-  return result.map((outlet, index) => ({ ...outlet, ordinal: index }));
+export function deriveRetailOutletsBlockFreshness(
+  outlets: ParsedRetailOutlet[],
+  presence: FieldPresenceState,
+  hasPrevious: boolean,
+): "current" | "preserved_from_previous" | "not_provided_in_snapshot" {
+  if (presence === "missing") {
+    return hasPrevious ? "preserved_from_previous" : "not_provided_in_snapshot";
+  }
+  if (presence === "explicit_null") {
+    return "not_provided_in_snapshot";
+  }
+  const freshValues = outlets.map((outlet) => outlet.provenance.freshness);
+  if (freshValues.every((value) => value === "current")) {
+    return "current";
+  }
+  if (freshValues.some((value) => value === "absent_from_current_export" || value === "preserved_from_previous")) {
+    return "preserved_from_previous";
+  }
+  return "not_provided_in_snapshot";
 }
 
 export function detectRegistryParentConflicts(
@@ -198,55 +342,6 @@ export function detectRegistryParentConflicts(
   return conflicts;
 }
 
-export function countOutletDiagnostics(outlets: ParsedRetailOutlet[]): {
-  outletsWithGuid: number;
-  outletsWithoutGuid: number;
-  outletsOpen: number;
-  outletsClosed: number;
-  outletsUnknownClosure: number;
-} {
-  let outletsWithGuid = 0;
-  let outletsWithoutGuid = 0;
-  let outletsOpen = 0;
-  let outletsClosed = 0;
-  let outletsUnknownClosure = 0;
-
-  for (const outlet of outlets) {
-    if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
-      outletsWithGuid += 1;
-    } else {
-      outletsWithoutGuid += 1;
-    }
-    if (outlet.closureStatus === "open") {
-      outletsOpen += 1;
-    } else if (outlet.closureStatus === "closed") {
-      outletsClosed += 1;
-    } else {
-      outletsUnknownClosure += 1;
-    }
-  }
-
-  return {
-    outletsWithGuid,
-    outletsWithoutGuid,
-    outletsOpen,
-    outletsClosed,
-    outletsUnknownClosure,
-  };
-}
-
-export function outletsFullyNormalized(outlets: ParsedRetailOutlet[]): boolean {
-  if (outlets.length === 0) {
-    return false;
-  }
-  return outlets.every(
-    (outlet) =>
-      outlet.outletGuidStatus === "confirmed" &&
-      outlet.guidStore &&
-      (outlet.closureStatus === "open" || outlet.closureStatus === "closed"),
-  );
-}
-
 export function countKnownOutletsMissingFromSnapshot(
   clientGuid: string,
   currentOutlets: ParsedRetailOutlet[],
@@ -266,37 +361,31 @@ export function countKnownOutletsMissingFromSnapshot(
   return missing;
 }
 
-export function registryRowsEqual(
-  left: OutletGuidRegistryRow | undefined,
-  right: Pick<OutletGuidRegistryRow, "guid_client" | "is_closed">,
-): boolean {
-  if (!left) {
+export function countOutletGuidRowStats(records: Array<{ retailOutlets: ParsedRetailOutlet[] }>): {
+  outletSourceRowCount: number;
+  outletUniqueGuidCount: number;
+} {
+  let outletSourceRowCount = 0;
+  const uniqueGuids = new Set<string>();
+  for (const record of records) {
+    for (const outlet of record.retailOutlets) {
+      if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+        outletSourceRowCount += 1;
+        uniqueGuids.add(outlet.guidStore.toLowerCase());
+      }
+    }
+  }
+  return { outletSourceRowCount, outletUniqueGuidCount: uniqueGuids.size };
+}
+
+export function outletsFieldsComplete(outlets: ParsedRetailOutlet[]): boolean {
+  if (outlets.length === 0) {
     return false;
   }
-  return (
-    left.guid_client.toLowerCase() === right.guid_client.toLowerCase() &&
-    left.is_closed === right.is_closed
+  return outlets.every(
+    (outlet) =>
+      outlet.outletGuidStatus === "confirmed" &&
+      outlet.guidStore &&
+      (outlet.closureStatus === "open" || outlet.closureStatus === "closed"),
   );
-}
-
-export function outletRegistrySnapshot(outlet: ParsedRetailOutlet): Pick<
-  OutletGuidRegistryRow,
-  "guid_store" | "guid_client" | "is_closed" | "closure_history"
-> | null {
-  if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore) {
-    return null;
-  }
-  return {
-    guid_store: outlet.guidStore,
-    guid_client: "",
-    is_closed: outlet.closed,
-    closure_history: outlet.closureHistory,
-  };
-}
-
-export function extendedOutletListsEqual(
-  left: ParsedRetailOutlet[],
-  right: ParsedRetailOutlet[],
-): boolean {
-  return isDeepStrictEqual(left, right);
 }

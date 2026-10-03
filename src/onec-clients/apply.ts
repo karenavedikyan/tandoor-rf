@@ -22,7 +22,7 @@ import {
   summarizeExtendedFreshness,
 } from "./extended-apply";
 import type { ExtendedSnapshot } from "./extended-types";
-import { detectRegistryParentConflicts } from "./outlet-identity";
+import { countKnownOutletsMissingFromSnapshot, detectRegistryParentConflicts } from "./outlet-identity";
 import { loadOutletGuidRegistry, upsertOutletRegistryEntries } from "./outlet-registry";
 import type { ParsedClientRecord, ValidatedClientsPayload } from "./types";
 
@@ -41,6 +41,9 @@ export type ApplyBlockSummary = {
   legacyApplied: true;
   extendedApplied: boolean;
   extendedBlockReason?: string | null;
+  extendedAppliedCount?: number;
+  extendedBlockedCount?: number;
+  outletParentLinkConflicts?: number;
 };
 
 export type ApplyResult =
@@ -263,17 +266,51 @@ function journalWarningsForPayload(payload: ValidatedClientsPayload) {
   return prepareJournalWarnings(payload.warnings, { totalWarningCount: payload.warningCount });
 }
 
+type ApplyExtendedStats = {
+  extendedAppliedCount: number;
+  extendedBlockedCount: number;
+  outletParentLinkConflicts: number;
+  knownOutletsMissingFromSnapshot: number | null;
+};
+
 function buildApplyBlockSummary(
   extendedApply: boolean,
   contractVerified: boolean,
+  stats: ApplyExtendedStats,
 ): ApplyBlockSummary | undefined {
   if (!extendedApply) {
     return undefined;
   }
+  if (!contractVerified) {
+    return {
+      legacyApplied: true,
+      extendedApplied: false,
+      extendedBlockReason: "awaiting_live_json_verification",
+      extendedAppliedCount: 0,
+      extendedBlockedCount: stats.extendedBlockedCount,
+      outletParentLinkConflicts: stats.outletParentLinkConflicts,
+    };
+  }
+  if (stats.outletParentLinkConflicts > 0 || stats.extendedBlockedCount > 0) {
+    return {
+      legacyApplied: true,
+      extendedApplied: false,
+      extendedBlockReason:
+        stats.outletParentLinkConflicts > 0
+          ? "outlet_parent_link_conflict"
+          : "extended_partially_blocked",
+      extendedAppliedCount: stats.extendedAppliedCount,
+      extendedBlockedCount: stats.extendedBlockedCount,
+      outletParentLinkConflicts: stats.outletParentLinkConflicts,
+    };
+  }
   return {
     legacyApplied: true,
-    extendedApplied: contractVerified,
-    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
+    extendedApplied: stats.extendedAppliedCount > 0,
+    extendedBlockReason: null,
+    extendedAppliedCount: stats.extendedAppliedCount,
+    extendedBlockedCount: 0,
+    outletParentLinkConflicts: 0,
   };
 }
 
@@ -281,19 +318,19 @@ function mergeExtendedDiagnosticsForJournal(
   payload: ValidatedClientsPayload,
   extendedApply: boolean,
   contractVerified: boolean,
-  extendedBlockedCount: number,
+  stats: ApplyExtendedStats,
 ): string | null {
   if (!extendedApply) {
     return null;
   }
-  const applyBlocks = {
-    legacyApplied: true,
-    extendedApplied: contractVerified,
-    extendedBlockReason: contractVerified ? null : "awaiting_live_json_verification",
-    extendedBlockedCount,
-  };
+  const applyBlocks = buildApplyBlockSummary(extendedApply, contractVerified, stats);
   const base = payload.extendedDiagnostics ?? {};
-  return JSON.stringify({ ...base, applyBlocks });
+  return JSON.stringify({
+    ...base,
+    knownOutletsMissingFromSnapshot: stats.knownOutletsMissingFromSnapshot,
+    outletParentLinkConflicts: stats.outletParentLinkConflicts,
+    applyBlocks,
+  });
 }
 
 async function loadApplyBlockSummaryFromJournal(
@@ -320,6 +357,9 @@ async function loadApplyBlockSummaryFromJournal(
         legacyApplied: applyBlocks.legacyApplied,
         extendedApplied: applyBlocks.extendedApplied,
         extendedBlockReason: applyBlocks.extendedBlockReason ?? null,
+        extendedAppliedCount: applyBlocks.extendedAppliedCount,
+        extendedBlockedCount: applyBlocks.extendedBlockedCount,
+        outletParentLinkConflicts: applyBlocks.outletParentLinkConflicts,
       };
     } finally {
       client.release();
@@ -788,6 +828,10 @@ export async function applyClientsImport(options: {
           let changedCount = 0;
           let unchangedCount = 0;
           let extendedBlockedCount = 0;
+          let extendedAppliedCount = 0;
+          let outletParentLinkConflicts = 0;
+          let knownOutletsMissingFromSnapshot = 0;
+          let missingOutletsChecked = false;
 
           for (let index = 0; index < options.payload.records.length; index += 1) {
             const record = options.payload.records[index]!;
@@ -805,6 +849,7 @@ export async function applyClientsImport(options: {
               );
               if (parentConflicts.length > 0) {
                 extendedBlockedCount += 1;
+                outletParentLinkConflicts += parentConflicts.length;
               } else {
                 extendedSnapshotJson = buildExtendedSnapshotJson(
                   extendedRecord,
@@ -813,6 +858,7 @@ export async function applyClientsImport(options: {
                   importTimestamp,
                   { contractVerified: true },
                 );
+                extendedAppliedCount += 1;
               }
             } else if (extendedRecord && !contractVerified) {
               extendedBlockedCount += 1;
@@ -962,19 +1008,28 @@ export async function applyClientsImport(options: {
             );
 
             if (extendedSnapshotJson) {
+              const outletsInCurrentExport = extendedSnapshotJson.currentRetailOutlets.filter(
+                (outlet) => outlet.provenance.freshness === "current",
+              );
               await upsertOutletRegistryEntries(
                 managed.client,
                 record.guid_client,
-                extendedSnapshotJson.currentRetailOutlets,
-                options.payload.sha256,
-                importTimestamp,
+                outletsInCurrentExport,
               );
-              for (const outlet of extendedSnapshotJson.currentRetailOutlets) {
+              missingOutletsChecked = true;
+              knownOutletsMissingFromSnapshot += countKnownOutletsMissingFromSnapshot(
+                record.guid_client,
+                extendedSnapshotJson.currentRetailOutlets,
+                outletRegistry,
+              );
+              for (const outlet of outletsInCurrentExport) {
                 if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
                   outletRegistry.set(outlet.guidStore.toLowerCase(), {
                     guid_store: outlet.guidStore,
                     guid_client: record.guid_client,
                     is_closed: outlet.closed,
+                    last_source_sha256: outlet.provenance.sourceSha256,
+                    last_imported_at: outlet.provenance.importedAt,
                     closure_history: outlet.closureHistory,
                   });
                 }
@@ -986,15 +1041,21 @@ export async function applyClientsImport(options: {
             }
           }
 
+          const applyExtendedStats: ApplyExtendedStats = {
+            extendedAppliedCount,
+            extendedBlockedCount,
+            outletParentLinkConflicts,
+            knownOutletsMissingFromSnapshot: missingOutletsChecked ? knownOutletsMissingFromSnapshot : null,
+          };
           const extendedDiagnosticsJson = mergeExtendedDiagnosticsForJournal(
             options.payload,
             extendedApply,
             contractVerified,
-            extendedBlockedCount,
+            applyExtendedStats,
           );
           const sourceFormatVersion = options.payload.sourceFormat ?? "legacy";
 
-          phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified);
+          phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified, applyExtendedStats);
 
           await queryManaged(
             managed,

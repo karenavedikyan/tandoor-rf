@@ -5,6 +5,7 @@ import { applyClientsImport } from "../../src/onec-clients/apply";
 import {
   buildExtendedClientsFileBytes,
   EXTENDED_FIXTURE_GUIDS,
+  sampleExtendedChild,
   sampleExtendedHolding,
   sampleIdentifiedOutlet,
   validateClientsForApplyTest,
@@ -59,8 +60,8 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     });
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const registry = await pool.query<{ guid_store: string; is_closed: boolean | null }>(
-      "SELECT guid_store::text, is_closed FROM onec_retail_outlets WHERE guid_store = $1::uuid",
+    const registry = await pool.query<{ guid_store: string; last_source_sha256: string }>(
+      "SELECT guid_store::text, last_source_sha256 FROM onec_retail_outlets WHERE guid_store = $1::uuid",
       [EXTENDED_FIXTURE_GUIDS.STORE_ONE],
     );
     const snapshot = await pool.query<{
@@ -72,6 +73,7 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
       [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
     );
     assert.equal(registry.rows[0]?.guid_store, EXTENDED_FIXTURE_GUIDS.STORE_ONE);
+    assert.equal(registry.rows[0]?.last_source_sha256, secondValidated.payload.sha256);
     assert.equal(
       snapshot.rows[0]?.extended_snapshot.currentRetailOutlets[0]?.address.storeAddress,
       "Updated street",
@@ -79,23 +81,134 @@ describe("onec clients outlet identity integration", { concurrency: false }, () 
     await pool.end();
   });
 
-  it("blocks extended apply when guid_store parent card conflicts with registry", async () => {
-    const firstBytes = buildExtendedClientsFileBytes([sampleExtendedHolding()]);
+  it("does not refresh registry source for outlet absent from current export", async () => {
+    const firstBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_ONE }),
+          sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO }),
+        ],
+      }),
+    ]);
+    const firstValidated = validateClientsForApplyTest(firstBytes);
+    assert.equal(firstValidated.ok, true);
+    if (!firstValidated.ok) return;
+    await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
+
+    const secondBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO })],
+      }),
+    ]);
+    const secondValidated = validateClientsForApplyTest(secondBytes);
+    assert.equal(secondValidated.ok, true);
+    if (!secondValidated.ok) return;
+    const secondApply = await applyClientsImport({
+      databaseUrl,
+      payload: secondValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+    assert.equal(secondApply.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const rows = await pool.query<{ guid_store: string; last_source_sha256: string }>(
+      "SELECT guid_store::text, last_source_sha256 FROM onec_retail_outlets ORDER BY guid_store::text",
+    );
+    const storeOne = rows.rows.find((row) => row.guid_store === EXTENDED_FIXTURE_GUIDS.STORE_ONE);
+    const storeTwo = rows.rows.find((row) => row.guid_store === EXTENDED_FIXTURE_GUIDS.STORE_TWO);
+    assert.equal(storeOne?.last_source_sha256, firstValidated.payload.sha256);
+    assert.equal(storeTwo?.last_source_sha256, secondValidated.payload.sha256);
+
+    const snapshot = await pool.query<{
+      extended_snapshot: {
+        blocks: { blockFreshness?: { retailOutlets: string } };
+        currentRetailOutlets: Array<{ guidStore: string; provenance: { freshness: string } }>;
+      };
+    }>(
+      "SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(snapshot.rows[0]?.extended_snapshot.blocks.blockFreshness?.retailOutlets, "preserved_from_previous");
+    assert.equal(
+      snapshot.rows[0]?.extended_snapshot.currentRetailOutlets.find(
+        (outlet) => outlet.guidStore === EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+      )?.provenance.freshness,
+      "absent_from_current_export",
+    );
+    await pool.end();
+  });
+
+  it("reports registry parent conflict in apply result and journal without claiming full extended apply", async () => {
+    const firstBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_ONE })],
+      }),
+      sampleExtendedChild({
+        retail_outlets: [sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO })],
+      }),
+    ]);
     const firstValidated = validateClientsForApplyTest(firstBytes);
     assert.equal(firstValidated.ok, true);
     if (!firstValidated.ok) return;
     await applyClientsImport({ databaseUrl, payload: firstValidated.payload });
 
     const conflictBytes = buildExtendedClientsFileBytes([
-      sampleExtendedHolding({
-        guid_client: EXTENDED_FIXTURE_GUIDS.CHILD_GUID,
-        name_client: "Child Shop",
-        guid_holding: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
+      sampleExtendedChild({
         retail_outlets: [sampleIdentifiedOutlet({ guid_store: EXTENDED_FIXTURE_GUIDS.STORE_ONE })],
+      }),
+      sampleExtendedHolding({
+        retail_outlets: [],
       }),
     ]);
     const conflictValidated = validateClientsForApplyTest(conflictBytes);
-    assert.equal(conflictValidated.ok, false);
+    assert.equal(conflictValidated.ok, true);
+    if (!conflictValidated.ok) return;
+
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: conflictValidated.payload,
+      expectedCommittedSha256: firstValidated.payload.sha256,
+    });
+    assert.equal(applied.ok, true);
+    assert.equal(applied.blockSummary?.extendedApplied, false);
+    assert.equal(applied.blockSummary?.extendedBlockReason, "outlet_parent_link_conflict");
+    assert.equal(applied.blockSummary?.outletParentLinkConflicts, 1);
+    assert.equal(applied.counts?.extendedBlockedCount, 1);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const child = await pool.query<{ extended_snapshot: unknown; extended_format_version: string | null }>(
+      "SELECT extended_snapshot, extended_format_version FROM onec_clients WHERE guid_client = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.CHILD_GUID],
+    );
+    assert.equal(child.rows[0]?.extended_format_version, "extended_v1");
+    assert.ok(child.rows[0]?.extended_snapshot);
+
+    const registry = await pool.query<{ guid_store: string; guid_client: string }>(
+      "SELECT guid_store::text, guid_client::text FROM onec_retail_outlets WHERE guid_store = $1::uuid",
+      [EXTENDED_FIXTURE_GUIDS.STORE_ONE],
+    );
+    assert.equal(registry.rows[0]?.guid_client, EXTENDED_FIXTURE_GUIDS.HOLDING_GUID);
+
+    const journal = await pool.query<{
+      extended_diagnostics: {
+        outletParentLinkConflicts?: number;
+        applyBlocks?: { extendedBlockReason?: string | null; outletParentLinkConflicts?: number };
+      } | null;
+    }>(
+      `
+        SELECT extended_diagnostics
+        FROM onec_client_import_runs
+        WHERE status = 'success'
+        ORDER BY finished_at DESC
+        LIMIT 1
+      `,
+    );
+    assert.equal(journal.rows[0]?.extended_diagnostics?.outletParentLinkConflicts, 1);
+    assert.equal(
+      journal.rows[0]?.extended_diagnostics?.applyBlocks?.extendedBlockReason,
+      "outlet_parent_link_conflict",
+    );
+    await pool.end();
   });
 
   it("is idempotent on repeated import with same outlet identity", async () => {

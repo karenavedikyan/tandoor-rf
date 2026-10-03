@@ -63,7 +63,9 @@ function outlet(label: string): ParsedRetailOutlet {
     outletGuidStatus: "not_provided",
     closed: null,
     closureStatus: "not_provided",
+    closureConfirmedInCurrentExport: false,
     closureHistory: [],
+    provenance: { freshness: "not_provided_in_snapshot", sourceSha256: "", importedAt: "" },
     distributionAllowed: false,
   };
 }

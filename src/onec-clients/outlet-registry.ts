@@ -6,6 +6,8 @@ type RegistryQueryRow = {
   guid_store: string;
   guid_client: string;
   is_closed: boolean | null;
+  last_source_sha256: string | null;
+  last_imported_at: Date | string | null;
   closure_history: RetailOutletClosureHistoryEntry[] | null;
 };
 
@@ -16,6 +18,8 @@ export async function loadOutletGuidRegistry(client: PoolClient): Promise<Map<st
         guid_store::text,
         guid_client::text,
         is_closed,
+        last_source_sha256,
+        last_imported_at,
         closure_history
       FROM onec_retail_outlets
     `,
@@ -26,6 +30,11 @@ export async function loadOutletGuidRegistry(client: PoolClient): Promise<Map<st
       guid_store: row.guid_store,
       guid_client: row.guid_client,
       is_closed: row.is_closed,
+      last_source_sha256: row.last_source_sha256,
+      last_imported_at:
+        row.last_imported_at instanceof Date
+          ? row.last_imported_at.toISOString()
+          : row.last_imported_at,
       closure_history: Array.isArray(row.closure_history) ? row.closure_history : [],
     });
   }
@@ -35,12 +44,13 @@ export async function loadOutletGuidRegistry(client: PoolClient): Promise<Map<st
 export async function upsertOutletRegistryEntries(
   client: PoolClient,
   clientGuid: string,
-  outlets: ParsedRetailOutlet[],
-  sourceSha256: string,
-  importedAt: string,
+  outletsInCurrentExport: ParsedRetailOutlet[],
 ): Promise<void> {
-  for (const outlet of outlets) {
+  for (const outlet of outletsInCurrentExport) {
     if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore) {
+      continue;
+    }
+    if (outlet.provenance.freshness !== "current") {
       continue;
     }
     await client.query(
@@ -71,8 +81,8 @@ export async function upsertOutletRegistryEntries(
         outlet.guidStore,
         clientGuid,
         outlet.closed,
-        sourceSha256,
-        importedAt,
+        outlet.provenance.sourceSha256,
+        outlet.provenance.importedAt,
         JSON.stringify(outlet.closureHistory),
       ],
     );

@@ -147,12 +147,21 @@ export function syntheticLongDetailPayload() {
   });
 }
 
-export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied" = "granted") {
-  const outlet = {
+export function syntheticOutletMock(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
     ordinal: 0,
+    guidStore: null,
+    guidStoreShortLabel: null,
     holdingName: "Холдинг Восток",
     identityLabel: "Точка из выгрузки 1С. Идентификатор ещё не передан",
+    closureStatus: "not_provided",
     closureStatusLabel: "Статус не передан",
+    closureNote: null,
+    presentInCurrentExport: true,
+    dataSourceLabel: "Источник не подтверждён",
+    freshnessLabel: "Источник не подтверждён",
     warehouse: true,
     warehouseLabel: "Используется как склад",
     addresses: {
@@ -182,7 +191,13 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
     },
     contacts: { storePhone: "+7 495 000-00-00", accountantPhone: "", accountantEmail: "" },
     distributionAllowed: false as const,
+    distributionNote: "Запись дистрибуции недоступна без подтверждённого идентификатора торговой точки.",
+    ...overrides,
   };
+}
+
+export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied" = "granted") {
+  const outlet = syntheticOutletMock();
   return syntheticDetailPayload({
     extended: {
       formatVersion: "extended_v1",
@@ -198,7 +213,9 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
         hardwareManager: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
         headOfSales: { assignmentLabel: "Не назначен", assignmentState: "unassigned" },
       },
-      retailOutlets: outletAccess === "granted" ? [outlet, { ...outlet, ordinal: 1 }] : [],
+      retailOutlets: outletAccess === "granted"
+        ? [outlet, syntheticOutletMock({ ordinal: 1 })]
+        : [],
       retailOutletsTotalCount: outletAccess === "granted" ? 2 : 0,
       retailOutletsTruncated: false,
       retailOutletsAccess: outletAccess,

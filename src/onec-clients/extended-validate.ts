@@ -33,7 +33,7 @@ import type {
   ValidatedExtendedClientsPayload,
 } from "./extended-types";
 import type { ValidationIssue, ValidationWarning } from "./types";
-import { outletsAreIdentical } from "./outlet-identity";
+import { countOutletGuidRowStats, outletsAreIdentical, outletsFieldsComplete } from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
 export type ExtendedValidationResult =
@@ -762,7 +762,9 @@ function validateRetailOutlets(
 
     let closed: boolean | null = null;
     let closureStatus: ParsedRetailOutlet["closureStatus"] = "not_provided";
+    let closureConfirmedInCurrentExport = false;
     if ("closed" in item) {
+      closureConfirmedInCurrentExport = true;
       const parsedClosed = readStrictBoolean(item.closed);
       if (parsedClosed === "invalid") {
         pushIssue(issues, {
@@ -854,7 +856,13 @@ function validateRetailOutlets(
       outletGuidStatus,
       closed,
       closureStatus,
+      closureConfirmedInCurrentExport,
       closureHistory: [],
+      provenance: {
+        freshness: outletGuidStatus === "confirmed" ? "current" : "not_provided_in_snapshot",
+        sourceSha256: "",
+        importedAt: "",
+      },
       distributionAllowed: false,
     });
   }
@@ -1200,14 +1208,8 @@ function buildDiagnostics(
   }
 
   const allOutlets = records.flatMap((record) => record.retailOutlets);
-  const outletNormalizedReady =
-    allOutlets.length > 0 &&
-    allOutlets.every(
-      (outlet) =>
-        outlet.outletGuidStatus === "confirmed" &&
-        outlet.guidStore &&
-        (outlet.closureStatus === "open" || outlet.closureStatus === "closed"),
-    );
+  const guidRowStats = countOutletGuidRowStats(records);
+  const outletFieldsComplete = outletsFieldsComplete(allOutlets);
 
   return {
     sourceFormat,
@@ -1219,9 +1221,11 @@ function buildDiagnostics(
     outletsOpen,
     outletsClosed,
     outletsUnknownClosure,
+    outletSourceRowCount: guidRowStats.outletSourceRowCount,
+    outletUniqueGuidCount: guidRowStats.outletUniqueGuidCount,
     duplicateOutletGuidCount: outletGuidStats.duplicateOutletGuidCount,
     outletParentLinkConflicts: outletGuidStats.outletParentLinkConflicts,
-    knownOutletsMissingFromSnapshot: 0,
+    knownOutletsMissingFromSnapshot: null,
     invalidManagerGuidCount,
     employeeDirectoryVerified: false,
     holdingLinkErrors,
@@ -1230,7 +1234,8 @@ function buildDiagnostics(
     blocks: {
       legacyImportReady: true,
       clientExtendedReady: false,
-      outletNormalizedReady,
+      outletFieldsComplete,
+      outletNormalizedReady: false,
     },
   };
 }

@@ -6,7 +6,7 @@ import {
   mergeManagerField,
   type ExtendedRecordFieldPresence,
 } from "./extended-presence";
-import { mergeRetailOutletsWithIdentity } from "./outlet-identity";
+import { deriveRetailOutletsBlockFreshness, mergeRetailOutletsWithIdentity } from "./outlet-identity";
 import type {
   ExtendedBlockFreshness,
   ExtendedBlockProvenance,
@@ -47,8 +47,9 @@ function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
 function appendHistoryWhenBusinessChanged(
   previous: ExtendedSnapshot | null,
   nextOutlets: ParsedRetailOutlet[],
+  baseHistory: RetailOutletHistoryEntry[],
 ): RetailOutletHistoryEntry[] {
-  const history = previous?.retailOutletHistory ? [...previous.retailOutletHistory] : [];
+  const history = [...baseHistory];
   const previousCurrent = previous?.currentRetailOutlets ?? [];
   if (previousCurrent.length === 0) {
     return history;
@@ -201,12 +202,17 @@ export function buildExtendedSnapshotJson(
     previous?.headOfSales,
     isNewClient,
   );
-  const currentRetailOutlets = mergeRetailOutletsWithIdentity(
+  const outletMerge = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
     previous?.currentRetailOutlets,
     { sourceSha256, importedAt },
   );
+  const currentRetailOutlets = outletMerge.outlets;
+  const retailOutletHistory = [
+    ...(previous?.retailOutletHistory ?? []),
+    ...outletMerge.historyEntries,
+  ];
 
   const businessChanged = !extendedBusinessDataEqual(previous, {
     formatVersion: "extended_v1",
@@ -217,14 +223,21 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory: previous?.retailOutletHistory ?? [],
+    retailOutletHistory,
     blocks: previous?.blocks ?? {
       clientExtendedReady: false,
       outletNormalizedReady: false,
     },
   });
 
-  const blockFreshness = buildBlockFreshness(record.fieldPresence, hasPrevious);
+  const blockFreshness = {
+    ...buildBlockFreshness(record.fieldPresence, hasPrevious),
+    retailOutlets: deriveRetailOutletsBlockFreshness(
+      currentRetailOutlets,
+      record.fieldPresence.retailOutlets,
+      hasPrevious,
+    ),
+  };
   const blockProvenance = buildBlockProvenance(blockFreshness, previous, sourceSha256, importedAt);
   const effectiveImportedAt =
     previous && !businessChanged ? previous.importedAt : importedAt;
@@ -238,7 +251,7 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory: appendHistoryWhenBusinessChanged(previous, currentRetailOutlets),
+    retailOutletHistory: appendHistoryWhenBusinessChanged(previous, currentRetailOutlets, retailOutletHistory),
     blocks: {
       clientExtendedReady: options.contractVerified,
       outletNormalizedReady: false,

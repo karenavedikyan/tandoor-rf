@@ -68,6 +68,9 @@ export type RetailOutletDto = {
   contacts: RetailOutletContactsDto;
   distributionAllowed: false;
   distributionNote: string;
+  presentInCurrentExport: boolean;
+  dataSourceLabel: string;
+  freshnessLabel: string;
 };
 
 export type ClientExtendedManagersDto = {
@@ -364,18 +367,46 @@ function outletIdentityLabel(outlet: ParsedRetailOutlet): string {
   return "Точка из выгрузки 1С. Идентификатор ещё не передан";
 }
 
+function outletDataSourceLabel(outlet: ParsedRetailOutlet): string {
+  if (outlet.provenance.freshness === "current") {
+    return "Подтверждено текущей выгрузкой";
+  }
+  if (outlet.provenance.freshness === "absent_from_current_export") {
+    return "Сохранено из предыдущей выгрузки; отсутствует в текущем файле";
+  }
+  if (outlet.provenance.freshness === "preserved_from_previous") {
+    return "Сохранено из предыдущей выгрузки";
+  }
+  return "Источник не подтверждён";
+}
+
+function outletFreshnessLabel(outlet: ParsedRetailOutlet): string {
+  const importedAtLabel = formatImportedAtLabel(outlet.provenance.importedAt);
+  const base = outletDataSourceLabel(outlet);
+  if (importedAtLabel) {
+    return `${base} (${importedAtLabel})`;
+  }
+  return base;
+}
+
 function outletClosurePresentation(outlet: ParsedRetailOutlet): {
   status: RetailOutletDto["closureStatus"];
   label: string;
   note: string | null;
 } {
   if (outlet.closureStatus === "open") {
-    return { status: "open", label: "Открыта", note: null };
+    const label = outlet.closureConfirmedInCurrentExport
+      ? "Открыта"
+      : "Открыта (статус сохранён; не подтверждён текущей выгрузкой)";
+    return { status: "open", label, note: null };
   }
   if (outlet.closureStatus === "closed") {
+    const label = outlet.closureConfirmedInCurrentExport
+      ? "Закрыта"
+      : "Закрыта (статус сохранён; не подтверждён текущей выгрузкой)";
     return {
       status: "closed",
-      label: "Закрыта",
+      label,
       note: "Точка остаётся доступной для просмотра и истории. Новые записи дистрибуции недоступны.",
     };
   }
@@ -437,6 +468,9 @@ function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
     },
     distributionAllowed: false,
     distributionNote: outletDistributionNote(outlet),
+    presentInCurrentExport: outlet.provenance.freshness === "current",
+    dataSourceLabel: outletDataSourceLabel(outlet),
+    freshnessLabel: outletFreshnessLabel(outlet),
   };
 }
 

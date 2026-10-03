@@ -4,6 +4,8 @@ import { buildExtendedSnapshotJson } from "../../src/onec-clients/extended-apply
 import {
   dedupeIdenticalOutlets,
   mergeRetailOutletsWithIdentity,
+  outletBusinessProjection,
+  outletsAreIdentical,
 } from "../../src/onec-clients/outlet-identity";
 import type { ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
 import { EXTENDED_FIXTURE_GUIDS } from "../helpers/onec-clients-extended-fixtures";
@@ -45,25 +47,53 @@ function outlet(overrides: Partial<ParsedRetailOutlet> = {}): ParsedRetailOutlet
     outletGuidStatus: "confirmed",
     closed: false,
     closureStatus: "open",
+    closureConfirmedInCurrentExport: true,
     closureHistory: [],
+    provenance: {
+      freshness: "current",
+      sourceSha256: "sha-a",
+      importedAt: "2026-01-01T00:00:00.000Z",
+    },
     distributionAllowed: false,
     ...overrides,
   };
 }
 
 describe("outlet identity merge", () => {
-  it("preserves confirmed outlet missing from next snapshot", () => {
-    const previous = [outlet({ guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE, closed: true, closureStatus: "closed" })];
-    const merged = mergeRetailOutletsWithIdentity([], "present", previous, {
-      sourceSha256: "sha-b",
-      importedAt: "2026-01-02T00:00:00.000Z",
-    });
-    assert.equal(merged.length, 1);
-    assert.equal(merged[0]?.closureStatus, "closed");
+  it("preserves confirmed outlet missing from next snapshot with previous provenance", () => {
+    const previous = [
+      outlet({
+        guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+        provenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+      outlet({
+        guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+        provenance: {
+          freshness: "current",
+          sourceSha256: "sha-a",
+          importedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    ];
+    const merged = mergeRetailOutletsWithIdentity(
+      [outlet({ guidStore: EXTENDED_FIXTURE_GUIDS.STORE_TWO })],
+      "present",
+      previous,
+      { sourceSha256: "sha-b", importedAt: "2026-01-02T00:00:00.000Z" },
+    );
+    assert.equal(merged.outlets.length, 2);
+    const missing = merged.outlets.find((item) => item.guidStore === EXTENDED_FIXTURE_GUIDS.STORE_ONE);
+    assert.equal(missing?.provenance.freshness, "absent_from_current_export");
+    assert.equal(missing?.provenance.sourceSha256, "sha-a");
+    assert.equal(merged.outletsInCurrentExport.length, 1);
   });
 
   it("keeps identity when address changes and order shifts", () => {
-    const previous = [outlet({ address: { storeAddress: "Old", deliveryAddress: "", routeDirection: "" }, ordinal: 0 })];
+    const previous = [outlet({ address: { storeAddress: "Old", deliveryAddress: "", routeDirection: "" } })];
     const incoming = [
       outlet({
         ordinal: 1,
@@ -74,37 +104,54 @@ describe("outlet identity merge", () => {
       sourceSha256: "sha-b",
       importedAt: "2026-01-02T00:00:00.000Z",
     });
-    assert.equal(merged.length, 1);
-    assert.equal(merged[0]?.guidStore, EXTENDED_FIXTURE_GUIDS.STORE_ONE);
-    assert.equal(merged[0]?.address.storeAddress, "New");
+    assert.equal(merged.outlets.length, 1);
+    assert.equal(merged.outlets[0]?.guidStore, EXTENDED_FIXTURE_GUIDS.STORE_ONE);
+    assert.equal(merged.outlets[0]?.address.storeAddress, "New");
+    assert.equal(merged.outlets[0]?.provenance.sourceSha256, "sha-b");
   });
 
-  it("records closure history on reopen", () => {
-    const previous = [outlet({ closed: true, closureStatus: "closed" })];
-    const incoming = [outlet({ closed: false, closureStatus: "open" })];
-    const merged = mergeRetailOutletsWithIdentity(incoming, "present", previous, {
+  it("records closure history on reopen and preserves closure when omitted", () => {
+    const previous = [outlet({ closed: true, closureStatus: "closed", closureConfirmedInCurrentExport: true })];
+    const incoming = [
+      outlet({
+        closed: false,
+        closureStatus: "open",
+        closureConfirmedInCurrentExport: true,
+      }),
+    ];
+    const reopened = mergeRetailOutletsWithIdentity(incoming, "present", previous, {
       sourceSha256: "sha-b",
       importedAt: "2026-01-02T00:00:00.000Z",
     });
-    assert.equal(merged[0]?.closureStatus, "open");
-    assert.equal(merged[0]?.closureHistory.length, 1);
-    assert.equal(merged[0]?.closureHistory[0]?.closed, false);
+    assert.equal(reopened.outlets[0]?.closureStatus, "open");
+    assert.equal(reopened.outlets[0]?.closureHistory.length, 1);
+
+    const preservedClosure = mergeRetailOutletsWithIdentity(
+      [outlet({ closureStatus: "not_provided", closed: null, closureConfirmedInCurrentExport: false })],
+      "present",
+      previous,
+      { sourceSha256: "sha-c", importedAt: "2026-01-03T00:00:00.000Z" },
+    );
+    assert.equal(preservedClosure.outlets[0]?.closed, true);
+    assert.equal(preservedClosure.outlets[0]?.closureConfirmedInCurrentExport, false);
   });
 
-  it("dedupes identical confirmed rows", () => {
-    const deduped = dedupeIdenticalOutlets([
-      outlet(),
-      outlet(),
-    ]);
-    assert.equal(deduped.length, 1);
+  it("dedupes identical confirmed rows only when full projection matches", () => {
+    assert.equal(dedupeIdenticalOutlets([outlet(), outlet()]).length, 1);
+    assert.equal(
+      outletsAreIdentical(outlet(), outlet({ contacts: { storePhone: "1", accountantPhone: "", accountantEmail: "" } })),
+      false,
+    );
   });
 
-  it("does not attach anonymous history entries to new guid outlets", () => {
+  it("archives anonymous outlets to history when identified outlets arrive", () => {
     const anonymous = outlet({
       guidStore: null,
       outletGuidStatus: "not_provided",
       closureStatus: "not_provided",
       closed: null,
+      closureConfirmedInCurrentExport: false,
+      provenance: { freshness: "not_provided_in_snapshot", sourceSha256: "", importedAt: "" },
     });
     const first = buildExtendedSnapshotJson(
       {
@@ -136,7 +183,6 @@ describe("outlet identity merge", () => {
       "2026-01-01T00:00:00.000Z",
       { contractVerified: true },
     );
-    const identified = outlet();
     const second = buildExtendedSnapshotJson(
       {
         guid_client: EXTENDED_FIXTURE_GUIDS.HOLDING_GUID,
@@ -151,7 +197,7 @@ describe("outlet identity merge", () => {
         regionalManager: { guid: null, name: "", state: "not_provided" },
         hardwareManager: { guid: null, name: "", state: "not_provided" },
         headOfSales: { guid: null, name: "", state: "not_provided" },
-        retailOutlets: [identified],
+        retailOutlets: [outlet()],
         recordFormat: "extended_v1",
         hasExtendedManagerFields: true,
         fieldPresence: {
@@ -167,7 +213,19 @@ describe("outlet identity merge", () => {
       "2026-01-02T00:00:00.000Z",
       { contractVerified: true },
     );
-    assert.equal(second.currentRetailOutlets.some((item) => item.guidStore === EXTENDED_FIXTURE_GUIDS.STORE_ONE), true);
-    assert.equal(second.currentRetailOutlets.some((item) => item.outletGuidStatus === "not_provided"), true);
+    assert.equal(second.currentRetailOutlets.length, 1);
+    assert.equal(second.currentRetailOutlets[0]?.outletGuidStatus, "confirmed");
+    assert.ok(second.retailOutletHistory.some((entry) => entry.retailOutlets[0]?.outletGuidStatus === "not_provided"));
+  });
+
+  it("compares full business projection including managers and contacts", () => {
+    const left = outlet();
+    const right = outlet({
+      managers: {
+        ...left.managers,
+        regionalManager: { guid: EXTENDED_FIXTURE_GUIDS.REGIONAL, name: "Regional", state: "directory_unverified" },
+      },
+    });
+    assert.notDeepEqual(outletBusinessProjection(left), outletBusinessProjection(right));
   });
 });

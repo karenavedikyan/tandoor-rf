@@ -92,6 +92,33 @@ describe("outlet guid_store and closed validation", () => {
     }
   });
 
+  it("treats duplicate guid rows with different managers as conflict", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({
+        retail_outlets: [
+          sampleIdentifiedOutlet(),
+          sampleIdentifiedOutlet({
+            managers: {
+              guid_manager: "",
+              name_manager: "",
+              guid_regional_manager: EXTENDED_FIXTURE_GUIDS.REGIONAL,
+              name_regional_manager: "Different Regional",
+              guid_hardware_manager: "",
+              name_hardware_manager: "",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+          }),
+        ],
+      }),
+    ]);
+    const result = validateExtendedClientsFileBytes(bytes);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.ok(result.issues.some((issue) => issue.code === "DUPLICATE_OUTLET_GUID"));
+    }
+  });
+
   it("reports outlet diagnostics aggregates", () => {
     const bytes = buildExtendedClientsFileBytes([
       sampleExtendedHolding({
@@ -107,7 +134,11 @@ describe("outlet guid_store and closed validation", () => {
       assert.equal(result.payload.diagnostics.outletsWithGuid, 2);
       assert.equal(result.payload.diagnostics.outletsOpen, 1);
       assert.equal(result.payload.diagnostics.outletsClosed, 1);
-      assert.equal(result.payload.diagnostics.blocks.outletNormalizedReady, true);
+      assert.equal(result.payload.diagnostics.blocks.outletFieldsComplete, true);
+      assert.equal(result.payload.diagnostics.blocks.outletNormalizedReady, false);
+      assert.equal(result.payload.diagnostics.outletSourceRowCount, 2);
+      assert.equal(result.payload.diagnostics.outletUniqueGuidCount, 2);
+      assert.equal(result.payload.diagnostics.knownOutletsMissingFromSnapshot, null);
     }
   });
 });
