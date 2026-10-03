@@ -136,6 +136,42 @@ export function outletsAreIdentical(left: ParsedRetailOutlet, right: ParsedRetai
   return isDeepStrictEqual(outletBusinessProjection(left), outletBusinessProjection(right));
 }
 
+/** Import-state for duplicate-row checks within one file (not business-history equality). */
+function loadingTimeImportState(loading: ParsedOutletLoading): string {
+  if (loading.loadingTimeAmbiguous) {
+    return "ambiguous";
+  }
+  if (loading.loadingTime != null) {
+    return `value:${normalizeLocalTimeForComparison(loading.loadingTime)}`;
+  }
+  return "explicit_empty";
+}
+
+function dateOfBirthImportState(lpr: ParsedOutletLpr): string {
+  if (lpr.dateOfBirthAmbiguous) {
+    return "ambiguous";
+  }
+  if (lpr.dateOfBirth != null) {
+    return `value:${lpr.dateOfBirth}`;
+  }
+  return "explicit_empty";
+}
+
+export function outletDuplicateRowsEquivalent(
+  left: ParsedRetailOutlet,
+  right: ParsedRetailOutlet,
+): boolean {
+  if (loadingTimeImportState(left.loading) !== loadingTimeImportState(right.loading)) {
+    return false;
+  }
+  if (dateOfBirthImportState(left.lpr) !== dateOfBirthImportState(right.lpr)) {
+    return false;
+  }
+  const leftBusiness = outletBusinessProjection(left);
+  const rightBusiness = outletBusinessProjection(right);
+  return isDeepStrictEqual(leftBusiness, rightBusiness);
+}
+
 export function dedupeIdenticalOutlets(outlets: ParsedRetailOutlet[]): ParsedRetailOutlet[] {
   const seen = new Set<string>();
   const result: ParsedRetailOutlet[] = [];
@@ -222,20 +258,13 @@ function appendClosureHistory(
   return history;
 }
 
-function previousLoadingConfirmed(previous: ParsedOutletLoading | undefined): boolean {
-  return (
-    previous?.loadingTime != null &&
-    previous.loadingTimeAmbiguous !== true &&
-    previous.loadingTimeConfirmedInCurrentExport !== false
-  );
+/** Whether a prior snapshot already established a usable business value (any export). */
+function previousLoadingHasConfirmedValue(previous: ParsedOutletLoading | undefined): boolean {
+  return previous?.loadingTime != null && previous.loadingTimeAmbiguous !== true;
 }
 
-function previousDateOfBirthConfirmed(previous: ParsedOutletLpr | undefined): boolean {
-  return (
-    previous?.dateOfBirth != null &&
-    previous.dateOfBirthAmbiguous !== true &&
-    previous.dateOfBirthConfirmedInCurrentExport !== false
-  );
+function previousDateOfBirthHasConfirmedValue(previous: ParsedOutletLpr | undefined): boolean {
+  return previous?.dateOfBirth != null && previous.dateOfBirthAmbiguous !== true;
 }
 
 function preservedFieldProvenance(
@@ -243,7 +272,11 @@ function preservedFieldProvenance(
   previousOutlet: ParsedRetailOutlet | undefined,
 ): OutletProvenance {
   if (fieldProvenance?.sourceSha256) {
-    return fieldProvenance;
+    return {
+      freshness: "preserved_from_previous",
+      sourceSha256: fieldProvenance.sourceSha256,
+      importedAt: fieldProvenance.importedAt,
+    };
   }
   if (previousOutlet?.provenance?.sourceSha256) {
     return {
@@ -266,7 +299,7 @@ function mergeLoadingField(
   context: OutletMergeContext,
 ): ParsedOutletLoading {
   if (incoming.loadingTimeAmbiguous) {
-    if (previousLoadingConfirmed(previous)) {
+    if (previousLoadingHasConfirmedValue(previous)) {
       return {
         ...incoming,
         loadingTime: previous!.loadingTime,
@@ -297,6 +330,7 @@ function mergeLoadingField(
   if (incoming.loadingTime != null) {
     return {
       ...incoming,
+      loadingTimeAmbiguous: false,
       loadingTimeAmbiguousIncomingRaw: null,
       loadingTimeConfirmedInCurrentExport: true,
       loadingTimeFieldProvenance: currentProvenance(context),
@@ -317,7 +351,7 @@ function mergeLprField(
   context: OutletMergeContext,
 ): ParsedOutletLpr {
   if (incoming.dateOfBirthAmbiguous) {
-    if (previousDateOfBirthConfirmed(previous)) {
+    if (previousDateOfBirthHasConfirmedValue(previous)) {
       return {
         ...incoming,
         dateOfBirth: previous!.dateOfBirth,
@@ -348,6 +382,7 @@ function mergeLprField(
   if (incoming.dateOfBirth != null) {
     return {
       ...incoming,
+      dateOfBirthAmbiguous: false,
       dateOfBirthAmbiguousIncomingRaw: null,
       dateOfBirthConfirmedInCurrentExport: true,
       dateOfBirthFieldProvenance: currentProvenance(context),

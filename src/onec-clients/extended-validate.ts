@@ -34,7 +34,11 @@ import type {
   ValidatedExtendedClientsPayload,
 } from "./extended-types";
 import type { ValidationIssue, ValidationWarning } from "./types";
-import { countOutletGuidRowStats, outletsAreIdentical, outletsFieldsComplete } from "./outlet-identity";
+import {
+  countOutletGuidRowStats,
+  outletDuplicateRowsEquivalent,
+  outletsFieldsComplete,
+} from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
 export type ExtendedValidationFailure = {
@@ -1047,7 +1051,7 @@ function validateOutletGuidsAcrossFile(
         continue;
       }
 
-      if (outletsAreIdentical(previous.outlet, outlet)) {
+      if (outletDuplicateRowsEquivalent(previous.outlet, outlet)) {
         pushWarning(warnings, {
           code: "DUPLICATE_OUTLET_GUID_ROW",
           index: clientIndex,
