@@ -230,11 +230,29 @@ export async function runClientsImport(
   }
 
   const extendedBlockedCount = applied.counts.extendedBlockedCount ?? 0;
+  const extendedAppliedCount = applied.blockSummary?.extendedAppliedCount ?? 0;
+  const outletParentLinkConflicts = applied.blockSummary?.outletParentLinkConflicts ?? 0;
   const extendedApplied = applied.blockSummary?.extendedApplied;
+  const extendedBlockReason = applied.blockSummary?.extendedBlockReason ?? null;
   let applyMessage = "Client import applied successfully.";
   if (extendedApplied === false && extendedBlockedCount > 0) {
-    applyMessage =
-      "Legacy client fields applied; extended block was not published (awaiting live JSON contract verification).";
+    if (extendedBlockReason === "outlet_parent_link_conflict") {
+      applyMessage =
+        outletParentLinkConflicts === 1
+          ? "Legacy client fields applied; extended block blocked for 1 client due to outlet parent-card conflict with registry."
+          : `Legacy client fields applied; extended block blocked for ${extendedBlockedCount} client(s) due to ${outletParentLinkConflicts} outlet parent-card conflict(s) with registry.`;
+    } else if (extendedBlockReason === "awaiting_live_json_verification") {
+      applyMessage =
+        "Legacy client fields applied; extended block was not published (awaiting live JSON contract verification).";
+    } else if (extendedBlockReason === "extended_partially_blocked") {
+      applyMessage =
+        extendedAppliedCount > 0
+          ? `Client import applied with legacy fields; ${extendedAppliedCount} extended record(s) published and ${extendedBlockedCount} blocked.`
+          : "Client import applied with legacy fields; extended block was partially blocked.";
+    } else {
+      applyMessage =
+        "Legacy client fields applied; extended block was not fully published.";
+    }
   } else if (extendedApplied === true && extendedBlockedCount > 0) {
     applyMessage =
       "Client import applied with legacy fields; some extended records were skipped.";
@@ -261,8 +279,11 @@ export async function runClientsImport(
         changedCount: applied.counts.changedCount,
         unchangedCount: applied.counts.unchangedCount,
         extendedBlockedCount: extendedBlockedCount > 0 ? extendedBlockedCount : undefined,
+        extendedAppliedCount: extendedAppliedCount > 0 ? extendedAppliedCount : undefined,
         extendedApplied: extendedApplied === undefined ? undefined : extendedApplied,
-        extendedBlockReason: applied.blockSummary?.extendedBlockReason ?? undefined,
+        extendedBlockReason: extendedBlockReason ?? undefined,
+        outletParentLinkConflicts:
+          outletParentLinkConflicts > 0 ? outletParentLinkConflicts : undefined,
       },
     },
     secrets,

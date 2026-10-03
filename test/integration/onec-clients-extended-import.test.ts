@@ -8,6 +8,7 @@ import {
   EXTENDED_FIXTURE_GUIDS,
   sampleExtendedChild,
   sampleExtendedHolding,
+  sampleIdentifiedOutlet,
   validateClientsForApplyTest,
 } from "../helpers/onec-clients-extended-fixtures";
 import { sampleClient } from "../helpers/onec-clients-fixtures";
@@ -60,7 +61,7 @@ describe("onec clients extended import integration", { concurrency: false }, () 
     assert.equal(holdingRow.rows[0]?.is_holding, true);
     assert.equal(
       holdingRow.rows[0]?.extended_snapshot?.currentRetailOutlets?.[0]?.outletGuidStatus,
-      "not_provided",
+      "confirmed",
     );
 
     const journal = await pool.query<{ source_format_version: string | null }>(
@@ -243,29 +244,14 @@ describe("onec clients extended import integration", { concurrency: false }, () 
         guid_regional_manager: undefined,
         name_regional_manager: undefined,
         retail_outlets: [
-          {
-            holding: "Holding Alpha",
-            warehouse: true,
+          sampleIdentifiedOutlet({
             address: {
               store_address: "Updated store street",
               delivery_address: "Updated delivery dock",
               direction_of_the_route: "South",
             },
             information_loading: { loading_on_monday: true, loading_time: "11:00" },
-            managers: {
-              guid_manager: "",
-              name_manager: "",
-              guid_regional_manager: "",
-              name_regional_manager: "",
-              guid_hardware_manager: "",
-              name_hardware_manager: "",
-              guid_head_of_the_sales_department: "",
-              name_head_of_the_sales_department: "",
-            },
-            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
-            LPR_information: {},
-            additional_information: {},
-          },
+          }),
         ],
       }),
     ]);

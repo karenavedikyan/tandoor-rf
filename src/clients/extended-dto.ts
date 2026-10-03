@@ -1,9 +1,12 @@
 import type { AccessContext } from "../access/types";
 import type {
   ExtendedBlockFreshness,
+  ExtendedBlockProvenance,
+  ExtendedBlockProvenanceEntry,
   ExtendedFreshnessState,
   ExtendedSnapshot,
   ManagerAssignmentState,
+  OutletProvenance,
   ParsedManagerRef,
   ParsedRetailOutlet,
   RetailOutletHistoryEntry,
@@ -13,7 +16,6 @@ import {
   summarizeRowFreshness,
   summarizeRowFreshnessFromProvenance,
 } from "../onec-clients/extended-apply";
-import type { ExtendedBlockProvenance, ExtendedBlockProvenanceEntry } from "../onec-clients/extended-types";
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import { canReadNestedRetailOutlets, MAX_OUTLETS_IN_DETAIL_RESPONSE } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
@@ -53,9 +55,13 @@ export type RetailOutletContactsDto = {
 
 export type RetailOutletDto = {
   ordinal: number;
+  guidStore: string | null;
+  guidStoreShortLabel: string | null;
   holdingName: string;
   identityLabel: string;
+  closureStatus: "open" | "closed" | "not_provided" | "invalid";
   closureStatusLabel: string;
+  closureNote: string | null;
   warehouse: boolean | null;
   warehouseLabel: string;
   addresses: RetailOutletAddressDto;
@@ -63,6 +69,10 @@ export type RetailOutletDto = {
   managers: RetailOutletManagersDto;
   contacts: RetailOutletContactsDto;
   distributionAllowed: false;
+  distributionNote: string;
+  presentInCurrentExport: boolean;
+  dataSourceLabel: string;
+  freshnessLabel: string;
 };
 
 export type ClientExtendedManagersDto = {
@@ -105,8 +115,18 @@ export type ClientExtendedDto = {
   retailOutletHistoryCount: number;
   dataQualityLabel: string;
   sensitiveFieldsWithheld: true;
-  outletNormalizedReady: false;
+  outletNormalizedReady: boolean;
   clientExtendedReady: boolean;
+};
+
+type ExtendedRow = {
+  is_holding: boolean | null;
+  source_sha256?: string | null;
+  extended_format_version: string | null;
+  extended_source_sha256: string | null;
+  extended_imported_at: Date | null;
+  extended_freshness_state: ExtendedFreshnessState | null;
+  extended_snapshot: unknown;
 };
 
 type LoadingDayField = Exclude<keyof ParsedRetailOutlet["loading"], "loadingTime">;
@@ -352,19 +372,162 @@ function toLoadingDto(outlet: ParsedRetailOutlet): RetailOutletLoadingDto {
   };
 }
 
-function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
+function outletIdentityLabel(outlet: ParsedRetailOutlet): string {
+  if (outlet.outletGuidStatus === "confirmed" && outlet.guidStore) {
+    return `Торговая точка 1С · ${shortUuidLabel(outlet.guidStore)}`;
+  }
+  return "Точка из выгрузки 1С. Идентификатор ещё не передан";
+}
+
+type OutletPresentationContext = {
+  retailOutletsBlockFreshness: ExtendedFreshnessState | null;
+  retailOutletsBlockProvenance: ExtendedBlockProvenanceEntry | null;
+  row: ExtendedRow;
+};
+
+type EffectiveOutletPresentation = {
+  provenance: OutletProvenance;
+  closureConfirmedInCurrentExport: boolean;
+};
+
+function resolveEffectiveOutletPresentation(
+  outlet: ParsedRetailOutlet,
+  context: OutletPresentationContext,
+): EffectiveOutletPresentation {
+  const blockNotCurrent =
+    context.retailOutletsBlockFreshness != null && context.retailOutletsBlockFreshness !== "current";
+  const extendedNotUpdated =
+    context.row.extended_freshness_state === "preserved_from_previous" &&
+    extendedNotUpdatedOnLastImport(context.row);
+
+  let provenance: OutletProvenance;
+  const storedProvenance = outlet.provenance;
+  if (storedProvenance?.freshness) {
+    if (storedProvenance.freshness === "absent_from_current_export") {
+      provenance = {
+        freshness: "absent_from_current_export",
+        sourceSha256: storedProvenance.sourceSha256,
+        importedAt: storedProvenance.importedAt,
+      };
+    } else if (storedProvenance.freshness === "current" && extendedNotUpdated) {
+      provenance = {
+        freshness: "preserved_from_previous",
+        sourceSha256:
+          storedProvenance.sourceSha256 ||
+          context.retailOutletsBlockProvenance?.sourceSha256 ||
+          "",
+        importedAt:
+          storedProvenance.importedAt ||
+          context.retailOutletsBlockProvenance?.importedAt ||
+          "",
+      };
+    } else {
+      provenance = storedProvenance;
+    }
+  } else {
+    provenance = {
+      freshness:
+        blockNotCurrent || extendedNotUpdated
+          ? (context.retailOutletsBlockFreshness ?? "preserved_from_previous")
+          : "current",
+      sourceSha256: context.retailOutletsBlockProvenance?.sourceSha256 ?? "",
+      importedAt: context.retailOutletsBlockProvenance?.importedAt ?? "",
+    };
+  }
+
+  const presentInCurrentExport = provenance.freshness === "current" && !extendedNotUpdated;
+
+  return {
+    provenance,
+    closureConfirmedInCurrentExport:
+      presentInCurrentExport && Boolean(outlet.closureConfirmedInCurrentExport),
+  };
+}
+
+function outletDataSourceLabel(provenance: OutletProvenance): string {
+  if (provenance.freshness === "current") {
+    return "Подтверждено текущей выгрузкой";
+  }
+  if (provenance.freshness === "absent_from_current_export") {
+    return "Сохранено из предыдущей выгрузки; отсутствует в текущем файле";
+  }
+  if (provenance.freshness === "preserved_from_previous") {
+    return "Сохранено из предыдущей выгрузки";
+  }
+  return "Источник не подтверждён";
+}
+
+function outletFreshnessLabel(provenance: OutletProvenance): string {
+  const importedAtLabel = formatImportedAtLabel(provenance.importedAt);
+  const base = outletDataSourceLabel(provenance);
+  if (importedAtLabel) {
+    return `${base} (${importedAtLabel})`;
+  }
+  return base;
+}
+
+function outletClosurePresentation(
+  outlet: ParsedRetailOutlet,
+  closureConfirmedInCurrentExport: boolean,
+): {
+  status: RetailOutletDto["closureStatus"];
+  label: string;
+  note: string | null;
+} {
+  if (outlet.closureStatus === "open") {
+    const label = closureConfirmedInCurrentExport
+      ? "Открыта"
+      : "Открыта (статус сохранён; не подтверждён текущей выгрузкой)";
+    return { status: "open", label, note: null };
+  }
+  if (outlet.closureStatus === "closed") {
+    const label = closureConfirmedInCurrentExport
+      ? "Закрыта"
+      : "Закрыта (статус сохранён; не подтверждён текущей выгрузкой)";
+    return {
+      status: "closed",
+      label,
+      note: "Точка остаётся доступной для просмотра и истории. Новые записи дистрибуции недоступны.",
+    };
+  }
+  if (outlet.closureStatus === "invalid") {
+    return { status: "invalid", label: "Статус не передан", note: null };
+  }
+  return { status: "not_provided", label: "Статус не передан", note: null };
+}
+
+function outletDistributionNote(outlet: ParsedRetailOutlet): string {
+  if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore) {
+    return "Запись дистрибуции недоступна без подтверждённого идентификатора торговой точки.";
+  }
+  if (outlet.closureStatus === "closed") {
+    return "Запись дистрибуции недоступна для закрытой торговой точки.";
+  }
+  if (outlet.closureStatus !== "open") {
+    return "Запись дистрибуции недоступна без подтверждённого статуса торговой точки.";
+  }
+  return "Запись дистрибуции будет доступна на следующем этапе.";
+}
+
+function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationContext): RetailOutletDto {
+  const effective = resolveEffectiveOutletPresentation(outlet, context);
   const warehouseLabel =
     outlet.warehouse === true
       ? "Используется как склад"
       : outlet.warehouse === false
         ? "Не используется как склад"
         : "Признак склада не передан";
+  const closure = outletClosurePresentation(outlet, effective.closureConfirmedInCurrentExport);
 
   return {
     ordinal: outlet.ordinal,
+    guidStore: outlet.guidStore,
+    guidStoreShortLabel: outlet.guidStore ? shortUuidLabel(outlet.guidStore) : null,
     holdingName: outlet.holdingName,
-    identityLabel: "Точка из выгрузки 1С. Идентификатор ещё не передан",
-    closureStatusLabel: "Статус не передан",
+    identityLabel: outletIdentityLabel(outlet),
+    closureStatus: closure.status,
+    closureStatusLabel: closure.label,
+    closureNote: closure.note,
     warehouse: outlet.warehouse,
     warehouseLabel,
     addresses: {
@@ -385,6 +548,10 @@ function toOutletDto(outlet: ParsedRetailOutlet): RetailOutletDto {
       accountantEmail: outlet.contacts.accountantEmail,
     },
     distributionAllowed: false,
+    distributionNote: outletDistributionNote(outlet),
+    presentInCurrentExport: effective.provenance.freshness === "current",
+    dataSourceLabel: outletDataSourceLabel(effective.provenance),
+    freshnessLabel: outletFreshnessLabel(effective.provenance),
   };
 }
 
@@ -441,16 +608,6 @@ function resolveSnapshotManagerLinks(
     }),
   };
 }
-
-type ExtendedRow = {
-  is_holding: boolean | null;
-  source_sha256?: string | null;
-  extended_format_version: string | null;
-  extended_source_sha256: string | null;
-  extended_imported_at: Date | null;
-  extended_freshness_state: ExtendedFreshnessState | null;
-  extended_snapshot: unknown;
-};
 
 export type ClientExtendedDtoOptions = {
   linkedEmployeeGuids?: ReadonlySet<string>;
@@ -514,6 +671,7 @@ export function toClientExtendedDto(
   const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
+  const outletNormalizedReady = snapshot?.blocks?.outletNormalizedReady === true;
   const rawBlockProvenance = snapshot?.blocks?.blockProvenance ?? null;
   const effectiveBlockProvenance = rawBlockProvenance
     ? applyRowFreshnessOverride(rawBlockProvenance, row)
@@ -538,6 +696,16 @@ export function toClientExtendedDto(
     dataQualityLabel = "Частично подключено";
   }
 
+  const retailOutletsBlockFreshness =
+    effectiveBlockProvenance?.retailOutlets.freshness ??
+    snapshot?.blocks?.blockFreshness?.retailOutlets ??
+    null;
+  const outletPresentationContext: OutletPresentationContext = {
+    retailOutletsBlockFreshness,
+    retailOutletsBlockProvenance: effectiveBlockProvenance?.retailOutlets ?? null,
+    row,
+  };
+
   return {
     formatVersion: row.extended_format_version ?? snapshot?.formatVersion ?? "extended_v1",
     sourceSha256: resolvedSourceSha256,
@@ -554,14 +722,14 @@ export function toClientExtendedDto(
       hardwareManager: toManagerRefDto(hardwareManager),
       headOfSales: toManagerRefDto(headOfSales),
     },
-    retailOutlets: visibleOutlets.map(toOutletDto),
+    retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
     retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,
     retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
     retailOutletHistoryCount: outletAccessGranted ? historyCount : 0,
     dataQualityLabel,
     sensitiveFieldsWithheld: true,
-    outletNormalizedReady: false,
+    outletNormalizedReady,
     clientExtendedReady,
   };
 }

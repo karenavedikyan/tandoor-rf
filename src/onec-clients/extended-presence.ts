@@ -4,6 +4,7 @@ import type {
   ParsedManagerRef,
   ParsedRetailOutlet,
 } from "./extended-types";
+import { outletBusinessProjection, type OutletBusinessProjection } from "./outlet-identity";
 
 export type FieldPresenceState = "missing" | "present" | "explicit_empty" | "explicit_null";
 
@@ -20,7 +21,7 @@ export type ExtendedBusinessProjection = {
   regionalManager: Pick<ParsedManagerRef, "guid" | "name" | "state">;
   hardwareManager: Pick<ParsedManagerRef, "guid" | "name" | "state">;
   headOfSales: Pick<ParsedManagerRef, "guid" | "name" | "state">;
-  currentRetailOutlets: ParsedRetailOutlet[];
+  currentRetailOutlets: OutletBusinessProjection[];
 };
 
 function managerBusinessRef(ref: ParsedManagerRef): Pick<ParsedManagerRef, "guid" | "name" | "state"> {
@@ -36,7 +37,7 @@ export function extendedBusinessProjection(snapshot: ExtendedSnapshot | null): E
     regionalManager: managerBusinessRef(snapshot.regionalManager),
     hardwareManager: managerBusinessRef(snapshot.hardwareManager),
     headOfSales: managerBusinessRef(snapshot.headOfSales),
-    currentRetailOutlets: snapshot.currentRetailOutlets,
+    currentRetailOutlets: snapshot.currentRetailOutlets.map(outletBusinessProjection),
   };
 }
 

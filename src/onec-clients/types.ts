@@ -107,8 +107,10 @@ export type ClientsImportResult = {
     changedCount?: number;
     unchangedCount?: number;
     extendedBlockedCount?: number;
+    extendedAppliedCount?: number;
     extendedApplied?: boolean;
     extendedBlockReason?: string;
+    outletParentLinkConflicts?: number;
   };
   errorCode?: string;
 };

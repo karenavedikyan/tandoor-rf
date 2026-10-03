@@ -7,6 +7,8 @@ const MANAGER_A = "22222222-2222-4222-8222-222222222222";
 const MANAGER_B = "55555555-5555-4555-8555-555555555555";
 const REGIONAL = "66666666-6666-4666-8666-666666666666";
 const UNKNOWN = "99999999-9999-4999-8999-999999999999";
+const STORE_ONE = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+const STORE_TWO = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 export function sampleExtendedHolding(overrides: Record<string, unknown> = {}) {
   return {
@@ -27,6 +29,8 @@ export function sampleExtendedHolding(overrides: Record<string, unknown> = {}) {
     name_head_of_the_sales_department: "",
     retail_outlets: [
       {
+        guid_store: STORE_ONE,
+        closed: false,
         holding: "Holding Alpha",
         warehouse: true,
         address: {
@@ -126,6 +130,42 @@ export function buildExtendedClientsFileBytes(
   return buildClientsFileBytes(records);
 }
 
+export function sampleIdentifiedOutlet(overrides: Record<string, unknown> = {}) {
+  return {
+    guid_store: STORE_ONE,
+    closed: false,
+    holding: "Holding Alpha",
+    warehouse: true,
+    address: {
+      store_address: "Store 1 street",
+      delivery_address: "Delivery dock 1",
+      direction_of_the_route: "North",
+    },
+    information_loading: {
+      loading_on_monday: true,
+      loading_time: "09:00",
+    },
+    managers: {
+      guid_manager: "",
+      name_manager: "",
+      guid_regional_manager: REGIONAL,
+      name_regional_manager: "Regional Lead",
+      guid_hardware_manager: "",
+      name_hardware_manager: "",
+      guid_head_of_the_sales_department: "",
+      name_head_of_the_sales_department: "",
+    },
+    contact_information: {
+      store_phone: "+7 (495) 111-22-33",
+      accountant_phone: "",
+      accountant_email: "acc@example.test",
+    },
+    LPR_information: {},
+    additional_information: {},
+    ...overrides,
+  };
+}
+
 export const EXTENDED_FIXTURE_GUIDS = {
   HOLDING_GUID,
   CHILD_GUID,
@@ -133,6 +173,8 @@ export const EXTENDED_FIXTURE_GUIDS = {
   MANAGER_B,
   REGIONAL,
   UNKNOWN,
+  STORE_ONE,
+  STORE_TWO,
 };
 
 export function legacyOnlyFileBytes(): Buffer {

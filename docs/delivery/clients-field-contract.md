@@ -107,8 +107,8 @@
 | `retail_outlets[].managers.*` | ответственные ТТ; пустой GUID → «Не назначен», **без наследования** | validate + apply | UI |
 | `retail_outlets[].contact_information.*` | контакты магазина/бухгалтерии | validate | UI (whitelist) |
 | `retail_outlets[].LPR_information.*` | ЛПР, бонусы | validate (хранение) | **не публикуется** (deny-by-default) |
-| Постоянный GUID ТТ | — | **не реализовано** | блокер production-import ТТ |
-| Статус закрытой ТТ | — | **не реализовано** | UI: «Статус не передан» |
+| `retail_outlets[].guid_store` | постоянный UUID ТТ (подтверждено 1С-специалистом; **live JSON не проверен**) | validate + registry `onec_retail_outlets`; уникальность по всему файлу и в БД | UI: «Торговая точка 1С · …» |
+| `retail_outlets[].closed` | boolean закрытия (только `true`/`false`; null/строки/числа → ошибка) | validate + merge с сохранением предыдущего статуса при отсутствии поля | «Открыта» / «Закрыта» / «Статус не передан» |
 
 **Определение версии файла:** `extended_v1`, если **хотя бы одна** запись содержит `holding: boolean`, массив `retail_outlets` и/или ключи доп. ответственных (`guid_regional_manager`, `guid_hardware_manager`, `guid_head_of_the_sales_department` и пары `name_*`). Иначе — legacy (8 ключей, прежние правила).
 
@@ -116,7 +116,11 @@
 
 **Доступ к вложенным ТТ (API/UI):** deny-by-default; исключения только по матрице R13 — `admin`, `director` с `fullClientBase`. Менеджер с доступом к карточке холдинга **не** получает адреса/контакты/назначения вложенных ТТ без отдельного разрешения. Количество недоступных ТТ не раскрывается.
 
-**Снимок ТТ:** текущий массив хранится целиком в `extended_snapshot.currentRetailOutlets`; предыдущие снимки — в `retailOutletHistory[]` с собственными `sourceSha256` и `capturedAt`. Без постоянного GUID ТТ не объявляются закрытыми/исчезнувшими.
+**Снимок ТТ:** текущий массив хранится в `extended_snapshot.currentRetailOutlets`; подтверждённые `guid_store` дополнительно регистрируются в `onec_retail_outlets` (PK, связь с `guid_client`). Идентичность ТТ определяется **только** по `guid_store`, не по адресу/ordinal. Исчезновение GUID из следующего снимка **не** означает закрытие или удаление. Анонимные снимки без `guid_store` остаются read-only и **не** привязываются к новым GUID эвристически. Конфликт `guid_store` между карточками клиентов блокирует apply затронутых расширенных данных. История закрытия — `closureHistory[]` на точке; архивные снимки — `retailOutletHistory[]`.
+
+**Политика дублей `guid_store` в одном файле:** идентичные повторы одной строки — предупреждение `DUPLICATE_OUTLET_GUID_ROW`, в apply учитывается одна ТТ; противоречивые повторы (разные клиенты, `closed`, адрес) — ошибка `OUTLET_GUID_CONFLICT` / `DUPLICATE_OUTLET_GUID`, apply блокируется.
+
+**Диагностика (агрегаты, без PII):** `outletSourceRowCount`, `outletUniqueGuidCount`, `outletsWithGuid`, `outletsWithoutGuid`, `outletsOpen`, `outletsClosed`, `outletsUnknownClosure`, `duplicateOutletGuidCount`, `outletParentLinkConflicts`, `knownOutletsMissingFromSnapshot` (`null` = не проверено, число = проверено на apply). `blocks.outletFieldsComplete` — полнота входных полей (`guid_store` + `closed` на всех строках); `blocks.outletNormalizedReady` — **всегда false** до live-подтверждения контракта, не путать с полнотой полей.
 
 **Актуальность расширения:** колонки `extended_imported_at`, `extended_freshness_state` (`current` | `preserved_from_previous` | `not_provided_in_snapshot`). После legacy-снимка блок помечается как сохранённый из предыдущей выгрузки.
 

@@ -4,9 +4,13 @@ import {
   extendedBusinessDataEqual,
   mergeHoldingFlag,
   mergeManagerField,
-  mergeRetailOutlets,
   type ExtendedRecordFieldPresence,
 } from "./extended-presence";
+import {
+  deriveRetailOutletsBlockFreshness,
+  mergeRetailOutletsWithIdentity,
+  outletsAreIdentical,
+} from "./outlet-identity";
 import type {
   ExtendedBlockFreshness,
   ExtendedBlockProvenance,
@@ -44,30 +48,151 @@ function readExistingSnapshot(snapshot: unknown): ExtendedSnapshot | null {
   return snapshot as ExtendedSnapshot;
 }
 
+function findNextOutletForHistory(
+  previousOutlet: ParsedRetailOutlet,
+  nextOutlets: ParsedRetailOutlet[],
+): ParsedRetailOutlet | undefined {
+  if (previousOutlet.outletGuidStatus === "confirmed" && previousOutlet.guidStore) {
+    const key = previousOutlet.guidStore.toLowerCase();
+    return nextOutlets.find(
+      (outlet) =>
+        outlet.outletGuidStatus === "confirmed" &&
+        outlet.guidStore?.toLowerCase() === key,
+    );
+  }
+  return nextOutlets.find((outlet) => outletsAreIdentical(outlet, previousOutlet));
+}
+
+function outletAlreadyArchivedInMerge(
+  outlet: ParsedRetailOutlet,
+  mergeHistoryEntries: RetailOutletHistoryEntry[],
+): boolean {
+  return mergeHistoryEntries.some((entry) =>
+    entry.retailOutlets.some((archived) => outletsAreIdentical(archived, outlet)),
+  );
+}
+
+function outletHistoryStateChanged(
+  previousOutlet: ParsedRetailOutlet,
+  nextOutlet: ParsedRetailOutlet | undefined,
+): boolean {
+  if (!nextOutlet) {
+    return true;
+  }
+  if (!outletsAreIdentical(previousOutlet, nextOutlet)) {
+    return true;
+  }
+  if (previousOutlet.provenance?.freshness !== nextOutlet.provenance?.freshness) {
+    return true;
+  }
+  if (previousOutlet.closureConfirmedInCurrentExport !== nextOutlet.closureConfirmedInCurrentExport) {
+    return true;
+  }
+  return false;
+}
+
+function resolveArchiveOrigin(
+  outlet: ParsedRetailOutlet,
+  previous: ExtendedSnapshot,
+): { sourceSha256: string; capturedAt: string } {
+  if (outlet.provenance?.sourceSha256) {
+    return {
+      sourceSha256: outlet.provenance.sourceSha256,
+      capturedAt: outlet.provenance.importedAt,
+    };
+  }
+  const blockProvenance = previous.blocks?.blockProvenance?.retailOutlets;
+  return {
+    sourceSha256: blockProvenance?.sourceSha256 ?? previous.sourceSha256,
+    capturedAt: blockProvenance?.importedAt ?? previous.importedAt,
+  };
+}
+
+function appendOutletsToHistoryByOrigin(
+  history: RetailOutletHistoryEntry[],
+  outlets: ParsedRetailOutlet[],
+  previous: ExtendedSnapshot,
+  archivedAt: string,
+): void {
+  const grouped = new Map<
+    string,
+    { sourceSha256: string; capturedAt: string; retailOutlets: ParsedRetailOutlet[] }
+  >();
+  for (const outlet of outlets) {
+    const origin = resolveArchiveOrigin(outlet, previous);
+    const key = `${origin.sourceSha256}\0${origin.capturedAt}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.retailOutlets.push(outlet);
+      continue;
+    }
+    grouped.set(key, {
+      sourceSha256: origin.sourceSha256,
+      capturedAt: origin.capturedAt,
+      retailOutlets: [outlet],
+    });
+  }
+  for (const entry of grouped.values()) {
+    history.push({
+      sourceSha256: entry.sourceSha256,
+      capturedAt: entry.capturedAt,
+      archivedAt,
+      retailOutlets: entry.retailOutlets,
+    });
+  }
+}
+
 function appendHistoryWhenBusinessChanged(
   previous: ExtendedSnapshot | null,
   nextOutlets: ParsedRetailOutlet[],
+  baseHistory: RetailOutletHistoryEntry[],
+  mergeHistoryEntries: RetailOutletHistoryEntry[],
+  archivedAt: string,
 ): RetailOutletHistoryEntry[] {
-  const history = previous?.retailOutletHistory ? [...previous.retailOutletHistory] : [];
+  const history = [...baseHistory];
   const previousCurrent = previous?.currentRetailOutlets ?? [];
   if (previousCurrent.length === 0) {
     return history;
   }
-  if (extendedBusinessDataEqual(previous, {
-    ...previous!,
-    currentRetailOutlets: nextOutlets,
-  })) {
+  if (
+    extendedBusinessDataEqual(previous, {
+      ...previous!,
+      currentRetailOutlets: nextOutlets,
+    })
+  ) {
     return history;
   }
   if (!previous) {
     return history;
   }
-  const previousOutletProvenance = previous.blocks?.blockProvenance?.retailOutlets;
-  history.push({
-    sourceSha256: previousOutletProvenance?.sourceSha256 ?? previous.sourceSha256,
-    capturedAt: previousOutletProvenance?.importedAt ?? previous.importedAt,
-    retailOutlets: previousCurrent,
+
+  const outletsToArchive = previousCurrent.filter((previousOutlet) => {
+    if (outletAlreadyArchivedInMerge(previousOutlet, mergeHistoryEntries)) {
+      return false;
+    }
+    const nextOutlet = findNextOutletForHistory(previousOutlet, nextOutlets);
+    return outletHistoryStateChanged(previousOutlet, nextOutlet);
   });
+
+  const orderOnlyChange =
+    outletsToArchive.length === 0 &&
+    previousCurrent.length === nextOutlets.length &&
+    previousCurrent.length > 0 &&
+    previousCurrent.every((previousOutlet) => {
+      const nextOutlet = findNextOutletForHistory(previousOutlet, nextOutlets);
+      return nextOutlet && outletsAreIdentical(previousOutlet, nextOutlet);
+    });
+
+  if (outletsToArchive.length === 0 && !orderOnlyChange) {
+    return history;
+  }
+
+  appendOutletsToHistoryByOrigin(
+    history,
+    orderOnlyChange ? previousCurrent : outletsToArchive,
+    previous,
+    archivedAt,
+  );
   return history;
 }
 
@@ -201,11 +326,17 @@ export function buildExtendedSnapshotJson(
     previous?.headOfSales,
     isNewClient,
   );
-  const currentRetailOutlets = mergeRetailOutlets(
+  const outletMerge = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
     previous?.currentRetailOutlets,
+    { sourceSha256, importedAt },
   );
+  const currentRetailOutlets = outletMerge.outlets;
+  const retailOutletHistory = [
+    ...(previous?.retailOutletHistory ?? []),
+    ...outletMerge.historyEntries,
+  ];
 
   const businessChanged = !extendedBusinessDataEqual(previous, {
     formatVersion: "extended_v1",
@@ -216,14 +347,21 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory: previous?.retailOutletHistory ?? [],
+    retailOutletHistory,
     blocks: previous?.blocks ?? {
       clientExtendedReady: false,
       outletNormalizedReady: false,
     },
   });
 
-  const blockFreshness = buildBlockFreshness(record.fieldPresence, hasPrevious);
+  const blockFreshness = {
+    ...buildBlockFreshness(record.fieldPresence, hasPrevious),
+    retailOutlets: deriveRetailOutletsBlockFreshness(
+      currentRetailOutlets,
+      record.fieldPresence.retailOutlets,
+      hasPrevious,
+    ),
+  };
   const blockProvenance = buildBlockProvenance(blockFreshness, previous, sourceSha256, importedAt);
   const effectiveImportedAt =
     previous && !businessChanged ? previous.importedAt : importedAt;
@@ -237,7 +375,13 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     currentRetailOutlets,
-    retailOutletHistory: appendHistoryWhenBusinessChanged(previous, currentRetailOutlets),
+    retailOutletHistory: appendHistoryWhenBusinessChanged(
+      previous,
+      currentRetailOutlets,
+      retailOutletHistory,
+      outletMerge.historyEntries,
+      importedAt,
+    ),
     blocks: {
       clientExtendedReady: options.contractVerified,
       outletNormalizedReady: false,

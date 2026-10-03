@@ -8,6 +8,7 @@ import {
   resolveMockResponse,
   syntheticDetailPayload,
   syntheticExtendedDetailPayload,
+  syntheticOutletMock,
 } from "./helpers/clients-api-mocks";
 
 describe("client card extended browser (mocked API)", { concurrency: false }, () => {
@@ -114,6 +115,109 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     const text = await page.locator("#pc-panel-data").innerText();
     assert.match(text, /Сохранено из предыдущей выгрузки/);
     assert.match(text, /1 из 25/);
+    await context.close();
+  });
+
+  it("shows open, closed, unknown and preserved outlet statuses", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.retailOutlets = [
+      syntheticOutletMock({
+        ordinal: 0,
+        guidStore: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+        guidStoreShortLabel: "cccc…ccc1",
+        identityLabel: "Торговая точка 1С · cccc…ccc1",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта",
+        dataSourceLabel: "Подтверждено текущей выгрузкой",
+      }),
+      syntheticOutletMock({
+        ordinal: 1,
+        guidStore: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        guidStoreShortLabel: "dddd…dddd",
+        identityLabel: "Торговая точка 1С · dddd…dddd",
+        closureStatus: "closed",
+        closureStatusLabel: "Закрыта",
+        closureNote: "Точка остаётся доступной для просмотра и истории. Новые записи дистрибуции недоступны.",
+        dataSourceLabel: "Подтверждено текущей выгрузкой",
+        distributionNote: "Запись дистрибуции недоступна для закрытой торговой точки.",
+      }),
+      syntheticOutletMock({
+        ordinal: 2,
+        closureStatus: "not_provided",
+        closureStatusLabel: "Статус не передан",
+      }),
+      syntheticOutletMock({
+        ordinal: 3,
+        guidStore: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        identityLabel: "Торговая точка 1С · eeee…eeee",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта",
+        presentInCurrentExport: false,
+        dataSourceLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле",
+        freshnessLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле (01.01.2026, 13:00)",
+      }),
+    ];
+    detail.client.extended.retailOutletsTotalCount = 4;
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /Открыта/);
+    assert.match(text, /Закрыта/);
+    assert.match(text, /Статус не передан/);
+    assert.match(text, /отсутствует в текущем файле/);
+    assert.match(text, /4 точек в текущем снимке/);
+    await context.close();
+  });
+
+  it("shows preserved outlet source and unconfirmed closure in UI", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.retailOutlets = [
+      syntheticOutletMock({
+        guidStore: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        identityLabel: "Торговая точка 1С · eeee…eeee",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта (статус сохранён; не подтверждён текущей выгрузкой)",
+        presentInCurrentExport: false,
+        dataSourceLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле",
+        freshnessLabel: "Сохранено из предыдущей выгрузки; отсутствует в текущем файле (01.01.2026, 13:00)",
+      }),
+    ];
+    detail.client.extended.retailOutletsTotalCount = 1;
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /отсутствует в текущем файле/);
+    assert.match(text, /не подтверждён текущей выгрузкой/);
+    await context.close();
+  });
+
+  it("does not duplicate archived anonymous outlet in current count", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const detail = syntheticExtendedDetailPayload("granted");
+    detail.client.extended.retailOutlets = [
+      syntheticOutletMock({
+        guidStore: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+        identityLabel: "Торговая точка 1С · cccc…ccc1",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта",
+      }),
+    ];
+    detail.client.extended.retailOutletsTotalCount = 1;
+    detail.client.extended.retailOutletHistoryCount = 1;
+    await installMocks(page, detail);
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /Торговая точка 1С · cccc…ccc1/);
+    assert.equal(await page.locator('[data-testid^="pc-outlet-"]').count(), 1);
+    assert.doesNotMatch(text, /Идентификатор ещё не передан.*Идентификатор ещё не передан/);
     await context.close();
   });
 
