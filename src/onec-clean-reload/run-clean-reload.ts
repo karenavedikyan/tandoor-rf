@@ -35,6 +35,7 @@ export async function runCleanReloadCli(argv: string[] = process.argv.slice(2)):
         durationMs: 0,
         plan: {
           targetDbFingerprint: "",
+          targetDb: { host: "", port: "", database: "" },
           bundleFingerprint: "",
           stats: {
             clientsRecordCount: 0,
@@ -47,6 +48,8 @@ export async function runCleanReloadCli(argv: string[] = process.argv.slice(2)):
             clientsWithoutManager: 0,
             unresolvedHoldingLinks: 0,
           },
+          schemaDependencies: [],
+          blockers: [],
           purgeScope: { tableGroups: [], orphanCleanupStatements: 0, catalogUntouched: true },
         },
       };

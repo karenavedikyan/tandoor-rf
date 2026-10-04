@@ -17,7 +17,45 @@ import { EXTENDED_FIXTURE_GUIDS } from "./onec-clients-extended-fixtures";
 export const UNASSIGNED_ROSTER_EMPLOYEE = "88888888-8888-4888-8888-888888888888";
 
 export function buildCleanReloadBundleClientsBytes(): Buffer {
-  return buildExtendedClientsFileBytes([sampleExtendedHolding(), sampleExtendedChild()]);
+  return buildExtendedClientsFileBytes([
+    sampleExtendedHolding(),
+    sampleExtendedChild({
+      retail_outlets: [
+        {
+          guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+          closed: true,
+          holding: "Holding Alpha",
+          warehouse: false,
+          address: {
+            store_address: "Child store",
+            delivery_address: "",
+            direction_of_the_route: "",
+          },
+          information_loading: {
+            loading_on_friday: true,
+            loading_time: "10:30",
+          },
+          managers: {
+            guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_B,
+            name_manager: "Manager Two",
+            guid_regional_manager: "",
+            name_regional_manager: "",
+            guid_hardware_manager: "",
+            name_hardware_manager: "",
+            guid_head_of_the_sales_department: "",
+            name_head_of_the_sales_department: "",
+          },
+          contact_information: {
+            store_phone: "",
+            accountant_phone: "",
+            accountant_email: "",
+          },
+          LPR_information: {},
+          additional_information: {},
+        },
+      ],
+    }),
+  ]);
 }
 
 export function buildCleanReloadBundleEmployeesBytes(): Buffer {

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseWholesaleEmployeeRosterBytes } from "../onec-clients/employee-roster";
 import type { HoldingLinkValidationPolicy } from "../onec-clients/holding-link-policy";
@@ -12,6 +11,9 @@ import {
   BUNDLE_EMPLOYEES_FILE,
   DEFAULT_HOLDING_LINK_POLICY,
 } from "./constants";
+import { validateCleanReloadOutletIdentityBytes } from "./outlet-validation";
+import { readBoundedBundleFile } from "./read-bounded-file";
+import { validateCleanReloadRosterSqlFields } from "./roster-validation";
 import type { PinnedBundleFile, PinnedCleanReloadBundle } from "./types";
 
 function sha256Buffer(bytes: Buffer): string {
@@ -40,16 +42,6 @@ export function computeBundleFingerprint(input: {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
-async function readRequiredFile(bundleDir: string, relativePath: string): Promise<Buffer> {
-  try {
-    return await readFile(path.join(bundleDir, relativePath));
-  } catch {
-    throw Object.assign(new Error(`Required bundle file is missing or unreadable: ${relativePath}.`), {
-      code: "BUNDLE_FILE_MISSING",
-    });
-  }
-}
-
 export async function loadPinnedCleanReloadBundle(input: {
   bundleDir: string;
   holdingLinkPolicy?: HoldingLinkValidationPolicy;
@@ -57,10 +49,26 @@ export async function loadPinnedCleanReloadBundle(input: {
   const bundleDir = path.resolve(input.bundleDir);
   const holdingLinkPolicy = input.holdingLinkPolicy ?? DEFAULT_HOLDING_LINK_POLICY;
 
-  const clientsBytes = await readRequiredFile(bundleDir, BUNDLE_CLIENTS_FILE);
-  const employeesBytes = await readRequiredFile(bundleDir, BUNDLE_EMPLOYEES_FILE);
+  const clientsBytes = await readBoundedBundleFile(bundleDir, BUNDLE_CLIENTS_FILE);
+  const employeesBytes = await readBoundedBundleFile(bundleDir, BUNDLE_EMPLOYEES_FILE);
   const clients = pinFile(BUNDLE_CLIENTS_FILE, clientsBytes);
   const employees = pinFile(BUNDLE_EMPLOYEES_FILE, employeesBytes);
+
+  const outletValidation = validateCleanReloadOutletIdentityBytes(clientsBytes);
+  if (!outletValidation.ok) {
+    throw Object.assign(new Error("Clean reload requires identified retail outlets (guid_store + closed)."), {
+      code: outletValidation.code,
+      issues: outletValidation.issues,
+    });
+  }
+
+  const rosterSqlValidation = validateCleanReloadRosterSqlFields(employeesBytes);
+  if (!rosterSqlValidation.ok) {
+    throw Object.assign(new Error("Employee roster contains fields that cannot be stored in PostgreSQL."), {
+      code: rosterSqlValidation.code,
+      issues: rosterSqlValidation.issues,
+    });
+  }
 
   const rosterParsed = parseWholesaleEmployeeRosterBytes(employeesBytes);
   if (!rosterParsed.ok) {
@@ -111,5 +119,6 @@ export async function loadPinnedCleanReloadBundle(input: {
     employeeRoster: rosterParsed.roster,
     verificationFingerprint,
     stats,
+    expectedOutletGuids: outletValidation.outletGuids,
   };
 }

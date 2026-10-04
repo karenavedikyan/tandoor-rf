@@ -9,13 +9,15 @@ import { storeExtendedContractConfirmation } from "../onec-clients/baseline-repl
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { loadPinnedCleanReloadBundle } from "./bundle";
 import {
-  assertCleanReloadLocksAvailable,
-  assertNoConcurrentImports,
+  assertApplyConcurrentImportsClear,
   buildCleanReloadPlan,
+  readConcurrentImportState,
   releaseCleanReloadLock,
+  runCleanReloadPreflight,
   supersedePendingImportJobs,
   tryAcquireCleanReloadLock,
 } from "./preflight";
+import { assertCleanReloadSchemaReady, inspectCleanReloadSchema } from "./schema-preflight";
 import { purgeCleanReloadScope } from "./purge";
 import { replaceWholesaleEmployeeRoster, revokeEmployeeLinksOutsideRoster } from "./roster-apply";
 import { computeTargetDbFingerprint } from "./target-db";
@@ -44,6 +46,23 @@ function failure(
   };
 }
 
+async function buildPlanWithLivePreflight(
+  databaseUrl: string,
+  bundle: Awaited<ReturnType<typeof loadPinnedCleanReloadBundle>>,
+  mode: "dry_run" | "apply",
+): Promise<CleanReloadPlan> {
+  const pool = new Pool(createPgPoolOptions(databaseUrl));
+  const client = await pool.connect();
+  try {
+    const schema = await inspectCleanReloadSchema(client);
+    const concurrent = await readConcurrentImportState(client);
+    return buildCleanReloadPlan(databaseUrl, bundle, schema, concurrent);
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
 export async function runCleanReload(options: RunCleanReloadOptions): Promise<CleanReloadResult> {
   const startedAt = Date.now();
   const mode = options.mode;
@@ -61,7 +80,53 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     });
   }
 
-  const plan = buildCleanReloadPlan(options.databaseUrl, bundle);
+  let plan: CleanReloadPlan;
+  try {
+    plan = await buildPlanWithLivePreflight(options.databaseUrl, bundle, mode);
+  } catch (error) {
+    return failure(
+      mode,
+      startedAt,
+      (error as { code?: string }).code ?? "PREFLIGHT_FAILED",
+      error instanceof Error ? error.message : "Preflight failed.",
+      buildCleanReloadPlan(
+        options.databaseUrl,
+        bundle,
+        { dependencies: [], missing: ["table:onec_wholesale_employee_roster"] },
+        { runningClientImports: 0, pendingImportJobs: 0 },
+      ),
+    );
+  }
+
+  if (plan.blockers.length > 0) {
+    const schemaBlocker = plan.blockers.find((item) => item.startsWith("MIGRATIONS_NOT_READY:"));
+    if (schemaBlocker) {
+      return failure(
+        mode,
+        startedAt,
+        "MIGRATIONS_NOT_READY",
+        "Database schema is not ready for clean reload (apply migration 032 and earlier client migrations).",
+        plan,
+        { blockers: plan.blockers },
+      );
+    }
+    if (mode === "dry_run") {
+      const code = plan.blockers.includes("PENDING_IMPORT_JOBS")
+        ? "PENDING_IMPORT_JOBS"
+        : plan.blockers.includes("CONCURRENT_CLIENT_IMPORT")
+          ? "CONCURRENT_CLIENT_IMPORT"
+          : "PREFLIGHT_BLOCKED";
+      return failure(
+        mode,
+        startedAt,
+        code,
+        "Clean reload preflight blockers must be resolved before dry-run.",
+        plan,
+        { blockers: plan.blockers },
+      );
+    }
+  }
+
   const rosterGuids = Array.from(bundle.employeeRoster.wholesaleGuids);
 
   if (mode === "apply") {
@@ -102,8 +167,7 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       const pool = new Pool(createPgPoolOptions(options.databaseUrl));
       const client = await pool.connect();
       try {
-        await assertCleanReloadLocksAvailable(client);
-        await assertNoConcurrentImports(client);
+        await runCleanReloadPreflight(client, "dry_run");
       } finally {
         client.release();
         await pool.end();
@@ -130,10 +194,13 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
   let pg: PoolClient | undefined;
   let cleanReloadLockHeld = false;
   let importLockHeld = false;
+  let commitAttempted = false;
+  let commitConfirmed = false;
 
   try {
     pg = await pool.connect();
-    await assertNoConcurrentImports(pg);
+
+    await assertCleanReloadSchemaReady(pg);
 
     if (!(await tryAcquireCleanReloadLock(pg))) {
       return failure(mode, startedAt, "CLEAN_RELOAD_LOCKED", "Another clean reload is already in progress.", plan);
@@ -145,10 +212,12 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     }
     importLockHeld = true;
 
+    await assertApplyConcurrentImportsClear(pg);
+
     await pg.query("BEGIN");
     await supersedePendingImportJobs(pg);
     await purgeCleanReloadScope(pg);
-    await options.testHooks?.afterPurge?.();
+    await options.testHooks?.afterPurge?.(pg);
 
     const revokedEmployeeLinks = await revokeEmployeeLinksOutsideRoster(pg, rosterGuids);
 
@@ -188,16 +257,17 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       });
     }
 
-    await options.testHooks?.afterClientsImport?.();
-
-    await options.testHooks?.beforeRosterReplace?.();
+    await options.testHooks?.afterClientsImport?.(pg);
+    await options.testHooks?.beforeRosterReplace?.(pg);
 
     const rosterEmployeeCount = await replaceWholesaleEmployeeRoster(pg, {
       sourceSha256: bundle.employeeRoster.sourceSha256,
       records: bundle.employeeRoster.records,
     });
 
+    commitAttempted = true;
     await pg.query("COMMIT");
+    commitConfirmed = true;
 
     return {
       ok: true,
@@ -208,16 +278,32 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
         clientsImportRunId: importResult.runId!,
         rosterEmployeeCount,
         revokedEmployeeLinks,
+        outletGuidsLoaded: bundle.expectedOutletGuids,
       },
     };
   } catch (error) {
     if (pg) {
       try {
-        await pg.query("ROLLBACK");
+        if (commitAttempted && !commitConfirmed) {
+          await pg.query("ROLLBACK");
+        } else if (!commitAttempted) {
+          await pg.query("ROLLBACK");
+        }
       } catch {
         // ignore rollback failure
       }
     }
+
+    if (commitAttempted && !commitConfirmed) {
+      return failure(
+        mode,
+        startedAt,
+        "COMMIT_UNCERTAIN",
+        "Clean reload commit outcome is unknown; inspect database state before retrying this destructive procedure.",
+        plan,
+      );
+    }
+
     return failure(
       mode,
       startedAt,

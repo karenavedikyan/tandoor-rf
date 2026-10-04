@@ -33,12 +33,20 @@ export type PinnedCleanReloadBundle = {
   employeeRoster: WholesaleEmployeeRoster;
   verificationFingerprint: string;
   stats: BundleCompositionStats;
+  expectedOutletGuids: readonly string[];
 };
 
 export type CleanReloadPlan = {
   targetDbFingerprint: string;
+  targetDb: {
+    host: string;
+    port: string;
+    database: string;
+  };
   bundleFingerprint: string;
   stats: BundleCompositionStats;
+  schemaDependencies: string[];
+  blockers: string[];
   purgeScope: {
     tableGroups: string[];
     orphanCleanupStatements: number;
@@ -55,6 +63,7 @@ export type CleanReloadSuccess = {
     clientsImportRunId: string;
     rosterEmployeeCount: number;
     revokedEmployeeLinks: number;
+    outletGuidsLoaded: readonly string[];
   };
 };
 
@@ -71,9 +80,9 @@ export type CleanReloadFailure = {
 export type CleanReloadResult = CleanReloadSuccess | CleanReloadFailure;
 
 export type CleanReloadTestHooks = {
-  afterPurge?: () => Promise<void>;
-  afterClientsImport?: () => Promise<void>;
-  beforeRosterReplace?: () => Promise<void>;
+  afterPurge?: (client: import("pg").PoolClient) => Promise<void>;
+  afterClientsImport?: (client: import("pg").PoolClient) => Promise<void>;
+  beforeRosterReplace?: (client: import("pg").PoolClient) => Promise<void>;
 };
 
 export type RunCleanReloadOptions = {

@@ -16,6 +16,7 @@ import { validateClientsForApplyTest } from "../helpers/onec-clients-extended-fi
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import {
+  buildCleanReloadBundleClientsBytes,
   buildCleanReloadBundleEmployeesBytes,
   UNASSIGNED_ROSTER_EMPLOYEE,
   writeCleanReloadBundleDir,
@@ -166,7 +167,20 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     assert.equal(validatedCatalog.ok, true);
     const catalogApply = await applyCatalogImport(databaseUrl, validatedCatalog.data!);
     assert.equal(catalogApply.ok, true);
+
+    const seedPool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await seedPool.query(
+      `
+        INSERT INTO onec_catalog_image_assets (source_path, status, content_sha256, byte_size)
+        VALUES ('images/clean-reload-seed.png', 'ready', $1, 128)
+        ON CONFLICT (source_path) DO NOTHING
+      `,
+      ["a".repeat(64)],
+    );
+    await seedPool.end();
+
     catalogBefore = await readCatalogSnapshot(databaseUrl);
+    assert.ok(catalogBefore.imageAssetCount >= 1);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
@@ -216,7 +230,13 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     assert.equal(dryRun.plan.targetDbFingerprint, computeTargetDbFingerprint(databaseUrl));
     assert.equal(dryRun.plan.stats.clientsRecordCount, 2);
     assert.equal(dryRun.plan.stats.wholesaleEmployeeCount, 4);
+    assert.equal(dryRun.plan.stats.retailOutletsOpen, 1);
+    assert.equal(dryRun.plan.stats.retailOutletsClosed, 1);
+    assert.equal(dryRun.plan.stats.retailOutletsWithoutGuidStore, 0);
     assert.equal(dryRun.plan.purgeScope.catalogUntouched, true);
+    assert.ok(dryRun.plan.targetDb.host);
+    assert.ok(dryRun.plan.schemaDependencies.includes("table:onec_wholesale_employee_roster"));
+    assert.equal(dryRun.plan.blockers.length, 0);
 
     const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
     const afterClients = await poolAfter.query<{ count: string }>(
@@ -247,15 +267,17 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     );
     assert.equal(grantCount.rows[0]?.count, "0");
 
-    const closedOutlet = await pool.query<{ is_closed: boolean }>(
-      `
-        SELECT is_closed
-        FROM onec_retail_outlets
-        WHERE guid_store = $1::uuid
-      `,
-      [EXTENDED_FIXTURE_GUIDS.STORE_ONE],
+    const outletRows = await pool.query<{ guid_store: string; is_closed: boolean }>(
+      `SELECT guid_store::text, is_closed FROM onec_retail_outlets ORDER BY guid_store`,
     );
-    assert.equal(closedOutlet.rows[0]?.is_closed, false);
+    assert.deepEqual(
+      outletRows.rows.map((row) => row.guid_store).sort(),
+      [EXTENDED_FIXTURE_GUIDS.STORE_ONE, EXTENDED_FIXTURE_GUIDS.STORE_TWO].sort(),
+    );
+    const openOutlet = outletRows.rows.find((row) => row.guid_store === EXTENDED_FIXTURE_GUIDS.STORE_ONE);
+    const closedOutlet = outletRows.rows.find((row) => row.guid_store === EXTENDED_FIXTURE_GUIDS.STORE_TWO);
+    assert.equal(openOutlet?.is_closed, false);
+    assert.equal(closedOutlet?.is_closed, true);
 
     const rosterCount = await pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_roster`,
@@ -306,11 +328,9 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     });
     assert.equal(dryRun.ok, true);
 
-    const mutatedBytes = buildExtendedClientsFileBytes([
-      sampleExtendedHolding({ address: "Mutated HQ address" }),
-      sampleExtendedChild(),
-    ]);
-    await writeFile(path.join(bundleDir, "all_clients.json"), mutatedBytes);
+    const parsedClients = JSON.parse(buildCleanReloadBundleClientsBytes().toString("utf8")) as Array<Record<string, unknown>>;
+    parsedClients[0]!.address = "Mutated HQ address";
+    await writeFile(path.join(bundleDir, "all_clients.json"), Buffer.from(JSON.stringify(parsedClients), "utf8"));
 
     const apply = await runCleanReload({
       mode: "apply",
@@ -324,6 +344,55 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     assert.equal(apply.ok, false);
     if (!apply.ok) {
       assert.equal(apply.code, "BUNDLE_FINGERPRINT_MISMATCH");
+    }
+  });
+
+  it("rejects bundle with anonymous retail outlets before purge", async () => {
+    const badClients = buildExtendedClientsFileBytes([
+      sampleExtendedHolding(),
+      sampleExtendedChild({
+        retail_outlets: [
+          {
+            holding: "Holding Alpha",
+            warehouse: false,
+            address: { store_address: "No guid" },
+          },
+        ],
+      }),
+    ]);
+    await writeFile(path.join(bundleDir, "all_clients.json"), badClients);
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "OUTLET_IDENTITY_REQUIRED");
+    }
+  });
+
+  it("rejects roster with invalid date_of_assumption before purge", async () => {
+    const badEmployees = buildCleanReloadBundleEmployeesBytes();
+    const parsed = JSON.parse(badEmployees.toString("utf8")) as Array<Record<string, unknown>>;
+    parsed[0]!.date_of_assumption = "not-a-date";
+    await writeFile(path.join(bundleDir, BUNDLE_EMPLOYEES_FILE), Buffer.from(JSON.stringify(parsed), "utf8"));
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "ROSTER_FIELD_INVALID");
+    }
+  });
+
+  it("dry-run reports migrations_not_ready when roster tables are absent", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DROP TABLE IF EXISTS onec_wholesale_employee_roster CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS onec_wholesale_roster_state CASCADE`);
+    await pool.end();
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "MIGRATIONS_NOT_READY");
+      assert.ok(dryRun.plan?.blockers.some((item) => item.includes("onec_wholesale_employee_roster")));
     }
   });
 
@@ -378,6 +447,34 @@ describe("onec clean reload integration", { concurrency: false }, () => {
       testHooks: {
         afterPurge: async () => {
           throw Object.assign(new Error("Injected purge-stage failure."), { code: "TEST_PURGE_FAILURE" });
+        },
+      },
+    });
+    assert.equal(apply.ok, false);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyStill = await pool.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await pool.end();
+  });
+
+  it("rolls back when roster INSERT fails at SQL layer", async () => {
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, true);
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "rollback-roster-sql",
+      testHooks: {
+        beforeRosterReplace: async (client) => {
+          await client.query(
+            `ALTER TABLE onec_wholesale_employee_roster ADD CONSTRAINT clean_reload_test_block CHECK (FALSE)`,
+          );
         },
       },
     });

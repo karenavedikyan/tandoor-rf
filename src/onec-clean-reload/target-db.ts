@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 
-export function computeTargetDbFingerprint(databaseUrl: string): string {
+export type TargetDbDisplay = {
+  host: string;
+  port: string;
+  database: string;
+};
+
+export function parseTargetDbDisplay(databaseUrl: string): TargetDbDisplay {
   let parsed: URL;
   try {
     parsed = new URL(databaseUrl);
@@ -14,11 +20,20 @@ export function computeTargetDbFingerprint(databaseUrl: string): string {
   if (!database) {
     throw new Error("DATABASE_URL must include a database name.");
   }
-  const payload = {
-    kind: "onec_rf_target_db_v1",
+  return {
     host: parsed.hostname.toLowerCase(),
     port: parsed.port || "5432",
     database,
+  };
+}
+
+export function computeTargetDbFingerprint(databaseUrl: string): string {
+  const display = parseTargetDbDisplay(databaseUrl);
+  const payload = {
+    kind: "onec_rf_target_db_v1",
+    host: display.host,
+    port: display.port,
+    database: display.database,
   };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }

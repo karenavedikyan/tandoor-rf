@@ -2,7 +2,9 @@
 
 **Назначение:** однократная явная процедура замены тестового состава **клиентов, торговых точек и справочника сотрудников ОПТ** актуальным комплектом файлов 1С.
 
-**Не заменяет** регулярный импорт (`onec-clients-import`) и **не** затрагивает каталог, фотографии и дистрибуцию.
+**Не заменяет** регулярный импорт (`onec-clients-import`).
+
+**Каталог и фотографии не изменяются.** Очищаются только **зависимые тестовые отметки дистрибуции** (`outlet_distribution_markers`, `outlet_distribution_marker_events`), привязанные к заменяемому клиентскому составу — это не импорт/изменение каталога.
 
 **Следующие этапы** (каталог, фото) выполняются отдельно после приёмки этого этапа.
 
@@ -18,9 +20,13 @@
   all_employees.json
 ```
 
+Требования clean reload (строже обычного импорта):
+- каждая переданная ТТ имеет валидный `guid_store` и булево `closed`;
+- roster: поля, приводимые к SQL (в т.ч. `date_of_assumption`), проходят проверку до очистки.
+
 `all_employees.json` уже отфильтрован специалистом 1С по подразделению «Продажи ОПТ».
 
-CLI фиксирует SHA256 каждого файла и вычисляет `bundleFingerprint` (`onec_rf_client_composition_reload_v1`). Между dry-run и apply файлы **не менять**.
+CLI фиксирует SHA256 каждого файла (ограниченное чтение, max 32 MiB) и вычисляет `bundleFingerprint` (`onec_rf_client_composition_reload_v1`). Между dry-run и apply файлы **не менять**.
 
 ---
 
@@ -29,12 +35,14 @@ CLI фиксирует SHA256 каждого файла и вычисляет `b
 | Область | Таблицы / действия |
 |---------|-------------------|
 | Локальные права и привязки | `access_grants` (client), `access_denials` (client), `delegation_clients`, `delegation_change_request_clients`, Bitrix card objects/cooldown, `outlet_distribution_marker_events` |
-| Дистрибуция (если migration 030) | `outlet_distribution_markers` |
+| Тестовые отметки дистрибуции (migration 030) | `outlet_distribution_markers` — только привязки к заменяемым клиентам/ТТ |
 | Ревизии (если migration 031) | `client_review_records` |
-| Клиенты и журналы | `onec_clients`, `onec_retail_outlets` (CASCADE), `onec_client_import_runs`, `onec_import_jobs`, quarantine/baseline journals |
+| Клиенты и журналы | `onec_clients`, `onec_retail_outlets`, `onec_client_import_runs`, `onec_import_jobs`, quarantine/baseline journals |
 | Справочник сотрудников | `onec_wholesale_employee_roster`, сброс `onec_wholesale_roster_state` |
 | Связи user ↔ сотрудник | отзыв активных `user_onec_employee_links` для GUID вне нового roster |
 | Exchange | сброс `onec_exchange_state` |
+
+Очистка выполняется явным порядком DELETE без `TRUNCATE ... CASCADE`.
 
 ## 3. Что сохраняется
 
@@ -52,7 +60,8 @@ CLI фиксирует SHA256 каждого файла и вычисляет `b
 
 1. Резервная копия PostgreSQL контура РФ.
 2. Скопировать актуальный комплект 1С в локальный каталог (не коммитить в Git).
-3. Убедиться, что нет `pending/running` operator jobs и scheduled apply.
+3. Убедиться, что migration `032` и более ранние client/catalog migrations применены.
+4. Dry-run **откажет**, если есть `pending/running` `onec_import_jobs` или running client import. Apply под locks **помечает pending jobs superseded** — повторный apply без dry-run при новых jobs не рекомендуется.
 
 ### 4.2 Dry-run (обязателен)
 
@@ -64,8 +73,10 @@ npm run onec-clean-reload:local -- --dry-run \
 
 Сохранить из JSON-ответа:
 - `plan.targetDbFingerprint`
+- `plan.targetDb` (host/port/database — без пароля)
 - `plan.bundleFingerprint`
 - `plan.stats` (clients, open/closed TT, employees, outside-roster, unresolved holdings)
+- `plan.schemaDependencies` и пустой `plan.blockers`
 
 ### 4.3 Apply
 
@@ -81,13 +92,15 @@ npm run onec-clean-reload:local -- --apply \
 Опции:
 - `--holding-link-policy=tolerant|strict` (default: tolerant)
 
+При `COMMIT_UNCERTAIN` не повторять apply вслепую — проверить фактическое состояние БД.
+
 ### 4.4 Проверка
 
 - вход admin
 - `GET /api/clients?view=all` — актуальный состав
 - карточка клиента → вложенные ТТ (`closed`, `guid_store`)
 - `GET /api/clients/wholesale-employees` — полный roster, включая сотрудников без клиентов
-- каталог и фото **не изменились** (сравнить active version / product count до и после)
+- каталог и фото **не изменились** (сравнить active version / product count / image assets до и после)
 
 ---
 
@@ -95,11 +108,11 @@ npm run onec-clean-reload:local -- --apply \
 
 - `--confirm-target-db` — от apply на чужой БД
 - `--expected-bundle-fingerprint` — от apply с изменёнными файлами
+- preflight schema (`MIGRATIONS_NOT_READY` без migration 032)
 - advisory lock `902451004` + client import lock
-- pending `onec_import_jobs` помечаются superseded
-- purge + clients import + roster — **одна транзакция** на одном `PoolClient`; при ошибке до COMMIT прежний состав остаётся целым
-- пустой roster блокирует процедуру до очистки
-- обычный импорт не ослаблен; `cleanReloadApply` доступен только этой процедуре
+- dry-run: pending jobs блокируют; apply: supersede pending jobs после locks
+- purge + clients import + roster — **одна транзакция**; при ошибке до COMMIT прежний состав остаётся целым
+- пустой roster и анонимные ТТ блокируют процедуру до очистки
 
 ---
 
@@ -108,6 +121,8 @@ npm run onec-clean-reload:local -- --apply \
 Требуется migration `032_onec_wholesale_employee_roster.sql` (таблицы `onec_wholesale_employee_roster`, `onec_wholesale_roster_state`).
 
 Также нужны миграции клиентов (`024`–`030`) и каталога (`020`–`023`) — каталог не изменяется, но должен быть развёрнут.
+
+Apply **не запускает** migrations автоматически.
 
 ---
 

@@ -15,6 +15,10 @@ async function tableExists(client: PoolClient, tableName: string): Promise<boole
   return result.rows[0]?.exists === true;
 }
 
+/**
+ * Purges client-composition scope without TRUNCATE ... CASCADE.
+ * Explicit order: orphan rows → distribution markers → client journals → clients/outlets → roster.
+ */
 export async function purgeCleanReloadScope(client: PoolClient): Promise<PurgeCounts> {
   let accessGrantsRemoved = 0;
 
@@ -39,17 +43,23 @@ export async function purgeCleanReloadScope(client: PoolClient): Promise<PurgeCo
   }
 
   if (await tableExists(client, "outlet_distribution_markers")) {
-    await client.query("TRUNCATE outlet_distribution_markers RESTART IDENTITY CASCADE");
+    await client.query(`DELETE FROM outlet_distribution_markers`);
   }
 
   if (await tableExists(client, "client_review_records")) {
-    await client.query("TRUNCATE client_review_records RESTART IDENTITY CASCADE");
+    await client.query(`DELETE FROM client_review_records`);
   }
 
-  await client.query(`TRUNCATE ${PURGE_TABLE_GROUPS.clientDomain.join(", ")} RESTART IDENTITY CASCADE`);
+  await client.query(`DELETE FROM onec_import_jobs`);
+  await client.query(`DELETE FROM onec_client_quarantine_records`);
+  await client.query(`DELETE FROM onec_baseline_replacement_runs`);
+  await client.query(`DELETE FROM onec_extended_contract_confirmations`);
+  await client.query(`DELETE FROM onec_client_import_runs`);
+  await client.query(`DELETE FROM onec_retail_outlets`);
+  await client.query(`DELETE FROM onec_clients`);
 
   if (await tableExists(client, "onec_wholesale_employee_roster")) {
-    await client.query(`TRUNCATE ${PURGE_TABLE_GROUPS.rosterDomain.join(", ")} RESTART IDENTITY CASCADE`);
+    await client.query(`DELETE FROM onec_wholesale_employee_roster`);
     await client.query(
       `
         UPDATE onec_wholesale_roster_state
