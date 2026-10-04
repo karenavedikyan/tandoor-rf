@@ -5,6 +5,12 @@
 
 ---
 
+## 0. Clean reload (чистый старт, отдельная процедура)
+
+Для **однократной** полной замены тестового состава клиентов и каталога актуальным комплектом 1С используйте [`clean-reload-runbook.md`](./clean-reload-runbook.md) и CLI `onec-clean-reload`. Это **не** регулярный импорт и **не** baseline replacement.
+
+---
+
 ## 1. Принципы безопасности
 
 - Источник — **только** согласованный plain FTP `gw.toopatch.ru`, базовый путь `/LC`, файл `clients/all_clients.json`.

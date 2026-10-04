@@ -653,6 +653,8 @@ export async function applyClientsImport(options: {
   employeeRosterSourceSha256?: string | null;
   /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
   baselineReplacementApply?: boolean;
+  /** Explicit clean reload after purge; skips shrink guards, not verification. */
+  cleanReloadApply?: boolean;
   /** Original full clients file SHA256 for baseline extended-contract gate (not accepted projection SHA). */
   originalClientsSourceSha256?: string;
   /** When true, caller owns BEGIN/COMMIT; apply must not commit or rollback the connection. */
@@ -804,7 +806,8 @@ export async function applyClientsImport(options: {
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
       } else {
-        const skipShrinkGuards = options.baselineReplacementApply === true;
+        const skipShrinkGuards =
+          options.baselineReplacementApply === true || options.cleanReloadApply === true;
         if (!skipShrinkGuards) {
           const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
           if (
@@ -898,7 +901,10 @@ export async function applyClientsImport(options: {
 
           const extendedApply = isExtendedApplyPayload(options.payload);
           let contractVerified = false;
-          if (options.baselineReplacementApply && options.originalClientsSourceSha256) {
+          if (
+            (options.baselineReplacementApply || options.cleanReloadApply) &&
+            options.originalClientsSourceSha256
+          ) {
             const { resolveBaselineExtendedContractVerified } = await import("./baseline-extended-contract");
             contractVerified = await resolveBaselineExtendedContractVerified({
               client: managed.client,
