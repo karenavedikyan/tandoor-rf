@@ -47,8 +47,16 @@
     var options = { states: [], decisions: [], commentMaxLength: 2000 };
     var eligibleManagers = [];
     var eligibleReviewers = [];
+    var eligibleReviewersLoaded = false;
+    var eligibleReviewersLoadError = null;
+    var reviewerRequiresExplicitChoice = false;
     var historyItems = [];
     var saveRequestId = 0;
+
+    function storedReviewStateValue(state) {
+      if (!state) return "unreviewed";
+      return state.storedReviewState || state.reviewState;
+    }
 
     function escapeHtml(value) {
       return shell.escapeHtml(String(value ?? ""));
@@ -123,17 +131,16 @@
 
       var assignedId = reviewState ? reviewState.assignedReviewerUserId : null;
       if (
+        eligibleReviewersLoaded &&
         assignedId &&
         !eligibleReviewers.some(function (item) {
           return item.userId === assignedId;
         })
       ) {
         optionsHtml +=
-          '<option value="' +
-          escapeHtml(assignedId) +
-          '" disabled>Недоступный проверяющий · ' +
-          escapeHtml(assignedId.slice(0, 8)) +
-          "</option>";
+          '<option value="" disabled selected>Ранее назначен: ' +
+          escapeHtml(reviewerLabel(assignedId)) +
+          " (недоступен)</option>";
       }
 
       reviewerSelect.innerHTML = optionsHtml;
@@ -193,20 +200,30 @@
         return;
       }
 
-      if (stateSelect) stateSelect.value = reviewState.reviewState;
+      if (stateSelect) stateSelect.value = storedReviewStateValue(reviewState);
       if (decisionSelect) decisionSelect.value = reviewState.reviewDecision || "";
       if (commentInput) commentInput.value = reviewState.comment || "";
       if (managerHidden) managerHidden.value = reviewState.proposedManagerGuid || "";
       if (managerInput) managerInput.value = managerLabel(reviewState.proposedManagerGuid);
+      reviewerRequiresExplicitChoice = false;
       if (reviewerSelect) {
-        reviewerSelect.value = reviewState.assignedReviewerUserId || "";
-        if (
-          reviewState.assignedReviewerUserId &&
-          !eligibleReviewers.some(function (item) {
-            return item.userId === reviewState.assignedReviewerUserId;
-          })
-        ) {
-          reviewerSelect.value = "";
+        if (!eligibleReviewersLoaded) {
+          reviewerSelect.value = reviewState.assignedReviewerUserId || "";
+          reviewerSelect.disabled = true;
+        } else {
+          reviewerSelect.disabled = false;
+          var assignedReviewerId = reviewState.assignedReviewerUserId || "";
+          var reviewerStillEligible = eligibleReviewers.some(function (item) {
+            return item.userId === assignedReviewerId;
+          });
+          if (assignedReviewerId && reviewerStillEligible) {
+            reviewerSelect.value = assignedReviewerId;
+          } else if (assignedReviewerId) {
+            reviewerSelect.value = "";
+            reviewerRequiresExplicitChoice = true;
+          } else {
+            reviewerSelect.value = "";
+          }
         }
       }
       if (dueInput) dueInput.value = isoToDatetimeLocal(reviewState.dueAt);
@@ -217,9 +234,16 @@
           (reviewState.isStale ? " · требуется повторная проверка" : "");
       }
 
+      var reviewersLoadErrorEl = container.querySelector("#client-review-reviewers-load-error");
+      if (reviewersLoadErrorEl) {
+        reviewersLoadErrorEl.hidden = !eligibleReviewersLoadError;
+        reviewersLoadErrorEl.textContent = eligibleReviewersLoadError || "";
+      }
+
       var unavailableReviewerNote = container.querySelector("#client-review-reviewer-unavailable");
       if (unavailableReviewerNote) {
         var reviewerUnavailable =
+          eligibleReviewersLoaded &&
           reviewState.assignedReviewerUserId &&
           !eligibleReviewers.some(function (item) {
             return item.userId === reviewState.assignedReviewerUserId;
@@ -228,11 +252,17 @@
         unavailableReviewerNote.textContent = reviewerUnavailable
           ? "Ранее назначенный проверяющий (" +
             reviewerLabel(reviewState.assignedReviewerUserId) +
-            ") больше недоступен. Выберите действующего администратора."
+            ") больше недоступен. Выберите действующего администратора или явно оставьте поле пустым."
           : "";
       }
 
+      var saveBtn = container.querySelector("#client-review-save");
       var recheckBtn = container.querySelector("#client-review-recheck");
+      var reloadReviewersBtn = container.querySelector("#client-review-reload-reviewers");
+      if (saveBtn) saveBtn.disabled = Boolean(eligibleReviewersLoadError);
+      if (recheckBtn) recheckBtn.disabled = Boolean(eligibleReviewersLoadError);
+      if (reloadReviewersBtn) reloadReviewersBtn.hidden = !eligibleReviewersLoadError;
+
       if (recheckBtn) {
         recheckBtn.hidden = !reviewState.isStale;
       }
@@ -265,6 +295,8 @@
         '<textarea id="client-review-comment" class="clients-field__input client-review-comment" rows="3"></textarea></label>' +
         '<label class="clients-field"><span class="clients-field__label">Проверяющий</span>' +
         '<select id="client-review-reviewer" class="clients-field__select"></select></label>' +
+        '<p id="client-review-reviewers-load-error" class="client-review-message client-review-message--error" hidden></p>' +
+        '<button type="button" class="workspace-button workspace-button--secondary" id="client-review-reload-reviewers" hidden>Повторить загрузку проверяющих</button>' +
         '<p id="client-review-reviewer-unavailable" class="client-review-message client-review-message--warn" hidden></p>' +
         '<label class="clients-field"><span class="clients-field__label">Срок проверки</span>' +
         '<input id="client-review-due" class="clients-field__input" type="datetime-local" /></label>' +
@@ -299,10 +331,30 @@
       container.querySelector("#client-review-recheck").addEventListener("click", function () {
         saveReview(true);
       });
+      var reloadReviewersBtn = container.querySelector("#client-review-reload-reviewers");
+      if (reloadReviewersBtn) {
+        reloadReviewersBtn.addEventListener("click", function () {
+          reloadReviewers();
+        });
+      }
 
       fillForm();
       renderHistory();
       return managerCombobox;
+    }
+
+    function applyReviewersLoadResult(result) {
+      if (result.response.status === 200 && result.data) {
+        eligibleReviewers = result.data.items || [];
+        eligibleReviewersLoaded = true;
+        eligibleReviewersLoadError = null;
+        return;
+      }
+      eligibleReviewersLoaded = false;
+      eligibleReviewersLoadError = api.extractErrorMessage(
+        result.data,
+        "Не удалось загрузить список проверяющих.",
+      );
     }
 
     function loadAll() {
@@ -319,17 +371,26 @@
         if (results[1].response.status === 200 && results[1].data) {
           eligibleManagers = results[1].data.items || [];
         }
-        if (results[2].response.status === 200 && results[2].data) {
-          eligibleReviewers = results[2].data.items || [];
-        }
+        applyReviewersLoadResult(results[2]);
         if (results[3].response.status === 200) {
           reviewState = results[3].data ? results[3].data.review : null;
         } else if (results[3].response.status === 403) {
           throw new Error("forbidden");
+        } else {
+          throw new Error("review-load-failed");
         }
         if (results[4].response.status === 200 && results[4].data) {
           historyItems = results[4].data.items || [];
         }
+      });
+    }
+
+    function reloadReviewers() {
+      return api.apiRequest("/api/clients/review/eligible-reviewers").then(function (result) {
+        applyReviewersLoadResult(result);
+        var reloadBtn = container.querySelector("#client-review-reload-reviewers");
+        if (reloadBtn) reloadBtn.hidden = !eligibleReviewersLoadError;
+        fillForm();
       });
     }
 
@@ -352,8 +413,28 @@
         return Promise.resolve();
       }
 
+      if (eligibleReviewersLoadError) {
+        renderFormMessage(
+          "error",
+          eligibleReviewersLoadError + " Повторите загрузку списка проверяющих.",
+        );
+        var reloadBtnBlocked = container.querySelector("#client-review-reload-reviewers");
+        if (reloadBtnBlocked) reloadBtnBlocked.hidden = false;
+        return Promise.resolve();
+      }
+
+      if (reviewerRequiresExplicitChoice && !reviewerSelect.value) {
+        renderFormMessage(
+          "error",
+          "Выберите действующего проверяющего или явно оставьте поле пустым.",
+        );
+        return Promise.resolve();
+      }
+
       var body = {
-        reviewState: stateSelect.value,
+        reviewState: recheckConfirmed
+          ? storedReviewStateValue(reviewState)
+          : stateSelect.value,
         reviewDecision: decisionSelect.value || null,
         comment: commentInput.value.trim() || null,
         proposedManagerGuid: managerHidden.value || null,
@@ -422,7 +503,7 @@
               return;
             }
             container.innerHTML =
-              '<p class="client-review-message client-review-message--error">Не удалось загрузить ревизию.</p>';
+              '<p class="client-review-message client-review-message--error">Не удалось загрузить ревизию. Обновите страницу.</p>';
           });
       },
       isoToDatetimeLocal: isoToDatetimeLocal,

@@ -20,7 +20,10 @@ export const REVIEW_COMMENT_MAX_LENGTH = 2000;
 
 export type ClientReviewRecord = {
   guidClient: string;
+  /** Effective queue/UI state; becomes needs_recheck while stale. */
   reviewState: ReviewState;
+  /** Persisted workflow state in client_review_records.review_state. */
+  storedReviewState: ReviewState;
   reviewDecision: ReviewDecision | null;
   comment: string | null;
   proposedManagerGuid: string | null;
@@ -122,11 +125,24 @@ function reviewFingerprintSql(tableAlias: string): string {
   return CLIENT_REVIEW_FINGERPRINT_SQL.replaceAll("oc.", `${tableAlias}.`);
 }
 
+export function reviewConfirmedTransferSql(clientsAlias = "onec_clients"): string {
+  return `(
+    crr.review_decision = 'propose_transfer'
+    AND crr.proposed_manager_guid IS NOT NULL
+    AND lower(${clientsAlias}.guid_manager::text) = lower(crr.proposed_manager_guid::text)
+    AND lower(crr.basis_manager_guid::text) <> lower(${clientsAlias}.guid_manager::text)
+  )`;
+}
+
 export function reviewIsStaleSql(clientsAlias = "onec_clients"): string {
   const fingerprintSql = reviewFingerprintSql(clientsAlias);
+  const confirmedTransferSql = reviewConfirmedTransferSql(clientsAlias);
   return `(
     crr.stale_reason IS NOT NULL
-    OR ${clientsAlias}.guid_manager IS DISTINCT FROM crr.basis_manager_guid
+    OR (
+      ${clientsAlias}.guid_manager IS DISTINCT FROM crr.basis_manager_guid
+      AND NOT (${confirmedTransferSql})
+    )
     OR (
       crr.basis_data_fingerprint IS NOT NULL
       AND ${fingerprintSql} <> crr.basis_data_fingerprint
@@ -168,16 +184,31 @@ function computeTransferStatus(
   return "proposed";
 }
 
+function isConfirmedTransferRow(
+  row: Pick<
+    ReviewRow,
+    "review_decision" | "proposed_manager_guid" | "basis_manager_guid" | "current_manager_guid"
+  >,
+): boolean {
+  if (row.review_decision !== "propose_transfer" || !row.proposed_manager_guid) {
+    return false;
+  }
+  return (
+    row.current_manager_guid.toLowerCase() === row.proposed_manager_guid.toLowerCase() &&
+    row.basis_manager_guid.toLowerCase() !== row.current_manager_guid.toLowerCase()
+  );
+}
+
 function staleReasonForRow(row: ReviewRow): string | null {
   if (row.stale_reason) {
     return row.stale_reason;
   }
-  const managerChanged =
-    row.current_manager_guid.toLowerCase() !== row.basis_manager_guid.toLowerCase();
   const fingerprintChanged =
     row.basis_data_fingerprint != null &&
     row.current_data_fingerprint !== row.basis_data_fingerprint;
-  if (managerChanged) {
+  const managerChanged =
+    row.current_manager_guid.toLowerCase() !== row.basis_manager_guid.toLowerCase();
+  if (managerChanged && !isConfirmedTransferRow(row)) {
     return "Импорт изменил назначение ответственного; требуется повторная проверка.";
   }
   if (fingerprintChanged) {
@@ -193,6 +224,7 @@ function toReviewRecord(row: ReviewRow): ClientReviewRecord {
   return {
     guidClient: row.guid_client,
     reviewState: isStale ? "needs_recheck" : row.review_state,
+    storedReviewState: row.review_state,
     reviewDecision: row.review_decision,
     comment: row.comment,
     proposedManagerGuid: row.proposed_manager_guid,
@@ -477,6 +509,24 @@ function validateReviewInput(input: UpsertClientReviewInput): void {
   parseDueAt(input.dueAt ?? null);
 }
 
+function isMaintainingConfirmedTransfer(
+  beforeRow: ReviewRow | null,
+  clientManagerGuid: string,
+  proposedManagerGuid: string | null | undefined,
+): boolean {
+  if (!beforeRow || beforeRow.review_decision !== "propose_transfer") {
+    return false;
+  }
+  if (!beforeRow.proposed_manager_guid || !proposedManagerGuid) {
+    return false;
+  }
+  const proposed = proposedManagerGuid.toLowerCase();
+  const storedProposed = beforeRow.proposed_manager_guid.toLowerCase();
+  const basis = beforeRow.basis_manager_guid.toLowerCase();
+  const current = clientManagerGuid.toLowerCase();
+  return proposed === storedProposed && proposed === current && basis !== current;
+}
+
 function assertOptimisticVersion(
   before: ClientReviewRecord | null,
   expectedVersion: number | null | undefined,
@@ -551,17 +601,6 @@ export async function upsertClientReview(
       throw new ReviewServiceError("Клиент не найден.", "NOT_FOUND");
     }
 
-    if (
-      input.reviewDecision === "propose_transfer" &&
-      input.proposedManagerGuid &&
-      input.proposedManagerGuid.toLowerCase() === clientRow.guid_manager.toLowerCase()
-    ) {
-      throw new ReviewServiceError(
-        "Передача текущему же ответственному не имеет смысла; выберите другого менеджера или подтвердите текущего.",
-        "VALIDATION",
-      );
-    }
-
     const currentFingerprint = fingerprintFromClientRow(clientRow);
 
     const existing = await client.query<ReviewRow>(
@@ -574,6 +613,18 @@ export async function upsertClientReview(
     assertOptimisticVersion(before, input.expectedVersion);
 
     const isRecheck = Boolean(input.recheckConfirmed);
+
+    if (
+      input.reviewDecision === "propose_transfer" &&
+      input.proposedManagerGuid &&
+      input.proposedManagerGuid.toLowerCase() === clientRow.guid_manager.toLowerCase() &&
+      !isMaintainingConfirmedTransfer(beforeRow, clientRow.guid_manager, input.proposedManagerGuid)
+    ) {
+      throw new ReviewServiceError(
+        "Передача текущему же ответственному не имеет смысла; выберите другого менеджера или подтвердите текущего.",
+        "VALIDATION",
+      );
+    }
     if (isRecheck) {
       if (!before || !before.isStale) {
         throw new ReviewServiceError(
@@ -592,23 +643,43 @@ export async function upsertClientReview(
     let staleReason: string | null = beforeRow?.stale_reason ?? null;
 
     if (isRecheck) {
-      basisManagerGuid = clientRow.guid_manager;
+      const completingPriorTransfer = isMaintainingConfirmedTransfer(
+        beforeRow,
+        clientRow.guid_manager,
+        input.proposedManagerGuid ?? beforeRow?.proposed_manager_guid,
+      );
       basisSourceSha256 = clientRow.source_sha256;
       basisDataFingerprint = currentFingerprint;
       basisImportedAt = clientRow.last_imported_at;
       staleReason = null;
+      basisManagerGuid = completingPriorTransfer
+        ? beforeRow!.basis_manager_guid
+        : clientRow.guid_manager;
     } else if (before && beforeRow) {
+      const maintainingConfirmedTransfer = isMaintainingConfirmedTransfer(
+        beforeRow,
+        clientRow.guid_manager,
+        input.proposedManagerGuid ?? beforeRow.proposed_manager_guid,
+      );
       const managerChanged =
         clientRow.guid_manager.toLowerCase() !== before.basisManagerGuid.toLowerCase();
       const fingerprintChanged =
         before.basisDataFingerprint != null && currentFingerprint !== before.basisDataFingerprint;
-      if (managerChanged || fingerprintChanged) {
+      if (fingerprintChanged || (managerChanged && !maintainingConfirmedTransfer)) {
         staleReason = "Импорт изменил назначение или состав клиента.";
       }
     }
 
     let nextReviewState = input.reviewState;
-    if (!isRecheck && staleReason && input.reviewState === "completed") {
+    if (isRecheck) {
+      if (!beforeRow) {
+        throw new ReviewServiceError(
+          "Повторная проверка доступна только для существующей записи ревизии.",
+          "VALIDATION",
+        );
+      }
+      nextReviewState = beforeRow.review_state;
+    } else if (staleReason && input.reviewState === "completed") {
       nextReviewState = "needs_recheck";
     }
 

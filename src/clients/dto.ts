@@ -222,9 +222,16 @@ function isReviewStaleFromRow(row: ClientRow): boolean {
   if (row.review_stale_reason) {
     return true;
   }
+  const confirmedTransfer =
+    row.review_decision === "propose_transfer" &&
+    row.review_proposed_manager_guid &&
+    row.review_proposed_manager_guid.toLowerCase() === row.guid_manager.toLowerCase() &&
+    row.review_basis_manager_guid != null &&
+    row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase();
   if (
     row.review_basis_manager_guid &&
-    row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase()
+    row.review_basis_manager_guid.toLowerCase() !== row.guid_manager.toLowerCase() &&
+    !confirmedTransfer
   ) {
     return true;
   }

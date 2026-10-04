@@ -719,6 +719,8 @@ describe("clients teams and review integration", { concurrency: false }, () => {
       });
     assert.equal(recheck.status, 200);
     assert.equal(recheck.body.review.isStale, false);
+    assert.equal(recheck.body.review.reviewState, "awaiting_1c_fix");
+    assert.equal(recheck.body.review.storedReviewState, "awaiting_1c_fix");
 
     const history = await request(app)
       .get(`/api/clients/${CLIENT_ONE}/review/history`)
@@ -820,6 +822,226 @@ describe("clients teams and review integration", { concurrency: false }, () => {
     assert.ok(staleListed);
     assert.equal(staleListed.review.isStale, true);
     assert.equal(staleListed.review.state, "needs_recheck");
+  });
+
+  it("recheck from needs_recheck UI restores stored workflow state", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        expectedVersion: null,
+      });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`UPDATE onec_clients SET address = 'Recheck UI address' WHERE guid_client = $1::uuid`, [
+      CLIENT_ONE,
+    ]);
+    await pool.end();
+
+    const stale = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(stale.body.review.reviewState, "needs_recheck");
+    assert.equal(stale.body.review.storedReviewState, "completed");
+    assert.equal(stale.body.review.isStale, true);
+
+    const recheck = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "needs_recheck",
+        reviewDecision: "confirm_current_manager",
+        expectedVersion: stale.body.review.version,
+        recheckConfirmed: true,
+      });
+    assert.equal(recheck.status, 200);
+    assert.equal(recheck.body.review.reviewState, "completed");
+    assert.equal(recheck.body.review.storedReviewState, "completed");
+    assert.equal(recheck.body.review.isStale, false);
+
+    const completedQueue = await request(app)
+      .get("/api/clients?view=review&reviewState=completed")
+      .set(authHeaders(adminCookie));
+    assert.ok(completedQueue.body.items.some((item: { guid: string }) => item.guid === CLIENT_ONE));
+  });
+
+  it("recheck preserves stored state for in_progress and awaiting_1c_fix", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    for (const [clientGuid, storedState] of [
+      [CLIENT_TWO, "in_progress"],
+      [CLIENT_THREE, "awaiting_1c_fix"],
+    ] as const) {
+      await request(app)
+        .put(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie))
+        .send({
+          reviewState: storedState,
+          reviewDecision: storedState === "awaiting_1c_fix" ? "propose_transfer" : null,
+          proposedManagerGuid: storedState === "awaiting_1c_fix" ? MANAGER_B : null,
+          expectedVersion: null,
+        });
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      await pool.query(`UPDATE onec_clients SET address = $2 WHERE guid_client = $1::uuid`, [
+        clientGuid,
+        `Stale ${storedState}`,
+      ]);
+      await pool.end();
+
+      const stale = await request(app)
+        .get(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie));
+      assert.equal(stale.body.review.storedReviewState, storedState);
+
+      const recheck = await request(app)
+        .put(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie))
+        .send({
+          reviewState: "needs_recheck",
+          reviewDecision: stale.body.review.reviewDecision,
+          proposedManagerGuid: stale.body.review.proposedManagerGuid,
+          expectedVersion: stale.body.review.version,
+          recheckConfirmed: true,
+        });
+      assert.equal(recheck.status, 200);
+      assert.equal(recheck.body.review.reviewState, storedState);
+      assert.equal(recheck.body.review.storedReviewState, storedState);
+      assert.equal(recheck.body.review.isStale, false);
+    }
+  });
+
+  it("allows recheck for confirmed transfer and rejects fresh B-to-B proposal", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "awaiting_1c_fix",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_B,
+        expectedVersion: null,
+      });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `
+        UPDATE onec_clients
+        SET guid_manager = $2::uuid, name_manager = 'Менеджер Петров'
+        WHERE guid_client = $1::uuid
+      `,
+      [CLIENT_ONE, MANAGER_B],
+    );
+    await pool.end();
+
+    const stale = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(stale.body.review.transferStatus, "confirmed_in_1c");
+    assert.equal(stale.body.review.isStale, true);
+
+    const recheck = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_B,
+        expectedVersion: stale.body.review.version,
+        recheckConfirmed: true,
+      });
+    assert.equal(recheck.status, 200);
+    assert.equal(recheck.body.review.transferStatus, "confirmed_in_1c");
+    assert.equal(recheck.body.review.isStale, false);
+
+    const reload = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(reload.body.review.transferStatus, "confirmed_in_1c");
+
+    const commentResave = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "awaiting_1c_fix",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_B,
+        comment: "Комментарий после подтверждения",
+        expectedVersion: reload.body.review.version,
+      });
+    assert.equal(commentResave.status, 200);
+    assert.equal(commentResave.body.review.transferStatus, "confirmed_in_1c");
+
+    const freshProposal = await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "awaiting_1c_fix",
+        reviewDecision: "propose_transfer",
+        proposedManagerGuid: MANAGER_B,
+        expectedVersion: null,
+      });
+    assert.equal(freshProposal.status, 400);
+
+    const pool2 = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool2.query(
+      `UPDATE onec_clients SET guid_manager = $2::uuid WHERE guid_client = $1::uuid`,
+      [CLIENT_ONE, MANAGER_A],
+    );
+    await pool2.end();
+
+    const notConfirmed = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(notConfirmed.body.review.transferStatus, "proposed");
+  });
+
+  it("preserves assigned reviewer on comment-only save and rejects unavailable without explicit choice", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    const created = await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "in_progress",
+        assignedReviewerUserId: adminUserId,
+        comment: "Initial",
+        expectedVersion: null,
+      });
+    assert.equal(created.status, 200);
+
+    const commentOnly = await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "in_progress",
+        assignedReviewerUserId: adminUserId,
+        comment: "Updated comment only",
+        expectedVersion: created.body.review.version,
+      });
+    assert.equal(commentOnly.status, 200);
+    assert.equal(commentOnly.body.review.assignedReviewerUserId, adminUserId);
+
+    const cleared = await request(app)
+      .put(`/api/clients/${CLIENT_TWO}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "in_progress",
+        assignedReviewerUserId: null,
+        comment: "Explicit clear",
+        expectedVersion: commentOnly.body.review.version,
+      });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.review.assignedReviewerUserId, null);
   });
 
   it("round-trips dueAt through API without drift", async () => {

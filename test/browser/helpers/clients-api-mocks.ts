@@ -248,6 +248,8 @@ export type MockOptions = {
   catalogProductsStatus?: number;
   catalogFailProductsOnce?: boolean;
   catalogAccessRevoked?: boolean;
+  reviewersStatus?: number;
+  reviewGetBody?: Record<string, unknown> | null;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -445,6 +447,11 @@ export function resolveMockResponse(
   }
 
   if (path === "/api/clients/review/eligible-reviewers") {
+    if (options.reviewersStatus && options.reviewersStatus !== 200) {
+      return jsonResponse(options.reviewersStatus, {
+        error: { message: "Reviewers temporarily unavailable." },
+      });
+    }
     return jsonResponse(200, {
       items: [
         {
@@ -473,23 +480,34 @@ export function resolveMockResponse(
           error: { message: "Expected JSON object body." },
         });
       }
+      const payload =
+        parsedBody && typeof parsedBody === "object" && parsedBody !== null
+          ? (parsedBody as {
+              reviewState?: string;
+              reviewDecision?: string | null;
+              assignedReviewerUserId?: string | null;
+              dueAt?: string | null;
+              recheckConfirmed?: boolean;
+            })
+          : {};
+      const nextStoredState = payload.recheckConfirmed
+        ? payload.reviewState ?? "completed"
+        : payload.reviewState ?? "completed";
       return jsonResponse(200, {
         review: {
-          reviewState: "completed",
-          reviewDecision: "confirm_current_manager",
-          version: 1,
+          reviewState: nextStoredState,
+          storedReviewState: nextStoredState,
+          reviewDecision: payload.reviewDecision ?? "confirm_current_manager",
+          version: 2,
           isStale: false,
           transferStatus: "none",
-          assignedReviewerUserId:
-            parsedBody && typeof parsedBody === "object" && parsedBody !== null
-              ? (parsedBody as { assignedReviewerUserId?: string }).assignedReviewerUserId ?? null
-              : null,
-          dueAt:
-            parsedBody && typeof parsedBody === "object" && parsedBody !== null
-              ? (parsedBody as { dueAt?: string | null }).dueAt ?? null
-              : null,
+          assignedReviewerUserId: payload.assignedReviewerUserId ?? null,
+          dueAt: payload.dueAt ?? null,
         },
       });
+    }
+    if (options.reviewGetBody !== undefined) {
+      return jsonResponse(200, { review: options.reviewGetBody });
     }
     return jsonResponse(200, { review: null });
   }

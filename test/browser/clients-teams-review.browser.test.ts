@@ -260,4 +260,126 @@ describe("clients teams and review browser", { concurrency: false }, () => {
 
     await page.close();
   });
+
+  it("recheck button sends stored state and leaves needs_recheck queue", async () => {
+    const page = await browser.newPage();
+    const state = { listCalls: 0, catalogProductsCalls: 0 };
+    let reviewPutBody: unknown = null;
+    const options: MockOptions = {
+      role: "admin",
+      reviewGetBody: {
+        reviewState: "needs_recheck",
+        storedReviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        comment: "Stale completed",
+        version: 3,
+        isStale: true,
+        staleReason: "Импорт изменил данные клиента",
+        transferStatus: "none",
+        assignedReviewerUserId: ADMIN_REVIEWER_ID,
+      },
+    };
+
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+      const postData = route.request().postData() ?? undefined;
+      if (url.pathname.endsWith("/review") && method === "PUT") {
+        reviewPutBody = postData ? JSON.parse(postData) : null;
+      }
+      const mock = resolveMockResponse(url, options, state, method, postData);
+      await route.fulfill(
+        mock ?? {
+          status: 404,
+          contentType: "application/json",
+          body: '{"error":"not mocked"}',
+        },
+      );
+    });
+
+    await page.goto(`${baseUrl}/clients/${encodeURIComponent(CLIENT_GUID)}`, {
+      waitUntil: "networkidle",
+    });
+    await page.waitForSelector("#client-review-recheck");
+    assert.equal(await page.inputValue("#client-review-state"), "completed");
+    await page.click("#client-review-recheck");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("сохранена");
+    });
+
+    assert.equal((reviewPutBody as { reviewState?: string }).reviewState, "completed");
+    assert.equal((reviewPutBody as { recheckConfirmed?: boolean }).recheckConfirmed, true);
+    assert.notEqual((reviewPutBody as { reviewState?: string }).reviewState, "needs_recheck");
+
+    await page.close();
+  });
+
+  it("blocks save on reviewers load failure and preserves reviewer after retry", async () => {
+    const page = await browser.newPage();
+    const state = { listCalls: 0, catalogProductsCalls: 0 };
+    let reviewPutBody: unknown = null;
+    let reviewersCalls = 0;
+    const options: MockOptions = {
+      role: "admin",
+      reviewGetBody: {
+        reviewState: "in_progress",
+        storedReviewState: "in_progress",
+        reviewDecision: null,
+        comment: "Keep reviewer",
+        version: 3,
+        isStale: false,
+        transferStatus: "none",
+        assignedReviewerUserId: ADMIN_REVIEWER_ID,
+      },
+    };
+
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+      const postData = route.request().postData() ?? undefined;
+      if (url.pathname === "/api/clients/review/eligible-reviewers") {
+        reviewersCalls += 1;
+        options.reviewersStatus = reviewersCalls === 1 ? 503 : 200;
+      }
+      if (url.pathname.endsWith("/review") && method === "PUT") {
+        reviewPutBody = postData ? JSON.parse(postData) : null;
+      }
+      const mock = resolveMockResponse(url, options, state, method, postData);
+      await route.fulfill(
+        mock ?? {
+          status: 404,
+          contentType: "application/json",
+          body: '{"error":"not mocked"}',
+        },
+      );
+    });
+
+    await page.goto(`${baseUrl}/clients/${encodeURIComponent(CLIENT_GUID)}`, {
+      waitUntil: "networkidle",
+    });
+    await page.waitForSelector("#client-review-reviewers-load-error");
+    assert.equal(await page.isDisabled("#client-review-save"), true);
+    await page.fill("#client-review-comment", "Comment only attempt");
+    assert.equal(reviewPutBody, null);
+
+    await page.click("#client-review-reload-reviewers");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-reviewers-load-error");
+      return el && el.hasAttribute("hidden");
+    });
+
+    await page.fill("#client-review-comment", "Comment after retry");
+    await page.click("#client-review-save");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("сохранена");
+    });
+    assert.equal(
+      (reviewPutBody as { assignedReviewerUserId?: string | null }).assignedReviewerUserId,
+      ADMIN_REVIEWER_ID,
+    );
+
+    await page.close();
+  });
 });
