@@ -249,6 +249,7 @@ export type MockOptions = {
   catalogFailProductsOnce?: boolean;
   catalogAccessRevoked?: boolean;
   reviewersStatus?: number;
+  eligibleReviewersItems?: Array<{ userId: string; name: string; shortId: string }>;
   reviewGetBody?: Record<string, unknown> | null;
 };
 
@@ -453,7 +454,7 @@ export function resolveMockResponse(
       });
     }
     return jsonResponse(200, {
-      items: [
+      items: options.eligibleReviewersItems ?? [
         {
           userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           name: "Synthetic Admin",

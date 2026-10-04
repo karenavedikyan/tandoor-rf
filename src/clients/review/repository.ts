@@ -8,9 +8,15 @@ import {
   ACTIVE_BASELINE_CLIENT_SQL,
   ACTIVE_BASELINE_OC_SQL,
 } from "../../onec-clients/baseline-active-scope";
-import type { ReviewDecision, ReviewState } from "./constants";
-import { REVIEW_DECISIONS, REVIEW_STATES } from "./constants";
+import {
+  REVIEW_DECISIONS,
+  REVIEW_STATES,
+  type ReviewDecision,
+  type ReviewState,
+} from "./constants";
 import { shortUuidLabel } from "../uuid-param";
+
+const RECHECK_TARGET_STATES = ["in_progress", "awaiting_1c_fix", "completed"] as const satisfies readonly ReviewState[];
 import {
   CLIENT_REVIEW_FINGERPRINT_SQL,
   computeClientReviewFingerprint,
@@ -678,9 +684,17 @@ export async function upsertClientReview(
           "VALIDATION",
         );
       }
-      nextReviewState = beforeRow.review_state;
-    } else if (staleReason && input.reviewState === "completed") {
-      nextReviewState = "needs_recheck";
+      if (beforeRow.review_state === "needs_recheck") {
+        if (!(RECHECK_TARGET_STATES as readonly string[]).includes(input.reviewState)) {
+          throw new ReviewServiceError(
+            "Выберите целевое состояние ревизии перед подтверждением повторной проверки.",
+            "VALIDATION",
+          );
+        }
+        nextReviewState = input.reviewState;
+      } else {
+        nextReviewState = beforeRow.review_state;
+      }
     }
 
     const nextVersion = (before?.version ?? 0) + 1;

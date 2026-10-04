@@ -50,6 +50,7 @@
     var eligibleReviewersLoaded = false;
     var eligibleReviewersLoadError = null;
     var reviewerRequiresExplicitChoice = false;
+    var REVIEWER_UNSET_VALUE = "__unset__";
     var historyItems = [];
     var saveRequestId = 0;
 
@@ -138,9 +139,11 @@
         })
       ) {
         optionsHtml +=
-          '<option value="" disabled selected>Ранее назначен: ' +
+          '<option value="' +
+          REVIEWER_UNSET_VALUE +
+          '">Ранее назначен: ' +
           escapeHtml(reviewerLabel(assignedId)) +
-          " (недоступен)</option>";
+          " (недоступен — выберите замену или снимите)</option>";
       }
 
       reviewerSelect.innerHTML = optionsHtml;
@@ -219,7 +222,7 @@
           if (assignedReviewerId && reviewerStillEligible) {
             reviewerSelect.value = assignedReviewerId;
           } else if (assignedReviewerId) {
-            reviewerSelect.value = "";
+            reviewerSelect.value = REVIEWER_UNSET_VALUE;
             reviewerRequiresExplicitChoice = true;
           } else {
             reviewerSelect.value = "";
@@ -423,7 +426,7 @@
         return Promise.resolve();
       }
 
-      if (reviewerRequiresExplicitChoice && !reviewerSelect.value) {
+      if (reviewerRequiresExplicitChoice && reviewerSelect.value === REVIEWER_UNSET_VALUE) {
         renderFormMessage(
           "error",
           "Выберите действующего проверяющего или явно оставьте поле пустым.",
@@ -431,14 +434,32 @@
         return Promise.resolve();
       }
 
+      var recheckTargetState = storedReviewStateValue(reviewState);
+      if (recheckConfirmed && recheckTargetState === "needs_recheck") {
+        recheckTargetState = stateSelect.value;
+      }
+      if (
+        recheckConfirmed &&
+        (recheckTargetState === "needs_recheck" || recheckTargetState === "unreviewed")
+      ) {
+        renderFormMessage(
+          "error",
+          "Выберите целевое состояние ревизии перед подтверждением повторной проверки.",
+        );
+        return Promise.resolve();
+      }
+
+      var assignedReviewerUserId = null;
+      if (reviewerSelect.value && reviewerSelect.value !== REVIEWER_UNSET_VALUE) {
+        assignedReviewerUserId = reviewerSelect.value;
+      }
+
       var body = {
-        reviewState: recheckConfirmed
-          ? storedReviewStateValue(reviewState)
-          : stateSelect.value,
+        reviewState: recheckConfirmed ? recheckTargetState : stateSelect.value,
         reviewDecision: decisionSelect.value || null,
         comment: commentInput.value.trim() || null,
         proposedManagerGuid: managerHidden.value || null,
-        assignedReviewerUserId: reviewerSelect.value || null,
+        assignedReviewerUserId: assignedReviewerUserId,
         dueAt: dueAt,
         expectedVersion: reviewState ? reviewState.version : 0,
         recheckConfirmed: recheckConfirmed,

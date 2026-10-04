@@ -13,6 +13,7 @@ const SCREENSHOT_DIR =
 
 const CLIENT_GUID = "11111111-1111-4111-8111-111111111111";
 const ADMIN_REVIEWER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const UNAVAILABLE_REVIEWER_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("clients teams and review browser", { concurrency: false }, () => {
   let browser: Browser;
@@ -370,6 +371,88 @@ describe("clients teams and review browser", { concurrency: false }, () => {
     });
 
     await page.fill("#client-review-comment", "Comment after retry");
+    await page.click("#client-review-save");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("сохранена");
+    });
+    assert.equal(
+      (reviewPutBody as { assignedReviewerUserId?: string | null }).assignedReviewerUserId,
+      ADMIN_REVIEWER_ID,
+    );
+
+    await page.close();
+  });
+
+  it("blocks unavailable reviewer save until explicit choice and allows clear or replacement", async () => {
+    const page = await browser.newPage();
+    const state = { listCalls: 0, catalogProductsCalls: 0 };
+    let reviewPutBody: unknown = null;
+    const options: MockOptions = {
+      role: "admin",
+      reviewGetBody: {
+        reviewState: "in_progress",
+        storedReviewState: "in_progress",
+        reviewDecision: null,
+        comment: "Needs reviewer decision",
+        version: 4,
+        isStale: false,
+        transferStatus: "none",
+        assignedReviewerUserId: UNAVAILABLE_REVIEWER_ID,
+      },
+      eligibleReviewersItems: [
+        {
+          userId: ADMIN_REVIEWER_ID,
+          name: "Synthetic Admin",
+          shortId: "aaaaaaaa",
+        },
+      ],
+    };
+
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+      const postData = route.request().postData() ?? undefined;
+      if (url.pathname.endsWith("/review") && method === "PUT") {
+        reviewPutBody = postData ? JSON.parse(postData) : null;
+      }
+      const mock = resolveMockResponse(url, options, state, method, postData);
+      await route.fulfill(
+        mock ?? {
+          status: 404,
+          contentType: "application/json",
+          body: '{"error":"not mocked"}',
+        },
+      );
+    });
+
+    await page.goto(`${baseUrl}/clients/${encodeURIComponent(CLIENT_GUID)}`, {
+      waitUntil: "networkidle",
+    });
+    await page.waitForSelector("#client-review-reviewer");
+    assert.equal(await page.inputValue("#client-review-reviewer"), "__unset__");
+
+    await page.click("#client-review-save");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("проверяющего");
+    });
+    assert.equal(reviewPutBody, null);
+
+    await page.selectOption("#client-review-reviewer", ADMIN_REVIEWER_ID);
+    await page.selectOption("#client-review-reviewer", "");
+    await page.click("#client-review-save");
+    await page.waitForFunction(() => {
+      const el = document.querySelector("#client-review-message");
+      return el && !el.hasAttribute("hidden") && el.textContent?.includes("сохранена");
+    });
+    assert.equal(
+      (reviewPutBody as { assignedReviewerUserId?: string | null }).assignedReviewerUserId,
+      null,
+    );
+
+    reviewPutBody = null;
+    await page.selectOption("#client-review-reviewer", ADMIN_REVIEWER_ID);
     await page.click("#client-review-save");
     await page.waitForFunction(() => {
       const el = document.querySelector("#client-review-message");

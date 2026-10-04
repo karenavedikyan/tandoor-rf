@@ -1004,6 +1004,130 @@ describe("clients teams and review integration", { concurrency: false }, () => {
     assert.equal(notConfirmed.body.review.transferStatus, "proposed");
   });
 
+  it("preserves stored workflow state on stale comment-only save before recheck", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    for (const [clientGuid, storedState, decision, proposedManagerGuid] of [
+      [CLIENT_ONE, "completed", "confirm_current_manager", null],
+      [CLIENT_TWO, "in_progress", null, null],
+      [CLIENT_THREE, "awaiting_1c_fix", "propose_transfer", MANAGER_B],
+    ] as const) {
+      await request(app)
+        .put(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie))
+        .send({
+          reviewState: storedState,
+          reviewDecision: decision,
+          proposedManagerGuid,
+          expectedVersion: null,
+        });
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      await pool.query(`UPDATE onec_clients SET address = $2 WHERE guid_client = $1::uuid`, [
+        clientGuid,
+        `Stale comment ${storedState}`,
+      ]);
+      await pool.end();
+
+      const stale = await request(app)
+        .get(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie));
+      assert.equal(stale.body.review.reviewState, "needs_recheck");
+      assert.equal(stale.body.review.storedReviewState, storedState);
+      assert.equal(stale.body.review.isStale, true);
+
+      const commentSave = await request(app)
+        .put(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie))
+        .send({
+          reviewState: storedState,
+          reviewDecision: decision,
+          proposedManagerGuid,
+          comment: `Comment while stale ${storedState}`,
+          expectedVersion: stale.body.review.version,
+        });
+      assert.equal(commentSave.status, 200);
+      assert.equal(commentSave.body.review.storedReviewState, storedState);
+      assert.equal(commentSave.body.review.reviewState, "needs_recheck");
+      assert.equal(commentSave.body.review.isStale, true);
+
+      const recheck = await request(app)
+        .put(`/api/clients/${clientGuid}/review`)
+        .set(authHeaders(adminCookie))
+        .send({
+          reviewState: storedState,
+          reviewDecision: decision,
+          proposedManagerGuid,
+          expectedVersion: commentSave.body.review.version,
+          recheckConfirmed: true,
+        });
+      assert.equal(recheck.status, 200);
+      assert.equal(recheck.body.review.reviewState, storedState);
+      assert.equal(recheck.body.review.storedReviewState, storedState);
+      assert.equal(recheck.body.review.isStale, false);
+    }
+  });
+
+  it("requires explicit target state when stored state is needs_recheck", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+
+    await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        expectedVersion: null,
+      });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `
+        UPDATE client_review_records
+        SET review_state = 'needs_recheck'
+        WHERE guid_client = $1::uuid
+      `,
+      [CLIENT_ONE],
+    );
+    await pool.query(`UPDATE onec_clients SET address = 'Corrupted stored state' WHERE guid_client = $1::uuid`, [
+      CLIENT_ONE,
+    ]);
+    await pool.end();
+
+    const stale = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie));
+    assert.equal(stale.body.review.storedReviewState, "needs_recheck");
+    assert.equal(stale.body.review.isStale, true);
+
+    const rejected = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "needs_recheck",
+        reviewDecision: "confirm_current_manager",
+        expectedVersion: stale.body.review.version,
+        recheckConfirmed: true,
+      });
+    assert.equal(rejected.status, 400);
+
+    const recovered = await request(app)
+      .put(`/api/clients/${CLIENT_ONE}/review`)
+      .set(authHeaders(adminCookie))
+      .send({
+        reviewState: "completed",
+        reviewDecision: "confirm_current_manager",
+        expectedVersion: stale.body.review.version,
+        recheckConfirmed: true,
+      });
+    assert.equal(recovered.status, 200);
+    assert.equal(recovered.body.review.reviewState, "completed");
+    assert.equal(recovered.body.review.storedReviewState, "completed");
+    assert.equal(recovered.body.review.isStale, false);
+  });
+
   it("preserves assigned reviewer on comment-only save and rejects unavailable without explicit choice", async () => {
     const adminCookie = await login("admin@example.com");
     const app = await loadApp();
