@@ -16,6 +16,11 @@ import {
   getClientCatalogSectionsTreeHandler,
 } from "./catalog-handlers";
 import {
+  getClientCatalogOutletDistributionHandler,
+  getClientCatalogOutletsHandler,
+  postClientCatalogOutletDistributionMarkerHandler,
+} from "./outlet-distribution-handlers";
+import {
   getClientBitrix24ClaimsHandler,
   getClientBitrix24LabelHandler,
   getClientBitrix24TasksHandler,
@@ -79,6 +84,23 @@ export function createClientsRouter(): express.Router {
   router.get("/:guid/catalog/media/:assetId", ...readChain, (req, res, next) => {
     void getClientCatalogMediaHandler(req, res).catch(next);
   });
+
+  router.get("/:guid/catalog/outlets", ...readChain, (req, res, next) => {
+    void getClientCatalogOutletsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/outlets/:storeGuid/distribution", ...readChain, (req, res, next) => {
+    void getClientCatalogOutletDistributionHandler(req, res).catch(next);
+  });
+
+  router.post(
+    "/:guid/catalog/outlets/:storeGuid/distribution/markers",
+    csrfProtection,
+    ...readChain,
+    (req, res, next) => {
+      void postClientCatalogOutletDistributionMarkerHandler(req, res).catch(next);
+    },
+  );
 
   router.get("/:guid/bitrix24/label", ...readChain, (req, res, next) => {
     void getClientBitrix24LabelHandler(req, res).catch(next);

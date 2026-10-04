@@ -32,6 +32,11 @@ export type CatalogKeyProperty = {
   value: string;
 };
 
+export type CatalogProductDistributionState = {
+  installed: boolean;
+  planned: boolean;
+};
+
 export type CatalogProductListItem = {
   code: string;
   name: string;
@@ -43,6 +48,7 @@ export type CatalogProductListItem = {
   article: string | null;
   keyProperties: CatalogKeyProperty[];
   activity: string;
+  distribution?: CatalogProductDistributionState;
 };
 
 export type CatalogProductSearchResult = {
@@ -95,4 +101,5 @@ export type CatalogProductDetail = {
   imageAssetIds: string[];
   article: string | null;
   snapshotImportedAt: string | null;
+  distribution?: CatalogProductDistributionState;
 };
