@@ -7,8 +7,14 @@ export type CleanReloadOutletIssue = {
   code: "MISSING_FIELD" | "INVALID_TYPE" | "INVALID_UUID" | "DUPLICATE_GUID_STORE";
 };
 
+export type ExpectedCleanReloadOutlet = {
+  guid_store: string;
+  guid_client: string;
+  closed: boolean;
+};
+
 export type CleanReloadOutletValidationResult =
-  | { ok: true; outletGuids: readonly string[] }
+  | { ok: true; outletGuids: readonly string[]; expectedOutlets: readonly ExpectedCleanReloadOutlet[] }
   | { ok: false; code: "INVALID_JSON" | "INVALID_ROOT" | "OUTLET_IDENTITY_REQUIRED"; issues: CleanReloadOutletIssue[] };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -31,11 +37,17 @@ export function validateCleanReloadOutletIdentityBytes(bytes: Buffer): CleanRelo
   const issues: CleanReloadOutletIssue[] = [];
   const seenGuids = new Set<string>();
   const outletGuids: string[] = [];
+  const expectedOutlets: ExpectedCleanReloadOutlet[] = [];
 
   for (let clientIndex = 0; clientIndex < parsed.length; clientIndex += 1) {
     const client = parsed[clientIndex];
     if (!isPlainObject(client)) {
       continue;
+    }
+    const clientGuidRaw = client.guid_client;
+    let clientGuid: string | null = null;
+    if (typeof clientGuidRaw === "string" && isValidNonZeroUuid(clientGuidRaw.trim())) {
+      clientGuid = normalizeUuid(clientGuidRaw.trim());
     }
     const outlets = client.retail_outlets;
     if (outlets === undefined || outlets === null) {
@@ -91,6 +103,13 @@ export function validateCleanReloadOutletIdentityBytes(bytes: Buffer): CleanRelo
         } else {
           seenGuids.add(guid);
           outletGuids.push(guid);
+          if (clientGuid !== null && typeof outlet.closed === "boolean") {
+            expectedOutlets.push({
+              guid_store: guid,
+              guid_client: clientGuid,
+              closed: outlet.closed,
+            });
+          }
         }
       }
 
@@ -116,5 +135,5 @@ export function validateCleanReloadOutletIdentityBytes(bytes: Buffer): CleanRelo
     return { ok: false, code: "OUTLET_IDENTITY_REQUIRED", issues };
   }
 
-  return { ok: true, outletGuids };
+  return { ok: true, outletGuids, expectedOutlets };
 }

@@ -143,6 +143,41 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     assert.equal(reads, 1);
   });
 
+  it("apply is blocked when job is no longer running after FTP read", async () => {
+    const validSha = buildImportVerificationFingerprint([sampleClient()]);
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)
+        VALUES ('apply', $1, NOW() + INTERVAL '1 hour')
+      `,
+      [validSha],
+    );
+
+    let releaseFtp!: () => void;
+    const ftpBlocked = new Promise<void>((resolve) => {
+      releaseFtp = resolve;
+    });
+    const pausingReader: FtpReader = async () => {
+      await ftpBlocked;
+      return { ok: true, bytes, remotePath: "/LC/clients/all_clients.json" };
+    };
+
+    const workerPromise = runOneImportJob(pool, env, pausingReader);
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const status = await pool.query<{ status: string }>(`SELECT status FROM onec_import_jobs LIMIT 1`);
+      if (status.rows[0]?.status === "running") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    await pool.query(`DELETE FROM onec_import_jobs`);
+    releaseFtp();
+    assert.equal(await workerPromise, "failed");
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+  });
+
   it("invalid FTP config fails without reading", async () => {
     await pool.query(`
       INSERT INTO onec_import_jobs (mode, expires_at)

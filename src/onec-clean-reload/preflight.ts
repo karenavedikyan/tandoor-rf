@@ -43,8 +43,8 @@ export function buildConcurrentImportBlockers(state: ConcurrentImportState): str
   return blockers;
 }
 
-/** Dry-run contract: refuse when imports/jobs are active; apply supersedes pending jobs under locks. */
-export async function assertDryRunConcurrentImportsClear(client: PoolClient): Promise<void> {
+/** Dry-run and apply both refuse when imports or operator jobs are active. */
+export async function assertCleanReloadConcurrentImportsClear(client: PoolClient): Promise<void> {
   const state = await readConcurrentImportState(client);
   const blockers = buildConcurrentImportBlockers(state);
   if (blockers.includes("CONCURRENT_CLIENT_IMPORT")) {
@@ -53,18 +53,8 @@ export async function assertDryRunConcurrentImportsClear(client: PoolClient): Pr
     });
   }
   if (blockers.includes("PENDING_IMPORT_JOBS")) {
-    throw Object.assign(new Error("Pending or running onec_import_jobs must be resolved before dry-run."), {
+    throw Object.assign(new Error("Pending or running onec_import_jobs must be resolved before clean reload."), {
       code: "PENDING_IMPORT_JOBS",
-    });
-  }
-}
-
-/** Apply contract: only running client imports block; pending jobs are superseded after locks. */
-export async function assertApplyConcurrentImportsClear(client: PoolClient): Promise<void> {
-  const state = await readConcurrentImportState(client);
-  if (state.runningClientImports > 0) {
-    throw Object.assign(new Error("A client import run is still marked as running."), {
-      code: "CONCURRENT_CLIENT_IMPORT",
     });
   }
 }
@@ -134,34 +124,13 @@ export function buildCleanReloadPlan(
   };
 }
 
-export async function supersedePendingImportJobs(client: PoolClient): Promise<number> {
-  const result = await client.query(
-    `
-      UPDATE onec_import_jobs
-      SET status = 'failed',
-          finished_at = NOW(),
-          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
-            'errorCode', 'CLEAN_RELOAD_SUPERSEDED',
-            'message', 'Superseded by onec-clean-reload apply.'
-          )
-      WHERE status IN ('pending', 'running')
-    `,
-  );
-  return result.rowCount ?? 0;
-}
-
 export async function runCleanReloadPreflight(
   client: PoolClient,
-  mode: "dry_run" | "apply",
 ): Promise<{ schema: Awaited<ReturnType<typeof inspectCleanReloadSchema>>; concurrent: ConcurrentImportState }> {
+  await assertCleanReloadLocksAvailable(client);
   await assertCleanReloadSchemaReady(client);
   const schema = await inspectCleanReloadSchema(client);
   const concurrent = await readConcurrentImportState(client);
-  if (mode === "dry_run") {
-    await assertDryRunConcurrentImportsClear(client);
-  } else {
-    await assertApplyConcurrentImportsClear(client);
-  }
-  await assertCleanReloadLocksAvailable(client);
+  await assertCleanReloadConcurrentImportsClear(client);
   return { schema, concurrent };
 }

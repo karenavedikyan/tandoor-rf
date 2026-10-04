@@ -120,5 +120,6 @@ export async function loadPinnedCleanReloadBundle(input: {
     verificationFingerprint,
     stats,
     expectedOutletGuids: outletValidation.outletGuids,
+    expectedOutlets: outletValidation.expectedOutlets,
   };
 }

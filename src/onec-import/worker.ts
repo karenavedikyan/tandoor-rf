@@ -65,6 +65,39 @@ function extractImportRunId(result: ClientsImportResult): string | null {
   return result.apply?.runId ?? null;
 }
 
+async function assertImportJobStillRunnable(
+  db: import("pg").PoolClient,
+  jobId: string,
+): Promise<boolean> {
+  const result = await db.query<{ status: string }>(
+    `
+      SELECT status
+      FROM onec_import_jobs
+      WHERE id = $1::uuid
+    `,
+    [jobId],
+  );
+  return result.rows[0]?.status === "running";
+}
+
+async function failSupersededImportJob(db: import("pg").PoolClient, jobId: string): Promise<void> {
+  await db.query(
+    `
+      UPDATE onec_import_jobs
+      SET
+        status = 'failed',
+        finished_at = NOW(),
+        error_code = 'IMPORT_JOB_SUPERSEDED',
+        result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+          'errorCode', 'IMPORT_JOB_SUPERSEDED',
+          'message', 'Import job is no longer runnable.'
+        )
+      WHERE id = $1::uuid AND status = 'running'
+    `,
+    [jobId],
+  );
+}
+
 /**
  * One attempt per invocation, no timer and no HTTP entry point.
  * Only an unexpired operator-created job can authorize FTP read / apply.
@@ -125,6 +158,17 @@ export async function runOneImportJob(
         holdingLinkValidationPolicy: job.holding_link_validation_policy,
         wholesaleCompositionMode: job.wholesale_composition_mode,
         employeeRosterExplicit: job.employee_roster_source_sha256 != null,
+      },
+      beforeApply: async () => {
+        if (!(await assertImportJobStillRunnable(db, job.id))) {
+          await failSupersededImportJob(db, job.id);
+          return {
+            ok: false as const,
+            errorCode: "IMPORT_JOB_SUPERSEDED",
+            message: "Import job is no longer runnable.",
+          };
+        }
+        return { ok: true as const };
       },
     });
     const serialized = JSON.stringify(importResult);

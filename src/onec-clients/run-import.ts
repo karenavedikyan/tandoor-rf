@@ -74,6 +74,7 @@ export type RunClientsImportOptions = {
   employeeRosterBytes?: Buffer;
   validationLimits?: ValidateClientsLimits;
   triggerSource?: ImportTriggerSource;
+  beforeApply?: () => Promise<{ ok: true } | { ok: false; errorCode: string; message: string }>;
 };
 
 function buildValidationLimits(
@@ -362,6 +363,28 @@ export async function runClientsImport(
       },
       secrets,
     );
+  }
+
+  if (options.beforeApply) {
+    const gate = await options.beforeApply();
+    if (!gate.ok) {
+      return sanitizeImportResult(
+        {
+          status: "APPLY_BLOCKED",
+          mode: "apply",
+          durationMs: Date.now() - startedAt,
+          security: "plain",
+          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
+          sha256: payload.sha256,
+          byteSize: payload.byteSize,
+          recordCount: payload.recordCount,
+          message: gate.message,
+          errorCode: gate.errorCode,
+          holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+        },
+        secrets,
+      );
+    }
   }
 
   const applied = await applyClientsImport({

@@ -1,6 +1,7 @@
 import type { HoldingLinkValidationPolicy } from "../onec-clients/holding-link-policy";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
 import type { WholesaleEmployeeRoster } from "../onec-clients/employee-roster";
+import type { ExpectedCleanReloadOutlet } from "./outlet-validation";
 
 export type CleanReloadMode = "dry_run" | "apply";
 
@@ -34,6 +35,7 @@ export type PinnedCleanReloadBundle = {
   verificationFingerprint: string;
   stats: BundleCompositionStats;
   expectedOutletGuids: readonly string[];
+  expectedOutlets: readonly ExpectedCleanReloadOutlet[];
 };
 
 export type CleanReloadPlan = {

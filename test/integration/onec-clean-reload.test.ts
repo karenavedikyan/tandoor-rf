@@ -41,8 +41,21 @@ import {
   setIntegrationEnv,
 } from "../helpers/test-db";
 import { BUNDLE_EMPLOYEES_FILE } from "../../src/onec-clean-reload/constants";
+import type { FtpReader } from "../../src/onec-clients/ftp-read";
+import { buildImportVerificationFingerprint } from "../helpers/onec-clients-fixtures";
+import { runOneImportJob } from "../../src/onec-import/worker";
 
 const ORIGIN = "http://127.0.0.1:3000";
+const FTP_ENV = {
+  ONEC_FTP_ENABLED: "true",
+  ONEC_FTP_SECURITY: "plain",
+  ONEC_FTP_HOST: "gw.toopatch.ru",
+  ONEC_FTP_PORT: "21",
+  ONEC_FTP_USER: "test",
+  ONEC_FTP_PASSWORD: "secret-test-value",
+  ONEC_FTP_BASE_PATH: "/LC",
+  ONEC_FTP_TIMEOUT_MS: "1000",
+};
 const TEST_PASSWORD = "StrongPass123!";
 const OLD_CLIENT = "11111111-1111-4111-8111-111111111111";
 const STALE_EMPLOYEE = "33333333-3333-4333-8333-333333333333";
@@ -564,6 +577,251 @@ describe("onec clean reload integration", { concurrency: false }, () => {
       .set("Origin", ORIGIN)
       .set("Cookie", cookie);
     assert.equal(list.status, 403);
+  });
+
+  it("apply refuses when pending or running import jobs exist", async () => {
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, true);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`
+      INSERT INTO onec_import_jobs (mode, status, expires_at)
+      VALUES ('dry_run', 'pending', NOW() + INTERVAL '1 hour')
+    `);
+    await pool.end();
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "pending-job-block",
+    });
+    assert.equal(apply.ok, false);
+    if (!apply.ok) {
+      assert.equal(apply.code, "PENDING_IMPORT_JOBS");
+    }
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyStill = await poolAfter.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await poolAfter.end();
+  });
+
+  it("refuses apply while import worker holds a running job after claim", async () => {
+    const dryRun = await runCleanReload({
+      mode: "dry_run",
+      bundleDir,
+      databaseUrl,
+      confirmExtendedContract: true,
+      operatorReference: "worker-race-dry-run",
+    });
+    assert.equal(dryRun.ok, true);
+
+    const staleBytes = buildExtendedClientsFileBytes([
+      sampleExtendedHolding({ name_client: "STALE WORKER Holding Alpha" }),
+      sampleExtendedChild({
+        name_client: "STALE WORKER Child Shop",
+        retail_outlets: [
+          {
+            guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+            closed: true,
+            holding: "Holding Alpha",
+            warehouse: false,
+            address: { store_address: "Child store", delivery_address: "", direction_of_the_route: "" },
+            information_loading: { loading_on_friday: true, loading_time: "10:30" },
+            managers: {
+              guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_B,
+              name_manager: "Manager Two",
+              guid_regional_manager: "",
+              name_regional_manager: "",
+              guid_hardware_manager: "",
+              name_hardware_manager: "",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+    const staleFingerprint = buildImportVerificationFingerprint(
+      JSON.parse(staleBytes.toString("utf8")) as Record<string, unknown>[],
+    );
+
+    let releaseFtp!: () => void;
+    const ftpBlocked = new Promise<void>((resolve) => {
+      releaseFtp = resolve;
+    });
+    const pausingReader: FtpReader = async () => {
+      await ftpBlocked;
+      return { ok: true, bytes: staleBytes, remotePath: "/LC/clients/all_clients.json" };
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)
+        VALUES ('apply', $1, NOW() + INTERVAL '1 hour')
+      `,
+      [staleFingerprint],
+    );
+
+    const workerPromise = runOneImportJob(pool, { ...FTP_ENV, DATABASE_URL: databaseUrl }, pausingReader);
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const status = await pool.query<{ status: string }>(`SELECT status FROM onec_import_jobs LIMIT 1`);
+      if (status.rows[0]?.status === "running") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "worker-race-apply",
+    });
+    assert.equal(apply.ok, false, JSON.stringify(apply));
+    if (!apply.ok) {
+      assert.equal(apply.code, "PENDING_IMPORT_JOBS");
+    }
+
+    const legacyBeforeRelease = await pool.query<{ name_client: string }>(
+      `SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid`,
+      [OLD_CLIENT],
+    );
+    assert.equal(legacyBeforeRelease.rowCount, 1);
+
+    releaseFtp();
+    await workerPromise;
+
+    const cleanReloadApplied = await pool.query(
+      `
+        SELECT 1
+        FROM onec_clients
+        WHERE guid_client = $1::uuid
+          AND name_client = 'Holding Alpha'
+      `,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(cleanReloadApplied.rowCount, 0);
+
+    const legacyStill = await pool.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await pool.end();
+  });
+
+  it("dry-run reports migrations_not_ready when required roster column is absent", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`ALTER TABLE onec_wholesale_employee_roster DROP COLUMN IF EXISTS raw_json`);
+    await pool.end();
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "MIGRATIONS_NOT_READY");
+      assert.ok(dryRun.plan?.blockers.some((item) => item.includes("raw_json")));
+    }
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyStill = await poolAfter.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await poolAfter.end();
+  });
+
+  it("rolls back apply when outlet registry insert is incomplete", async () => {
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, true);
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "outlet-registry-verify",
+      testHooks: {
+        afterPurge: async (client) => {
+          await client.query(`
+            CREATE OR REPLACE FUNCTION clean_reload_test_block_store_two()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+              IF NEW.guid_store = '${EXTENDED_FIXTURE_GUIDS.STORE_TWO}'::uuid THEN
+                RETURN NULL;
+              END IF;
+              RETURN NEW;
+            END;
+            $$;
+          `);
+          await client.query(`DROP TRIGGER IF EXISTS clean_reload_test_block_store_two ON onec_retail_outlets`);
+          await client.query(
+            `
+              CREATE TRIGGER clean_reload_test_block_store_two
+              BEFORE INSERT ON onec_retail_outlets
+              FOR EACH ROW
+              EXECUTE FUNCTION clean_reload_test_block_store_two()
+            `,
+          );
+        },
+      },
+    });
+    assert.equal(apply.ok, false);
+    if (!apply.ok) {
+      assert.equal(apply.code, "OUTLET_REGISTRY_MISMATCH");
+    }
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyStill = await pool.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await pool.end();
+  });
+
+  it("rolls back apply when outlet registry owner or closed state is wrong", async () => {
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, true);
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "outlet-registry-owner",
+      testHooks: {
+        afterClientsImport: async (client) => {
+          await client.query(
+            `
+              UPDATE onec_retail_outlets
+              SET is_closed = TRUE
+              WHERE guid_store = $1::uuid
+            `,
+            [EXTENDED_FIXTURE_GUIDS.STORE_ONE],
+          );
+        },
+      },
+    });
+    assert.equal(apply.ok, false);
+    if (!apply.ok) {
+      assert.equal(apply.code, "OUTLET_REGISTRY_MISMATCH");
+    }
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyStill = await pool.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
+    assert.equal(legacyStill.rowCount, 1);
+    await pool.end();
   });
 
   it("repeat apply does not create duplicate clients or roster rows", async () => {

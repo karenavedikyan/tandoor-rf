@@ -9,15 +9,15 @@ import { storeExtendedContractConfirmation } from "../onec-clients/baseline-repl
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { loadPinnedCleanReloadBundle } from "./bundle";
 import {
-  assertApplyConcurrentImportsClear,
+  assertCleanReloadConcurrentImportsClear,
   buildCleanReloadPlan,
   readConcurrentImportState,
   releaseCleanReloadLock,
   runCleanReloadPreflight,
-  supersedePendingImportJobs,
   tryAcquireCleanReloadLock,
 } from "./preflight";
-import { assertCleanReloadSchemaReady, inspectCleanReloadSchema } from "./schema-preflight";
+import { assertCleanReloadSchemaReady } from "./schema-preflight";
+import { verifyCleanReloadOutletRegistry } from "./outlet-registry-verify";
 import { purgeCleanReloadScope } from "./purge";
 import { replaceWholesaleEmployeeRoster, revokeEmployeeLinksOutsideRoster } from "./roster-apply";
 import { computeTargetDbFingerprint } from "./target-db";
@@ -26,6 +26,7 @@ import type { CleanReloadPlan, CleanReloadResult, RunCleanReloadOptions } from "
 export type { CleanReloadResult } from "./types";
 import { tryAcquireImportLock } from "../onec-clients/import-lock";
 import { IMPORT_ADVISORY_LOCK_KEY } from "../onec-clients/constants";
+import { inspectCleanReloadSchema } from "./schema-preflight";
 
 function failure(
   mode: RunCleanReloadOptions["mode"],
@@ -46,10 +47,48 @@ function failure(
   };
 }
 
+function preflightBlockerFailure(
+  mode: RunCleanReloadOptions["mode"],
+  startedAt: number,
+  plan: CleanReloadPlan,
+): CleanReloadResult | null {
+  if (plan.blockers.length === 0) {
+    return null;
+  }
+
+  const schemaBlocker = plan.blockers.find((item) => item.startsWith("MIGRATIONS_NOT_READY:"));
+  if (schemaBlocker) {
+    return failure(
+      mode,
+      startedAt,
+      "MIGRATIONS_NOT_READY",
+      "Database schema is not ready for clean reload (apply migration 032 and earlier client migrations).",
+      plan,
+      { blockers: plan.blockers },
+    );
+  }
+
+  const code = plan.blockers.includes("PENDING_IMPORT_JOBS")
+    ? "PENDING_IMPORT_JOBS"
+    : plan.blockers.includes("CONCURRENT_CLIENT_IMPORT")
+      ? "CONCURRENT_CLIENT_IMPORT"
+      : "PREFLIGHT_BLOCKED";
+
+  return failure(
+    mode,
+    startedAt,
+    code,
+    mode === "dry_run"
+      ? "Clean reload preflight blockers must be resolved before dry-run."
+      : "Clean reload preflight blockers must be resolved before apply.",
+    plan,
+    { blockers: plan.blockers },
+  );
+}
+
 async function buildPlanWithLivePreflight(
   databaseUrl: string,
   bundle: Awaited<ReturnType<typeof loadPinnedCleanReloadBundle>>,
-  mode: "dry_run" | "apply",
 ): Promise<CleanReloadPlan> {
   const pool = new Pool(createPgPoolOptions(databaseUrl));
   const client = await pool.connect();
@@ -82,49 +121,19 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
 
   let plan: CleanReloadPlan;
   try {
-    plan = await buildPlanWithLivePreflight(options.databaseUrl, bundle, mode);
+    plan = await buildPlanWithLivePreflight(options.databaseUrl, bundle);
   } catch (error) {
     return failure(
       mode,
       startedAt,
       (error as { code?: string }).code ?? "PREFLIGHT_FAILED",
       error instanceof Error ? error.message : "Preflight failed.",
-      buildCleanReloadPlan(
-        options.databaseUrl,
-        bundle,
-        { dependencies: [], missing: ["table:onec_wholesale_employee_roster"] },
-        { runningClientImports: 0, pendingImportJobs: 0 },
-      ),
     );
   }
 
-  if (plan.blockers.length > 0) {
-    const schemaBlocker = plan.blockers.find((item) => item.startsWith("MIGRATIONS_NOT_READY:"));
-    if (schemaBlocker) {
-      return failure(
-        mode,
-        startedAt,
-        "MIGRATIONS_NOT_READY",
-        "Database schema is not ready for clean reload (apply migration 032 and earlier client migrations).",
-        plan,
-        { blockers: plan.blockers },
-      );
-    }
-    if (mode === "dry_run") {
-      const code = plan.blockers.includes("PENDING_IMPORT_JOBS")
-        ? "PENDING_IMPORT_JOBS"
-        : plan.blockers.includes("CONCURRENT_CLIENT_IMPORT")
-          ? "CONCURRENT_CLIENT_IMPORT"
-          : "PREFLIGHT_BLOCKED";
-      return failure(
-        mode,
-        startedAt,
-        code,
-        "Clean reload preflight blockers must be resolved before dry-run.",
-        plan,
-        { blockers: plan.blockers },
-      );
-    }
+  const blockerFailure = preflightBlockerFailure(mode, startedAt, plan);
+  if (blockerFailure) {
+    return blockerFailure;
   }
 
   const rosterGuids = Array.from(bundle.employeeRoster.wholesaleGuids);
@@ -167,7 +176,7 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       const pool = new Pool(createPgPoolOptions(options.databaseUrl));
       const client = await pool.connect();
       try {
-        await runCleanReloadPreflight(client, "dry_run");
+        await runCleanReloadPreflight(client);
       } finally {
         client.release();
         await pool.end();
@@ -200,8 +209,6 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
   try {
     pg = await pool.connect();
 
-    await assertCleanReloadSchemaReady(pg);
-
     if (!(await tryAcquireCleanReloadLock(pg))) {
       return failure(mode, startedAt, "CLEAN_RELOAD_LOCKED", "Another clean reload is already in progress.", plan);
     }
@@ -212,10 +219,12 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     }
     importLockHeld = true;
 
-    await assertApplyConcurrentImportsClear(pg);
+    await assertCleanReloadSchemaReady(pg);
+    await assertCleanReloadConcurrentImportsClear(pg);
+    // Re-check immediately before BEGIN to close the claim race under held advisory locks.
+    await assertCleanReloadConcurrentImportsClear(pg);
 
     await pg.query("BEGIN");
-    await supersedePendingImportJobs(pg);
     await purgeCleanReloadScope(pg);
     await options.testHooks?.afterPurge?.(pg);
 
@@ -265,6 +274,12 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       records: bundle.employeeRoster.records,
     });
 
+    const outletRegistry = await verifyCleanReloadOutletRegistry(pg, bundle.expectedOutlets);
+    if (!outletRegistry.ok) {
+      await pg.query("ROLLBACK");
+      return failure(mode, startedAt, outletRegistry.code, outletRegistry.message, plan, outletRegistry.details);
+    }
+
     commitAttempted = true;
     await pg.query("COMMIT");
     commitConfirmed = true;
@@ -278,7 +293,7 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
         clientsImportRunId: importResult.runId!,
         rosterEmployeeCount,
         revokedEmployeeLinks,
-        outletGuidsLoaded: bundle.expectedOutletGuids,
+        outletGuidsLoaded: outletRegistry.outletGuidsLoaded,
       },
     };
   } catch (error) {

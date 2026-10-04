@@ -61,7 +61,7 @@ CLI фиксирует SHA256 каждого файла (ограниченно�
 1. Резервная копия PostgreSQL контура РФ.
 2. Скопировать актуальный комплект 1С в локальный каталог (не коммитить в Git).
 3. Убедиться, что migration `032` и более ранние client/catalog migrations применены.
-4. Dry-run **откажет**, если есть `pending/running` `onec_import_jobs` или running client import. Apply под locks **помечает pending jobs superseded** — повторный apply без dry-run при новых jobs не рекомендуется.
+4. Dry-run и apply **откажут**, если есть `pending/running` `onec_import_jobs` или running client import. Дождитесь завершения/истечения operator jobs перед clean reload.
 
 ### 4.2 Dry-run (обязателен)
 
@@ -110,7 +110,9 @@ npm run onec-clean-reload:local -- --apply \
 - `--expected-bundle-fingerprint` — от apply с изменёнными файлами
 - preflight schema (`MIGRATIONS_NOT_READY` без migration 032)
 - advisory lock `902451004` + client import lock
-- dry-run: pending jobs блокируют; apply: supersede pending jobs после locks
+- dry-run и apply: pending/running `onec_import_jobs` и running client import блокируют процедуру до очистки
+- worker import job: после чтения FTP и **перед** apply повторно проверяет, что job всё ещё `running`; удалённый/superseded job не выполняет apply
+- clean reload apply: advisory lock `902451004` + client import lock, повторная проверка jobs под locks непосредственно перед BEGIN
 - purge + clients import + roster — **одна транзакция**; при ошибке до COMMIT прежний состав остаётся целым
 - пустой roster и анонимные ТТ блокируют процедуру до очистки
 
