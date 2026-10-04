@@ -223,6 +223,7 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     await assertCleanReloadConcurrentImportsClear(pg);
     // Re-check immediately before BEGIN to close the claim race under held advisory locks.
     await assertCleanReloadConcurrentImportsClear(pg);
+    await options.testHooks?.afterConcurrentCheck?.(pg);
 
     await pg.query("BEGIN");
     await purgeCleanReloadScope(pg);

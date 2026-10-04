@@ -82,6 +82,7 @@ export type CleanReloadFailure = {
 export type CleanReloadResult = CleanReloadSuccess | CleanReloadFailure;
 
 export type CleanReloadTestHooks = {
+  afterConcurrentCheck?: (client: import("pg").PoolClient) => Promise<void>;
   afterPurge?: (client: import("pg").PoolClient) => Promise<void>;
   afterClientsImport?: (client: import("pg").PoolClient) => Promise<void>;
   beforeRosterReplace?: (client: import("pg").PoolClient) => Promise<void>;

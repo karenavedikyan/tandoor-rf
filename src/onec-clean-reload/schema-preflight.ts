@@ -1,20 +1,38 @@
 import type { PoolClient } from "pg";
+import { PURGE_REQUIRED_TABLES } from "./constants";
+
+const CORE_SCHEMA_TABLES = [
+  "onec_clients",
+  "onec_retail_outlets",
+  "onec_client_import_runs",
+  "onec_import_jobs",
+  "onec_exchange_state",
+  "onec_wholesale_employee_roster",
+  "onec_wholesale_roster_state",
+] as const;
 
 export const REQUIRED_SCHEMA_OBJECTS = [
-  { kind: "table" as const, name: "onec_clients" },
-  { kind: "table" as const, name: "onec_retail_outlets" },
-  { kind: "table" as const, name: "onec_client_import_runs" },
-  { kind: "table" as const, name: "onec_import_jobs" },
-  { kind: "table" as const, name: "onec_exchange_state" },
-  { kind: "table" as const, name: "onec_wholesale_employee_roster" },
-  { kind: "table" as const, name: "onec_wholesale_roster_state" },
-] as const;
+  ...new Set([...CORE_SCHEMA_TABLES, ...PURGE_REQUIRED_TABLES]),
+].map((name) => ({ kind: "table" as const, name }));
 
 /** Columns referenced by clean reload purge, clients import, roster replace, and exchange reset. */
 export const REQUIRED_SCHEMA_COLUMNS = [
   { table: "onec_retail_outlets", column: "guid_store" },
   { table: "onec_retail_outlets", column: "guid_client" },
   { table: "onec_retail_outlets", column: "is_closed" },
+  { table: "onec_client_import_runs", column: "status" },
+  { table: "onec_client_import_runs", column: "mode" },
+  { table: "onec_client_import_runs", column: "trigger_source" },
+  { table: "onec_client_import_runs", column: "parent_run_id" },
+  { table: "onec_client_import_runs", column: "source_sha256" },
+  { table: "onec_client_import_runs", column: "source_byte_size" },
+  { table: "onec_client_import_runs", column: "source_record_count" },
+  { table: "onec_client_import_runs", column: "warning_count" },
+  { table: "onec_client_import_runs", column: "warnings" },
+  { table: "onec_client_import_runs", column: "warnings_truncated" },
+  { table: "onec_client_import_runs", column: "verification_fingerprint" },
+  { table: "onec_client_import_runs", column: "finished_at" },
+  { table: "onec_client_import_runs", column: "error_code" },
   { table: "onec_wholesale_employee_roster", column: "guid_manager" },
   { table: "onec_wholesale_employee_roster", column: "name_manager" },
   { table: "onec_wholesale_employee_roster", column: "guid_post" },

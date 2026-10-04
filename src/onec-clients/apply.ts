@@ -37,6 +37,7 @@ import {
 import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
+import { assertOperatorImportJobRunnable } from "./import-job-guard";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
@@ -73,7 +74,8 @@ export type ApplyResult =
         | "APPLY_BLOCKED"
         | "VERIFICATION_FINGERPRINT_REQUIRED"
         | "VERIFICATION_FINGERPRINT_MISMATCH"
-        | "VERIFICATION_PARAMETERS_MISMATCH";
+        | "VERIFICATION_PARAMETERS_MISMATCH"
+        | "IMPORT_JOB_SUPERSEDED";
       message: string;
       runId?: string;
       actualFingerprint?: string;
@@ -88,6 +90,10 @@ export type ApplyTestHooks = {
   failRelease?: boolean;
   failPoolEnd?: boolean;
   onClientReady?: (client: PoolClient) => void;
+  /** Test-only: pause after connection is ready, before import advisory lock acquisition. */
+  beforeImportLock?: () => Promise<void>;
+  /** Test-only: pause after import lock is held, before operator job gate and writes. */
+  afterImportLock?: (client: PoolClient) => Promise<void>;
 };
 
 type ExistingClientRow = {
@@ -659,6 +665,8 @@ export async function applyClientsImport(options: {
   originalClientsSourceSha256?: string;
   /** When true, caller owns BEGIN/COMMIT; apply must not commit or rollback the connection. */
   participatingTransaction?: boolean;
+  /** Operator job id; validated only after import advisory lock is held on this connection. */
+  operatorImportJobId?: string;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -739,6 +747,8 @@ export async function applyClientsImport(options: {
   }
 
   try {
+    await options.testHooks?.beforeImportLock?.();
+
     if (!options.lockAlreadyHeld) {
       const lock = await queryManaged<{ locked: boolean }>(
         managed,
@@ -749,6 +759,21 @@ export async function applyClientsImport(options: {
         outcome = { ok: false, code: "IMPORT_LOCKED", message: "Another clients import is already running." };
       } else {
         phase.lockHeld = true;
+      }
+    }
+
+    if (!outcome) {
+      await options.testHooks?.afterImportLock?.(managed.client);
+
+      if (options.operatorImportJobId) {
+        const runnable = await assertOperatorImportJobRunnable(managed.client, options.operatorImportJobId);
+        if (!runnable) {
+          outcome = {
+            ok: false,
+            code: "IMPORT_JOB_SUPERSEDED",
+            message: "Import job is no longer runnable.",
+          };
+        }
       }
     }
 

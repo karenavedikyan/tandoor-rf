@@ -111,7 +111,7 @@ npm run onec-clean-reload:local -- --apply \
 - preflight schema (`MIGRATIONS_NOT_READY` без migration 032)
 - advisory lock `902451004` + client import lock
 - dry-run и apply: pending/running `onec_import_jobs` и running client import блокируют процедуру до очистки
-- worker import job: после чтения FTP и **перед** apply повторно проверяет, что job всё ещё `running`; удалённый/superseded job не выполняет apply
+- worker import job: `applyClientsImport` проверяет `operatorImportJobId` **после** захвата client import advisory lock на том же соединении; удалённый/superseded job не выполняет apply
 - clean reload apply: advisory lock `902451004` + client import lock, повторная проверка jobs под locks непосредственно перед BEGIN
 - purge + clients import + roster — **одна транзакция**; при ошибке до COMMIT прежний состав остаётся целым
 - пустой roster и анонимные ТТ блокируют процедуру до очистки

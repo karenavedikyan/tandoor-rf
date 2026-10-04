@@ -44,6 +44,7 @@ import { BUNDLE_EMPLOYEES_FILE } from "../../src/onec-clean-reload/constants";
 import type { FtpReader } from "../../src/onec-clients/ftp-read";
 import { buildImportVerificationFingerprint } from "../helpers/onec-clients-fixtures";
 import { runOneImportJob } from "../../src/onec-import/worker";
+import { runClientsImport } from "../../src/onec-clients/run-import";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const FTP_ENV = {
@@ -821,6 +822,193 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     const legacyStill = await pool.query(`SELECT 1 FROM onec_clients WHERE guid_client = $1::uuid`, [OLD_CLIENT]);
     assert.equal(legacyStill.rowCount, 1);
+    await pool.end();
+  });
+
+  function buildStaleAfterCheckClientsBytes(): Buffer {
+    return buildExtendedClientsFileBytes([
+      sampleExtendedHolding({ name_client: "STALE AFTER CHECK Holding Alpha" }),
+      sampleExtendedChild({
+        name_client: "STALE AFTER CHECK Child Shop",
+        retail_outlets: [
+          {
+            guid_store: EXTENDED_FIXTURE_GUIDS.STORE_TWO,
+            closed: true,
+            holding: "Holding Alpha",
+            warehouse: false,
+            address: { store_address: "Child store", delivery_address: "", direction_of_the_route: "" },
+            information_loading: { loading_on_friday: true, loading_time: "10:30" },
+            managers: {
+              guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_B,
+              name_manager: "Manager Two",
+              guid_regional_manager: "",
+              name_regional_manager: "",
+              guid_hardware_manager: "",
+              name_hardware_manager: "",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+            LPR_information: {},
+            additional_information: {},
+          },
+        ],
+      }),
+    ]);
+  }
+
+  async function assertNoStaleAfterCheckClients(pool: Pool): Promise<void> {
+    const stale = await pool.query<{ name_client: string }>(
+      `SELECT name_client FROM onec_clients WHERE name_client LIKE 'STALE AFTER CHECK%'`,
+    );
+    assert.equal(stale.rowCount, 0);
+    const holding = await pool.query<{ name_client: string }>(
+      `SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid`,
+      [EXTENDED_FIXTURE_GUIDS.HOLDING_GUID],
+    );
+    assert.equal(holding.rows[0]?.name_client, "Holding Alpha");
+  }
+
+  it("dry-run reports migrations_not_ready when required purge table is absent", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DROP TABLE IF EXISTS outlet_distribution_marker_events CASCADE`);
+    await pool.end();
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "MIGRATIONS_NOT_READY");
+      assert.ok(
+        dryRun.plan?.blockers.some((item) => item.includes("outlet_distribution_marker_events")),
+      );
+    }
+  });
+
+  it("dry-run reports migrations_not_ready when import metadata column is absent", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`ALTER TABLE onec_client_import_runs DROP COLUMN IF EXISTS verification_fingerprint`);
+    await pool.end();
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, false);
+    if (!dryRun.ok) {
+      assert.equal(dryRun.code, "MIGRATIONS_NOT_READY");
+      assert.ok(dryRun.plan?.blockers.some((item) => item.includes("verification_fingerprint")));
+    }
+  });
+
+  it("dry-run succeeds when optional review schema is absent", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DROP TABLE IF EXISTS client_review_records CASCADE`);
+    await pool.end();
+
+    const dryRun = await runCleanReload({ mode: "dry_run", bundleDir, databaseUrl });
+    assert.equal(dryRun.ok, true);
+    assert.equal(dryRun.plan.blockers.length, 0);
+  });
+
+  it("job created after clean reload concurrent check cannot republish stale client names", async () => {
+    const dryRun = await runCleanReload({
+      mode: "dry_run",
+      bundleDir,
+      databaseUrl,
+      confirmExtendedContract: true,
+      operatorReference: "after-check-race-dry-run",
+    });
+    assert.equal(dryRun.ok, true);
+
+    const staleBytes = buildStaleAfterCheckClientsBytes();
+    const staleFingerprint = buildImportVerificationFingerprint(
+      JSON.parse(staleBytes.toString("utf8")) as Record<string, unknown>[],
+    );
+
+    let releaseFtp!: () => void;
+    const ftpBlocked = new Promise<void>((resolve) => {
+      releaseFtp = resolve;
+    });
+    const pausingReader: FtpReader = async () => {
+      await ftpBlocked;
+      return { ok: true, bytes: staleBytes, remotePath: "/LC/clients/all_clients.json" };
+    };
+
+    const jobPool = new Pool({ connectionString: databaseUrl, max: 2 });
+    let workerPromise: Promise<"idle" | "success" | "failed"> | undefined;
+
+    const apply = await runCleanReload({
+      mode: "apply",
+      bundleDir,
+      databaseUrl,
+      expectedBundleFingerprint: dryRun.plan.bundleFingerprint,
+      confirmTargetDb: dryRun.plan.targetDbFingerprint,
+      confirmExtendedContract: true,
+      operatorReference: "after-check-race-apply",
+      testHooks: {
+        afterConcurrentCheck: async () => {
+          await jobPool.query(
+            `
+              INSERT INTO onec_import_jobs (mode, expected_sha256, expires_at)
+              VALUES ('apply', $1, NOW() + INTERVAL '1 hour')
+            `,
+            [staleFingerprint],
+          );
+          workerPromise = runOneImportJob(jobPool, { ...FTP_ENV, DATABASE_URL: databaseUrl }, pausingReader);
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            const status = await jobPool.query<{ status: string }>(
+              `SELECT status FROM onec_import_jobs ORDER BY requested_at DESC LIMIT 1`,
+            );
+            if (status.rows[0]?.status === "running") {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+        },
+      },
+    });
+    assert.equal(apply.ok, true, JSON.stringify(apply));
+
+    releaseFtp();
+    if (workerPromise) {
+      assert.equal(await workerPromise, "failed");
+    }
+
+    await assertNoStaleAfterCheckClients(jobPool);
+    await jobPool.end();
+  });
+
+  it("operator worker re-checks job after import lock and rejects deleted job", async () => {
+    const cleanApply = await applyCleanReload(databaseUrl, bundleDir);
+    assert.equal(cleanApply.ok, true);
+
+    const staleBytes = buildStaleAfterCheckClientsBytes();
+    const staleFingerprint = buildImportVerificationFingerprint(
+      JSON.parse(staleBytes.toString("utf8")) as Record<string, unknown>[],
+    );
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const job = await pool.query<{ id: string }>(
+      `
+        INSERT INTO onec_import_jobs (mode, expected_sha256, status, expires_at)
+        VALUES ('apply', $1, 'running', NOW() + INTERVAL '1 hour')
+        RETURNING id::text
+      `,
+      [staleFingerprint],
+    );
+
+    const importResult = await runClientsImport({
+      env: { ...FTP_ENV, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-sha256", staleFingerprint],
+      fileBytes: staleBytes,
+      triggerSource: "operator_job",
+      operatorImportJobId: job.rows[0]!.id,
+      applyTestHooks: {
+        afterImportLock: async (client) => {
+          await client.query(`DELETE FROM onec_import_jobs WHERE id = $1::uuid`, [job.rows[0]!.id]);
+        },
+      },
+    });
+
+    assert.equal(importResult.status, "IMPORT_JOB_SUPERSEDED");
+    await assertNoStaleAfterCheckClients(pool);
     await pool.end();
   });
 

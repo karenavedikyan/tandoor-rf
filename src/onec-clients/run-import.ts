@@ -1,6 +1,6 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport, createImportPool, type ImportTriggerSource } from "./apply";
+import { applyClientsImport, createImportPool, type ApplyTestHooks, type ImportTriggerSource } from "./apply";
 import {
   CLI_ARGUMENT_ERROR_MESSAGES,
   parseClientsImportCliArgs,
@@ -74,7 +74,8 @@ export type RunClientsImportOptions = {
   employeeRosterBytes?: Buffer;
   validationLimits?: ValidateClientsLimits;
   triggerSource?: ImportTriggerSource;
-  beforeApply?: () => Promise<{ ok: true } | { ok: false; errorCode: string; message: string }>;
+  operatorImportJobId?: string;
+  applyTestHooks?: ApplyTestHooks;
 };
 
 function buildValidationLimits(
@@ -365,33 +366,13 @@ export async function runClientsImport(
     );
   }
 
-  if (options.beforeApply) {
-    const gate = await options.beforeApply();
-    if (!gate.ok) {
-      return sanitizeImportResult(
-        {
-          status: "APPLY_BLOCKED",
-          mode: "apply",
-          durationMs: Date.now() - startedAt,
-          security: "plain",
-          transportWarning: PLAIN_FTP_TRANSPORT_WARNING,
-          sha256: payload.sha256,
-          byteSize: payload.byteSize,
-          recordCount: payload.recordCount,
-          message: gate.message,
-          errorCode: gate.errorCode,
-          holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
-        },
-        secrets,
-      );
-    }
-  }
-
   const applied = await applyClientsImport({
     databaseUrl,
     payload,
     triggerSource: options.triggerSource ?? "manual",
     expectedVerificationFingerprint: cliOptions.expectedSha256,
+    operatorImportJobId: options.operatorImportJobId,
+    testHooks: options.applyTestHooks,
   });
   if (!applied.ok) {
     const mappedErrorCode =
