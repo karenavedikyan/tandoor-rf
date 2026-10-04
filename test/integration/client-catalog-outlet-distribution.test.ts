@@ -39,6 +39,139 @@ const STORE_ONE = EXTENDED_FIXTURE_GUIDS.STORE_ONE;
 const STORE_TWO = EXTENDED_FIXTURE_GUIDS.STORE_TWO;
 const MANAGER_A = EXTENDED_FIXTURE_GUIDS.MANAGER_A;
 const FOREIGN_CLIENT = "44444444-4444-4444-8444-444444444444";
+const IMPORT_PAUSE_ADVISORY_KEY = 987654321;
+
+async function installImportPauseTrigger(pool: Pool): Promise<void> {
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION test_pause_client_import() RETURNS trigger AS $$
+    BEGIN
+      PERFORM pg_advisory_lock(${IMPORT_PAUSE_ADVISORY_KEY});
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await pool.query(`
+    DROP TRIGGER IF EXISTS test_pause_client_import_trg ON onec_clients;
+    CREATE TRIGGER test_pause_client_import_trg
+    AFTER UPDATE ON onec_clients
+    FOR EACH ROW
+    EXECUTE FUNCTION test_pause_client_import();
+  `);
+}
+
+async function dropImportPauseTrigger(pool: Pool): Promise<void> {
+  await pool.query(`DROP TRIGGER IF EXISTS test_pause_client_import_trg ON onec_clients`);
+  await pool.query(`DROP FUNCTION IF EXISTS test_pause_client_import()`);
+}
+
+async function waitForImportPausedOnClient(pool: Pool, timeoutMs = 20000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ count: string }>(
+      `
+        SELECT COUNT(*)::text AS count
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND objid = $1::bigint
+          AND NOT granted
+      `,
+      [IMPORT_PAUSE_ADVISORY_KEY],
+    );
+    if (Number(result.rows[0]?.count ?? "0") >= 1) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Timed out waiting for import to pause on client update");
+}
+
+async function isImportWaitingOnPause(pool: Pool): Promise<boolean> {
+  const result = await pool.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND objid = $1::bigint
+        AND NOT granted
+    `,
+    [IMPORT_PAUSE_ADVISORY_KEY],
+  );
+  return Number(result.rows[0]?.count ?? "0") >= 1;
+}
+
+async function waitForSaveBlockedWhileImportPaused(
+  pool: Pool,
+  isPostSettled: () => boolean,
+  timeoutMs = 5000,
+): Promise<void> {
+  let confirmed = 0;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isPostSettled()) {
+      throw new Error("marker save completed before import pause was released");
+    }
+    if (await isImportWaitingOnPause(pool)) {
+      confirmed += 1;
+      if (confirmed >= 3) {
+        return;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for marker save to block on import-held client lock");
+}
+
+function buildCloseOutletImportBytes(closedStoreGuid: string, nameSuffix: string): Buffer {
+  return buildExtendedClientsFileBytes([
+    sampleExtendedHolding({
+      guid_client: CLIENT_ONE,
+      name_client: `Client Alpha Close Outlet Import ${nameSuffix}`,
+      retail_outlets: [
+        sampleIdentifiedOutlet({
+          guid_store: STORE_ONE,
+          closed: closedStoreGuid === STORE_ONE,
+        }),
+        sampleIdentifiedOutlet({
+          guid_store: STORE_TWO,
+          closed: closedStoreGuid === STORE_TWO,
+          address: { store_address: "Second store", delivery_address: "", direction_of_the_route: "" },
+        }),
+      ],
+    }),
+    sampleClient({
+      guid_client: FOREIGN_CLIENT,
+      name_client: "Foreign",
+      guid_manager: MANAGER_A,
+      name_manager: "Manager",
+    }),
+  ]);
+}
+
+function buildCloseStoreOneImportBytes(): Buffer {
+  return buildCloseOutletImportBytes(STORE_ONE, "one");
+}
+
+async function applyCloseOutletImport(
+  databaseUrl: string,
+  closedStoreGuid: string,
+  nameSuffix: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const bytes = buildCloseOutletImportBytes(closedStoreGuid, nameSuffix);
+  const validated = validateClientsForApplyTest(bytes);
+  if (!validated.ok) {
+    return { ok: false, code: "VALIDATION", message: "validation failed" };
+  }
+  const applied = await applyClientsImportVerified({ databaseUrl, payload: validated.payload });
+  return applied.ok
+    ? { ok: true }
+    : { ok: false, code: applied.code, message: applied.message };
+}
+
+async function applyCloseStoreOneImport(
+  databaseUrl: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  return applyCloseOutletImport(databaseUrl, STORE_ONE, "one");
+}
 
 async function loadApp() {
   await resetPoolForTests();
@@ -495,7 +628,7 @@ describe("client catalog outlet distribution integration", { concurrency: false 
     }
   });
 
-  it("rejects marker save when outlet closes while save waits on row lock", async () => {
+  it("rejects marker save when import closes outlet while save waits on client lock", async () => {
     const cookie = await login("admin@example.com");
     const app = await loadApp();
     const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
@@ -505,37 +638,61 @@ describe("client catalog outlet distribution integration", { concurrency: false 
       productCode: "p1",
       versionId: catalogVersionId,
     };
-    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
-    const blocker = await pool.connect();
-    try {
-      await blocker.query("BEGIN");
-      await blocker.query(
-        `SELECT guid_store FROM onec_retail_outlets WHERE guid_store = $1::uuid FOR UPDATE`,
-        [STORE_ONE],
-      );
 
-      const postPromise = request(app)
+    const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+    await installImportPauseTrigger(pool);
+    const gate = await pool.connect();
+    const observer = await pool.connect();
+    try {
+      await gate.query(`SELECT pg_advisory_lock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]);
+
+      const importPromise = applyCloseStoreOneImport(databaseUrl);
+      await waitForImportPausedOnClient(observer);
+
+      let postSettled = false;
+      let postResult: Awaited<ReturnType<typeof request>> | null = null;
+      void request(app)
         .post(url)
         .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
-        .send(body);
+        .send(body)
+        .then((res) => {
+          postResult = res;
+          postSettled = true;
+        });
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await waitForSaveBlockedWhileImportPaused(observer, () => postSettled);
 
-      await blocker.query(`UPDATE onec_retail_outlets SET is_closed = TRUE WHERE guid_store = $1::uuid`, [
-        STORE_ONE,
-      ]);
-      await blocker.query("COMMIT");
+      await gate.query(`SELECT pg_advisory_unlock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]);
 
-      const res = await postPromise;
-      assert.equal(res.status, 422, JSON.stringify(res.body));
-      assert.equal(res.body.code, "OUTLET_NOT_WRITABLE");
+      const importResult = await importPromise;
+      assert.equal(importResult.ok, true, importResult.message ?? importResult.code ?? "import failed");
+
+      const deadline = Date.now() + 15000;
+      while (!postSettled && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.ok(postResult, "marker save did not settle");
+      assert.equal(postResult!.status, 422, JSON.stringify(postResult!.body));
+      assert.equal(postResult!.body.code, "OUTLET_NOT_WRITABLE");
+
+      const events = await pool.query<{ n: number }>(
+        `
+          SELECT COUNT(*)::int AS n
+          FROM outlet_distribution_marker_events
+          WHERE product_code = 'p1' AND event_kind = 'set'
+        `,
+      );
+      assert.equal(events.rows[0]?.n, 0);
     } finally {
-      blocker.release();
+      await gate.query(`SELECT pg_advisory_unlock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]).catch(() => undefined);
+      gate.release();
+      observer.release();
+      await dropImportPauseTrigger(pool);
       await pool.end();
     }
   });
 
-  it("completes marker save before outlet closure blocks subsequent writes", async () => {
+  it("completes marker save before import closes outlet and blocks subsequent writes", async () => {
     const cookie = await login("admin@example.com");
     const app = await loadApp();
     const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
@@ -551,12 +708,18 @@ describe("client catalog outlet distribution integration", { concurrency: false 
       .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
       .send(body);
     assert.equal(saved.status, 200);
+    assert.equal(saved.body.changed, true);
+
+    const importResult = await applyCloseStoreOneImport(databaseUrl);
+    assert.equal(importResult.ok, true, importResult.message ?? importResult.code ?? "import failed");
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    await pool.query(`UPDATE onec_retail_outlets SET is_closed = TRUE WHERE guid_store = $1::uuid`, [
-      STORE_ONE,
-    ]);
+    const closed = await pool.query<{ is_closed: boolean }>(
+      `SELECT is_closed FROM onec_retail_outlets WHERE guid_store = $1::uuid`,
+      [STORE_ONE],
+    );
     await pool.end();
+    assert.equal(closed.rows[0]?.is_closed, true);
 
     const blocked = await request(app)
       .post(url)
@@ -564,6 +727,94 @@ describe("client catalog outlet distribution integration", { concurrency: false 
       .send(body);
     assert.equal(blocked.status, 422);
     assert.equal(blocked.body.code, "OUTLET_NOT_WRITABLE");
+
+    const verifyPool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const events = await verifyPool.query<{ event_kind: string }>(
+      `SELECT event_kind FROM outlet_distribution_marker_events WHERE product_code = 'p1' ORDER BY occurred_at`,
+    );
+    await verifyPool.end();
+    assert.deepEqual(events.rows.map((row) => row.event_kind), ["set"]);
+  });
+
+  it("avoids deadlock when import and marker save overlap in either order", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const url = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "planned",
+      productCode: "p2",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+    await installImportPauseTrigger(pool);
+    const gate = await pool.connect();
+    const observer = await pool.connect();
+    try {
+      await gate.query(`SELECT pg_advisory_lock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]);
+
+      const importFirst = applyCloseStoreOneImport(databaseUrl);
+      await waitForImportPausedOnClient(observer);
+
+      let saveFirstSettled = false;
+      let saveFirstResult: Awaited<ReturnType<typeof request>> | null = null;
+      void request(app)
+        .post(url)
+        .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+        .send(body)
+        .then((res) => {
+          saveFirstResult = res;
+          saveFirstSettled = true;
+        });
+
+      await waitForSaveBlockedWhileImportPaused(observer, () => saveFirstSettled);
+      await gate.query(`SELECT pg_advisory_unlock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]);
+
+      const importFirstResult = await importFirst;
+      assert.equal(importFirstResult.ok, true);
+
+      const deadline = Date.now() + 15000;
+      while (!saveFirstSettled && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.ok(saveFirstResult);
+      assert.notEqual(saveFirstResult!.status, 500, JSON.stringify(saveFirstResult!.body));
+      assert.equal(saveFirstResult!.status, 422);
+    } finally {
+      await gate.query(`SELECT pg_advisory_unlock($1)`, [IMPORT_PAUSE_ADVISORY_KEY]).catch(() => undefined);
+      gate.release();
+      observer.release();
+      await dropImportPauseTrigger(pool);
+      await pool.end();
+    }
+
+    const urlStoreTwo = `/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_TWO}/distribution/markers`;
+    const saveSecond = await request(app)
+      .post(urlStoreTwo)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send({
+        action: "set",
+        markerKind: "planned",
+        productCode: "p2",
+        versionId: catalogVersionId,
+      });
+    assert.equal(saveSecond.status, 200);
+
+    const importSecond = await applyCloseOutletImport(databaseUrl, STORE_TWO, "two");
+    assert.equal(importSecond.ok, true);
+
+    const blocked = await request(app)
+      .post(urlStoreTwo)
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send({
+        action: "set",
+        markerKind: "planned",
+        productCode: "p2",
+        versionId: catalogVersionId,
+      });
+    assert.equal(blocked.status, 422);
+    assert.notEqual(blocked.status, 500);
   });
 
   it("records history on clear without deleting prior fact row", async () => {

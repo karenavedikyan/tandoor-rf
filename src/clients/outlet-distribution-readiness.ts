@@ -193,12 +193,27 @@ export async function assertOutletBelongsToClient(
   return (row.rows[0]?.guid_client ?? "").toLowerCase() === cardGuid.toLowerCase();
 }
 
-/** Locks outlet registry row then client row (fixed order) for consistent marker writes. */
+/**
+ * Locks client row then outlet registry row (same order as applyClientsImport:
+ * onec_clients before onec_retail_outlets) to avoid deadlocks with concurrent import.
+ */
 export async function lockOutletDistributionContext(
   client: PoolClient,
   cardGuid: string,
   storeGuid: string,
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  const clientRow = await client.query<{ guid_client: string }>(
+    `SELECT guid_client::text FROM onec_clients WHERE guid_client = $1::uuid FOR UPDATE`,
+    [cardGuid],
+  );
+  if (!clientRow.rows[0]) {
+    return {
+      ok: false,
+      code: "OUTLET_NOT_FOUND",
+      message: "Торговая точка не найдена для выбранного клиента.",
+    };
+  }
+
   const outletRow = await client.query<RegistryRow>(
     `
       SELECT guid_store::text, guid_client::text, is_closed
@@ -217,18 +232,6 @@ export async function lockOutletDistributionContext(
     };
   }
   if (registry.guid_client.toLowerCase() !== cardGuid.toLowerCase()) {
-    return {
-      ok: false,
-      code: "OUTLET_NOT_FOUND",
-      message: "Торговая точка не найдена для выбранного клиента.",
-    };
-  }
-
-  const clientRow = await client.query<{ guid_client: string }>(
-    `SELECT guid_client::text FROM onec_clients WHERE guid_client = $1::uuid FOR UPDATE`,
-    [cardGuid],
-  );
-  if (!clientRow.rows[0]) {
     return {
       ok: false,
       code: "OUTLET_NOT_FOUND",
