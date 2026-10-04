@@ -1,10 +1,8 @@
 import type { PoolClient } from "pg";
-import { tryAcquireCatalogImportLock } from "../onec-catalog/import-lock";
 import { IMPORT_ADVISORY_LOCK_KEY } from "../onec-clients/constants";
 import { tryAcquireImportLock } from "../onec-clients/import-lock";
-import { IMPORT_ADVISORY_LOCK_KEY as CATALOG_IMPORT_ADVISORY_LOCK_KEY } from "../onec-catalog/constants";
 import { CLEAN_RELOAD_ADVISORY_LOCK_KEY, PURGE_TABLE_GROUPS } from "./constants";
-import type { PinnedCleanReloadBundle, CleanReloadPlan } from "./types";
+import type { CleanReloadPlan, PinnedCleanReloadBundle } from "./types";
 import { computeTargetDbFingerprint } from "./target-db";
 
 export async function assertNoConcurrentImports(client: PoolClient): Promise<void> {
@@ -18,19 +16,6 @@ export async function assertNoConcurrentImports(client: PoolClient): Promise<voi
   if (Number(runningClients.rows[0]?.count ?? "0") > 0) {
     throw Object.assign(new Error("A client import run is still marked as running."), {
       code: "CONCURRENT_CLIENT_IMPORT",
-    });
-  }
-
-  const runningCatalog = await client.query<{ count: string }>(
-    `
-      SELECT COUNT(*)::text AS count
-      FROM onec_catalog_import_runs
-      WHERE status = 'running'
-    `,
-  );
-  if (Number(runningCatalog.rows[0]?.count ?? "0") > 0) {
-    throw Object.assign(new Error("A catalog import run is still marked as running."), {
-      code: "CONCURRENT_CATALOG_IMPORT",
     });
   }
 
@@ -76,37 +61,29 @@ export async function assertCleanReloadLocksAvailable(client: PoolClient): Promi
     });
   }
   await client.query(`SELECT pg_advisory_unlock($1)`, [IMPORT_ADVISORY_LOCK_KEY]);
-
-  const catalogImport = await tryAcquireCatalogImportLock(client);
-  if (!catalogImport) {
-    throw Object.assign(new Error("Catalog import advisory lock is held."), {
-      code: "CATALOG_IMPORT_LOCKED",
-    });
-  }
-  await client.query(`SELECT pg_advisory_unlock($1)`, [CATALOG_IMPORT_ADVISORY_LOCK_KEY]);
 }
 
 export function buildCleanReloadPlan(
   databaseUrl: string,
   bundle: PinnedCleanReloadBundle,
 ): CleanReloadPlan {
+  const tableGroups = [
+    "client_orphans",
+    ...PURGE_TABLE_GROUPS.clientDomain,
+    ...PURGE_TABLE_GROUPS.rosterDomain,
+    "onec_exchange_state_reset",
+    "outlet_distribution_markers_optional",
+    "client_review_records_optional",
+  ];
+
   return {
     targetDbFingerprint: computeTargetDbFingerprint(databaseUrl),
     bundleFingerprint: bundle.bundleFingerprint,
-    catalogManifestSha256: bundle.catalogManifestSha256,
-    clientsRecordCount: bundle.clientsPayload.recordCount,
-    wholesaleEmployeeCount: bundle.employeeRoster.wholesaleCount,
-    catalogProductCount: bundle.catalogData?.counts.products ?? 0,
+    stats: bundle.stats,
     purgeScope: {
-      tableGroups: [
-        "client_orphans",
-        ...PURGE_TABLE_GROUPS.catalogImages,
-        ...PURGE_TABLE_GROUPS.catalogCore,
-        ...PURGE_TABLE_GROUPS.clientDomain,
-        "onec_exchange_state_reset",
-        "onec_catalog_state_reset",
-      ],
+      tableGroups,
       orphanCleanupStatements: PURGE_TABLE_GROUPS.clientOrphans.length,
+      catalogUntouched: true,
     },
   };
 }

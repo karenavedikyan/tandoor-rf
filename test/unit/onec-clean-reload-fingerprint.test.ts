@@ -14,7 +14,6 @@ describe("onec clean reload fingerprints", () => {
   it("computes bundle fingerprint over sorted file hashes", () => {
     const first = computeBundleFingerprint({
       holdingLinkPolicy: "tolerant",
-      catalogProfile: "full",
       files: [
         { relativePath: "all_clients.json", sha256: "a".repeat(64) },
         { relativePath: "all_employees.json", sha256: "b".repeat(64) },
@@ -22,7 +21,6 @@ describe("onec clean reload fingerprints", () => {
     });
     const second = computeBundleFingerprint({
       holdingLinkPolicy: "tolerant",
-      catalogProfile: "full",
       files: [
         { relativePath: "all_employees.json", sha256: "b".repeat(64) },
         { relativePath: "all_clients.json", sha256: "a".repeat(64) },
@@ -33,7 +31,6 @@ describe("onec clean reload fingerprints", () => {
       first,
       computeBundleFingerprint({
         holdingLinkPolicy: "strict",
-        catalogProfile: "full",
         files: [
           { relativePath: "all_clients.json", sha256: "a".repeat(64) },
           { relativePath: "all_employees.json", sha256: "b".repeat(64) },

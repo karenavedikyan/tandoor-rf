@@ -1,6 +1,4 @@
 import { Pool, type PoolClient } from "pg";
-import { runCatalogImageSync } from "../catalog/image-sync";
-import { applyCatalogImport } from "../onec-catalog/apply";
 import { applyClientsImport } from "../onec-clients/apply";
 import {
   buildExtendedContractConfirmation,
@@ -19,6 +17,7 @@ import {
   tryAcquireCleanReloadLock,
 } from "./preflight";
 import { purgeCleanReloadScope } from "./purge";
+import { replaceWholesaleEmployeeRoster, revokeEmployeeLinksOutsideRoster } from "./roster-apply";
 import { computeTargetDbFingerprint } from "./target-db";
 import type { CleanReloadPlan, CleanReloadResult, RunCleanReloadOptions } from "./types";
 
@@ -45,62 +44,6 @@ function failure(
   };
 }
 
-async function finalizeImageSync(
-  client: PoolClient,
-  apply: boolean,
-): Promise<{ runId: string; status: string } | undefined> {
-  const runInsert = await client.query<{ id: string }>(
-    `
-      INSERT INTO onec_catalog_image_sync_runs (mode, status, source_kind)
-      VALUES ($1, 'running', 'local_dir')
-      RETURNING id::text AS id
-    `,
-    [apply ? "apply" : "dry_run"],
-  );
-  const runId = runInsert.rows[0]!.id;
-  const report = await runCatalogImageSync(client, { apply });
-  const status =
-    report.errors.length &&
-    report.filesPrepared === 0 &&
-    report.filesRestored === 0 &&
-    report.filesSkipped === 0
-      ? "failed"
-      : report.errors.length || report.stoppedByLimit
-        ? "partial"
-        : "success";
-  await client.query(
-    `
-      UPDATE onec_catalog_image_sync_runs
-      SET finished_at = NOW(),
-          status = $2,
-          files_seen = $3,
-          files_prepared = $4,
-          files_failed = $5,
-          files_skipped = $6,
-          bytes_processed = $7,
-          report = $8::jsonb
-      WHERE id = $1::uuid
-    `,
-    [
-      runId,
-      status,
-      report.filesSeen,
-      report.filesPrepared + report.filesRestored,
-      report.filesFailed,
-      report.filesSkipped,
-      report.sourceBytesRead + report.previewBytesWritten,
-      JSON.stringify(report),
-    ],
-  );
-  if (status === "failed") {
-    throw Object.assign(new Error("Catalog image sync failed."), {
-      code: "IMAGE_SYNC_FAILED",
-      report,
-    });
-  }
-  return { runId, status };
-}
-
 export async function runCleanReload(options: RunCleanReloadOptions): Promise<CleanReloadResult> {
   const startedAt = Date.now();
   const mode = options.mode;
@@ -110,8 +53,6 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     bundle = await loadPinnedCleanReloadBundle({
       bundleDir: options.bundleDir,
       holdingLinkPolicy: options.holdingLinkPolicy,
-      catalogProfile: options.catalogProfile,
-      skipCatalog: options.skipCatalog,
     });
   } catch (error) {
     const code = (error as { code?: string }).code ?? "BUNDLE_LOAD_FAILED";
@@ -121,6 +62,7 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
   }
 
   const plan = buildCleanReloadPlan(options.databaseUrl, bundle);
+  const rosterGuids = Array.from(bundle.employeeRoster.wholesaleGuids);
 
   if (mode === "apply") {
     if (!options.expectedBundleFingerprint) {
@@ -206,6 +148,9 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
     await pg.query("BEGIN");
     await supersedePendingImportJobs(pg);
     await purgeCleanReloadScope(pg);
+    await options.testHooks?.afterPurge?.();
+
+    const revokedEmployeeLinks = await revokeEmployeeLinksOutsideRoster(pg, rosterGuids);
 
     if (options.confirmExtendedContract && options.operatorReference?.trim()) {
       const confirmation = buildExtendedContractConfirmation({
@@ -243,36 +188,16 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       });
     }
 
+    await options.testHooks?.afterClientsImport?.();
+
+    await options.testHooks?.beforeRosterReplace?.();
+
+    const rosterEmployeeCount = await replaceWholesaleEmployeeRoster(pg, {
+      sourceSha256: bundle.employeeRoster.sourceSha256,
+      records: bundle.employeeRoster.records,
+    });
+
     await pg.query("COMMIT");
-
-    let catalogImportRunId: string | undefined;
-    let catalogVersionId: string | undefined;
-    if (!options.skipCatalog && bundle.catalogData) {
-      const catalogResult = await applyCatalogImport(options.databaseUrl, bundle.catalogData, {
-        triggerSource: "manual",
-      });
-      if (!catalogResult.ok) {
-        return failure(mode, startedAt, catalogResult.code, catalogResult.message, plan, {
-          clientsImportRunId: importResult.runId,
-          catalogImportRunId: catalogResult.runId,
-        });
-      }
-      catalogImportRunId = catalogResult.runId;
-      catalogVersionId = catalogResult.versionId;
-    }
-
-    let imageSyncRunId: string | undefined;
-    let imageSyncStatus: string | undefined;
-    if (!options.skipImageSync) {
-      const imageClient = await pool.connect();
-      try {
-        const imageResult = await finalizeImageSync(imageClient, true);
-        imageSyncRunId = imageResult?.runId;
-        imageSyncStatus = imageResult?.status;
-      } finally {
-        imageClient.release();
-      }
-    }
 
     return {
       ok: true,
@@ -281,10 +206,8 @@ export async function runCleanReload(options: RunCleanReloadOptions): Promise<Cl
       plan,
       apply: {
         clientsImportRunId: importResult.runId!,
-        catalogImportRunId,
-        catalogVersionId,
-        imageSyncRunId,
-        imageSyncStatus,
+        rosterEmployeeCount,
+        revokedEmployeeLinks,
       },
     };
   } catch (error) {

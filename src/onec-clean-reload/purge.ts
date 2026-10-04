@@ -4,6 +4,7 @@ import { PURGE_TABLE_GROUPS } from "./constants";
 export type PurgeCounts = {
   accessGrantsRemoved: number;
   clientsRemoved: number;
+  rosterRowsRemoved: number;
 };
 
 async function tableExists(client: PoolClient, tableName: string): Promise<boolean> {
@@ -17,6 +18,19 @@ async function tableExists(client: PoolClient, tableName: string): Promise<boole
 export async function purgeCleanReloadScope(client: PoolClient): Promise<PurgeCounts> {
   let accessGrantsRemoved = 0;
 
+  const clientsBefore = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM onec_clients`,
+  );
+  const clientsRemoved = Number(clientsBefore.rows[0]?.count ?? "0");
+
+  let rosterRowsRemoved = 0;
+  if (await tableExists(client, "onec_wholesale_employee_roster")) {
+    const rosterBefore = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_roster`,
+    );
+    rosterRowsRemoved = Number(rosterBefore.rows[0]?.count ?? "0");
+  }
+
   for (const statement of PURGE_TABLE_GROUPS.clientOrphans) {
     const result = await client.query(statement);
     if (statement.includes("access_grants")) {
@@ -28,27 +42,24 @@ export async function purgeCleanReloadScope(client: PoolClient): Promise<PurgeCo
     await client.query("TRUNCATE outlet_distribution_markers RESTART IDENTITY CASCADE");
   }
 
-  const imageTables = PURGE_TABLE_GROUPS.catalogImages.filter((table) => table.length > 0);
-  if (imageTables.length > 0) {
-    await client.query(
-      `TRUNCATE ${imageTables.join(", ")} RESTART IDENTITY CASCADE`,
-    );
+  if (await tableExists(client, "client_review_records")) {
+    await client.query("TRUNCATE client_review_records RESTART IDENTITY CASCADE");
   }
 
-  await client.query(
-    `TRUNCATE ${PURGE_TABLE_GROUPS.catalogCore.join(", ")} RESTART IDENTITY CASCADE`,
-  );
-
-  await client.query(
-    `UPDATE onec_catalog_state
-     SET active_version_id = NULL,
-         last_successful_manifest_sha256 = NULL,
-         apply_blocked = FALSE,
-         apply_blocked_reason = NULL
-     WHERE id = 1`,
-  );
-
   await client.query(`TRUNCATE ${PURGE_TABLE_GROUPS.clientDomain.join(", ")} RESTART IDENTITY CASCADE`);
+
+  if (await tableExists(client, "onec_wholesale_employee_roster")) {
+    await client.query(`TRUNCATE ${PURGE_TABLE_GROUPS.rosterDomain.join(", ")} RESTART IDENTITY CASCADE`);
+    await client.query(
+      `
+        UPDATE onec_wholesale_roster_state
+        SET source_sha256 = repeat('0', 64),
+            employee_count = 0,
+            imported_at = NOW()
+        WHERE id = 1
+      `,
+    );
+  }
 
   await client.query(
     `
@@ -69,12 +80,9 @@ export async function purgeCleanReloadScope(client: PoolClient): Promise<PurgeCo
     `,
   );
 
-  const clientsCount = await client.query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM onec_clients`,
-  );
-
   return {
     accessGrantsRemoved,
-    clientsRemoved: Number(clientsCount.rows[0]?.count ?? "0"),
+    clientsRemoved,
+    rosterRowsRemoved,
   };
 }

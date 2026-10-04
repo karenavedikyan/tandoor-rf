@@ -1,22 +1,18 @@
 import { resolve } from "node:path";
-import { CATALOG_IMPORT_PROFILES, type CatalogImportProfile } from "../onec-catalog/constants";
 import { isHoldingLinkValidationPolicy, type HoldingLinkValidationPolicy } from "../onec-clients/holding-link-policy";
 import { isSha256Hex } from "../onec-clients/sha256";
-import { DEFAULT_CATALOG_PROFILE, DEFAULT_HOLDING_LINK_POLICY } from "./constants";
+import { DEFAULT_HOLDING_LINK_POLICY } from "./constants";
 import type { CleanReloadMode } from "./types";
 
 export type CleanReloadCliOptions = {
   mode: CleanReloadMode;
   bundleDir: string;
   holdingLinkPolicy: HoldingLinkValidationPolicy;
-  catalogProfile: CatalogImportProfile;
   expectedBundleFingerprint?: string;
   confirmTargetDb?: string;
   confirmExtendedContract: boolean;
   operatorReference?: string;
   operatorNote?: string;
-  skipCatalog: boolean;
-  skipImageSync: boolean;
 };
 
 export type CleanReloadCliParseFailure = {
@@ -34,14 +30,11 @@ export function parseCleanReloadCliArgs(argv: string[]): CleanReloadCliParseFail
   let mode: CleanReloadMode = "dry_run";
   let bundleDir: string | undefined;
   let holdingLinkPolicy: HoldingLinkValidationPolicy = DEFAULT_HOLDING_LINK_POLICY;
-  let catalogProfile: CatalogImportProfile = DEFAULT_CATALOG_PROFILE;
   let expectedBundleFingerprint: string | undefined;
   let confirmTargetDb: string | undefined;
   let confirmExtendedContract = false;
   let operatorReference: string | undefined;
   let operatorNote: string | undefined;
-  let skipCatalog = false;
-  let skipImageSync = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -79,23 +72,6 @@ export function parseCleanReloadCliArgs(argv: string[]): CleanReloadCliParseFail
       holdingLinkPolicy = value;
       continue;
     }
-    if (arg === "--catalog-profile") {
-      const value = argv[index + 1] as CatalogImportProfile | undefined;
-      index += 1;
-      if (!value || !(CATALOG_IMPORT_PROFILES as readonly string[]).includes(value)) {
-        return { ok: false, code: "INVALID_CATALOG_PROFILE", message: "--catalog-profile must be full or distribution." };
-      }
-      catalogProfile = value;
-      continue;
-    }
-    if (arg.startsWith("--catalog-profile=")) {
-      const value = arg.slice("--catalog-profile=".length) as CatalogImportProfile;
-      if (!(CATALOG_IMPORT_PROFILES as readonly string[]).includes(value)) {
-        return { ok: false, code: "INVALID_CATALOG_PROFILE", message: "--catalog-profile must be full or distribution." };
-      }
-      catalogProfile = value;
-      continue;
-    }
     if (arg === "--expected-bundle-fingerprint") {
       expectedBundleFingerprint = argv[index + 1];
       index += 1;
@@ -130,14 +106,6 @@ export function parseCleanReloadCliArgs(argv: string[]): CleanReloadCliParseFail
     if (arg === "--operator-note") {
       operatorNote = argv[index + 1];
       index += 1;
-      continue;
-    }
-    if (arg === "--skip-catalog") {
-      skipCatalog = true;
-      continue;
-    }
-    if (arg === "--skip-image-sync") {
-      skipImageSync = true;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -180,14 +148,11 @@ export function parseCleanReloadCliArgs(argv: string[]): CleanReloadCliParseFail
       mode,
       bundleDir: resolve(bundleDir.trim()),
       holdingLinkPolicy,
-      catalogProfile,
       expectedBundleFingerprint,
       confirmTargetDb,
       confirmExtendedContract,
       operatorReference,
       operatorNote,
-      skipCatalog,
-      skipImageSync,
     },
   };
 }

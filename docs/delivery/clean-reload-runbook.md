@@ -1,8 +1,10 @@
-# Runbook: clean reload актуальной базы 1С (tandoor-rf)
+# Runbook: замена клиентского состава 1С (tandoor-rf, этап 1)
 
-**Назначение:** однократная явная процедура «чистый старт» для контура РФ в разработке: удалить старый тестовый состав клиентов/каталога в явно определённой области и загрузить зафиксированный комплект файлов 1С.
+**Назначение:** однократная явная процедура замены тестового состава **клиентов, торговых точек и справочника сотрудников ОПТ** актуальным комплектом файлов 1С.
 
-**Не заменяет** регулярный импорт (`onec-clients-import`, `onec-catalog-import`) и **не** архивирует старые клиенты (в отличие от `onec-wholesale-baseline-replace`).
+**Не заменяет** регулярный импорт (`onec-clients-import`) и **не** затрагивает каталог, фотографии и дистрибуцию.
+
+**Следующие этапы** (каталог, фото) выполняются отдельно после приёмки этого этапа.
 
 ---
 
@@ -14,19 +16,11 @@
 <bundle-dir>/
   all_clients.json
   all_employees.json
-  catalog/groups/data.xml
-  catalog/section/data.xml
-  catalog/storage/data.xml
-  catalog/types_prices/data.xml
-  catalog/products/data.xml
-  catalog/prices/data.xml
-  catalog/stock/data.xml
-  catalog/stock_expected/data.xml
 ```
 
-Фотографии — через существующий `onec-catalog-image-sync` из настроенного `CATALOG_IMAGE_SOURCE_DIR` (или FTP pilot CLI), **после** успешного catalog import.
+`all_employees.json` уже отфильтрован специалистом 1С по подразделению «Продажи ОПТ».
 
-CLI фиксирует SHA256 каждого файла и вычисляет `bundleFingerprint`. Между dry-run и apply файлы **не менять**.
+CLI фиксирует SHA256 каждого файла и вычисляет `bundleFingerprint` (`onec_rf_client_composition_reload_v1`). Между dry-run и apply файлы **не менять**.
 
 ---
 
@@ -34,20 +28,21 @@ CLI фиксирует SHA256 каждого файла и вычисляет `b
 
 | Область | Таблицы / действия |
 |---------|-------------------|
+| Локальные права и привязки | `access_grants` (client), `access_denials` (client), `delegation_clients`, `delegation_change_request_clients`, Bitrix card objects/cooldown, `outlet_distribution_marker_events` |
+| Дистрибуция (если migration 030) | `outlet_distribution_markers` |
+| Ревизии (если migration 031) | `client_review_records` |
 | Клиенты и журналы | `onec_clients`, `onec_retail_outlets` (CASCADE), `onec_client_import_runs`, `onec_import_jobs`, quarantine/baseline journals |
-| Ревизии | `client_review_records`, `client_review_history` (CASCADE) |
-| Каталог | все `onec_catalog_*` версии + staging/quarantine; сброс `onec_catalog_state` |
-| Фото-кэш каталога | `onec_catalog_image_*` |
-| Дистрибуция (если migration 030 применена) | `outlet_distribution_markers`, events |
-| Локальные права на удалённые GUID | `access_grants` (client), `access_denials` (client), `delegation_clients`, `bitrix24_client_card_objects` (client), cooldown |
+| Справочник сотрудников | `onec_wholesale_employee_roster`, сброс `onec_wholesale_roster_state` |
+| Связи user ↔ сотрудник | отзыв активных `user_onec_employee_links` для GUID вне нового roster |
 | Exchange | сброс `onec_exchange_state` |
 
 ## 3. Что сохраняется
 
-- `users`, `sessions`, пароль администратора
+- `users`, `sessions`, пароль и вход администратора
+- **каталог целиком:** `onec_catalog_*`, `onec_catalog_image_*`, `onec_catalog_state`
 - команды, delegations (кроме `delegation_clients`), Bitrix24 задачи/журналы
-- схема БД и учёт миграций
-- файлы вне области очистки
+- схема БD, миграции, настройки и секреты
+- проверенные `user_onec_employee_links` для GUID, присутствующих в новом roster
 
 ---
 
@@ -70,7 +65,7 @@ npm run onec-clean-reload:local -- --dry-run \
 Сохранить из JSON-ответа:
 - `plan.targetDbFingerprint`
 - `plan.bundleFingerprint`
-- counts (clients, employees, products)
+- `plan.stats` (clients, open/closed TT, employees, outside-roster, unresolved holdings)
 
 ### 4.3 Apply
 
@@ -85,22 +80,14 @@ npm run onec-clean-reload:local -- --apply \
 
 Опции:
 - `--holding-link-policy=tolerant|strict` (default: tolerant)
-- `--catalog-profile=full|distribution` (default: full)
-- `--skip-image-sync` — если фото отдельным шагом
-- `--skip-catalog` — только клиенты (не для полного старта)
 
-### 4.4 Image sync (если не выполнен в apply)
-
-```bash
-npm run onec-catalog-image-sync:local -- --apply
-```
-
-### 4.5 Проверка
+### 4.4 Проверка
 
 - вход admin
-- `/api/clients?view=all` — актуальный состав
-- карточка клиента → ТТ (`closed`, `guid_store`)
-- каталог → товар → фото
+- `GET /api/clients?view=all` — актуальный состав
+- карточка клиента → вложенные ТТ (`closed`, `guid_store`)
+- `GET /api/clients/wholesale-employees` — полный roster, включая сотрудников без клиентов
+- каталог и фото **не изменились** (сравнить active version / product count до и после)
 
 ---
 
@@ -108,13 +95,22 @@ npm run onec-catalog-image-sync:local -- --apply
 
 - `--confirm-target-db` — от apply на чужой БД
 - `--expected-bundle-fingerprint` — от apply с изменёнными файлами
-- advisory lock `902451004` + проверка client/catalog import locks
+- advisory lock `902451004` + client import lock
 - pending `onec_import_jobs` помечаются superseded
-- purge + clients import — одна транзакция; при ошибке до COMMIT данные не меняются
-- catalog import после COMMIT clients; при сбое каталога клиенты уже загружены — восстановление из backup
+- purge + clients import + roster — **одна транзакция** на одном `PoolClient`; при ошибке до COMMIT прежний состав остаётся целым
+- пустой roster блокирует процедуру до очистки
+- обычный импорт не ослаблен; `cleanReloadApply` доступен только этой процедуре
 
 ---
 
 ## 6. Миграции
 
-Дополнительных миграций **не требуется**. Нужны уже применённые миграции клиентов (`024`–`031`) и каталога (`020`–`023`), включая `030` дистрибуции если модуль развёрнут.
+Требуется migration `032_onec_wholesale_employee_roster.sql` (таблицы `onec_wholesale_employee_roster`, `onec_wholesale_roster_state`).
+
+Также нужны миграции клиентов (`024`–`030`) и каталога (`020`–`023`) — каталог не изменяется, но должен быть развёрнут.
+
+---
+
+## 7. Live-загрузка
+
+Актуальные файлы 1С в среде разработки могут отсутствовать. В этом случае процедура проверена на синтетических данных в integration/browser тестах; production-import и deploy **не выполняются** этим runbook.
