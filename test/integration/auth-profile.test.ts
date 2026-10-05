@@ -83,6 +83,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "028_onec_clients_import_link_metadata.sql",
       "029_wholesale_baseline_quarantine.sql",
       "030_outlet_distribution_markers.sql",
+      "031_client_review_queue.sql",
       "032_onec_wholesale_employee_roster.sql",
     ]);
     const second = await runMigrations({ databaseUrl });

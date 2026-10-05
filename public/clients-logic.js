@@ -7,23 +7,340 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  var NO_DATA_LABEL = "Нет данных";
+
+  var LIST_QUERY_KEYS = [
+    "view",
+    "entity",
+    "q",
+    "manager",
+    "holding",
+    "phone",
+    "rop",
+    "unassignedCategory",
+    "reviewState",
+    "reviewDecision",
+    "hasOutlets",
+    "sortBy",
+    "sortDir",
+    "cols",
+    "outletStatus",
+    "warehouse",
+    "regionalManager",
+    "tandoorClub",
+    "page",
+  ];
+
+  var CLIENT_COLUMNS = [
+    { id: "name", label: "Клиент", entity: "clients", defaultVisible: true, locked: true, sortable: true, hasSource: true },
+    { id: "code1c", label: "Код 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "inn", label: "ИНН", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "category", label: "Категория", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "holding", label: "Холдинг", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "address", label: "Адрес", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "city", label: "Город", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "manager", label: "Менеджер", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "regional", label: "Региональный", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "team", label: "РОП / команда", entity: "clients", defaultVisible: false, sortable: true, viewModes: ["teams", "review"], hasSource: true },
+    { id: "outletsCount", label: "Кол-во ТТ", entity: "clients", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "assignmentState", label: "Состояние назначения", entity: "clients", defaultVisible: false, sortable: false, viewModes: ["teams", "review"], hasSource: true },
+    { id: "review", label: "Ревизия", entity: "clients", defaultVisible: false, sortable: false, viewModes: ["review"], hasSource: true },
+    { id: "phone", label: "Телефон", entity: "clients", defaultVisible: true, sortable: false, hasSource: true },
+    { id: "warehouse", label: "Склад", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "tandoorClub", label: "Tandoor Club", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "cashback", label: "Cashback", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "nextStep", label: "Следующий шаг", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+  ];
+
+  var OUTLET_COLUMNS = [
+    { id: "clientName", label: "Клиент", entity: "outlets", defaultVisible: true, locked: true, sortable: true, hasSource: true },
+    { id: "outlet", label: "Торговая точка", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "guidStore", label: "ID ТТ", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "address", label: "Адрес", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "status", label: "Статус ТТ", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "manager", label: "Менеджер", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
+    { id: "holding", label: "Холдинг", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "regional", label: "Региональный", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "warehouse", label: "Склад", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "tandoorClub", label: "Tandoor Club", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "cashback", label: "Cashback", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
+  ];
+
+  function columnDefinitions(entity) {
+    return entity === "outlets" ? OUTLET_COLUMNS.slice() : CLIENT_COLUMNS.slice();
+  }
+
+  function isColumnAllowedForView(col, view) {
+    if (!col.viewModes || col.viewModes.length === 0) {
+      return true;
+    }
+    return col.viewModes.indexOf(view) !== -1;
+  }
+
+  function defaultVisibleColumnIds(entity, view) {
+    return columnDefinitions(entity)
+      .filter(function (col) {
+        return col.defaultVisible && isColumnAllowedForView(col, view);
+      })
+      .map(function (col) {
+        return col.id;
+      });
+  }
+
+  function parseColumnsParam(raw) {
+    if (!raw || typeof raw !== "string") {
+      return [];
+    }
+    return raw
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(function (part) {
+        return part.length > 0;
+      });
+  }
+
+  function buildColumnsStorageKey(userId, entity) {
+    return "clients-columns:" + (userId || "anonymous") + ":" + (entity || "clients");
+  }
+
+  function readStoredColumnIds(storageKey) {
+    try {
+      if (typeof localStorage === "undefined") {
+        return [];
+      }
+      var raw = localStorage.getItem(storageKey);
+      if (!raw) {
+        return [];
+      }
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.filter(function (item) {
+        return typeof item === "string";
+      });
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function persistStoredColumnIds(storageKey, columnIds) {
+    try {
+      if (typeof localStorage === "undefined") {
+        return;
+      }
+      localStorage.setItem(storageKey, JSON.stringify(columnIds));
+    } catch (_err) {
+      /* ignore quota errors */
+    }
+  }
+
+  function resolveVisibleColumns(input) {
+    var entity = input.entity || "clients";
+    var view = input.view || "all";
+    var defs = columnDefinitions(entity);
+    var defById = {};
+    defs.forEach(function (col) {
+      defById[col.id] = col;
+    });
+    var allowedIds = defs
+      .filter(function (col) {
+        return isColumnAllowedForView(col, view);
+      })
+      .map(function (col) {
+        return col.id;
+      });
+    var allowedSet = {};
+    allowedIds.forEach(function (id) {
+      allowedSet[id] = true;
+    });
+
+    var fromUrl = parseColumnsParam(input.cols || "");
+    var fromStorage = input.storageKey ? readStoredColumnIds(input.storageKey) : [];
+    var seed = fromUrl.length > 0 ? fromUrl : fromStorage.length > 0 ? fromStorage : defaultVisibleColumnIds(entity, view);
+
+    var visible = [];
+    seed.forEach(function (id) {
+      if (!allowedSet[id] || visible.indexOf(id) !== -1) {
+        return;
+      }
+      visible.push(id);
+    });
+
+    defs.forEach(function (col) {
+      if (col.locked && visible.indexOf(col.id) === -1 && isColumnAllowedForView(col, view)) {
+        visible.unshift(col.id);
+      }
+    });
+
+    if (visible.length === 0) {
+      return defaultVisibleColumnIds(entity, view);
+    }
+    return visible;
+  }
+
+  function toggleColumnSelection(currentIds, columnId, enabled, entity, view) {
+    var defs = columnDefinitions(entity);
+    var def = defs.find(function (col) {
+      return col.id === columnId;
+    });
+    if (!def || def.locked || !isColumnAllowedForView(def, view || "all")) {
+      return currentIds.slice();
+    }
+    var next = currentIds.slice();
+    var index = next.indexOf(columnId);
+    if (enabled && index === -1) {
+      next.push(columnId);
+    }
+    if (!enabled && index !== -1) {
+      next.splice(index, 1);
+    }
+    defs.forEach(function (col) {
+      if (col.locked && next.indexOf(col.id) === -1) {
+        next.unshift(col.id);
+      }
+    });
+    return next.length > 0 ? next : defaultVisibleColumnIds(entity, view || "all");
+  }
+
+  function nextSortState(currentSortBy, currentSortDir, columnId) {
+    if (currentSortBy !== columnId) {
+      return { sortBy: columnId, sortDir: "asc" };
+    }
+    if (currentSortDir === "asc") {
+      return { sortBy: columnId, sortDir: "desc" };
+    }
+    return { sortBy: columnId, sortDir: "asc" };
+  }
+
+  function sortIndicator(sortBy, sortDir, columnId) {
+    if (sortBy !== columnId) {
+      return "";
+    }
+    return sortDir === "desc" ? " ▼" : " ▲";
+  }
+
+  function defaultSortFieldForEntity(entity) {
+    return entity === "outlets" ? "clientName" : "name";
+  }
+
+  function mapSortFieldForEntity(fromEntity, toEntity, sortBy) {
+    if (!sortBy || fromEntity === toEntity) {
+      return sortBy || null;
+    }
+    if (fromEntity === "clients" && toEntity === "outlets") {
+      var toOutlets = { name: "clientName", holding: "holding", manager: "manager", address: "address" };
+      return toOutlets[sortBy] || null;
+    }
+    if (fromEntity === "outlets" && toEntity === "clients") {
+      var toClients = { clientName: "name", holding: "holding", manager: "manager", address: "address" };
+      return toClients[sortBy] || null;
+    }
+    return null;
+  }
+
+  function isSortAllowedForEntity(entity, sortBy) {
+    if (!sortBy) {
+      return false;
+    }
+    var def = columnDefinitions(entity).find(function (col) {
+      return col.id === sortBy;
+    });
+    return Boolean(def && def.sortable && def.hasSource);
+  }
+
+  function normalizeStateForEntitySwitch(state, previousEntity) {
+    var next = Object.assign({}, state);
+    next.page = 1;
+    next.cols = "";
+    var mappedSort = mapSortFieldForEntity(previousEntity, next.entity, next.sortBy);
+    if (mappedSort && isSortAllowedForEntity(next.entity, mappedSort)) {
+      next.sortBy = mappedSort;
+    } else if (isSortAllowedForEntity(next.entity, next.sortBy)) {
+      /* keep */
+    } else {
+      next.sortBy = defaultSortFieldForEntity(next.entity);
+      next.sortDir = "asc";
+    }
+    if (next.entity === "clients") {
+      next.outletStatus = "all";
+      next.warehouse = "all";
+      next.regionalManager = "";
+      next.tandoorClub = "";
+    }
+    return next;
+  }
+
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
+    var view = params.get("view") || "all";
+    if (view !== "all" && view !== "teams" && view !== "review") {
+      view = "all";
+    }
+    var entity = params.get("entity") || "clients";
+    if (entity !== "clients" && entity !== "outlets") {
+      entity = "clients";
+    }
     return {
+      view: view,
+      entity: entity,
       q: params.get("q") || "",
       manager: params.get("manager") || "",
       holding: params.get("holding") || "",
       phone: params.get("phone") || "all",
+      rop: params.get("rop") || "",
+      unassignedCategory: params.get("unassignedCategory") || "",
+      reviewState: params.get("reviewState") || "",
+      reviewDecision: params.get("reviewDecision") || "",
+      hasOutlets: params.get("hasOutlets") || "all",
+      outletStatus: params.get("outletStatus") || "all",
+      warehouse: params.get("warehouse") || "all",
+      regionalManager: params.get("regionalManager") || "",
+      tandoorClub: params.get("tandoorClub") || "",
+      sortBy: params.get("sortBy") || "",
+      sortDir: params.get("sortDir") || "",
+      cols: params.get("cols") || "",
       page: Math.max(1, Number(params.get("page") || "1") || 1),
     };
   }
 
+  function applyPresentationDefaults(state, presentation, search) {
+    if (!presentation) {
+      return state;
+    }
+    var params = new URLSearchParams(search || "");
+    var next = Object.assign({}, state);
+    if (!params.has("view")) {
+      next.view = presentation.defaultView || next.view;
+    }
+    if (!params.has("entity")) {
+      next.entity = presentation.defaultEntity || next.entity;
+    }
+    return next;
+  }
+
   function buildListQueryString(state) {
     var params = new URLSearchParams();
+    if (state.view && state.view !== "all") params.set("view", state.view);
+    if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
+    if (state.rop) params.set("rop", state.rop);
+    if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
+    if (state.reviewState) params.set("reviewState", state.reviewState);
+    if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
+    if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
+    if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
+    if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
+    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
+    if (state.sortBy) params.set("sortBy", state.sortBy);
+    if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
+    if (state.cols) params.set("cols", state.cols);
     if (state.page > 1) params.set("page", String(state.page));
     return params.toString();
   }
@@ -41,7 +358,7 @@
       var probe = new URLSearchParams(value.slice(1));
       if (
         Array.from(probe.keys()).some(function (key) {
-          return key !== "q" && key !== "manager" && key !== "holding" && key !== "phone" && key !== "page";
+          return LIST_QUERY_KEYS.indexOf(key) === -1;
         })
       ) {
         return "";
@@ -485,7 +802,23 @@
   }
 
   return {
+    NO_DATA_LABEL: NO_DATA_LABEL,
+    LIST_QUERY_KEYS: LIST_QUERY_KEYS,
+    columnDefinitions: columnDefinitions,
+    defaultVisibleColumnIds: defaultVisibleColumnIds,
+    parseColumnsParam: parseColumnsParam,
+    buildColumnsStorageKey: buildColumnsStorageKey,
+    readStoredColumnIds: readStoredColumnIds,
+    persistStoredColumnIds: persistStoredColumnIds,
+    resolveVisibleColumns: resolveVisibleColumns,
+    toggleColumnSelection: toggleColumnSelection,
+    nextSortState: nextSortState,
+    sortIndicator: sortIndicator,
+    defaultSortFieldForEntity: defaultSortFieldForEntity,
+    mapSortFieldForEntity: mapSortFieldForEntity,
+    normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     readStateFromSearch: readStateFromSearch,
+    applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,

@@ -47,6 +47,26 @@ describe("onec clean reload boundary validation", () => {
     }
   });
 
+  it("accepts roster date_of_assumption in DD.MM.YYYY format", () => {
+    const bytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_A, {
+        date_of_assumption: "05.10.2026",
+      }),
+    ]);
+    const result = validateCleanReloadRosterSqlFields(bytes);
+    assert.equal(result.ok, true);
+  });
+
+  it("accepts roster leap-day date_of_assumption in DD.MM.YYYY format", () => {
+    const bytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_A, {
+        date_of_assumption: "29.02.2024",
+      }),
+    ]);
+    const result = validateCleanReloadRosterSqlFields(bytes);
+    assert.equal(result.ok, true);
+  });
+
   it("rejects roster date_of_assumption that cannot be cast to timestamptz", () => {
     const bytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_A, {

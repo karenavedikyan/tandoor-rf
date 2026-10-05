@@ -1,10 +1,24 @@
-import { combineScopeAndFilter } from "../access/combine-filters";
+import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { getPool, query } from "../db/pool";
 import { getCommittedSnapshotSha } from "../onec-exchange/state";
+import { buildReviewStateFilter } from "./review/repository";
+import {
+  assertManagerInTeamScope,
+  buildTeamRopFilter,
+  employeePortfolioClause,
+  TeamAccessError,
+} from "./teams/repository";
+import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
+import { outletsJsonArraySql, scopedHasOutletsClause, scopedOutletsCountSql } from "./outlets/scope-sql";
+import { buildClientsOrderBy } from "./sort";
+import {
+  canUseReviewNavigation,
+  canUseUnassignedNavigation,
+} from "./role-presentation";
 import {
   toClientDetail,
   toClientListItem,
@@ -48,44 +62,230 @@ export async function countAllClients(): Promise<number> {
   return Number(result.rows[0]?.count ?? "0");
 }
 
-function resolveScopedFilter(context: AccessContext, input: ClientsListQuery): ReturnType<typeof buildClientsFilter> {
-  const userFilter = buildClientsFilter(input);
+async function resolveScopedFilter(
+  context: AccessContext,
+  input: ClientsListQuery,
+): Promise<{
+  whereSql: string;
+  params: unknown[];
+  selectExtraParams: unknown[];
+  joinSql: string;
+  extraSelect: string;
+  outletsCountExpr: string;
+}> {
+  if (input.view === "review" && !canUseReviewNavigation(context)) {
+    throw new ListClientsError("Очередь ревизии недоступна для вашей роли.", "FORBIDDEN");
+  }
+
+  const hasReviewFilter =
+    (input.reviewState && input.reviewState !== "any") ||
+    (input.reviewDecision && input.reviewDecision !== "any");
+  if (hasReviewFilter && !canUseReviewNavigation(context)) {
+    throw new ListClientsError("Фильтры ревизии недоступны для вашей роли.", "FORBIDDEN");
+  }
+
+  if (input.unassignedCategory && !canUseUnassignedNavigation(context)) {
+    throw new ListClientsError(
+      "Фильтр нераспределённых назначений недоступен для вашей роли.",
+      "FORBIDDEN",
+    );
+  }
+
+  if (input.ropUserId && input.managerId) {
+    try {
+      await assertManagerInTeamScope(context, input.ropUserId, input.managerId);
+    } catch (error) {
+      if (error instanceof TeamAccessError) {
+        throw new ListClientsError(error.message, error.code);
+      }
+      throw error;
+    }
+  } else if (input.ropUserId && input.view === "teams") {
+    if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
+      throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
+    }
+    if (context.role === "rop" && context.userId !== input.ropUserId) {
+      throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
+    }
+  }
+
+  const portfolioManagerId =
+    input.view === "teams" && input.managerId ? input.managerId : undefined;
+  let userFilter = buildClientsFilter(
+    portfolioManagerId ? { ...input, managerId: undefined } : input,
+  );
   const scope = buildClientScopeSql(context);
-  return combineScopeAndFilter(scope, userFilter);
+
+  if (portfolioManagerId) {
+    userFilter = combineScopeAndFilter(userFilter, {
+      whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
+      params: [portfolioManagerId],
+    });
+  }
+
+  if (input.unassignedCategory) {
+    const summary = await buildUnassignedSummary({ category: input.unassignedCategory });
+    const employeeGuids = summary.employees.map((e) => e.employeeGuid);
+    userFilter = combineScopeAndFilter(
+      userFilter,
+      buildUnassignedCategoryFilter(input.unassignedCategory, employeeGuids),
+    );
+  }
+
+  if (input.view === "teams" && input.ropUserId && !input.managerId) {
+    userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));
+  }
+
+  const reviewJoin = buildReviewStateFilter(
+    input.reviewState ?? (input.view === "review" ? "any" : "any"),
+    input.reviewDecision,
+  );
+  if (reviewJoin.whereClauses.length > 0) {
+    userFilter = mergeSqlFilters(userFilter, reviewJoin.whereClauses, reviewJoin.params);
+  }
+
+  let combined = combineScopeAndFilter(scope, userFilter);
+
+  let regionalEmployeeParam: string | undefined;
+  let selectExtraParams: unknown[] = [];
+  if (context.role === "regional_manager" && context.employeeId) {
+    regionalEmployeeParam = `$${combined.params.length + 1}::text`;
+    if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+      combined = {
+        whereSql: combined.whereSql,
+        params: [...combined.params, context.employeeId],
+      };
+    } else {
+      selectExtraParams = [context.employeeId];
+    }
+  }
+  const outletsCountExpr = scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+
+  if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+    combined = mergeSqlFilters(
+      combined,
+      [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+      [],
+    );
+  }
+
+  const includeReview =
+    canUseReviewNavigation(context) &&
+    (input.view === "review" || input.reviewState || input.reviewDecision);
+  const includeTeamContext = input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
+
+  const joinSql = [
+    includeReview ? reviewJoin.joinSql : "",
+    includeTeamContext
+      ? `
+        LEFT JOIN LATERAL (
+          SELECT u.full_name AS rop_name
+          FROM rop_team_members rtm
+          JOIN user_onec_employee_links uoel
+            ON uoel.user_id = rtm.member_user_id AND uoel.revoked_at IS NULL
+          JOIN users u ON u.id = rtm.rop_user_id
+          WHERE rtm.revoked_at IS NULL
+            AND uoel.employee_id = onec_clients.guid_manager
+          ORDER BY rtm.created_at ASC
+          LIMIT 1
+        ) team_ctx ON TRUE
+      `
+      : "",
+  ].join("\n");
+
+  const extraSelect = [
+    includeReview
+      ? `
+        , crr.review_state
+        , crr.review_decision
+        , crr.stale_reason AS review_stale_reason
+        , crr.basis_manager_guid::text AS review_basis_manager_guid
+        , crr.basis_data_fingerprint AS review_basis_data_fingerprint
+        , crr.proposed_manager_guid::text AS review_proposed_manager_guid
+        , onec_clients.guid_holding_pending::text
+        , onec_clients.holding_link_state
+      `
+      : "",
+    includeTeamContext
+      ? `
+        , team_ctx.rop_name AS team_label
+        , CASE
+            WHEN COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') = 'outside_wholesale_roster'
+              THEN 'Вне списка ОПТ'
+            WHEN COALESCE(onec_clients.manager_roster_state, 'in_wholesale_roster') = 'roster_not_loaded'
+              THEN 'Roster не загружен'
+            WHEN team_ctx.rop_name IS NULL
+              THEN 'Без команды РОП'
+            ELSE NULL
+          END AS unassigned_reason
+      `
+      : "",
+    `
+        , ${outletsCountExpr}::text AS outlets_count
+        `,
+  ].join("\n");
+
+  return {
+    whereSql: combined.whereSql,
+    params: combined.params,
+    selectExtraParams,
+    joinSql,
+    extraSelect,
+    outletsCountExpr,
+  };
+}
+
+export class ListClientsError extends Error {
+  code: "FORBIDDEN" | "NOT_FOUND";
+
+  constructor(message: string, code: "FORBIDDEN" | "NOT_FOUND") {
+    super(message);
+    this.code = code;
+  }
 }
 
 export async function listClients(
   context: AccessContext,
   input: ClientsListQuery,
 ): Promise<ClientsListResponse> {
-  const filter = resolveScopedFilter(context, input);
+  const filter = await resolveScopedFilter(context, input);
+  const fromSql = `FROM onec_clients ${filter.joinSql}`;
   const totalResult = await query<CountRow>(
-    `SELECT COUNT(*)::text AS count FROM onec_clients ${filter.whereSql}`,
+    `SELECT COUNT(*)::text AS count ${fromSql} ${filter.whereSql}`,
     filter.params,
   );
   const total = Number(totalResult.rows[0]?.count ?? "0");
   const totalPages = total === 0 ? 0 : Math.ceil(total / input.pageSize);
   const offset = (input.page - 1) * input.pageSize;
 
-  const listParams = [...filter.params, input.pageSize, offset];
-  const limitParam = `$${filter.params.length + 1}`;
-  const offsetParam = `$${filter.params.length + 2}`;
+  const listParams = [...filter.params, ...filter.selectExtraParams, input.pageSize, offset];
+  const paginationBase = filter.params.length + filter.selectExtraParams.length;
+  const limitParam = `$${paginationBase + 1}`;
+  const offsetParam = `$${paginationBase + 2}`;
+
+  const includeTeamContext =
+    input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
+  const orderBy = buildClientsOrderBy(input, {
+    includeTeamSort: includeTeamContext,
+    outletsCountExpr: filter.outletsCountExpr,
+  });
 
   const rows = await query<ClientRow>(
     `
       SELECT
-        guid_client::text,
-        name_client,
-        guid_holding::text,
-        name_holding,
-        guid_manager::text,
-        name_manager,
-        address,
-        telephone,
-        last_imported_at
-      FROM onec_clients
+        onec_clients.guid_client::text,
+        onec_clients.name_client,
+        onec_clients.guid_holding::text,
+        onec_clients.name_holding,
+        onec_clients.guid_manager::text,
+        onec_clients.name_manager,
+        onec_clients.address,
+        onec_clients.telephone,
+        onec_clients.last_imported_at
+        ${filter.extraSelect}
+      ${fromSql}
       ${filter.whereSql}
-      ORDER BY name_client ASC, guid_client ASC
+      ${orderBy}
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `,
@@ -133,9 +333,29 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     holdingFilter.params,
   );
 
+  const regionalManagers = await query<OptionRow>(
+    `
+      SELECT DISTINCT ON (regional_guid)
+        regional_guid AS id,
+        COALESCE(regional_name, regional_guid) AS name
+      FROM (
+        SELECT
+          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
+          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'name'), '') AS regional_name
+        FROM onec_clients
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJsonArraySql("onec_clients")}) outlet
+        ${managerFilter.whereSql}
+      ) scoped_regional
+      WHERE regional_guid IS NOT NULL
+      ORDER BY regional_guid ASC, regional_name ASC
+    `,
+    managerFilter.params,
+  );
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     holdings: holdings.rows.map((row) => toClientOption(row.id, row.name)),
+    regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
   };
 }
 

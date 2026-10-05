@@ -371,6 +371,7 @@ export async function runClientsImport(
     payload,
     triggerSource: options.triggerSource ?? "manual",
     expectedVerificationFingerprint: cliOptions.expectedSha256,
+    employeeRosterSourceSha256: payload.employeeRosterSourceSha256 ?? null,
     operatorImportJobId: options.operatorImportJobId,
     testHooks: options.applyTestHooks,
   });

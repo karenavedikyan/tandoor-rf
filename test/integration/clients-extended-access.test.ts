@@ -118,7 +118,7 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
     await closePool();
   });
 
-  it("denies nested outlet payload for scoped manager with card access", async () => {
+  it("allows assigned manager to read nested outlets on own clients", async () => {
     const app = await loadApp();
     const cookie = await login("manager-a@example.com");
     const res = await request(app)
@@ -126,12 +126,19 @@ describe("clients extended nested outlet access", { concurrency: false }, () => 
       .set(authHeaders(cookie));
 
     assert.equal(res.status, 200);
-    assert.ok(res.body.client.extended);
-    assert.equal(res.body.client.extended.retailOutletsAccess, "denied");
-    assert.equal(res.body.client.extended.retailOutlets.length, 0);
-    assert.equal(res.body.client.extended.retailOutletHistoryCount, 0);
-    const serialized = JSON.stringify(res.body.client.extended);
-    assert.doesNotMatch(serialized, /Store 1 street|Delivery dock 1|Child store/i);
+    assert.equal(res.body.client.extended.retailOutletsAccess, "granted");
+    assert.ok(res.body.client.extended.retailOutlets.length >= 1);
+    assert.match(JSON.stringify(res.body.client.extended), /Store 1 street|Delivery dock 1/);
+  });
+
+  it("denies foreign client card for manager outside guid_manager portfolio", async () => {
+    const app = await loadApp();
+    const cookie = await login("manager-a@example.com");
+    const res = await request(app)
+      .get(`/api/clients/${EXTENDED_FIXTURE_GUIDS.CHILD_GUID}`)
+      .set(authHeaders(cookie));
+
+    assert.equal(res.status, 404);
   });
 
   it("allows admin to read nested outlets", async () => {

@@ -642,6 +642,29 @@ function appendCleanupWarnings(result: ApplyResult, cleanupWarnings: string[]): 
   };
 }
 
+function rejectMissingValidatedRosterStates(
+  payload: ValidatedClientsPayload,
+): { code: "APPLY_BLOCKED"; message: string } | null {
+  if (payload.employeeRosterSourceSha256 == null) {
+    return null;
+  }
+  const extendedByGuid = new Map(
+    (payload.extendedRecords ?? []).map((record) => [record.guid_client, record]),
+  );
+  for (const record of payload.records) {
+    const state =
+      extendedByGuid.get(record.guid_client)?.managerRosterState ?? record.managerRosterState;
+    if (state == null) {
+      return {
+        code: "APPLY_BLOCKED",
+        message:
+          "Validated manager roster state is missing for one or more records; re-run validation with the employee roster.",
+      };
+    }
+  }
+  return null;
+}
+
 export async function applyClientsImport(options: {
   databaseUrl?: string;
   payload: ValidatedClientsPayload;
@@ -696,6 +719,14 @@ export async function applyClientsImport(options: {
         verificationFailure.code === "VERIFICATION_FINGERPRINT_MISMATCH"
           ? verificationFailure.actualFingerprint
           : undefined,
+    };
+  }
+  const missingRosterState = rejectMissingValidatedRosterStates(options.payload);
+  if (missingRosterState) {
+    return {
+      ok: false,
+      code: missingRosterState.code,
+      message: missingRosterState.message,
     };
   }
   const verifiedFingerprint = verificationFingerprintFromPayload({ payload: options.payload });
@@ -962,8 +993,13 @@ export async function applyClientsImport(options: {
             const applyRecord = { ...record, ...confirmedHolding };
             const current = existing.get(applyRecord.guid_client);
             const rosterLoadedInPayload = options.payload.employeeRosterSourceSha256 != null;
+            const incomingManagerRosterState =
+              extendedRecord?.managerRosterState ??
+              record.managerRosterState ??
+              "roster_not_loaded";
             const linkMetadata = resolveImportLinkMetadata(extendedRecord, {
               incomingManagerGuid: applyRecord.guid_manager,
+              incomingManagerRosterState,
               previousManagerGuid: current?.guid_manager ?? null,
               previousManagerRosterState: current?.manager_roster_state ?? null,
               rosterLoadedInPayload,

@@ -1,3 +1,4 @@
+import { parseCalendarDateInput } from "../shared/calendar-date";
 import { isValidNonZeroUuid, normalizeUuid } from "../onec-clients/uuid";
 
 export type CleanReloadRosterIssue = {
@@ -12,22 +13,6 @@ export type CleanReloadRosterValidationResult =
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isValidCalendarDate(datePart: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
-  if (!match) {
-    return false;
-  }
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() + 1 === month &&
-    date.getUTCDate() === day
-  );
 }
 
 /** Validates roster fields that are later cast to SQL types (clean reload boundary only). */
@@ -122,26 +107,8 @@ function validateDateOfAssumptionField(
     return;
   }
 
-  if (/[Zz]$/.test(trimmed) || /[+-]\d{2}:\d{2}$/.test(trimmed)) {
-    issues.push({ recordIndex, field: "date_of_assumption", code: "INVALID_DATE_FORMAT" });
-    return;
-  }
-
-  const dateTimeMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(trimmed);
-  if (dateTimeMatch) {
-    const [, datePart, hour, minute, second] = dateTimeMatch;
-    if (
-      !isValidCalendarDate(datePart!) ||
-      Number(hour) > 23 ||
-      Number(minute) > 59 ||
-      Number(second) > 59
-    ) {
-      issues.push({ recordIndex, field: "date_of_assumption", code: "INVALID_DATE_FORMAT" });
-    }
-    return;
-  }
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || !isValidCalendarDate(trimmed)) {
+  const parsed = parseCalendarDateInput(trimmed);
+  if (!parsed.ok) {
     issues.push({ recordIndex, field: "date_of_assumption", code: "INVALID_DATE_FORMAT" });
   }
 }

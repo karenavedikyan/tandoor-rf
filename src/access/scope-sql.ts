@@ -3,6 +3,7 @@ import {
   ACTIVE_BASELINE_OC_SQL,
   appendActiveBaselineFilter,
 } from "../onec-clients/baseline-active-scope";
+import { ropTeamPortfolioClause } from "../clients/team-portfolio-sql";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
 import type { ClientScopeSql } from "./types";
@@ -88,15 +89,7 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
           FROM onec_clients oc
           WHERE ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL.replaceAll("onec_clients.", "oc.")}
             AND ${ACTIVE_BASELINE_OC_SQL.trim()}
-            AND oc.guid_manager IN (
-            SELECT uoel.employee_id
-            FROM rop_team_members rtm
-            JOIN user_onec_employee_links uoel
-              ON uoel.user_id = rtm.member_user_id AND uoel.revoked_at IS NULL
-            WHERE rtm.rop_user_id = $1::uuid AND rtm.revoked_at IS NULL
-            UNION
-            SELECT $2::uuid
-          )
+            AND ${ropTeamPortfolioClause("$1", "$2").replaceAll("onec_clients.", "oc.")}
         `,
         [userParam, context.employeeId!],
       );

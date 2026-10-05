@@ -16,13 +16,31 @@
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
           <header class="clients-page-header">
-            <h1 class="clients-page-title">Клиенты</h1>
+            <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
           </header>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
           <div id="init-panel" class="clients-hidden" role="alert"></div>
 
           <div id="clients-app" class="clients-hidden">
+            <nav id="view-switcher" class="clients-view-switcher" aria-label="Режим просмотра">
+              <button type="button" class="clients-view-switcher__btn" data-view="all">Все клиенты</button>
+              <button type="button" class="clients-view-switcher__btn" data-view="teams">По командам</button>
+              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
+                Требуют проверки
+              </button>
+            </nav>
+
+            <nav id="entity-switcher" class="clients-view-switcher clients-hidden" aria-label="Тип списка">
+              <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
+              <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
+            </nav>
+
+            <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация"></nav>
+
+            <div id="teams-panel" class="clients-teams-panel clients-hidden"></div>
+            <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
+
             <div class="clients-toolbar">
               <label class="clients-field">
                 <span class="clients-field__label">Поиск</span>
@@ -79,6 +97,71 @@
                     <option value="no">Нет</option>
                   </select>
                 </label>
+                <label class="clients-field clients-hidden" id="outlets-filter-wrap">
+                  <span class="clients-field__label">Торговые точки</span>
+                  <select id="outlets-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="yes">Есть</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="outlet-status-filter-wrap">
+                  <span class="clients-field__label">Статус ТТ</span>
+                  <select id="outlet-status-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="open">Открыта</option>
+                    <option value="closed">Закрыта</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="warehouse-filter-wrap">
+                  <span class="clients-field__label">Склад</span>
+                  <select id="warehouse-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                    <option value="unknown">Нет данных</option>
+                  </select>
+                </label>
+                <div class="clients-field clients-hidden" id="regional-filter-wrap">
+                  <span class="clients-field__label" id="regional-filter-label">Региональный</span>
+                  <div class="clients-combobox" id="regional-combobox">
+                    <input
+                      id="regional-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="regional-filter-label"
+                      aria-controls="regional-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все региональные"
+                    />
+                    <input type="hidden" id="regional-filter" value="" />
+                    <ul id="regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <label class="clients-field clients-hidden" id="tandoor-filter-wrap">
+                  <span class="clients-field__label">Tandoor Club</span>
+                  <input id="tandoor-filter" class="clients-field__input" type="search" autocomplete="off" placeholder="Статус клуба" />
+                </label>
+                <label class="clients-field clients-hidden" id="review-state-filter-wrap">
+                  <span class="clients-field__label">Состояние ревизии</span>
+                  <select id="review-state-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="review-decision-filter-wrap">
+                  <span class="clients-field__label">Решение ревизии</span>
+                  <select id="review-decision-filter" class="clients-field__select">
+                    <option value="">Все</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="unassigned-filter-wrap">
+                  <span class="clients-field__label">Нераспределённое</span>
+                  <select id="unassigned-filter" class="clients-field__select">
+                    <option value="">Все категории</option>
+                  </select>
+                </label>
                 <button id="reset-filters" type="button" class="workspace-button workspace-button--ghost">
                   Сбросить
                 </button>
@@ -86,7 +169,15 @@
             </div>
 
             <div class="clients-meta">
-              <p id="result-count">Найдено 0 клиентов</p>
+              <div class="clients-meta__row">
+                <p id="result-count">Найдено 0 клиентов</p>
+                <div class="clients-meta__actions">
+                  <button type="button" class="workspace-button workspace-button--ghost" id="columns-picker-btn">
+                    Колонки
+                  </button>
+                </div>
+              </div>
+              <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
               <p id="sync-status" class="clients-sync"></p>
             </div>
 
@@ -96,10 +187,12 @@
                 <div class="clients-table-wrap">
                   <table class="clients-table" aria-label="Список клиентов">
                     <thead>
-                      <tr>
+                      <tr id="clients-table-head-row">
                         <th scope="col">Клиент</th>
                         <th scope="col">Холдинг</th>
                         <th scope="col">Менеджер</th>
+                        <th scope="col" data-col="team" class="clients-hidden">Команда</th>
+                        <th scope="col" data-col="review" class="clients-hidden">Ревизия</th>
                         <th scope="col">Адрес</th>
                         <th scope="col">Телефон</th>
                       </tr>

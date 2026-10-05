@@ -326,10 +326,38 @@
     }
   }
 
+  var currentUser = null;
+
+  function maybeMountReviewPanel(client) {
+    if (!currentUser || currentUser.role !== "admin" || !window.ClientReviewPanel) {
+      return;
+    }
+    var host = document.getElementById("client-review-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "client-review-host";
+      detailRoot.appendChild(host);
+    }
+    window.ClientReviewPanel.create({
+      api: api,
+      shell: shell,
+      logic: logic,
+      guid: client.guid,
+      container: host,
+      currentManagerLabel:
+        client.manager && client.manager.name
+          ? client.manager.name + " · " + client.manager.shortId
+          : "—",
+    }).mount();
+  }
+
   var detailController = logic.createDetailController({
     parseGuidFromPath: clientGuidFromPath,
     ensureAdminAccess: function (callback) {
-      return shell.ensureClientsReadAccess(callback);
+      return shell.ensureClientsReadAccess(function (user, reason) {
+        currentUser = user;
+        callback(user, reason);
+      });
     },
     showInvalidGuid: function () {
       showState("Некорректная ссылка", "Идентификатор клиента имеет неверный формат.", null);
@@ -376,6 +404,7 @@
         return;
       }
       renderClient(result.data.client);
+      maybeMountReviewPanel(result.data.client);
     },
     showClientError: function (err, onRetry) {
       showState("Ошибка загрузки", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000), onRetry);

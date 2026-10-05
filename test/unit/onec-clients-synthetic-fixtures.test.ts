@@ -8,10 +8,13 @@ import {
   loadClientsFixture,
 } from "../helpers/onec-clients-fixture-files";
 
-const PARSED_RECORD_KEYS = KNOWN_CLIENT_KEYS satisfies readonly (keyof ParsedClientRecord)[];
+const VALIDATED_RECORD_KEYS = [
+  ...KNOWN_CLIENT_KEYS,
+  "managerRosterState",
+] satisfies readonly (keyof ParsedClientRecord)[];
 
 function assertParsedRecordShape(record: ParsedClientRecord): void {
-  assert.deepEqual(Object.keys(record).sort(), [...PARSED_RECORD_KEYS].sort());
+  assert.deepEqual(Object.keys(record).sort(), [...VALIDATED_RECORD_KEYS].sort());
 }
 
 describe("onec clients synthetic fixtures (R0.2)", () => {

@@ -18,10 +18,54 @@ describe("clients query parsing", () => {
     assert.equal(parseClientsListQuery({ manager: { id: "x" } }).ok, false);
   });
 
+  it("parses entity mode and extended view filters", () => {
+    const outlets = parseClientsListQuery({ entity: "outlets" });
+    assert.equal(outlets.ok, true);
+    if (outlets.ok) {
+      assert.equal(outlets.query.entity, "outlets");
+      assert.equal(outlets.query.view, "all");
+    }
+  });
+
+  it("parses extended view and review filters", () => {
+    const parsed = parseClientsListQuery({
+      view: "review",
+      reviewState: "in_progress",
+      unassignedCategory: "opt_without_rop_team",
+      hasOutlets: "yes",
+      page: "2",
+    });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) {
+      assert.equal(parsed.query.view, "review");
+      assert.equal(parsed.query.reviewState, "in_progress");
+      assert.equal(parsed.query.unassignedCategory, "opt_without_rop_team");
+      assert.equal(parsed.query.hasOutlets, "yes");
+    }
+  });
+
+  it("parses sort parameters and rejects invalid sort fields", () => {
+    const parsed = parseClientsListQuery({ sortBy: "holding", sortDir: "desc" });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) {
+      assert.equal(parsed.query.sortBy, "holding");
+      assert.equal(parsed.query.sortDir, "desc");
+    }
+    assert.equal(parseClientsListQuery({ sortBy: "unknown" }).ok, false);
+    assert.equal(parseClientsListQuery({ sortDir: "sideways" }).ok, false);
+  });
+
   it("builds phone filter without matching everything on empty normalized phone", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
+      view: "all",
       q: "+-()",
       phone: "all",
+      hasOutlets: "all",
+      outletStatus: "all",
+      warehouseFilter: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });
@@ -31,8 +75,15 @@ describe("clients query parsing", () => {
 
   it("includes normalized phone search when digits remain", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
+      view: "all",
       q: "+7 (999)",
       phone: "all",
+      hasOutlets: "all",
+      outletStatus: "all",
+      warehouseFilter: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });
@@ -41,8 +92,15 @@ describe("clients query parsing", () => {
 
   it("does not treat cyrillic text as phone search input", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
+      view: "all",
       q: "альфа",
       phone: "all",
+      hasOutlets: "all",
+      outletStatus: "all",
+      warehouseFilter: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });

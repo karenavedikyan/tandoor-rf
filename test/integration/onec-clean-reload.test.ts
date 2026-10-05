@@ -41,6 +41,11 @@ import {
   setIntegrationEnv,
 } from "../helpers/test-db";
 import { BUNDLE_EMPLOYEES_FILE } from "../../src/onec-clean-reload/constants";
+import {
+  buildEmployeeRosterBytes,
+  buildEmployeeRosterEntry,
+} from "../helpers/onec-clients-employee-roster-fixtures";
+import { calendarDateToTimestamptz } from "../../src/shared/calendar-date";
 import type { FtpReader } from "../../src/onec-clients/ftp-read";
 import { buildImportVerificationFingerprint } from "../helpers/onec-clients-fixtures";
 import { runOneImportJob } from "../../src/onec-import/worker";
@@ -381,6 +386,50 @@ describe("onec clean reload integration", { concurrency: false }, () => {
     if (!dryRun.ok) {
       assert.equal(dryRun.code, "OUTLET_IDENTITY_REQUIRED");
     }
+  });
+
+  it("stores roster date_of_assumption from DD.MM.YYYY without timezone shift", async () => {
+    const employees = [
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_A, {
+        name_manager: "Synthetic Manager A",
+        email: "mgr-a@example.test",
+        date_of_assumption: "05.10.2026",
+      }),
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.MANAGER_B, {
+        name_manager: "Synthetic Manager B",
+        email: "mgr-b@example.test",
+        date_of_assumption: "29.02.2024",
+      }),
+      buildEmployeeRosterEntry(EXTENDED_FIXTURE_GUIDS.REGIONAL, {
+        name_manager: "Synthetic Regional",
+        email: "regional@example.test",
+      }),
+      buildEmployeeRosterEntry(UNASSIGNED_ROSTER_EMPLOYEE, {
+        name_manager: "Unassigned Wholesale Employee",
+        email: "unassigned@example.test",
+      }),
+    ];
+    await writeFile(path.join(bundleDir, BUNDLE_EMPLOYEES_FILE), buildEmployeeRosterBytes(employees));
+
+    const apply = await applyCleanReload(databaseUrl, bundleDir);
+    assert.equal(apply.ok, true, JSON.stringify(apply));
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const rows = await pool.query<{ guid_manager: string; date_of_assumption: Date }>(
+      `
+        SELECT guid_manager::text, date_of_assumption
+        FROM onec_wholesale_employee_roster
+        WHERE guid_manager IN ($1::uuid, $2::uuid)
+        ORDER BY guid_manager
+      `,
+      [EXTENDED_FIXTURE_GUIDS.MANAGER_A, EXTENDED_FIXTURE_GUIDS.MANAGER_B],
+    );
+    await pool.end();
+
+    assert.equal(rows.rowCount, 2);
+    const byGuid = new Map(rows.rows.map((row) => [row.guid_manager, row.date_of_assumption.toISOString()]));
+    assert.equal(byGuid.get(EXTENDED_FIXTURE_GUIDS.MANAGER_A), calendarDateToTimestamptz("2026-10-05"));
+    assert.equal(byGuid.get(EXTENDED_FIXTURE_GUIDS.MANAGER_B), calendarDateToTimestamptz("2024-02-29"));
   });
 
   it("rejects roster with invalid date_of_assumption before purge", async () => {

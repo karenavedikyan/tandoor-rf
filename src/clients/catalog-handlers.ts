@@ -25,6 +25,10 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
 import { canReadClientGuid } from "./repository";
 import {
+  canAccessRetailOutletGuid,
+  listAccessibleOutletGuidsForClient,
+} from "./outlet-scope";
+import {
   assertOutletBelongsToClient,
   assertOutletDistributionWritable,
   loadOutletDistributionOptions,
@@ -47,6 +51,7 @@ async function resolveCatalogDistributionContext(
   client: import("pg").PoolClient,
   cardGuid: string,
   storeGuidParam: unknown,
+  accessContext?: import("../access/types").AccessContext,
 ): Promise<CatalogDistributionContext> {
   const defaultBlocked =
     "Выберите торговую точку, чтобы сохранять дистрибуцию по образцам.";
@@ -67,6 +72,18 @@ async function resolveCatalogDistributionContext(
       selectionPersisted: false,
       distributionEnabled: false,
       futureActionsBlockedReason: "Некорректный идентификатор торговой точки.",
+    };
+  }
+  if (
+    accessContext &&
+    !(await canAccessRetailOutletGuid(accessContext, cardGuid, storeGuid))
+  ) {
+    return {
+      storeGuid,
+      outletConfirmed: false,
+      selectionPersisted: false,
+      distributionEnabled: false,
+      futureActionsBlockedReason: "Торговая точка недоступна в вашей области.",
     };
   }
   if (!(await assertOutletBelongsToClient(client, cardGuid, storeGuid))) {
@@ -162,8 +179,10 @@ export async function getClientCatalogMetaHandler(req: AccessRequest, res: Respo
       client,
       cardGuid,
       req.query.storeGuid,
+      req.accessContext!,
     );
-    const outlets = await loadOutletDistributionOptions(client, cardGuid);
+    const accessible = await listAccessibleOutletGuidsForClient(req.accessContext!, cardGuid);
+    const outlets = await loadOutletDistributionOptions(client, cardGuid, accessible);
     setNoStore(res);
     res.status(200).json({
       ...meta,
@@ -249,6 +268,7 @@ export async function getClientCatalogProductsHandler(
         client,
         cardGuid,
         req.query.storeGuid,
+        req.accessContext!,
       );
       let items = result.items;
       if (distribution.storeGuid && distribution.distributionEnabled) {
@@ -571,6 +591,7 @@ export async function getClientCatalogProductHandler(req: AccessRequest, res: Re
       client,
       cardGuid,
       req.query.storeGuid,
+      req.accessContext!,
     );
     let product = detail;
     if (distribution.storeGuid && distribution.distributionEnabled) {

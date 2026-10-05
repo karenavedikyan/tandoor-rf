@@ -49,6 +49,42 @@ const logic = require("../../public/clients-logic.js") as {
     lastSuccessfulImportAtLabel?: string | null;
     warning?: string | null;
   } | null) => { text: string; warning: boolean; appendWarning: string };
+  resolveVisibleColumns: (input: {
+    entity: string;
+    view: string;
+    cols?: string;
+    storageKey?: string;
+  }) => string[];
+  defaultVisibleColumnIds: (entity: string, view: string) => string[];
+  nextSortState: (
+    currentSortBy: string,
+    currentSortDir: string,
+    columnId: string,
+  ) => { sortBy: string; sortDir: string };
+  normalizeStateForEntitySwitch: (
+    state: {
+      entity: string;
+      sortBy?: string;
+      sortDir?: string;
+      cols?: string;
+      page?: number;
+      outletStatus?: string;
+      warehouse?: string;
+      regionalManager?: string;
+      tandoorClub?: string;
+    },
+    previousEntity: string,
+  ) => {
+    entity: string;
+    sortBy: string;
+    sortDir: string;
+    cols: string;
+    page: number;
+    outletStatus?: string;
+    warehouse?: string;
+    regionalManager?: string;
+    tandoorClub?: string;
+  };
 };
 
 describe("clients frontend logic", () => {
@@ -88,6 +124,63 @@ describe("clients frontend logic", () => {
     });
     assert.match(formatted.text, /ожидается согласованное обновление/);
     assert.equal(formatted.warning, true);
+  });
+
+  it("resolves visible columns from URL and storage defaults", () => {
+    const resolved = logic.resolveVisibleColumns({
+      entity: "clients",
+      view: "all",
+      cols: "name,holding,outletsCount",
+      storageKey: "test-columns",
+    });
+    assert.deepEqual(resolved, ["name", "holding", "outletsCount"]);
+    const defaults = logic.defaultVisibleColumnIds("clients", "all");
+    assert.ok(defaults.indexOf("name") !== -1);
+    assert.ok(defaults.indexOf("holding") !== -1);
+  });
+
+  it("cycles sort state for sortable columns", () => {
+    assert.deepEqual(logic.nextSortState("name", "asc", "holding"), {
+      sortBy: "holding",
+      sortDir: "asc",
+    });
+    assert.deepEqual(logic.nextSortState("holding", "asc", "holding"), {
+      sortBy: "holding",
+      sortDir: "desc",
+    });
+  });
+
+  it("normalizes incompatible sort when switching list entity", () => {
+    const fromClients = logic.normalizeStateForEntitySwitch(
+      {
+        entity: "outlets",
+        sortBy: "name",
+        sortDir: "desc",
+        cols: "name,holding",
+        page: 3,
+      },
+      "clients",
+    );
+    assert.equal(fromClients.sortBy, "clientName");
+    assert.equal(fromClients.sortDir, "desc");
+    assert.equal(fromClients.cols, "");
+    assert.equal(fromClients.page, 1);
+
+    const fromOutlets = logic.normalizeStateForEntitySwitch(
+      {
+        entity: "clients",
+        sortBy: "status",
+        sortDir: "asc",
+        page: 2,
+      },
+      "outlets",
+    );
+    assert.equal(fromOutlets.sortBy, "name");
+    assert.equal(fromOutlets.sortDir, "asc");
+    assert.equal(fromOutlets.outletStatus, "all");
+    assert.equal(fromOutlets.warehouse, "all");
+    assert.equal(fromOutlets.regionalManager, "");
+    assert.equal(fromOutlets.tandoorClub, "");
   });
 
   it("labels sync status as LK import, not 1C file time", () => {

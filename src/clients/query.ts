@@ -1,14 +1,35 @@
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SEARCH_LENGTH, MIN_PAGE } from "./constants";
 import { escapeIlikePattern, normalizePhoneForSearch } from "./phone";
+import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
+import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
+import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
 import { isValidUuidParam } from "./uuid-param";
 
 export type PhoneFilter = "all" | "yes" | "no";
+export type OutletsFilter = "all" | "yes" | "no";
+export type OutletStatusFilter = "all" | "open" | "closed";
+export type OutletWarehouseFilter = "all" | "yes" | "no" | "unknown";
+export type ClientsViewMode = "all" | "teams" | "review";
+export type ClientsEntityMode = "clients" | "outlets";
 
 export type ClientsListQuery = {
+  entity: ClientsEntityMode;
+  view: ClientsViewMode;
   q: string;
   managerId?: string;
   holdingId?: string;
   phone: PhoneFilter;
+  ropUserId?: string;
+  unassignedCategory?: UnassignedCategory;
+  reviewState?: ReviewState | "any";
+  reviewDecision?: ReviewDecision | "any";
+  hasOutlets: OutletsFilter;
+  outletStatus: OutletStatusFilter;
+  warehouseFilter: OutletWarehouseFilter;
+  regionalManagerId?: string;
+  tandoorClub?: string;
+  sortBy: ClientSortField | OutletSortField;
+  sortDir: "asc" | "desc";
   page: number;
   pageSize: number;
 };
@@ -122,13 +143,123 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр холдинга." };
   }
 
+  const entityRaw = parseScalarString(input.entity, "clients") ?? "clients";
+  if (entityRaw !== "clients" && entityRaw !== "outlets") {
+    return { ok: false, message: "Некорректный режим списка." };
+  }
+
+  const viewRaw = parseScalarString(input.view, "all") ?? "all";
+  if (viewRaw !== "all" && viewRaw !== "teams" && viewRaw !== "review") {
+    return { ok: false, message: "Некорректный режим просмотра." };
+  }
+
+  const ropUserId = parseOptionalUuid(input.rop, "РОП");
+  if (ropUserId === null) {
+    return { ok: false, message: "Некорректный фильтр РОП." };
+  }
+
+  let unassignedCategory: UnassignedCategory | undefined;
+  if (input.unassignedCategory !== undefined && input.unassignedCategory !== null && input.unassignedCategory !== "") {
+    if (rejectNonScalar(input.unassignedCategory)) {
+      return { ok: false, message: "Некорректная категория нераспределённого назначения." };
+    }
+    const raw = String(input.unassignedCategory).trim();
+    if (!(UNASSIGNED_CATEGORIES as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректная категория нераспределённого назначения." };
+    }
+    unassignedCategory = raw as UnassignedCategory;
+  }
+
+  let reviewState: ReviewState | "any" | undefined;
+  if (input.reviewState !== undefined && input.reviewState !== null && input.reviewState !== "") {
+    if (rejectNonScalar(input.reviewState)) {
+      return { ok: false, message: "Некорректное состояние ревизии." };
+    }
+    const raw = String(input.reviewState).trim();
+    if (raw !== "any" && !(REVIEW_STATES as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректное состояние ревизии." };
+    }
+    reviewState = raw as ReviewState | "any";
+  }
+
+  let reviewDecision: ReviewDecision | "any" | undefined;
+  if (input.reviewDecision !== undefined && input.reviewDecision !== null && input.reviewDecision !== "") {
+    if (rejectNonScalar(input.reviewDecision)) {
+      return { ok: false, message: "Некорректное решение ревизии." };
+    }
+    const raw = String(input.reviewDecision).trim();
+    if (raw !== "any" && !(REVIEW_DECISIONS as readonly string[]).includes(raw)) {
+      return { ok: false, message: "Некорректное решение ревизии." };
+    }
+    reviewDecision = raw as ReviewDecision | "any";
+  }
+
+  const outletsRaw = parseScalarString(input.hasOutlets, "all") ?? "all";
+  if (outletsRaw !== "all" && outletsRaw !== "yes" && outletsRaw !== "no") {
+    return { ok: false, message: "Некорректный фильтр торговых точек." };
+  }
+
+  const outletStatusRaw = parseScalarString(input.outletStatus, "all") ?? "all";
+  if (outletStatusRaw !== "all" && outletStatusRaw !== "open" && outletStatusRaw !== "closed") {
+    return { ok: false, message: "Некорректный фильтр статуса торговой точки." };
+  }
+
+  const warehouseRaw = parseScalarString(input.warehouse, "all") ?? "all";
+  if (
+    warehouseRaw !== "all" &&
+    warehouseRaw !== "yes" &&
+    warehouseRaw !== "no" &&
+    warehouseRaw !== "unknown"
+  ) {
+    return { ok: false, message: "Некорректный фильтр склада." };
+  }
+
+  const regionalManagerId = parseOptionalUuid(input.regionalManager, "регионального менеджера");
+  if (regionalManagerId === null) {
+    return { ok: false, message: "Некорректный фильтр регионального менеджера." };
+  }
+
+  let tandoorClub: string | undefined;
+  if (input.tandoorClub !== undefined && input.tandoorClub !== null && input.tandoorClub !== "") {
+    if (rejectNonScalar(input.tandoorClub)) {
+      return { ok: false, message: "Некорректный фильтр Tandoor Club." };
+    }
+    const raw = String(input.tandoorClub).trim();
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return { ok: false, message: "Слишком длинный фильтр Tandoor Club." };
+    }
+    tandoorClub = raw;
+  }
+
+  const sortDir = parseSortDirection(input.sortDir);
+  if (sortDir === null) {
+    return { ok: false, message: "Некорректное направление сортировки." };
+  }
+  const sortBy = parseSortBy(entityRaw as ClientsEntityMode, input.sortBy);
+  if (sortBy === null) {
+    return { ok: false, message: "Некорректное поле сортировки." };
+  }
+
   return {
     ok: true,
     query: {
+      entity: entityRaw as ClientsEntityMode,
+      view: viewRaw as ClientsViewMode,
       q: rawQ,
       managerId,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
+      ropUserId,
+      unassignedCategory,
+      reviewState,
+      reviewDecision,
+      hasOutlets: outletsRaw as OutletsFilter,
+      outletStatus: outletStatusRaw as OutletStatusFilter,
+      warehouseFilter: warehouseRaw as OutletWarehouseFilter,
+      regionalManagerId,
+      tandoorClub,
+      sortBy,
+      sortDir,
       page,
       pageSize,
     },
@@ -158,24 +289,24 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   if (query.managerId) {
     params.push(query.managerId);
-    clauses.push(`guid_manager = $${params.length}::uuid`);
+    clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }
 
   if (query.holdingId) {
     params.push(query.holdingId);
-    clauses.push(`guid_holding = $${params.length}::uuid`);
+    clauses.push(`onec_clients.guid_holding = $${params.length}::uuid`);
   }
 
   clauses.push(phonePresenceSql(query.phone));
 
-  if (query.q.length > 0) {
+  if (query.entity === "clients" && query.q.length > 0) {
     params.push(`%${escapeIlikePattern(query.q)}%`);
     const textParam = `$${params.length}`;
     const textClauses = [
-      `name_client ILIKE ${textParam} ESCAPE '\\'`,
-      `name_holding ILIKE ${textParam} ESCAPE '\\'`,
-      `name_manager ILIKE ${textParam} ESCAPE '\\'`,
-      `address ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_client ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_holding ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.name_manager ILIKE ${textParam} ESCAPE '\\'`,
+      `onec_clients.address ILIKE ${textParam} ESCAPE '\\'`,
     ];
 
     const normalizedPhone = normalizePhoneForSearch(query.q);
@@ -197,4 +328,17 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return { whereSql, params };
+}
+
+export function mergeFilterClauses(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {
+  const params = [...base.params, ...extraParams];
+  const baseClause = base.whereSql ? base.whereSql.replace(/^WHERE\s+/, "") : "";
+  const clauses = [baseClause, ...extraClauses].filter((clause) => clause.length > 0);
+  if (clauses.length === 0) {
+    return { whereSql: "", params };
+  }
+  return {
+    whereSql: `WHERE ${clauses.join(" AND ")}`,
+    params,
+  };
 }

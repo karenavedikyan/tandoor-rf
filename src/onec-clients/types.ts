@@ -66,6 +66,8 @@ export type ParsedClientRecord = {
   name_manager: string;
   address: string;
   telephone: string[];
+  /** Set during validation when employee roster is loaded; apply must not recompute from a separate roster object. */
+  managerRosterState?: import("./extended-types").ClientManagerRosterState;
 };
 
 export type ExtendedContractVerification = "synthetic_confirmed" | "operator_confirmed" | "unverified";

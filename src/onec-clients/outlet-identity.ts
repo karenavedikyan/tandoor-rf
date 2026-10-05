@@ -9,7 +9,7 @@ import type {
   RetailOutletClosureHistoryEntry,
   RetailOutletHistoryEntry,
 } from "./extended-types";
-import type { FieldPresenceState } from "./extended-presence";
+import { mergeManagerField, type FieldPresenceState } from "./extended-presence";
 
 export type OutletGuidRegistryRow = {
   guid_store: string;
@@ -411,6 +411,100 @@ function mergeLprField(
   };
 }
 
+function mergeAddressField(
+  incoming: ParsedRetailOutlet["address"],
+  previous: ParsedRetailOutlet["address"] | undefined,
+): ParsedRetailOutlet["address"] {
+  const presence = incoming.fieldPresence;
+  if (!presence) {
+    return incoming;
+  }
+  const hadAnyField =
+    presence.storeAddress || presence.deliveryAddress || presence.routeDirection;
+  if (!hadAnyField && previous) {
+    return { ...previous, fieldPresence: presence };
+  }
+  const base = previous ?? incoming;
+  return {
+    storeAddress: presence.storeAddress ? incoming.storeAddress : base.storeAddress,
+    deliveryAddress: presence.deliveryAddress ? incoming.deliveryAddress : base.deliveryAddress,
+    routeDirection: presence.routeDirection ? incoming.routeDirection : base.routeDirection,
+    fieldPresence: presence,
+  };
+}
+
+function mergeAdditionalField(
+  incoming: ParsedRetailOutlet["additional"],
+  previous: ParsedRetailOutlet["additional"] | undefined,
+): ParsedRetailOutlet["additional"] {
+  const presence = incoming.fieldPresence;
+  if (!presence) {
+    return incoming;
+  }
+  const hadAnyField = presence.statusTandoorClub || presence.bonusTandoorClub;
+  if (!hadAnyField && previous) {
+    return { ...previous, fieldPresence: presence };
+  }
+  const base = previous ?? incoming;
+  return {
+    statusTandoorClub: presence.statusTandoorClub
+      ? incoming.statusTandoorClub
+      : base.statusTandoorClub,
+    bonusTandoorClub: presence.bonusTandoorClub ? incoming.bonusTandoorClub : base.bonusTandoorClub,
+    fieldPresence: presence,
+  };
+}
+
+function mergeOutletManagersField(
+  incoming: ParsedRetailOutlet["managers"],
+  previous: ParsedRetailOutlet["managers"] | undefined,
+): ParsedRetailOutlet["managers"] {
+  const presence = incoming.fieldPresence;
+  if (!presence) {
+    return incoming;
+  }
+  const base = previous ?? incoming;
+  return {
+    manager: mergeManagerField(incoming.manager, presence.manager, base.manager, false),
+    regionalManager: mergeManagerField(
+      incoming.regionalManager,
+      presence.regionalManager,
+      base.regionalManager,
+      false,
+    ),
+    hardwareManager: mergeManagerField(
+      incoming.hardwareManager,
+      presence.hardwareManager,
+      base.hardwareManager,
+      false,
+    ),
+    headOfSales: mergeManagerField(incoming.headOfSales, presence.headOfSales, base.headOfSales, false),
+    fieldPresence: presence,
+  };
+}
+
+function mergeContactsField(
+  incoming: ParsedRetailOutlet["contacts"],
+  previous: ParsedRetailOutlet["contacts"] | undefined,
+): ParsedRetailOutlet["contacts"] {
+  const presence = incoming.fieldPresence;
+  if (!presence) {
+    return incoming;
+  }
+  const hadAnyField =
+    presence.storePhone || presence.accountantPhone || presence.accountantEmail;
+  if (!hadAnyField && previous) {
+    return { ...previous, fieldPresence: presence };
+  }
+  const base = previous ?? incoming;
+  return {
+    storePhone: presence.storePhone ? incoming.storePhone : base.storePhone,
+    accountantPhone: presence.accountantPhone ? incoming.accountantPhone : base.accountantPhone,
+    accountantEmail: presence.accountantEmail ? incoming.accountantEmail : base.accountantEmail,
+    fieldPresence: presence,
+  };
+}
+
 function mergeConfirmedOutlet(
   incoming: ParsedRetailOutlet,
   previous: ParsedRetailOutlet | undefined,
@@ -428,11 +522,19 @@ function mergeConfirmedOutlet(
 
   const loading = mergeLoadingField(incoming.loading, previous?.loading, previous, context);
   const lpr = mergeLprField(incoming.lpr, previous?.lpr, previous, context);
+  const contacts = mergeContactsField(incoming.contacts, previous?.contacts);
+  const address = mergeAddressField(incoming.address, previous?.address);
+  const additional = mergeAdditionalField(incoming.additional, previous?.additional);
+  const managers = mergeOutletManagersField(incoming.managers, previous?.managers);
 
   return {
     ...incoming,
     loading,
     lpr,
+    contacts,
+    address,
+    additional,
+    managers,
     closureStatus,
     closed,
     closureConfirmedInCurrentExport,

@@ -251,6 +251,7 @@ export function resolveImportLinkMetadata(
   record: import("./extended-types").ParsedExtendedClientRecord | undefined,
   options?: {
     incomingManagerGuid?: string;
+    incomingManagerRosterState?: import("./extended-types").ClientManagerRosterState;
     previousManagerGuid?: string | null;
     previousManagerRosterState?: import("./extended-types").ClientManagerRosterState | null;
     rosterLoadedInPayload?: boolean;
@@ -261,7 +262,8 @@ export function resolveImportLinkMetadata(
   managerRosterState: import("./extended-types").ClientManagerRosterState;
 } {
   const incomingManagerGuid = options?.incomingManagerGuid ?? record?.guid_manager ?? "";
-  const incomingRosterState = record?.managerRosterState ?? "roster_not_loaded";
+  const incomingRosterState =
+    options?.incomingManagerRosterState ?? record?.managerRosterState ?? "roster_not_loaded";
   const managerRosterState = resolveManagerRosterStateForApply({
     incomingState: incomingRosterState,
     incomingManagerGuid,

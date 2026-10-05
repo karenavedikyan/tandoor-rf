@@ -4,6 +4,7 @@ export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
 export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
+export type ClientsBusinessRole = "manager" | "regional_manager" | "rop" | "director" | "admin";
 
 export function adminUserPayload() {
   return {
@@ -81,6 +82,41 @@ export function syntheticPagedListPayload(page: number) {
   };
 }
 
+export function syntheticOutletsListPayload() {
+  return {
+    items: [
+      {
+        guidStore: "44444444-4444-4444-8444-444444444444",
+        guidClient: SYNTHETIC_CLIENT_GUID,
+        clientName: "Synthetic Client Alpha",
+        outletLabel: "Store Alpha",
+        address: "Store street 1",
+        isClosed: false,
+        closureStatusLabel: "Открыта",
+        holdingName: "Холдинг Восток",
+        manager: {
+          id: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+        },
+        regionalManager: {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Regional One",
+          shortId: "AAAAAAAA",
+          hasSource: true,
+        },
+        warehouse: { value: true, label: "Да", hasSource: true },
+        tandoorClub: { value: "Gold", hasSource: true },
+      },
+    ],
+    total: 1,
+    page: 1,
+    pageSize: 50,
+    totalPages: 1,
+    isEmptyDatabase: false,
+  };
+}
+
 export function syntheticOptionsPayload() {
   return {
     managers: [
@@ -97,7 +133,128 @@ export function syntheticOptionsPayload() {
         shortId: "44444444",
       },
     ],
+    regionalManagers: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Regional One",
+        shortId: "AAAAAAAA",
+      },
+    ],
   };
+}
+
+function userPayloadForBusinessRole(role: ClientsBusinessRole) {
+  switch (role) {
+    case "manager":
+      return {
+        user: {
+          role: "manager",
+          email: "manager@synthetic.test",
+          fullName: "Synthetic Manager",
+        },
+      };
+    case "regional_manager":
+      return {
+        user: {
+          role: "regional_manager",
+          email: "regional@synthetic.test",
+          fullName: "Synthetic Regional",
+        },
+      };
+    case "rop":
+      return {
+        user: {
+          role: "rop",
+          email: "rop@synthetic.test",
+          fullName: "Synthetic ROP",
+        },
+      };
+    case "director":
+      return {
+        user: {
+          role: "director",
+          email: "director@synthetic.test",
+          fullName: "Synthetic Director",
+        },
+      };
+    default:
+      return adminUserPayload();
+  }
+}
+
+export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin") {
+  switch (role) {
+    case "manager":
+      return {
+        presentation: {
+          pageTitle: "Мои клиенты",
+          defaultView: "all",
+          defaultEntity: "clients",
+          allowedViews: ["all"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: false,
+          showManagerTeamFilter: false,
+          showTeamNavigation: false,
+          reviewReadOnly: true,
+        },
+      };
+    case "regional_manager":
+      return {
+        presentation: {
+          pageTitle: "Мои торговые точки",
+          defaultView: "all",
+          defaultEntity: "outlets",
+          allowedViews: ["all"],
+          allowedEntities: ["outlets", "clients"],
+          showViewSwitcher: false,
+          showManagerTeamFilter: false,
+          showTeamNavigation: false,
+          reviewReadOnly: true,
+        },
+      };
+    case "rop":
+      return {
+        presentation: {
+          pageTitle: "Клиенты моей команды",
+          defaultView: "teams",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams"],
+          allowedEntities: ["clients"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: true,
+        },
+      };
+    case "director":
+      return {
+        presentation: {
+          pageTitle: "Вся клиентская база",
+          defaultView: "teams",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams", "review"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: true,
+        },
+      };
+    default:
+      return {
+        presentation: {
+          pageTitle: "Клиенты",
+          defaultView: "all",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams", "review"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: false,
+        },
+      };
+  }
 }
 
 export function syntheticSyncStatusPayload() {
@@ -232,8 +389,10 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
 
 export type MockOptions = {
   role?: MockRole;
+  clientsBusinessRole?: ClientsBusinessRole;
   listStatus?: number;
   listBody?: unknown;
+  outletsListBody?: unknown;
   detailStatus?: number;
   detailBody?: unknown;
   failListOnce?: boolean;
@@ -248,6 +407,9 @@ export type MockOptions = {
   catalogProductsStatus?: number;
   catalogFailProductsOnce?: boolean;
   catalogAccessRevoked?: boolean;
+  reviewersStatus?: number;
+  eligibleReviewersItems?: Array<{ userId: string; name: string; shortId: string }>;
+  reviewGetBody?: Record<string, unknown> | null;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -356,12 +518,16 @@ export function resolveMockResponse(
   options: MockOptions,
   state: { listCalls: number; catalogProductsCalls: number },
   method = "GET",
+  requestBody?: string,
 ): { status: number; contentType: string; body: string } | null {
   const path = url.pathname;
 
   if (path === "/api/auth/me") {
     if (options.role === "anonymous") {
       return jsonResponse(401, { error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
+    }
+    if (options.clientsBusinessRole) {
+      return jsonResponse(200, userPayloadForBusinessRole(options.clientsBusinessRole));
     }
     if (options.role === "manager") {
       return jsonResponse(200, managerUserPayload());
@@ -372,6 +538,13 @@ export function resolveMockResponse(
     return jsonResponse(200, adminUserPayload());
   }
 
+  if (path === "/api/clients/presentation") {
+    const presentationRole =
+      options.clientsBusinessRole ??
+      (options.role === "manager" ? "manager" : "admin");
+    return jsonResponse(200, syntheticPresentationPayload(presentationRole));
+  }
+
   if (path === "/api/clients/options") {
     return jsonResponse(200, syntheticOptionsPayload());
   }
@@ -380,13 +553,168 @@ export function resolveMockResponse(
     return jsonResponse(200, syntheticSyncStatusPayload());
   }
 
+  if (path === "/api/clients/teams") {
+    return jsonResponse(200, {
+      items: [
+        {
+          ropUserId: "99999999-9999-4999-8999-999999999999",
+          ropName: "Synthetic ROP",
+          ropEmployeeGuid: SYNTHETIC_MANAGER_A,
+          ropEmployeeName: "Менеджер Иванов",
+          ropEmployeeShortId: "22222222",
+          managerCount: 1,
+          uniqueClientCount: 2,
+        },
+      ],
+    });
+  }
+
+  if (path.match(/^\/api\/clients\/teams\/[^/]+\/managers$/)) {
+    return jsonResponse(200, {
+      items: [
+        {
+          kind: "team_member",
+          userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+          clientCount: 2,
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/unassigned/summary") {
+    return jsonResponse(200, {
+      limitationNote: "Полноценный справочник сотрудников ОПТ в БД недоступен.",
+      categories: [
+        {
+          category: "opt_without_rop_team",
+          label: "Сотрудники ОПТ без команды РОП",
+          uniqueClientCount: 1,
+          employeeCount: 1,
+        },
+      ],
+      employees: [
+        {
+          employeeGuid: "55555555-5555-4555-8555-555555555555",
+          name: "Менеджер Петров",
+          shortId: "55555555",
+          clientCount: 1,
+          category: "opt_without_rop_team",
+          categoryLabel: "Сотрудники ОПТ без команды РОП",
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/review/options") {
+    return jsonResponse(200, {
+      states: [
+        { id: "unreviewed", label: "Не проверен" },
+        { id: "in_progress", label: "В работе" },
+        { id: "completed", label: "Завершён" },
+      ],
+      decisions: [{ id: "confirm_current_manager", label: "Подтвердить текущего ответственного" }],
+      commentMaxLength: 2000,
+    });
+  }
+
+  if (path === "/api/clients/review/eligible-managers") {
+    return jsonResponse(200, {
+      items: [
+        {
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/review/eligible-reviewers") {
+    if (options.reviewersStatus && options.reviewersStatus !== 200) {
+      return jsonResponse(options.reviewersStatus, {
+        error: { message: "Reviewers temporarily unavailable." },
+      });
+    }
+    return jsonResponse(200, {
+      items: options.eligibleReviewersItems ?? [
+        {
+          userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Synthetic Admin",
+          shortId: "aaaaaaaa",
+        },
+      ],
+    });
+  }
+
+  const reviewMatch = path.match(/^\/api\/clients\/([^/]+)\/review(?:\/history)?$/);
+  if (reviewMatch) {
+    if (path.endsWith("/history")) {
+      return jsonResponse(200, { items: [] });
+    }
+    if (method === "PUT") {
+      let parsedBody: unknown = null;
+      try {
+        parsedBody = JSON.parse(requestBody ?? "{}");
+      } catch {
+        parsedBody = null;
+      }
+      if (typeof parsedBody === "string") {
+        return jsonResponse(400, {
+          error: { message: "Expected JSON object body." },
+        });
+      }
+      const payload =
+        parsedBody && typeof parsedBody === "object" && parsedBody !== null
+          ? (parsedBody as {
+              reviewState?: string;
+              reviewDecision?: string | null;
+              assignedReviewerUserId?: string | null;
+              dueAt?: string | null;
+              recheckConfirmed?: boolean;
+            })
+          : {};
+      const nextStoredState = payload.recheckConfirmed
+        ? payload.reviewState ?? "completed"
+        : payload.reviewState ?? "completed";
+      return jsonResponse(200, {
+        review: {
+          reviewState: nextStoredState,
+          storedReviewState: nextStoredState,
+          reviewDecision: payload.reviewDecision ?? "confirm_current_manager",
+          version: 2,
+          isStale: false,
+          transferStatus: "none",
+          assignedReviewerUserId: payload.assignedReviewerUserId ?? null,
+          dueAt: payload.dueAt ?? null,
+        },
+      });
+    }
+    if (options.reviewGetBody !== undefined) {
+      return jsonResponse(200, { review: options.reviewGetBody });
+    }
+    return jsonResponse(200, { review: null });
+  }
+
   if (path === "/api/clients") {
     state.listCalls += 1;
+    const entity = url.searchParams.get("entity") || "clients";
+    const sortBy = url.searchParams.get("sortBy");
+    if (entity === "outlets" && sortBy === "name") {
+      return jsonResponse(400, {
+        error: { code: "VALIDATION_ERROR", message: "Некорректное поле сортировки." },
+      });
+    }
     if (options.failListOnce && state.listCalls === 1) {
       return jsonResponse(503, { error: { code: "SERVICE_UNAVAILABLE", message: "Temporary" } });
     }
     if (options.listStatus && options.listStatus !== 200) {
       return jsonResponse(options.listStatus, options.listBody ?? { error: { message: "Error" } });
+    }
+    if (entity === "outlets") {
+      return jsonResponse(200, options.outletsListBody ?? syntheticOutletsListPayload());
     }
     return jsonResponse(200, options.listBody ?? syntheticListPayload());
   }

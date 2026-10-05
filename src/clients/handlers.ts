@@ -4,6 +4,7 @@ import { loadScheduledExchangeConfig } from "../onec-scheduled-exchange/config";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
+import { listRetailOutlets } from "./outlets/repository";
 import { parseClientsListQuery } from "./query";
 import {
   countAllClients,
@@ -11,7 +12,9 @@ import {
   getClientOptions,
   getClientsSyncStatus,
   listClients,
+  ListClientsError,
 } from "./repository";
+import { validateClientsListQuery } from "./role-presentation";
 
 function sendValidationError(res: Response, message: string): void {
   setNoStore(res);
@@ -29,12 +32,40 @@ export async function listClientsHandler(
     return;
   }
 
-  const result = await listClients(context, parsed.query);
+  const accessError = validateClientsListQuery(context, parsed.query);
+  if (accessError) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, accessError));
+    return;
+  }
+
+  let result;
+  try {
+    result =
+      parsed.query.entity === "outlets"
+        ? await listRetailOutlets(context, parsed.query)
+        : await listClients(context, parsed.query);
+  } catch (error) {
+    if (error instanceof ListClientsError) {
+      setNoStore(res);
+      const status = error.code === "FORBIDDEN" ? 403 : 404;
+      res.status(status).json(apiError(error.code === "FORBIDDEN" ? ERROR_CODES.FORBIDDEN : ERROR_CODES.NOT_FOUND, error.message));
+      return;
+    }
+    throw error;
+  }
   const hasFilters = Boolean(
     parsed.query.q ||
       parsed.query.managerId ||
       parsed.query.holdingId ||
-      parsed.query.phone !== "all",
+      parsed.query.phone !== "all" ||
+      parsed.query.view !== "all" ||
+      parsed.query.entity !== "clients" ||
+      parsed.query.ropUserId ||
+      parsed.query.unassignedCategory ||
+      parsed.query.reviewState ||
+      parsed.query.reviewDecision ||
+      parsed.query.hasOutlets !== "all",
   );
   if (!hasFilters && result.total === 0 && context.fullClientBase) {
     result.isEmptyDatabase = (await countAllClients()) === 0;
