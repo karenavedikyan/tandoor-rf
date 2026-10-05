@@ -1754,6 +1754,8 @@ export function validateExtendedClientsFileBytes(
     outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
     applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
     annotateHoldingLinkStates(records);
+  } else if (employeeRoster != null) {
+    applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
   }
   const holdingLinkErrors = issueCount.value - holdingErrorsBefore;
 
@@ -1863,6 +1865,7 @@ export function toLegacyValidatedPayload(
       name_manager: record.name_manager,
       address: record.address,
       telephone: record.telephone,
+      managerRosterState: record.managerRosterState,
     })),
     warnings: keepExtendedWarnings
       ? (payload.warnings as ValidationWarning[])

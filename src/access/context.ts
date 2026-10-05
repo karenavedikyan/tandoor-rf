@@ -1,3 +1,4 @@
+import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 import { query } from "../db/pool";
 import type { UserRole } from "../shared/user";
 import { isClientReadRole } from "../shared/user";
@@ -8,11 +9,24 @@ type LinkRow = { employee_id: string };
 type ConflictRow = { employee_id: string };
 type DenialRow = { id: string };
 
+async function runAccessQuery<T extends QueryResultRow>(
+  client: PoolClient | undefined,
+  text: string,
+  params: unknown[],
+): Promise<QueryResult<T>> {
+  if (client) {
+    return client.query<T>(text, params);
+  }
+  return query<T>(text, params);
+}
+
 export async function loadAccessContext(
   userId: string,
   role?: UserRole,
+  client?: PoolClient,
 ): Promise<AccessContext> {
-  const userResult = await query<UserRow>(
+  const userResult = await runAccessQuery<UserRow>(
+    client,
     "SELECT role, status FROM users WHERE id = $1::uuid",
     [userId],
   );
@@ -48,7 +62,8 @@ export async function loadAccessContext(
     };
   }
 
-  const linkResult = await query<LinkRow>(
+  const linkResult = await runAccessQuery<LinkRow>(
+    client,
     `
       SELECT employee_id::text
       FROM user_onec_employee_links
@@ -61,7 +76,8 @@ export async function loadAccessContext(
 
   let employeeLinkConflict = false;
   if (employeeId) {
-    const conflictResult = await query<ConflictRow>(
+    const conflictResult = await runAccessQuery<ConflictRow>(
+      client,
       `
         SELECT employee_id::text
         FROM user_onec_employee_links
@@ -74,7 +90,8 @@ export async function loadAccessContext(
     employeeLinkConflict = conflictResult.rows.length > 0;
   }
 
-  const denialAll = await query<DenialRow>(
+  const denialAll = await runAccessQuery<DenialRow>(
+    client,
     `
       SELECT id::text
       FROM access_denials

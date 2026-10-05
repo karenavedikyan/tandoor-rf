@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import type { Express } from "express";
 import { Pool } from "pg";
 import request from "supertest";
 import { applyCatalogImport } from "../../src/onec-catalog/apply";
@@ -38,19 +39,12 @@ function authHeaders(cookie: string): Record<string, string> {
   return { Origin: ORIGIN, Cookie: cookie };
 }
 
-async function loadApp() {
-  await resetPoolForTests();
-  const { createApp } = await import("../../src/server");
-  return createApp();
-}
-
-async function login(email: string): Promise<string> {
-  const app = await loadApp();
+async function login(app: Express, email: string): Promise<string> {
   const res = await request(app)
     .post("/api/auth/login")
     .set({ Origin: ORIGIN, "Content-Type": "application/json" })
     .send({ email, password: TEST_PASSWORD });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
   return (res.headers["set-cookie"]?.[0] ?? "").split(";")[0] ?? "";
 }
 
@@ -79,10 +73,97 @@ function snapshotWithoutRegionalAccess(snapshot: unknown): unknown {
   return copy;
 }
 
+function startPost(
+  app: Express,
+  url: string,
+  cookie: string,
+  body: Record<string, unknown>,
+): { result: Promise<Awaited<ReturnType<typeof request>>>; settled: () => boolean } {
+  let postSettled = false;
+  let postResult: Awaited<ReturnType<typeof request>> | null = null;
+  const result = request(app)
+    .post(url)
+    .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+    .send(body)
+    .then((res) => {
+      postResult = res;
+      postSettled = true;
+      return res;
+    });
+  return {
+    result,
+    settled: () => postSettled,
+  };
+}
+
+async function runConcurrentPostDuringClientLock(input: {
+  app: Express;
+  monitor: Pool;
+  holder: import("pg").PoolClient;
+  url: string;
+  cookie: string;
+  body: Record<string, unknown>;
+  whileLocked: () => Promise<void>;
+}): Promise<Awaited<ReturnType<typeof request>>> {
+  await input.holder.query("BEGIN");
+  await input.holder.query(
+    `SELECT guid_client FROM onec_clients WHERE guid_client = $1::uuid FOR UPDATE`,
+    [CLIENT_GUID],
+  );
+
+  const post = startPost(input.app, input.url, input.cookie, input.body);
+  const holderPid = Number(
+    (await input.holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+  );
+  let sawBlockedWaiter = false;
+  for (let attempt = 0; attempt < 300 && !post.settled(); attempt += 1) {
+    const blocked = await input.monitor.query<{ blocked: boolean }>(
+      `
+        SELECT (
+          COALESCE(array_length(pg_blocking_pids($1::int), 1), 0) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM pg_stat_activity
+            WHERE pid <> $1::int
+              AND wait_event_type = 'Lock'
+              AND query ILIKE '%onec_clients%'
+              AND state = 'active'
+          )
+        ) AS blocked
+      `,
+      [holderPid],
+    );
+    if (blocked.rows[0]?.blocked) {
+      sawBlockedWaiter = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (post.settled()) {
+    const early = await post.result;
+    assert.fail(
+      `POST settled before lock wait with status ${early.status}: ${JSON.stringify(early.body)}`,
+    );
+  }
+  assert.equal(sawBlockedWaiter, true, "expected POST to wait on onec_clients row lock");
+
+  await input.whileLocked();
+  await input.holder.query("COMMIT");
+
+  const waitDeadline = Date.now() + 15000;
+  while (!post.settled() && Date.now() < waitDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return post.result;
+}
+
 describe("PR41 R3 distribution write access revalidation", { concurrency: false }, () => {
   let databaseUrl = "";
   let catalogVersionId = "";
   let regionalCookie = "";
+  let regionalUserId = "";
+  let adminUserId = "";
+  let app!: Express;
 
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
@@ -100,6 +181,7 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
       fullName: "Admin",
       role: "admin",
     });
+    adminUserId = admin.id;
     const regional = await createTestUser({
       databaseUrl,
       email: "regional@example.com",
@@ -107,6 +189,7 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
       fullName: "Regional",
       role: "regional_manager",
     });
+    regionalUserId = regional.id;
     await linkUserToEmployee({
       databaseUrl,
       userId: regional.id,
@@ -147,7 +230,10 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
     assert.equal(applied.ok, true, applied.ok ? "" : `${applied.code}: ${applied.message}`);
 
     catalogVersionId = await seedCatalog(databaseUrl);
-    regionalCookie = await login("regional@example.com");
+    await resetPoolForTests();
+    const { createApp } = await import("../../src/server");
+    app = createApp();
+    regionalCookie = await login(app, "regional@example.com");
   });
 
   after(async () => {
@@ -155,7 +241,6 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
   });
 
   it("rejects marker write when regional assignment changes while waiting on client lock", async () => {
-    const app = await loadApp();
     const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
     const body = {
       action: "set",
@@ -165,45 +250,31 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
     };
 
     const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
     const holder = await pool.connect();
     try {
-      await holder.query("BEGIN");
-      const locked = await holder.query<{ extended_snapshot: unknown }>(
-        `SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid FOR UPDATE`,
-        [CLIENT_GUID],
-      );
-      assert.equal(locked.rowCount, 1);
-
-      let postSettled = false;
-      let postResult: Awaited<ReturnType<typeof request>> | null = null;
-      void request(app)
-        .post(url)
-        .set({ Origin: ORIGIN, Cookie: regionalCookie, "Content-Type": "application/json" })
-        .send(body)
-        .then((res) => {
-          postResult = res;
-          postSettled = true;
-        });
-
-      const deadline = Date.now() + 5000;
-      while (!postSettled && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      assert.equal(postSettled, false, "POST should wait on client row lock");
-
-      const updatedSnapshot = snapshotWithoutRegionalAccess(locked.rows[0]!.extended_snapshot);
-      await holder.query(
-        `UPDATE onec_clients SET extended_snapshot = $2::jsonb WHERE guid_client = $1::uuid`,
-        [CLIENT_GUID, JSON.stringify(updatedSnapshot)],
-      );
-      await holder.query("COMMIT");
-
-      const waitDeadline = Date.now() + 15000;
-      while (!postSettled && Date.now() < waitDeadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      assert.ok(postResult, "POST did not settle");
-      assert.equal(postResult!.status, 404, JSON.stringify(postResult!.body));
+      let snapshotForUpdate: unknown;
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: regionalCookie,
+        body,
+        whileLocked: async () => {
+          const locked = await holder.query<{ extended_snapshot: unknown }>(
+            `SELECT extended_snapshot FROM onec_clients WHERE guid_client = $1::uuid`,
+            [CLIENT_GUID],
+          );
+          snapshotForUpdate = locked.rows[0]!.extended_snapshot;
+          const updatedSnapshot = snapshotWithoutRegionalAccess(snapshotForUpdate);
+          await holder.query(
+            `UPDATE onec_clients SET extended_snapshot = $2::jsonb WHERE guid_client = $1::uuid`,
+            [CLIENT_GUID, JSON.stringify(updatedSnapshot)],
+          );
+        },
+      });
+      assert.equal(postResult.status, 404, JSON.stringify(postResult.body));
 
       const events = await pool.query<{ n: number }>(
         `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'p1'`,
@@ -212,12 +283,53 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       holder.release();
-      await pool.end();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
+    }
+  });
+
+  it("rejects marker write when employee-link is revoked while waiting on client lock", async () => {
+    const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "revoke-link",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holder = await pool.connect();
+    try {
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: regionalCookie,
+        body,
+        whileLocked: async () => {
+          await holder.query(
+            `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL`,
+            [regionalUserId],
+          );
+        },
+      });
+      assert.equal(postResult.status, 403, JSON.stringify(postResult.body));
+
+      const events = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'revoke-link'`,
+      );
+      assert.equal(events.rows[0]?.n, 0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
     }
   });
 
   it("allows write before assignment change and blocks subsequent reads", async () => {
-    const app = await loadApp();
     const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
     const body = {
       action: "set",

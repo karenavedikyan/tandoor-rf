@@ -7,7 +7,9 @@ import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { canReadClientGuid } from "./repository";
 import {
+  accessContextAllowsClientScope,
   listAccessibleOutletGuidsForClient,
+  loadFreshAccessContext,
   loadFreshClientAndOutletAccess,
 } from "./outlet-scope";
 import {
@@ -113,9 +115,10 @@ export async function getClientCatalogOutletDistributionHandler(
   }
   const client = await pool.connect();
   try {
+    const freshContext = await loadFreshAccessContext(client, req.authUser!.id, req.authUser!.role);
     const freshAccess = await loadFreshClientAndOutletAccess(
       client,
-      req.accessContext!,
+      freshContext,
       cardGuid,
       storeGuid,
     );
@@ -215,9 +218,16 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
       });
       return;
     }
+    const freshContext = await loadFreshAccessContext(client, req.authUser!.id, req.authUser!.role);
+    if (!accessContextAllowsClientScope(freshContext)) {
+      await client.query("ROLLBACK");
+      setNoStore(res);
+      res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Access denied."));
+      return;
+    }
     const freshAccess = await loadFreshClientAndOutletAccess(
       client,
-      req.accessContext!,
+      freshContext,
       cardGuid,
       storeGuid,
     );

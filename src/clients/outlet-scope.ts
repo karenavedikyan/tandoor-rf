@@ -1,8 +1,10 @@
 import type { PoolClient } from "pg";
+import { loadAccessContext } from "../access/context";
 import { combineScopeAndFilter } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { query } from "../db/pool";
+import type { UserRole } from "../shared/user";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
 import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
 import { filterRetailOutletsForContext } from "./outlet-access";
@@ -83,7 +85,22 @@ function accessibleStoreGuidsFromRow(
 }
 
 /**
- * Re-evaluates client and outlet access on the locked connection after row locks are held.
+ * Loads current authorization on the locked connection. Caller must pass the same PoolClient used for row locks.
+ */
+export async function loadFreshAccessContext(
+  client: PoolClient,
+  userId: string,
+  role: UserRole,
+): Promise<AccessContext> {
+  return loadAccessContext(userId, role, client);
+}
+
+export function accessContextAllowsClientScope(context: AccessContext): boolean {
+  return buildClientScopeSql(context).whereSql !== "WHERE FALSE";
+}
+
+/**
+ * Re-evaluates client and outlet access using a freshly loaded access context on the locked connection.
  */
 export async function loadFreshClientAndOutletAccess(
   client: PoolClient,
