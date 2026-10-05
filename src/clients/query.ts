@@ -310,6 +310,19 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр регионального менеджера." };
   }
 
+  if (missingRop && ropEmployeeGuid) {
+    return { ok: false, message: "Нельзя одновременно выбрать РОП и фильтр «РОП не указан»." };
+  }
+  if (missingManager && managerId) {
+    return { ok: false, message: "Нельзя одновременно выбрать менеджера и фильтр «Менеджер не указан»." };
+  }
+  if (missingRegional && regionalManagerId) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать регионального и фильтр «Региональный не указан».",
+    };
+  }
+
   let tandoorClub: string | undefined;
   if (input.tandoorClub !== undefined && input.tandoorClub !== null && input.tandoorClub !== "") {
     if (rejectNonScalar(input.tandoorClub)) {
@@ -398,7 +411,8 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   const params: unknown[] = [];
 
   const orgTeamsManagerHandled = Boolean(query.ropEmployeeGuid) && Boolean(query.managerId);
-  if (query.managerId && !orgTeamsManagerHandled) {
+  const outletEntityManagerHandled = query.entity === "outlets";
+  if (query.managerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
     params.push(query.managerId);
     clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }

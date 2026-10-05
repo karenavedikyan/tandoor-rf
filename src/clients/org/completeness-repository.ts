@@ -28,6 +28,7 @@ export type CompletenessQueueQuery = {
   entityKind?: "client" | "outlet";
   ropEmployeeGuid?: string;
   managerId?: string;
+  regionalManagerId?: string;
   reviewState?: string;
   page: number;
   pageSize: number;
@@ -234,6 +235,13 @@ export async function listCompletenessQueue(
     branchClause = branchClause
       ? `${branchClause} AND manager_guid = lower(${p}::text)`
       : `manager_guid = lower(${p}::text)`;
+  }
+  if (input.regionalManagerId) {
+    branchParams.push(input.regionalManagerId.toLowerCase());
+    const p = `$${baseParams.length + searchParams.length + branchParams.length}`;
+    branchClause = branchClause
+      ? `${branchClause} AND regional_guid = lower(${p}::text)`
+      : `regional_guid = lower(${p}::text)`;
   }
 
   const entityClause =

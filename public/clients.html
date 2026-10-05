@@ -56,6 +56,24 @@
                 />
               </label>
               <div class="clients-toolbar__row clients-toolbar__row--filters">
+                <div class="clients-field clients-hidden" id="rop-filter-wrap">
+                  <span class="clients-field__label" id="rop-filter-label">РОП</span>
+                  <div class="clients-combobox" id="rop-combobox">
+                    <input
+                      id="rop-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="rop-filter-label"
+                      aria-controls="rop-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все РОП"
+                    />
+                    <input type="hidden" id="rop-filter" value="" />
+                    <ul id="rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
                 <div class="clients-field">
                   <span class="clients-field__label" id="manager-filter-label">Менеджер 1С</span>
                   <div class="clients-combobox" id="manager-combobox">

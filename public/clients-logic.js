@@ -8,6 +8,9 @@
   "use strict";
 
   var NO_DATA_LABEL = "Нет данных";
+  var MISSING_ROP_ID = "__missing_rop__";
+  var MISSING_MANAGER_ID = "__missing_manager__";
+  var MISSING_REGIONAL_ID = "__missing_regional__";
 
   var LIST_QUERY_KEYS = [
     "view",
@@ -33,6 +36,9 @@
     "portfolio",
     "responsibleKind",
     "completenessReason",
+    "missingRop",
+    "missingManager",
+    "missingRegional",
     "page",
   ];
 
@@ -316,6 +322,9 @@
           return value.length > 0;
         }),
       tandoorClub: params.get("tandoorClub") || "",
+      missingRop: params.get("missingRop") === "1",
+      missingManager: params.get("missingManager") === "1",
+      missingRegional: params.get("missingRegional") === "1",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
@@ -388,6 +397,9 @@
         params.append("completenessReason", reason);
       });
     }
+    if (state.missingRop) params.set("missingRop", "1");
+    if (state.missingManager) params.set("missingManager", "1");
+    if (state.missingRegional) params.set("missingRegional", "1");
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
@@ -452,9 +464,12 @@
     };
   }
 
-  function comboboxLabelForId(selectedId, options) {
+  function comboboxLabelForId(selectedId, options, missingEntry) {
     if (!selectedId) {
       return "";
+    }
+    if (missingEntry && selectedId === missingEntry.id) {
+      return missingEntry.label;
     }
     var match = options.find(function (item) {
       return item.id === selectedId;
@@ -462,9 +477,26 @@
     return match ? optionLabel(match) : selectedId.slice(0, 8).toUpperCase();
   }
 
-  function comboboxApplyFromUrl(model, selectedId, options) {
+  function resolveComboboxSelection(selectedId, missingEntry) {
+    if (!selectedId) {
+      return { guid: "", missing: false };
+    }
+    if (missingEntry && selectedId === missingEntry.id) {
+      return { guid: "", missing: true };
+    }
+    return { guid: selectedId, missing: false };
+  }
+
+  function comboboxSelectedIdFromState(guid, missing, missingId) {
+    if (missing) {
+      return missingId;
+    }
+    return guid || "";
+  }
+
+  function comboboxApplyFromUrl(model, selectedId, options, missingEntry) {
     model.selectedId = selectedId || "";
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
@@ -477,23 +509,26 @@
     return model;
   }
 
-  function comboboxOnBlur(model, options) {
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+  function comboboxOnBlur(model, options, missingEntry) {
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
   }
 
-  function comboboxSelect(model, selectedId, options) {
+  function comboboxSelect(model, selectedId, options, missingEntry) {
     model.selectedId = selectedId || "";
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
   }
 
-  function comboboxListEntries(options, query, allLabel) {
+  function comboboxListEntries(options, query, allLabel, missingEntry) {
     var entries = [{ id: "", label: allLabel }];
+    if (missingEntry) {
+      entries.push({ id: missingEntry.id, label: missingEntry.label });
+    }
     filterOptions(options, query).forEach(function (item) {
       entries.push({ id: item.id, label: optionLabel(item) });
     });
@@ -699,6 +734,7 @@
     var listEl = config.listEl;
     var options = config.options;
     var allLabel = config.allLabel;
+    var missingEntry = config.missingEntry || null;
     var listboxId = config.listboxId;
     var onApplySelection = config.onApplySelection;
 
@@ -711,7 +747,7 @@
     var ownerDocument = config.root.ownerDocument || (typeof document !== "undefined" ? document : null);
 
     function renderList() {
-      var entries = comboboxListEntries(options(), model.searchText, allLabel);
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
       listEl.innerHTML = "";
       entries.forEach(function (entry, index) {
         var li = (ownerDocument || listEl.ownerDocument).createElement("li");
@@ -744,7 +780,7 @@
 
     function closeList(restoreLabel) {
       if (restoreLabel) {
-        comboboxOnBlur(model, options());
+        comboboxOnBlur(model, options(), missingEntry);
       }
       model.open = false;
       model.activeIndex = -1;
@@ -755,7 +791,7 @@
     }
 
     function applySelection(selectedId) {
-      comboboxSelect(model, selectedId, options());
+      comboboxSelect(model, selectedId, options(), missingEntry);
       syncDom();
       closeList(false);
       onApplySelection(model.selectedId);
@@ -772,7 +808,7 @@
     });
 
     input.addEventListener("keydown", function (event) {
-      var entries = comboboxListEntries(options(), model.searchText, allLabel);
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
       if (event.key === "ArrowDown") {
         event.preventDefault();
         model.open = true;
@@ -839,11 +875,11 @@
           hidden.value = model.selectedId;
           return;
         }
-        comboboxApplyFromUrl(model, selectedId, options());
+        comboboxApplyFromUrl(model, selectedId, options(), missingEntry);
         syncDom();
       },
       reset: function () {
-        comboboxSelect(model, "", options());
+        comboboxSelect(model, "", options(), missingEntry);
         syncDom();
         closeList(false);
       },
@@ -854,6 +890,9 @@
 
   return {
     NO_DATA_LABEL: NO_DATA_LABEL,
+    MISSING_ROP_ID: MISSING_ROP_ID,
+    MISSING_MANAGER_ID: MISSING_MANAGER_ID,
+    MISSING_REGIONAL_ID: MISSING_REGIONAL_ID,
     LIST_QUERY_KEYS: LIST_QUERY_KEYS,
     columnDefinitions: columnDefinitions,
     defaultVisibleColumnIds: defaultVisibleColumnIds,
@@ -889,6 +928,8 @@
     comboboxOnBlur: comboboxOnBlur,
     comboboxSelect: comboboxSelect,
     comboboxListEntries: comboboxListEntries,
+    resolveComboboxSelection: resolveComboboxSelection,
+    comboboxSelectedIdFromState: comboboxSelectedIdFromState,
     comboboxMoveActive: comboboxMoveActive,
     createDetailController: createDetailController,
     mountCombobox: mountCombobox,

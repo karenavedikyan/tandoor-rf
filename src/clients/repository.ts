@@ -8,7 +8,7 @@ import {
   applyOrgTeamsClientFilter,
 } from "./org/teams-list-filters";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
-import { clientHeadOfSalesGuidSql } from "./org/assignment-sql";
+import { applyClientListAssignmentFilters, buildScopedRopOptionsSql } from "./list-assignment-filters";
 import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
@@ -182,16 +182,7 @@ async function resolveScopedFilter(
     );
   }
 
-  if (input.missingRop) {
-    userFilter = mergeSqlFilters(userFilter, [`${clientHeadOfSalesGuidSql()} IS NULL`], []);
-  }
-  if (input.missingManager) {
-    userFilter = mergeSqlFilters(
-      userFilter,
-      [`NULLIF(BTRIM(lower(onec_clients.guid_manager::text)), '00000000-0000-0000-0000-000000000000') IS NULL`],
-      [],
-    );
-  }
+  userFilter = applyClientListAssignmentFilters(userFilter, input);
 
   const reviewJoin = buildReviewStateFilter(
     input.reviewState ?? (input.view === "review" ? "any" : "any"),
@@ -409,10 +400,14 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     managerFilter.params,
   );
 
+  const ropOptionsQuery = buildScopedRopOptionsSql(managerFilter.whereSql, managerFilter.params);
+  const rops = await query<OptionRow>(ropOptionsQuery.sql, ropOptionsQuery.params);
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     holdings: holdings.rows.map((row) => toClientOption(row.id, row.name)),
     regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
+    rops: rops.rows.map((row) => toClientOption(row.id, row.name)),
   };
 }
 

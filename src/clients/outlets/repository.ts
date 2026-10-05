@@ -13,6 +13,7 @@ import {
   outletStoreAddressSql,
 } from "./list-filter";
 import { applyOrgTeamsOutletFilter } from "../org/teams-list-filters";
+import { applyOutletListAssignmentFilters } from "../list-assignment-filters";
 import { ListClientsError } from "../repository";
 import { buildOutletScope, scopedHasOutletsClause } from "./scope-sql";
 
@@ -106,6 +107,8 @@ export async function listRetailOutlets(
       const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");
       combinedWhere = mergeSqlFilters(combinedWhere, [orgClause], orgFilter.params);
     }
+  } else if (input.view === "all") {
+    combinedWhere = applyOutletListAssignmentFilters(combinedWhere, input);
   }
 
   const fromSql = `

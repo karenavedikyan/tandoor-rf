@@ -138,6 +138,14 @@ function parseCompletenessQuery(input: Record<string, unknown>): CompletenessQue
     managerId = input.manager.trim().toLowerCase();
   }
 
+  let regionalManagerId: string | undefined;
+  if (input.regionalManager !== undefined && input.regionalManager !== null && input.regionalManager !== "") {
+    if (typeof input.regionalManager !== "string" || !isValidUuidParam(input.regionalManager)) {
+      return { error: "Некорректный фильтр регионального менеджера." };
+    }
+    regionalManagerId = input.regionalManager.trim().toLowerCase();
+  }
+
   let reviewState: string | undefined;
   if (input.reviewState !== undefined && input.reviewState !== null && input.reviewState !== "") {
     reviewState = String(input.reviewState).trim();
@@ -150,6 +158,7 @@ function parseCompletenessQuery(input: Record<string, unknown>): CompletenessQue
     entityKind,
     ropEmployeeGuid,
     managerId,
+    regionalManagerId,
     reviewState,
     page,
     pageSize,

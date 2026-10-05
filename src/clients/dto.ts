@@ -131,6 +131,7 @@ export type ClientsOptionsResponse = {
   managers: ClientOptionDto[];
   holdings: ClientOptionDto[];
   regionalManagers: ClientOptionDto[];
+  rops: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =

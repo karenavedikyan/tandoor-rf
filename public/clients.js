@@ -10,6 +10,10 @@
   var accessPanel = document.getElementById("access-panel");
   var initPanel = document.getElementById("init-panel");
   var searchInput = document.getElementById("search-input");
+  var ropFilterWrap = document.getElementById("rop-filter-wrap");
+  var ropFilter = document.getElementById("rop-filter");
+  var ropFilterInput = document.getElementById("rop-filter-input");
+  var ropFilterList = document.getElementById("rop-filter-list");
   var managerFilter = document.getElementById("manager-filter");
   var managerFilterInput = document.getElementById("manager-filter-input");
   var managerFilterList = document.getElementById("manager-filter-list");
@@ -63,9 +67,15 @@
   var managerOptions = [];
   var holdingOptions = [];
   var regionalOptions = [];
+  var ropOptions = [];
   var managerCombobox = null;
   var holdingCombobox = null;
   var regionalCombobox = null;
+  var ropCombobox = null;
+
+  var ropMissingEntry = { id: logic.MISSING_ROP_ID, label: "РОП не указан" };
+  var managerMissingEntry = { id: logic.MISSING_MANAGER_ID, label: "Менеджер не указан" };
+  var regionalMissingEntry = { id: logic.MISSING_REGIONAL_ID, label: "Региональный не указан" };
   var currentUser = null;
   var rolePresentation = null;
   var teamContext = {
@@ -101,8 +111,36 @@
     return appEl.dataset.entity || "clients";
   }
 
+  function applyAssignmentSelectionsToState(state) {
+    if (state.view === "teams" || state.view === "review") {
+      return state;
+    }
+    if (ropCombobox) {
+      var ropSelection = logic.resolveComboboxSelection(ropCombobox.model.selectedId, ropMissingEntry);
+      state.ropEmployee = ropSelection.missing ? "" : ropSelection.guid;
+      state.missingRop = ropSelection.missing;
+    }
+    if (managerCombobox) {
+      var managerSelection = logic.resolveComboboxSelection(
+        managerCombobox.model.selectedId,
+        managerMissingEntry,
+      );
+      state.manager = managerSelection.missing ? "" : managerSelection.guid;
+      state.missingManager = managerSelection.missing;
+    }
+    if (regionalCombobox) {
+      var regionalSelection = logic.resolveComboboxSelection(
+        regionalCombobox.model.selectedId,
+        regionalMissingEntry,
+      );
+      state.regionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
+      state.missingRegional = regionalSelection.missing;
+    }
+    return state;
+  }
+
   function currentStateFromForm() {
-    return {
+    var state = {
       view: currentView(),
       entity: currentEntity(),
       q: searchInput.value.trim(),
@@ -122,12 +160,16 @@
       portfolio: appEl.dataset.portfolio || "",
       responsibleKind: appEl.dataset.responsibleKind || "",
       completenessReasons: readCompletenessReasonsFromFilter(),
+      missingRop: false,
+      missingManager: false,
+      missingRegional: false,
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
       cols: appEl.dataset.cols || "",
       page: Number(appEl.dataset.page || "1") || 1,
     };
+    return applyAssignmentSelectionsToState(state);
   }
 
   function columnsStorageKey(entity) {
@@ -193,26 +235,39 @@
     appEl.dataset.cols = state.cols || "";
     visibleColumnIds = resolveColumnsForState(state);
     searchInput.value = state.q || "";
-    managerFilter.value = state.manager;
+    managerFilter.value = state.missingManager ? "" : state.manager || "";
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
     outletsFilter.value = state.hasOutlets || "all";
     outletStatusFilter.value = state.outletStatus || "all";
     warehouseFilter.value = state.warehouse || "all";
-    regionalFilter.value = state.regionalManager || "";
+    regionalFilter.value = state.missingRegional ? "" : state.regionalManager || "";
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
     unassignedFilter.value = state.unassignedCategory || "";
     applyCompletenessReasonsToFilter(state.completenessReasons || []);
+    if (ropCombobox && state.view !== "teams" && state.view !== "review") {
+      ropCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(state.ropEmployee, state.missingRop, logic.MISSING_ROP_ID),
+      );
+    }
     if (managerCombobox) {
-      managerCombobox.syncFromUrl(state.manager);
+      managerCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(state.manager, state.missingManager, logic.MISSING_MANAGER_ID),
+      );
     }
     if (holdingCombobox) {
       holdingCombobox.syncFromUrl(state.holding);
     }
     if (regionalCombobox) {
-      regionalCombobox.syncFromUrl(state.regionalManager || "");
+      regionalCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.regionalManager,
+          state.missingRegional,
+          logic.MISSING_REGIONAL_ID,
+        ),
+      );
     }
     updateViewSwitcherActive(state.view || "all");
     updateEntitySwitcherActive(state.entity || "clients");
@@ -472,6 +527,21 @@
   }
 
   function mountFilterComboboxes() {
+    ropCombobox = logic.mountCombobox({
+      model: logic.createComboboxModel(),
+      input: ropFilterInput,
+      hidden: ropFilter,
+      listEl: ropFilterList,
+      root: document.getElementById("rop-combobox"),
+      listboxId: "rop-filter-list",
+      allLabel: "Все РОП",
+      missingEntry: ropMissingEntry,
+      options: function () {
+        return ropOptions;
+      },
+      onApplySelection: applyComboboxFilter,
+    });
+
     managerCombobox = logic.mountCombobox({
       model: logic.createComboboxModel(),
       input: managerFilterInput,
@@ -480,6 +550,7 @@
       root: document.getElementById("manager-combobox"),
       listboxId: "manager-filter-list",
       allLabel: "Все менеджеры",
+      missingEntry: managerMissingEntry,
       options: function () {
         return managerOptions;
       },
@@ -508,6 +579,7 @@
       root: document.getElementById("regional-combobox"),
       listboxId: "regional-filter-list",
       allLabel: "Все региональные",
+      missingEntry: regionalMissingEntry,
       options: function () {
         return regionalOptions;
       },
@@ -850,22 +922,31 @@
     var isTeams = state.view === "teams";
     var isCompleteness = state.view === "completeness";
     var isOutlets = (state.entity || "clients") === "outlets";
+    var showAssignmentFilters =
+      rolePresentation &&
+      rolePresentation.showManagerTeamFilter &&
+      !isTeams &&
+      !isReview;
+    ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
     document.getElementById("manager-combobox")?.classList.toggle(
       "clients-hidden",
-      isCompleteness || !(rolePresentation && rolePresentation.showManagerTeamFilter),
+      !(showAssignmentFilters || isCompleteness),
     );
-    document.getElementById("holding-combobox")?.classList.toggle("clients-hidden", isCompleteness);
-    phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness);
+    document.getElementById("holding-combobox")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     entitySwitcherEl.classList.toggle(
       "clients-hidden",
       !isCompleteness && !(rolePresentation && rolePresentation.allowedEntities && rolePresentation.allowedEntities.length > 1),
     );
     completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
     outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
-    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    regionalFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets);
+    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    regionalFilterWrap.classList.toggle(
+      "clients-hidden",
+      !isOutlets || !(showAssignmentFilters || isCompleteness),
+    );
+    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
@@ -1326,6 +1407,9 @@
     var params = new URLSearchParams();
     if (state.q) params.set("q", state.q);
     if (state.entity) params.set("entity", state.entity);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
+    if (state.manager) params.set("manager", state.manager);
+    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
     (state.completenessReasons || []).forEach(function (reason) {
       params.append("completenessReason", reason);
     });
@@ -1409,6 +1493,10 @@
       managerOptions = result.data.managers || [];
       holdingOptions = result.data.holdings || [];
       regionalOptions = result.data.regionalManagers || [];
+      ropOptions = result.data.rops || [];
+      if (ropCombobox) {
+        ropCombobox.syncFromUrl(ropFilter.value);
+      }
       if (managerCombobox) {
         managerCombobox.syncFromUrl(managerFilter.value);
       }
@@ -1664,6 +1752,9 @@
     if (regionalCombobox) {
       regionalCombobox.reset();
     }
+    if (ropCombobox) {
+      ropCombobox.reset();
+    }
     outletStatusFilter.value = "all";
     warehouseFilter.value = "all";
     tandoorFilter.value = "";
@@ -1683,6 +1774,9 @@
       reviewState: "",
       reviewDecision: "",
       completenessReasons: [],
+      missingRop: false,
+      missingManager: false,
+      missingRegional: false,
       hasOutlets: "all",
       outletStatus: "all",
       warehouse: "all",

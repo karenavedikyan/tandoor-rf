@@ -252,7 +252,78 @@ export function syntheticOptionsPayload() {
         shortId: "AAAAAAAA",
       },
     ],
+    rops: [
+      {
+        id: NAV_ROP_A,
+        name: "ROP Alpha",
+        shortId: "11A0C069",
+      },
+      {
+        id: NAV_ROP_B,
+        name: "ROP Beta",
+        shortId: "2B4CD6C6",
+      },
+    ],
   };
+}
+
+export function filterAwareAllListPayload(url: URL) {
+  if (url.searchParams.get("view") !== "all") {
+    return null;
+  }
+  const entity = url.searchParams.get("entity") || "clients";
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  const manager = url.searchParams.get("manager");
+  const missingManager = url.searchParams.get("missingManager") === "1";
+  const missingRop = url.searchParams.get("missingRop") === "1";
+
+  if (entity === "clients") {
+    if (missingRop) {
+      return {
+        items: [navClientItem("99999999-9999-4999-8999-999999999999", "Missing ROP Client")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_A && manager === SYNTHETIC_MANAGER_A) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return null;
+  }
+
+  if (missingManager) {
+    return {
+      items: [navOutletItem("88888888-8888-4888-8888-888888888805", "Client C1", NAV_CLIENT_C1)],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+      isEmptyDatabase: false,
+    };
+  }
+
+  if (ropEmployee === NAV_ROP_B && manager === SYNTHETIC_MANAGER_A) {
+    return {
+      items: [navOutletItem(NAV_OUTLET_T1, "Client C1", NAV_CLIENT_C1)],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+      isEmptyDatabase: false,
+    };
+  }
+
+  return null;
 }
 
 function userPayloadForBusinessRole(role: ClientsBusinessRole) {
@@ -696,6 +767,15 @@ export function completenessAwareQueuePayload(url: URL) {
     items = items.filter((item) => reasons.some((reason) => item.reasons.includes(reason)));
   }
 
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  if (ropEmployee) {
+    items = items.filter((item) => item.knownAssignees?.rop?.guid === ropEmployee);
+  }
+  const manager = url.searchParams.get("manager");
+  if (manager) {
+    items = items.filter((item) => item.knownAssignees?.manager?.guid === manager);
+  }
+
   const page = Number(url.searchParams.get("page") || "1");
   const pageSize = Number(url.searchParams.get("pageSize") || "50");
   const total = items.length;
@@ -1002,6 +1082,10 @@ export function resolveMockResponse(
     const portfolioPayload = portfolioAwareClientsListPayload(url);
     if (portfolioPayload) {
       return jsonResponse(200, portfolioPayload);
+    }
+    const filterPayload = filterAwareAllListPayload(url);
+    if (filterPayload) {
+      return jsonResponse(200, filterPayload);
     }
     if (entity === "outlets") {
       return jsonResponse(200, options.outletsListBody ?? syntheticOutletsListPayload());

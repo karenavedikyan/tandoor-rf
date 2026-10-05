@@ -58,13 +58,6 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
     `);
   }
 
-  const orgTeamsRegionalHandled =
-    Boolean(query.ropEmployeeGuid) && Boolean(query.regionalManagerId);
-  if (query.regionalManagerId && !orgTeamsRegionalHandled) {
-    params.push(query.regionalManagerId);
-    clauses.push(`lower(${outletRegionalGuidSql(snapshotExpr)}) = lower($${params.length}::text)`);
-  }
-
   if (query.tandoorClub && query.tandoorClub.trim().length > 0) {
     params.push(`%${escapeIlikePattern(query.tandoorClub.trim())}%`);
     clauses.push(`${outletTandoorClubSql(snapshotExpr)} ILIKE $${params.length} ESCAPE '\\'`);
