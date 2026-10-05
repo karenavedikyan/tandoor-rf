@@ -7,7 +7,13 @@ export function canReadClientsApi(context: AccessContext): boolean {
   if (context.status !== "active") {
     return false;
   }
+  if (context.employeeLinkConflict) {
+    return false;
+  }
   if (context.role === "admin") {
+    return true;
+  }
+  if (context.role === "rop" && context.hasEmployeeLink) {
     return true;
   }
   return isClientReadRole(context.role) && context.hasScopedClientAccess;

@@ -104,7 +104,10 @@ async function resolveScopedFilter(
 
   const ropEmployeeGuid =
     input.ropEmployeeGuid ??
-    (input.view === "teams" && context.role === "rop" && context.employeeId
+    (input.view === "teams" &&
+    context.role === "rop" &&
+    context.employeeId &&
+    !input.ropUserId
       ? context.employeeId.toLowerCase()
       : undefined);
 

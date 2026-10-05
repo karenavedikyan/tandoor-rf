@@ -17,6 +17,7 @@ import {
   RETAIL_OUTLETS_JSON,
 } from "./assignment-sql";
 import { ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL } from "./constants";
+import { orgRopBranchClientScope } from "./scoped-branch-sql";
 
 export type OrgDirectorSummary = {
   employeeGuid: string;
@@ -70,10 +71,21 @@ export type OrgStructureOverview = {
 };
 
 function assertOrgStructureAccess(context: AccessContext): void {
+  if (context.status !== "active") {
+    throw new OrgStructureAccessError("Аккаунт неактивен.", "FORBIDDEN");
+  }
+  if (context.employeeLinkConflict) {
+    throw new OrgStructureAccessError("Конфликт привязки сотрудника 1С.", "FORBIDDEN");
+  }
   if (context.role === "admin" || context.fullClientBase) {
     return;
   }
-  if (context.role === "rop" && context.employeeId) {
+  if (
+    context.role === "rop" &&
+    context.employeeId &&
+    context.hasEmployeeLink &&
+    !context.employeeLinkConflict
+  ) {
     return;
   }
   throw new OrgStructureAccessError("Структура по назначениям недоступна для вашей роли.", "FORBIDDEN");
@@ -242,13 +254,17 @@ async function countScopedOutlets(context: AccessContext, ropGuid: string): Prom
 }
 
 async function countManagersForRop(context: AccessContext, ropGuid: string): Promise<number> {
+  const branchScope = orgRopBranchClientScope(context, ropGuid, "oc");
+  if (branchScope.denied) {
+    return 0;
+  }
+  const ropParamIndex = branchScope.params.length + 1;
   const result = await query<{ count: string }>(
     `
       WITH scoped AS (
         SELECT oc.guid_client, oc.guid_manager, oc.extended_snapshot
         FROM onec_clients oc
-        WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
-          AND ${ropPortfolioClause("$1", "oc")}
+        WHERE ${branchScope.clause}
       ),
       client_mgr AS (
         SELECT DISTINCT lower(guid_manager::text) AS guid FROM scoped
@@ -259,7 +275,7 @@ async function countManagersForRop(context: AccessContext, ropGuid: string): Pro
         FROM scoped s
         JOIN onec_clients oc ON oc.guid_client = s.guid_client
         CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($1::text)
+        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
       )
       SELECT COUNT(DISTINCT guid)::text AS count
       FROM (
@@ -268,21 +284,25 @@ async function countManagersForRop(context: AccessContext, ropGuid: string): Pro
         SELECT guid FROM outlet_mgr WHERE guid IS NOT NULL
       ) all_mgr
     `,
-    [ropGuid],
+    [...branchScope.params, ropGuid.toLowerCase()],
   );
   return Number(result.rows[0]?.count ?? "0");
 }
 
 async function countRegionalsForRop(context: AccessContext, ropGuid: string): Promise<number> {
+  const branchScope = orgRopBranchClientScope(context, ropGuid, "oc");
+  if (branchScope.denied) {
+    return 0;
+  }
   const result = await query<{ count: string }>(
     `
       SELECT COUNT(DISTINCT NULLIF(BTRIM(lower(outlet.elem->'managers'->'regionalManager'->>'guid')), ''))::text AS count
       FROM onec_clients oc
       CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-      WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
-        AND ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($1::text)
+      WHERE ${branchScope.clause}
+        AND ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${branchScope.params.length + 1}::text)
     `,
-    [ropGuid],
+    [...branchScope.params, ropGuid.toLowerCase()],
   );
   return Number(result.rows[0]?.count ?? "0");
 }
@@ -386,6 +406,11 @@ export async function listOrgRopResponsibles(
     throw new OrgStructureAccessError("Нет доступа к ветке РОП.", "FORBIDDEN");
   }
 
+  const branchScope = orgRopBranchClientScope(context, ropEmployeeGuid, "oc");
+  if (branchScope.denied) {
+    return [];
+  }
+
   const linked = await loadLinkedAccountGuids();
   const rosterRows = await query<{ guid_manager: string; name_manager: string }>(
     `SELECT guid_manager::text, name_manager FROM onec_wholesale_employee_roster`,
@@ -394,6 +419,7 @@ export async function listOrgRopResponsibles(
     rosterRows.rows.map((row) => [row.guid_manager.toLowerCase(), row.name_manager]),
   );
 
+  const ropParamIndex = branchScope.params.length + 1;
   const rows = await query<{
     kind: "manager" | "regional";
     employee_guid: string;
@@ -405,8 +431,7 @@ export async function listOrgRopResponsibles(
       WITH scoped_clients AS (
         SELECT oc.guid_client, oc.guid_manager, oc.name_manager, oc.extended_snapshot
         FROM onec_clients oc
-        WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
-          AND ${ropPortfolioClause("$1", "oc")}
+        WHERE ${branchScope.clause}
       ),
       client_managers AS (
         SELECT
@@ -428,7 +453,7 @@ export async function listOrgRopResponsibles(
         FROM scoped_clients sc
         JOIN onec_clients oc ON oc.guid_client = sc.guid_client
         CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($1::text)
+        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
           AND ${outletManagerGuidSql("outlet.elem")} IS NOT NULL
         GROUP BY ${outletManagerGuidSql("outlet.elem")}
       ),
@@ -442,7 +467,7 @@ export async function listOrgRopResponsibles(
         FROM scoped_clients sc
         JOIN onec_clients oc ON oc.guid_client = sc.guid_client
         CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($1::text)
+        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
           AND ${outletRegionalGuidSql("outlet.elem")} IS NOT NULL
         GROUP BY ${outletRegionalGuidSql("outlet.elem")}
       ),
@@ -460,7 +485,7 @@ export async function listOrgRopResponsibles(
       WHERE employee_guid IS NOT NULL
       ORDER BY kind ASC, name ASC NULLS LAST, employee_guid ASC
     `,
-    [ropEmployeeGuid.toLowerCase()],
+    [...branchScope.params, ropEmployeeGuid.toLowerCase()],
   );
 
   const merged = new Map<string, OrgResponsibleSummary>();
