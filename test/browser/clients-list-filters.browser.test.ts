@@ -18,6 +18,33 @@ const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
   path.join(process.cwd(), "test-results", "screenshots");
 
+type ListRouteState = {
+  listCalls: number;
+  catalogProductsCalls: number;
+  lastCompletenessQueueUrl: string;
+  lastListUrl: string;
+};
+
+async function waitForResetListState(
+  state: ListRouteState,
+  callsBeforeReset: number,
+): Promise<void> {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (
+      state.listCalls > callsBeforeReset &&
+      !state.lastListUrl.includes("ropEmployee=") &&
+      !state.lastListUrl.includes("manager=")
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(
+    `reset list state not reached; calls=${state.listCalls} before=${callsBeforeReset} lastListUrl=${state.lastListUrl}`,
+  );
+}
+
 describe("clients list filters browser", { concurrency: false }, () => {
   let browser: Browser;
   let server: http.Server;
@@ -47,13 +74,19 @@ describe("clients list filters browser", { concurrency: false }, () => {
 
   async function setupPage(optionsFailOnce = false) {
     const page = await browser.newPage();
-    const state = { listCalls: 0, catalogProductsCalls: 0, lastCompletenessQueueUrl: "", lastListUrl: "" };
+    const state: ListRouteState = {
+      listCalls: 0,
+      catalogProductsCalls: 0,
+      lastCompletenessQueueUrl: "",
+      lastListUrl: "",
+    };
     const options: MockOptions = { role: "admin", clientsBusinessRole: "director" };
     let optionsCalls = 0;
 
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
       if (url.pathname === "/api/clients") {
+        state.listCalls += 1;
         state.lastListUrl = url.search;
       }
       if (url.pathname === "/api/clients/options") {
@@ -123,9 +156,13 @@ describe("clients list filters browser", { concurrency: false }, () => {
       fullPage: true,
     });
 
+    const listCallsBeforeReset = state.listCalls;
     await page.click("#reset-filters");
     await page.waitForFunction(() => !window.location.search.includes("ropEmployee="));
-    assert.ok(!state.lastListUrl.includes("ropEmployee="));
+    await waitForResetListState(state, listCallsBeforeReset);
+    assert.equal(await page.locator("#rop-filter-input").inputValue(), "");
+    assert.equal(await page.locator("#manager-filter-input").inputValue(), "");
+    await page.waitForSelector("#clients-table-body tr");
 
     await page.close();
   });

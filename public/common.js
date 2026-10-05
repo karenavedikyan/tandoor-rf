@@ -33,6 +33,16 @@
 
   function apiRequest(path, options) {
     var controller = new AbortController();
+    var externalSignal = options && options.signal;
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener("abort", function () {
+          controller.abort();
+        });
+      }
+    }
     var timeoutMs =
       options && typeof options.timeoutMs === "number" && options.timeoutMs > 0
         ? options.timeoutMs

@@ -64,6 +64,7 @@
 
   var debounceTimer = null;
   var activeRequestId = 0;
+  var listFetchAbortController = null;
   var managerOptions = [];
   var holdingOptions = [];
   var regionalOptions = [];
@@ -218,7 +219,16 @@
   }
 
   function invalidateInFlightRequests() {
+    if (listFetchAbortController) {
+      listFetchAbortController.abort();
+      listFetchAbortController = null;
+    }
     activeRequestId += 1;
+  }
+
+  function nextListFetchSignal() {
+    listFetchAbortController = new AbortController();
+    return listFetchAbortController.signal;
   }
 
   function applyStateToForm(state) {
@@ -1233,16 +1243,22 @@
     return parts.length > 0 ? parts.join(" · ") : "—";
   }
 
+  function completenessCardHref(item) {
+    if (item.entityKind === "outlet" && item.guidStore) {
+      return (
+        "/clients/" +
+        encodeURIComponent(item.guidClient) +
+        "?store=" +
+        encodeURIComponent(item.guidStore)
+      );
+    }
+    return "/clients/" + encodeURIComponent(item.guidClient);
+  }
+
   function renderCompletenessRows(items) {
     tableBody.innerHTML = (items || [])
       .map(function (item) {
-        var cardHref =
-          item.entityKind === "outlet" && item.guidStore
-            ? "/clients/" +
-              encodeURIComponent(item.guidClient) +
-              "?store=" +
-              encodeURIComponent(item.guidStore)
-            : "/clients/" + encodeURIComponent(item.guidClient);
+        var cardHref = completenessCardHref(item);
         var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
         var parentLabel =
           item.entityKind === "outlet" ? item.parentClientName || "—" : "—";
@@ -1269,6 +1285,39 @@
           shell.escapeHtml(item.lastImportedAtLabel || "—") +
           "</td>" +
           "</tr>"
+        );
+      })
+      .join("");
+
+    cardsEl.innerHTML = (items || [])
+      .map(function (item) {
+        var cardHref = completenessCardHref(item);
+        var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
+        var parentLabel =
+          item.entityKind === "outlet" ? item.parentClientName || "—" : "—";
+        return (
+          '<article class="clients-card clients-card--completeness">' +
+          '<p class="clients-card__line"><strong>Тип:</strong> ' +
+          shell.escapeHtml(entityLabel) +
+          "</p>" +
+          '<h2 class="clients-card__title"><a class="clients-link" href="' +
+          cardHref +
+          '">' +
+          shell.escapeHtml(item.name) +
+          "</a></h2>" +
+          '<p class="clients-card__line"><strong>Родитель:</strong> ' +
+          shell.escapeHtml(parentLabel) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Назначения:</strong> ' +
+          shell.escapeHtml(formatCompletenessAssignees(item)) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Причины:</strong> ' +
+          shell.escapeHtml((item.reasonLabels || []).join("; ")) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Импорт:</strong> ' +
+          shell.escapeHtml(item.lastImportedAtLabel || "—") +
+          "</p>" +
+          "</article>"
         );
       })
       .join("");
@@ -1421,7 +1470,9 @@
     });
     params.set("page", String(state.page || 1));
     params.set("pageSize", "50");
-    return api.apiRequest("/api/clients/completeness-queue?" + params.toString()).then(function (result) {
+    return api.apiRequest("/api/clients/completeness-queue?" + params.toString(), {
+      signal: nextListFetchSignal(),
+    }).then(function (result) {
       return {
         ok: result.response.status === 200,
         data: result.data,
@@ -1586,41 +1637,47 @@
     if (state.view === "completeness") {
       showResultsState("loading", "Загрузка очереди…", "", "");
       updateViewChrome(state);
-      return loadCompletenessQueue(state).then(function (result) {
-        if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
-          return;
-        }
-        if (!result.ok) {
-          showResultsState(
-            "error",
-            "Не удалось загрузить очередь",
-            api.extractErrorMessage(result.error, "Повторите попытку."),
-            '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
-          );
-          document.getElementById("retry-load")?.addEventListener("click", function () {
-            loadList(state, true);
-          });
-          return;
-        }
-        var data = result.data || { items: [], total: 0, totalPages: 0 };
-        if (!data.total) {
-          showResultsState(
-            "empty",
-            "Нет записей с выбранными условиями",
-            "Измените фильтры или дождитесь следующего импорта из 1С.",
-            "",
-          );
-          resultCountEl.textContent = "0 записей в очереди";
-          return;
-        }
-        showResultsContent();
-        tableHeadRow.innerHTML =
-          "<th>Тип</th><th>Название</th><th>Родитель</th><th>Назначения</th><th>Причины</th><th>Импорт</th>";
-        renderCompletenessRows(data.items || []);
-        cardsEl.innerHTML = "";
-        resultCountEl.textContent = data.total + " записей в очереди";
-        renderPagination(state, data.totalPages || 0);
-      });
+      return loadCompletenessQueue(state)
+        .then(function (result) {
+          if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
+            return;
+          }
+          if (!result.ok) {
+            showResultsState(
+              "error",
+              "Не удалось загрузить очередь",
+              api.extractErrorMessage(result.error, "Повторите попытку."),
+              '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
+            );
+            document.getElementById("retry-load")?.addEventListener("click", function () {
+              loadList(state, true);
+            });
+            return;
+          }
+          var data = result.data || { items: [], total: 0, totalPages: 0 };
+          if (!data.total) {
+            showResultsState(
+              "empty",
+              "Нет записей с выбранными условиями",
+              "Измените фильтры или дождитесь следующего импорта из 1С.",
+              "",
+            );
+            resultCountEl.textContent = "0 записей в очереди";
+            return;
+          }
+          showResultsContent();
+          tableHeadRow.innerHTML =
+            "<th>Тип</th><th>Название</th><th>Родитель</th><th>Назначения</th><th>Причины</th><th>Импорт</th>";
+          renderCompletenessRows(data.items || []);
+          resultCountEl.textContent = data.total + " записей в очереди";
+          renderPagination(state, data.totalPages || 0);
+        })
+        .catch(function (err) {
+          if (err && err.name === "AbortError") {
+            return;
+          }
+          throw err;
+        });
     }
 
     showResultsState("loading", "Загрузка списка…", "", "");
@@ -1641,7 +1698,9 @@
         }
         renderTeamsPanel(state);
         renderUnassignedPanel(unassignedContext.summary, state);
-        return api.apiRequest("/api/clients?" + buildQueryString(state));
+        return api.apiRequest("/api/clients?" + buildQueryString(state), {
+          signal: nextListFetchSignal(),
+        });
       })
       .then(function (result) {
         if (!result || !result.response) {
@@ -1718,6 +1777,9 @@
         renderPagination(state, result.data.totalPages || 0);
       })
       .catch(function (err) {
+        if (err && err.name === "AbortError") {
+          return;
+        }
         if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
           return;
         }

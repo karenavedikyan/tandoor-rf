@@ -215,7 +215,7 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     assert.match(await page.locator("#client-loaded-at").textContent(), /28.09.2026, 12:30/);
     assert.match(await page.locator("#client-source-updated").textContent(), /не передано/);
     await page.click('a.workspace-button--ghost:has-text("К списку")');
-    await page.waitForURL(`**/clients?q=Synthetic**`);
+    await page.waitForURL(`**/clients?view=all&q=Synthetic**`);
     assert.doesNotMatch(await page.textContent("#access-panel"), /Нет доступа/);
     await closePage(page, context);
   });

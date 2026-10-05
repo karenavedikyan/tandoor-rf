@@ -409,24 +409,19 @@ describe("clients four roles acceptance (real PostgreSQL)", { concurrency: false
       await assertCounterMatchesList(page, viewport);
       assert.match(await resultsText(page, viewport), /Alpha Client/i);
 
+      const completenessResponse = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/clients/completeness-queue") && response.status() === 200,
+      );
+      await page.goto("/clients?view=completeness", { waitUntil: "networkidle" });
+      await completenessResponse;
+      await waitForListLoaded(page, viewport);
+      assert.ok(!(await page.locator('[data-action="review-write"]').count()));
+      assert.match(await resultsText(page, viewport), /Incomplete/i);
       if (isMobileViewport(viewport)) {
-        const completenessProbe = await page.evaluate(async () => {
-          const res = await fetch("/api/clients/completeness-queue", { credentials: "include" });
-          const body = await res.json();
-          return { status: res.status, total: body.total as number };
-        });
-        assert.equal(completenessProbe.status, 200);
-        assert.ok(completenessProbe.total >= 1);
-      } else {
-        const completenessResponse = page.waitForResponse(
-          (response) =>
-            response.url().includes("/api/clients/completeness-queue") && response.status() === 200,
-        );
-        await page.goto("/clients?view=completeness", { waitUntil: "networkidle" });
-        await completenessResponse;
-        await waitForListLoaded(page, viewport);
-        assert.ok(!(await page.locator('[data-action="review-write"]').count()));
-        assert.match(await resultsText(page, viewport), /Incomplete/i);
+        const card = page.locator(".clients-card").first();
+        await card.waitFor({ state: "visible" });
+        assert.equal(await card.isVisible(), true);
       }
 
       await context.close();

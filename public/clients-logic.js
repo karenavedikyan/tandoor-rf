@@ -374,7 +374,7 @@
 
   function buildListQueryString(state) {
     var params = new URLSearchParams();
-    if (state.view && state.view !== "all") params.set("view", state.view);
+    if (state.view) params.set("view", state.view);
     if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
