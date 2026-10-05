@@ -65,19 +65,20 @@ export class CompletenessAccessError extends Error {
 function clientReasonsSql(clientAlias = "oc"): string {
   const headGuid = clientHeadOfSalesGuidSql(clientAlias);
   const headState = `${clientAlias}.extended_snapshot->'headOfSales'->>'state'`;
-  const mgrState = `${clientAlias}.manager_roster_state`;
+  const regionalState = `${clientAlias}.extended_snapshot->'regionalManager'->>'state'`;
+  const mgrState = `COALESCE(${clientAlias}.manager_roster_state, 'in_wholesale_roster')`;
+  const mgrGuid = `NULLIF(BTRIM(lower(${clientAlias}.guid_manager::text)), '')`;
+  const zeroUuid = `'00000000-0000-0000-0000-000000000000'`;
   return `
     ARRAY_REMOVE(ARRAY[
       CASE
-        WHEN ${headGuid} IS NULL
-          OR ${headState} IN ('unassigned', 'not_provided', 'invalid')
-        THEN 'missing_rop'
+        WHEN ${mgrState} = 'roster_not_loaded'
+        THEN 'roster_unavailable'
       END,
       CASE
-        WHEN ${clientAlias}.guid_manager IS NULL
-          OR NULLIF(BTRIM(lower(${clientAlias}.guid_manager::text)), '') IS NULL
-          OR NULLIF(BTRIM(lower(${clientAlias}.guid_manager::text)), '00000000-0000-0000-0000-000000000000') IS NULL
-        THEN 'missing_manager'
+        WHEN ${headState} = 'not_provided'
+          OR ${regionalState} = 'not_provided'
+        THEN 'field_not_provided'
       END,
       CASE
         WHEN ${mgrState} = 'outside_wholesale_roster'
@@ -85,8 +86,26 @@ function clientReasonsSql(clientAlias = "oc"): string {
         THEN 'responsible_outside_roster'
       END,
       CASE
+        WHEN ${mgrState} <> 'roster_not_loaded'
+          AND ${headState} NOT IN ('not_provided', 'outside_wholesale_roster')
+          AND (
+            ${headGuid} IS NULL
+            OR ${headState} IN ('unassigned', 'invalid')
+          )
+        THEN 'missing_rop'
+      END,
+      CASE
+        WHEN ${mgrState} NOT IN ('roster_not_loaded', 'outside_wholesale_roster')
+          AND (${mgrGuid} IS NULL OR ${mgrGuid} = ${zeroUuid})
+        THEN 'missing_manager'
+      END,
+      CASE
+        WHEN ${mgrState} <> 'roster_not_loaded'
+          AND ${regionalState} = 'unassigned'
+        THEN 'missing_regional'
+      END,
+      CASE
         WHEN ${headState} = 'invalid'
-          OR ${clientAlias}.extended_snapshot->'headOfSales'->>'state' = 'invalid'
         THEN 'invalid_or_conflicting_assignment'
       END,
       CASE
@@ -95,57 +114,63 @@ function clientReasonsSql(clientAlias = "oc"): string {
         THEN 'org_role_conflict'
       END,
       CASE
-        WHEN ${headState} = 'not_provided'
-          OR (${clientAlias}.extended_snapshot IS NULL AND ${clientAlias}.guid_head_sales IS NULL)
-        THEN 'field_not_provided'
-      END,
-      CASE
         WHEN ${clientAlias}.extended_freshness_state IN ('preserved_from_previous', 'not_provided_in_snapshot')
         THEN 'data_stale'
-      END,
-      CASE
-        WHEN ${mgrState} = 'roster_not_loaded'
-        THEN 'roster_unavailable'
       END
     ], NULL)::text[]
   `.replaceAll("$director_guid$", `'${ORG_DIRECTOR_EMPLOYEE_GUID}'`);
 }
 
-function outletReasonsSql(): string {
+function outletReasonsSql(clientAlias = "oc"): string {
+  const rosterLoaded = `COALESCE(${clientAlias}.manager_roster_state, 'in_wholesale_roster') <> 'roster_not_loaded'`;
+  const headState = `outlet.elem->'managers'->'headOfSales'->>'state'`;
+  const managerState = `outlet.elem->'managers'->'manager'->>'state'`;
+  const regionalState = `outlet.elem->'managers'->'regionalManager'->>'state'`;
   return `
     ARRAY_REMOVE(ARRAY[
       CASE
-        WHEN ${outletHeadOfSalesGuidSql("outlet.elem")} IS NULL
-          OR outlet.elem->'managers'->'headOfSales'->>'state' IN ('unassigned', 'not_provided', 'invalid')
-        THEN 'missing_rop'
+        WHEN ${headState} = 'not_provided'
+          OR ${managerState} = 'not_provided'
+          OR ${regionalState} = 'not_provided'
+        THEN 'field_not_provided'
       END,
       CASE
-        WHEN ${outletManagerGuidSql("outlet.elem")} IS NULL
-          OR outlet.elem->'managers'->'manager'->>'state' IN ('unassigned', 'not_provided', 'invalid')
-        THEN 'missing_manager'
-      END,
-      CASE
-        WHEN ${outletRegionalGuidSql("outlet.elem")} IS NULL
-          AND outlet.elem->'managers'->'regionalManager'->>'state' IN ('unassigned', 'not_provided')
-        THEN 'missing_regional'
-      END,
-      CASE
-        WHEN outlet.elem->'managers'->'manager'->>'state' = 'outside_wholesale_roster'
-          OR outlet.elem->'managers'->'headOfSales'->>'state' = 'outside_wholesale_roster'
+        WHEN ${managerState} = 'outside_wholesale_roster'
+          OR ${headState} = 'outside_wholesale_roster'
+          OR ${regionalState} = 'outside_wholesale_roster'
         THEN 'responsible_outside_roster'
       END,
       CASE
-        WHEN outlet.elem->'managers'->'manager'->>'state' = 'invalid'
-          OR outlet.elem->'managers'->'headOfSales'->>'state' = 'invalid'
+        WHEN ${rosterLoaded}
+          AND ${headState} NOT IN ('not_provided', 'outside_wholesale_roster')
+          AND (
+            ${outletHeadOfSalesGuidSql("outlet.elem")} IS NULL
+            OR ${headState} IN ('unassigned', 'invalid')
+          )
+        THEN 'missing_rop'
+      END,
+      CASE
+        WHEN ${rosterLoaded}
+          AND ${managerState} NOT IN ('not_provided', 'outside_wholesale_roster', 'invalid')
+          AND (
+            ${outletManagerGuidSql("outlet.elem")} IS NULL
+            OR ${managerState} IN ('unassigned', 'invalid')
+          )
+        THEN 'missing_manager'
+      END,
+      CASE
+        WHEN ${rosterLoaded}
+          AND ${regionalState} = 'unassigned'
+        THEN 'missing_regional'
+      END,
+      CASE
+        WHEN ${managerState} = 'invalid'
+          OR ${headState} = 'invalid'
         THEN 'invalid_or_conflicting_assignment'
       END,
       CASE
         WHEN ${outletHeadOfSalesGuidSql("outlet.elem")} = '${ORG_DIRECTOR_EMPLOYEE_GUID}'
         THEN 'org_role_conflict'
-      END,
-      CASE
-        WHEN outlet.elem->'managers'->'headOfSales'->>'state' = 'not_provided'
-        THEN 'field_not_provided'
       END,
       CASE
         WHEN outlet.elem->'provenance'->>'freshness' IN ('preserved_from_previous', 'not_provided_in_snapshot')
@@ -218,6 +243,14 @@ export async function listCompletenessQueue(
         ? "entity_kind = 'outlet'"
         : "";
 
+  let outletAccessClause = "";
+  const outletAccessParams: unknown[] = [];
+  if (context.role === "regional_manager" && context.employeeId) {
+    outletAccessParams.push(context.employeeId.toLowerCase());
+    const p = `$${baseParams.length + searchParams.length + branchParams.length + outletAccessParams.length}`;
+    outletAccessClause = `AND lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) = lower(${p}::text)`;
+  }
+
   const innerSql = `
     WITH scoped_clients AS (
       SELECT oc.*
@@ -265,12 +298,13 @@ export async function listCompletenessQueue(
         NULLIF(BTRIM(outlet.elem->'managers'->'regionalManager'->>'name'), '') AS regional_name,
         oc.last_imported_at,
         crr.review_state,
-        ${outletReasonsSql()} AS reasons
+        ${outletReasonsSql("oc")} AS reasons
       FROM scoped_clients oc
       JOIN onec_retail_outlets ro ON ro.guid_client = oc.guid_client
       CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
       LEFT JOIN client_review_records crr ON crr.guid_client = oc.guid_client
       WHERE lower(COALESCE(outlet.elem->>'guidStore', '')) = lower(ro.guid_store::text)
+        ${outletAccessClause}
     ),
     merged AS (
       SELECT * FROM client_items
@@ -280,11 +314,14 @@ export async function listCompletenessQueue(
     SELECT * FROM merged
   `;
 
-  const reasonFilter = buildReasonFilter(input, baseParams.length + searchParams.length + branchParams.length + 1);
+  const reasonFilter = buildReasonFilter(
+    input,
+    baseParams.length + searchParams.length + branchParams.length + outletAccessParams.length + 1,
+  );
   const whereParts = [reasonFilter.sql, ...searchClauses, branchClause, entityClause].filter(Boolean);
   const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
 
-  const allParams = [...baseParams, ...searchParams, ...branchParams, ...reasonFilter.params];
+  const allParams = [...baseParams, ...searchParams, ...branchParams, ...outletAccessParams, ...reasonFilter.params];
   const offset = (input.page - 1) * input.pageSize;
 
   const countResult = await query<{ count: string; client_count: string; outlet_count: string }>(

@@ -11,6 +11,10 @@ export const NAV_OUTLET_T2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 export const NAV_OUTLET_T1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 export const NAV_OUTLET_C3_T3 = "88888888-8888-4888-8888-888888888803";
 
+export const COMPLETENESS_CLIENT_BOTH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const COMPLETENESS_CLIENT_FILLED = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+export const COMPLETENESS_STORE_MISSING = "88888888-8888-4888-8888-888888888801";
+
 export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
 export type ClientsBusinessRole = "manager" | "regional_manager" | "rop" | "director" | "admin";
 
@@ -621,10 +625,101 @@ export function jsonResponse(status: number, body: unknown): {
   };
 }
 
+function completenessQueueItem(input: {
+  entityKind: "client" | "outlet";
+  guidClient: string;
+  guidStore?: string | null;
+  name: string;
+  parentClientName?: string | null;
+  reasons: string[];
+  reasonLabels: string[];
+}) {
+  return {
+    entityKind: input.entityKind,
+    guidClient: input.guidClient,
+    guidStore: input.guidStore ?? null,
+    name: input.name,
+    address: "",
+    parentClientName: input.parentClientName ?? null,
+    knownAssignees: {
+      rop: { guid: null, name: null },
+      manager: { guid: null, name: null },
+      regional: { guid: null, name: null },
+    },
+    reasons: input.reasons,
+    reasonLabels: input.reasonLabels,
+    lastImportedAt: "2026-10-05T12:00:00.000Z",
+    lastImportedAtLabel: "05.10.2026, 12:00",
+    reviewState: null,
+    reviewStateLabel: null,
+    hasLinkedAccount: null,
+  };
+}
+
+const COMPLETENESS_QUEUE_FIXTURE = [
+  completenessQueueItem({
+    entityKind: "client",
+    guidClient: COMPLETENESS_CLIENT_BOTH,
+    name: "Client Both Missing",
+    reasons: ["missing_rop", "missing_manager"],
+    reasonLabels: ["Не указан РОП", "Не указан ответственный менеджер"],
+  }),
+  completenessQueueItem({
+    entityKind: "outlet",
+    guidClient: COMPLETENESS_CLIENT_FILLED,
+    guidStore: COMPLETENESS_STORE_MISSING,
+    name: "Store Missing Assignments",
+    parentClientName: "Client Filled",
+    reasons: ["missing_rop", "missing_manager"],
+    reasonLabels: ["Не указан РОП", "Не указан ответственный менеджер"],
+  }),
+];
+
+export function completenessAwareQueuePayload(url: URL) {
+  const entity = url.searchParams.get("entity") || "clients";
+  const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+  const reasons = url.searchParams.getAll("completenessReason");
+
+  let items = COMPLETENESS_QUEUE_FIXTURE.filter((item) =>
+    entity === "outlets" ? item.entityKind === "outlet" : item.entityKind === "client",
+  );
+
+  if (q) {
+    items = items.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        (item.parentClientName && item.parentClientName.toLowerCase().includes(q)),
+    );
+  }
+
+  if (reasons.length > 0) {
+    items = items.filter((item) => reasons.some((reason) => item.reasons.includes(reason)));
+  }
+
+  const page = Number(url.searchParams.get("page") || "1");
+  const pageSize = Number(url.searchParams.get("pageSize") || "50");
+  const total = items.length;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+  const start = (page - 1) * pageSize;
+
+  return {
+    items: items.slice(start, start + pageSize),
+    total,
+    page,
+    pageSize,
+    totalPages,
+    summary: {
+      clients: COMPLETENESS_QUEUE_FIXTURE.filter((item) => item.entityKind === "client").length,
+      outlets: COMPLETENESS_QUEUE_FIXTURE.filter((item) => item.entityKind === "outlet").length,
+      records: COMPLETENESS_QUEUE_FIXTURE.length,
+    },
+  };
+}
+
 export function resolveMockResponse(
   url: URL,
   options: MockOptions,
-  state: { listCalls: number; catalogProductsCalls: number },
+  state: { listCalls: number; catalogProductsCalls: number; lastCompletenessQueueUrl?: string },
   method = "GET",
   requestBody?: string,
 ): { status: number; contentType: string; body: string } | null {
@@ -729,6 +824,11 @@ export function resolveMockResponse(
   }
 
   if (path === "/api/clients/completeness-queue") {
+    state.lastCompletenessQueueUrl = url.search;
+    const payload = completenessAwareQueuePayload(url);
+    if (payload) {
+      return jsonResponse(200, payload);
+    }
     return jsonResponse(200, {
       items: [],
       total: 0,

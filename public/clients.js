@@ -52,6 +52,8 @@
   var reviewDecisionFilter = document.getElementById("review-decision-filter");
   var unassignedFilterWrap = document.getElementById("unassigned-filter-wrap");
   var unassignedFilter = document.getElementById("unassigned-filter");
+  var completenessReasonFilterWrap = document.getElementById("completeness-reason-filter-wrap");
+  var completenessReasonFilter = document.getElementById("completeness-reason-filter");
   var columnsPickerBtn = document.getElementById("columns-picker-btn");
   var columnsPickerEl = document.getElementById("columns-picker");
   var visibleColumnIds = [];
@@ -119,6 +121,7 @@
       hardwareManager: appEl.dataset.hardwareManager || "",
       portfolio: appEl.dataset.portfolio || "",
       responsibleKind: appEl.dataset.responsibleKind || "",
+      completenessReasons: readCompletenessReasonsFromFilter(),
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
@@ -147,6 +150,29 @@
   function cancelScheduledLoad() {
     clearTimeout(debounceTimer);
     debounceTimer = null;
+  }
+
+  function readCompletenessReasonsFromFilter() {
+    if (!completenessReasonFilter) {
+      return [];
+    }
+    return Array.from(completenessReasonFilter.selectedOptions)
+      .map(function (opt) {
+        return opt.value;
+      })
+      .filter(function (value) {
+        return value.length > 0;
+      });
+  }
+
+  function applyCompletenessReasonsToFilter(reasons) {
+    if (!completenessReasonFilter) {
+      return;
+    }
+    var selected = new Set(reasons || []);
+    Array.from(completenessReasonFilter.options).forEach(function (opt) {
+      opt.selected = selected.has(opt.value);
+    });
   }
 
   function invalidateInFlightRequests() {
@@ -178,6 +204,7 @@
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
     unassignedFilter.value = state.unassignedCategory || "";
+    applyCompletenessReasonsToFilter(state.completenessReasons || []);
     if (managerCombobox) {
       managerCombobox.syncFromUrl(state.manager);
     }
@@ -821,8 +848,20 @@
   function updateViewChrome(state) {
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
+    var isCompleteness = state.view === "completeness";
     var isOutlets = (state.entity || "clients") === "outlets";
-    outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all");
+    document.getElementById("manager-combobox")?.classList.toggle(
+      "clients-hidden",
+      isCompleteness || !(rolePresentation && rolePresentation.showManagerTeamFilter),
+    );
+    document.getElementById("holding-combobox")?.classList.toggle("clients-hidden", isCompleteness);
+    phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness);
+    entitySwitcherEl.classList.toggle(
+      "clients-hidden",
+      !isCompleteness && !(rolePresentation && rolePresentation.allowedEntities && rolePresentation.allowedEntities.length > 1),
+    );
+    completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
+    outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
     outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets);
     warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets);
     regionalFilterWrap.classList.toggle("clients-hidden", !isOutlets);
@@ -1092,6 +1131,21 @@
     });
   }
 
+  function formatCompletenessAssignees(item) {
+    var parts = [];
+    var known = item.knownAssignees || {};
+    if (known.rop && (known.rop.name || known.rop.guid)) {
+      parts.push("РОП: " + (known.rop.name || known.rop.guid));
+    }
+    if (known.manager && (known.manager.name || known.manager.guid)) {
+      parts.push("Менеджер: " + (known.manager.name || known.manager.guid));
+    }
+    if (known.regional && (known.regional.name || known.regional.guid)) {
+      parts.push("Региональный: " + (known.regional.name || known.regional.guid));
+    }
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }
+
   function renderCompletenessRows(items) {
     tableBody.innerHTML = (items || [])
       .map(function (item) {
@@ -1103,6 +1157,8 @@
               encodeURIComponent(item.guidStore)
             : "/clients/" + encodeURIComponent(item.guidClient);
         var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
+        var parentLabel =
+          item.entityKind === "outlet" ? item.parentClientName || "—" : "—";
         return (
           "<tr>" +
           "<td>" +
@@ -1114,7 +1170,10 @@
           shell.escapeHtml(item.name) +
           "</a></td>" +
           "<td>" +
-          shell.escapeHtml(item.address || "—") +
+          shell.escapeHtml(parentLabel) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(formatCompletenessAssignees(item)) +
           "</td>" +
           "<td>" +
           shell.escapeHtml((item.reasonLabels || []).join("; ")) +
@@ -1266,8 +1325,10 @@
   function loadCompletenessQueue(state) {
     var params = new URLSearchParams();
     if (state.q) params.set("q", state.q);
-    if (state.manager) params.set("manager", state.manager);
-    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
+    if (state.entity) params.set("entity", state.entity);
+    (state.completenessReasons || []).forEach(function (reason) {
+      params.append("completenessReason", reason);
+    });
     params.set("page", String(state.page || 1));
     params.set("pageSize", "50");
     return api.apiRequest("/api/clients/completeness-queue?" + params.toString()).then(function (result) {
@@ -1460,7 +1521,7 @@
         }
         showResultsContent();
         tableHeadRow.innerHTML =
-          "<th>Тип</th><th>Название</th><th>Адрес</th><th>Причины</th><th>Импорт</th>";
+          "<th>Тип</th><th>Название</th><th>Родитель</th><th>Назначения</th><th>Причины</th><th>Импорт</th>";
         renderCompletenessRows(data.items || []);
         cardsEl.innerHTML = "";
         resultCountEl.textContent = data.total + " записей в очереди";
@@ -1621,6 +1682,7 @@
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
+      completenessReasons: [],
       hasOutlets: "all",
       outletStatus: "all",
       warehouse: "all",
@@ -1641,9 +1703,10 @@
     ) {
       return;
     }
+    var nextEntity = view === "completeness" ? "clients" : currentEntity();
     navigateState({
       view: view,
-      entity: currentEntity(),
+      entity: nextEntity,
       q: "",
       manager: "",
       holding: "",
@@ -1656,6 +1719,7 @@
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
+      completenessReasons: [],
       hasOutlets: "all",
       page: 1,
     });
@@ -1759,6 +1823,11 @@
     scheduleLoad(true, false);
   });
   unassignedFilter.addEventListener("change", function () {
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    scheduleLoad(true, false);
+  });
+  completenessReasonFilter?.addEventListener("change", function () {
     cancelScheduledLoad();
     invalidateInFlightRequests();
     scheduleLoad(true, false);

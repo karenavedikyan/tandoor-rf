@@ -165,6 +165,20 @@
                     <option value="">Все категории</option>
                   </select>
                 </label>
+                <label class="clients-field clients-hidden" id="completeness-reason-filter-wrap">
+                  <span class="clients-field__label">Причина неполноты</span>
+                  <select id="completeness-reason-filter" class="clients-field__select" multiple size="1">
+                    <option value="missing_rop">Не указан РОП</option>
+                    <option value="missing_manager">Не указан менеджер</option>
+                    <option value="missing_regional">Не указан региональный</option>
+                    <option value="responsible_outside_roster">Вне справочника ОПТ</option>
+                    <option value="invalid_or_conflicting_assignment">Некорректное назначение</option>
+                    <option value="org_role_conflict">Конфликт орг. роли</option>
+                    <option value="field_not_provided">Поле не передано</option>
+                    <option value="data_stale">Данные устарели</option>
+                    <option value="roster_unavailable">Справочник ОПТ недоступен</option>
+                  </select>
+                </label>
                 <button id="reset-filters" type="button" class="workspace-button workspace-button--ghost">
                   Сбросить
                 </button>

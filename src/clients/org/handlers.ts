@@ -88,7 +88,7 @@ function parseCompletenessQuery(input: Record<string, unknown>): CompletenessQue
   const q = typeof input.q === "string" ? input.q.trim() : "";
 
   let reasons: CompletenessReason[] = [];
-  const rawReasons = input.reason ?? input.reasons;
+  const rawReasons = input.completenessReason ?? input.reason ?? input.reasons;
   if (rawReasons !== undefined && rawReasons !== null && rawReasons !== "") {
     const values = Array.isArray(rawReasons) ? rawReasons : [rawReasons];
     for (const value of values) {
@@ -106,12 +106,20 @@ function parseCompletenessQuery(input: Record<string, unknown>): CompletenessQue
   }
 
   let entityKind: "client" | "outlet" | undefined;
-  if (input.entityKind !== undefined && input.entityKind !== null && input.entityKind !== "") {
-    const raw = String(input.entityKind).trim();
-    if (raw !== "client" && raw !== "outlet") {
+  const rawEntityKind =
+    input.entityKind !== undefined && input.entityKind !== null && input.entityKind !== ""
+      ? String(input.entityKind).trim()
+      : input.entity !== undefined && input.entity !== null && input.entity !== ""
+        ? String(input.entity).trim()
+        : "";
+  if (rawEntityKind) {
+    if (rawEntityKind === "client" || rawEntityKind === "clients") {
+      entityKind = "client";
+    } else if (rawEntityKind === "outlet" || rawEntityKind === "outlets") {
+      entityKind = "outlet";
+    } else {
       return { error: "Некорректный тип записи." };
     }
-    entityKind = raw;
   }
 
   let ropEmployeeGuid: string | undefined;

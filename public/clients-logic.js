@@ -32,6 +32,7 @@
     "tandoorClub",
     "portfolio",
     "responsibleKind",
+    "completenessReason",
     "page",
   ];
 
@@ -306,6 +307,14 @@
       hardwareManager: params.get("hardwareManager") || "",
       portfolio: params.get("portfolio") || "",
       responsibleKind: params.get("responsibleKind") || "",
+      completenessReasons: params
+        .getAll("completenessReason")
+        .map(function (value) {
+          return value.trim();
+        })
+        .filter(function (value) {
+          return value.length > 0;
+        }),
       tandoorClub: params.get("tandoorClub") || "",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
@@ -374,6 +383,11 @@
     if (state.hardwareManager) params.set("hardwareManager", state.hardwareManager);
     if (state.portfolio) params.set("portfolio", state.portfolio);
     if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
+    if (state.view === "completeness" && state.completenessReasons && state.completenessReasons.length > 0) {
+      state.completenessReasons.forEach(function (reason) {
+        params.append("completenessReason", reason);
+      });
+    }
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
