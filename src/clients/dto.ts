@@ -101,6 +101,21 @@ export type RetailOutletListItemDto = {
     name: string;
     shortId: string;
   };
+  regionalManager: {
+    id: string | null;
+    name: string;
+    shortId: string | null;
+    hasSource: boolean;
+  };
+  warehouse: {
+    value: boolean | null;
+    label: string;
+    hasSource: boolean;
+  };
+  tandoorClub: {
+    value: string | null;
+    hasSource: boolean;
+  };
 };
 
 export type RetailOutletsListResponse = {
@@ -115,6 +130,7 @@ export type RetailOutletsListResponse = {
 export type ClientsOptionsResponse = {
   managers: ClientOptionDto[];
   holdings: ClientOptionDto[];
+  regionalManagers: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =
@@ -315,6 +331,134 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   }
 
   return item;
+}
+
+type OutletListRow = {
+  guid_store: string;
+  guid_client: string;
+  client_name: string;
+  is_closed: boolean;
+  store_address: string | null;
+  name_holding: string;
+  guid_manager: string;
+  name_manager: string;
+  outlet_snapshot: unknown;
+};
+
+function readOutletSnapshotField(snapshot: unknown): Record<string, unknown> | null {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+  return snapshot as Record<string, unknown>;
+}
+
+function readNestedManager(snapshot: Record<string, unknown> | null, key: string): { guid: string | null; name: string } {
+  if (!snapshot) {
+    return { guid: null, name: "" };
+  }
+  const managers = snapshot.managers;
+  if (!managers || typeof managers !== "object" || Array.isArray(managers)) {
+    return { guid: null, name: "" };
+  }
+  const ref = (managers as Record<string, unknown>)[key];
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
+    return { guid: null, name: "" };
+  }
+  const guidRaw = (ref as { guid?: unknown }).guid;
+  const nameRaw = (ref as { name?: unknown }).name;
+  const guid = typeof guidRaw === "string" && guidRaw.trim().length > 0 ? guidRaw.trim() : null;
+  const name = typeof nameRaw === "string" ? nameRaw.trim() : "";
+  return { guid, name };
+}
+
+function readWarehouseFromSnapshot(snapshot: Record<string, unknown> | null): {
+  value: boolean | null;
+  hasSource: boolean;
+} {
+  if (!snapshot || !("warehouse" in snapshot)) {
+    return { value: null, hasSource: false };
+  }
+  const raw = snapshot.warehouse;
+  if (raw === true || raw === false) {
+    return { value: raw, hasSource: true };
+  }
+  return { value: null, hasSource: false };
+}
+
+function readTandoorClubFromSnapshot(snapshot: Record<string, unknown> | null): {
+  value: string | null;
+  hasSource: boolean;
+} {
+  if (!snapshot) {
+    return { value: null, hasSource: false };
+  }
+  const additional = snapshot.additional;
+  if (!additional || typeof additional !== "object" || Array.isArray(additional)) {
+    return { value: null, hasSource: false };
+  }
+  if (!("statusTandoorClub" in (additional as Record<string, unknown>))) {
+    return { value: null, hasSource: false };
+  }
+  const raw = (additional as { statusTandoorClub?: unknown }).statusTandoorClub;
+  if (typeof raw !== "string") {
+    return { value: null, hasSource: true };
+  }
+  const trimmed = raw.trim();
+  return { value: trimmed.length > 0 ? trimmed : null, hasSource: true };
+}
+
+function outletAddressLabel(storeAddress: string | null, fallback: string): string {
+  const trimmed = (storeAddress ?? "").trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+  return fallback.trim();
+}
+
+export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItemDto {
+  const snapshot = readOutletSnapshotField(row.outlet_snapshot);
+  const regional = readNestedManager(snapshot, "regionalManager");
+  const warehouse = readWarehouseFromSnapshot(snapshot);
+  const tandoorClub = readTandoorClubFromSnapshot(snapshot);
+  const address = outletAddressLabel(row.store_address, "");
+
+  return {
+    guidStore: row.guid_store,
+    guidClient: row.guid_client,
+    clientName: row.client_name,
+    outletLabel: outletAddressLabel(row.store_address, row.guid_store),
+    address,
+    isClosed: row.is_closed,
+    closureStatusLabel: row.is_closed ? "Закрыта" : "Открыта",
+    holdingName: row.name_holding,
+    manager: {
+      id: row.guid_manager,
+      name: row.name_manager,
+      shortId: shortUuidLabel(row.guid_manager),
+    },
+    regionalManager: {
+      id: regional.guid,
+      name: regional.name,
+      shortId: regional.guid ? shortUuidLabel(regional.guid) : null,
+      hasSource: Boolean(regional.guid || regional.name),
+    },
+    warehouse: {
+      value: warehouse.value,
+      hasSource: warehouse.hasSource,
+      label:
+        warehouse.value === true
+          ? "Да"
+          : warehouse.value === false
+            ? "Нет"
+            : warehouse.hasSource
+              ? "Не указан"
+              : "Нет данных",
+    },
+    tandoorClub: {
+      value: tandoorClub.value,
+      hasSource: tandoorClub.hasSource,
+    },
+  };
 }
 
 export function toClientDetail(

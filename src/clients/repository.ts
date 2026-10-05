@@ -13,6 +13,7 @@ import {
 import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
+import { outletsJsonArraySql, scopedHasOutletsClause, scopedOutletsCountSql } from "./outlets/scope-sql";
 import { buildClientsOrderBy } from "./sort";
 import {
   canUseReviewNavigation,
@@ -64,7 +65,14 @@ export async function countAllClients(): Promise<number> {
 async function resolveScopedFilter(
   context: AccessContext,
   input: ClientsListQuery,
-): Promise<{ whereSql: string; params: unknown[]; joinSql: string; extraSelect: string }> {
+): Promise<{
+  whereSql: string;
+  params: unknown[];
+  selectExtraParams: unknown[];
+  joinSql: string;
+  extraSelect: string;
+  outletsCountExpr: string;
+}> {
   if (input.view === "review" && !canUseReviewNavigation(context)) {
     throw new ListClientsError("Очередь ревизии недоступна для вашей роли.", "FORBIDDEN");
   }
@@ -136,7 +144,30 @@ async function resolveScopedFilter(
     userFilter = mergeSqlFilters(userFilter, reviewJoin.whereClauses, reviewJoin.params);
   }
 
-  const combined = combineScopeAndFilter(scope, userFilter);
+  let combined = combineScopeAndFilter(scope, userFilter);
+
+  let regionalEmployeeParam: string | undefined;
+  let selectExtraParams: unknown[] = [];
+  if (context.role === "regional_manager" && context.employeeId) {
+    regionalEmployeeParam = `$${combined.params.length + 1}::text`;
+    if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+      combined = {
+        whereSql: combined.whereSql,
+        params: [...combined.params, context.employeeId],
+      };
+    } else {
+      selectExtraParams = [context.employeeId];
+    }
+  }
+  const outletsCountExpr = scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+
+  if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+    combined = mergeSqlFilters(
+      combined,
+      [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+      [],
+    );
+  }
 
   const includeReview =
     canUseReviewNavigation(context) &&
@@ -190,19 +221,17 @@ async function resolveScopedFilter(
       `
       : "",
     `
-        , (
-            SELECT COUNT(*)::text
-            FROM onec_retail_outlets oro
-            WHERE oro.guid_client = onec_clients.guid_client
-          ) AS outlets_count
+        , ${outletsCountExpr}::text AS outlets_count
         `,
   ].join("\n");
 
   return {
     whereSql: combined.whereSql,
     params: combined.params,
+    selectExtraParams,
     joinSql,
     extraSelect,
+    outletsCountExpr,
   };
 }
 
@@ -229,15 +258,16 @@ export async function listClients(
   const totalPages = total === 0 ? 0 : Math.ceil(total / input.pageSize);
   const offset = (input.page - 1) * input.pageSize;
 
-  const listParams = [...filter.params, input.pageSize, offset];
-  const limitParam = `$${filter.params.length + 1}`;
-  const offsetParam = `$${filter.params.length + 2}`;
+  const listParams = [...filter.params, ...filter.selectExtraParams, input.pageSize, offset];
+  const paginationBase = filter.params.length + filter.selectExtraParams.length;
+  const limitParam = `$${paginationBase + 1}`;
+  const offsetParam = `$${paginationBase + 2}`;
 
   const includeTeamContext =
     input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
   const orderBy = buildClientsOrderBy(input, {
     includeTeamSort: includeTeamContext,
-    includeOutletsCount: true,
+    outletsCountExpr: filter.outletsCountExpr,
   });
 
   const rows = await query<ClientRow>(
@@ -303,9 +333,29 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     holdingFilter.params,
   );
 
+  const regionalManagers = await query<OptionRow>(
+    `
+      SELECT DISTINCT ON (regional_guid)
+        regional_guid AS id,
+        COALESCE(regional_name, regional_guid) AS name
+      FROM (
+        SELECT
+          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
+          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'name'), '') AS regional_name
+        FROM onec_clients
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJsonArraySql("onec_clients")}) outlet
+        ${managerFilter.whereSql}
+      ) scoped_regional
+      WHERE regional_guid IS NOT NULL
+      ORDER BY regional_guid ASC, regional_name ASC
+    `,
+    managerFilter.params,
+  );
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     holdings: holdings.rows.map((row) => toClientOption(row.id, row.name)),
+    regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
   };
 }
 

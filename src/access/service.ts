@@ -1501,6 +1501,8 @@ export async function listClientsForDelegator(input: {
     q: input.q ?? "",
     phone: "all",
     hasOutlets: "all",
+    outletStatus: "all",
+    warehouseFilter: "all",
     sortBy: "name",
     sortDir: "asc",
     page: input.page,

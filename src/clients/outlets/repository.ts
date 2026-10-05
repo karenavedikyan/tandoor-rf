@@ -1,13 +1,18 @@
 import { mergeSqlFilters } from "../../access/combine-filters";
-import { appendUserDenials, buildClientScopeSql } from "../../access/scope-sql";
 import type { AccessContext } from "../../access/types";
 import { query } from "../../db/pool";
-import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
 import type { RetailOutletsListResponse } from "../dto";
+import { toRetailOutletListItem } from "../dto";
 import type { ClientsListQuery } from "../query";
 import { buildClientsFilter } from "../query";
 import { buildClientsOrderBy } from "../sort";
-import { shortUuidLabel } from "../uuid-param";
+import {
+  buildOutletsListFilter,
+  outletSortExpressions,
+  outletSnapshotSubquery,
+  outletStoreAddressSql,
+} from "./list-filter";
+import { buildOutletScope, scopedHasOutletsClause } from "./scope-sql";
 
 type CountRow = { count: string };
 
@@ -20,131 +25,8 @@ type OutletRow = {
   name_holding: string;
   guid_manager: string;
   name_manager: string;
+  outlet_snapshot: unknown;
 };
-
-const OUTLETS_JSON_ARRAY = `
-  CASE
-    WHEN jsonb_typeof(oc.extended_snapshot->'currentRetailOutlets') = 'array'
-      THEN oc.extended_snapshot->'currentRetailOutlets'
-    ELSE '[]'::jsonb
-  END
-`;
-
-function appendOcUserDenials(
-  scope: { whereSql: string; params: unknown[] },
-  userId: string,
-): { whereSql: string; params: unknown[] } {
-  if (scope.whereSql === "WHERE FALSE") {
-    return scope;
-  }
-
-  const userParam = scope.params.length + 1;
-  const denialClause = `NOT EXISTS (
-    SELECT 1
-    FROM access_denials ad
-    WHERE ad.user_id = $${userParam}::uuid
-      AND ad.revoked_at IS NULL
-      AND (
-        ad.scope_type = 'all_clients'
-        OR ad.object_id = oc.guid_client
-      )
-  )`;
-
-  if (!scope.whereSql) {
-    return {
-      whereSql: `WHERE ${denialClause}`,
-      params: [...scope.params, userId],
-    };
-  }
-
-  const scopeClause = scope.whereSql.trim().replace(/^WHERE\s+/i, "");
-  return {
-    whereSql: `WHERE (${scopeClause}) AND (${denialClause})`,
-    params: [...scope.params, userId],
-  };
-}
-
-function buildRegionalOutletScope(context: AccessContext): { whereSql: string; params: unknown[] } {
-  if (!context.employeeId) {
-    return { whereSql: "WHERE FALSE", params: [] };
-  }
-
-  const base = {
-    whereSql: `
-      WHERE EXISTS (
-        SELECT 1
-        FROM access_grants g
-        WHERE g.user_id = $1::uuid
-          AND g.grant_type = 'client'
-          AND g.object_id = oc.guid_client
-          AND g.revoked_at IS NULL
-      )
-      AND EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(${OUTLETS_JSON_ARRAY}) outlet
-        WHERE lower(coalesce(outlet->>'guidStore', '')) = lower(ro.guid_store::text)
-          AND lower(coalesce(outlet->'managers'->'regionalManager'->>'guid', '')) = lower($2::text)
-      )
-      AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
-    `,
-    params: [context.userId, context.employeeId],
-  };
-
-  return appendOcUserDenials(base, context.userId);
-}
-
-function buildOutletScope(context: AccessContext): { whereSql: string; params: unknown[] } {
-  if (context.fullClientBase) {
-    const scope = appendUserDenials({ whereSql: "", params: [] }, context.userId);
-    if (!scope.whereSql) {
-      return {
-        whereSql: `WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}`,
-        params: [],
-      };
-    }
-    const clause = scope.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc.");
-    return {
-      whereSql: `WHERE (${clause}) AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}`,
-      params: scope.params,
-    };
-  }
-
-  if (context.role === "regional_manager") {
-    return buildRegionalOutletScope(context);
-  }
-
-  const clientScope = buildClientScopeSql(context);
-  if (clientScope.whereSql === "WHERE FALSE") {
-    return clientScope;
-  }
-
-  const scopeClause = clientScope.whereSql
-    ? clientScope.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc_scope.")
-    : "TRUE";
-
-  const base = {
-    whereSql: `
-      WHERE EXISTS (
-        SELECT 1
-        FROM onec_clients oc_scope
-        WHERE oc_scope.guid_client = ro.guid_client
-          AND (${scopeClause})
-      )
-      AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
-    `,
-    params: clientScope.params,
-  };
-
-  return appendOcUserDenials(base, context.userId);
-}
-
-function outletAddressFromSnapshot(storeAddress: string | null, fallback: string): string {
-  const trimmed = (storeAddress ?? "").trim();
-  if (trimmed.length > 0) {
-    return trimmed;
-  }
-  return fallback.trim();
-}
 
 export async function listRetailOutlets(
   context: AccessContext,
@@ -162,16 +44,46 @@ export async function listRetailOutlets(
   }
 
   const outletScope = buildOutletScope(context);
-  const userFilter = buildClientsFilter({ ...input, view: "all" });
+  const userFilter = buildClientsFilter({ ...input, view: "all", q: "" });
   const filterClause = userFilter.whereSql
     ? userFilter.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc.")
     : "";
 
-  const combinedWhere = mergeSqlFilters(
+  let combinedWhere = mergeSqlFilters(
     outletScope,
     filterClause ? [filterClause] : [],
     userFilter.params,
   );
+
+  let regionalEmployeeParam: string | undefined;
+  if (context.role === "regional_manager" && context.employeeId) {
+    const existingEmployeeIndex = combinedWhere.params.findIndex(
+      (param) => typeof param === "string" && param.toLowerCase() === context.employeeId!.toLowerCase(),
+    );
+    if (existingEmployeeIndex >= 0) {
+      regionalEmployeeParam = `$${existingEmployeeIndex + 1}::text`;
+    } else {
+      regionalEmployeeParam = `$${combinedWhere.params.length + 1}::text`;
+      combinedWhere = {
+        whereSql: combinedWhere.whereSql,
+        params: [...combinedWhere.params, context.employeeId],
+      };
+    }
+  }
+
+  if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+    combinedWhere = mergeSqlFilters(
+      combinedWhere,
+      [scopedHasOutletsClause(context, input.hasOutlets, "oc", regionalEmployeeParam)],
+      [],
+    );
+  }
+
+  const outletListFilter = buildOutletsListFilter(input);
+  if (outletListFilter.whereSql) {
+    const outletClause = outletListFilter.whereSql.replace(/^WHERE\s+/, "");
+    combinedWhere = mergeSqlFilters(combinedWhere, [outletClause], outletListFilter.params);
+  }
 
   const fromSql = `
     FROM onec_retail_outlets ro
@@ -189,10 +101,16 @@ export async function listRetailOutlets(
   const limitParam = `$${combinedWhere.params.length + 1}`;
   const offsetParam = `$${combinedWhere.params.length + 2}`;
 
+  const sortExprs = outletSortExpressions();
   const orderBy = buildClientsOrderBy(input, {
     includeTeamSort: false,
-    includeOutletsCount: false,
+    outletStoreAddressExpr: sortExprs.storeAddress,
+    outletRegionalNameExpr: sortExprs.regionalName,
+    outletWarehouseExpr: sortExprs.warehouseSortKey,
+    outletTandoorClubExpr: sortExprs.tandoorClub,
   });
+
+  const snapshotExpr = outletSnapshotSubquery("ro", "oc");
 
   const rows = await query<OutletRow>(
     `
@@ -201,15 +119,11 @@ export async function listRetailOutlets(
         ro.guid_client::text,
         oc.name_client AS client_name,
         ro.is_closed,
-        (
-          SELECT outlet->'address'->>'storeAddress'
-          FROM jsonb_array_elements(${OUTLETS_JSON_ARRAY}) outlet
-          WHERE lower(coalesce(outlet->>'guidStore', '')) = lower(ro.guid_store::text)
-          LIMIT 1
-        ) AS store_address,
+        ${outletStoreAddressSql("ro", "oc")} AS store_address,
         oc.name_holding,
         oc.guid_manager::text,
-        oc.name_manager
+        oc.name_manager,
+        ${snapshotExpr} AS outlet_snapshot
       ${fromSql}
       ${combinedWhere.whereSql}
       ${orderBy}
@@ -220,21 +134,7 @@ export async function listRetailOutlets(
   );
 
   return {
-    items: rows.rows.map((row) => ({
-      guidStore: row.guid_store,
-      guidClient: row.guid_client,
-      clientName: row.client_name,
-      outletLabel: outletAddressFromSnapshot(row.store_address, row.guid_store),
-      address: outletAddressFromSnapshot(row.store_address, ""),
-      isClosed: row.is_closed,
-      closureStatusLabel: row.is_closed ? "Закрыта" : "Открыта",
-      holdingName: row.name_holding,
-      manager: {
-        id: row.guid_manager,
-        name: row.name_manager,
-        shortId: shortUuidLabel(row.guid_manager),
-      },
-    })),
+    items: rows.rows.map((row) => toRetailOutletListItem(row)),
     total,
     page: input.page,
     pageSize: input.pageSize,

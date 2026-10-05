@@ -24,6 +24,10 @@
     "sortBy",
     "sortDir",
     "cols",
+    "outletStatus",
+    "warehouse",
+    "regionalManager",
+    "tandoorClub",
     "page",
   ];
 
@@ -56,9 +60,9 @@
     { id: "status", label: "Статус ТТ", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
     { id: "manager", label: "Менеджер", entity: "outlets", defaultVisible: true, sortable: true, hasSource: true },
     { id: "holding", label: "Холдинг", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
-    { id: "regional", label: "Региональный", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
-    { id: "warehouse", label: "Склад", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
-    { id: "tandoorClub", label: "Tandoor Club", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "regional", label: "Региональный", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "warehouse", label: "Склад", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "tandoorClub", label: "Tandoor Club", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
     { id: "cashback", label: "Cashback", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
   ];
 
@@ -218,6 +222,57 @@
     return sortDir === "desc" ? " ▼" : " ▲";
   }
 
+  function defaultSortFieldForEntity(entity) {
+    return entity === "outlets" ? "clientName" : "name";
+  }
+
+  function mapSortFieldForEntity(fromEntity, toEntity, sortBy) {
+    if (!sortBy || fromEntity === toEntity) {
+      return sortBy || null;
+    }
+    if (fromEntity === "clients" && toEntity === "outlets") {
+      var toOutlets = { name: "clientName", holding: "holding", manager: "manager", address: "address" };
+      return toOutlets[sortBy] || null;
+    }
+    if (fromEntity === "outlets" && toEntity === "clients") {
+      var toClients = { clientName: "name", holding: "holding", manager: "manager", address: "address" };
+      return toClients[sortBy] || null;
+    }
+    return null;
+  }
+
+  function isSortAllowedForEntity(entity, sortBy) {
+    if (!sortBy) {
+      return false;
+    }
+    var def = columnDefinitions(entity).find(function (col) {
+      return col.id === sortBy;
+    });
+    return Boolean(def && def.sortable && def.hasSource);
+  }
+
+  function normalizeStateForEntitySwitch(state, previousEntity) {
+    var next = Object.assign({}, state);
+    next.page = 1;
+    next.cols = "";
+    var mappedSort = mapSortFieldForEntity(previousEntity, next.entity, next.sortBy);
+    if (mappedSort && isSortAllowedForEntity(next.entity, mappedSort)) {
+      next.sortBy = mappedSort;
+    } else if (isSortAllowedForEntity(next.entity, next.sortBy)) {
+      /* keep */
+    } else {
+      next.sortBy = defaultSortFieldForEntity(next.entity);
+      next.sortDir = "asc";
+    }
+    if (next.entity === "clients") {
+      next.outletStatus = "all";
+      next.warehouse = "all";
+      next.regionalManager = "";
+      next.tandoorClub = "";
+    }
+    return next;
+  }
+
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
     var view = params.get("view") || "all";
@@ -240,6 +295,10 @@
       reviewState: params.get("reviewState") || "",
       reviewDecision: params.get("reviewDecision") || "",
       hasOutlets: params.get("hasOutlets") || "all",
+      outletStatus: params.get("outletStatus") || "all",
+      warehouse: params.get("warehouse") || "all",
+      regionalManager: params.get("regionalManager") || "",
+      tandoorClub: params.get("tandoorClub") || "",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
@@ -275,6 +334,10 @@
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
     if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
+    if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
+    if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
+    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
     if (state.cols) params.set("cols", state.cols);
@@ -751,6 +814,9 @@
     toggleColumnSelection: toggleColumnSelection,
     nextSortState: nextSortState,
     sortIndicator: sortIndicator,
+    defaultSortFieldForEntity: defaultSortFieldForEntity,
+    mapSortFieldForEntity: mapSortFieldForEntity,
+    normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     readStateFromSearch: readStateFromSearch,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,

@@ -61,6 +61,30 @@ const logic = require("../../public/clients-logic.js") as {
     currentSortDir: string,
     columnId: string,
   ) => { sortBy: string; sortDir: string };
+  normalizeStateForEntitySwitch: (
+    state: {
+      entity: string;
+      sortBy?: string;
+      sortDir?: string;
+      cols?: string;
+      page?: number;
+      outletStatus?: string;
+      warehouse?: string;
+      regionalManager?: string;
+      tandoorClub?: string;
+    },
+    previousEntity: string,
+  ) => {
+    entity: string;
+    sortBy: string;
+    sortDir: string;
+    cols: string;
+    page: number;
+    outletStatus?: string;
+    warehouse?: string;
+    regionalManager?: string;
+    tandoorClub?: string;
+  };
 };
 
 describe("clients frontend logic", () => {
@@ -124,6 +148,39 @@ describe("clients frontend logic", () => {
       sortBy: "holding",
       sortDir: "desc",
     });
+  });
+
+  it("normalizes incompatible sort when switching list entity", () => {
+    const fromClients = logic.normalizeStateForEntitySwitch(
+      {
+        entity: "outlets",
+        sortBy: "name",
+        sortDir: "desc",
+        cols: "name,holding",
+        page: 3,
+      },
+      "clients",
+    );
+    assert.equal(fromClients.sortBy, "clientName");
+    assert.equal(fromClients.sortDir, "desc");
+    assert.equal(fromClients.cols, "");
+    assert.equal(fromClients.page, 1);
+
+    const fromOutlets = logic.normalizeStateForEntitySwitch(
+      {
+        entity: "clients",
+        sortBy: "status",
+        sortDir: "asc",
+        page: 2,
+      },
+      "outlets",
+    );
+    assert.equal(fromOutlets.sortBy, "name");
+    assert.equal(fromOutlets.sortDir, "asc");
+    assert.equal(fromOutlets.outletStatus, "all");
+    assert.equal(fromOutlets.warehouse, "all");
+    assert.equal(fromOutlets.regionalManager, "");
+    assert.equal(fromOutlets.tandoorClub, "");
   });
 
   it("labels sync status as LK import, not 1C file time", () => {

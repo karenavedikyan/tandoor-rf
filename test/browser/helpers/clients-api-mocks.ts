@@ -82,6 +82,41 @@ export function syntheticPagedListPayload(page: number) {
   };
 }
 
+export function syntheticOutletsListPayload() {
+  return {
+    items: [
+      {
+        guidStore: "44444444-4444-4444-8444-444444444444",
+        guidClient: SYNTHETIC_CLIENT_GUID,
+        clientName: "Synthetic Client Alpha",
+        outletLabel: "Store Alpha",
+        address: "Store street 1",
+        isClosed: false,
+        closureStatusLabel: "Открыта",
+        holdingName: "Холдинг Восток",
+        manager: {
+          id: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+        },
+        regionalManager: {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Regional One",
+          shortId: "AAAAAAAA",
+          hasSource: true,
+        },
+        warehouse: { value: true, label: "Да", hasSource: true },
+        tandoorClub: { value: "Gold", hasSource: true },
+      },
+    ],
+    total: 1,
+    page: 1,
+    pageSize: 50,
+    totalPages: 1,
+    isEmptyDatabase: false,
+  };
+}
+
 export function syntheticOptionsPayload() {
   return {
     managers: [
@@ -96,6 +131,13 @@ export function syntheticOptionsPayload() {
         id: SYNTHETIC_HOLDING_A,
         name: "Холдинг Восток",
         shortId: "44444444",
+      },
+    ],
+    regionalManagers: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Regional One",
+        shortId: "AAAAAAAA",
       },
     ],
   };
@@ -350,6 +392,7 @@ export type MockOptions = {
   clientsBusinessRole?: ClientsBusinessRole;
   listStatus?: number;
   listBody?: unknown;
+  outletsListBody?: unknown;
   detailStatus?: number;
   detailBody?: unknown;
   failListOnce?: boolean;
@@ -657,11 +700,21 @@ export function resolveMockResponse(
 
   if (path === "/api/clients") {
     state.listCalls += 1;
+    const entity = url.searchParams.get("entity") || "clients";
+    const sortBy = url.searchParams.get("sortBy");
+    if (entity === "outlets" && sortBy === "name") {
+      return jsonResponse(400, {
+        error: { code: "VALIDATION_ERROR", message: "Некорректное поле сортировки." },
+      });
+    }
     if (options.failListOnce && state.listCalls === 1) {
       return jsonResponse(503, { error: { code: "SERVICE_UNAVAILABLE", message: "Temporary" } });
     }
     if (options.listStatus && options.listStatus !== 200) {
       return jsonResponse(options.listStatus, options.listBody ?? { error: { message: "Error" } });
+    }
+    if (entity === "outlets") {
+      return jsonResponse(200, options.outletsListBody ?? syntheticOutletsListPayload());
     }
     return jsonResponse(200, options.listBody ?? syntheticListPayload());
   }

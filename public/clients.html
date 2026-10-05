@@ -105,6 +105,45 @@
                     <option value="no">Нет</option>
                   </select>
                 </label>
+                <label class="clients-field clients-hidden" id="outlet-status-filter-wrap">
+                  <span class="clients-field__label">Статус ТТ</span>
+                  <select id="outlet-status-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="open">Открыта</option>
+                    <option value="closed">Закрыта</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="warehouse-filter-wrap">
+                  <span class="clients-field__label">Склад</span>
+                  <select id="warehouse-filter" class="clients-field__select">
+                    <option value="all">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                    <option value="unknown">Нет данных</option>
+                  </select>
+                </label>
+                <div class="clients-field clients-hidden" id="regional-filter-wrap">
+                  <span class="clients-field__label" id="regional-filter-label">Региональный</span>
+                  <div class="clients-combobox" id="regional-combobox">
+                    <input
+                      id="regional-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="regional-filter-label"
+                      aria-controls="regional-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все региональные"
+                    />
+                    <input type="hidden" id="regional-filter" value="" />
+                    <ul id="regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <label class="clients-field clients-hidden" id="tandoor-filter-wrap">
+                  <span class="clients-field__label">Tandoor Club</span>
+                  <input id="tandoor-filter" class="clients-field__input" type="search" autocomplete="off" placeholder="Статус клуба" />
+                </label>
                 <label class="clients-field clients-hidden" id="review-state-filter-wrap">
                   <span class="clients-field__label">Состояние ревизии</span>
                   <select id="review-state-filter" class="clients-field__select">

@@ -35,6 +35,16 @@
   var unassignedPanelEl = document.getElementById("unassigned-panel");
   var outletsFilterWrap = document.getElementById("outlets-filter-wrap");
   var outletsFilter = document.getElementById("outlets-filter");
+  var outletStatusFilterWrap = document.getElementById("outlet-status-filter-wrap");
+  var outletStatusFilter = document.getElementById("outlet-status-filter");
+  var warehouseFilterWrap = document.getElementById("warehouse-filter-wrap");
+  var warehouseFilter = document.getElementById("warehouse-filter");
+  var regionalFilterWrap = document.getElementById("regional-filter-wrap");
+  var regionalFilter = document.getElementById("regional-filter");
+  var regionalFilterInput = document.getElementById("regional-filter-input");
+  var regionalFilterList = document.getElementById("regional-filter-list");
+  var tandoorFilterWrap = document.getElementById("tandoor-filter-wrap");
+  var tandoorFilter = document.getElementById("tandoor-filter");
   var reviewStateFilterWrap = document.getElementById("review-state-filter-wrap");
   var reviewStateFilter = document.getElementById("review-state-filter");
   var reviewDecisionFilterWrap = document.getElementById("review-decision-filter-wrap");
@@ -49,8 +59,10 @@
   var activeRequestId = 0;
   var managerOptions = [];
   var holdingOptions = [];
+  var regionalOptions = [];
   var managerCombobox = null;
   var holdingCombobox = null;
+  var regionalCombobox = null;
   var currentUser = null;
   var rolePresentation = null;
   var teamContext = { rops: [], managers: [], ropName: "", managerName: "" };
@@ -91,6 +103,10 @@
       reviewState: reviewStateFilter.value || "",
       reviewDecision: reviewDecisionFilter.value || "",
       hasOutlets: outletsFilter.value || "all",
+      outletStatus: outletStatusFilter.value || "all",
+      warehouse: warehouseFilter.value || "all",
+      regionalManager: regionalFilter.value || "",
+      tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
       cols: appEl.dataset.cols || "",
@@ -138,6 +154,10 @@
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
     outletsFilter.value = state.hasOutlets || "all";
+    outletStatusFilter.value = state.outletStatus || "all";
+    warehouseFilter.value = state.warehouse || "all";
+    regionalFilter.value = state.regionalManager || "";
+    tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
     unassignedFilter.value = state.unassignedCategory || "";
@@ -146,6 +166,9 @@
     }
     if (holdingCombobox) {
       holdingCombobox.syncFromUrl(state.holding);
+    }
+    if (regionalCombobox) {
+      regionalCombobox.syncFromUrl(state.regionalManager || "");
     }
     updateViewSwitcherActive(state.view || "all");
     updateEntitySwitcherActive(state.entity || "clients");
@@ -344,6 +367,34 @@
     if (columnId === "holding") {
       return shell.escapeHtml(item.holdingName || "—");
     }
+    if (columnId === "regional") {
+      if (!item.regionalManager || !item.regionalManager.hasSource) {
+        return renderNoDataCell();
+      }
+      if (!item.regionalManager.id && !item.regionalManager.name) {
+        return '<span class="clients-phone-muted">—</span>';
+      }
+      var regionalLabel = item.regionalManager.name || item.regionalManager.id;
+      if (item.regionalManager.shortId) {
+        regionalLabel += " · " + item.regionalManager.shortId;
+      }
+      return shell.escapeHtml(regionalLabel);
+    }
+    if (columnId === "warehouse") {
+      if (!item.warehouse || !item.warehouse.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.warehouse.label || "—");
+    }
+    if (columnId === "tandoorClub") {
+      if (!item.tandoorClub || !item.tandoorClub.hasSource) {
+        return renderNoDataCell();
+      }
+      if (!item.tandoorClub.value) {
+        return '<span class="clients-phone-muted">—</span>';
+      }
+      return shell.escapeHtml(item.tandoorClub.value);
+    }
     return renderNoDataCell();
   }
 
@@ -395,6 +446,20 @@
       allLabel: "Все холдинги",
       options: function () {
         return holdingOptions;
+      },
+      onApplySelection: applyComboboxFilter,
+    });
+
+    regionalCombobox = logic.mountCombobox({
+      model: logic.createComboboxModel(),
+      input: regionalFilterInput,
+      hidden: regionalFilter,
+      listEl: regionalFilterList,
+      root: document.getElementById("regional-combobox"),
+      listboxId: "regional-filter-list",
+      allLabel: "Все региональные",
+      options: function () {
+        return regionalOptions;
       },
       onApplySelection: applyComboboxFilter,
     });
@@ -714,6 +779,10 @@
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
     if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
+    if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
+    if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
+    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
     if (state.cols) params.set("cols", state.cols);
@@ -731,7 +800,12 @@
   function updateViewChrome(state) {
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
+    var isOutlets = (state.entity || "clients") === "outlets";
     outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all");
+    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets);
+    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets);
+    regionalFilterWrap.classList.toggle("clients-hidden", !isOutlets);
+    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
@@ -1065,11 +1139,15 @@
       }
       managerOptions = result.data.managers || [];
       holdingOptions = result.data.holdings || [];
+      regionalOptions = result.data.regionalManagers || [];
       if (managerCombobox) {
         managerCombobox.syncFromUrl(managerFilter.value);
       }
       if (holdingCombobox) {
         holdingCombobox.syncFromUrl(holdingFilter.value);
+      }
+      if (regionalCombobox) {
+        regionalCombobox.syncFromUrl(regionalFilter.value);
       }
       return { ok: true };
     });
@@ -1274,6 +1352,12 @@
     if (holdingCombobox) {
       holdingCombobox.reset();
     }
+    if (regionalCombobox) {
+      regionalCombobox.reset();
+    }
+    outletStatusFilter.value = "all";
+    warehouseFilter.value = "all";
+    tandoorFilter.value = "";
     loadList({
       view: currentView(),
       entity: currentEntity(),
@@ -1286,6 +1370,10 @@
       reviewState: "",
       reviewDecision: "",
       hasOutlets: "all",
+      outletStatus: "all",
+      warehouse: "all",
+      regionalManager: "",
+      tandoorClub: "",
       sortBy: "",
       sortDir: "",
       cols: "",
@@ -1325,12 +1413,12 @@
     ) {
       return;
     }
-    navigateState(
-      Object.assign({}, currentStateFromForm(), {
-        entity: entity,
-        page: 1,
-      }),
+    var previousEntity = currentEntity();
+    var nextState = logic.normalizeStateForEntitySwitch(
+      Object.assign({}, currentStateFromForm(), { entity: entity }),
+      previousEntity,
     );
+    navigateState(nextState);
   }
 
   function initializeWorkspace() {
@@ -1389,6 +1477,20 @@
     cancelScheduledLoad();
     invalidateInFlightRequests();
     scheduleLoad(true, false);
+  });
+  outletStatusFilter.addEventListener("change", function () {
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    scheduleLoad(true, false);
+  });
+  warehouseFilter.addEventListener("change", function () {
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    scheduleLoad(true, false);
+  });
+  tandoorFilter.addEventListener("input", function () {
+    invalidateInFlightRequests();
+    scheduleLoad(true, true);
   });
   reviewStateFilter.addEventListener("change", function () {
     cancelScheduledLoad();

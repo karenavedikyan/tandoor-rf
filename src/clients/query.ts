@@ -7,6 +7,8 @@ import { isValidUuidParam } from "./uuid-param";
 
 export type PhoneFilter = "all" | "yes" | "no";
 export type OutletsFilter = "all" | "yes" | "no";
+export type OutletStatusFilter = "all" | "open" | "closed";
+export type OutletWarehouseFilter = "all" | "yes" | "no" | "unknown";
 export type ClientsViewMode = "all" | "teams" | "review";
 export type ClientsEntityMode = "clients" | "outlets";
 
@@ -22,6 +24,10 @@ export type ClientsListQuery = {
   reviewState?: ReviewState | "any";
   reviewDecision?: ReviewDecision | "any";
   hasOutlets: OutletsFilter;
+  outletStatus: OutletStatusFilter;
+  warehouseFilter: OutletWarehouseFilter;
+  regionalManagerId?: string;
+  tandoorClub?: string;
   sortBy: ClientSortField | OutletSortField;
   sortDir: "asc" | "desc";
   page: number;
@@ -193,6 +199,38 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр торговых точек." };
   }
 
+  const outletStatusRaw = parseScalarString(input.outletStatus, "all") ?? "all";
+  if (outletStatusRaw !== "all" && outletStatusRaw !== "open" && outletStatusRaw !== "closed") {
+    return { ok: false, message: "Некорректный фильтр статуса торговой точки." };
+  }
+
+  const warehouseRaw = parseScalarString(input.warehouse, "all") ?? "all";
+  if (
+    warehouseRaw !== "all" &&
+    warehouseRaw !== "yes" &&
+    warehouseRaw !== "no" &&
+    warehouseRaw !== "unknown"
+  ) {
+    return { ok: false, message: "Некорректный фильтр склада." };
+  }
+
+  const regionalManagerId = parseOptionalUuid(input.regionalManager, "регионального менеджера");
+  if (regionalManagerId === null) {
+    return { ok: false, message: "Некорректный фильтр регионального менеджера." };
+  }
+
+  let tandoorClub: string | undefined;
+  if (input.tandoorClub !== undefined && input.tandoorClub !== null && input.tandoorClub !== "") {
+    if (rejectNonScalar(input.tandoorClub)) {
+      return { ok: false, message: "Некорректный фильтр Tandoor Club." };
+    }
+    const raw = String(input.tandoorClub).trim();
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return { ok: false, message: "Слишком длинный фильтр Tandoor Club." };
+    }
+    tandoorClub = raw;
+  }
+
   const sortDir = parseSortDirection(input.sortDir);
   if (sortDir === null) {
     return { ok: false, message: "Некорректное направление сортировки." };
@@ -216,6 +254,10 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       reviewState,
       reviewDecision,
       hasOutlets: outletsRaw as OutletsFilter,
+      outletStatus: outletStatusRaw as OutletStatusFilter,
+      warehouseFilter: warehouseRaw as OutletWarehouseFilter,
+      regionalManagerId,
+      tandoorClub,
       sortBy,
       sortDir,
       page,
@@ -241,23 +283,6 @@ function phonePresenceSql(mode: PhoneFilter): string {
   return "TRUE";
 }
 
-function outletsPresenceSql(mode: OutletsFilter): string {
-  const hasOutlets = `
-    EXISTS (
-      SELECT 1
-      FROM onec_retail_outlets oro
-      WHERE oro.guid_client = onec_clients.guid_client
-    )
-  `;
-  if (mode === "yes") {
-    return hasOutlets;
-  }
-  if (mode === "no") {
-    return `NOT ${hasOutlets}`;
-  }
-  return "TRUE";
-}
-
 export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -273,9 +298,8 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   }
 
   clauses.push(phonePresenceSql(query.phone));
-  clauses.push(outletsPresenceSql(query.hasOutlets));
 
-  if (query.q.length > 0) {
+  if (query.entity === "clients" && query.q.length > 0) {
     params.push(`%${escapeIlikePattern(query.q)}%`);
     const textParam = `$${params.length}`;
     const textClauses = [
@@ -304,4 +328,17 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return { whereSql, params };
+}
+
+export function mergeFilterClauses(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {
+  const params = [...base.params, ...extraParams];
+  const baseClause = base.whereSql ? base.whereSql.replace(/^WHERE\s+/, "") : "";
+  const clauses = [baseClause, ...extraClauses].filter((clause) => clause.length > 0);
+  if (clauses.length === 0) {
+    return { whereSql: "", params };
+  }
+  return {
+    whereSql: `WHERE ${clauses.join(" AND ")}`,
+    params,
+  };
 }

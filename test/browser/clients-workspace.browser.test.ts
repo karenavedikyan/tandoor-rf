@@ -322,6 +322,29 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await closePage(page, context);
   });
 
+  it("normalizes sort when switching clients to outlets and shows outlet filters", async () => {
+    const { page, context } = await openPage();
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients&sortBy=name&sortDir=desc`);
+    await page.waitForSelector("#clients-app:not(.clients-hidden)");
+    await page.waitForSelector(".clients-table tbody tr");
+    await page.click('[data-entity="outlets"]');
+    await page.waitForFunction(() => {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("entity") === "outlets" && params.get("sortBy") !== "name";
+    });
+    await page.waitForSelector(".clients-table tbody tr");
+    assert.match(await page.textContent("#result-count"), /торговых точек/i);
+    assert.equal(await page.locator('#results-state[data-state="error"]').count(), 0);
+    await page.waitForSelector("#outlet-status-filter-wrap:not(.clients-hidden)");
+    await page.waitForSelector("#warehouse-filter-wrap:not(.clients-hidden)");
+    await page.waitForSelector("#regional-filter-wrap:not(.clients-hidden)");
+    await page.waitForSelector("#tandoor-filter-wrap:not(.clients-hidden)");
+    await page.reload();
+    await page.waitForSelector(".clients-table tbody tr");
+    assert.equal(await page.locator('#results-state[data-state="error"]').count(), 0);
+    await closePage(page, context);
+  });
+
   it("shows forbidden access for role without client-read policy and keeps keyboard focus on search", async () => {
     const { page, context } = await openPage({ role: "marketer" });
     await page.goto(`${baseUrl}/clients`);
