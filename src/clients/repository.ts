@@ -5,9 +5,8 @@ import { getPool, query } from "../db/pool";
 import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
 import {
-  buildOrgManagerInBranchFilter,
-  buildOrgRopBranchFilter,
-} from "./org/branch-filters";
+  applyOrgTeamsClientFilter,
+} from "./org/teams-list-filters";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
 import { clientHeadOfSalesGuidSql } from "./org/assignment-sql";
 import {
@@ -120,7 +119,11 @@ async function resolveScopedFilter(
       }
       throw error;
     }
-  } else if (ropEmployeeGuid && input.managerId && input.view === "teams") {
+  } else if (
+    ropEmployeeGuid &&
+    input.view === "teams" &&
+    (input.managerId || input.regionalManagerId || input.hardwareManagerId || input.branchPortfolio)
+  ) {
     if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
       throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
     }
@@ -163,13 +166,8 @@ async function resolveScopedFilter(
     );
   }
 
-  if (input.view === "teams" && ropEmployeeGuid && input.managerId) {
-    userFilter = combineScopeAndFilter(
-      userFilter,
-      buildOrgManagerInBranchFilter(ropEmployeeGuid, input.managerId),
-    );
-  } else if (input.view === "teams" && ropEmployeeGuid && !input.managerId) {
-    userFilter = combineScopeAndFilter(userFilter, buildOrgRopBranchFilter(ropEmployeeGuid));
+  if (input.view === "teams" && ropEmployeeGuid) {
+    userFilter = applyOrgTeamsClientFilter(userFilter, input, ropEmployeeGuid);
   } else if (input.view === "teams" && input.ropUserId && !input.managerId) {
     userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));
   }

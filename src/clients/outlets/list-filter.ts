@@ -58,7 +58,9 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
     `);
   }
 
-  if (query.regionalManagerId) {
+  const orgTeamsRegionalHandled =
+    Boolean(query.ropEmployeeGuid) && Boolean(query.regionalManagerId);
+  if (query.regionalManagerId && !orgTeamsRegionalHandled) {
     params.push(query.regionalManagerId);
     clauses.push(`lower(${outletRegionalGuidSql(snapshotExpr)}) = lower($${params.length}::text)`);
   }

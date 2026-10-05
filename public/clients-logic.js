@@ -28,7 +28,10 @@
     "outletStatus",
     "warehouse",
     "regionalManager",
+    "hardwareManager",
     "tandoorClub",
+    "portfolio",
+    "responsibleKind",
     "page",
   ];
 
@@ -300,6 +303,9 @@
       outletStatus: params.get("outletStatus") || "all",
       warehouse: params.get("warehouse") || "all",
       regionalManager: params.get("regionalManager") || "",
+      hardwareManager: params.get("hardwareManager") || "",
+      portfolio: params.get("portfolio") || "",
+      responsibleKind: params.get("responsibleKind") || "",
       tandoorClub: params.get("tandoorClub") || "",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
@@ -323,6 +329,31 @@
     return next;
   }
 
+  function isBranchPortfolioList(state) {
+    return (
+      state &&
+      state.view === "teams" &&
+      state.ropEmployee &&
+      (state.portfolio === "clients" || state.portfolio === "outlets")
+    );
+  }
+
+  function hasResponsibleSelection(state) {
+    if (!state || state.view !== "teams" || !state.ropEmployee) {
+      return false;
+    }
+    if (state.responsibleKind === "regional") {
+      return Boolean(state.regionalManager);
+    }
+    if (state.responsibleKind === "hardware") {
+      return Boolean(state.hardwareManager);
+    }
+    if (state.responsibleKind === "manager") {
+      return Boolean(state.manager);
+    }
+    return Boolean(state.manager);
+  }
+
   function buildListQueryString(state) {
     var params = new URLSearchParams();
     if (state.view && state.view !== "all") params.set("view", state.view);
@@ -340,6 +371,9 @@
     if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
     if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    if (state.hardwareManager) params.set("hardwareManager", state.hardwareManager);
+    if (state.portfolio) params.set("portfolio", state.portfolio);
+    if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
@@ -823,6 +857,8 @@
     readStateFromSearch: readStateFromSearch,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
+    isBranchPortfolioList: isBranchPortfolioList,
+    hasResponsibleSelection: hasResponsibleSelection,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,
     resolveAddressPresentation: resolveAddressPresentation,

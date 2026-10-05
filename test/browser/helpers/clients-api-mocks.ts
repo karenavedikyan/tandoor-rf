@@ -3,6 +3,14 @@ export const SYNTHETIC_CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
+export const NAV_ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
+export const NAV_ROP_B = "2b4cd6c6-a29e-11e3-86da-08606e7fce4d";
+export const NAV_CLIENT_C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const NAV_CLIENT_C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+export const NAV_OUTLET_T2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+export const NAV_OUTLET_T1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+export const NAV_OUTLET_C3_T3 = "88888888-8888-4888-8888-888888888803";
+
 export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
 export type ClientsBusinessRole = "manager" | "regional_manager" | "rop" | "director" | "admin";
 
@@ -115,6 +123,106 @@ export function syntheticOutletsListPayload() {
     totalPages: 1,
     isEmptyDatabase: false,
   };
+}
+
+function navClientItem(guid: string, name: string) {
+  return {
+    guid,
+    name,
+    holding: { id: null, name: "" },
+    manager: {
+      id: SYNTHETIC_MANAGER_A,
+      name: "Менеджер Иванов",
+      shortId: "22222222",
+    },
+    address: "Addr",
+    phonePreview: { primary: null, extraCount: 0 },
+  };
+}
+
+function navOutletItem(guidStore: string, clientName: string, guidClient: string) {
+  return {
+    guidStore,
+    guidClient,
+    clientName,
+    outletLabel: "Store " + guidStore.slice(0, 8),
+    address: "Store street",
+    isClosed: false,
+    closureStatusLabel: "Открыта",
+    holdingName: "",
+    manager: {
+      id: SYNTHETIC_MANAGER_A,
+      name: "Менеджер Иванов",
+      shortId: "22222222",
+    },
+    regionalManager: { id: null, name: "", shortId: "", hasSource: false },
+    warehouse: { value: false, label: "Нет", hasSource: true },
+    tandoorClub: { value: null, hasSource: false },
+  };
+}
+
+export function portfolioAwareClientsListPayload(url: URL) {
+  const view = url.searchParams.get("view");
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  const portfolio = url.searchParams.get("portfolio");
+  const entity = url.searchParams.get("entity") || "clients";
+
+  if (view !== "teams" || !ropEmployee || !portfolio) {
+    return null;
+  }
+
+  if (entity === "outlets" && portfolio === "outlets") {
+    if (ropEmployee === NAV_ROP_A) {
+      return {
+        items: [navOutletItem(NAV_OUTLET_T2, "Client C1", NAV_CLIENT_C1)],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_B) {
+      return {
+        items: [
+          navOutletItem(NAV_OUTLET_T1, "Client C1", NAV_CLIENT_C1),
+          navOutletItem(NAV_OUTLET_C3_T3, "Client C3", "88888888-8888-4888-8888-888888888888"),
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
+  }
+
+  if (entity === "clients" && portfolio === "clients") {
+    if (ropEmployee === NAV_ROP_A) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_B) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C2, "Client C2")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
+  }
+
+  return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
 }
 
 export function syntheticOptionsPayload() {
@@ -565,19 +673,35 @@ export function resolveMockResponse(
       },
       rops: [
         {
-          employeeGuid: "99999999-9999-4999-8999-999999999999",
-          name: "Synthetic ROP",
-          shortId: "99999999",
+          employeeGuid: NAV_ROP_A,
+          name: "ROP Alpha",
+          shortId: "11A0C069",
           rosterPost: "Руководитель отдела продаж",
           hasLinkedAccount: true,
           hasAssignedPortfolio: true,
           portfolioNote: null,
-          managerCount: 1,
+          managerCount: 2,
           regionalCount: 0,
-          teamMemberCount: 1,
-          uniqueClientCount: 2,
-          uniqueOutletCount: 0,
+          teamMemberCount: 2,
+          uniqueClientCount: 1,
+          uniqueOutletCount: 1,
           parentClientCount: 0,
+          sources: ["roster", "assignment"],
+        },
+        {
+          employeeGuid: NAV_ROP_B,
+          name: "ROP Beta",
+          shortId: "2B4CD6C6",
+          rosterPost: "Руководитель отдела продаж",
+          hasLinkedAccount: true,
+          hasAssignedPortfolio: true,
+          portfolioNote: null,
+          managerCount: 2,
+          regionalCount: 1,
+          teamMemberCount: 2,
+          uniqueClientCount: 1,
+          uniqueOutletCount: 2,
+          parentClientCount: 1,
           sources: ["roster", "assignment"],
         },
       ],
@@ -774,6 +898,10 @@ export function resolveMockResponse(
     }
     if (options.listStatus && options.listStatus !== 200) {
       return jsonResponse(options.listStatus, options.listBody ?? { error: { message: "Error" } });
+    }
+    const portfolioPayload = portfolioAwareClientsListPayload(url);
+    if (portfolioPayload) {
+      return jsonResponse(200, portfolioPayload);
     }
     if (entity === "outlets") {
       return jsonResponse(200, options.outletsListBody ?? syntheticOutletsListPayload());

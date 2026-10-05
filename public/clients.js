@@ -116,6 +116,9 @@
       outletStatus: outletStatusFilter.value || "all",
       warehouse: warehouseFilter.value || "all",
       regionalManager: regionalFilter.value || "",
+      hardwareManager: appEl.dataset.hardwareManager || "",
+      portfolio: appEl.dataset.portfolio || "",
+      responsibleKind: appEl.dataset.responsibleKind || "",
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
@@ -155,6 +158,9 @@
     appEl.dataset.entity = state.entity || "clients";
     appEl.dataset.rop = state.rop || "";
     appEl.dataset.ropEmployee = state.ropEmployee || "";
+    appEl.dataset.portfolio = state.portfolio || "";
+    appEl.dataset.responsibleKind = state.responsibleKind || "";
+    appEl.dataset.hardwareManager = state.hardwareManager || "";
     appEl.dataset.page = String(state.page);
     appEl.dataset.sortBy = state.sortBy || "";
     appEl.dataset.sortDir = state.sortDir || "";
@@ -784,29 +790,26 @@
   }
 
   function buildQueryString(state) {
-    var params = new URLSearchParams();
-    if (state.view && state.view !== "all") params.set("view", state.view);
-    if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
-    if (state.q) params.set("q", state.q);
-    if (state.manager) params.set("manager", state.manager);
-    if (state.holding) params.set("holding", state.holding);
-    if (state.phone && state.phone !== "all") params.set("phone", state.phone);
-    if (state.rop) params.set("rop", state.rop);
-    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
-    if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
-    if (state.reviewState) params.set("reviewState", state.reviewState);
-    if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
-    if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
-    if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
-    if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
-    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
-    if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
-    if (state.sortBy) params.set("sortBy", state.sortBy);
-    if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
-    if (state.cols) params.set("cols", state.cols);
-    params.set("page", String(state.page));
+    var params = new URLSearchParams(logic.buildListQueryString(state));
     params.set("pageSize", "50");
     return params.toString();
+  }
+
+  function navigateResponsible(state, manager, kind, entityMode) {
+    var next = {
+      view: "teams",
+      ropEmployee: state.ropEmployee,
+      rop: "",
+      portfolio: "",
+      manager: kind === "manager" ? manager.employeeGuid : "",
+      regionalManager: kind === "regional" ? manager.employeeGuid : "",
+      hardwareManager: kind === "hardware" ? manager.employeeGuid : "",
+      responsibleKind: kind,
+      entity: entityMode || "clients",
+      page: 1,
+    };
+    teamContext.managerName = manager.name || "";
+    navigateState(next);
   }
 
   function updateViewSwitcherActive(view) {
@@ -827,16 +830,18 @@
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
-    teamsPanelEl.classList.toggle("clients-hidden", !isTeams || Boolean(state.manager));
+    var branchList = logic.isBranchPortfolioList(state);
+    var responsibleList = logic.hasResponsibleSelection(state);
+    teamsPanelEl.classList.toggle("clients-hidden", !isTeams || branchList || responsibleList);
     var reviewEmployeePick = isReview && Boolean(state.unassignedCategory) && !state.manager;
     unassignedPanelEl.classList.toggle("clients-hidden", !isReview);
     resultsContentEl.classList.toggle(
       "clients-hidden",
-      (isTeams && !state.manager) || reviewEmployeePick,
+      (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
     paginationEl.classList.toggle(
       "clients-hidden",
-      (isTeams && !state.manager) || reviewEmployeePick,
+      (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
     renderBreadcrumbs(state);
   }
@@ -856,8 +861,13 @@
           href: "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee),
         });
       }
-      if (state.manager) {
-        parts.push({ label: teamContext.managerName || "Менеджер", href: null });
+      if (state.portfolio === "clients") {
+        parts.push({ label: "Клиенты ветки", href: null });
+      } else if (state.portfolio === "outlets") {
+        parts.push({ label: "ТТ ветки", href: null });
+      }
+      if (logic.hasResponsibleSelection(state)) {
+        parts.push({ label: teamContext.managerName || "Ответственный", href: null });
       }
     } else if (state.view === "completeness") {
       parts.push({ label: "Незаполненные назначения", href: "/clients?view=completeness" });
@@ -892,7 +902,11 @@
   }
 
   function renderTeamsPanel(state) {
-    if (state.view !== "teams" || state.manager) {
+    if (
+      state.view !== "teams" ||
+      logic.isBranchPortfolioList(state) ||
+      logic.hasResponsibleSelection(state)
+    ) {
       teamsPanelEl.innerHTML = "";
       return;
     }
@@ -947,10 +961,16 @@
               '<span class="clients-phone-muted">' +
               (rop.teamMemberCount ?? rop.managerCount) +
               " ответств. · " +
+              '<button type="button" class="clients-inline-link" data-portfolio="clients" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
+              '">' +
               rop.uniqueClientCount +
-              " клиентов · " +
+              " клиентов</button> · " +
+              '<button type="button" class="clients-inline-link" data-portfolio="outlets" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
+              '">' +
               rop.uniqueOutletCount +
-              " ТТ" +
+              " ТТ</button>" +
               shell.escapeHtml(note) +
               "</span>" +
               "</button>"
@@ -959,14 +979,52 @@
           .join("") +
         "</div>" +
         undefinedHtml;
-      teamsPanelEl.querySelectorAll("[data-rop-employee]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
+      teamsPanelEl.querySelectorAll("[data-rop-employee].clients-team-card").forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          if (event.target.closest("[data-portfolio]")) {
+            return;
+          }
           var ropGuid = btn.getAttribute("data-rop-employee");
           var match = (teamContext.rops || []).find(function (item) {
             return item.employeeGuid === ropGuid;
           });
           teamContext.ropName = match ? match.name : "";
-          navigateState({ view: "teams", ropEmployee: ropGuid, rop: "", manager: "", page: 1 });
+          navigateState({
+            view: "teams",
+            ropEmployee: ropGuid,
+            rop: "",
+            manager: "",
+            regionalManager: "",
+            hardwareManager: "",
+            portfolio: "",
+            responsibleKind: "",
+            entity: "clients",
+            page: 1,
+          });
+        });
+      });
+      teamsPanelEl.querySelectorAll("[data-portfolio][data-rop-employee]").forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          event.stopPropagation();
+          event.preventDefault();
+          var ropGuid = btn.getAttribute("data-rop-employee");
+          var portfolio = btn.getAttribute("data-portfolio");
+          var match = (teamContext.rops || []).find(function (item) {
+            return item.employeeGuid === ropGuid;
+          });
+          teamContext.ropName = match ? match.name : "";
+          navigateState({
+            view: "teams",
+            ropEmployee: ropGuid,
+            rop: "",
+            manager: "",
+            regionalManager: "",
+            hardwareManager: "",
+            portfolio: portfolio,
+            responsibleKind: "",
+            entity: portfolio === "outlets" ? "outlets" : "clients",
+            page: 1,
+          });
         });
       });
       return;
@@ -982,7 +1040,7 @@
                 ? "Менеджер по фурнитуре"
                 : "Менеджер";
           return (
-            '<button type="button" class="clients-team-card" data-manager="' +
+            '<div class="clients-team-card" data-manager="' +
             shell.escapeHtml(manager.employeeGuid) +
             '">' +
             "<strong>" +
@@ -994,29 +1052,42 @@
             renderOrgBadge(manager.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
             renderOrgBadge(manager.rosterInOpt === false ? "Вне справочника ОПТ" : "") +
             '<span class="clients-phone-muted">' +
-            manager.clientCount +
-            " клиентов · " +
-            manager.outletCount +
-            " ТТ</span>" +
-            "</button>"
+            (manager.clientCount > 0
+              ? '<button type="button" class="clients-inline-link" data-responsible-entity="clients" data-responsible-kind="' +
+                shell.escapeHtml(manager.kind) +
+                '" data-manager="' +
+                shell.escapeHtml(manager.employeeGuid) +
+                '">' +
+                manager.clientCount +
+                " клиентов</button>"
+              : "0 клиентов") +
+            " · " +
+            (manager.outletCount > 0
+              ? '<button type="button" class="clients-inline-link" data-responsible-entity="outlets" data-responsible-kind="' +
+                shell.escapeHtml(manager.kind) +
+                '" data-manager="' +
+                shell.escapeHtml(manager.employeeGuid) +
+                '">' +
+                manager.outletCount +
+                " ТТ</button>"
+              : "0 ТТ") +
+            "</span></div>"
           );
         })
         .join("") +
       "</div>";
-    teamsPanelEl.querySelectorAll("[data-manager]").forEach(function (btn) {
+    teamsPanelEl.querySelectorAll("[data-responsible-entity]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var managerGuid = btn.getAttribute("data-manager");
+        var kind = btn.getAttribute("data-responsible-kind") || "manager";
+        var entityMode = btn.getAttribute("data-responsible-entity") || "clients";
         var match = (teamContext.managers || []).find(function (item) {
           return item.employeeGuid === managerGuid;
         });
-        teamContext.managerName = match ? match.name : "";
-        navigateState({
-          view: "teams",
-          ropEmployee: state.ropEmployee,
-          rop: "",
-          manager: managerGuid,
-          page: 1,
-        });
+        if (!match) {
+          return;
+        }
+        navigateResponsible(state, match, kind, entityMode);
       });
     });
   }
@@ -1173,7 +1244,7 @@
           return result.response.status === 200;
         }),
       );
-    } else if (!state.manager) {
+    } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
       requests.push(
         api
           .apiRequest(
@@ -1328,7 +1399,7 @@
       });
     }
 
-    if (state.view === "teams" && !state.manager) {
+    if (state.view === "teams" && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state)) {
       showResultsState("loading", "Загрузка команд…", "", "");
       return loadTeamsContext(state).then(function (ctx) {
         if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
@@ -1544,6 +1615,9 @@
       phone: "all",
       rop: "",
       ropEmployee: "",
+      portfolio: "",
+      responsibleKind: "",
+      hardwareManager: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
@@ -1576,6 +1650,9 @@
       phone: "all",
       rop: "",
       ropEmployee: "",
+      portfolio: "",
+      responsibleKind: "",
+      hardwareManager: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",

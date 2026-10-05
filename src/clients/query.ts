@@ -2,6 +2,10 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SEARCH_LENGTH, MIN_PAGE } from ".
 import { escapeIlikePattern, normalizePhoneForSearch } from "./phone";
 import type { CompletenessReason } from "./org/completeness-reasons";
 import { COMPLETENESS_REASONS } from "./org/completeness-reasons";
+import {
+  parseBranchPortfolio,
+  parseResponsibleAssignmentKind,
+} from "./org/teams-list-filters";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
 import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
@@ -24,6 +28,10 @@ export type ClientsListQuery = {
   ropUserId?: string;
   /** 1C employee GUID for assignment-based ROP branch (distinct from ropUserId account id). */
   ropEmployeeGuid?: string;
+  /** ROP branch portfolio slice when view=teams: assigned clients or outlets only. */
+  branchPortfolio?: "clients" | "outlets";
+  /** Responsible assignment kind for org-structure drill-down. */
+  responsibleKind?: "manager" | "regional" | "hardware";
   hardwareManagerId?: string;
   completenessReasons?: CompletenessReason[];
   completenessReasonMode?: "any" | "all";
@@ -323,6 +331,16 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректное поле сортировки." };
   }
 
+  const branchPortfolio = parseBranchPortfolio(input.portfolio);
+  if (branchPortfolio === null) {
+    return { ok: false, message: "Некорректный параметр portfolio." };
+  }
+
+  const responsibleKind = parseResponsibleAssignmentKind(input.responsibleKind);
+  if (responsibleKind === null) {
+    return { ok: false, message: "Некорректный тип назначения ответственного." };
+  }
+
   return {
     ok: true,
     query: {
@@ -334,6 +352,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
       ropEmployeeGuid,
+      branchPortfolio,
+      responsibleKind,
       hardwareManagerId,
       completenessReasons,
       completenessReasonMode: completenessReasonMode ?? "any",
@@ -377,7 +397,8 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   const clauses: string[] = [];
   const params: unknown[] = [];
 
-  if (query.managerId) {
+  const orgTeamsManagerHandled = Boolean(query.ropEmployeeGuid) && Boolean(query.managerId);
+  if (query.managerId && !orgTeamsManagerHandled) {
     params.push(query.managerId);
     clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }
