@@ -59,6 +59,18 @@ async function login(email: string): Promise<string> {
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 }
 
+const PROTECTED_GUIDS = [ROP_EMPLOYEE, ROP_OTHER, MANAGER_M1, MANAGER_M2, MANAGER_NO_ACCOUNT, CLIENT_OK, CLIENT_DENIED];
+
+function assertNoOrgStructureLeak(body: unknown): void {
+  const payload = body as { rops?: unknown; items?: unknown };
+  assert.ok(!payload.rops);
+  assert.ok(!payload.items);
+  const serialized = JSON.stringify(body);
+  for (const guid of PROTECTED_GUIDS) {
+    assert.doesNotMatch(serialized, new RegExp(guid, "i"));
+  }
+}
+
 function extendedSnapshot(headOfSalesGuid: string, managerGuid: string, managerName: string) {
   return {
     formatVersion: "extended_v1",
@@ -294,6 +306,116 @@ describe("clients org structure access integration", { concurrency: false }, () 
       .set(authHeaders(cookie));
     assert.equal(res.status, 403);
     assert.ok(!res.body.items);
+  });
+
+  it("D: inactive ROP session cannot load org structure after disable", async () => {
+    const cookie = await login("rop@example.com");
+    const app = await loadApp();
+
+    const overviewBefore = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(overviewBefore.status, 200);
+    assert.ok(overviewBefore.body.rops.length > 0);
+    assert.ok(overviewBefore.body.rops[0].uniqueClientCount > 0);
+
+    const responsiblesBefore = await request(app)
+      .get(`/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`)
+      .set(authHeaders(cookie));
+    assert.equal(responsiblesBefore.status, 200);
+    assert.ok(responsiblesBefore.body.items.length > 0);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`UPDATE users SET status = 'disabled' WHERE id = $1::uuid`, [ropUserId]);
+    await pool.end();
+    await resetPoolForTests();
+
+    const appAfter = await loadApp();
+    const overviewAfter = await request(appAfter).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(overviewAfter.status, 401);
+    assert.equal(overviewAfter.body.error?.code, "UNAUTHORIZED");
+    assertNoOrgStructureLeak(overviewAfter.body);
+
+    const responsiblesAfter = await request(appAfter)
+      .get(`/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`)
+      .set(authHeaders(cookie));
+    assert.equal(responsiblesAfter.status, 401);
+    assert.equal(responsiblesAfter.body.error?.code, "UNAUTHORIZED");
+    assertNoOrgStructureLeak(responsiblesAfter.body);
+  });
+
+  it("D: revoked employee-link blocks org structure on same session", async () => {
+    const cookie = await login("rop@example.com");
+    const app = await loadApp();
+
+    const overviewBefore = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(overviewBefore.status, 200);
+    assert.ok(overviewBefore.body.rops[0].uniqueClientCount > 0);
+
+    const responsiblesBefore = await request(app)
+      .get(`/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`)
+      .set(authHeaders(cookie));
+    assert.equal(responsiblesBefore.status, 200);
+    assert.ok(responsiblesBefore.body.items.length > 0);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL`,
+      [ropUserId],
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const appAfter = await loadApp();
+    for (const path of [
+      "/api/clients/org-structure",
+      `/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`,
+    ] as const) {
+      const res = await request(appAfter).get(path).set(authHeaders(cookie));
+      assert.equal(res.status, 403, path);
+      assert.equal(res.body.error?.code, "FORBIDDEN");
+      assertNoOrgStructureLeak(res.body);
+    }
+  });
+
+  it("D: employee-link conflict blocks org structure without leaking data", async () => {
+    const cookie = await login("rop@example.com");
+    const app = await loadApp();
+
+    const overviewBefore = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(overviewBefore.status, 200);
+    assert.ok(overviewBefore.body.rops[0].uniqueClientCount > 0);
+
+    const conflictUserId = (
+      await createTestUser({
+        databaseUrl,
+        email: "rop-conflict@example.com",
+        password: TEST_PASSWORD,
+        fullName: "ROP Conflict Twin",
+        role: "rop",
+      })
+    ).id;
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DROP INDEX IF EXISTS user_onec_employee_links_active_employee_uq`);
+    await pool.query(
+      `
+        INSERT INTO user_onec_employee_links (user_id, employee_id, basis, confirmed_by_user_id)
+        VALUES ($1::uuid, $2::uuid, $3, $4::uuid)
+      `,
+      [conflictUserId, ROP_EMPLOYEE, "integration conflict", adminUserId],
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const appAfter = await loadApp();
+    for (const path of [
+      "/api/clients/org-structure",
+      `/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`,
+    ] as const) {
+      const res = await request(appAfter).get(path).set(authHeaders(cookie));
+      assert.equal(res.status, 403, path);
+      assert.equal(res.body.error?.code, "FORBIDDEN");
+      assertNoOrgStructureLeak(res.body);
+    }
   });
 
   it("D: admin sees responsibles without LK account without creating users", async () => {
