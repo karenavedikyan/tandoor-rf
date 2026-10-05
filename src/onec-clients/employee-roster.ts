@@ -5,14 +5,64 @@ import { isValidNonZeroUuid, normalizeUuid } from "./uuid";
 export const EMPLOYEES_RELATIVE_PATH = "clients/all_employees.json";
 export const MAX_EMPLOYEE_ROSTER_BYTES = MAX_SOURCE_BYTES;
 
+export type WholesaleEmployeeRecord = {
+  guidManager: string;
+  nameManager: string;
+  guidPost: string | null;
+  post: string | null;
+  condition: string | null;
+  dateOfAssumption: string | null;
+  guidWorkSchedule: string | null;
+  workSchedule: string | null;
+  decree: string | null;
+  email: string | null;
+  telephone: string | null;
+  raw: Record<string, unknown>;
+};
+
 export type WholesaleEmployeeRoster = {
   wholesaleGuids: ReadonlySet<string>;
+  records: readonly WholesaleEmployeeRecord[];
   totalRecords: number;
   wholesaleCount: number;
   sourceSha256: string;
   /** True when the file parsed successfully but contains zero valid wholesale employees. */
   isEmpty: boolean;
 };
+
+function readOptionalString(raw: Record<string, unknown>, key: string): string | null {
+  const value = raw[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalUuid(raw: Record<string, unknown>, key: string): string | null {
+  const value = readOptionalString(raw, key);
+  if (!value || !isValidNonZeroUuid(value)) {
+    return null;
+  }
+  return normalizeUuid(value);
+}
+
+function toEmployeeRecord(raw: Record<string, unknown>, guid: string): WholesaleEmployeeRecord {
+  return {
+    guidManager: guid,
+    nameManager: readOptionalString(raw, "name_manager") ?? "",
+    guidPost: readOptionalUuid(raw, "guid_post"),
+    post: readOptionalString(raw, "post"),
+    condition: readOptionalString(raw, "condition"),
+    dateOfAssumption: readOptionalString(raw, "date_of_assumption"),
+    guidWorkSchedule: readOptionalUuid(raw, "guid_work_schedule"),
+    workSchedule: readOptionalString(raw, "work_schedule"),
+    decree: readOptionalString(raw, "decree"),
+    email: readOptionalString(raw, "email"),
+    telephone: readOptionalString(raw, "telephone"),
+    raw,
+  };
+}
 
 export type EmployeeRosterParseFailureCode =
   | "INVALID_UTF8"
@@ -80,6 +130,7 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
   }
 
   const wholesaleGuids = new Set<string>();
+  const records: WholesaleEmployeeRecord[] = [];
   const invalidRecordIndexes: number[] = [];
 
   for (let index = 0; index < parsed.length; index += 1) {
@@ -102,6 +153,7 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
       };
     }
     wholesaleGuids.add(guid);
+    records.push(toEmployeeRecord(item, guid));
   }
 
   if (invalidRecordIndexes.length > 0) {
@@ -117,6 +169,7 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
     ok: true,
     roster: {
       wholesaleGuids,
+      records,
       totalRecords: parsed.length,
       wholesaleCount: wholesaleGuids.size,
       sourceSha256: createHash("sha256").update(bytes).digest("hex"),

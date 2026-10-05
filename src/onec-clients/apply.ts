@@ -37,6 +37,7 @@ import {
 import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
+import { assertOperatorImportJobRunnable } from "./import-job-guard";
 
 export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
 
@@ -73,7 +74,8 @@ export type ApplyResult =
         | "APPLY_BLOCKED"
         | "VERIFICATION_FINGERPRINT_REQUIRED"
         | "VERIFICATION_FINGERPRINT_MISMATCH"
-        | "VERIFICATION_PARAMETERS_MISMATCH";
+        | "VERIFICATION_PARAMETERS_MISMATCH"
+        | "IMPORT_JOB_SUPERSEDED";
       message: string;
       runId?: string;
       actualFingerprint?: string;
@@ -88,6 +90,10 @@ export type ApplyTestHooks = {
   failRelease?: boolean;
   failPoolEnd?: boolean;
   onClientReady?: (client: PoolClient) => void;
+  /** Test-only: pause after connection is ready, before import advisory lock acquisition. */
+  beforeImportLock?: () => Promise<void>;
+  /** Test-only: pause after import lock is held, before operator job gate and writes. */
+  afterImportLock?: (client: PoolClient) => Promise<void>;
 };
 
 type ExistingClientRow = {
@@ -653,10 +659,14 @@ export async function applyClientsImport(options: {
   employeeRosterSourceSha256?: string | null;
   /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
   baselineReplacementApply?: boolean;
+  /** Explicit clean reload after purge; skips shrink guards, not verification. */
+  cleanReloadApply?: boolean;
   /** Original full clients file SHA256 for baseline extended-contract gate (not accepted projection SHA). */
   originalClientsSourceSha256?: string;
   /** When true, caller owns BEGIN/COMMIT; apply must not commit or rollback the connection. */
   participatingTransaction?: boolean;
+  /** Operator job id; validated only after import advisory lock is held on this connection. */
+  operatorImportJobId?: string;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -737,6 +747,8 @@ export async function applyClientsImport(options: {
   }
 
   try {
+    await options.testHooks?.beforeImportLock?.();
+
     if (!options.lockAlreadyHeld) {
       const lock = await queryManaged<{ locked: boolean }>(
         managed,
@@ -747,6 +759,21 @@ export async function applyClientsImport(options: {
         outcome = { ok: false, code: "IMPORT_LOCKED", message: "Another clients import is already running." };
       } else {
         phase.lockHeld = true;
+      }
+    }
+
+    if (!outcome) {
+      await options.testHooks?.afterImportLock?.(managed.client);
+
+      if (options.operatorImportJobId) {
+        const runnable = await assertOperatorImportJobRunnable(managed.client, options.operatorImportJobId);
+        if (!runnable) {
+          outcome = {
+            ok: false,
+            code: "IMPORT_JOB_SUPERSEDED",
+            message: "Import job is no longer runnable.",
+          };
+        }
       }
     }
 
@@ -804,7 +831,8 @@ export async function applyClientsImport(options: {
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
       } else {
-        const skipShrinkGuards = options.baselineReplacementApply === true;
+        const skipShrinkGuards =
+          options.baselineReplacementApply === true || options.cleanReloadApply === true;
         if (!skipShrinkGuards) {
           const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
           if (
@@ -898,7 +926,10 @@ export async function applyClientsImport(options: {
 
           const extendedApply = isExtendedApplyPayload(options.payload);
           let contractVerified = false;
-          if (options.baselineReplacementApply && options.originalClientsSourceSha256) {
+          if (
+            (options.baselineReplacementApply || options.cleanReloadApply) &&
+            options.originalClientsSourceSha256
+          ) {
             const { resolveBaselineExtendedContractVerified } = await import("./baseline-extended-contract");
             contractVerified = await resolveBaselineExtendedContractVerified({
               client: managed.client,

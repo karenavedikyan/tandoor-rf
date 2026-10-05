@@ -5,6 +5,7 @@ import {
 } from "../access/middleware";
 import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
+import { requireAdmin } from "../middleware/require-admin";
 import { requireDatabaseReady } from "../middleware/database";
 import {
   getClientCatalogFacetValuesHandler,
@@ -34,6 +35,7 @@ import {
   getClientHandler,
   listClientsHandler,
 } from "./handlers";
+import { listWholesaleEmployeesHandler } from "./wholesale-employees-handlers";
 
 export function createClientsRouter(): express.Router {
   const router = express.Router();
@@ -55,6 +57,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/", ...readChain, (req, res, next) => {
     void listClientsHandler(req, res).catch(next);
+  });
+
+  router.get("/wholesale-employees", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
+    void listWholesaleEmployeesHandler(req, res).catch(next);
   });
 
   router.get("/:guid/catalog/meta", ...readChain, (req, res, next) => {
