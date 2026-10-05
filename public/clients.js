@@ -166,7 +166,7 @@
     appEl.dataset.sortDir = state.sortDir || "";
     appEl.dataset.cols = state.cols || "";
     visibleColumnIds = resolveColumnsForState(state);
-    searchInput.value = state.q;
+    searchInput.value = state.q || "";
     managerFilter.value = state.manager;
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
@@ -1224,7 +1224,7 @@
   function navigateState(nextState) {
     cancelScheduledLoad();
     invalidateInFlightRequests();
-    loadList(nextState, false);
+    loadList(Object.assign({}, currentStateFromForm(), nextState), false);
   }
 
   function loadTeamsContext(state) {
