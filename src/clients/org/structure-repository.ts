@@ -9,6 +9,7 @@ import {
 import { shortUuidLabel } from "../uuid-param";
 import {
   clientAssignedToRopClause,
+  clientNotAssignedToRopClause,
   clientHardwareGuidSql,
   clientHeadOfSalesGuidSql,
   clientHeadOfSalesNameSql,
@@ -303,7 +304,7 @@ async function countParentClientsOfAssignedOutlets(context: AccessContext, ropGu
       CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
       ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
         AND ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
-        AND NOT (${clientAssignedToRopClause(`$${ropParamIndex}`, "oc")})
+        AND ${clientNotAssignedToRopClause(`$${ropParamIndex}`, "oc")}
     `,
     [...scoped.params, ropGuid.toLowerCase()],
   );

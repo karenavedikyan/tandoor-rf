@@ -51,6 +51,11 @@ export function clientAssignedToRopClause(ropParamSql: string, clientAlias = "on
   return `${clientHeadOfSalesGuidSql(clientAlias)} = lower(${ropParamSql}::text)`;
 }
 
+/** Client is not directly assigned to the ROP (NULL-safe; missing headOfSales counts as unassigned). */
+export function clientNotAssignedToRopClause(ropParamSql: string, clientAlias = "onec_clients"): string {
+  return `${clientHeadOfSalesGuidSql(clientAlias)} IS DISTINCT FROM lower(${ropParamSql}::text)`;
+}
+
 /** Outlets assigned to a ROP via outlet-level headOfSales in extended snapshot. */
 export function outletAssignedToRopExistsClause(
   ropParamSql: string,

@@ -3,7 +3,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
 import request from "supertest";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
-import { denyClientAccess, linkUserToEmployee } from "../helpers/access-db-fixtures";
+import { addRopTeamMember, denyClientAccess, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import {
   insertSuccessfulImportRun,
   insertSyntheticClients,
@@ -17,6 +17,7 @@ const TEST_PASSWORD = "StrongPass123!";
 let databaseUrl = "";
 let adminUserId = "";
 let ropAUserId = "";
+let ropBUserId = "";
 
 const ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
 const ROP_B = "2b4cd6c6-a29e-11e3-86da-08606e7fce4d";
@@ -27,7 +28,10 @@ const M4 = "44444444-4444-4444-8444-444444444444";
 const R1 = "55555555-5555-4555-8555-555555555555";
 const C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const C3 = "88888888-8888-4888-8888-888888888888";
 const T3 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const C3_T3 = "88888888-8888-4888-8888-888888888803";
+const C3_T4 = "88888888-8888-4888-8888-888888888804";
 const T1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const T2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
@@ -233,10 +237,25 @@ describe("clients org structure branch composition integration", { concurrency: 
         role: "rop",
       })
     ).id;
+    ropBUserId = (
+      await createTestUser({
+        databaseUrl,
+        email: "rop-b@example.com",
+        password: TEST_PASSWORD,
+        fullName: "ROP B User",
+        role: "rop",
+      })
+    ).id;
     await linkUserToEmployee({
       databaseUrl,
       userId: ropAUserId,
       employeeId: ROP_A,
+      confirmedByUserId: adminUserId,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: ropBUserId,
+      employeeId: ROP_B,
       confirmedByUserId: adminUserId,
     });
 
@@ -382,6 +401,264 @@ describe("clients org structure branch composition integration", { concurrency: 
     }
   });
 
+  it("isolates C3 outlet-only parent for ROP B without client-level ROP", async () => {
+    setIntegrationEnv(databaseUrl, ORIGIN);
+    await resetPoolForTests();
+    await prepareDatabase(databaseUrl);
+
+    const admin = await createTestUser({
+      databaseUrl,
+      email: "admin-isolated@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admin Isolated",
+      role: "admin",
+    });
+    await seedRoster();
+    await insertSuccessfulImportRun(databaseUrl);
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 Isolated",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C3,
+      branchSnapshot({
+        outlets: [{ guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } }],
+      }),
+    );
+    await insertSyntheticRetailOutlets(databaseUrl, [{ guid_store: C3_T3, guid_client: C3 }]);
+
+    const cookie = await login("admin-isolated@example.com");
+    const app = await loadApp();
+    const ropB = (await request(app).get("/api/clients/org-structure").set(authHeaders(cookie))).body.rops.find(
+      (item: { employeeGuid: string }) => item.employeeGuid === ROP_B,
+    );
+    assert.ok(ropB);
+    assert.equal(ropB.uniqueClientCount, 0);
+    assert.equal(ropB.uniqueOutletCount, 1);
+    assert.equal(ropB.parentClientCount, 1);
+  });
+
+  it("counts parent client when outlet is assigned but client-level ROP is missing", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 No ROP",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C3,
+      branchSnapshot({
+        outlets: [{ guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } }],
+      }),
+    );
+    await insertSyntheticRetailOutlets(databaseUrl, [{ guid_store: C3_T3, guid_client: C3 }]);
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const overview = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(overview.status, 200);
+    const ropB = overview.body.rops.find((item: { employeeGuid: string }) => item.employeeGuid === ROP_B);
+    assert.ok(ropB);
+    assert.equal(ropB.uniqueClientCount, 1, "C2 still directly assigned to B");
+    assert.equal(ropB.uniqueOutletCount, 2, "T1 and C3_T3 outlets under B");
+    assert.equal(ropB.parentClientCount, 2, "C1 and C3 are outlet-only parents");
+  });
+
+  it("counts parent client when client headOfSales guid is empty string", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 Empty ROP Guid",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(databaseUrl, C3, {
+      ...branchSnapshot({
+        outlets: [{ guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } }],
+      }),
+      headOfSales: { guid: "", name: "", state: "unassigned" },
+    });
+    await insertSyntheticRetailOutlets(databaseUrl, [{ guid_store: C3_T3, guid_client: C3 }]);
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const ropB = (await request(app).get("/api/clients/org-structure").set(authHeaders(cookie))).body.rops.find(
+      (item: { employeeGuid: string }) => item.employeeGuid === ROP_B,
+    );
+    assert.equal(ropB.parentClientCount, 2, "empty client ROP guid still yields parent count for C3");
+  });
+
+  it("deduplicates parentClientCount for multiple outlets of the same client", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 Multi Outlet",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C3,
+      branchSnapshot({
+        outlets: [
+          { guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } },
+          { guidStore: C3_T4, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } },
+        ],
+      }),
+    );
+    await insertSyntheticRetailOutlets(databaseUrl, [
+      { guid_store: C3_T3, guid_client: C3 },
+      { guid_store: C3_T4, guid_client: C3 },
+    ]);
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const ropB = (await request(app).get("/api/clients/org-structure").set(authHeaders(cookie))).body.rops.find(
+      (item: { employeeGuid: string }) => item.employeeGuid === ROP_B,
+    );
+    assert.equal(ropB.uniqueOutletCount, 3, "T1 + two C3 outlets");
+    assert.equal(ropB.parentClientCount, 2, "C1 and C3 counted once each");
+  });
+
+  it("does not count parentClient when client is also directly assigned to the ROP", async () => {
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 Assigned To B",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C3,
+      branchSnapshot({
+        clientRop: { guid: ROP_B, name: "ROP Beta" },
+        outlets: [{ guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } }],
+      }),
+    );
+    await insertSyntheticRetailOutlets(databaseUrl, [{ guid_store: C3_T3, guid_client: C3 }]);
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const ropB = (await request(app).get("/api/clients/org-structure").set(authHeaders(cookie))).body.rops.find(
+      (item: { employeeGuid: string }) => item.employeeGuid === ROP_B,
+    );
+    assert.equal(ropB.uniqueClientCount, 2, "C2 and C3 directly assigned");
+    assert.equal(ropB.parentClientCount, 1, "only C1 remains outlet-only parent");
+  });
+
+  it("excludes denied parent client and its outlets from parentClientCount", async () => {
+    setIntegrationEnv(databaseUrl, ORIGIN);
+    await resetPoolForTests();
+    await prepareDatabase(databaseUrl);
+
+    const admin = await createTestUser({
+      databaseUrl,
+      email: "admin-deny-parent@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admin Deny Parent",
+      role: "admin",
+    });
+    const ropBLocal = (
+      await createTestUser({
+        databaseUrl,
+        email: "rop-b-deny@example.com",
+        password: TEST_PASSWORD,
+        fullName: "ROP B Deny",
+        role: "rop",
+      })
+    ).id;
+    const managerUserId = (
+      await createTestUser({
+        databaseUrl,
+        email: "manager-m1-deny@example.com",
+        password: TEST_PASSWORD,
+        fullName: "Manager One",
+        role: "manager",
+      })
+    ).id;
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: ropBLocal,
+      employeeId: ROP_B,
+      confirmedByUserId: admin.id,
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerUserId,
+      employeeId: M1,
+      confirmedByUserId: admin.id,
+    });
+    await addRopTeamMember({
+      databaseUrl,
+      ropUserId: ropBLocal,
+      memberUserId: managerUserId,
+      createdByUserId: admin.id,
+    });
+
+    await seedRoster();
+    await insertSuccessfulImportRun(databaseUrl);
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C3,
+        name_client: "Client C3 Denied Parent",
+        guid_manager: M1,
+        name_manager: "Manager One",
+      },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C3,
+      branchSnapshot({
+        outlets: [{ guidStore: C3_T3, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M2, name: "Manager Two" } }],
+      }),
+    );
+    await insertSyntheticRetailOutlets(databaseUrl, [{ guid_store: C3_T3, guid_client: C3 }]);
+
+    const app = await loadApp();
+    const beforeCookie = (
+      await request(app)
+        .post("/api/auth/login")
+        .set(authHeaders())
+        .send({ email: "rop-b-deny@example.com", password: TEST_PASSWORD })
+    ).headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    const before = await request(app).get("/api/clients/org-structure").set(authHeaders(beforeCookie));
+    assert.equal(before.body.rops[0].parentClientCount, 1);
+
+    await denyClientAccess({
+      databaseUrl,
+      userId: ropBLocal,
+      scopeType: "client",
+      objectId: C3,
+      deniedByUserId: admin.id,
+    });
+    await resetPoolForTests();
+    const appAfter = await loadApp();
+    const afterCookie = (
+      await request(appAfter)
+        .post("/api/auth/login")
+        .set(authHeaders())
+        .send({ email: "rop-b-deny@example.com", password: TEST_PASSWORD })
+    ).headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    const after = await request(appAfter).get("/api/clients/org-structure").set(authHeaders(afterCookie));
+    assert.equal(after.status, 200);
+    const ropB = after.body.rops[0];
+    assert.equal(ropB.uniqueClientCount, 0);
+    assert.equal(ropB.uniqueOutletCount, 0);
+    assert.equal(ropB.parentClientCount, 0);
+  });
+
   it("excludes denied client and its outlets from scoped ROP branch", async () => {
     await denyClientAccess({
       databaseUrl,
@@ -398,6 +675,7 @@ describe("clients org structure branch composition integration", { concurrency: 
     const ropA = overview.body.rops[0];
     assert.equal(ropA.uniqueClientCount, 0);
     assert.equal(ropA.uniqueOutletCount, 0);
+    assert.equal(ropA.parentClientCount, 0);
     assert.equal(ropA.teamMemberCount, 0);
 
     const resp = await request(app)
