@@ -2,6 +2,7 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SEARCH_LENGTH, MIN_PAGE } from ".
 import { escapeIlikePattern, normalizePhoneForSearch } from "./phone";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
+import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
 import { isValidUuidParam } from "./uuid-param";
 
 export type PhoneFilter = "all" | "yes" | "no";
@@ -21,6 +22,8 @@ export type ClientsListQuery = {
   reviewState?: ReviewState | "any";
   reviewDecision?: ReviewDecision | "any";
   hasOutlets: OutletsFilter;
+  sortBy: ClientSortField | OutletSortField;
+  sortDir: "asc" | "desc";
   page: number;
   pageSize: number;
 };
@@ -190,6 +193,15 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр торговых точек." };
   }
 
+  const sortDir = parseSortDirection(input.sortDir);
+  if (sortDir === null) {
+    return { ok: false, message: "Некорректное направление сортировки." };
+  }
+  const sortBy = parseSortBy(entityRaw as ClientsEntityMode, input.sortBy);
+  if (sortBy === null) {
+    return { ok: false, message: "Некорректное поле сортировки." };
+  }
+
   return {
     ok: true,
     query: {
@@ -204,6 +216,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       reviewState,
       reviewDecision,
       hasOutlets: outletsRaw as OutletsFilter,
+      sortBy,
+      sortDir,
       page,
       pageSize,
     },

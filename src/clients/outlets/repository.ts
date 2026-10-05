@@ -6,6 +6,7 @@ import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope
 import type { RetailOutletsListResponse } from "../dto";
 import type { ClientsListQuery } from "../query";
 import { buildClientsFilter } from "../query";
+import { buildClientsOrderBy } from "../sort";
 import { shortUuidLabel } from "../uuid-param";
 
 type CountRow = { count: string };
@@ -188,6 +189,11 @@ export async function listRetailOutlets(
   const limitParam = `$${combinedWhere.params.length + 1}`;
   const offsetParam = `$${combinedWhere.params.length + 2}`;
 
+  const orderBy = buildClientsOrderBy(input, {
+    includeTeamSort: false,
+    includeOutletsCount: false,
+  });
+
   const rows = await query<OutletRow>(
     `
       SELECT
@@ -206,7 +212,7 @@ export async function listRetailOutlets(
         oc.name_manager
       ${fromSql}
       ${combinedWhere.whereSql}
-      ORDER BY oc.name_client ASC, ro.guid_store ASC
+      ${orderBy}
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `,

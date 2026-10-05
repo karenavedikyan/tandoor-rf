@@ -4,6 +4,60 @@
   margin-bottom: 1rem;
 }
 
+.clients-meta__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.clients-meta__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.clients-columns-picker {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.75rem;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  box-shadow: var(--rf-shadow-sm);
+}
+
+.clients-columns-picker__grid {
+  display: grid;
+  gap: 0.35rem 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+}
+
+.clients-columns-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.clients-columns-picker__item--disabled {
+  opacity: 0.55;
+}
+
+.clients-table th.clients-table__sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.clients-table th.clients-table__sortable:hover {
+  color: var(--rf-primary);
+}
+
+.clients-no-data {
+  color: var(--rf-text-muted);
+  font-style: italic;
+}
+
 .clients-page-title {
   margin: 0;
   font-size: clamp(1.35rem, 3vw, 1.75rem);

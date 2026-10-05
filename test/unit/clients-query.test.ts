@@ -44,6 +44,17 @@ describe("clients query parsing", () => {
     }
   });
 
+  it("parses sort parameters and rejects invalid sort fields", () => {
+    const parsed = parseClientsListQuery({ sortBy: "holding", sortDir: "desc" });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) {
+      assert.equal(parsed.query.sortBy, "holding");
+      assert.equal(parsed.query.sortDir, "desc");
+    }
+    assert.equal(parseClientsListQuery({ sortBy: "unknown" }).ok, false);
+    assert.equal(parseClientsListQuery({ sortDir: "sideways" }).ok, false);
+  });
+
   it("builds phone filter without matching everything on empty normalized phone", () => {
     const filter = buildClientsFilter({
       entity: "clients",
@@ -51,6 +62,8 @@ describe("clients query parsing", () => {
       q: "+-()",
       phone: "all",
       hasOutlets: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });
@@ -65,6 +78,8 @@ describe("clients query parsing", () => {
       q: "+7 (999)",
       phone: "all",
       hasOutlets: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });
@@ -78,6 +93,8 @@ describe("clients query parsing", () => {
       q: "альфа",
       phone: "all",
       hasOutlets: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 50,
     });

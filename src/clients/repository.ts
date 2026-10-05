@@ -13,6 +13,7 @@ import {
 import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
+import { buildClientsOrderBy } from "./sort";
 import {
   canUseReviewNavigation,
   canUseUnassignedNavigation,
@@ -188,15 +189,13 @@ async function resolveScopedFilter(
           END AS unassigned_reason
       `
       : "",
-    input.hasOutlets !== "all" || input.view !== "all"
-      ? `
+    `
         , (
             SELECT COUNT(*)::text
             FROM onec_retail_outlets oro
             WHERE oro.guid_client = onec_clients.guid_client
           ) AS outlets_count
-        `
-      : "",
+        `,
   ].join("\n");
 
   return {
@@ -234,6 +233,13 @@ export async function listClients(
   const limitParam = `$${filter.params.length + 1}`;
   const offsetParam = `$${filter.params.length + 2}`;
 
+  const includeTeamContext =
+    input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
+  const orderBy = buildClientsOrderBy(input, {
+    includeTeamSort: includeTeamContext,
+    includeOutletsCount: true,
+  });
+
   const rows = await query<ClientRow>(
     `
       SELECT
@@ -249,7 +255,7 @@ export async function listClients(
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}
-      ORDER BY onec_clients.name_client ASC, onec_clients.guid_client ASC
+      ${orderBy}
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `,

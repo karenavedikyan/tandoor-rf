@@ -41,8 +41,9 @@
   var reviewDecisionFilter = document.getElementById("review-decision-filter");
   var unassignedFilterWrap = document.getElementById("unassigned-filter-wrap");
   var unassignedFilter = document.getElementById("unassigned-filter");
-  var teamColHeader = document.querySelector('[data-col="team"]');
-  var reviewColHeader = document.querySelector('[data-col="review"]');
+  var columnsPickerBtn = document.getElementById("columns-picker-btn");
+  var columnsPickerEl = document.getElementById("columns-picker");
+  var visibleColumnIds = [];
 
   var debounceTimer = null;
   var activeRequestId = 0;
@@ -90,8 +91,28 @@
       reviewState: reviewStateFilter.value || "",
       reviewDecision: reviewDecisionFilter.value || "",
       hasOutlets: outletsFilter.value || "all",
+      sortBy: appEl.dataset.sortBy || "",
+      sortDir: appEl.dataset.sortDir || "",
+      cols: appEl.dataset.cols || "",
       page: Number(appEl.dataset.page || "1") || 1,
     };
+  }
+
+  function columnsStorageKey(entity) {
+    return logic.buildColumnsStorageKey(currentUser && currentUser.id, entity || currentEntity());
+  }
+
+  function resolveColumnsForState(state) {
+    return logic.resolveVisibleColumns({
+      entity: state.entity || "clients",
+      view: state.view || "all",
+      cols: state.cols || "",
+      storageKey: columnsStorageKey(state.entity || "clients"),
+    });
+  }
+
+  function columnsParamFromIds(columnIds) {
+    return columnIds.join(",");
   }
 
   function cancelScheduledLoad() {
@@ -108,6 +129,10 @@
     appEl.dataset.entity = state.entity || "clients";
     appEl.dataset.rop = state.rop || "";
     appEl.dataset.page = String(state.page);
+    appEl.dataset.sortBy = state.sortBy || "";
+    appEl.dataset.sortDir = state.sortDir || "";
+    appEl.dataset.cols = state.cols || "";
+    visibleColumnIds = resolveColumnsForState(state);
     searchInput.value = state.q;
     managerFilter.value = state.manager;
     holdingFilter.value = state.holding;
@@ -125,7 +150,7 @@
     updateViewSwitcherActive(state.view || "all");
     updateEntitySwitcherActive(state.entity || "clients");
     updateViewChrome(state);
-    showEntityTableHeaders(state.entity || "clients");
+    renderTableHead(state);
   }
 
   function applyRoleChrome(presentation) {
@@ -177,29 +202,149 @@
     });
   }
 
-  function showEntityTableHeaders(entity) {
+  function columnDefById(entity, columnId) {
+    return logic.columnDefinitions(entity).find(function (col) {
+      return col.id === columnId;
+    });
+  }
+
+  function renderNoDataCell() {
+    return '<span class="clients-no-data">' + shell.escapeHtml(logic.NO_DATA_LABEL) + "</span>";
+  }
+
+  function renderTableHead(state) {
     if (!tableHeadRow) {
       return;
     }
-    if (entity === "outlets") {
-      tableHeadRow.innerHTML =
-        "<th scope=\"col\">Клиент</th>" +
-        "<th scope=\"col\">Торговая точка</th>" +
-        "<th scope=\"col\">Адрес</th>" +
-        "<th scope=\"col\">Статус ТТ</th>" +
-        "<th scope=\"col\">Менеджер</th>";
-      return;
+    var entity = state.entity || "clients";
+    var sortBy = state.sortBy || (entity === "outlets" ? "clientName" : "name");
+    var sortDir = state.sortDir || "asc";
+    tableHeadRow.innerHTML = visibleColumnIds
+      .map(function (columnId) {
+        var def = columnDefById(entity, columnId);
+        if (!def) {
+          return "";
+        }
+        var sortable = def.sortable && def.hasSource;
+        var classes = sortable ? " clients-table__sortable" : "";
+        var indicator = sortable ? logic.sortIndicator(sortBy, sortDir, columnId) : "";
+        return (
+          '<th scope="col" data-column="' +
+          shell.escapeHtml(columnId) +
+          '"' +
+          (sortable ? ' data-sortable="true"' : "") +
+          ' class="' +
+          classes.trim() +
+          '">' +
+          shell.escapeHtml(def.label) +
+          indicator +
+          "</th>"
+        );
+      })
+      .join("");
+    tableHeadRow.querySelectorAll("[data-sortable]").forEach(function (th) {
+      th.addEventListener("click", function () {
+        var columnId = th.getAttribute("data-column") || "";
+        var def = columnDefById(entity, columnId);
+        if (!def || !def.sortable) {
+          return;
+        }
+        var next = logic.nextSortState(sortBy, sortDir, columnId);
+        navigateState(
+          Object.assign({}, currentStateFromForm(), {
+            sortBy: next.sortBy,
+            sortDir: next.sortDir,
+            page: 1,
+          }),
+        );
+      });
+    });
+  }
+
+  function renderClientColumnCell(columnId, item) {
+    var def = columnDefById("clients", columnId);
+    if (def && !def.hasSource) {
+      return renderNoDataCell();
     }
-    tableHeadRow.innerHTML =
-      "<th scope=\"col\">Клиент</th>" +
-      "<th scope=\"col\">Холдинг</th>" +
-      "<th scope=\"col\">Менеджер</th>" +
-      '<th scope="col" data-col="team" class="clients-hidden">Команда</th>' +
-      '<th scope="col" data-col="review" class="clients-hidden">Ревизия</th>' +
-      "<th scope=\"col\">Адрес</th>" +
-      "<th scope=\"col\">Телефон</th>";
-    teamColHeader = document.querySelector('[data-col="team"]');
-    reviewColHeader = document.querySelector('[data-col="review"]');
+    if (columnId === "name") {
+      return (
+        '<a class="clients-link" href="' +
+        clientHref(item.guid) +
+        '">' +
+        shell.escapeHtml(item.name) +
+        "</a>"
+      );
+    }
+    if (columnId === "holding") {
+      return renderHoldingCell(item);
+    }
+    if (columnId === "manager") {
+      return shell.escapeHtml(item.manager.name) + " · " + shell.escapeHtml(item.manager.shortId);
+    }
+    if (columnId === "team") {
+      return renderTeamCell(item);
+    }
+    if (columnId === "review") {
+      return renderReviewCell(item);
+    }
+    if (columnId === "address") {
+      return shell.escapeHtml(item.address || "—");
+    }
+    if (columnId === "phone") {
+      return renderPhonePreview(item.phonePreview);
+    }
+    if (columnId === "outletsCount") {
+      if (item.outletsCount === undefined || item.outletsCount === null) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(String(item.outletsCount));
+    }
+    if (columnId === "assignmentState") {
+      if (!item.teamContext || !item.teamContext.unassignedReason) {
+        return '<span class="clients-phone-muted">—</span>';
+      }
+      return (
+        '<span class="clients-tag clients-tag--warn">' +
+        shell.escapeHtml(item.teamContext.unassignedReason) +
+        "</span>"
+      );
+    }
+    return renderNoDataCell();
+  }
+
+  function renderOutletColumnCell(columnId, item) {
+    var def = columnDefById("outlets", columnId);
+    if (def && !def.hasSource) {
+      return renderNoDataCell();
+    }
+    if (columnId === "clientName") {
+      return (
+        '<a class="clients-link" href="' +
+        clientHref(item.guidClient) +
+        '">' +
+        shell.escapeHtml(item.clientName) +
+        "</a>"
+      );
+    }
+    if (columnId === "outlet") {
+      return shell.escapeHtml(item.outletLabel || item.guidStore);
+    }
+    if (columnId === "guidStore") {
+      return shell.escapeHtml(item.guidStore);
+    }
+    if (columnId === "address") {
+      return shell.escapeHtml(item.address || "—");
+    }
+    if (columnId === "status") {
+      return shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта"));
+    }
+    if (columnId === "manager") {
+      return shell.escapeHtml(item.manager.name) + " · " + shell.escapeHtml(item.manager.shortId);
+    }
+    if (columnId === "holding") {
+      return shell.escapeHtml(item.holdingName || "—");
+    }
+    return renderNoDataCell();
   }
 
   function resultCountLabel(total, entity) {
@@ -359,37 +504,17 @@
     return html;
   }
 
-  function showExtendedColumns(mode) {
-    var showTeam = mode === "teams" || mode === "review";
-    var showReview = mode === "review";
-    teamColHeader.classList.toggle("clients-hidden", !showTeam);
-    reviewColHeader.classList.toggle("clients-hidden", !showReview);
-  }
-
-  function renderOutletRows(items) {
+  function renderOutletRows(items, state) {
+    renderTableHead(state);
     tableBody.innerHTML = items
       .map(function (item) {
         return (
           "<tr>" +
-          '<td><a class="clients-link" href="' +
-          clientHref(item.guidClient) +
-          '">' +
-          shell.escapeHtml(item.clientName) +
-          "</a></td>" +
-          "<td>" +
-          shell.escapeHtml(item.outletLabel || item.guidStore) +
-          "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.address || "—") +
-          "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта")) +
-          "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</td>" +
+          visibleColumnIds
+            .map(function (columnId) {
+              return "<td>" + renderOutletColumnCell(columnId, item) + "</td>";
+            })
+            .join("") +
           "</tr>"
         );
       })
@@ -399,61 +524,38 @@
       .map(function (item) {
         return (
           '<article class="clients-card">' +
-          '<h2 class="clients-card__title"><a class="clients-link" href="' +
-          clientHref(item.guidClient) +
-          '">' +
-          shell.escapeHtml(item.clientName) +
-          "</a></h2>" +
-          '<p class="clients-card__line"><strong>Торговая точка:</strong> ' +
-          shell.escapeHtml(item.outletLabel || item.guidStore) +
-          "</p>" +
-          '<p class="clients-card__line"><strong>Адрес:</strong> ' +
-          shell.escapeHtml(item.address || "—") +
-          "</p>" +
-          '<p class="clients-card__line"><strong>Статус:</strong> ' +
-          shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта")) +
-          "</p>" +
-          '<p class="clients-card__line"><strong>Менеджер:</strong> ' +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</p>" +
+          visibleColumnIds
+            .map(function (columnId) {
+              var def = columnDefById("outlets", columnId);
+              if (!def) {
+                return "";
+              }
+              return (
+                '<p class="clients-card__line"><strong>' +
+                shell.escapeHtml(def.label) +
+                ":</strong> " +
+                renderOutletColumnCell(columnId, item) +
+                "</p>"
+              );
+            })
+            .join("") +
           "</article>"
         );
       })
       .join("");
   }
 
-  function renderRows(items) {
-    var view = currentView();
-    showExtendedColumns(view);
+  function renderRows(items, state) {
+    renderTableHead(state);
     tableBody.innerHTML = items
       .map(function (item) {
-        var teamCell = view === "teams" || view === "review" ? "<td>" + renderTeamCell(item) + "</td>" : "";
-        var reviewCell = view === "review" ? "<td>" + renderReviewCell(item) + "</td>" : "";
         return (
           "<tr>" +
-          '<td><a class="clients-link" href="' +
-          clientHref(item.guid) +
-          '">' +
-          shell.escapeHtml(item.name) +
-          "</a></td>" +
-          "<td>" +
-          renderHoldingCell(item) +
-          "</td>" +
-          "<td>" +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</td>" +
-          teamCell +
-          reviewCell +
-          "<td>" +
-          shell.escapeHtml(item.address || "—") +
-          "</td>" +
-          "<td>" +
-          renderPhonePreview(item.phonePreview) +
-          "</td>" +
+          visibleColumnIds
+            .map(function (columnId) {
+              return "<td>" + renderClientColumnCell(columnId, item) + "</td>";
+            })
+            .join("") +
           "</tr>"
         );
       })
@@ -461,39 +563,108 @@
 
     cardsEl.innerHTML = items
       .map(function (item) {
-        var extra = "";
-        if (view === "teams" || view === "review") {
-          extra += '<p class="clients-card__line"><strong>Команда:</strong> ' + renderTeamCell(item) + "</p>";
-        }
-        if (view === "review") {
-          extra += '<p class="clients-card__line"><strong>Ревизия:</strong> ' + renderReviewCell(item) + "</p>";
-        }
         return (
           '<article class="clients-card">' +
-          '<h2 class="clients-card__title"><a class="clients-link" href="' +
-          clientHref(item.guid) +
-          '">' +
-          shell.escapeHtml(item.name) +
-          "</a></h2>" +
-          '<p class="clients-card__line"><strong>Холдинг:</strong> ' +
-          (item.holding.id ? renderHoldingCell(item) : "—") +
-          "</p>" +
-          '<p class="clients-card__line"><strong>Менеджер:</strong> ' +
-          shell.escapeHtml(item.manager.name) +
-          " · " +
-          shell.escapeHtml(item.manager.shortId) +
-          "</p>" +
-          extra +
-          '<p class="clients-card__line"><strong>Адрес:</strong> ' +
-          shell.escapeHtml(item.address || "—") +
-          "</p>" +
-          '<p class="clients-card__line"><strong>Телефон:</strong> ' +
-          renderPhonePreview(item.phonePreview) +
-          "</p>" +
+          visibleColumnIds
+            .map(function (columnId) {
+              var def = columnDefById("clients", columnId);
+              if (!def) {
+                return "";
+              }
+              if (columnId === "name") {
+                return (
+                  '<h2 class="clients-card__title"><a class="clients-link" href="' +
+                  clientHref(item.guid) +
+                  '">' +
+                  shell.escapeHtml(item.name) +
+                  "</a></h2>"
+                );
+              }
+              return (
+                '<p class="clients-card__line"><strong>' +
+                shell.escapeHtml(def.label) +
+                ":</strong> " +
+                renderClientColumnCell(columnId, item) +
+                "</p>"
+              );
+            })
+            .join("") +
           "</article>"
         );
       })
       .join("");
+  }
+
+  function renderColumnPicker(state) {
+    if (!columnsPickerEl) {
+      return;
+    }
+    var entity = state.entity || "clients";
+    var view = state.view || "all";
+    var defs = logic.columnDefinitions(entity).filter(function (col) {
+      if (!col.viewModes || col.viewModes.length === 0) {
+        return true;
+      }
+      return col.viewModes.indexOf(view) !== -1;
+    });
+    columnsPickerEl.innerHTML =
+      '<div class="clients-columns-picker__grid">' +
+      defs
+        .map(function (col) {
+          var checked = visibleColumnIds.indexOf(col.id) !== -1;
+          var disabled = col.locked;
+          return (
+            '<label class="clients-columns-picker__item' +
+            (disabled ? " clients-columns-picker__item--disabled" : "") +
+            '">' +
+            '<input type="checkbox" data-column-id="' +
+            shell.escapeHtml(col.id) +
+            '"' +
+            (checked ? " checked" : "") +
+            (disabled ? " disabled" : "") +
+            " />" +
+            "<span>" +
+            shell.escapeHtml(col.label) +
+            (col.hasSource ? "" : " · " + shell.escapeHtml(logic.NO_DATA_LABEL)) +
+            "</span>" +
+            "</label>"
+          );
+        })
+        .join("") +
+      "</div>";
+    columnsPickerEl.querySelectorAll("input[type=checkbox]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        var columnId = input.getAttribute("data-column-id") || "";
+        var nextIds = logic.toggleColumnSelection(
+          visibleColumnIds,
+          columnId,
+          input.checked,
+          entity,
+          view,
+        );
+        visibleColumnIds = nextIds;
+        logic.persistStoredColumnIds(columnsStorageKey(entity), nextIds);
+        navigateState(
+          Object.assign({}, currentStateFromForm(), {
+            cols: columnsParamFromIds(nextIds),
+            page: 1,
+          }),
+        );
+      });
+    });
+  }
+
+  function toggleColumnPicker(state) {
+    if (!columnsPickerEl) {
+      return;
+    }
+    var willOpen = columnsPickerEl.classList.contains("clients-hidden");
+    if (willOpen) {
+      renderColumnPicker(state);
+      columnsPickerEl.classList.remove("clients-hidden");
+    } else {
+      columnsPickerEl.classList.add("clients-hidden");
+    }
   }
 
   function renderPagination(state, totalPages) {
@@ -543,6 +714,9 @@
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
     if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
+    if (state.sortBy) params.set("sortBy", state.sortBy);
+    if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
+    if (state.cols) params.set("cols", state.cols);
     params.set("page", String(state.page));
     params.set("pageSize", "50");
     return params.toString();
@@ -1055,10 +1229,11 @@
         showResultsContent();
         resultCountEl.textContent = resultCountLabel(result.data.total, state.entity || "clients");
         if ((state.entity || "clients") === "outlets") {
-          renderOutletRows(result.data.items || []);
+          renderOutletRows(result.data.items || [], state);
         } else {
-          renderRows(result.data.items || []);
+          renderRows(result.data.items || [], state);
         }
+        renderColumnPicker(state);
         renderPagination(state, result.data.totalPages || 0);
       })
       .catch(function (err) {
@@ -1111,6 +1286,9 @@
       reviewState: "",
       reviewDecision: "",
       hasOutlets: "all",
+      sortBy: "",
+      sortDir: "",
+      cols: "",
       page: 1,
     }, false);
   }
@@ -1238,6 +1416,9 @@
     switchEntity(btn.getAttribute("data-entity"));
   });
   resetFiltersBtn.addEventListener("click", resetFilters);
+  columnsPickerBtn?.addEventListener("click", function () {
+    toggleColumnPicker(currentStateFromForm());
+  });
 
   window.addEventListener("popstate", function () {
     cancelScheduledLoad();

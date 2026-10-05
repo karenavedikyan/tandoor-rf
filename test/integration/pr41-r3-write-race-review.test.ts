@@ -161,14 +161,16 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
   let databaseUrl = "";
   let catalogVersionId = "";
   let regionalCookie = "";
+  let adminCookie = "";
+  let directorCookie = "";
   let regionalUserId = "";
   let adminUserId = "";
+  let directorUserId = "";
   let app!: Express;
 
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl, ORIGIN);
-    await prepareDatabase(databaseUrl);
   });
 
   beforeEach(async () => {
@@ -182,6 +184,20 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
       role: "admin",
     });
     adminUserId = admin.id;
+    const director = await createTestUser({
+      databaseUrl,
+      email: "director@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Director",
+      role: "director",
+    });
+    directorUserId = director.id;
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: director.id,
+      employeeId: OTHER_REGIONAL,
+      confirmedByUserId: admin.id,
+    });
     const regional = await createTestUser({
       databaseUrl,
       email: "regional@example.com",
@@ -234,6 +250,8 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
     const { createApp } = await import("../../src/server");
     app = createApp();
     regionalCookie = await login(app, "regional@example.com");
+    adminCookie = await login(app, "admin@example.com");
+    directorCookie = await login(app, "director@example.com");
   });
 
   after(async () => {
@@ -288,6 +306,49 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
     }
   });
 
+  it("rejects marker write when role changes to marketer while waiting on client lock", async () => {
+    const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "role-marketer",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holder = await pool.connect();
+    try {
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: regionalCookie,
+        body,
+        whileLocked: async () => {
+          await holder.query(`UPDATE users SET role = 'marketer' WHERE id = $1::uuid`, [regionalUserId]);
+        },
+      });
+      assert.equal(postResult.status, 403, JSON.stringify(postResult.body));
+
+      const events = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'role-marketer'`,
+      );
+      assert.equal(events.rows[0]?.n, 0);
+
+      const afterGet = await request(app)
+        .get(`/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution`)
+        .set(authHeaders(regionalCookie));
+      assert.equal(afterGet.status, 403, JSON.stringify(afterGet.body));
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
+    }
+  });
+
   it("rejects marker write when employee-link is revoked while waiting on client lock", async () => {
     const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
     const body = {
@@ -321,6 +382,125 @@ describe("PR41 R3 distribution write access revalidation", { concurrency: false 
         `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'revoke-link'`,
       );
       assert.equal(events.rows[0]?.n, 0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
+    }
+  });
+
+  it("rejects marker write when admin role downgrades to marketer while waiting on client lock", async () => {
+    const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "admin-marketer",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holder = await pool.connect();
+    try {
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: adminCookie,
+        body,
+        whileLocked: async () => {
+          await holder.query(`UPDATE users SET role = 'manager' WHERE id = $1::uuid`, [adminUserId]);
+        },
+      });
+      assert.equal(postResult.status, 403, JSON.stringify(postResult.body));
+
+      const events = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'admin-marketer'`,
+      );
+      assert.equal(events.rows[0]?.n, 0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
+    }
+  });
+
+  it("rejects marker write when director role downgrades to marketer while waiting on client lock", async () => {
+    const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "director-marketer",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holder = await pool.connect();
+    try {
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: directorCookie,
+        body,
+        whileLocked: async () => {
+          await holder.query(`UPDATE users SET role = 'marketer' WHERE id = $1::uuid`, [directorUserId]);
+        },
+      });
+      assert.equal(postResult.status, 403, JSON.stringify(postResult.body));
+
+      const events = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'director-marketer'`,
+      );
+      assert.equal(events.rows[0]?.n, 0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await monitor.end().catch(() => undefined);
+      await pool.end().catch(() => undefined);
+    }
+  });
+
+  it("allows marker write when role and access remain unchanged while waiting on client lock", async () => {
+    const url = `/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution/markers`;
+    const body = {
+      action: "set",
+      markerKind: "installed",
+      productCode: "p2",
+      versionId: catalogVersionId,
+    };
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const monitor = new Pool({ connectionString: databaseUrl, max: 1 });
+    const holder = await pool.connect();
+    try {
+      const postResult = await runConcurrentPostDuringClientLock({
+        app,
+        monitor,
+        holder,
+        url,
+        cookie: regionalCookie,
+        body,
+        whileLocked: async () => {
+          /* access unchanged while lock held */
+        },
+      });
+      assert.equal(postResult.status, 200, JSON.stringify(postResult.body));
+
+      const events = await pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM outlet_distribution_marker_events WHERE product_code = 'p2'`,
+      );
+      assert.equal(events.rows[0]?.n, 1);
+
+      const afterGet = await request(app)
+        .get(`/api/clients/${CLIENT_GUID}/catalog/outlets/${STORE_ONE}/distribution`)
+        .set(authHeaders(regionalCookie));
+      assert.equal(afterGet.status, 200, JSON.stringify(afterGet.body));
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       holder.release();

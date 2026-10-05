@@ -49,6 +49,18 @@ const logic = require("../../public/clients-logic.js") as {
     lastSuccessfulImportAtLabel?: string | null;
     warning?: string | null;
   } | null) => { text: string; warning: boolean; appendWarning: string };
+  resolveVisibleColumns: (input: {
+    entity: string;
+    view: string;
+    cols?: string;
+    storageKey?: string;
+  }) => string[];
+  defaultVisibleColumnIds: (entity: string, view: string) => string[];
+  nextSortState: (
+    currentSortBy: string,
+    currentSortDir: string,
+    columnId: string,
+  ) => { sortBy: string; sortDir: string };
 };
 
 describe("clients frontend logic", () => {
@@ -88,6 +100,30 @@ describe("clients frontend logic", () => {
     });
     assert.match(formatted.text, /ожидается согласованное обновление/);
     assert.equal(formatted.warning, true);
+  });
+
+  it("resolves visible columns from URL and storage defaults", () => {
+    const resolved = logic.resolveVisibleColumns({
+      entity: "clients",
+      view: "all",
+      cols: "name,holding,outletsCount",
+      storageKey: "test-columns",
+    });
+    assert.deepEqual(resolved, ["name", "holding", "outletsCount"]);
+    const defaults = logic.defaultVisibleColumnIds("clients", "all");
+    assert.ok(defaults.indexOf("name") !== -1);
+    assert.ok(defaults.indexOf("holding") !== -1);
+  });
+
+  it("cycles sort state for sortable columns", () => {
+    assert.deepEqual(logic.nextSortState("name", "asc", "holding"), {
+      sortBy: "holding",
+      sortDir: "asc",
+    });
+    assert.deepEqual(logic.nextSortState("holding", "asc", "holding"), {
+      sortBy: "holding",
+      sortDir: "desc",
+    });
   });
 
   it("labels sync status as LK import, not 1C file time", () => {

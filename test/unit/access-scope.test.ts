@@ -53,9 +53,14 @@ describe("access scope SQL", () => {
       }),
     );
     const filter = buildClientsFilter({
+      entity: "clients",
+      view: "all",
       q: "",
       managerId: "55555555-5555-4555-8555-555555555555",
       phone: "all",
+      hasOutlets: "all",
+      sortBy: "name",
+      sortDir: "asc",
       page: 1,
       pageSize: 20,
     });

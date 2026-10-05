@@ -107,13 +107,13 @@ describe("PR41 R4 post-lock access revalidation", { concurrency: false }, () => 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const before = await loadFreshAccessContext(client, regionalUserId, "regional_manager");
+      const before = await loadFreshAccessContext(client, regionalUserId);
       assert.equal(accessContextAllowsClientScope(before), true);
       await client.query(
         `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL`,
         [regionalUserId],
       );
-      const after = await loadFreshAccessContext(client, regionalUserId, "regional_manager");
+      const after = await loadFreshAccessContext(client, regionalUserId);
       assert.equal(accessContextAllowsClientScope(after), false);
       await client.query("ROLLBACK");
     } finally {
@@ -129,15 +129,13 @@ describe("PR41 R4 post-lock access revalidation", { concurrency: false }, () => 
       await client.query("BEGIN");
       assert.equal(
         accessContextAllowsClientScope(
-          await loadFreshAccessContext(client, regionalUserId, "regional_manager"),
+          await loadFreshAccessContext(client, regionalUserId),
         ),
         true,
       );
       await client.query(`UPDATE users SET status = 'disabled' WHERE id = $1::uuid`, [regionalUserId]);
       assert.equal(
-        accessContextAllowsClientScope(
-          await loadFreshAccessContext(client, regionalUserId, "regional_manager"),
-        ),
+        accessContextAllowsClientScope(await loadFreshAccessContext(client, regionalUserId)),
         false,
       );
       await client.query("ROLLBACK");
@@ -152,11 +150,9 @@ describe("PR41 R4 post-lock access revalidation", { concurrency: false }, () => 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const before = await loadFreshAccessContext(client, regionalUserId, "regional_manager");
+      const before = await loadFreshAccessContext(client, regionalUserId);
       assert.equal(accessContextAllowsClientScope(before), true);
-      assert.ok(
-        await loadFreshClientAndOutletAccess(client, before, CLIENT_GUID, STORE_ONE),
-      );
+      assert.ok(await loadFreshClientAndOutletAccess(client, before, CLIENT_GUID, STORE_ONE));
       await client.query(
         `
           INSERT INTO access_denials (user_id, scope_type, object_id, reason, basis, created_by_user_id)
@@ -164,11 +160,27 @@ describe("PR41 R4 post-lock access revalidation", { concurrency: false }, () => 
         `,
         [regionalUserId, CLIENT_GUID, "integration test denial", "integration test", adminUserId],
       );
-      const after = await loadFreshAccessContext(client, regionalUserId, "regional_manager");
-      assert.equal(
-        await loadFreshClientAndOutletAccess(client, after, CLIENT_GUID, STORE_ONE),
-        null,
-      );
+      const after = await loadFreshAccessContext(client, regionalUserId);
+      assert.equal(await loadFreshClientAndOutletAccess(client, after, CLIENT_GUID, STORE_ONE), null);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+      await pool.end();
+    }
+  });
+
+  it("reloads database role after role change on the locked connection", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const before = await loadFreshAccessContext(client, regionalUserId);
+      assert.equal(before.role, "regional_manager");
+      assert.equal(accessContextAllowsClientScope(before), true);
+      await client.query(`UPDATE users SET role = 'marketer' WHERE id = $1::uuid`, [regionalUserId]);
+      const after = await loadFreshAccessContext(client, regionalUserId);
+      assert.equal(after.role, "marketer");
+      assert.equal(accessContextAllowsClientScope(after), false);
       await client.query("ROLLBACK");
     } finally {
       client.release();
@@ -189,7 +201,7 @@ describe("PR41 R4 post-lock access revalidation", { concurrency: false }, () => 
         `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL`,
         [regionalUserId],
       );
-      const freshContext = await loadFreshAccessContext(client, regionalUserId, "regional_manager");
+      const freshContext = await loadFreshAccessContext(client, regionalUserId);
       assert.equal(accessContextAllowsClientScope(freshContext), false);
       const freshAccess = await loadFreshClientAndOutletAccess(
         client,

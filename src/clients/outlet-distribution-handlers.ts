@@ -115,7 +115,7 @@ export async function getClientCatalogOutletDistributionHandler(
   }
   const client = await pool.connect();
   try {
-    const freshContext = await loadFreshAccessContext(client, req.authUser!.id, req.authUser!.role);
+    const freshContext = await loadFreshAccessContext(client, req.authUser!.id);
     const freshAccess = await loadFreshClientAndOutletAccess(
       client,
       freshContext,
@@ -218,7 +218,7 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
       });
       return;
     }
-    const freshContext = await loadFreshAccessContext(client, req.authUser!.id, req.authUser!.role);
+    const freshContext = await loadFreshAccessContext(client, req.authUser!.id);
     if (!accessContextAllowsClientScope(freshContext)) {
       await client.query("ROLLBACK");
       setNoStore(res);

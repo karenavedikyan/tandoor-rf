@@ -4,7 +4,6 @@ import { combineScopeAndFilter } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { query } from "../db/pool";
-import type { UserRole } from "../shared/user";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
 import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
 import { filterRetailOutletsForContext } from "./outlet-access";
@@ -85,14 +84,14 @@ function accessibleStoreGuidsFromRow(
 }
 
 /**
- * Loads current authorization on the locked connection. Caller must pass the same PoolClient used for row locks.
+ * Loads current authorization on the locked connection from database state only.
+ * Request/session role must not override the user's current role after lock wait.
  */
 export async function loadFreshAccessContext(
   client: PoolClient,
   userId: string,
-  role: UserRole,
 ): Promise<AccessContext> {
-  return loadAccessContext(userId, role, client);
+  return loadAccessContext(userId, undefined, client);
 }
 
 export function accessContextAllowsClientScope(context: AccessContext): boolean {

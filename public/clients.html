@@ -130,7 +130,15 @@
             </div>
 
             <div class="clients-meta">
-              <p id="result-count">Найдено 0 клиентов</p>
+              <div class="clients-meta__row">
+                <p id="result-count">Найдено 0 клиентов</p>
+                <div class="clients-meta__actions">
+                  <button type="button" class="workspace-button workspace-button--ghost" id="columns-picker-btn">
+                    Колонки
+                  </button>
+                </div>
+              </div>
+              <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
               <p id="sync-status" class="clients-sync"></p>
             </div>
 
