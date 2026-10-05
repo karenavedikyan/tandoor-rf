@@ -12,6 +12,7 @@ import {
   syntheticListPayload,
   syntheticLongDetailPayload,
   syntheticPagedListPayload,
+  type ClientsBusinessRole,
   type MockOptions,
 } from "./helpers/clients-api-mocks";
 
@@ -971,5 +972,40 @@ describe("clients workspace browser (R1.4-prep, mocked API)", { concurrency: fal
     await page.waitForTimeout(250);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     await closePage(page, context);
+  });
+
+  it("captures four role list screenshots on desktop and mobile", async () => {
+    const roles: ClientsBusinessRole[] = ["manager", "regional_manager", "rop", "director"];
+    for (const clientsBusinessRole of roles) {
+      const { page, context } = await openPage({ role: "admin", clientsBusinessRole });
+      const href =
+        clientsBusinessRole === "regional_manager"
+          ? `${baseUrl}/clients?entity=outlets`
+          : clientsBusinessRole === "rop" || clientsBusinessRole === "director"
+            ? `${baseUrl}/clients?view=teams`
+            : `${baseUrl}/clients`;
+      await page.goto(href);
+      await page.waitForSelector("#clients-app:not(.clients-hidden)");
+      await page.waitForSelector("#clients-page-title");
+      await captureScreenshot(
+        page,
+        `clients-role-${clientsBusinessRole}-1440-light.png`,
+        { width: 1440, height: 900 },
+        "light",
+      );
+      await captureScreenshot(
+        page,
+        `clients-role-${clientsBusinessRole}-390-light.png`,
+        { width: 390, height: 844 },
+        "light",
+      );
+      for (const name of [
+        `clients-role-${clientsBusinessRole}-1440-light.png`,
+        `clients-role-${clientsBusinessRole}-390-light.png`,
+      ]) {
+        assert.ok(fs.existsSync(path.join(SCREENSHOT_DIR, name)), `missing screenshot ${name}`);
+      }
+      await closePage(page, context);
+    }
   });
 });

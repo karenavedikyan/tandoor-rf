@@ -237,6 +237,12 @@ export function resolveManagerRosterStateForApply(input: {
     input.previousManagerGuid.toLowerCase() !== input.incomingManagerGuid.toLowerCase();
 
   if (managerChanged) {
+    if (input.previousManagerRosterState === "outside_wholesale_roster") {
+      return "outside_wholesale_roster";
+    }
+    if (!input.rosterLoadedInPayload) {
+      return "roster_not_loaded";
+    }
     return "outside_wholesale_roster";
   }
 

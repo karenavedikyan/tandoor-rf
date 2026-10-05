@@ -4,6 +4,7 @@ export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
 export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
+export type ClientsBusinessRole = "manager" | "regional_manager" | "rop" | "director" | "admin";
 
 export function adminUserPayload() {
   return {
@@ -100,35 +101,118 @@ export function syntheticOptionsPayload() {
   };
 }
 
-export function syntheticPresentationPayload(role: MockRole = "admin") {
-  if (role === "manager") {
-    return {
-      presentation: {
-        pageTitle: "Мои клиенты",
-        defaultView: "all",
-        defaultEntity: "clients",
-        allowedViews: ["all"],
-        allowedEntities: ["clients", "outlets"],
-        showViewSwitcher: false,
-        showManagerTeamFilter: false,
-        showTeamNavigation: false,
-        reviewReadOnly: true,
-      },
-    };
+function userPayloadForBusinessRole(role: ClientsBusinessRole) {
+  switch (role) {
+    case "manager":
+      return {
+        user: {
+          role: "manager",
+          email: "manager@synthetic.test",
+          fullName: "Synthetic Manager",
+        },
+      };
+    case "regional_manager":
+      return {
+        user: {
+          role: "regional_manager",
+          email: "regional@synthetic.test",
+          fullName: "Synthetic Regional",
+        },
+      };
+    case "rop":
+      return {
+        user: {
+          role: "rop",
+          email: "rop@synthetic.test",
+          fullName: "Synthetic ROP",
+        },
+      };
+    case "director":
+      return {
+        user: {
+          role: "director",
+          email: "director@synthetic.test",
+          fullName: "Synthetic Director",
+        },
+      };
+    default:
+      return adminUserPayload();
   }
-  return {
-    presentation: {
-      pageTitle: role === "admin" ? "Клиенты" : "Вся клиентская база",
-      defaultView: role === "admin" ? "all" : "teams",
-      defaultEntity: "clients",
-      allowedViews: ["all", "teams", "review"],
-      allowedEntities: ["clients", "outlets"],
-      showViewSwitcher: true,
-      showManagerTeamFilter: true,
-      showTeamNavigation: true,
-      reviewReadOnly: role !== "admin",
-    },
-  };
+}
+
+export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin") {
+  switch (role) {
+    case "manager":
+      return {
+        presentation: {
+          pageTitle: "Мои клиенты",
+          defaultView: "all",
+          defaultEntity: "clients",
+          allowedViews: ["all"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: false,
+          showManagerTeamFilter: false,
+          showTeamNavigation: false,
+          reviewReadOnly: true,
+        },
+      };
+    case "regional_manager":
+      return {
+        presentation: {
+          pageTitle: "Мои торговые точки",
+          defaultView: "all",
+          defaultEntity: "outlets",
+          allowedViews: ["all"],
+          allowedEntities: ["outlets", "clients"],
+          showViewSwitcher: false,
+          showManagerTeamFilter: false,
+          showTeamNavigation: false,
+          reviewReadOnly: true,
+        },
+      };
+    case "rop":
+      return {
+        presentation: {
+          pageTitle: "Клиенты моей команды",
+          defaultView: "teams",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams"],
+          allowedEntities: ["clients"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: true,
+        },
+      };
+    case "director":
+      return {
+        presentation: {
+          pageTitle: "Вся клиентская база",
+          defaultView: "teams",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams", "review"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: true,
+        },
+      };
+    default:
+      return {
+        presentation: {
+          pageTitle: "Клиенты",
+          defaultView: "all",
+          defaultEntity: "clients",
+          allowedViews: ["all", "teams", "review"],
+          allowedEntities: ["clients", "outlets"],
+          showViewSwitcher: true,
+          showManagerTeamFilter: true,
+          showTeamNavigation: true,
+          reviewReadOnly: false,
+        },
+      };
+  }
 }
 
 export function syntheticSyncStatusPayload() {
@@ -263,6 +347,7 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
 
 export type MockOptions = {
   role?: MockRole;
+  clientsBusinessRole?: ClientsBusinessRole;
   listStatus?: number;
   listBody?: unknown;
   detailStatus?: number;
@@ -398,6 +483,9 @@ export function resolveMockResponse(
     if (options.role === "anonymous") {
       return jsonResponse(401, { error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
     }
+    if (options.clientsBusinessRole) {
+      return jsonResponse(200, userPayloadForBusinessRole(options.clientsBusinessRole));
+    }
     if (options.role === "manager") {
       return jsonResponse(200, managerUserPayload());
     }
@@ -408,7 +496,10 @@ export function resolveMockResponse(
   }
 
   if (path === "/api/clients/presentation") {
-    return jsonResponse(200, syntheticPresentationPayload(options.role ?? "admin"));
+    const presentationRole =
+      options.clientsBusinessRole ??
+      (options.role === "manager" ? "manager" : "admin");
+    return jsonResponse(200, syntheticPresentationPayload(presentationRole));
   }
 
   if (path === "/api/clients/options") {

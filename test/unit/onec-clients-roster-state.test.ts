@@ -18,7 +18,7 @@ describe("resolveManagerRosterStateForApply", () => {
     );
   });
 
-  it("blocks unconfirmed manager change without roster", () => {
+  it("blocks unconfirmed manager change without roster when client was already outside", () => {
     assert.equal(
       resolveManagerRosterStateForApply({
         incomingState: "roster_not_loaded",
@@ -28,6 +28,19 @@ describe("resolveManagerRosterStateForApply", () => {
         rosterLoadedInPayload: false,
       }),
       "outside_wholesale_roster",
+    );
+  });
+
+  it("allows manager reassignment without roster when client was in active scope", () => {
+    assert.equal(
+      resolveManagerRosterStateForApply({
+        incomingState: "roster_not_loaded",
+        incomingManagerGuid: "55555555-5555-4555-8555-555555555555",
+        previousManagerRosterState: "roster_not_loaded",
+        previousManagerGuid: "22222222-2222-4222-8222-222222222222",
+        rosterLoadedInPayload: false,
+      }),
+      "roster_not_loaded",
     );
   });
 
