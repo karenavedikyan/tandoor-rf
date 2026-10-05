@@ -326,6 +326,7 @@ export function toClientDetail(
   const nonEmptyPhones = telephones.filter((item) => item.trim().length > 0);
   const extended = toClientExtendedDto(
     {
+      guid_manager: row.guid_manager,
       is_holding: row.is_holding ?? null,
       source_sha256: row.source_sha256 ?? null,
       extended_format_version: row.extended_format_version ?? null,

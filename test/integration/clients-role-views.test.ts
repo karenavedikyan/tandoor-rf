@@ -10,6 +10,7 @@ import {
 } from "../helpers/clients-db-fixtures";
 import {
   addRopTeamMember,
+  denyClientAccess,
   grantClientAccess,
   linkUserToEmployee,
 } from "../helpers/access-db-fixtures";
@@ -23,6 +24,7 @@ import {
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
 let databaseUrl = "";
+let regionalUserId = "";
 
 const MANAGER_A = "22222222-2222-4222-8222-222222222222";
 const MANAGER_B = "55555555-5555-4555-8555-555555555555";
@@ -31,8 +33,10 @@ const REGIONAL_EMPLOYEE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const DIRECTOR_EMPLOYEE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const CLIENT_ONE = "11111111-1111-4111-8111-111111111111";
 const CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
+const CLIENT_REGIONAL_ONLY = "12121212-1212-4121-8121-121212121212";
 const STORE_ONE = "44444444-4444-4444-8444-444444444444";
 const STORE_TWO = "55555555-5555-5555-8555-555555555555";
+const STORE_REGIONAL_ONLY = "13131313-1313-4131-8131-131313131313";
 
 function authHeaders(cookie?: string): Record<string, string> {
   const headers: Record<string, string> = { Origin: ORIGIN };
@@ -96,7 +100,8 @@ describe("clients role views integration", { concurrency: false }, () => {
         role: "manager",
       })
     ).id;
-    const ropUserId = (
+    let ropUserId = "";
+    ropUserId = (
       await createTestUser({
         databaseUrl,
         email: "rop@example.com",
@@ -105,7 +110,7 @@ describe("clients role views integration", { concurrency: false }, () => {
         role: "rop",
       })
     ).id;
-    const regionalUserId = (
+    regionalUserId = (
       await createTestUser({
         databaseUrl,
         email: "regional@example.com",
@@ -141,10 +146,19 @@ describe("clients role views integration", { concurrency: false }, () => {
         address: "Kazan",
         telephone: [],
       },
+      {
+        guid_client: CLIENT_REGIONAL_ONLY,
+        name_client: "Regional Only Client",
+        guid_manager: MANAGER_B,
+        name_manager: "Manager Petrov",
+        address: "Perm",
+        telephone: [],
+      },
     ]);
     await insertSyntheticRetailOutlets(databaseUrl, [
       { guid_store: STORE_ONE, guid_client: CLIENT_ONE, is_closed: false },
       { guid_store: STORE_TWO, guid_client: CLIENT_ONE, is_closed: true },
+      { guid_store: STORE_REGIONAL_ONLY, guid_client: CLIENT_REGIONAL_ONLY, is_closed: false },
     ]);
     await updateClientExtendedSnapshot(
       databaseUrl,
@@ -182,7 +196,24 @@ describe("clients role views integration", { concurrency: false }, () => {
         ],
       },
     );
-    await insertSuccessfulImportRun(databaseUrl, { recordCount: 2 });
+    await updateClientExtendedSnapshot(databaseUrl, CLIENT_REGIONAL_ONLY, {
+      currentRetailOutlets: [
+        {
+          ordinal: 1,
+          guidStore: STORE_REGIONAL_ONLY,
+          outletGuidStatus: "confirmed",
+          closed: false,
+          address: { storeAddress: "Regional Only Store", deliveryAddress: "", routeDirection: "" },
+          managers: {
+            manager: { guid: MANAGER_B, name: "Manager", state: "directory_unverified" },
+            regionalManager: { guid: REGIONAL_EMPLOYEE, name: "Regional", state: "directory_unverified" },
+            hardwareManager: { guid: null, name: "", state: "not_provided" },
+            headOfSales: { guid: null, name: "", state: "not_provided" },
+          },
+        },
+      ],
+    });
+    await insertSuccessfulImportRun(databaseUrl, { recordCount: 3 });
 
     const adminCookie = await login("admin@example.com");
     for (const [userId, employeeId] of [
@@ -211,6 +242,18 @@ describe("clients role views integration", { concurrency: false }, () => {
       ropUserId,
       memberUserId: managerAUserId,
       createdByUserId: admin.id,
+    });
+    await addRopTeamMember({
+      databaseUrl,
+      ropUserId,
+      memberUserId: regionalUserId,
+      createdByUserId: admin.id,
+    });
+    await grantClientAccess({
+      databaseUrl,
+      userId: regionalUserId,
+      objectId: CLIENT_REGIONAL_ONLY,
+      grantedByUserId: admin.id,
     });
   });
 
@@ -265,6 +308,14 @@ describe("clients role views integration", { concurrency: false }, () => {
       .get(`/api/clients/${CLIENT_TWO}`)
       .set(authHeaders(cookie));
     assert.equal(foreignClient.status, 404);
+
+    const card = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}`)
+      .set(authHeaders(cookie));
+    assert.equal(card.status, 200);
+    assert.equal(card.body.client.extended.retailOutletsAccess, "granted");
+    assert.equal(card.body.client.extended.retailOutlets.length, 1);
+    assert.equal(card.body.client.extended.retailOutlets[0].guidStore, STORE_ONE);
   });
 
   it("ROP sees team members and scoped clients", async () => {
@@ -288,6 +339,9 @@ describe("clients role views integration", { concurrency: false }, () => {
     assert.equal(clients.status, 200);
     assert.equal(clients.body.total, 1);
     assert.equal(clients.body.items[0].guid, CLIENT_ONE);
+
+    const ropSummary = teams.body.items[0];
+    assert.equal(ropSummary.uniqueClientCount, 2, "team count includes regional-only client once");
   });
 
   it("director sees full base and read-only review navigation", async () => {
@@ -296,7 +350,7 @@ describe("clients role views integration", { concurrency: false }, () => {
 
     const all = await request(app).get("/api/clients").set(authHeaders(cookie));
     assert.equal(all.status, 200);
-    assert.equal(all.body.total, 2);
+    assert.equal(all.body.total, 3);
 
     const review = await request(app).get("/api/clients?view=review").set(authHeaders(cookie));
     assert.equal(review.status, 200);
@@ -316,7 +370,7 @@ describe("clients role views integration", { concurrency: false }, () => {
     assert.equal(writeReview.status, 403);
   });
 
-  it("rejects foreign client GUID and disallowed entity modes", async () => {
+  it("manager can list own outlets and foreign GUID stays forbidden", async () => {
     const app = await loadApp();
     const managerCookie = await login("manager-a@example.com");
 
@@ -328,6 +382,38 @@ describe("clients role views integration", { concurrency: false }, () => {
     const outlets = await request(app)
       .get("/api/clients?entity=outlets")
       .set(authHeaders(managerCookie));
-    assert.equal(outlets.status, 403);
+    assert.equal(outlets.status, 200);
+    assert.ok(outlets.body.total >= 1);
+    assert.ok(
+      outlets.body.items.every((item: { guidClient: string }) => item.guidClient === CLIENT_ONE),
+    );
+  });
+
+  it("individual client denial removes regional outlets from list", async () => {
+    const app = await loadApp();
+    const adminUser = await createTestUser({
+      databaseUrl,
+      email: "admin-deny-helper@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admin Deny Helper",
+      role: "admin",
+    });
+    await denyClientAccess({
+      databaseUrl,
+      userId: regionalUserId,
+      scopeType: "client",
+      objectId: CLIENT_ONE,
+      deniedByUserId: adminUser.id,
+      basis: "integration denial test",
+    });
+
+    const regionalCookie = await login("regional@example.com");
+    const after = await request(app)
+      .get("/api/clients?entity=outlets")
+      .set(authHeaders(regionalCookie));
+    assert.equal(after.status, 200);
+    assert.ok(
+      after.body.items.every((item: { guidClient: string }) => item.guidClient !== CLIENT_ONE),
+    );
   });
 });

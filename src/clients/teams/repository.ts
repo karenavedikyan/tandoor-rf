@@ -9,6 +9,38 @@ import {
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../../onec-clients/manager-status";
 import { shortUuidLabel } from "../uuid-param";
 
+const RETAIL_OUTLETS_JSON = `
+  CASE
+    WHEN jsonb_typeof(onec_clients.extended_snapshot->'currentRetailOutlets') = 'array'
+      THEN onec_clients.extended_snapshot->'currentRetailOutlets'
+    ELSE '[]'::jsonb
+  END
+`;
+
+function employeePortfolioClause(employeeParamSql: string): string {
+  return `(
+    (guid_manager = ${employeeParamSql} AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
+      WHERE lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) = lower(${employeeParamSql}::text)
+    )
+  )`;
+}
+
+function employeesPortfolioClause(arrayParamSql: string): string {
+  return `(
+    (guid_manager = ANY(${arrayParamSql}::uuid[]) AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
+      WHERE lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) = ANY(
+        SELECT lower(g::text) FROM unnest(${arrayParamSql}::uuid[]) AS g
+      )
+    )
+  )`;
+}
+
 export type TeamRopSummary = {
   ropUserId: string;
   ropName: string;
@@ -90,7 +122,7 @@ async function countDistinctClientsForEmployeeGuids(
   }
   const scope = buildClientScopeSql(context);
   const filter = combineScopeAndFilter(scope, {
-    whereSql: `WHERE guid_manager = ANY($1::uuid[]) AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}`,
+    whereSql: `WHERE ${employeesPortfolioClause("$1")}`,
     params: [employeeGuids],
   });
   if (filter.whereSql === "WHERE FALSE") {
@@ -106,7 +138,7 @@ async function countDistinctClientsForEmployeeGuids(
 async function countClientsForEmployee(context: AccessContext, employeeGuid: string): Promise<number> {
   const scope = buildClientScopeSql(context);
   const filter = combineScopeAndFilter(scope, {
-    whereSql: `WHERE guid_manager = $1::uuid AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}`,
+    whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
     params: [employeeGuid],
   });
   if (filter.whereSql === "WHERE FALSE") {
@@ -300,7 +332,7 @@ export async function buildTeamRopFilter(ropUserId: string): Promise<{ whereSql:
     return { whereSql: "WHERE FALSE", params: [] };
   }
   return {
-    whereSql: `WHERE guid_manager = ANY($1::uuid[])`,
+    whereSql: `WHERE ${employeesPortfolioClause("$1")}`,
     params: [employeeGuids],
   };
 }

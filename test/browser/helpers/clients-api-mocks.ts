@@ -270,9 +270,25 @@ export function syntheticCatalogMetaPayload() {
       { code: "s1", name: "Section one" },
       { code: "s2", name: "Section two" },
     ],
+    outlets: [
+      {
+        guidStore: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+        guidClient: SYNTHETIC_CLIENT_GUID,
+        displayName: "Mock store",
+        storeAddress: "Mock store address",
+        guidStoreShortLabel: "cccc…ccc1",
+        closureStatus: "open",
+        closureStatusLabel: "Открыта",
+        presentInCurrentExport: true,
+        distributionWritable: true,
+        distributionBlockedReason: null,
+      },
+    ],
+    selectedStoreGuid: null,
     outletConfirmed: false,
-    futureActionsBlockedReason:
-      "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
+    selectionPersisted: false,
+    distributionEnabled: false,
+    futureActionsBlockedReason: "Выберите торговую точку, чтобы сохранять дистрибуцию по образцам.",
   };
 }
 
@@ -321,8 +337,8 @@ export function syntheticCatalogProductDetailPayload() {
     },
     outletConfirmed: false,
     selectionPersisted: false,
-    futureActionsBlockedReason:
-      "Просмотр каталога. Сохранение дистрибуции станет доступно после подключения торговой точки.",
+    distributionEnabled: false,
+    futureActionsBlockedReason: "Выберите торговую точку, чтобы сохранять дистрибуцию по образцам.",
   };
 }
 

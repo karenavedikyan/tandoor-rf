@@ -109,7 +109,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultView: "all",
         defaultEntity: "clients",
         allowedViews: ["all"],
-        allowedEntities: ["clients"],
+        allowedEntities: ["clients", "outlets"],
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,

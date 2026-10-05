@@ -1,6 +1,6 @@
 import { getDatabaseUrl } from "../config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
-import { applyClientsImport, createImportPool, type ImportTriggerSource } from "./apply";
+import { applyClientsImport, createImportPool, type ApplyTestHooks, type ImportTriggerSource } from "./apply";
 import {
   CLI_ARGUMENT_ERROR_MESSAGES,
   parseClientsImportCliArgs,
@@ -74,6 +74,8 @@ export type RunClientsImportOptions = {
   employeeRosterBytes?: Buffer;
   validationLimits?: ValidateClientsLimits;
   triggerSource?: ImportTriggerSource;
+  operatorImportJobId?: string;
+  applyTestHooks?: ApplyTestHooks;
 };
 
 function buildValidationLimits(
@@ -369,6 +371,8 @@ export async function runClientsImport(
     payload,
     triggerSource: options.triggerSource ?? "manual",
     expectedVerificationFingerprint: cliOptions.expectedSha256,
+    operatorImportJobId: options.operatorImportJobId,
+    testHooks: options.applyTestHooks,
   });
   if (!applied.ok) {
     const mappedErrorCode =

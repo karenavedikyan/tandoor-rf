@@ -14,6 +14,7 @@ export const IMPORT_STATUSES = [
   "SUPERSEDED_BY_NEWER_IMPORT",
   "APPLY_BLOCKED",
   "ARGUMENT_ERROR",
+  "IMPORT_JOB_SUPERSEDED",
 ] as const;
 
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];

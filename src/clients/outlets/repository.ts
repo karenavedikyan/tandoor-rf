@@ -29,12 +29,46 @@ const OUTLETS_JSON_ARRAY = `
   END
 `;
 
+function appendOcUserDenials(
+  scope: { whereSql: string; params: unknown[] },
+  userId: string,
+): { whereSql: string; params: unknown[] } {
+  if (scope.whereSql === "WHERE FALSE") {
+    return scope;
+  }
+
+  const userParam = scope.params.length + 1;
+  const denialClause = `NOT EXISTS (
+    SELECT 1
+    FROM access_denials ad
+    WHERE ad.user_id = $${userParam}::uuid
+      AND ad.revoked_at IS NULL
+      AND (
+        ad.scope_type = 'all_clients'
+        OR ad.object_id = oc.guid_client
+      )
+  )`;
+
+  if (!scope.whereSql) {
+    return {
+      whereSql: `WHERE ${denialClause}`,
+      params: [...scope.params, userId],
+    };
+  }
+
+  const scopeClause = scope.whereSql.trim().replace(/^WHERE\s+/i, "");
+  return {
+    whereSql: `WHERE (${scopeClause}) AND (${denialClause})`,
+    params: [...scope.params, userId],
+  };
+}
+
 function buildRegionalOutletScope(context: AccessContext): { whereSql: string; params: unknown[] } {
   if (!context.employeeId) {
     return { whereSql: "WHERE FALSE", params: [] };
   }
 
-  return {
+  const base = {
     whereSql: `
       WHERE EXISTS (
         SELECT 1
@@ -54,6 +88,8 @@ function buildRegionalOutletScope(context: AccessContext): { whereSql: string; p
     `,
     params: [context.userId, context.employeeId],
   };
+
+  return appendOcUserDenials(base, context.userId);
 }
 
 function buildOutletScope(context: AccessContext): { whereSql: string; params: unknown[] } {

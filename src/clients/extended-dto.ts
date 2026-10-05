@@ -17,7 +17,11 @@ import {
   summarizeRowFreshnessFromProvenance,
 } from "../onec-clients/extended-apply";
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
-import { canReadNestedRetailOutlets, MAX_OUTLETS_IN_DETAIL_RESPONSE } from "./outlet-access";
+import {
+  canReadNestedRetailOutlets,
+  filterRetailOutletsForContext,
+  MAX_OUTLETS_IN_DETAIL_RESPONSE,
+} from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
 
 export type ManagerRefDto = {
@@ -126,6 +130,7 @@ export type ClientExtendedDto = {
 };
 
 type ExtendedRow = {
+  guid_manager?: string;
   is_holding: boolean | null;
   source_sha256?: string | null;
   extended_format_version: string | null;
@@ -446,6 +451,50 @@ type EffectiveOutletPresentation = {
   closureConfirmedInCurrentExport: boolean;
 };
 
+export type OutletDistributionGateRow = {
+  extended_freshness_state: ExtendedFreshnessState | null;
+  source_sha256: string | null;
+  extended_source_sha256: string | null;
+};
+
+function resolveRetailOutletsBlockFreshnessForGate(
+  row: OutletDistributionGateRow,
+  snapshot: ExtendedSnapshot | null,
+): ExtendedFreshnessState | null {
+  const raw = snapshot?.blocks?.blockFreshness?.retailOutlets ?? null;
+  if (raw == null) {
+    return null;
+  }
+  if (
+    row.extended_freshness_state === "preserved_from_previous" &&
+    extendedNotUpdatedOnLastImport(row as ExtendedRow) &&
+    raw === "current"
+  ) {
+    return "preserved_from_previous";
+  }
+  return raw;
+}
+
+export function assessOutletExportFreshness(
+  outlet: ParsedRetailOutlet | null,
+  row: OutletDistributionGateRow,
+  snapshot: ExtendedSnapshot | null,
+): { presentInCurrentExport: boolean; exportFreshness: OutletProvenance["freshness"] | null } {
+  if (!outlet) {
+    return { presentInCurrentExport: false, exportFreshness: null };
+  }
+  const context: OutletPresentationContext = {
+    retailOutletsBlockFreshness: resolveRetailOutletsBlockFreshnessForGate(row, snapshot),
+    retailOutletsBlockProvenance: snapshot?.blocks?.blockProvenance?.retailOutlets ?? null,
+    row: row as ExtendedRow,
+  };
+  const effective = resolveEffectiveOutletPresentation(outlet, context);
+  return {
+    presentInCurrentExport: effective.provenance.freshness === "current",
+    exportFreshness: effective.provenance.freshness,
+  };
+}
+
 function resolveEffectiveOutletPresentation(
   outlet: ParsedRetailOutlet,
   context: OutletPresentationContext,
@@ -735,18 +784,27 @@ export function toClientExtendedDto(
   const snapshot = rawSnapshot
     ? resolveSnapshotManagerLinks(rawSnapshot, linkedEmployeeGuids)
     : null;
-  const currentOutlets = readCurrentOutlets(snapshot);
-  const historyCount = readHistoryCount(snapshot);
+  const currentOutletsRaw = readCurrentOutlets(snapshot);
+  const clientManagerGuid = row.guid_manager ?? "";
+  const scopedOutlets =
+    context && clientManagerGuid
+      ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw)
+      : outletAccessGranted
+        ? currentOutletsRaw
+        : [];
+  const outletAccessEffective = outletAccessGranted && scopedOutlets.length > 0;
+  const currentOutlets = outletAccessEffective ? scopedOutlets : [];
+  const historyCount = outletAccessEffective ? readHistoryCount(snapshot) : 0;
 
   const regionalManager = snapshot?.regionalManager ?? { guid: null, name: "", state: "not_provided" as const };
   const hardwareManager = snapshot?.hardwareManager ?? { guid: null, name: "", state: "not_provided" as const };
   const headOfSales = snapshot?.headOfSales ?? { guid: null, name: "", state: "not_provided" as const };
 
   const totalOutletCount = currentOutlets.length;
-  const visibleOutlets = outletAccessGranted
+  const visibleOutlets = outletAccessEffective
     ? currentOutlets.slice(0, MAX_OUTLETS_IN_DETAIL_RESPONSE)
     : [];
-  const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
+  const truncated = outletAccessEffective && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
   const outletNormalizedReady = snapshot?.blocks?.outletNormalizedReady === true;
@@ -768,6 +826,8 @@ export function toClientExtendedDto(
   let dataQualityLabel = "Структура торговых точек не передана";
   if (!outletAccessGranted) {
     dataQualityLabel = "Торговые точки недоступны для вашей роли";
+  } else if (outletAccessGranted && scopedOutlets.length === 0 && currentOutletsRaw.length > 0) {
+    dataQualityLabel = "Нет доступных торговых точек в вашей области";
   } else if (resolvedFreshnessState === "preserved_from_previous") {
     dataQualityLabel = "Расширенные данные сохранены из предыдущей выгрузки";
   } else if (currentOutlets.length > 0) {
@@ -801,10 +861,10 @@ export function toClientExtendedDto(
       headOfSales: toManagerRefDto(headOfSales),
     },
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
-    retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
+    retailOutletsTotalCount: outletAccessEffective ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,
-    retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
-    retailOutletHistoryCount: outletAccessGranted ? historyCount : 0,
+    retailOutletsAccess: outletAccessEffective ? "granted" : "denied",
+    retailOutletHistoryCount: outletAccessEffective ? historyCount : 0,
     dataQualityLabel,
     sensitiveFieldsWithheld: true,
     outletNormalizedReady,

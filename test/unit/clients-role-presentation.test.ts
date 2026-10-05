@@ -31,7 +31,7 @@ describe("clients role presentation", () => {
     assert.equal(presentation.defaultEntity, "clients");
     assert.equal(presentation.showViewSwitcher, false);
     assert.deepEqual(presentation.allowedViews, ["all"]);
-    assert.deepEqual(presentation.allowedEntities, ["clients"]);
+    assert.deepEqual(presentation.allowedEntities, ["clients", "outlets"]);
   });
 
   it("maps regional manager defaults to outlets list", () => {
