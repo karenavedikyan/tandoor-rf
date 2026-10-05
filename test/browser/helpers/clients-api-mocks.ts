@@ -232,7 +232,7 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           pageTitle: "Вся клиентская база",
           defaultView: "teams",
           defaultEntity: "clients",
-          allowedViews: ["all", "teams", "review"],
+          allowedViews: ["all", "teams", "review", "completeness"],
           allowedEntities: ["clients", "outlets"],
           showViewSwitcher: true,
           showManagerTeamFilter: true,
@@ -551,6 +551,66 @@ export function resolveMockResponse(
 
   if (path === "/api/clients/sync-status") {
     return jsonResponse(200, syntheticSyncStatusPayload());
+  }
+
+  if (path === "/api/clients/org-structure") {
+    return jsonResponse(200, {
+      director: {
+        employeeGuid: "a2bacfab-ebec-11e3-a1dd-08606e7fce4d",
+        name: "Synthetic Director",
+        shortId: "A2BACFAB",
+        rosterPost: "Директор",
+        hasLinkedAccount: true,
+        note: "Организационная роль директора задаётся по GUID 1С.",
+      },
+      rops: [
+        {
+          employeeGuid: "99999999-9999-4999-8999-999999999999",
+          name: "Synthetic ROP",
+          shortId: "99999999",
+          rosterPost: "Руководитель отдела продаж",
+          hasLinkedAccount: true,
+          hasAssignedPortfolio: true,
+          portfolioNote: null,
+          managerCount: 1,
+          regionalCount: 0,
+          uniqueClientCount: 2,
+          uniqueOutletCount: 0,
+          sources: ["roster", "assignment"],
+        },
+      ],
+      undefinedTeam: [],
+      rosterLoaded: true,
+      limitationNote: "Структура построена по назначениям 1С.",
+    });
+  }
+
+  if (path.match(/^\/api\/clients\/org-structure\/[^/]+\/responsibles$/)) {
+    return jsonResponse(200, {
+      items: [
+        {
+          kind: "manager",
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+          hasLinkedAccount: true,
+          rosterInOpt: true,
+          clientCount: 2,
+          outletCount: 0,
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/completeness-queue") {
+    return jsonResponse(200, {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      totalPages: 0,
+      summary: { clients: 0, outlets: 0, records: 0 },
+    });
   }
 
   if (path === "/api/clients/teams") {

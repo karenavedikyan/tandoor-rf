@@ -5,6 +5,12 @@ import { getPool, query } from "../db/pool";
 import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
 import {
+  buildOrgManagerInBranchFilter,
+  buildOrgRopBranchFilter,
+} from "./org/branch-filters";
+import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
+import { clientHeadOfSalesGuidSql } from "./org/assignment-sql";
+import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
   employeePortfolioClause,
@@ -16,6 +22,7 @@ import { buildClientsFilter } from "./query";
 import { outletsJsonArraySql, scopedHasOutletsClause, scopedOutletsCountSql } from "./outlets/scope-sql";
 import { buildClientsOrderBy } from "./sort";
 import {
+  canUseCompletenessNavigation,
   canUseReviewNavigation,
   canUseUnassignedNavigation,
 } from "./role-presentation";
@@ -77,6 +84,10 @@ async function resolveScopedFilter(
     throw new ListClientsError("Очередь ревизии недоступна для вашей роли.", "FORBIDDEN");
   }
 
+  if (input.view === "completeness" && !canUseCompletenessNavigation(context)) {
+    throw new ListClientsError("Очередь незаполненных назначений недоступна для вашей роли.", "FORBIDDEN");
+  }
+
   const hasReviewFilter =
     (input.reviewState && input.reviewState !== "any") ||
     (input.reviewDecision && input.reviewDecision !== "any");
@@ -91,6 +102,12 @@ async function resolveScopedFilter(
     );
   }
 
+  const ropEmployeeGuid =
+    input.ropEmployeeGuid ??
+    (input.view === "teams" && context.role === "rop" && context.employeeId
+      ? context.employeeId.toLowerCase()
+      : undefined);
+
   if (input.ropUserId && input.managerId) {
     try {
       await assertManagerInTeamScope(context, input.ropUserId, input.managerId);
@@ -100,6 +117,10 @@ async function resolveScopedFilter(
       }
       throw error;
     }
+  } else if (ropEmployeeGuid && input.managerId && input.view === "teams") {
+    if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
+      throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
+    }
   } else if (input.ropUserId && input.view === "teams") {
     if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
       throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
@@ -107,10 +128,17 @@ async function resolveScopedFilter(
     if (context.role === "rop" && context.userId !== input.ropUserId) {
       throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
     }
+  } else if (ropEmployeeGuid && input.view === "teams") {
+    if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
+      throw new ListClientsError("Нет доступа к структуре по назначениям.", "FORBIDDEN");
+    }
+    if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
+      throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
+    }
   }
 
   const portfolioManagerId =
-    input.view === "teams" && input.managerId ? input.managerId : undefined;
+    input.view === "teams" && input.managerId && !ropEmployeeGuid ? input.managerId : undefined;
   let userFilter = buildClientsFilter(
     portfolioManagerId ? { ...input, managerId: undefined } : input,
   );
@@ -132,8 +160,36 @@ async function resolveScopedFilter(
     );
   }
 
-  if (input.view === "teams" && input.ropUserId && !input.managerId) {
+  if (input.view === "teams" && ropEmployeeGuid && input.managerId) {
+    userFilter = combineScopeAndFilter(
+      userFilter,
+      buildOrgManagerInBranchFilter(ropEmployeeGuid, input.managerId),
+    );
+  } else if (input.view === "teams" && ropEmployeeGuid && !input.managerId) {
+    userFilter = combineScopeAndFilter(userFilter, buildOrgRopBranchFilter(ropEmployeeGuid));
+  } else if (input.view === "teams" && input.ropUserId && !input.managerId) {
     userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));
+  }
+
+  if (input.completenessReasons && input.completenessReasons.length > 0) {
+    userFilter = combineScopeAndFilter(
+      userFilter,
+      buildCompletenessReasonsFilter(
+        input.completenessReasons,
+        input.completenessReasonMode ?? "any",
+      ),
+    );
+  }
+
+  if (input.missingRop) {
+    userFilter = mergeSqlFilters(userFilter, [`${clientHeadOfSalesGuidSql()} IS NULL`], []);
+  }
+  if (input.missingManager) {
+    userFilter = mergeSqlFilters(
+      userFilter,
+      [`NULLIF(BTRIM(lower(onec_clients.guid_manager::text)), '00000000-0000-0000-0000-000000000000') IS NULL`],
+      [],
+    );
   }
 
   const reviewJoin = buildReviewStateFilter(

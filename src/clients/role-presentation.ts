@@ -60,6 +60,10 @@ export function canUseUnassignedNavigation(context: AccessContext): boolean {
   return canUseReviewNavigation(context);
 }
 
+export function canUseCompletenessNavigation(context: AccessContext): boolean {
+  return canUseReviewNavigation(context);
+}
+
 export function resolveBusinessClientsRole(role: UserRole): BusinessClientsRole {
   switch (role) {
     case "manager":
@@ -165,7 +169,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         clientsHref: "/clients?view=teams",
         defaultView: "teams",
         defaultEntity: "clients",
-        allowedViews: ["all", "teams", "review"],
+        allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
         showViewSwitcher: true,
         showManagerTeamFilter: true,
@@ -183,7 +187,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         clientsHref: "/clients?view=all",
         defaultView: "all",
         defaultEntity: "clients",
-        allowedViews: ["all", "teams", "review"],
+        allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
         showViewSwitcher: true,
         showManagerTeamFilter: true,

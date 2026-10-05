@@ -17,6 +17,7 @@
     "holding",
     "phone",
     "rop",
+    "ropEmployee",
     "unassignedCategory",
     "reviewState",
     "reviewDecision",
@@ -276,7 +277,7 @@
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
     var view = params.get("view") || "all";
-    if (view !== "all" && view !== "teams" && view !== "review") {
+    if (view !== "all" && view !== "teams" && view !== "review" && view !== "completeness") {
       view = "all";
     }
     var entity = params.get("entity") || "clients";
@@ -291,6 +292,7 @@
       holding: params.get("holding") || "",
       phone: params.get("phone") || "all",
       rop: params.get("rop") || "",
+      ropEmployee: params.get("ropEmployee") || "",
       unassignedCategory: params.get("unassignedCategory") || "",
       reviewState: params.get("reviewState") || "",
       reviewDecision: params.get("reviewDecision") || "",
@@ -330,6 +332,7 @@
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
     if (state.rop) params.set("rop", state.rop);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
     if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);

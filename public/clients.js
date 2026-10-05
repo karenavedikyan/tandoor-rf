@@ -29,6 +29,7 @@
   var entitySwitcherEl = document.getElementById("entity-switcher");
   var pageTitleEl = document.getElementById("clients-page-title");
   var viewReviewTab = document.getElementById("view-review-tab");
+  var viewCompletenessTab = document.getElementById("view-completeness-tab");
   var tableHeadRow = document.getElementById("clients-table-head-row");
   var breadcrumbsEl = document.getElementById("clients-breadcrumbs");
   var teamsPanelEl = document.getElementById("teams-panel");
@@ -65,7 +66,15 @@
   var regionalCombobox = null;
   var currentUser = null;
   var rolePresentation = null;
-  var teamContext = { rops: [], managers: [], ropName: "", managerName: "" };
+  var teamContext = {
+    director: null,
+    rops: [],
+    undefinedTeam: [],
+    managers: [],
+    ropName: "",
+    managerName: "",
+    limitationNote: "",
+  };
   var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
 
   function readStateFromUrl() {
@@ -99,6 +108,7 @@
       holding: holdingFilter.value,
       phone: phoneFilter.value || "all",
       rop: appEl.dataset.rop || "",
+      ropEmployee: appEl.dataset.ropEmployee || "",
       unassignedCategory: unassignedFilter.value || "",
       reviewState: reviewStateFilter.value || "",
       reviewDecision: reviewDecisionFilter.value || "",
@@ -144,6 +154,7 @@
     appEl.dataset.view = state.view || "all";
     appEl.dataset.entity = state.entity || "clients";
     appEl.dataset.rop = state.rop || "";
+    appEl.dataset.ropEmployee = state.ropEmployee || "";
     appEl.dataset.page = String(state.page);
     appEl.dataset.sortBy = state.sortBy || "";
     appEl.dataset.sortDir = state.sortDir || "";
@@ -194,6 +205,12 @@
       "clients-hidden",
       !(presentation.allowedViews && presentation.allowedViews.indexOf("review") !== -1),
     );
+    if (viewCompletenessTab) {
+      viewCompletenessTab.classList.toggle(
+        "clients-hidden",
+        !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
+      );
+    }
     document.getElementById("manager-combobox")?.classList.toggle(
       "clients-hidden",
       !presentation.showManagerTeamFilter,
@@ -775,6 +792,7 @@
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
     if (state.rop) params.set("rop", state.rop);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
     if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
@@ -832,15 +850,17 @@
     var parts = [];
     if (state.view === "teams") {
       parts.push({ label: "По командам", href: "/clients?view=teams" });
-      if (state.rop) {
+      if (state.ropEmployee) {
         parts.push({
           label: teamContext.ropName || "РОП",
-          href: "/clients?view=teams&rop=" + encodeURIComponent(state.rop),
+          href: "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee),
         });
       }
       if (state.manager) {
         parts.push({ label: teamContext.managerName || "Менеджер", href: null });
       }
+    } else if (state.view === "completeness") {
+      parts.push({ label: "Незаполненные назначения", href: "/clients?view=completeness" });
     } else if (state.view === "review") {
       parts.push({ label: "Ревизия", href: "/clients?view=review" });
       if (state.unassignedCategory) {
@@ -865,41 +885,88 @@
     breadcrumbsEl.classList.remove("clients-hidden");
   }
 
+  function renderOrgBadge(label) {
+    return label
+      ? '<span class="clients-phone-muted clients-team-badge">' + shell.escapeHtml(label) + "</span>"
+      : "";
+  }
+
   function renderTeamsPanel(state) {
     if (state.view !== "teams" || state.manager) {
       teamsPanelEl.innerHTML = "";
       return;
     }
-    if (!state.rop) {
+    if (!state.ropEmployee) {
+      var directorHtml = "";
+      if (teamContext.director) {
+        directorHtml =
+          '<div class="clients-team-director">' +
+          "<strong>" +
+          shell.escapeHtml(teamContext.director.name) +
+          "</strong> · директор" +
+          renderOrgBadge(teamContext.director.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+          '<p class="clients-phone-muted">' +
+          shell.escapeHtml(teamContext.director.note || "") +
+          "</p></div>";
+      }
+      var undefinedHtml =
+        (teamContext.undefinedTeam || []).length > 0
+          ? '<div class="clients-team-section"><h3 class="clients-team-section__title">Команда не определена</h3><div class="clients-teams-list">' +
+            teamContext.undefinedTeam
+              .map(function (member) {
+                return (
+                  '<div class="clients-team-card clients-team-card--static">' +
+                  "<strong>" +
+                  shell.escapeHtml(member.name) +
+                  "</strong>" +
+                  renderOrgBadge(member.rosterPost || "") +
+                  renderOrgBadge(member.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+                  "</div>"
+                );
+              })
+              .join("") +
+            "</div></div>"
+          : "";
       teamsPanelEl.innerHTML =
+        directorHtml +
+        (teamContext.limitationNote
+          ? '<p class="clients-phone-muted">' + shell.escapeHtml(teamContext.limitationNote) + "</p>"
+          : "") +
         '<div class="clients-teams-list">' +
         (teamContext.rops || [])
           .map(function (rop) {
+            var note = rop.portfolioNote ? " · " + rop.portfolioNote : "";
             return (
-              '<button type="button" class="clients-team-card" data-rop="' +
-              shell.escapeHtml(rop.ropUserId) +
+              '<button type="button" class="clients-team-card" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
               '">' +
               "<strong>" +
-              shell.escapeHtml(rop.ropName) +
+              shell.escapeHtml(rop.name) +
               "</strong>" +
+              renderOrgBadge(rop.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
               '<span class="clients-phone-muted">' +
               rop.managerCount +
-              " менедж. · " +
+              " ответств. · " +
               rop.uniqueClientCount +
-              " клиентов</span>" +
+              " клиентов · " +
+              rop.uniqueOutletCount +
+              " ТТ" +
+              shell.escapeHtml(note) +
+              "</span>" +
               "</button>"
             );
           })
           .join("") +
-        "</div>";
-      teamsPanelEl.querySelectorAll("[data-rop]").forEach(function (btn) {
+        "</div>" +
+        undefinedHtml;
+      teamsPanelEl.querySelectorAll("[data-rop-employee]").forEach(function (btn) {
         btn.addEventListener("click", function () {
-          var ropId = btn.getAttribute("data-rop");
+          var ropGuid = btn.getAttribute("data-rop-employee");
           var match = (teamContext.rops || []).find(function (item) {
-            return item.ropUserId === ropId;
+            return item.employeeGuid === ropGuid;
           });
-          teamContext.ropName = match ? match.ropName : "";
-          navigateState({ view: "teams", rop: ropId, manager: "", page: 1 });
+          teamContext.ropName = match ? match.name : "";
+          navigateState({ view: "teams", ropEmployee: ropGuid, rop: "", manager: "", page: 1 });
         });
       });
       return;
@@ -908,20 +975,29 @@
       '<div class="clients-teams-list">' +
       (teamContext.managers || [])
         .map(function (manager) {
-          var label =
-            manager.kind === "rop_own"
-              ? "Собственные клиенты РОП"
-              : manager.name + " · " + manager.shortId;
+          var kindLabel =
+            manager.kind === "regional"
+              ? "Региональный"
+              : manager.kind === "hardware"
+                ? "Менеджер по фурнитуре"
+                : "Менеджер";
           return (
             '<button type="button" class="clients-team-card" data-manager="' +
             shell.escapeHtml(manager.employeeGuid) +
             '">' +
             "<strong>" +
-            shell.escapeHtml(label) +
+            shell.escapeHtml(manager.name) +
+            " · " +
+            shell.escapeHtml(manager.shortId) +
             "</strong>" +
+            renderOrgBadge(kindLabel) +
+            renderOrgBadge(manager.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+            renderOrgBadge(manager.rosterInOpt === false ? "Вне справочника ОПТ" : "") +
             '<span class="clients-phone-muted">' +
             manager.clientCount +
-            " клиентов</span>" +
+            " клиентов · " +
+            manager.outletCount +
+            " ТТ</span>" +
             "</button>"
           );
         })
@@ -936,12 +1012,49 @@
         teamContext.managerName = match ? match.name : "";
         navigateState({
           view: "teams",
-          rop: state.rop,
+          ropEmployee: state.ropEmployee,
+          rop: "",
           manager: managerGuid,
           page: 1,
         });
       });
     });
+  }
+
+  function renderCompletenessRows(items) {
+    tableBody.innerHTML = (items || [])
+      .map(function (item) {
+        var cardHref =
+          item.entityKind === "outlet" && item.guidStore
+            ? "/clients/" +
+              encodeURIComponent(item.guidClient) +
+              "?store=" +
+              encodeURIComponent(item.guidStore)
+            : "/clients/" + encodeURIComponent(item.guidClient);
+        var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
+        return (
+          "<tr>" +
+          "<td>" +
+          shell.escapeHtml(entityLabel) +
+          "</td>" +
+          '<td><a class="clients-link" href="' +
+          cardHref +
+          '">' +
+          shell.escapeHtml(item.name) +
+          "</a></td>" +
+          "<td>" +
+          shell.escapeHtml(item.address || "—") +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml((item.reasonLabels || []).join("; ")) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(item.lastImportedAtLabel || "—") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
   }
 
   function renderUnassignedPanel(summary, state) {
@@ -1048,27 +1161,51 @@
       return Promise.resolve({ ok: true });
     }
     var requests = [];
-    if (!state.rop) {
+    if (!state.ropEmployee) {
       requests.push(
-        api.apiRequest("/api/clients/teams").then(function (result) {
+        api.apiRequest("/api/clients/org-structure").then(function (result) {
           if (result.response.status === 200 && result.data) {
-            teamContext.rops = result.data.items || [];
+            teamContext.director = result.data.director || null;
+            teamContext.rops = result.data.rops || [];
+            teamContext.undefinedTeam = result.data.undefinedTeam || [];
+            teamContext.limitationNote = result.data.limitationNote || "";
           }
           return result.response.status === 200;
         }),
       );
     } else if (!state.manager) {
       requests.push(
-        api.apiRequest("/api/clients/teams/" + encodeURIComponent(state.rop) + "/managers").then(function (result) {
-          if (result.response.status === 200 && result.data) {
-            teamContext.managers = result.data.items || [];
-          }
-          return result.response.status === 200;
-        }),
+        api
+          .apiRequest(
+            "/api/clients/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
+          )
+          .then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              teamContext.managers = result.data.items || [];
+            }
+            return result.response.status === 200;
+          }),
       );
     }
     return Promise.all(requests).then(function (results) {
       return { ok: results.every(Boolean) || results.length === 0 };
+    });
+  }
+
+  function loadCompletenessQueue(state) {
+    var params = new URLSearchParams();
+    if (state.q) params.set("q", state.q);
+    if (state.manager) params.set("manager", state.manager);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
+    params.set("page", String(state.page || 1));
+    params.set("pageSize", "50");
+    return api.apiRequest("/api/clients/completeness-queue?" + params.toString()).then(function (result) {
+      return {
+        ok: result.response.status === 200,
+        data: result.data,
+        status: result.response.status,
+        error: result.data,
+      };
     });
   }
 
@@ -1212,11 +1349,51 @@
         renderTeamsPanel(state);
         showResultsState(
           "empty",
-          state.rop ? "Выберите менеджера" : "Выберите РОП",
-          "Клиенты загружаются после выбора менеджера команды.",
+          state.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
+          "Клиенты загружаются после выбора ответственного в ветке РОП.",
           "",
         );
-        resultCountEl.textContent = state.rop ? "Менеджеры команды" : "Команды продаж";
+        resultCountEl.textContent = state.ropEmployee ? "Ответственные РОП" : "Структура по назначениям 1С";
+      });
+    }
+
+    if (state.view === "completeness") {
+      showResultsState("loading", "Загрузка очереди…", "", "");
+      updateViewChrome(state);
+      return loadCompletenessQueue(state).then(function (result) {
+        if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
+          return;
+        }
+        if (!result.ok) {
+          showResultsState(
+            "error",
+            "Не удалось загрузить очередь",
+            api.extractErrorMessage(result.error, "Повторите попытку."),
+            '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
+          );
+          document.getElementById("retry-load")?.addEventListener("click", function () {
+            loadList(state, true);
+          });
+          return;
+        }
+        var data = result.data || { items: [], total: 0, totalPages: 0 };
+        if (!data.total) {
+          showResultsState(
+            "empty",
+            "Нет записей с выбранными условиями",
+            "Измените фильтры или дождитесь следующего импорта из 1С.",
+            "",
+          );
+          resultCountEl.textContent = "0 записей в очереди";
+          return;
+        }
+        showResultsContent();
+        tableHeadRow.innerHTML =
+          "<th>Тип</th><th>Название</th><th>Адрес</th><th>Причины</th><th>Импорт</th>";
+        renderCompletenessRows(data.items || []);
+        cardsEl.innerHTML = "";
+        resultCountEl.textContent = data.total + " записей в очереди";
+        renderPagination(state, data.totalPages || 0);
       });
     }
 
@@ -1366,6 +1543,7 @@
       holding: "",
       phone: "all",
       rop: "",
+      ropEmployee: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
@@ -1397,6 +1575,7 @@
       holding: "",
       phone: "all",
       rop: "",
+      ropEmployee: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",

@@ -45,6 +45,11 @@ import {
   reviewOptionsHandler,
   upsertClientReviewHandler,
 } from "./review/handlers";
+import {
+  completenessQueueHandler,
+  orgRopResponsiblesHandler,
+  orgStructureOverviewHandler,
+} from "./org/handlers";
 import { listTeamManagersHandler, listTeamRopsHandler } from "./teams/handlers";
 import { unassignedSummaryHandler } from "./unassigned/handlers";
 
@@ -68,6 +73,18 @@ export function createClientsRouter(): express.Router {
 
   router.get("/presentation", ...readChain, (req, res, next) => {
     void clientsPresentationHandler(req, res).catch(next);
+  });
+
+  router.get("/org-structure", ...readChain, (req, res, next) => {
+    void orgStructureOverviewHandler(req, res).catch(next);
+  });
+
+  router.get("/org-structure/:ropEmployeeGuid/responsibles", ...readChain, (req, res, next) => {
+    void orgRopResponsiblesHandler(req, res).catch(next);
+  });
+
+  router.get("/completeness-queue", ...readChain, (req, res, next) => {
+    void completenessQueueHandler(req, res).catch(next);
   });
 
   router.get("/teams", ...readChain, (req, res, next) => {
