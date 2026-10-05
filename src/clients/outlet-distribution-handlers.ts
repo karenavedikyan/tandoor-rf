@@ -6,7 +6,10 @@ import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { canReadClientGuid } from "./repository";
-import { canAccessRetailOutletGuid, listAccessibleOutletGuidsForClient } from "./outlet-scope";
+import {
+  listAccessibleOutletGuidsForClient,
+  loadFreshClientAndOutletAccess,
+} from "./outlet-scope";
 import {
   assertOutletBelongsToClient,
   assertOutletDistributionWritable,
@@ -20,20 +23,6 @@ import {
   upsertDistributionMarker,
 } from "./outlet-distribution-repository";
 import { isValidUuidParam } from "./uuid-param";
-
-async function assertOutletReadable(
-  req: AccessRequest,
-  res: Response,
-  cardGuid: string,
-  storeGuid: string,
-): Promise<boolean> {
-  if (!(await canAccessRetailOutletGuid(req.accessContext!, cardGuid, storeGuid))) {
-    setNoStore(res);
-    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Outlet not found."));
-    return false;
-  }
-  return true;
-}
 
 async function assertClientAccess(
   req: AccessRequest,
@@ -112,11 +101,7 @@ export async function getClientCatalogOutletDistributionHandler(
 ): Promise<void> {
   const cardGuid = String(req.params.guid ?? "");
   const storeGuid = parseStoreGuid(String(req.params.storeGuid ?? ""), res);
-  if (
-    !storeGuid ||
-    !(await assertClientAccess(req, res, cardGuid)) ||
-    !(await assertOutletReadable(req, res, cardGuid, storeGuid))
-  ) {
+  if (!storeGuid || !(await assertClientAccess(req, res, cardGuid))) {
     return;
   }
 
@@ -128,6 +113,17 @@ export async function getClientCatalogOutletDistributionHandler(
   }
   const client = await pool.connect();
   try {
+    const freshAccess = await loadFreshClientAndOutletAccess(
+      client,
+      req.accessContext!,
+      cardGuid,
+      storeGuid,
+    );
+    if (!freshAccess) {
+      setNoStore(res);
+      res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Outlet not found."));
+      return;
+    }
     if (!(await assertOutletBelongsToClient(client, cardGuid, storeGuid))) {
       setNoStore(res);
       res.status(404).json({
@@ -165,11 +161,11 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
 ): Promise<void> {
   const cardGuid = String(req.params.guid ?? "");
   const storeGuid = parseStoreGuid(String(req.params.storeGuid ?? ""), res);
-  if (
-    !storeGuid ||
-    !(await assertClientAccess(req, res, cardGuid)) ||
-    !(await assertOutletReadable(req, res, cardGuid, storeGuid))
-  ) {
+  if (!storeGuid || !isValidUuidParam(cardGuid)) {
+    if (!isValidUuidParam(cardGuid)) {
+      setNoStore(res);
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Invalid client id."));
+    }
     return;
   }
 
@@ -219,7 +215,24 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
       });
       return;
     }
-    const writable = await assertOutletDistributionWritable(client, cardGuid, storeGuid);
+    const freshAccess = await loadFreshClientAndOutletAccess(
+      client,
+      req.accessContext!,
+      cardGuid,
+      storeGuid,
+    );
+    if (!freshAccess) {
+      await client.query("ROLLBACK");
+      setNoStore(res);
+      res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Outlet not found."));
+      return;
+    }
+    const writable = await assertOutletDistributionWritable(
+      client,
+      cardGuid,
+      storeGuid,
+      freshAccess.accessibleStoreGuids,
+    );
     if (!writable.ok) {
       await client.query("ROLLBACK");
       setNoStore(res);

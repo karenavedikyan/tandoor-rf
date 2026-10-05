@@ -34,7 +34,11 @@ import {
   verificationFingerprintFromPayload,
   verifyApplyVerification,
 } from "./import-verification-fingerprint";
-import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
+import {
+  resolveClientManagerRosterState,
+  resolveConfirmedHoldingForApply,
+  resolveImportLinkMetadata,
+} from "./manager-status";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 import { assertOperatorImportJobRunnable } from "./import-job-guard";
@@ -657,6 +661,7 @@ export async function applyClientsImport(options: {
   expectedVerificationFingerprint: string;
   holdingLinkValidationPolicy?: HoldingLinkValidationPolicy;
   employeeRosterSourceSha256?: string | null;
+  employeeRoster?: import("./employee-roster").WholesaleEmployeeRoster | null;
   /** Controlled wholesale baseline replacement only; skips shrink guards, not verification. */
   baselineReplacementApply?: boolean;
   /** Explicit clean reload after purge; skips shrink guards, not verification. */
@@ -962,8 +967,14 @@ export async function applyClientsImport(options: {
             const applyRecord = { ...record, ...confirmedHolding };
             const current = existing.get(applyRecord.guid_client);
             const rosterLoadedInPayload = options.payload.employeeRosterSourceSha256 != null;
+            const incomingManagerRosterState =
+              extendedRecord?.managerRosterState ??
+              (rosterLoadedInPayload && options.employeeRoster
+                ? resolveClientManagerRosterState(applyRecord.guid_manager, options.employeeRoster)
+                : "roster_not_loaded");
             const linkMetadata = resolveImportLinkMetadata(extendedRecord, {
               incomingManagerGuid: applyRecord.guid_manager,
+              incomingManagerRosterState,
               previousManagerGuid: current?.guid_manager ?? null,
               previousManagerRosterState: current?.manager_roster_state ?? null,
               rosterLoadedInPayload,

@@ -25,6 +25,11 @@ export type ParsedOutletAddress = {
   storeAddress: string;
   deliveryAddress: string;
   routeDirection: string;
+  fieldPresence?: {
+    storeAddress: boolean;
+    deliveryAddress: boolean;
+    routeDirection: boolean;
+  };
 };
 
 export type ParsedOutletLoading = {
@@ -50,6 +55,12 @@ export type ParsedOutletManagers = {
   regionalManager: ParsedManagerRef;
   hardwareManager: ParsedManagerRef;
   headOfSales: ParsedManagerRef;
+  fieldPresence?: {
+    manager: import("./extended-presence").FieldPresenceState;
+    regionalManager: import("./extended-presence").FieldPresenceState;
+    hardwareManager: import("./extended-presence").FieldPresenceState;
+    headOfSales: import("./extended-presence").FieldPresenceState;
+  };
 };
 
 export type ParsedOutletContacts = {
@@ -83,6 +94,10 @@ export type ParsedOutletLpr = {
 export type ParsedOutletAdditional = {
   statusTandoorClub: string;
   bonusTandoorClub: string;
+  fieldPresence?: {
+    statusTandoorClub: boolean;
+    bonusTandoorClub: boolean;
+  };
 };
 
 export type OutletGuidStatus = "confirmed" | "not_provided" | "invalid";

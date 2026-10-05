@@ -428,6 +428,12 @@ function parseOutletManagers(
     regionalManager: regional.ref,
     hardwareManager: hardware.ref,
     headOfSales: head.ref,
+    fieldPresence: {
+      manager: manager.presence,
+      regionalManager: regional.presence,
+      hardwareManager: hardware.presence,
+      headOfSales: head.presence,
+    },
   };
 }
 
@@ -439,7 +445,16 @@ function parseOutletAddress(
   issueCount: { value: number },
 ): ParsedOutletAddress | null {
   if (raw === undefined || raw === null) {
-    return { storeAddress: "", deliveryAddress: "", routeDirection: "" };
+    return {
+      storeAddress: "",
+      deliveryAddress: "",
+      routeDirection: "",
+      fieldPresence: {
+        storeAddress: false,
+        deliveryAddress: false,
+        routeDirection: false,
+      },
+    };
   }
   if (!isPlainObject(raw)) {
     pushIssue(issues, {
@@ -450,16 +465,27 @@ function parseOutletAddress(
     }, issueCount);
     return null;
   }
-  const fields: Array<[keyof ParsedOutletAddress, string]> = [
+  type AddressField = "storeAddress" | "deliveryAddress" | "routeDirection";
+  const fields: Array<[AddressField, string]> = [
     ["storeAddress", "store_address"],
     ["deliveryAddress", "delivery_address"],
     ["routeDirection", "direction_of_the_route"],
   ];
-  const result: ParsedOutletAddress = { storeAddress: "", deliveryAddress: "", routeDirection: "" };
+  const result: ParsedOutletAddress = {
+    storeAddress: "",
+    deliveryAddress: "",
+    routeDirection: "",
+    fieldPresence: {
+      storeAddress: false,
+      deliveryAddress: false,
+      routeDirection: false,
+    },
+  };
   for (const [target, source] of fields) {
     if (!(source in raw)) {
       continue;
     }
+    result.fieldPresence![target] = true;
     const parsed = readOptionalStringField(raw[source]);
     if (parsed.kind === "invalid_type") {
       pushIssue(issues, {
@@ -791,7 +817,11 @@ function parseOutletAdditional(
   issueCount: { value: number },
 ): ParsedOutletAdditional | null {
   if (raw === undefined || raw === null) {
-    return { statusTandoorClub: "", bonusTandoorClub: "" };
+    return {
+      statusTandoorClub: "",
+      bonusTandoorClub: "",
+      fieldPresence: { statusTandoorClub: false, bonusTandoorClub: false },
+    };
   }
   if (!isPlainObject(raw)) {
     pushIssue(issues, {
@@ -802,8 +832,13 @@ function parseOutletAdditional(
     }, issueCount);
     return null;
   }
-  const result: ParsedOutletAdditional = { statusTandoorClub: "", bonusTandoorClub: "" };
+  const result: ParsedOutletAdditional = {
+    statusTandoorClub: "",
+    bonusTandoorClub: "",
+    fieldPresence: { statusTandoorClub: false, bonusTandoorClub: false },
+  };
   if ("status_tandoor_club" in raw) {
+    result.fieldPresence!.statusTandoorClub = true;
     const parsed = readOptionalStringField(raw.status_tandoor_club);
     if (parsed.kind === "invalid_type") {
       pushIssue(issues, {
@@ -817,6 +852,7 @@ function parseOutletAdditional(
     result.statusTandoorClub = parsed.kind === "value" ? parsed.value : "";
   }
   if ("bonus_tandoor_club" in raw) {
+    result.fieldPresence!.bonusTandoorClub = true;
     const parsed = readScalarField(raw.bonus_tandoor_club);
     if (parsed.kind === "invalid_type") {
       pushIssue(issues, {
@@ -1334,7 +1370,13 @@ function applyEmployeeRosterToRecords(
           }, warningCount);
         }
       }
-      return { ...outlet, managers };
+      return {
+        ...outlet,
+        managers: {
+          ...managers,
+          fieldPresence: outlet.managers.fieldPresence,
+        },
+      };
     });
   }
 }

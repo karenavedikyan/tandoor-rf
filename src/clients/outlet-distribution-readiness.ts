@@ -253,8 +253,9 @@ export async function assertOutletDistributionWritable(
   client: PoolClient,
   cardGuid: string,
   storeGuid: string,
+  accessibleStoreGuids?: ReadonlySet<string> | null,
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
-  const options = await loadOutletDistributionOptions(client, cardGuid);
+  const options = await loadOutletDistributionOptions(client, cardGuid, accessibleStoreGuids);
   const match = options.find((item) => item.guidStore.toLowerCase() === storeGuid.toLowerCase());
   if (!match) {
     return {

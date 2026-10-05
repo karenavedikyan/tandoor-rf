@@ -22,6 +22,10 @@ import {
   sampleClient,
   sampleClientTwo,
 } from "../helpers/onec-clients-fixtures";
+import {
+  buildEmployeeRosterBytes,
+  buildEmployeeRosterEntry,
+} from "../helpers/onec-clients-employee-roster-fixtures";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
@@ -55,15 +59,26 @@ function ftpEnv(databaseUrl: string): NodeJS.ProcessEnv {
   };
 }
 
-async function applyBytes(databaseUrl: string, clients: Record<string, unknown>[]) {
+async function applyBytes(
+  databaseUrl: string,
+  clients: Record<string, unknown>[],
+  rosterBytes?: Buffer,
+) {
   const bytes = buildClientsFileBytes(clients);
-  const hash = buildImportVerificationFingerprint(clients);
+  const hash = buildImportVerificationFingerprint(clients, { employeeRosterBytes: rosterBytes });
   const result = await runClientsImport({
     env: ftpEnv(databaseUrl),
     argv: ["--apply", "--expected-sha256", hash],
     fileBytes: bytes,
+    employeeRosterBytes: rosterBytes,
   });
   assert.equal(result.status, "SUCCESS", JSON.stringify(result));
+}
+
+function rosterConfirmingManagers(...guids: string[]): Buffer {
+  return buildEmployeeRosterBytes(
+    guids.map((guid) => buildEmployeeRosterEntry(guid, { name_manager: `Roster ${guid.slice(0, 8)}` })),
+  );
 }
 
 describe("manager reassignment after import (same app session)", { concurrency: false }, () => {
@@ -227,10 +242,14 @@ describe("manager reassignment after import (same app session)", { concurrency: 
       1,
     );
 
-    await applyBytes(databaseUrl, [
-      sampleClient({ guid_manager: MANAGER_B, name_manager: "Manager B", name_client: "Alpha Searchable" }),
-      sampleClientTwo({ guid_manager: MANAGER_B, name_manager: "Manager B" }),
-    ]);
+    await applyBytes(
+      databaseUrl,
+      [
+        sampleClient({ guid_manager: MANAGER_B, name_manager: "Manager B", name_client: "Alpha Searchable" }),
+        sampleClientTwo({ guid_manager: MANAGER_B, name_manager: "Manager B" }),
+      ],
+      rosterConfirmingManagers(MANAGER_B),
+    );
 
     assert.equal((await request(app).get("/api/clients").set(authHeaders(managerACookie))).body.total, 0);
     assert.equal(

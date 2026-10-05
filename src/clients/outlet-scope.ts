@@ -1,3 +1,6 @@
+import type { PoolClient } from "pg";
+import { combineScopeAndFilter } from "../access/combine-filters";
+import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { query } from "../db/pool";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
@@ -63,4 +66,60 @@ export async function canAccessRetailOutletGuid(
 ): Promise<boolean> {
   const allowed = await listAccessibleOutletGuidsForClient(context, cardGuid);
   return allowed.has(storeGuid.toLowerCase());
+}
+
+export type LockedClientAccessRow = {
+  guidManager: string;
+  accessibleStoreGuids: Set<string>;
+};
+
+function accessibleStoreGuidsFromRow(
+  context: AccessContext,
+  row: { guid_manager: string; extended_snapshot: unknown },
+): Set<string> {
+  const outlets = readCurrentOutlets(row.extended_snapshot);
+  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets);
+  return confirmedOutletGuids(filtered);
+}
+
+/**
+ * Re-evaluates client and outlet access on the locked connection after row locks are held.
+ */
+export async function loadFreshClientAndOutletAccess(
+  client: PoolClient,
+  context: AccessContext,
+  cardGuid: string,
+  storeGuid: string,
+): Promise<LockedClientAccessRow | null> {
+  const scope = buildClientScopeSql(context);
+  const filter = combineScopeAndFilter(scope, {
+    whereSql: "WHERE guid_client = $1::uuid",
+    params: [cardGuid],
+  });
+  if (filter.whereSql === "WHERE FALSE") {
+    return null;
+  }
+
+  const result = await client.query<{ guid_manager: string; extended_snapshot: unknown }>(
+    `
+      SELECT guid_manager::text, extended_snapshot
+      FROM onec_clients
+      ${filter.whereSql}
+    `,
+    filter.params,
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const accessibleStoreGuids = accessibleStoreGuidsFromRow(context, row);
+  if (!accessibleStoreGuids.has(storeGuid.toLowerCase())) {
+    return null;
+  }
+
+  return {
+    guidManager: row.guid_manager,
+    accessibleStoreGuids,
+  };
 }
