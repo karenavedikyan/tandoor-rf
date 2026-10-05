@@ -26,6 +26,8 @@ const M_OTHER = "77777777-7777-4777-8777-777777777701";
 const C1 = "11111111-1111-4111-8111-111111111111";
 const C2 = "22222222-2222-4222-8222-222222222222";
 const C_B = "33333333-3333-4333-8333-333333333333";
+const T1 = "11111111-1111-4111-8111-111111111112";
+const T1B = "11111111-1111-4111-8111-111111111113";
 const T2 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const T3 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
@@ -178,6 +180,18 @@ async function seedAssignmentFixture(): Promise<void> {
     branchSnapshot({
       clientRop: { guid: ROP_A, name: "ROP Alpha" },
       clientManager: { guid: M_SHARED, name: "Shared Manager" },
+      outlets: [
+        {
+          guidStore: T1,
+          rop: { guid: ROP_A, name: "ROP Alpha" },
+          manager: { guid: M_SHARED, name: "Shared Manager" },
+        },
+        {
+          guidStore: T1B,
+          rop: { guid: ROP_B, name: "ROP Beta" },
+          manager: { guid: M_SHARED, name: "Shared Manager" },
+        },
+      ],
     }),
   );
   await updateClientExtendedSnapshot(
@@ -208,6 +222,8 @@ async function seedAssignmentFixture(): Promise<void> {
   );
 
   await insertSyntheticRetailOutlets(databaseUrl, [
+    { guid_store: T1, guid_client: C1 },
+    { guid_store: T1B, guid_client: C1 },
     { guid_store: T2, guid_client: C2 },
     { guid_store: T3, guid_client: C2 },
   ]);
@@ -289,7 +305,26 @@ describe("clients ROP assignment read scope integration", { concurrency: false }
     const overview = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
     assert.equal(overview.status, 200);
     assert.equal(overview.body.rops[0].uniqueClientCount, 1);
-    assert.equal(overview.body.rops[0].uniqueOutletCount, 1);
+    assert.equal(overview.body.rops[0].uniqueOutletCount, 2);
+
+    const outlets = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=outlets&portfolio=outlets&ropEmployee=${ROP_A}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(outlets.status, 200);
+    assert.equal(outlets.body.total, overview.body.rops[0].uniqueOutletCount);
+    assert.deepEqual(
+      (outlets.body.items as Array<{ guidStore: string }>).map((item) => item.guidStore).sort(),
+      [T1, T2].sort(),
+    );
+
+    const foreignBranch = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=outlets&portfolio=outlets&ropEmployee=${ROP_B}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(foreignBranch.status, 403);
 
     const parentCard = await request(app).get(`/api/clients/${C2}`).set(authHeaders(cookie));
     assert.equal(parentCard.status, 200);
@@ -319,6 +354,26 @@ describe("clients ROP assignment read scope integration", { concurrency: false }
 
     const foreignCard = await request(app).get(`/api/clients/${C_B}`).set(authHeaders(cookie));
     assert.equal(foreignCard.status, 404);
+  });
+
+  it("3: client-level assignment does not reveal sibling outlet assigned to another ROP", async () => {
+    const cookie = await login("rop-a@example.com");
+    const app = await loadApp();
+
+    const card = await request(app).get(`/api/clients/${C1}`).set(authHeaders(cookie));
+    assert.equal(card.status, 200);
+    const storeGuids = (card.body.client?.extended?.retailOutlets ?? []).map(
+      (item: { guidStore: string | null }) => item.guidStore,
+    );
+    assert.deepEqual(storeGuids, [T1]);
+    assert.ok(!storeGuids.includes(T1B));
+
+    const outlets = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=outlets&portfolio=outlets&ropEmployee=${ROP_A}`,
+      )
+      .set(authHeaders(cookie));
+    assert.ok(!(outlets.body.items as Array<{ guidStore: string }>).some((item) => item.guidStore === T1B));
   });
 
   it("C: shared manager does not give ROP A portfolio of ROP B", async () => {

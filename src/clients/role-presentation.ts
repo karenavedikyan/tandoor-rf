@@ -21,6 +21,8 @@ export type RolePresentation = {
   defaultEntity: ClientsEntityMode;
   allowedViews: ClientsViewMode[];
   allowedEntities: ClientsEntityMode[];
+  /** When false, entity switcher stays hidden even if multiple entities are allowed. */
+  showEntitySwitcher?: boolean;
   showViewSwitcher: boolean;
   showManagerTeamFilter: boolean;
   showTeamNavigation: boolean;
@@ -149,7 +151,8 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams"],
-        allowedEntities: ["clients"],
+        allowedEntities: ["clients", "outlets"],
+        showEntitySwitcher: false,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,

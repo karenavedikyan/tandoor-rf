@@ -70,10 +70,6 @@ function filterRopRetailOutlets(
   }
 
   const clientHead = normalizeGuid(options?.clientHeadOfSalesGuid);
-  if (clientHead === employeeId) {
-    return outlets;
-  }
-
   const teamGuids = new Set(options?.ropTeamEmployeeGuids ?? []);
   teamGuids.add(employeeId);
 
@@ -87,8 +83,14 @@ function filterRopRetailOutlets(
     if (outletHead === employeeId) {
       return true;
     }
+    if (outletHead && outletHead !== employeeId) {
+      return false;
+    }
     const regionalGuid = normalizeGuid(outlet.managers.regionalManager.guid);
-    return regionalGuid !== null && teamGuids.has(regionalGuid);
+    if (regionalGuid !== null && teamGuids.has(regionalGuid)) {
+      return true;
+    }
+    return clientHead === employeeId;
   });
 }
 

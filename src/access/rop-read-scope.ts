@@ -2,6 +2,7 @@ import {
   clientAssignedToRopClause,
   outletAssignedToRopClause,
   outletAssignedToRopExistsClause,
+  outletInheritedFromClientRopClause,
 } from "../clients/org/assignment-sql";
 import { RETAIL_OUTLETS_JSON, ropTeamPortfolioClause } from "../clients/team-portfolio-sql";
 import { query } from "../db/pool";
@@ -73,8 +74,8 @@ export function ropDirectClientListClause(
 
 /**
  * Per-outlet visibility for ROP sessions:
- * all outlets of a directly assigned client, assigned outlets otherwise,
- * or all outlets for legacy team clients.
+ * legacy team clients → all outlets; otherwise outlet-level assignment,
+ * client-assigned inheritance without conflicting outlet ROP, or legacy regional.
  */
 export function ropOutletRowAccessibleClause(
   ropUserParamSql: string,
@@ -85,8 +86,7 @@ export function ropOutletRowAccessibleClause(
   const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", clientAlias);
   const teamEmployees = ropLegacyTeamEmployeesSubquery(ropUserParamSql, ropEmployeeParamSql);
   return `(
-    ${clientAssignedToRopClause(ropEmployeeParamSql, clientAlias)}
-    OR lower(${clientAlias}.guid_manager::text) IN (
+    lower(${clientAlias}.guid_manager::text) IN (
       SELECT lower(employee_guid::text) FROM (${teamEmployees}) team
     )
     OR EXISTS (
@@ -95,6 +95,7 @@ export function ropOutletRowAccessibleClause(
       WHERE lower(coalesce(outlet.elem->>'guidStore', '')) = lower(${storeAlias}.guid_store::text)
         AND (
           ${outletAssignedToRopClause(ropEmployeeParamSql, "outlet.elem")}
+          OR ${outletInheritedFromClientRopClause(ropEmployeeParamSql, clientAlias, "outlet.elem")}
           OR lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) IN (
             SELECT lower(employee_guid::text) FROM (${teamEmployees}) team_reg
           )

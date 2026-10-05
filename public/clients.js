@@ -936,7 +936,13 @@
     phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     entitySwitcherEl.classList.toggle(
       "clients-hidden",
-      !isCompleteness && !(rolePresentation && rolePresentation.allowedEntities && rolePresentation.allowedEntities.length > 1),
+      !isCompleteness &&
+        !(
+          rolePresentation &&
+          rolePresentation.allowedEntities &&
+          rolePresentation.allowedEntities.length > 1 &&
+          rolePresentation.showEntitySwitcher !== false
+        ),
     );
     completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
     outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);

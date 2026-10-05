@@ -40,6 +40,8 @@ function outlet(guidStore: string, ropGuid: string): ParsedRetailOutlet {
   } as ParsedRetailOutlet;
 }
 
+const ROP_B = "2b4cd6c6-a29e-11e3-86da-08606e7fce4d";
+
 describe("ROP outlet card filter", () => {
   it("returns outlet assigned to ROP on outlet-only parent", () => {
     const filtered = filterRetailOutletsForContext(
@@ -52,5 +54,21 @@ describe("ROP outlet card filter", () => {
       },
     );
     assert.equal(filtered.length, 1);
+  });
+
+  it("hides sibling outlet assigned to another ROP on client-assigned parent", () => {
+    const filtered = filterRetailOutletsForContext(
+      context,
+      "66666666-6666-4666-8666-666666666601",
+      [outlet("11111111-1111-4111-8111-111111111112", ROP_A), outlet("11111111-1111-4111-8111-111111111113", ROP_B)],
+      {
+        clientHeadOfSalesGuid: ROP_A,
+        ropTeamEmployeeGuids: new Set([ROP_A]),
+      },
+    );
+    assert.deepEqual(
+      filtered.map((item) => item.guidStore),
+      ["11111111-1111-4111-8111-111111111112"],
+    );
   });
 });

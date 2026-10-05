@@ -42,6 +42,24 @@ export function outletAssignedToRopClause(
   return `${outletHeadOfSalesGuidSql(outletAlias)} = lower(${ropParamSql}::text)`;
 }
 
+/**
+ * Outlet on a client-assigned ROP parent without a conflicting outlet-level ROP assignment.
+ * Outlets explicitly assigned to another ROP stay excluded.
+ */
+export function outletInheritedFromClientRopClause(
+  ropParamSql: string,
+  clientAlias = "onec_clients",
+  outletAlias = "outlet.elem",
+): string {
+  return `(
+    ${clientAssignedToRopClause(ropParamSql, clientAlias)}
+    AND (
+      ${outletHeadOfSalesGuidSql(outletAlias)} IS NULL
+      OR ${outletHeadOfSalesGuidSql(outletAlias)} = lower(${ropParamSql}::text)
+    )
+  )`;
+}
+
 export function outletStoreGuidSql(outletAlias = "outlet"): string {
   return `NULLIF(BTRIM(lower(${outletAlias}->>'guidStore')), '')`;
 }

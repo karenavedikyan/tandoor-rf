@@ -48,6 +48,9 @@ describe("clients role presentation", () => {
     assert.equal(presentation.pageTitle, "Клиенты моей команды");
     assert.equal(presentation.defaultView, "teams");
     assert.equal(presentation.showTeamNavigation, true);
+    assert.deepEqual(presentation.allowedEntities, ["clients", "outlets"]);
+    assert.equal(presentation.showEntitySwitcher, false);
+    assert.equal(validateClientsListQuery(context({ role: "rop" }), { view: "teams", entity: "outlets" }), null);
   });
 
   it("allows director review navigation read-only", () => {
