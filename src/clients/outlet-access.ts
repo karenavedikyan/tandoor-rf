@@ -17,7 +17,7 @@ function isActiveScopedReader(context: AccessContext): boolean {
  * Card-level client access is enforced separately; this gate only controls outlet payload.
  */
 export function canReadNestedRetailOutlets(context: AccessContext): boolean {
-  if (!isActiveScopedReader(context)) {
+  if (context.status !== "active" || context.explicitlyDeniedAll || context.employeeLinkConflict) {
     return false;
   }
   if (context.role === "admin") {
@@ -25,6 +25,9 @@ export function canReadNestedRetailOutlets(context: AccessContext): boolean {
   }
   if (context.role === "director" && context.fullClientBase) {
     return true;
+  }
+  if (!isActiveScopedReader(context)) {
+    return false;
   }
   if (context.role === "manager" || context.role === "regional_manager" || context.role === "rop") {
     return context.hasEmployeeLink;

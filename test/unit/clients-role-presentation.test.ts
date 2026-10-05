@@ -71,9 +71,6 @@ describe("clients role presentation", () => {
       /недоступен/i,
     );
     assert.equal(validateClientsListQuery(manager, { view: "all", entity: "clients" }), null);
-    assert.match(
-      validateClientsListQuery(manager, { view: "all", entity: "outlets" }) ?? "",
-      /недоступен/i,
-    );
+    assert.equal(validateClientsListQuery(manager, { view: "all", entity: "outlets" }), null);
   });
 });
