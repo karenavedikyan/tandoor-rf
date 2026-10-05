@@ -3,6 +3,11 @@ import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
 
 export const MAX_OUTLETS_IN_DETAIL_RESPONSE = 20;
 
+export type OutletFilterOptions = {
+  clientHeadOfSalesGuid?: string | null;
+  ropTeamEmployeeGuids?: ReadonlySet<string> | null;
+};
+
 function isActiveScopedReader(context: AccessContext): boolean {
   return (
     context.status === "active" &&
@@ -45,6 +50,50 @@ function confirmedOutletGuid(outlet: ParsedRetailOutlet): string | null {
   return outlet.guidStore.toLowerCase();
 }
 
+function normalizeGuid(guid: string | null | undefined): string | null {
+  if (!guid) {
+    return null;
+  }
+  const trimmed = guid.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function filterRopRetailOutlets(
+  context: AccessContext,
+  clientManagerGuid: string,
+  outlets: ParsedRetailOutlet[],
+  options?: OutletFilterOptions,
+): ParsedRetailOutlet[] {
+  const employeeId = normalizeGuid(context.employeeId);
+  if (!employeeId) {
+    return [];
+  }
+
+  const clientHead = normalizeGuid(options?.clientHeadOfSalesGuid);
+  const teamGuids = new Set(options?.ropTeamEmployeeGuids ?? []);
+  teamGuids.add(employeeId);
+
+  const managerGuid = normalizeGuid(clientManagerGuid);
+  if (managerGuid && teamGuids.has(managerGuid)) {
+    return outlets;
+  }
+
+  return outlets.filter((outlet) => {
+    const outletHead = normalizeGuid(outlet.managers.headOfSales.guid);
+    if (outletHead === employeeId) {
+      return true;
+    }
+    if (outletHead && outletHead !== employeeId) {
+      return false;
+    }
+    const regionalGuid = normalizeGuid(outlet.managers.regionalManager.guid);
+    if (regionalGuid !== null && teamGuids.has(regionalGuid)) {
+      return true;
+    }
+    return clientHead === employeeId;
+  });
+}
+
 /**
  * Filters outlet rows to those visible in list/card for the current role.
  * Does not grant client access by itself — caller must already enforce client scope.
@@ -53,6 +102,7 @@ export function filterRetailOutletsForContext(
   context: AccessContext,
   clientManagerGuid: string,
   outlets: ParsedRetailOutlet[],
+  options?: OutletFilterOptions,
 ): ParsedRetailOutlet[] {
   if (!canReadNestedRetailOutlets(context)) {
     return [];
@@ -81,7 +131,7 @@ export function filterRetailOutletsForContext(
   }
 
   if (context.role === "rop") {
-    return outlets;
+    return filterRopRetailOutlets(context, clientManagerGuid, outlets, options);
   }
 
   if (context.role === "assistant") {
@@ -95,6 +145,7 @@ export function countVisibleRetailOutletsForContext(
   context: AccessContext,
   clientManagerGuid: string,
   outlets: ParsedRetailOutlet[],
+  options?: OutletFilterOptions,
 ): number {
-  return filterRetailOutletsForContext(context, clientManagerGuid, outlets).length;
+  return filterRetailOutletsForContext(context, clientManagerGuid, outlets, options).length;
 }

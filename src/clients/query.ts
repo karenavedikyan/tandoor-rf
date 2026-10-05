@@ -1,5 +1,11 @@
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SEARCH_LENGTH, MIN_PAGE } from "./constants";
 import { escapeIlikePattern, normalizePhoneForSearch } from "./phone";
+import type { CompletenessReason } from "./org/completeness-reasons";
+import { COMPLETENESS_REASONS } from "./org/completeness-reasons";
+import {
+  parseBranchPortfolio,
+  parseResponsibleAssignmentKind,
+} from "./org/teams-list-filters";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
 import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
@@ -9,7 +15,7 @@ export type PhoneFilter = "all" | "yes" | "no";
 export type OutletsFilter = "all" | "yes" | "no";
 export type OutletStatusFilter = "all" | "open" | "closed";
 export type OutletWarehouseFilter = "all" | "yes" | "no" | "unknown";
-export type ClientsViewMode = "all" | "teams" | "review";
+export type ClientsViewMode = "all" | "teams" | "review" | "completeness";
 export type ClientsEntityMode = "clients" | "outlets";
 
 export type ClientsListQuery = {
@@ -20,6 +26,18 @@ export type ClientsListQuery = {
   holdingId?: string;
   phone: PhoneFilter;
   ropUserId?: string;
+  /** 1C employee GUID for assignment-based ROP branch (distinct from ropUserId account id). */
+  ropEmployeeGuid?: string;
+  /** ROP branch portfolio slice when view=teams: assigned clients or outlets only. */
+  branchPortfolio?: "clients" | "outlets";
+  /** Responsible assignment kind for org-structure drill-down. */
+  responsibleKind?: "manager" | "regional" | "hardware";
+  hardwareManagerId?: string;
+  completenessReasons?: CompletenessReason[];
+  completenessReasonMode?: "any" | "all";
+  missingRop?: boolean;
+  missingManager?: boolean;
+  missingRegional?: boolean;
   unassignedCategory?: UnassignedCategory;
   reviewState?: ReviewState | "any";
   reviewDecision?: ReviewDecision | "any";
@@ -149,13 +167,86 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   }
 
   const viewRaw = parseScalarString(input.view, "all") ?? "all";
-  if (viewRaw !== "all" && viewRaw !== "teams" && viewRaw !== "review") {
+  if (viewRaw !== "all" && viewRaw !== "teams" && viewRaw !== "review" && viewRaw !== "completeness") {
     return { ok: false, message: "Некорректный режим просмотра." };
   }
 
   const ropUserId = parseOptionalUuid(input.rop, "РОП");
   if (ropUserId === null) {
     return { ok: false, message: "Некорректный фильтр РОП." };
+  }
+
+  const ropEmployeeGuid = parseOptionalUuid(input.ropEmployee, "РОП (GUID сотрудника)");
+  if (ropEmployeeGuid === null) {
+    return { ok: false, message: "Некорректный фильтр РОП (GUID сотрудника)." };
+  }
+
+  if (ropUserId && ropEmployeeGuid) {
+    return { ok: false, message: "Нельзя одновременно использовать rop и ropEmployee." };
+  }
+
+  const hardwareManagerId = parseOptionalUuid(input.hardwareManager, "менеджера по фурнитуре");
+  if (hardwareManagerId === null) {
+    return { ok: false, message: "Некорректный фильтр менеджера по фурнитуре." };
+  }
+
+  let completenessReasons: CompletenessReason[] | undefined;
+  const rawCompletenessReasons = input.completenessReason ?? input.completenessReasons;
+  if (rawCompletenessReasons !== undefined && rawCompletenessReasons !== null && rawCompletenessReasons !== "") {
+    const values = Array.isArray(rawCompletenessReasons) ? rawCompletenessReasons : [rawCompletenessReasons];
+    completenessReasons = [];
+    for (const value of values) {
+      if (rejectNonScalar(value)) {
+        return { ok: false, message: "Некорректная причина неполноты." };
+      }
+      const raw = String(value).trim();
+      if (!(COMPLETENESS_REASONS as readonly string[]).includes(raw)) {
+        return { ok: false, message: "Некорректная причина неполноты." };
+      }
+      completenessReasons.push(raw as CompletenessReason);
+    }
+  }
+
+  let completenessReasonMode: "any" | "all" | undefined;
+  if (input.completenessReasonMode !== undefined && input.completenessReasonMode !== null && input.completenessReasonMode !== "") {
+    if (rejectNonScalar(input.completenessReasonMode)) {
+      return { ok: false, message: "Некорректный режим фильтра причин." };
+    }
+    const raw = String(input.completenessReasonMode).trim();
+    if (raw !== "any" && raw !== "all") {
+      return { ok: false, message: "Некорректный режим фильтра причин." };
+    }
+    completenessReasonMode = raw;
+  }
+
+  function parseOptionalBooleanFlag(value: unknown, label: string): boolean | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value).trim().toLowerCase();
+    if (raw === "1" || raw === "true" || raw === "yes") {
+      return true;
+    }
+    if (raw === "0" || raw === "false" || raw === "no") {
+      return false;
+    }
+    return null;
+  }
+
+  const missingRop = parseOptionalBooleanFlag(input.missingRop, "missingRop");
+  if (missingRop === null) {
+    return { ok: false, message: "Некорректный фильтр «не указан РОП»." };
+  }
+  const missingManager = parseOptionalBooleanFlag(input.missingManager, "missingManager");
+  if (missingManager === null) {
+    return { ok: false, message: "Некорректный фильтр «не указан менеджер»." };
+  }
+  const missingRegional = parseOptionalBooleanFlag(input.missingRegional, "missingRegional");
+  if (missingRegional === null) {
+    return { ok: false, message: "Некорректный фильтр «не указан региональный»." };
   }
 
   let unassignedCategory: UnassignedCategory | undefined;
@@ -219,6 +310,19 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр регионального менеджера." };
   }
 
+  if (missingRop && ropEmployeeGuid) {
+    return { ok: false, message: "Нельзя одновременно выбрать РОП и фильтр «РОП не указан»." };
+  }
+  if (missingManager && managerId) {
+    return { ok: false, message: "Нельзя одновременно выбрать менеджера и фильтр «Менеджер не указан»." };
+  }
+  if (missingRegional && regionalManagerId) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать регионального и фильтр «Региональный не указан».",
+    };
+  }
+
   let tandoorClub: string | undefined;
   if (input.tandoorClub !== undefined && input.tandoorClub !== null && input.tandoorClub !== "") {
     if (rejectNonScalar(input.tandoorClub)) {
@@ -240,6 +344,16 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректное поле сортировки." };
   }
 
+  const branchPortfolio = parseBranchPortfolio(input.portfolio);
+  if (branchPortfolio === null) {
+    return { ok: false, message: "Некорректный параметр portfolio." };
+  }
+
+  const responsibleKind = parseResponsibleAssignmentKind(input.responsibleKind);
+  if (responsibleKind === null) {
+    return { ok: false, message: "Некорректный тип назначения ответственного." };
+  }
+
   return {
     ok: true,
     query: {
@@ -250,6 +364,15 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       holdingId,
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
+      ropEmployeeGuid,
+      branchPortfolio,
+      responsibleKind,
+      hardwareManagerId,
+      completenessReasons,
+      completenessReasonMode: completenessReasonMode ?? "any",
+      missingRop,
+      missingManager,
+      missingRegional,
       unassignedCategory,
       reviewState,
       reviewDecision,
@@ -287,7 +410,9 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
   const clauses: string[] = [];
   const params: unknown[] = [];
 
-  if (query.managerId) {
+  const orgTeamsManagerHandled = Boolean(query.ropEmployeeGuid) && Boolean(query.managerId);
+  const outletEntityManagerHandled = query.entity === "outlets";
+  if (query.managerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
     params.push(query.managerId);
     clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }

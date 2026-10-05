@@ -21,6 +21,8 @@ export type RolePresentation = {
   defaultEntity: ClientsEntityMode;
   allowedViews: ClientsViewMode[];
   allowedEntities: ClientsEntityMode[];
+  /** When false, entity switcher stays hidden even if multiple entities are allowed. */
+  showEntitySwitcher?: boolean;
   showViewSwitcher: boolean;
   showManagerTeamFilter: boolean;
   showTeamNavigation: boolean;
@@ -57,6 +59,10 @@ export function canUseReviewNavigation(context: AccessContext): boolean {
 }
 
 export function canUseUnassignedNavigation(context: AccessContext): boolean {
+  return canUseReviewNavigation(context);
+}
+
+export function canUseCompletenessNavigation(context: AccessContext): boolean {
   return canUseReviewNavigation(context);
 }
 
@@ -145,7 +151,8 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams"],
-        allowedEntities: ["clients"],
+        allowedEntities: ["clients", "outlets"],
+        showEntitySwitcher: false,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,
@@ -165,7 +172,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         clientsHref: "/clients?view=teams",
         defaultView: "teams",
         defaultEntity: "clients",
-        allowedViews: ["all", "teams", "review"],
+        allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
         showViewSwitcher: true,
         showManagerTeamFilter: true,
@@ -183,7 +190,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         clientsHref: "/clients?view=all",
         defaultView: "all",
         defaultEntity: "clients",
-        allowedViews: ["all", "teams", "review"],
+        allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
         showViewSwitcher: true,
         showManagerTeamFilter: true,

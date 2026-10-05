@@ -3,6 +3,18 @@ export const SYNTHETIC_CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
+export const NAV_ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
+export const NAV_ROP_B = "2b4cd6c6-a29e-11e3-86da-08606e7fce4d";
+export const NAV_CLIENT_C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const NAV_CLIENT_C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+export const NAV_OUTLET_T2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+export const NAV_OUTLET_T1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+export const NAV_OUTLET_C3_T3 = "88888888-8888-4888-8888-888888888803";
+
+export const COMPLETENESS_CLIENT_BOTH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const COMPLETENESS_CLIENT_FILLED = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+export const COMPLETENESS_STORE_MISSING = "88888888-8888-4888-8888-888888888801";
+
 export type MockRole = "admin" | "manager" | "marketer" | "anonymous";
 export type ClientsBusinessRole = "manager" | "regional_manager" | "rop" | "director" | "admin";
 
@@ -117,6 +129,106 @@ export function syntheticOutletsListPayload() {
   };
 }
 
+function navClientItem(guid: string, name: string) {
+  return {
+    guid,
+    name,
+    holding: { id: null, name: "" },
+    manager: {
+      id: SYNTHETIC_MANAGER_A,
+      name: "Менеджер Иванов",
+      shortId: "22222222",
+    },
+    address: "Addr",
+    phonePreview: { primary: null, extraCount: 0 },
+  };
+}
+
+function navOutletItem(guidStore: string, clientName: string, guidClient: string) {
+  return {
+    guidStore,
+    guidClient,
+    clientName,
+    outletLabel: "Store " + guidStore.slice(0, 8),
+    address: "Store street",
+    isClosed: false,
+    closureStatusLabel: "Открыта",
+    holdingName: "",
+    manager: {
+      id: SYNTHETIC_MANAGER_A,
+      name: "Менеджер Иванов",
+      shortId: "22222222",
+    },
+    regionalManager: { id: null, name: "", shortId: "", hasSource: false },
+    warehouse: { value: false, label: "Нет", hasSource: true },
+    tandoorClub: { value: null, hasSource: false },
+  };
+}
+
+export function portfolioAwareClientsListPayload(url: URL) {
+  const view = url.searchParams.get("view");
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  const portfolio = url.searchParams.get("portfolio");
+  const entity = url.searchParams.get("entity") || "clients";
+
+  if (view !== "teams" || !ropEmployee || !portfolio) {
+    return null;
+  }
+
+  if (entity === "outlets" && portfolio === "outlets") {
+    if (ropEmployee === NAV_ROP_A) {
+      return {
+        items: [navOutletItem(NAV_OUTLET_T2, "Client C1", NAV_CLIENT_C1)],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_B) {
+      return {
+        items: [
+          navOutletItem(NAV_OUTLET_T1, "Client C1", NAV_CLIENT_C1),
+          navOutletItem(NAV_OUTLET_C3_T3, "Client C3", "88888888-8888-4888-8888-888888888888"),
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
+  }
+
+  if (entity === "clients" && portfolio === "clients") {
+    if (ropEmployee === NAV_ROP_A) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_B) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C2, "Client C2")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
+  }
+
+  return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
+}
+
 export function syntheticOptionsPayload() {
   return {
     managers: [
@@ -140,7 +252,78 @@ export function syntheticOptionsPayload() {
         shortId: "AAAAAAAA",
       },
     ],
+    rops: [
+      {
+        id: NAV_ROP_A,
+        name: "ROP Alpha",
+        shortId: "11A0C069",
+      },
+      {
+        id: NAV_ROP_B,
+        name: "ROP Beta",
+        shortId: "2B4CD6C6",
+      },
+    ],
   };
+}
+
+export function filterAwareAllListPayload(url: URL) {
+  if (url.searchParams.get("view") !== "all") {
+    return null;
+  }
+  const entity = url.searchParams.get("entity") || "clients";
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  const manager = url.searchParams.get("manager");
+  const missingManager = url.searchParams.get("missingManager") === "1";
+  const missingRop = url.searchParams.get("missingRop") === "1";
+
+  if (entity === "clients") {
+    if (missingRop) {
+      return {
+        items: [navClientItem("99999999-9999-4999-8999-999999999999", "Missing ROP Client")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (ropEmployee === NAV_ROP_A && manager === SYNTHETIC_MANAGER_A) {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    return null;
+  }
+
+  if (missingManager) {
+    return {
+      items: [navOutletItem("88888888-8888-4888-8888-888888888805", "Client C1", NAV_CLIENT_C1)],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+      isEmptyDatabase: false,
+    };
+  }
+
+  if (ropEmployee === NAV_ROP_B && manager === SYNTHETIC_MANAGER_A) {
+    return {
+      items: [navOutletItem(NAV_OUTLET_T1, "Client C1", NAV_CLIENT_C1)],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+      isEmptyDatabase: false,
+    };
+  }
+
+  return null;
 }
 
 function userPayloadForBusinessRole(role: ClientsBusinessRole) {
@@ -219,7 +402,8 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           defaultView: "teams",
           defaultEntity: "clients",
           allowedViews: ["all", "teams"],
-          allowedEntities: ["clients"],
+          allowedEntities: ["clients", "outlets"],
+          showEntitySwitcher: false,
           showViewSwitcher: true,
           showManagerTeamFilter: true,
           showTeamNavigation: true,
@@ -232,7 +416,7 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           pageTitle: "Вся клиентская база",
           defaultView: "teams",
           defaultEntity: "clients",
-          allowedViews: ["all", "teams", "review"],
+          allowedViews: ["all", "teams", "review", "completeness"],
           allowedEntities: ["clients", "outlets"],
           showViewSwitcher: true,
           showManagerTeamFilter: true,
@@ -246,7 +430,7 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           pageTitle: "Клиенты",
           defaultView: "all",
           defaultEntity: "clients",
-          allowedViews: ["all", "teams", "review"],
+          allowedViews: ["all", "teams", "review", "completeness"],
           allowedEntities: ["clients", "outlets"],
           showViewSwitcher: true,
           showManagerTeamFilter: true,
@@ -513,10 +697,110 @@ export function jsonResponse(status: number, body: unknown): {
   };
 }
 
+function completenessQueueItem(input: {
+  entityKind: "client" | "outlet";
+  guidClient: string;
+  guidStore?: string | null;
+  name: string;
+  parentClientName?: string | null;
+  reasons: string[];
+  reasonLabels: string[];
+}) {
+  return {
+    entityKind: input.entityKind,
+    guidClient: input.guidClient,
+    guidStore: input.guidStore ?? null,
+    name: input.name,
+    address: "",
+    parentClientName: input.parentClientName ?? null,
+    knownAssignees: {
+      rop: { guid: null, name: null },
+      manager: { guid: null, name: null },
+      regional: { guid: null, name: null },
+    },
+    reasons: input.reasons,
+    reasonLabels: input.reasonLabels,
+    lastImportedAt: "2026-10-05T12:00:00.000Z",
+    lastImportedAtLabel: "05.10.2026, 12:00",
+    reviewState: null,
+    reviewStateLabel: null,
+    hasLinkedAccount: null,
+  };
+}
+
+const COMPLETENESS_QUEUE_FIXTURE = [
+  completenessQueueItem({
+    entityKind: "client",
+    guidClient: COMPLETENESS_CLIENT_BOTH,
+    name: "Client Both Missing",
+    reasons: ["missing_rop", "missing_manager"],
+    reasonLabels: ["Не указан РОП", "Не указан ответственный менеджер"],
+  }),
+  completenessQueueItem({
+    entityKind: "outlet",
+    guidClient: COMPLETENESS_CLIENT_FILLED,
+    guidStore: COMPLETENESS_STORE_MISSING,
+    name: "Store Missing Assignments",
+    parentClientName: "Client Filled",
+    reasons: ["missing_rop", "missing_manager"],
+    reasonLabels: ["Не указан РОП", "Не указан ответственный менеджер"],
+  }),
+];
+
+export function completenessAwareQueuePayload(url: URL) {
+  const entity = url.searchParams.get("entity") || "clients";
+  const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+  const reasons = url.searchParams.getAll("completenessReason");
+
+  let items = COMPLETENESS_QUEUE_FIXTURE.filter((item) =>
+    entity === "outlets" ? item.entityKind === "outlet" : item.entityKind === "client",
+  );
+
+  if (q) {
+    items = items.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        (item.parentClientName && item.parentClientName.toLowerCase().includes(q)),
+    );
+  }
+
+  if (reasons.length > 0) {
+    items = items.filter((item) => reasons.some((reason) => item.reasons.includes(reason)));
+  }
+
+  const ropEmployee = url.searchParams.get("ropEmployee");
+  if (ropEmployee) {
+    items = items.filter((item) => item.knownAssignees?.rop?.guid === ropEmployee);
+  }
+  const manager = url.searchParams.get("manager");
+  if (manager) {
+    items = items.filter((item) => item.knownAssignees?.manager?.guid === manager);
+  }
+
+  const page = Number(url.searchParams.get("page") || "1");
+  const pageSize = Number(url.searchParams.get("pageSize") || "50");
+  const total = items.length;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+  const start = (page - 1) * pageSize;
+
+  return {
+    items: items.slice(start, start + pageSize),
+    total,
+    page,
+    pageSize,
+    totalPages,
+    summary: {
+      clients: COMPLETENESS_QUEUE_FIXTURE.filter((item) => item.entityKind === "client").length,
+      outlets: COMPLETENESS_QUEUE_FIXTURE.filter((item) => item.entityKind === "outlet").length,
+      records: COMPLETENESS_QUEUE_FIXTURE.length,
+    },
+  };
+}
+
 export function resolveMockResponse(
   url: URL,
   options: MockOptions,
-  state: { listCalls: number; catalogProductsCalls: number },
+  state: { listCalls: number; catalogProductsCalls: number; lastCompletenessQueueUrl?: string },
   method = "GET",
   requestBody?: string,
 ): { status: number; contentType: string; body: string } | null {
@@ -551,6 +835,89 @@ export function resolveMockResponse(
 
   if (path === "/api/clients/sync-status") {
     return jsonResponse(200, syntheticSyncStatusPayload());
+  }
+
+  if (path === "/api/clients/org-structure") {
+    return jsonResponse(200, {
+      director: {
+        employeeGuid: "a2bacfab-ebec-11e3-a1dd-08606e7fce4d",
+        name: "Synthetic Director",
+        shortId: "A2BACFAB",
+        rosterPost: "Директор",
+        hasLinkedAccount: true,
+        note: "Организационная роль директора задаётся по GUID 1С.",
+      },
+      rops: [
+        {
+          employeeGuid: NAV_ROP_A,
+          name: "ROP Alpha",
+          shortId: "11A0C069",
+          rosterPost: "Руководитель отдела продаж",
+          hasLinkedAccount: true,
+          hasAssignedPortfolio: true,
+          portfolioNote: null,
+          managerCount: 2,
+          regionalCount: 0,
+          teamMemberCount: 2,
+          uniqueClientCount: 1,
+          uniqueOutletCount: 1,
+          parentClientCount: 0,
+          sources: ["roster", "assignment"],
+        },
+        {
+          employeeGuid: NAV_ROP_B,
+          name: "ROP Beta",
+          shortId: "2B4CD6C6",
+          rosterPost: "Руководитель отдела продаж",
+          hasLinkedAccount: true,
+          hasAssignedPortfolio: true,
+          portfolioNote: null,
+          managerCount: 2,
+          regionalCount: 1,
+          teamMemberCount: 2,
+          uniqueClientCount: 1,
+          uniqueOutletCount: 2,
+          parentClientCount: 1,
+          sources: ["roster", "assignment"],
+        },
+      ],
+      undefinedTeam: [],
+      rosterLoaded: true,
+      limitationNote: "Структура построена по назначениям 1С.",
+    });
+  }
+
+  if (path.match(/^\/api\/clients\/org-structure\/[^/]+\/responsibles$/)) {
+    return jsonResponse(200, {
+      items: [
+        {
+          kind: "manager",
+          employeeGuid: SYNTHETIC_MANAGER_A,
+          name: "Менеджер Иванов",
+          shortId: "22222222",
+          hasLinkedAccount: true,
+          rosterInOpt: true,
+          clientCount: 2,
+          outletCount: 0,
+        },
+      ],
+    });
+  }
+
+  if (path === "/api/clients/completeness-queue") {
+    state.lastCompletenessQueueUrl = url.search;
+    const payload = completenessAwareQueuePayload(url);
+    if (payload) {
+      return jsonResponse(200, payload);
+    }
+    return jsonResponse(200, {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      totalPages: 0,
+      summary: { clients: 0, outlets: 0, records: 0 },
+    });
   }
 
   if (path === "/api/clients/teams") {
@@ -712,6 +1079,14 @@ export function resolveMockResponse(
     }
     if (options.listStatus && options.listStatus !== 200) {
       return jsonResponse(options.listStatus, options.listBody ?? { error: { message: "Error" } });
+    }
+    const portfolioPayload = portfolioAwareClientsListPayload(url);
+    if (portfolioPayload) {
+      return jsonResponse(200, portfolioPayload);
+    }
+    const filterPayload = filterAwareAllListPayload(url);
+    if (filterPayload) {
+      return jsonResponse(200, filterPayload);
     }
     if (entity === "outlets") {
       return jsonResponse(200, options.outletsListBody ?? syntheticOutletsListPayload());

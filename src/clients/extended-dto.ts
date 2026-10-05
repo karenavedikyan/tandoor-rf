@@ -726,6 +726,7 @@ function resolveSnapshotManagerLinks(
 
 export type ClientExtendedDtoOptions = {
   linkedEmployeeGuids?: ReadonlySet<string>;
+  ropTeamEmployeeGuids?: ReadonlySet<string>;
 };
 
 export function toClientExtendedDto(
@@ -786,8 +787,12 @@ export function toClientExtendedDto(
     : null;
   const currentOutletsRaw = readCurrentOutlets(snapshot);
   const clientManagerGuid = row.guid_manager ?? "";
+  const clientHeadOfSalesGuid = snapshot?.headOfSales?.guid ?? null;
   const scopedOutlets = context
-    ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw)
+    ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw, {
+        clientHeadOfSalesGuid,
+        ropTeamEmployeeGuids: options?.ropTeamEmployeeGuids,
+      })
     : outletAccessGranted
       ? currentOutletsRaw
       : [];

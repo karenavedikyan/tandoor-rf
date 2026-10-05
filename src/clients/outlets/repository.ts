@@ -12,6 +12,9 @@ import {
   outletSnapshotSubquery,
   outletStoreAddressSql,
 } from "./list-filter";
+import { applyOrgTeamsOutletFilter } from "../org/teams-list-filters";
+import { applyOutletListAssignmentFilters } from "../list-assignment-filters";
+import { ListClientsError } from "../repository";
 import { buildOutletScope, scopedHasOutletsClause } from "./scope-sql";
 
 type CountRow = { count: string };
@@ -32,7 +35,20 @@ export async function listRetailOutlets(
   context: AccessContext,
   input: ClientsListQuery,
 ): Promise<RetailOutletsListResponse> {
-  if (input.view !== "all") {
+  const ropEmployeeGuid =
+    input.ropEmployeeGuid ??
+    (input.view === "teams" &&
+    context.role === "rop" &&
+    context.employeeId &&
+    !input.ropUserId
+      ? context.employeeId.toLowerCase()
+      : undefined);
+
+  if (input.view === "teams" && ropEmployeeGuid) {
+    if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
+      throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
+    }
+  } else if (input.view !== "all") {
     return {
       items: [],
       total: 0,
@@ -44,7 +60,7 @@ export async function listRetailOutlets(
   }
 
   const outletScope = buildOutletScope(context);
-  const userFilter = buildClientsFilter({ ...input, view: "all", q: "" });
+  const userFilter = buildClientsFilter({ ...input, q: "" });
   const filterClause = userFilter.whereSql
     ? userFilter.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc.")
     : "";
@@ -83,6 +99,16 @@ export async function listRetailOutlets(
   if (outletListFilter.whereSql) {
     const outletClause = outletListFilter.whereSql.replace(/^WHERE\s+/, "");
     combinedWhere = mergeSqlFilters(combinedWhere, [outletClause], outletListFilter.params);
+  }
+
+  if (input.view === "teams" && ropEmployeeGuid) {
+    const orgFilter = applyOrgTeamsOutletFilter({ whereSql: "", params: [] }, input, ropEmployeeGuid);
+    if (orgFilter.whereSql) {
+      const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");
+      combinedWhere = mergeSqlFilters(combinedWhere, [orgClause], orgFilter.params);
+    }
+  } else if (input.view === "all") {
+    combinedWhere = applyOutletListAssignmentFilters(combinedWhere, input);
   }
 
   const fromSql = `

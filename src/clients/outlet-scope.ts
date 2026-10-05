@@ -6,12 +6,28 @@ import type { AccessContext } from "../access/types";
 import { query } from "../db/pool";
 import { readExtendedSnapshot } from "../onec-clients/extended-apply";
 import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
+import { loadRopTeamEmployeeGuids } from "../access/rop-read-scope";
 import { filterRetailOutletsForContext } from "./outlet-access";
 
 type ClientOutletRow = {
   guid_manager: string;
   extended_snapshot: unknown;
 };
+
+async function resolveRopOutletFilterOptions(
+  context: AccessContext,
+  extendedSnapshot: unknown,
+): Promise<{ clientHeadOfSalesGuid: string | null; ropTeamEmployeeGuids: Set<string> | null }> {
+  if (context.role !== "rop" || !context.employeeId) {
+    return { clientHeadOfSalesGuid: null, ropTeamEmployeeGuids: null };
+  }
+  const snapshot = readExtendedSnapshot(extendedSnapshot);
+  const ropTeamEmployeeGuids = await loadRopTeamEmployeeGuids(context.userId, context.employeeId);
+  return {
+    clientHeadOfSalesGuid: snapshot?.headOfSales?.guid ?? null,
+    ropTeamEmployeeGuids,
+  };
+}
 
 function readCurrentOutlets(snapshot: unknown): ParsedRetailOutlet[] {
   const parsed = readExtendedSnapshot(snapshot);
@@ -56,7 +72,8 @@ export async function listAccessibleOutletGuidsForClient(
     return new Set();
   }
   const outlets = readCurrentOutlets(row.extended_snapshot);
-  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets);
+  const ropOptions = await resolveRopOutletFilterOptions(context, row.extended_snapshot);
+  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, ropOptions);
   return confirmedOutletGuids(filtered);
 }
 
@@ -74,12 +91,13 @@ export type LockedClientAccessRow = {
   accessibleStoreGuids: Set<string>;
 };
 
-function accessibleStoreGuidsFromRow(
+async function accessibleStoreGuidsFromRow(
   context: AccessContext,
   row: { guid_manager: string; extended_snapshot: unknown },
-): Set<string> {
+): Promise<Set<string>> {
   const outlets = readCurrentOutlets(row.extended_snapshot);
-  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets);
+  const ropOptions = await resolveRopOutletFilterOptions(context, row.extended_snapshot);
+  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, ropOptions);
   return confirmedOutletGuids(filtered);
 }
 
@@ -129,7 +147,7 @@ export async function loadFreshClientAndOutletAccess(
     return null;
   }
 
-  const accessibleStoreGuids = accessibleStoreGuidsFromRow(context, row);
+  const accessibleStoreGuids = await accessibleStoreGuidsFromRow(context, row);
   if (!accessibleStoreGuids.has(storeGuid.toLowerCase())) {
     return null;
   }

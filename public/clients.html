@@ -29,6 +29,9 @@
               <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
                 Требуют проверки
               </button>
+              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="completeness" id="view-completeness-tab">
+                Незаполненные назначения
+              </button>
             </nav>
 
             <nav id="entity-switcher" class="clients-view-switcher clients-hidden" aria-label="Тип списка">
@@ -53,6 +56,24 @@
                 />
               </label>
               <div class="clients-toolbar__row clients-toolbar__row--filters">
+                <div class="clients-field clients-hidden" id="rop-filter-wrap">
+                  <span class="clients-field__label" id="rop-filter-label">РОП</span>
+                  <div class="clients-combobox" id="rop-combobox">
+                    <input
+                      id="rop-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="rop-filter-label"
+                      aria-controls="rop-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все РОП"
+                    />
+                    <input type="hidden" id="rop-filter" value="" />
+                    <ul id="rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
                 <div class="clients-field">
                   <span class="clients-field__label" id="manager-filter-label">Менеджер 1С</span>
                   <div class="clients-combobox" id="manager-combobox">
@@ -160,6 +181,20 @@
                   <span class="clients-field__label">Нераспределённое</span>
                   <select id="unassigned-filter" class="clients-field__select">
                     <option value="">Все категории</option>
+                  </select>
+                </label>
+                <label class="clients-field clients-hidden" id="completeness-reason-filter-wrap">
+                  <span class="clients-field__label">Причина неполноты</span>
+                  <select id="completeness-reason-filter" class="clients-field__select" multiple size="1">
+                    <option value="missing_rop">Не указан РОП</option>
+                    <option value="missing_manager">Не указан менеджер</option>
+                    <option value="missing_regional">Не указан региональный</option>
+                    <option value="responsible_outside_roster">Вне справочника ОПТ</option>
+                    <option value="invalid_or_conflicting_assignment">Некорректное назначение</option>
+                    <option value="org_role_conflict">Конфликт орг. роли</option>
+                    <option value="field_not_provided">Поле не передано</option>
+                    <option value="data_stale">Данные устарели</option>
+                    <option value="roster_unavailable">Справочник ОПТ недоступен</option>
                   </select>
                 </label>
                 <button id="reset-filters" type="button" class="workspace-button workspace-button--ghost">

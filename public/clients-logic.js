@@ -8,6 +8,9 @@
   "use strict";
 
   var NO_DATA_LABEL = "Нет данных";
+  var MISSING_ROP_ID = "__missing_rop__";
+  var MISSING_MANAGER_ID = "__missing_manager__";
+  var MISSING_REGIONAL_ID = "__missing_regional__";
 
   var LIST_QUERY_KEYS = [
     "view",
@@ -17,6 +20,7 @@
     "holding",
     "phone",
     "rop",
+    "ropEmployee",
     "unassignedCategory",
     "reviewState",
     "reviewDecision",
@@ -27,7 +31,14 @@
     "outletStatus",
     "warehouse",
     "regionalManager",
+    "hardwareManager",
     "tandoorClub",
+    "portfolio",
+    "responsibleKind",
+    "completenessReason",
+    "missingRop",
+    "missingManager",
+    "missingRegional",
     "page",
   ];
 
@@ -276,7 +287,7 @@
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
     var view = params.get("view") || "all";
-    if (view !== "all" && view !== "teams" && view !== "review") {
+    if (view !== "all" && view !== "teams" && view !== "review" && view !== "completeness") {
       view = "all";
     }
     var entity = params.get("entity") || "clients";
@@ -291,6 +302,7 @@
       holding: params.get("holding") || "",
       phone: params.get("phone") || "all",
       rop: params.get("rop") || "",
+      ropEmployee: params.get("ropEmployee") || "",
       unassignedCategory: params.get("unassignedCategory") || "",
       reviewState: params.get("reviewState") || "",
       reviewDecision: params.get("reviewDecision") || "",
@@ -298,7 +310,21 @@
       outletStatus: params.get("outletStatus") || "all",
       warehouse: params.get("warehouse") || "all",
       regionalManager: params.get("regionalManager") || "",
+      hardwareManager: params.get("hardwareManager") || "",
+      portfolio: params.get("portfolio") || "",
+      responsibleKind: params.get("responsibleKind") || "",
+      completenessReasons: params
+        .getAll("completenessReason")
+        .map(function (value) {
+          return value.trim();
+        })
+        .filter(function (value) {
+          return value.length > 0;
+        }),
       tandoorClub: params.get("tandoorClub") || "",
+      missingRop: params.get("missingRop") === "1",
+      missingManager: params.get("missingManager") === "1",
+      missingRegional: params.get("missingRegional") === "1",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
@@ -321,15 +347,41 @@
     return next;
   }
 
+  function isBranchPortfolioList(state) {
+    return (
+      state &&
+      state.view === "teams" &&
+      state.ropEmployee &&
+      (state.portfolio === "clients" || state.portfolio === "outlets")
+    );
+  }
+
+  function hasResponsibleSelection(state) {
+    if (!state || state.view !== "teams" || !state.ropEmployee) {
+      return false;
+    }
+    if (state.responsibleKind === "regional") {
+      return Boolean(state.regionalManager);
+    }
+    if (state.responsibleKind === "hardware") {
+      return Boolean(state.hardwareManager);
+    }
+    if (state.responsibleKind === "manager") {
+      return Boolean(state.manager);
+    }
+    return Boolean(state.manager);
+  }
+
   function buildListQueryString(state) {
     var params = new URLSearchParams();
-    if (state.view && state.view !== "all") params.set("view", state.view);
+    if (state.view) params.set("view", state.view);
     if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
     if (state.rop) params.set("rop", state.rop);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
     if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
@@ -337,6 +389,17 @@
     if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
     if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    if (state.hardwareManager) params.set("hardwareManager", state.hardwareManager);
+    if (state.portfolio) params.set("portfolio", state.portfolio);
+    if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
+    if (state.view === "completeness" && state.completenessReasons && state.completenessReasons.length > 0) {
+      state.completenessReasons.forEach(function (reason) {
+        params.append("completenessReason", reason);
+      });
+    }
+    if (state.missingRop) params.set("missingRop", "1");
+    if (state.missingManager) params.set("missingManager", "1");
+    if (state.missingRegional) params.set("missingRegional", "1");
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
@@ -401,9 +464,12 @@
     };
   }
 
-  function comboboxLabelForId(selectedId, options) {
+  function comboboxLabelForId(selectedId, options, missingEntry) {
     if (!selectedId) {
       return "";
+    }
+    if (missingEntry && selectedId === missingEntry.id) {
+      return missingEntry.label;
     }
     var match = options.find(function (item) {
       return item.id === selectedId;
@@ -411,9 +477,26 @@
     return match ? optionLabel(match) : selectedId.slice(0, 8).toUpperCase();
   }
 
-  function comboboxApplyFromUrl(model, selectedId, options) {
+  function resolveComboboxSelection(selectedId, missingEntry) {
+    if (!selectedId) {
+      return { guid: "", missing: false };
+    }
+    if (missingEntry && selectedId === missingEntry.id) {
+      return { guid: "", missing: true };
+    }
+    return { guid: selectedId, missing: false };
+  }
+
+  function comboboxSelectedIdFromState(guid, missing, missingId) {
+    if (missing) {
+      return missingId;
+    }
+    return guid || "";
+  }
+
+  function comboboxApplyFromUrl(model, selectedId, options, missingEntry) {
     model.selectedId = selectedId || "";
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
@@ -426,23 +509,26 @@
     return model;
   }
 
-  function comboboxOnBlur(model, options) {
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+  function comboboxOnBlur(model, options, missingEntry) {
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
   }
 
-  function comboboxSelect(model, selectedId, options) {
+  function comboboxSelect(model, selectedId, options, missingEntry) {
     model.selectedId = selectedId || "";
-    model.searchText = comboboxLabelForId(model.selectedId, options);
+    model.searchText = comboboxLabelForId(model.selectedId, options, missingEntry);
     model.activeIndex = -1;
     model.open = false;
     return model;
   }
 
-  function comboboxListEntries(options, query, allLabel) {
+  function comboboxListEntries(options, query, allLabel, missingEntry) {
     var entries = [{ id: "", label: allLabel }];
+    if (missingEntry) {
+      entries.push({ id: missingEntry.id, label: missingEntry.label });
+    }
     filterOptions(options, query).forEach(function (item) {
       entries.push({ id: item.id, label: optionLabel(item) });
     });
@@ -648,6 +734,7 @@
     var listEl = config.listEl;
     var options = config.options;
     var allLabel = config.allLabel;
+    var missingEntry = config.missingEntry || null;
     var listboxId = config.listboxId;
     var onApplySelection = config.onApplySelection;
 
@@ -660,7 +747,7 @@
     var ownerDocument = config.root.ownerDocument || (typeof document !== "undefined" ? document : null);
 
     function renderList() {
-      var entries = comboboxListEntries(options(), model.searchText, allLabel);
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
       listEl.innerHTML = "";
       entries.forEach(function (entry, index) {
         var li = (ownerDocument || listEl.ownerDocument).createElement("li");
@@ -693,7 +780,7 @@
 
     function closeList(restoreLabel) {
       if (restoreLabel) {
-        comboboxOnBlur(model, options());
+        comboboxOnBlur(model, options(), missingEntry);
       }
       model.open = false;
       model.activeIndex = -1;
@@ -704,7 +791,7 @@
     }
 
     function applySelection(selectedId) {
-      comboboxSelect(model, selectedId, options());
+      comboboxSelect(model, selectedId, options(), missingEntry);
       syncDom();
       closeList(false);
       onApplySelection(model.selectedId);
@@ -721,7 +808,7 @@
     });
 
     input.addEventListener("keydown", function (event) {
-      var entries = comboboxListEntries(options(), model.searchText, allLabel);
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
       if (event.key === "ArrowDown") {
         event.preventDefault();
         model.open = true;
@@ -788,11 +875,11 @@
           hidden.value = model.selectedId;
           return;
         }
-        comboboxApplyFromUrl(model, selectedId, options());
+        comboboxApplyFromUrl(model, selectedId, options(), missingEntry);
         syncDom();
       },
       reset: function () {
-        comboboxSelect(model, "", options());
+        comboboxSelect(model, "", options(), missingEntry);
         syncDom();
         closeList(false);
       },
@@ -803,6 +890,9 @@
 
   return {
     NO_DATA_LABEL: NO_DATA_LABEL,
+    MISSING_ROP_ID: MISSING_ROP_ID,
+    MISSING_MANAGER_ID: MISSING_MANAGER_ID,
+    MISSING_REGIONAL_ID: MISSING_REGIONAL_ID,
     LIST_QUERY_KEYS: LIST_QUERY_KEYS,
     columnDefinitions: columnDefinitions,
     defaultVisibleColumnIds: defaultVisibleColumnIds,
@@ -820,6 +910,8 @@
     readStateFromSearch: readStateFromSearch,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
+    isBranchPortfolioList: isBranchPortfolioList,
+    hasResponsibleSelection: hasResponsibleSelection,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,
     resolveAddressPresentation: resolveAddressPresentation,
@@ -836,6 +928,8 @@
     comboboxOnBlur: comboboxOnBlur,
     comboboxSelect: comboboxSelect,
     comboboxListEntries: comboboxListEntries,
+    resolveComboboxSelection: resolveComboboxSelection,
+    comboboxSelectedIdFromState: comboboxSelectedIdFromState,
     comboboxMoveActive: comboboxMoveActive,
     createDetailController: createDetailController,
     mountCombobox: mountCombobox,

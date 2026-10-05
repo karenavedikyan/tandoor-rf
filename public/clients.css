@@ -656,6 +656,29 @@
   border-color: var(--rf-primary);
 }
 
+.clients-team-card--static {
+  cursor: default;
+}
+
+.clients-team-card--static:hover {
+  border-color: var(--rf-border);
+}
+
+.clients-inline-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rf-primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.clients-inline-link:hover {
+  color: color-mix(in srgb, var(--rf-primary) 80%, var(--rf-text));
+}
+
 .clients-unassigned-note {
   margin: 0 0 0.65rem;
   font-size: 0.85rem;

@@ -1,9 +1,15 @@
 import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
+import { loadRopTeamEmployeeGuids } from "../access/rop-read-scope";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { getPool, query } from "../db/pool";
 import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
+import {
+  applyOrgTeamsClientFilter,
+} from "./org/teams-list-filters";
+import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
+import { applyClientListAssignmentFilters, buildScopedRopOptionsSql } from "./list-assignment-filters";
 import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
@@ -16,6 +22,7 @@ import { buildClientsFilter } from "./query";
 import { outletsJsonArraySql, scopedHasOutletsClause, scopedOutletsCountSql } from "./outlets/scope-sql";
 import { buildClientsOrderBy } from "./sort";
 import {
+  canUseCompletenessNavigation,
   canUseReviewNavigation,
   canUseUnassignedNavigation,
 } from "./role-presentation";
@@ -77,6 +84,10 @@ async function resolveScopedFilter(
     throw new ListClientsError("Очередь ревизии недоступна для вашей роли.", "FORBIDDEN");
   }
 
+  if (input.view === "completeness" && !canUseCompletenessNavigation(context)) {
+    throw new ListClientsError("Очередь незаполненных назначений недоступна для вашей роли.", "FORBIDDEN");
+  }
+
   const hasReviewFilter =
     (input.reviewState && input.reviewState !== "any") ||
     (input.reviewDecision && input.reviewDecision !== "any");
@@ -91,6 +102,15 @@ async function resolveScopedFilter(
     );
   }
 
+  const ropEmployeeGuid =
+    input.ropEmployeeGuid ??
+    (input.view === "teams" &&
+    context.role === "rop" &&
+    context.employeeId &&
+    !input.ropUserId
+      ? context.employeeId.toLowerCase()
+      : undefined);
+
   if (input.ropUserId && input.managerId) {
     try {
       await assertManagerInTeamScope(context, input.ropUserId, input.managerId);
@@ -100,6 +120,14 @@ async function resolveScopedFilter(
       }
       throw error;
     }
+  } else if (
+    ropEmployeeGuid &&
+    input.view === "teams" &&
+    (input.managerId || input.regionalManagerId || input.hardwareManagerId || input.branchPortfolio)
+  ) {
+    if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
+      throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
+    }
   } else if (input.ropUserId && input.view === "teams") {
     if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
       throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
@@ -107,14 +135,23 @@ async function resolveScopedFilter(
     if (context.role === "rop" && context.userId !== input.ropUserId) {
       throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
     }
+  } else if (ropEmployeeGuid && input.view === "teams") {
+    if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
+      throw new ListClientsError("Нет доступа к структуре по назначениям.", "FORBIDDEN");
+    }
+    if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
+      throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
+    }
   }
 
   const portfolioManagerId =
-    input.view === "teams" && input.managerId ? input.managerId : undefined;
+    input.view === "teams" && input.managerId && !ropEmployeeGuid ? input.managerId : undefined;
   let userFilter = buildClientsFilter(
     portfolioManagerId ? { ...input, managerId: undefined } : input,
   );
-  const scope = buildClientScopeSql(context);
+  const scope = buildClientScopeSql(context, {
+    ropDirectClientList: context.role === "rop" && input.entity === "clients",
+  });
 
   if (portfolioManagerId) {
     userFilter = combineScopeAndFilter(userFilter, {
@@ -132,9 +169,23 @@ async function resolveScopedFilter(
     );
   }
 
-  if (input.view === "teams" && input.ropUserId && !input.managerId) {
+  if (input.view === "teams" && ropEmployeeGuid) {
+    userFilter = applyOrgTeamsClientFilter(userFilter, input, ropEmployeeGuid);
+  } else if (input.view === "teams" && input.ropUserId && !input.managerId) {
     userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));
   }
+
+  if (input.completenessReasons && input.completenessReasons.length > 0) {
+    userFilter = combineScopeAndFilter(
+      userFilter,
+      buildCompletenessReasonsFilter(
+        input.completenessReasons,
+        input.completenessReasonMode ?? "any",
+      ),
+    );
+  }
+
+  userFilter = applyClientListAssignmentFilters(userFilter, input);
 
   const reviewJoin = buildReviewStateFilter(
     input.reviewState ?? (input.view === "review" ? "any" : "any"),
@@ -159,14 +210,19 @@ async function resolveScopedFilter(
       selectExtraParams = [context.employeeId];
     }
   }
-  const outletsCountExpr = scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+  const outletsCountExpr =
+    combined.whereSql === "WHERE FALSE"
+      ? "0"
+      : scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
-    combined = mergeSqlFilters(
-      combined,
-      [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
-      [],
-    );
+    if (combined.whereSql !== "WHERE FALSE") {
+      combined = mergeSqlFilters(
+        combined,
+        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+        [],
+      );
+    }
   }
 
   const includeReview =
@@ -303,7 +359,9 @@ export async function listClients(
 }
 
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
-  const scope = buildClientScopeSql(context);
+  const scope = buildClientScopeSql(context, {
+    ropDirectClientList: context.role === "rop",
+  });
   const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
   const holdingFilter = combineScopeAndFilter(scope, {
     whereSql: "WHERE guid_holding IS NOT NULL",
@@ -352,10 +410,14 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     managerFilter.params,
   );
 
+  const ropOptionsQuery = buildScopedRopOptionsSql(managerFilter.whereSql, managerFilter.params);
+  const rops = await query<OptionRow>(ropOptionsQuery.sql, ropOptionsQuery.params);
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     holdings: holdings.rows.map((row) => toClientOption(row.id, row.name)),
     regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
+    rops: rops.rows.map((row) => toClientOption(row.id, row.name)),
   };
 }
 
@@ -384,6 +446,10 @@ export async function getClientByGuid(
   }
 
   const linkedEmployeeGuids = await loadActiveLinkedEmployeeGuids();
+  const ropTeamEmployeeGuids =
+    context.role === "rop" && context.employeeId
+      ? await loadRopTeamEmployeeGuids(context.userId, context.employeeId)
+      : undefined;
 
   const result = await query<ClientRow>(
     `
@@ -416,7 +482,7 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row, context, { linkedEmployeeGuids });
+  return toClientDetail(row, context, { linkedEmployeeGuids, ropTeamEmployeeGuids });
 }
 
 export async function canReadClientGuid(

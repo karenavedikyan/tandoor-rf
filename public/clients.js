@@ -10,6 +10,10 @@
   var accessPanel = document.getElementById("access-panel");
   var initPanel = document.getElementById("init-panel");
   var searchInput = document.getElementById("search-input");
+  var ropFilterWrap = document.getElementById("rop-filter-wrap");
+  var ropFilter = document.getElementById("rop-filter");
+  var ropFilterInput = document.getElementById("rop-filter-input");
+  var ropFilterList = document.getElementById("rop-filter-list");
   var managerFilter = document.getElementById("manager-filter");
   var managerFilterInput = document.getElementById("manager-filter-input");
   var managerFilterList = document.getElementById("manager-filter-list");
@@ -29,6 +33,7 @@
   var entitySwitcherEl = document.getElementById("entity-switcher");
   var pageTitleEl = document.getElementById("clients-page-title");
   var viewReviewTab = document.getElementById("view-review-tab");
+  var viewCompletenessTab = document.getElementById("view-completeness-tab");
   var tableHeadRow = document.getElementById("clients-table-head-row");
   var breadcrumbsEl = document.getElementById("clients-breadcrumbs");
   var teamsPanelEl = document.getElementById("teams-panel");
@@ -51,21 +56,38 @@
   var reviewDecisionFilter = document.getElementById("review-decision-filter");
   var unassignedFilterWrap = document.getElementById("unassigned-filter-wrap");
   var unassignedFilter = document.getElementById("unassigned-filter");
+  var completenessReasonFilterWrap = document.getElementById("completeness-reason-filter-wrap");
+  var completenessReasonFilter = document.getElementById("completeness-reason-filter");
   var columnsPickerBtn = document.getElementById("columns-picker-btn");
   var columnsPickerEl = document.getElementById("columns-picker");
   var visibleColumnIds = [];
 
   var debounceTimer = null;
   var activeRequestId = 0;
+  var listFetchAbortController = null;
   var managerOptions = [];
   var holdingOptions = [];
   var regionalOptions = [];
+  var ropOptions = [];
   var managerCombobox = null;
   var holdingCombobox = null;
   var regionalCombobox = null;
+  var ropCombobox = null;
+
+  var ropMissingEntry = { id: logic.MISSING_ROP_ID, label: "РОП не указан" };
+  var managerMissingEntry = { id: logic.MISSING_MANAGER_ID, label: "Менеджер не указан" };
+  var regionalMissingEntry = { id: logic.MISSING_REGIONAL_ID, label: "Региональный не указан" };
   var currentUser = null;
   var rolePresentation = null;
-  var teamContext = { rops: [], managers: [], ropName: "", managerName: "" };
+  var teamContext = {
+    director: null,
+    rops: [],
+    undefinedTeam: [],
+    managers: [],
+    ropName: "",
+    managerName: "",
+    limitationNote: "",
+  };
   var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
 
   function readStateFromUrl() {
@@ -90,8 +112,36 @@
     return appEl.dataset.entity || "clients";
   }
 
+  function applyAssignmentSelectionsToState(state) {
+    if (state.view === "teams" || state.view === "review") {
+      return state;
+    }
+    if (ropCombobox) {
+      var ropSelection = logic.resolveComboboxSelection(ropCombobox.model.selectedId, ropMissingEntry);
+      state.ropEmployee = ropSelection.missing ? "" : ropSelection.guid;
+      state.missingRop = ropSelection.missing;
+    }
+    if (managerCombobox) {
+      var managerSelection = logic.resolveComboboxSelection(
+        managerCombobox.model.selectedId,
+        managerMissingEntry,
+      );
+      state.manager = managerSelection.missing ? "" : managerSelection.guid;
+      state.missingManager = managerSelection.missing;
+    }
+    if (regionalCombobox) {
+      var regionalSelection = logic.resolveComboboxSelection(
+        regionalCombobox.model.selectedId,
+        regionalMissingEntry,
+      );
+      state.regionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
+      state.missingRegional = regionalSelection.missing;
+    }
+    return state;
+  }
+
   function currentStateFromForm() {
-    return {
+    var state = {
       view: currentView(),
       entity: currentEntity(),
       q: searchInput.value.trim(),
@@ -99,6 +149,7 @@
       holding: holdingFilter.value,
       phone: phoneFilter.value || "all",
       rop: appEl.dataset.rop || "",
+      ropEmployee: appEl.dataset.ropEmployee || "",
       unassignedCategory: unassignedFilter.value || "",
       reviewState: reviewStateFilter.value || "",
       reviewDecision: reviewDecisionFilter.value || "",
@@ -106,12 +157,20 @@
       outletStatus: outletStatusFilter.value || "all",
       warehouse: warehouseFilter.value || "all",
       regionalManager: regionalFilter.value || "",
+      hardwareManager: appEl.dataset.hardwareManager || "",
+      portfolio: appEl.dataset.portfolio || "",
+      responsibleKind: appEl.dataset.responsibleKind || "",
+      completenessReasons: readCompletenessReasonsFromFilter(),
+      missingRop: false,
+      missingManager: false,
+      missingRegional: false,
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
       cols: appEl.dataset.cols || "",
       page: Number(appEl.dataset.page || "1") || 1,
     };
+    return applyAssignmentSelectionsToState(state);
   }
 
   function columnsStorageKey(entity) {
@@ -136,39 +195,89 @@
     debounceTimer = null;
   }
 
+  function readCompletenessReasonsFromFilter() {
+    if (!completenessReasonFilter) {
+      return [];
+    }
+    return Array.from(completenessReasonFilter.selectedOptions)
+      .map(function (opt) {
+        return opt.value;
+      })
+      .filter(function (value) {
+        return value.length > 0;
+      });
+  }
+
+  function applyCompletenessReasonsToFilter(reasons) {
+    if (!completenessReasonFilter) {
+      return;
+    }
+    var selected = new Set(reasons || []);
+    Array.from(completenessReasonFilter.options).forEach(function (opt) {
+      opt.selected = selected.has(opt.value);
+    });
+  }
+
   function invalidateInFlightRequests() {
+    if (listFetchAbortController) {
+      listFetchAbortController.abort();
+      listFetchAbortController = null;
+    }
     activeRequestId += 1;
+  }
+
+  function nextListFetchSignal() {
+    listFetchAbortController = new AbortController();
+    return listFetchAbortController.signal;
   }
 
   function applyStateToForm(state) {
     appEl.dataset.view = state.view || "all";
     appEl.dataset.entity = state.entity || "clients";
     appEl.dataset.rop = state.rop || "";
+    appEl.dataset.ropEmployee = state.ropEmployee || "";
+    appEl.dataset.portfolio = state.portfolio || "";
+    appEl.dataset.responsibleKind = state.responsibleKind || "";
+    appEl.dataset.hardwareManager = state.hardwareManager || "";
     appEl.dataset.page = String(state.page);
     appEl.dataset.sortBy = state.sortBy || "";
     appEl.dataset.sortDir = state.sortDir || "";
     appEl.dataset.cols = state.cols || "";
     visibleColumnIds = resolveColumnsForState(state);
-    searchInput.value = state.q;
-    managerFilter.value = state.manager;
+    searchInput.value = state.q || "";
+    managerFilter.value = state.missingManager ? "" : state.manager || "";
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
     outletsFilter.value = state.hasOutlets || "all";
     outletStatusFilter.value = state.outletStatus || "all";
     warehouseFilter.value = state.warehouse || "all";
-    regionalFilter.value = state.regionalManager || "";
+    regionalFilter.value = state.missingRegional ? "" : state.regionalManager || "";
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
     unassignedFilter.value = state.unassignedCategory || "";
+    applyCompletenessReasonsToFilter(state.completenessReasons || []);
+    if (ropCombobox && state.view !== "teams" && state.view !== "review") {
+      ropCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(state.ropEmployee, state.missingRop, logic.MISSING_ROP_ID),
+      );
+    }
     if (managerCombobox) {
-      managerCombobox.syncFromUrl(state.manager);
+      managerCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(state.manager, state.missingManager, logic.MISSING_MANAGER_ID),
+      );
     }
     if (holdingCombobox) {
       holdingCombobox.syncFromUrl(state.holding);
     }
     if (regionalCombobox) {
-      regionalCombobox.syncFromUrl(state.regionalManager || "");
+      regionalCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.regionalManager,
+          state.missingRegional,
+          logic.MISSING_REGIONAL_ID,
+        ),
+      );
     }
     updateViewSwitcherActive(state.view || "all");
     updateEntitySwitcherActive(state.entity || "clients");
@@ -194,6 +303,12 @@
       "clients-hidden",
       !(presentation.allowedViews && presentation.allowedViews.indexOf("review") !== -1),
     );
+    if (viewCompletenessTab) {
+      viewCompletenessTab.classList.toggle(
+        "clients-hidden",
+        !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
+      );
+    }
     document.getElementById("manager-combobox")?.classList.toggle(
       "clients-hidden",
       !presentation.showManagerTeamFilter,
@@ -422,6 +537,21 @@
   }
 
   function mountFilterComboboxes() {
+    ropCombobox = logic.mountCombobox({
+      model: logic.createComboboxModel(),
+      input: ropFilterInput,
+      hidden: ropFilter,
+      listEl: ropFilterList,
+      root: document.getElementById("rop-combobox"),
+      listboxId: "rop-filter-list",
+      allLabel: "Все РОП",
+      missingEntry: ropMissingEntry,
+      options: function () {
+        return ropOptions;
+      },
+      onApplySelection: applyComboboxFilter,
+    });
+
     managerCombobox = logic.mountCombobox({
       model: logic.createComboboxModel(),
       input: managerFilterInput,
@@ -430,6 +560,7 @@
       root: document.getElementById("manager-combobox"),
       listboxId: "manager-filter-list",
       allLabel: "Все менеджеры",
+      missingEntry: managerMissingEntry,
       options: function () {
         return managerOptions;
       },
@@ -458,6 +589,7 @@
       root: document.getElementById("regional-combobox"),
       listboxId: "regional-filter-list",
       allLabel: "Все региональные",
+      missingEntry: regionalMissingEntry,
       options: function () {
         return regionalOptions;
       },
@@ -767,28 +899,26 @@
   }
 
   function buildQueryString(state) {
-    var params = new URLSearchParams();
-    if (state.view && state.view !== "all") params.set("view", state.view);
-    if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
-    if (state.q) params.set("q", state.q);
-    if (state.manager) params.set("manager", state.manager);
-    if (state.holding) params.set("holding", state.holding);
-    if (state.phone && state.phone !== "all") params.set("phone", state.phone);
-    if (state.rop) params.set("rop", state.rop);
-    if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
-    if (state.reviewState) params.set("reviewState", state.reviewState);
-    if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
-    if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
-    if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
-    if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
-    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
-    if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
-    if (state.sortBy) params.set("sortBy", state.sortBy);
-    if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
-    if (state.cols) params.set("cols", state.cols);
-    params.set("page", String(state.page));
+    var params = new URLSearchParams(logic.buildListQueryString(state));
     params.set("pageSize", "50");
     return params.toString();
+  }
+
+  function navigateResponsible(state, manager, kind, entityMode) {
+    var next = {
+      view: "teams",
+      ropEmployee: state.ropEmployee,
+      rop: "",
+      portfolio: "",
+      manager: kind === "manager" ? manager.employeeGuid : "",
+      regionalManager: kind === "regional" ? manager.employeeGuid : "",
+      hardwareManager: kind === "hardware" ? manager.employeeGuid : "",
+      responsibleKind: kind,
+      entity: entityMode || "clients",
+      page: 1,
+    };
+    teamContext.managerName = manager.name || "";
+    navigateState(next);
   }
 
   function updateViewSwitcherActive(view) {
@@ -800,25 +930,54 @@
   function updateViewChrome(state) {
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
+    var isCompleteness = state.view === "completeness";
     var isOutlets = (state.entity || "clients") === "outlets";
-    outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all");
-    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    regionalFilterWrap.classList.toggle("clients-hidden", !isOutlets);
-    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets);
+    var showAssignmentFilters =
+      rolePresentation &&
+      rolePresentation.showManagerTeamFilter &&
+      !isTeams &&
+      !isReview;
+    ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
+    document.getElementById("manager-combobox")?.classList.toggle(
+      "clients-hidden",
+      !(showAssignmentFilters || isCompleteness),
+    );
+    document.getElementById("holding-combobox")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    entitySwitcherEl.classList.toggle(
+      "clients-hidden",
+      !isCompleteness &&
+        !(
+          rolePresentation &&
+          rolePresentation.allowedEntities &&
+          rolePresentation.allowedEntities.length > 1 &&
+          rolePresentation.showEntitySwitcher !== false
+        ),
+    );
+    completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
+    outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
+    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    regionalFilterWrap.classList.toggle(
+      "clients-hidden",
+      !isOutlets || !(showAssignmentFilters || isCompleteness),
+    );
+    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
-    teamsPanelEl.classList.toggle("clients-hidden", !isTeams || Boolean(state.manager));
+    var branchList = logic.isBranchPortfolioList(state);
+    var responsibleList = logic.hasResponsibleSelection(state);
+    teamsPanelEl.classList.toggle("clients-hidden", !isTeams || branchList || responsibleList);
     var reviewEmployeePick = isReview && Boolean(state.unassignedCategory) && !state.manager;
     unassignedPanelEl.classList.toggle("clients-hidden", !isReview);
     resultsContentEl.classList.toggle(
       "clients-hidden",
-      (isTeams && !state.manager) || reviewEmployeePick,
+      (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
     paginationEl.classList.toggle(
       "clients-hidden",
-      (isTeams && !state.manager) || reviewEmployeePick,
+      (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
     renderBreadcrumbs(state);
   }
@@ -832,15 +991,22 @@
     var parts = [];
     if (state.view === "teams") {
       parts.push({ label: "По командам", href: "/clients?view=teams" });
-      if (state.rop) {
+      if (state.ropEmployee) {
         parts.push({
           label: teamContext.ropName || "РОП",
-          href: "/clients?view=teams&rop=" + encodeURIComponent(state.rop),
+          href: "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee),
         });
       }
-      if (state.manager) {
-        parts.push({ label: teamContext.managerName || "Менеджер", href: null });
+      if (state.portfolio === "clients") {
+        parts.push({ label: "Клиенты ветки", href: null });
+      } else if (state.portfolio === "outlets") {
+        parts.push({ label: "ТТ ветки", href: null });
       }
+      if (logic.hasResponsibleSelection(state)) {
+        parts.push({ label: teamContext.managerName || "Ответственный", href: null });
+      }
+    } else if (state.view === "completeness") {
+      parts.push({ label: "Незаполненные назначения", href: "/clients?view=completeness" });
     } else if (state.view === "review") {
       parts.push({ label: "Ревизия", href: "/clients?view=review" });
       if (state.unassignedCategory) {
@@ -865,41 +1031,136 @@
     breadcrumbsEl.classList.remove("clients-hidden");
   }
 
+  function renderOrgBadge(label) {
+    return label
+      ? '<span class="clients-phone-muted clients-team-badge">' + shell.escapeHtml(label) + "</span>"
+      : "";
+  }
+
   function renderTeamsPanel(state) {
-    if (state.view !== "teams" || state.manager) {
+    if (
+      state.view !== "teams" ||
+      logic.isBranchPortfolioList(state) ||
+      logic.hasResponsibleSelection(state)
+    ) {
       teamsPanelEl.innerHTML = "";
       return;
     }
-    if (!state.rop) {
+    if (!state.ropEmployee) {
+      var directorHtml = "";
+      if (teamContext.director) {
+        directorHtml =
+          '<div class="clients-team-director">' +
+          "<strong>" +
+          shell.escapeHtml(teamContext.director.name) +
+          "</strong> · директор" +
+          renderOrgBadge(teamContext.director.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+          '<p class="clients-phone-muted">' +
+          shell.escapeHtml(teamContext.director.note || "") +
+          "</p></div>";
+      }
+      var undefinedHtml =
+        (teamContext.undefinedTeam || []).length > 0
+          ? '<div class="clients-team-section"><h3 class="clients-team-section__title">Команда не определена</h3><div class="clients-teams-list">' +
+            teamContext.undefinedTeam
+              .map(function (member) {
+                return (
+                  '<div class="clients-team-card clients-team-card--static">' +
+                  "<strong>" +
+                  shell.escapeHtml(member.name) +
+                  "</strong>" +
+                  renderOrgBadge(member.rosterPost || "") +
+                  renderOrgBadge(member.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+                  "</div>"
+                );
+              })
+              .join("") +
+            "</div></div>"
+          : "";
       teamsPanelEl.innerHTML =
+        directorHtml +
+        (teamContext.limitationNote
+          ? '<p class="clients-phone-muted">' + shell.escapeHtml(teamContext.limitationNote) + "</p>"
+          : "") +
         '<div class="clients-teams-list">' +
         (teamContext.rops || [])
           .map(function (rop) {
+            var note = rop.portfolioNote ? " · " + rop.portfolioNote : "";
             return (
-              '<button type="button" class="clients-team-card" data-rop="' +
-              shell.escapeHtml(rop.ropUserId) +
+              '<button type="button" class="clients-team-card" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
               '">' +
               "<strong>" +
-              shell.escapeHtml(rop.ropName) +
+              shell.escapeHtml(rop.name) +
               "</strong>" +
+              renderOrgBadge(rop.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
               '<span class="clients-phone-muted">' +
-              rop.managerCount +
-              " менедж. · " +
+              (rop.teamMemberCount ?? rop.managerCount) +
+              " ответств. · " +
+              '<button type="button" class="clients-inline-link" data-portfolio="clients" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
+              '">' +
               rop.uniqueClientCount +
-              " клиентов</span>" +
+              " клиентов</button> · " +
+              '<button type="button" class="clients-inline-link" data-portfolio="outlets" data-rop-employee="' +
+              shell.escapeHtml(rop.employeeGuid) +
+              '">' +
+              rop.uniqueOutletCount +
+              " ТТ</button>" +
+              shell.escapeHtml(note) +
+              "</span>" +
               "</button>"
             );
           })
           .join("") +
-        "</div>";
-      teamsPanelEl.querySelectorAll("[data-rop]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          var ropId = btn.getAttribute("data-rop");
+        "</div>" +
+        undefinedHtml;
+      teamsPanelEl.querySelectorAll("[data-rop-employee].clients-team-card").forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          if (event.target.closest("[data-portfolio]")) {
+            return;
+          }
+          var ropGuid = btn.getAttribute("data-rop-employee");
           var match = (teamContext.rops || []).find(function (item) {
-            return item.ropUserId === ropId;
+            return item.employeeGuid === ropGuid;
           });
-          teamContext.ropName = match ? match.ropName : "";
-          navigateState({ view: "teams", rop: ropId, manager: "", page: 1 });
+          teamContext.ropName = match ? match.name : "";
+          navigateState({
+            view: "teams",
+            ropEmployee: ropGuid,
+            rop: "",
+            manager: "",
+            regionalManager: "",
+            hardwareManager: "",
+            portfolio: "",
+            responsibleKind: "",
+            entity: "clients",
+            page: 1,
+          });
+        });
+      });
+      teamsPanelEl.querySelectorAll("[data-portfolio][data-rop-employee]").forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          event.stopPropagation();
+          event.preventDefault();
+          var ropGuid = btn.getAttribute("data-rop-employee");
+          var portfolio = btn.getAttribute("data-portfolio");
+          var match = (teamContext.rops || []).find(function (item) {
+            return item.employeeGuid === ropGuid;
+          });
+          teamContext.ropName = match ? match.name : "";
+          navigateState({
+            view: "teams",
+            ropEmployee: ropGuid,
+            rop: "",
+            manager: "",
+            regionalManager: "",
+            hardwareManager: "",
+            portfolio: portfolio,
+            responsibleKind: "",
+            entity: portfolio === "outlets" ? "outlets" : "clients",
+            page: 1,
+          });
         });
       });
       return;
@@ -908,40 +1169,158 @@
       '<div class="clients-teams-list">' +
       (teamContext.managers || [])
         .map(function (manager) {
-          var label =
-            manager.kind === "rop_own"
-              ? "Собственные клиенты РОП"
-              : manager.name + " · " + manager.shortId;
+          var kindLabel =
+            manager.kind === "regional"
+              ? "Региональный"
+              : manager.kind === "hardware"
+                ? "Менеджер по фурнитуре"
+                : "Менеджер";
           return (
-            '<button type="button" class="clients-team-card" data-manager="' +
+            '<div class="clients-team-card" data-manager="' +
             shell.escapeHtml(manager.employeeGuid) +
             '">' +
             "<strong>" +
-            shell.escapeHtml(label) +
+            shell.escapeHtml(manager.name) +
+            " · " +
+            shell.escapeHtml(manager.shortId) +
             "</strong>" +
+            renderOrgBadge(kindLabel) +
+            renderOrgBadge(manager.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
+            renderOrgBadge(manager.rosterInOpt === false ? "Вне справочника ОПТ" : "") +
             '<span class="clients-phone-muted">' +
-            manager.clientCount +
-            " клиентов</span>" +
-            "</button>"
+            (manager.clientCount > 0
+              ? '<button type="button" class="clients-inline-link" data-responsible-entity="clients" data-responsible-kind="' +
+                shell.escapeHtml(manager.kind) +
+                '" data-manager="' +
+                shell.escapeHtml(manager.employeeGuid) +
+                '">' +
+                manager.clientCount +
+                " клиентов</button>"
+              : "0 клиентов") +
+            " · " +
+            (manager.outletCount > 0
+              ? '<button type="button" class="clients-inline-link" data-responsible-entity="outlets" data-responsible-kind="' +
+                shell.escapeHtml(manager.kind) +
+                '" data-manager="' +
+                shell.escapeHtml(manager.employeeGuid) +
+                '">' +
+                manager.outletCount +
+                " ТТ</button>"
+              : "0 ТТ") +
+            "</span></div>"
           );
         })
         .join("") +
       "</div>";
-    teamsPanelEl.querySelectorAll("[data-manager]").forEach(function (btn) {
+    teamsPanelEl.querySelectorAll("[data-responsible-entity]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var managerGuid = btn.getAttribute("data-manager");
+        var kind = btn.getAttribute("data-responsible-kind") || "manager";
+        var entityMode = btn.getAttribute("data-responsible-entity") || "clients";
         var match = (teamContext.managers || []).find(function (item) {
           return item.employeeGuid === managerGuid;
         });
-        teamContext.managerName = match ? match.name : "";
-        navigateState({
-          view: "teams",
-          rop: state.rop,
-          manager: managerGuid,
-          page: 1,
-        });
+        if (!match) {
+          return;
+        }
+        navigateResponsible(state, match, kind, entityMode);
       });
     });
+  }
+
+  function formatCompletenessAssignees(item) {
+    var parts = [];
+    var known = item.knownAssignees || {};
+    if (known.rop && (known.rop.name || known.rop.guid)) {
+      parts.push("РОП: " + (known.rop.name || known.rop.guid));
+    }
+    if (known.manager && (known.manager.name || known.manager.guid)) {
+      parts.push("Менеджер: " + (known.manager.name || known.manager.guid));
+    }
+    if (known.regional && (known.regional.name || known.regional.guid)) {
+      parts.push("Региональный: " + (known.regional.name || known.regional.guid));
+    }
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }
+
+  function completenessCardHref(item) {
+    if (item.entityKind === "outlet" && item.guidStore) {
+      return (
+        "/clients/" +
+        encodeURIComponent(item.guidClient) +
+        "?store=" +
+        encodeURIComponent(item.guidStore)
+      );
+    }
+    return "/clients/" + encodeURIComponent(item.guidClient);
+  }
+
+  function renderCompletenessRows(items) {
+    tableBody.innerHTML = (items || [])
+      .map(function (item) {
+        var cardHref = completenessCardHref(item);
+        var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
+        var parentLabel =
+          item.entityKind === "outlet" ? item.parentClientName || "—" : "—";
+        return (
+          "<tr>" +
+          "<td>" +
+          shell.escapeHtml(entityLabel) +
+          "</td>" +
+          '<td><a class="clients-link" href="' +
+          cardHref +
+          '">' +
+          shell.escapeHtml(item.name) +
+          "</a></td>" +
+          "<td>" +
+          shell.escapeHtml(parentLabel) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(formatCompletenessAssignees(item)) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml((item.reasonLabels || []).join("; ")) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(item.lastImportedAtLabel || "—") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    cardsEl.innerHTML = (items || [])
+      .map(function (item) {
+        var cardHref = completenessCardHref(item);
+        var entityLabel = item.entityKind === "outlet" ? "ТТ" : "Клиент";
+        var parentLabel =
+          item.entityKind === "outlet" ? item.parentClientName || "—" : "—";
+        return (
+          '<article class="clients-card clients-card--completeness">' +
+          '<p class="clients-card__line"><strong>Тип:</strong> ' +
+          shell.escapeHtml(entityLabel) +
+          "</p>" +
+          '<h2 class="clients-card__title"><a class="clients-link" href="' +
+          cardHref +
+          '">' +
+          shell.escapeHtml(item.name) +
+          "</a></h2>" +
+          '<p class="clients-card__line"><strong>Родитель:</strong> ' +
+          shell.escapeHtml(parentLabel) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Назначения:</strong> ' +
+          shell.escapeHtml(formatCompletenessAssignees(item)) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Причины:</strong> ' +
+          shell.escapeHtml((item.reasonLabels || []).join("; ")) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Импорт:</strong> ' +
+          shell.escapeHtml(item.lastImportedAtLabel || "—") +
+          "</p>" +
+          "</article>"
+        );
+      })
+      .join("");
   }
 
   function renderUnassignedPanel(summary, state) {
@@ -1040,7 +1419,7 @@
   function navigateState(nextState) {
     cancelScheduledLoad();
     invalidateInFlightRequests();
-    loadList(nextState, false);
+    loadList(Object.assign({}, currentStateFromForm(), nextState), false);
   }
 
   function loadTeamsContext(state) {
@@ -1048,27 +1427,58 @@
       return Promise.resolve({ ok: true });
     }
     var requests = [];
-    if (!state.rop) {
+    if (!state.ropEmployee) {
       requests.push(
-        api.apiRequest("/api/clients/teams").then(function (result) {
+        api.apiRequest("/api/clients/org-structure").then(function (result) {
           if (result.response.status === 200 && result.data) {
-            teamContext.rops = result.data.items || [];
+            teamContext.director = result.data.director || null;
+            teamContext.rops = result.data.rops || [];
+            teamContext.undefinedTeam = result.data.undefinedTeam || [];
+            teamContext.limitationNote = result.data.limitationNote || "";
           }
           return result.response.status === 200;
         }),
       );
-    } else if (!state.manager) {
+    } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
       requests.push(
-        api.apiRequest("/api/clients/teams/" + encodeURIComponent(state.rop) + "/managers").then(function (result) {
-          if (result.response.status === 200 && result.data) {
-            teamContext.managers = result.data.items || [];
-          }
-          return result.response.status === 200;
-        }),
+        api
+          .apiRequest(
+            "/api/clients/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
+          )
+          .then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              teamContext.managers = result.data.items || [];
+            }
+            return result.response.status === 200;
+          }),
       );
     }
     return Promise.all(requests).then(function (results) {
       return { ok: results.every(Boolean) || results.length === 0 };
+    });
+  }
+
+  function loadCompletenessQueue(state) {
+    var params = new URLSearchParams();
+    if (state.q) params.set("q", state.q);
+    if (state.entity) params.set("entity", state.entity);
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
+    if (state.manager) params.set("manager", state.manager);
+    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
+    (state.completenessReasons || []).forEach(function (reason) {
+      params.append("completenessReason", reason);
+    });
+    params.set("page", String(state.page || 1));
+    params.set("pageSize", "50");
+    return api.apiRequest("/api/clients/completeness-queue?" + params.toString(), {
+      signal: nextListFetchSignal(),
+    }).then(function (result) {
+      return {
+        ok: result.response.status === 200,
+        data: result.data,
+        status: result.response.status,
+        error: result.data,
+      };
     });
   }
 
@@ -1140,6 +1550,10 @@
       managerOptions = result.data.managers || [];
       holdingOptions = result.data.holdings || [];
       regionalOptions = result.data.regionalManagers || [];
+      ropOptions = result.data.rops || [];
+      if (ropCombobox) {
+        ropCombobox.syncFromUrl(ropFilter.value);
+      }
       if (managerCombobox) {
         managerCombobox.syncFromUrl(managerFilter.value);
       }
@@ -1191,7 +1605,7 @@
       });
     }
 
-    if (state.view === "teams" && !state.manager) {
+    if (state.view === "teams" && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state)) {
       showResultsState("loading", "Загрузка команд…", "", "");
       return loadTeamsContext(state).then(function (ctx) {
         if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
@@ -1212,12 +1626,58 @@
         renderTeamsPanel(state);
         showResultsState(
           "empty",
-          state.rop ? "Выберите менеджера" : "Выберите РОП",
-          "Клиенты загружаются после выбора менеджера команды.",
+          state.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
+          "Клиенты загружаются после выбора ответственного в ветке РОП.",
           "",
         );
-        resultCountEl.textContent = state.rop ? "Менеджеры команды" : "Команды продаж";
+        resultCountEl.textContent = state.ropEmployee ? "Ответственные РОП" : "Структура по назначениям 1С";
       });
+    }
+
+    if (state.view === "completeness") {
+      showResultsState("loading", "Загрузка очереди…", "", "");
+      updateViewChrome(state);
+      return loadCompletenessQueue(state)
+        .then(function (result) {
+          if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
+            return;
+          }
+          if (!result.ok) {
+            showResultsState(
+              "error",
+              "Не удалось загрузить очередь",
+              api.extractErrorMessage(result.error, "Повторите попытку."),
+              '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
+            );
+            document.getElementById("retry-load")?.addEventListener("click", function () {
+              loadList(state, true);
+            });
+            return;
+          }
+          var data = result.data || { items: [], total: 0, totalPages: 0 };
+          if (!data.total) {
+            showResultsState(
+              "empty",
+              "Нет записей с выбранными условиями",
+              "Измените фильтры или дождитесь следующего импорта из 1С.",
+              "",
+            );
+            resultCountEl.textContent = "0 записей в очереди";
+            return;
+          }
+          showResultsContent();
+          tableHeadRow.innerHTML =
+            "<th>Тип</th><th>Название</th><th>Родитель</th><th>Назначения</th><th>Причины</th><th>Импорт</th>";
+          renderCompletenessRows(data.items || []);
+          resultCountEl.textContent = data.total + " записей в очереди";
+          renderPagination(state, data.totalPages || 0);
+        })
+        .catch(function (err) {
+          if (err && err.name === "AbortError") {
+            return;
+          }
+          throw err;
+        });
     }
 
     showResultsState("loading", "Загрузка списка…", "", "");
@@ -1238,7 +1698,9 @@
         }
         renderTeamsPanel(state);
         renderUnassignedPanel(unassignedContext.summary, state);
-        return api.apiRequest("/api/clients?" + buildQueryString(state));
+        return api.apiRequest("/api/clients?" + buildQueryString(state), {
+          signal: nextListFetchSignal(),
+        });
       })
       .then(function (result) {
         if (!result || !result.response) {
@@ -1315,6 +1777,9 @@
         renderPagination(state, result.data.totalPages || 0);
       })
       .catch(function (err) {
+        if (err && err.name === "AbortError") {
+          return;
+        }
         if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
           return;
         }
@@ -1355,6 +1820,9 @@
     if (regionalCombobox) {
       regionalCombobox.reset();
     }
+    if (ropCombobox) {
+      ropCombobox.reset();
+    }
     outletStatusFilter.value = "all";
     warehouseFilter.value = "all";
     tandoorFilter.value = "";
@@ -1366,9 +1834,17 @@
       holding: "",
       phone: "all",
       rop: "",
+      ropEmployee: "",
+      portfolio: "",
+      responsibleKind: "",
+      hardwareManager: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
+      completenessReasons: [],
+      missingRop: false,
+      missingManager: false,
+      missingRegional: false,
       hasOutlets: "all",
       outletStatus: "all",
       warehouse: "all",
@@ -1389,17 +1865,23 @@
     ) {
       return;
     }
+    var nextEntity = view === "completeness" ? "clients" : currentEntity();
     navigateState({
       view: view,
-      entity: currentEntity(),
+      entity: nextEntity,
       q: "",
       manager: "",
       holding: "",
       phone: "all",
       rop: "",
+      ropEmployee: "",
+      portfolio: "",
+      responsibleKind: "",
+      hardwareManager: "",
       unassignedCategory: "",
       reviewState: "",
       reviewDecision: "",
+      completenessReasons: [],
       hasOutlets: "all",
       page: 1,
     });
@@ -1503,6 +1985,11 @@
     scheduleLoad(true, false);
   });
   unassignedFilter.addEventListener("change", function () {
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    scheduleLoad(true, false);
+  });
+  completenessReasonFilter?.addEventListener("change", function () {
     cancelScheduledLoad();
     invalidateInFlightRequests();
     scheduleLoad(true, false);
