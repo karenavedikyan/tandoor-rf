@@ -945,7 +945,7 @@
               "</strong>" +
               renderOrgBadge(rop.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
               '<span class="clients-phone-muted">' +
-              rop.managerCount +
+              (rop.teamMemberCount ?? rop.managerCount) +
               " ответств. · " +
               rop.uniqueClientCount +
               " клиентов · " +

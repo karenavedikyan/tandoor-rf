@@ -8,16 +8,20 @@ import {
 } from "../../onec-clients/baseline-active-scope";
 import { shortUuidLabel } from "../uuid-param";
 import {
+  clientAssignedToRopClause,
+  clientHardwareGuidSql,
   clientHeadOfSalesGuidSql,
   clientHeadOfSalesNameSql,
+  clientRegionalGuidSql,
+  outletAssignedToRopClause,
+  outletHardwareGuidSql,
   outletHeadOfSalesGuidSql,
   outletManagerGuidSql,
   outletRegionalGuidSql,
-  ropPortfolioClause,
+  outletStoreGuidSql,
   RETAIL_OUTLETS_JSON,
 } from "./assignment-sql";
 import { ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL } from "./constants";
-import { orgRopBranchClientScope } from "./scoped-branch-sql";
 
 export type OrgDirectorSummary = {
   employeeGuid: string;
@@ -36,10 +40,18 @@ export type OrgRopSummary = {
   hasLinkedAccount: boolean;
   hasAssignedPortfolio: boolean;
   portfolioNote: string | null;
+  /** Distinct managers (client + outlet level) in the branch, excluding the ROP. */
   managerCount: number;
+  /** Distinct regionals (client + outlet level) in the branch, excluding the ROP. */
   regionalCount: number;
+  /** Distinct responsibles across manager/regional/hardware kinds, excluding the ROP. */
+  teamMemberCount: number;
+  /** Clients with client-level headOfSales matching this ROP. */
   uniqueClientCount: number;
+  /** Outlets with outlet-level headOfSales matching this ROP. */
   uniqueOutletCount: number;
+  /** Parent clients of outlet-only assignments (not directly assigned to this ROP). */
+  parentClientCount: number;
   sources: Array<"roster" | "assignment">;
 };
 
@@ -216,98 +228,197 @@ async function loadRopCandidates(): Promise<RopCandidateRow[]> {
   return result.rows;
 }
 
-async function countScopedClients(context: AccessContext, extraWhere: string, params: unknown[]): Promise<number> {
+function activeBaselineForAlias(clientAlias: string): string {
+  return `COALESCE(${clientAlias}.baseline_status, 'active') = 'active'`;
+}
+
+function scopedClientFilter(
+  context: AccessContext,
+  clientAlias = "onec_clients",
+): { whereSql: string; params: unknown[]; denied: boolean } {
   const scope = buildClientScopeSql(context);
-  const filter = combineScopeAndFilter(scope, {
-    whereSql: extraWhere ? `WHERE ${extraWhere}` : "",
-    params,
+  const scopedForAlias = {
+    whereSql: scope.whereSql.replaceAll("onec_clients.", `${clientAlias}.`),
+    params: scope.params,
+  };
+  const filter = combineScopeAndFilter(scopedForAlias, {
+    whereSql: `WHERE ${activeBaselineForAlias(clientAlias)}`,
+    params: [],
   });
   if (filter.whereSql === "WHERE FALSE") {
+    return { whereSql: "WHERE FALSE", params: [], denied: true };
+  }
+  return { whereSql: filter.whereSql, params: filter.params, denied: false };
+}
+
+async function countAssignedClients(context: AccessContext, ropGuid: string): Promise<number> {
+  const scoped = scopedClientFilter(context, "onec_clients");
+  if (scoped.denied) {
     return 0;
   }
+  const ropParamIndex = scoped.params.length + 1;
   const result = await query<{ count: string }>(
-    `SELECT COUNT(DISTINCT onec_clients.guid_client)::text AS count FROM onec_clients ${filter.whereSql}`,
-    filter.params,
+    `
+      SELECT COUNT(DISTINCT onec_clients.guid_client)::text AS count
+      FROM onec_clients
+      ${scoped.whereSql}
+        AND ${clientAssignedToRopClause(`$${ropParamIndex}`, "onec_clients")}
+    `,
+    [...scoped.params, ropGuid.toLowerCase()],
   );
   return Number(result.rows[0]?.count ?? "0");
 }
 
-async function countScopedOutlets(context: AccessContext, ropGuid: string): Promise<number> {
-  const scope = buildClientScopeSql(context);
-  const filter = combineScopeAndFilter(scope, {
-    whereSql: `WHERE ${ropPortfolioClause("$1")}`,
-    params: [ropGuid],
-  });
-  if (filter.whereSql === "WHERE FALSE") {
+async function countAssignedOutlets(context: AccessContext, ropGuid: string): Promise<number> {
+  const scoped = scopedClientFilter(context, "oc");
+  if (scoped.denied) {
     return 0;
   }
+  const ropParamIndex = scoped.params.length + 1;
   const result = await query<{ count: string }>(
     `
-      SELECT COUNT(*)::text AS count
+      SELECT COUNT(DISTINCT ro.guid_store)::text AS count
       FROM onec_retail_outlets ro
       JOIN onec_clients oc ON oc.guid_client = ro.guid_client
-      ${filter.whereSql.replaceAll("onec_clients.", "oc.")}
+      CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
+      ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
+        AND ${outletStoreGuidSql("outlet.elem")} = lower(ro.guid_store::text)
+        AND ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
     `,
-    filter.params,
+    [...scoped.params, ropGuid.toLowerCase()],
   );
   return Number(result.rows[0]?.count ?? "0");
 }
 
-async function countManagersForRop(context: AccessContext, ropGuid: string): Promise<number> {
-  const branchScope = orgRopBranchClientScope(context, ropGuid, "oc");
-  if (branchScope.denied) {
+async function countParentClientsOfAssignedOutlets(context: AccessContext, ropGuid: string): Promise<number> {
+  const scoped = scopedClientFilter(context, "oc");
+  if (scoped.denied) {
     return 0;
   }
-  const ropParamIndex = branchScope.params.length + 1;
+  const ropParamIndex = scoped.params.length + 1;
   const result = await query<{ count: string }>(
     `
-      WITH scoped AS (
-        SELECT oc.guid_client, oc.guid_manager, oc.extended_snapshot
-        FROM onec_clients oc
-        WHERE ${branchScope.clause}
-      ),
-      client_mgr AS (
-        SELECT DISTINCT lower(guid_manager::text) AS guid FROM scoped
-      ),
-      outlet_mgr AS (
-        SELECT DISTINCT ${outletHeadOfSalesGuidSql("outlet.elem")} AS rop_guid,
-               NULLIF(BTRIM(lower(outlet.elem->'managers'->'manager'->>'guid')), '') AS guid
-        FROM scoped s
-        JOIN onec_clients oc ON oc.guid_client = s.guid_client
-        CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
-      )
-      SELECT COUNT(DISTINCT guid)::text AS count
-      FROM (
-        SELECT guid FROM client_mgr WHERE guid IS NOT NULL
-        UNION
-        SELECT guid FROM outlet_mgr WHERE guid IS NOT NULL
-      ) all_mgr
-    `,
-    [...branchScope.params, ropGuid.toLowerCase()],
-  );
-  return Number(result.rows[0]?.count ?? "0");
-}
-
-async function countRegionalsForRop(context: AccessContext, ropGuid: string): Promise<number> {
-  const branchScope = orgRopBranchClientScope(context, ropGuid, "oc");
-  if (branchScope.denied) {
-    return 0;
-  }
-  const result = await query<{ count: string }>(
-    `
-      SELECT COUNT(DISTINCT NULLIF(BTRIM(lower(outlet.elem->'managers'->'regionalManager'->>'guid')), ''))::text AS count
+      SELECT COUNT(DISTINCT oc.guid_client)::text AS count
       FROM onec_clients oc
       CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-      WHERE ${branchScope.clause}
-        AND ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${branchScope.params.length + 1}::text)
+      ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
+        AND ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
+        AND NOT (${clientAssignedToRopClause(`$${ropParamIndex}`, "oc")})
     `,
-    [...branchScope.params, ropGuid.toLowerCase()],
+    [...scoped.params, ropGuid.toLowerCase()],
   );
   return Number(result.rows[0]?.count ?? "0");
+}
+
+type TeamCountRow = {
+  manager_count: string;
+  regional_count: string;
+  team_member_count: string;
+};
+
+async function countTeamMembersForRop(context: AccessContext, ropGuid: string): Promise<TeamCountRow> {
+  const scoped = scopedClientFilter(context, "oc");
+  if (scoped.denied) {
+    return { manager_count: "0", regional_count: "0", team_member_count: "0" };
+  }
+  const ropLower = ropGuid.toLowerCase();
+  const ropParamIndex = scoped.params.length + 1;
+  const ropExcludeParamIndex = scoped.params.length + 2;
+  const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc");
+  const result = await query<TeamCountRow>(
+    `
+      WITH scoped_clients AS (
+        SELECT oc.guid_client, oc.guid_manager, oc.name_manager, oc.extended_snapshot
+        FROM onec_clients oc
+        ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
+      ),
+      client_assigned AS (
+        SELECT sc.*
+        FROM scoped_clients sc
+        WHERE ${clientAssignedToRopClause(`$${ropParamIndex}`, "sc")}
+      ),
+      client_managers AS (
+        SELECT DISTINCT lower(guid_manager::text) AS employee_guid
+        FROM client_assigned
+        WHERE lower(guid_manager::text) IS NOT NULL
+          AND lower(guid_manager::text) <> lower($${ropExcludeParamIndex}::text)
+      ),
+      client_regionals AS (
+        SELECT DISTINCT ${clientRegionalGuidSql("client_assigned")} AS employee_guid
+        FROM client_assigned
+        WHERE ${clientRegionalGuidSql("client_assigned")} IS NOT NULL
+          AND ${clientRegionalGuidSql("client_assigned")} <> lower($${ropExcludeParamIndex}::text)
+      ),
+      client_hardware AS (
+        SELECT DISTINCT ${clientHardwareGuidSql("client_assigned")} AS employee_guid
+        FROM client_assigned
+        WHERE ${clientHardwareGuidSql("client_assigned")} IS NOT NULL
+          AND ${clientHardwareGuidSql("client_assigned")} <> lower($${ropExcludeParamIndex}::text)
+      ),
+      outlet_rows AS (
+        SELECT
+          ${outletManagerGuidSql("outlet.elem")} AS manager_guid,
+          ${outletRegionalGuidSql("outlet.elem")} AS regional_guid,
+          ${outletHardwareGuidSql("outlet.elem")} AS hardware_guid
+        FROM scoped_clients sc
+        JOIN onec_clients oc ON oc.guid_client = sc.guid_client
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
+        WHERE ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
+      ),
+      outlet_managers AS (
+        SELECT DISTINCT manager_guid AS employee_guid
+        FROM outlet_rows
+        WHERE manager_guid IS NOT NULL
+          AND manager_guid <> lower($${ropExcludeParamIndex}::text)
+      ),
+      outlet_regionals AS (
+        SELECT DISTINCT regional_guid AS employee_guid
+        FROM outlet_rows
+        WHERE regional_guid IS NOT NULL
+          AND regional_guid <> lower($${ropExcludeParamIndex}::text)
+      ),
+      outlet_hardware AS (
+        SELECT DISTINCT hardware_guid AS employee_guid
+        FROM outlet_rows
+        WHERE hardware_guid IS NOT NULL
+          AND hardware_guid <> lower($${ropExcludeParamIndex}::text)
+      ),
+      managers AS (
+        SELECT employee_guid FROM client_managers
+        UNION
+        SELECT employee_guid FROM outlet_managers
+      ),
+      regionals AS (
+        SELECT employee_guid FROM client_regionals
+        UNION
+        SELECT employee_guid FROM outlet_regionals
+      ),
+      hardware AS (
+        SELECT employee_guid FROM client_hardware
+        UNION
+        SELECT employee_guid FROM outlet_hardware
+      ),
+      team_members AS (
+        SELECT employee_guid FROM managers
+        UNION
+        SELECT employee_guid FROM regionals
+        UNION
+        SELECT employee_guid FROM hardware
+      )
+      SELECT
+        (SELECT COUNT(*)::text FROM managers) AS manager_count,
+        (SELECT COUNT(*)::text FROM regionals) AS regional_count,
+        (SELECT COUNT(*)::text FROM team_members) AS team_member_count
+    `,
+    [...scoped.params, ropLower, ropLower],
+  );
+  return (
+    result.rows[0] ?? { manager_count: "0", regional_count: "0", team_member_count: "0" }
+  );
 }
 
 async function loadUndefinedTeamMembers(linked: Set<string>): Promise<OrgUndefinedTeamMember[]> {
+  const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc");
   const result = await query<{ employee_guid: string; name: string; post: string | null }>(
     `
       SELECT
@@ -316,18 +427,39 @@ async function loadUndefinedTeamMembers(linked: Set<string>): Promise<OrgUndefin
         r.post
       FROM onec_wholesale_employee_roster r
       WHERE lower(r.guid_manager::text) <> $1
+        AND r.post IS DISTINCT FROM $2
         AND NOT (
-          r.post = $2
-          OR EXISTS (
+          EXISTS (
             SELECT 1 FROM onec_clients oc
             WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
               AND (
                 ${clientHeadOfSalesGuidSql("oc")} = lower(r.guid_manager::text)
                 OR EXISTS (
                   SELECT 1
-                  FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
+                  FROM jsonb_array_elements(${outletsJson}) outlet(elem)
                   WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower(r.guid_manager::text)
                 )
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM onec_clients oc
+            WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
+              AND ${clientHeadOfSalesGuidSql("oc")} IS NOT NULL
+              AND (
+                lower(oc.guid_manager::text) = lower(r.guid_manager::text)
+                OR ${clientRegionalGuidSql("oc")} = lower(r.guid_manager::text)
+                OR ${clientHardwareGuidSql("oc")} = lower(r.guid_manager::text)
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM onec_clients oc
+            CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
+            WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
+              AND ${outletHeadOfSalesGuidSql("outlet.elem")} IS NOT NULL
+              AND (
+                ${outletManagerGuidSql("outlet.elem")} = lower(r.guid_manager::text)
+                OR ${outletRegionalGuidSql("outlet.elem")} = lower(r.guid_manager::text)
+                OR ${outletHardwareGuidSql("outlet.elem")} = lower(r.guid_manager::text)
               )
           )
         )
@@ -359,8 +491,10 @@ export async function getOrgStructureOverview(context: AccessContext): Promise<O
 
   const rops: OrgRopSummary[] = [];
   for (const row of visibleRops) {
-    const clientCount = await countScopedClients(context, ropPortfolioClause("$1"), [row.employee_guid]);
-    const outletCount = await countScopedOutlets(context, row.employee_guid);
+    const clientCount = await countAssignedClients(context, row.employee_guid);
+    const outletCount = await countAssignedOutlets(context, row.employee_guid);
+    const parentClientCount = await countParentClientsOfAssignedOutlets(context, row.employee_guid);
+    const teamCounts = await countTeamMembersForRop(context, row.employee_guid);
     const hasPortfolio = clientCount > 0 || outletCount > 0;
     rops.push({
       employeeGuid: row.employee_guid,
@@ -370,10 +504,12 @@ export async function getOrgStructureOverview(context: AccessContext): Promise<O
       hasLinkedAccount: linked.has(row.employee_guid),
       hasAssignedPortfolio: hasPortfolio,
       portfolioNote: hasPortfolio ? null : "Нет назначенного портфеля",
-      managerCount: await countManagersForRop(context, row.employee_guid),
-      regionalCount: await countRegionalsForRop(context, row.employee_guid),
+      managerCount: Number(teamCounts.manager_count),
+      regionalCount: Number(teamCounts.regional_count),
+      teamMemberCount: Number(teamCounts.team_member_count),
       uniqueClientCount: clientCount,
       uniqueOutletCount: outletCount,
+      parentClientCount,
       sources: [
         ...(row.from_roster ? (["roster"] as const) : []),
         ...(row.from_assignment ? (["assignment"] as const) : []),
@@ -406,8 +542,8 @@ export async function listOrgRopResponsibles(
     throw new OrgStructureAccessError("Нет доступа к ветке РОП.", "FORBIDDEN");
   }
 
-  const branchScope = orgRopBranchClientScope(context, ropEmployeeGuid, "oc");
-  if (branchScope.denied) {
+  const scoped = scopedClientFilter(context, "oc");
+  if (scoped.denied) {
     return [];
   }
 
@@ -419,9 +555,12 @@ export async function listOrgRopResponsibles(
     rosterRows.rows.map((row) => [row.guid_manager.toLowerCase(), row.name_manager]),
   );
 
-  const ropParamIndex = branchScope.params.length + 1;
+  const ropLower = ropEmployeeGuid.toLowerCase();
+  const ropParamIndex = scoped.params.length + 1;
+  const ropExcludeParamIndex = scoped.params.length + 2;
+  const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc");
   const rows = await query<{
-    kind: "manager" | "regional";
+    kind: "manager" | "regional" | "hardware";
     employee_guid: string;
     name: string | null;
     client_count: string;
@@ -431,7 +570,12 @@ export async function listOrgRopResponsibles(
       WITH scoped_clients AS (
         SELECT oc.guid_client, oc.guid_manager, oc.name_manager, oc.extended_snapshot
         FROM onec_clients oc
-        WHERE ${branchScope.clause}
+        ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
+      ),
+      client_assigned AS (
+        SELECT sc.*
+        FROM scoped_clients sc
+        WHERE ${clientAssignedToRopClause(`$${ropParamIndex}`, "sc")}
       ),
       client_managers AS (
         SELECT
@@ -440,8 +584,34 @@ export async function listOrgRopResponsibles(
           MAX(name_manager) AS name,
           COUNT(DISTINCT guid_client)::text AS client_count,
           '0'::text AS outlet_count
-        FROM scoped_clients
+        FROM client_assigned
+        WHERE lower(guid_manager::text) IS NOT NULL
+          AND lower(guid_manager::text) <> lower($${ropExcludeParamIndex}::text)
         GROUP BY lower(guid_manager::text)
+      ),
+      client_regionals AS (
+        SELECT
+          'regional'::text AS kind,
+          ${clientRegionalGuidSql("client_assigned")} AS employee_guid,
+          MAX(NULLIF(BTRIM(client_assigned.extended_snapshot->'regionalManager'->>'name'), '')) AS name,
+          COUNT(DISTINCT guid_client)::text AS client_count,
+          '0'::text AS outlet_count
+        FROM client_assigned
+        WHERE ${clientRegionalGuidSql("client_assigned")} IS NOT NULL
+          AND ${clientRegionalGuidSql("client_assigned")} <> lower($${ropExcludeParamIndex}::text)
+        GROUP BY ${clientRegionalGuidSql("client_assigned")}
+      ),
+      client_hardware AS (
+        SELECT
+          'hardware'::text AS kind,
+          ${clientHardwareGuidSql("client_assigned")} AS employee_guid,
+          MAX(NULLIF(BTRIM(client_assigned.extended_snapshot->'hardwareManager'->>'name'), '')) AS name,
+          COUNT(DISTINCT guid_client)::text AS client_count,
+          '0'::text AS outlet_count
+        FROM client_assigned
+        WHERE ${clientHardwareGuidSql("client_assigned")} IS NOT NULL
+          AND ${clientHardwareGuidSql("client_assigned")} <> lower($${ropExcludeParamIndex}::text)
+        GROUP BY ${clientHardwareGuidSql("client_assigned")}
       ),
       outlet_managers AS (
         SELECT
@@ -452,9 +622,10 @@ export async function listOrgRopResponsibles(
           COUNT(*)::text AS outlet_count
         FROM scoped_clients sc
         JOIN onec_clients oc ON oc.guid_client = sc.guid_client
-        CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
+        WHERE ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
           AND ${outletManagerGuidSql("outlet.elem")} IS NOT NULL
+          AND ${outletManagerGuidSql("outlet.elem")} <> lower($${ropExcludeParamIndex}::text)
         GROUP BY ${outletManagerGuidSql("outlet.elem")}
       ),
       outlet_regionals AS (
@@ -466,26 +637,41 @@ export async function listOrgRopResponsibles(
           COUNT(*)::text AS outlet_count
         FROM scoped_clients sc
         JOIN onec_clients oc ON oc.guid_client = sc.guid_client
-        CROSS JOIN LATERAL jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc")}) outlet(elem)
-        WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower($${ropParamIndex}::text)
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
+        WHERE ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
           AND ${outletRegionalGuidSql("outlet.elem")} IS NOT NULL
+          AND ${outletRegionalGuidSql("outlet.elem")} <> lower($${ropExcludeParamIndex}::text)
         GROUP BY ${outletRegionalGuidSql("outlet.elem")}
       ),
-      outlet_responsibles AS (
-        SELECT * FROM outlet_managers
-        UNION ALL
-        SELECT * FROM outlet_regionals
+      outlet_hardware AS (
+        SELECT
+          'hardware'::text AS kind,
+          ${outletHardwareGuidSql("outlet.elem")} AS employee_guid,
+          MAX(NULLIF(BTRIM(outlet.elem->'managers'->'hardwareManager'->>'name'), '')) AS name,
+          '0'::text AS client_count,
+          COUNT(*)::text AS outlet_count
+        FROM scoped_clients sc
+        JOIN onec_clients oc ON oc.guid_client = sc.guid_client
+        CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
+        WHERE ${outletAssignedToRopClause(`$${ropParamIndex}`, "outlet.elem")}
+          AND ${outletHardwareGuidSql("outlet.elem")} IS NOT NULL
+          AND ${outletHardwareGuidSql("outlet.elem")} <> lower($${ropExcludeParamIndex}::text)
+        GROUP BY ${outletHardwareGuidSql("outlet.elem")}
       )
-      SELECT kind, employee_guid, name, client_count, outlet_count
-      FROM client_managers
-      WHERE employee_guid IS NOT NULL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM client_managers
       UNION ALL
-      SELECT kind, employee_guid, name, client_count, outlet_count
-      FROM outlet_responsibles
-      WHERE employee_guid IS NOT NULL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM client_regionals
+      UNION ALL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM client_hardware
+      UNION ALL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM outlet_managers
+      UNION ALL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM outlet_regionals
+      UNION ALL
+      SELECT kind, employee_guid, name, client_count, outlet_count FROM outlet_hardware
       ORDER BY kind ASC, name ASC NULLS LAST, employee_guid ASC
     `,
-    [...branchScope.params, ropEmployeeGuid.toLowerCase()],
+    [...scoped.params, ropLower, ropLower],
   );
 
   const merged = new Map<string, OrgResponsibleSummary>();

@@ -26,6 +26,22 @@ export function outletHardwareGuidSql(outletAlias = "outlet"): string {
   return `NULLIF(BTRIM(lower(${outletAlias}->'managers'->'hardwareManager'->>'guid')), '')`;
 }
 
+export function clientRegionalGuidSql(clientAlias = "onec_clients"): string {
+  return `NULLIF(BTRIM(lower(${clientAlias}.extended_snapshot->'regionalManager'->>'guid')), '')`;
+}
+
+export function clientHardwareGuidSql(clientAlias = "onec_clients"): string {
+  return `NULLIF(BTRIM(lower(${clientAlias}.extended_snapshot->'hardwareManager'->>'guid')), '')`;
+}
+
+/** Outlet row in extended snapshot assigned to ROP via outlet-level headOfSales. */
+export function outletAssignedToRopClause(
+  ropParamSql: string,
+  outletAlias = "outlet.elem",
+): string {
+  return `${outletHeadOfSalesGuidSql(outletAlias)} = lower(${ropParamSql}::text)`;
+}
+
 export function outletStoreGuidSql(outletAlias = "outlet"): string {
   return `NULLIF(BTRIM(lower(${outletAlias}->>'guidStore')), '')`;
 }
@@ -77,18 +93,22 @@ export function managerInRopBranchClause(
   )`;
 }
 
-/** Regional portfolio within ROP branch. */
+/** Regional portfolio within ROP branch (client-level and outlet-level assignments). */
 export function regionalInRopBranchClause(
   ropParamSql: string,
   regionalParamSql: string,
   clientAlias = "onec_clients",
 ): string {
-  return `
-    EXISTS (
+  return `(
+    (
+      ${clientAssignedToRopClause(ropParamSql, clientAlias)}
+      AND ${clientRegionalGuidSql(clientAlias)} = lower(${regionalParamSql}::text)
+    )
+    OR EXISTS (
       SELECT 1
       FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", clientAlias)}) outlet(elem)
       WHERE ${outletHeadOfSalesGuidSql("outlet.elem")} = lower(${ropParamSql}::text)
         AND ${outletRegionalGuidSql("outlet.elem")} = lower(${regionalParamSql}::text)
     )
-  `;
+  )`;
 }
