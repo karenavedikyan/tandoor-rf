@@ -3,7 +3,7 @@ import {
   ACTIVE_BASELINE_OC_SQL,
   appendActiveBaselineFilter,
 } from "../onec-clients/baseline-active-scope";
-import { ropTeamPortfolioClause } from "../clients/team-portfolio-sql";
+import { ropDirectClientListClause, ropFullClientReadClause } from "./rop-read-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
 import type { ClientScopeSql } from "./types";
@@ -51,7 +51,15 @@ export function appendUserDenials(scope: ClientScopeSql, userId: string): Client
   };
 }
 
-export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
+export type BuildClientScopeOptions = {
+  /** ROP client list: exclude parents reachable only via outlet-level 1C assignment. */
+  ropDirectClientList?: boolean;
+};
+
+export function buildClientScopeSql(
+  context: AccessContext,
+  options: BuildClientScopeOptions = {},
+): ClientScopeSql {
   if (context.explicitlyDeniedAll) {
     return DENY_SCOPE;
   }
@@ -83,13 +91,16 @@ export function buildClientScopeSql(context: AccessContext): ClientScopeSql {
     }
 
     case "rop": {
+      const ropReadClause = options.ropDirectClientList
+        ? ropDirectClientListClause("$1", "$2", "oc")
+        : ropFullClientReadClause("$1", "$2", "oc");
       scope = scopedWhere(
         `
           SELECT oc.guid_client
           FROM onec_clients oc
           WHERE ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL.replaceAll("onec_clients.", "oc.")}
             AND ${ACTIVE_BASELINE_OC_SQL.trim()}
-            AND ${ropTeamPortfolioClause("$1", "$2").replaceAll("onec_clients.", "oc.")}
+            AND ${ropReadClause}
         `,
         [userParam, context.employeeId!],
       );

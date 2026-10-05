@@ -1,4 +1,5 @@
 import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
+import { loadRopTeamEmployeeGuids } from "../access/rop-read-scope";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
 import { getPool, query } from "../db/pool";
@@ -148,7 +149,9 @@ async function resolveScopedFilter(
   let userFilter = buildClientsFilter(
     portfolioManagerId ? { ...input, managerId: undefined } : input,
   );
-  const scope = buildClientScopeSql(context);
+  const scope = buildClientScopeSql(context, {
+    ropDirectClientList: context.role === "rop" && input.entity === "clients",
+  });
 
   if (portfolioManagerId) {
     userFilter = combineScopeAndFilter(userFilter, {
@@ -207,14 +210,19 @@ async function resolveScopedFilter(
       selectExtraParams = [context.employeeId];
     }
   }
-  const outletsCountExpr = scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+  const outletsCountExpr =
+    combined.whereSql === "WHERE FALSE"
+      ? "0"
+      : scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
-    combined = mergeSqlFilters(
-      combined,
-      [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
-      [],
-    );
+    if (combined.whereSql !== "WHERE FALSE") {
+      combined = mergeSqlFilters(
+        combined,
+        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+        [],
+      );
+    }
   }
 
   const includeReview =
@@ -351,7 +359,9 @@ export async function listClients(
 }
 
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
-  const scope = buildClientScopeSql(context);
+  const scope = buildClientScopeSql(context, {
+    ropDirectClientList: context.role === "rop",
+  });
   const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
   const holdingFilter = combineScopeAndFilter(scope, {
     whereSql: "WHERE guid_holding IS NOT NULL",
@@ -436,6 +446,10 @@ export async function getClientByGuid(
   }
 
   const linkedEmployeeGuids = await loadActiveLinkedEmployeeGuids();
+  const ropTeamEmployeeGuids =
+    context.role === "rop" && context.employeeId
+      ? await loadRopTeamEmployeeGuids(context.userId, context.employeeId)
+      : undefined;
 
   const result = await query<ClientRow>(
     `
@@ -468,7 +482,7 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row, context, { linkedEmployeeGuids });
+  return toClientDetail(row, context, { linkedEmployeeGuids, ropTeamEmployeeGuids });
 }
 
 export async function canReadClientGuid(

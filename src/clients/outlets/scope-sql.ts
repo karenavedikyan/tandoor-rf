@@ -1,3 +1,4 @@
+import { ropOutletRowAccessibleClause } from "../../access/rop-read-scope";
 import { appendUserDenials, buildClientScopeSql } from "../../access/scope-sql";
 import type { AccessContext } from "../../access/types";
 import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
@@ -124,6 +125,15 @@ export function buildOutletScope(context: AccessContext): { whereSql: string; pa
     ? clientScope.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc_scope.")
     : "TRUE";
 
+  let outletRowClause = "TRUE";
+  const outletRowParams: unknown[] = [...clientScope.params];
+  if (context.role === "rop" && context.employeeId) {
+    const ropUserParam = `$${outletRowParams.length + 1}`;
+    const ropEmployeeParam = `$${outletRowParams.length + 2}`;
+    outletRowParams.push(context.userId, context.employeeId);
+    outletRowClause = ropOutletRowAccessibleClause(ropUserParam, ropEmployeeParam, "ro", "oc");
+  }
+
   const base = {
     whereSql: `
       WHERE EXISTS (
@@ -132,9 +142,10 @@ export function buildOutletScope(context: AccessContext): { whereSql: string; pa
         WHERE oc_scope.guid_client = ro.guid_client
           AND (${scopeClause})
       )
+      AND (${outletRowClause})
       AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
     `,
-    params: clientScope.params,
+    params: outletRowParams,
   };
 
   return appendOcUserDenials(base, context.userId);
@@ -155,6 +166,10 @@ function scopedOutletRowAccessibleSql(
           AND lower(coalesce(outlet->'managers'->'regionalManager'->>'guid', '')) = lower(${regionalEmployeeParam})
       )
     `;
+  }
+
+  if (context.role === "rop" && context.employeeId) {
+    return ropOutletRowAccessibleClause("$1", "$2", storeAlias, clientAlias);
   }
 
   return "TRUE";

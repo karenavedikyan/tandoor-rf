@@ -258,8 +258,8 @@ describe("clients org structure access integration", { concurrency: false }, () 
     assert.equal(overview.status, 200);
     const rop = overview.body.rops.find((item: { employeeGuid: string }) => item.employeeGuid === ROP_EMPLOYEE);
     assert.ok(rop);
-    assert.equal(rop.uniqueClientCount, 1);
-    assert.equal(rop.managerCount, 1);
+    assert.equal(rop.uniqueClientCount, 2);
+    assert.equal(rop.managerCount, 2);
 
     const responsibles = await request(app)
       .get(`/api/clients/org-structure/${ROP_EMPLOYEE}/responsibles`)
@@ -268,7 +268,7 @@ describe("clients org structure access integration", { concurrency: false }, () 
     const guids = responsibles.body.items.map((item: { employeeGuid: string }) => item.employeeGuid);
     assert.ok(guids.includes(MANAGER_M1));
     assert.ok(!guids.includes(MANAGER_M2));
-    assert.ok(!guids.includes(MANAGER_NO_ACCOUNT));
+    assert.ok(guids.includes(MANAGER_NO_ACCOUNT));
 
     const m1 = responsibles.body.items.find((item: { employeeGuid: string }) => item.employeeGuid === MANAGER_M1);
     assert.equal(m1.clientCount, 1);
