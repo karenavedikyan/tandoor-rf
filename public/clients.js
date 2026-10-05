@@ -26,7 +26,10 @@
   var cardsEl = document.getElementById("clients-cards");
   var paginationEl = document.getElementById("pagination");
   var viewSwitcherEl = document.getElementById("view-switcher");
+  var entitySwitcherEl = document.getElementById("entity-switcher");
+  var pageTitleEl = document.getElementById("clients-page-title");
   var viewReviewTab = document.getElementById("view-review-tab");
+  var tableHeadRow = document.getElementById("clients-table-head-row");
   var breadcrumbsEl = document.getElementById("clients-breadcrumbs");
   var teamsPanelEl = document.getElementById("teams-panel");
   var unassignedPanelEl = document.getElementById("unassigned-panel");
@@ -48,6 +51,7 @@
   var managerCombobox = null;
   var holdingCombobox = null;
   var currentUser = null;
+  var rolePresentation = null;
   var teamContext = { rops: [], managers: [], ropName: "", managerName: "" };
   var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
 
@@ -69,9 +73,14 @@
     return appEl.dataset.view || "all";
   }
 
+  function currentEntity() {
+    return appEl.dataset.entity || "clients";
+  }
+
   function currentStateFromForm() {
     return {
       view: currentView(),
+      entity: currentEntity(),
       q: searchInput.value.trim(),
       manager: managerFilter.value,
       holding: holdingFilter.value,
@@ -96,6 +105,7 @@
 
   function applyStateToForm(state) {
     appEl.dataset.view = state.view || "all";
+    appEl.dataset.entity = state.entity || "clients";
     appEl.dataset.rop = state.rop || "";
     appEl.dataset.page = String(state.page);
     searchInput.value = state.q;
@@ -113,7 +123,90 @@
       holdingCombobox.syncFromUrl(state.holding);
     }
     updateViewSwitcherActive(state.view || "all");
+    updateEntitySwitcherActive(state.entity || "clients");
     updateViewChrome(state);
+    showEntityTableHeaders(state.entity || "clients");
+  }
+
+  function applyRoleChrome(presentation) {
+    rolePresentation = presentation;
+    if (!presentation) {
+      return;
+    }
+    if (pageTitleEl) {
+      pageTitleEl.textContent = presentation.pageTitle || "Клиенты";
+    }
+    document.title = (presentation.pageTitle || "Клиенты") + " — tandoor-rf";
+    viewSwitcherEl.classList.toggle("clients-hidden", !presentation.showViewSwitcher);
+    entitySwitcherEl.classList.toggle(
+      "clients-hidden",
+      !(presentation.allowedEntities && presentation.allowedEntities.length > 1),
+    );
+    viewReviewTab.classList.toggle(
+      "clients-hidden",
+      !(presentation.allowedViews && presentation.allowedViews.indexOf("review") !== -1),
+    );
+    document.getElementById("manager-combobox")?.classList.toggle(
+      "clients-hidden",
+      !presentation.showManagerTeamFilter,
+    );
+  }
+
+  function loadPresentation() {
+    return api.apiRequest("/api/clients/presentation").then(function (result) {
+      if (result.response.status === 403) {
+        return { ok: false, forbidden: true };
+      }
+      if (result.response.status !== 200 || !result.data || !result.data.presentation) {
+        return {
+          ok: false,
+          message: api.extractErrorMessage(result.data, "Не удалось определить роль."),
+        };
+      }
+      applyRoleChrome(result.data.presentation);
+      return { ok: true, presentation: result.data.presentation };
+    });
+  }
+
+  function updateEntitySwitcherActive(entity) {
+    if (!entitySwitcherEl) {
+      return;
+    }
+    entitySwitcherEl.querySelectorAll("[data-entity]").forEach(function (btn) {
+      btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-entity") === entity);
+    });
+  }
+
+  function showEntityTableHeaders(entity) {
+    if (!tableHeadRow) {
+      return;
+    }
+    if (entity === "outlets") {
+      tableHeadRow.innerHTML =
+        "<th scope=\"col\">Клиент</th>" +
+        "<th scope=\"col\">Торговая точка</th>" +
+        "<th scope=\"col\">Адрес</th>" +
+        "<th scope=\"col\">Статус ТТ</th>" +
+        "<th scope=\"col\">Менеджер</th>";
+      return;
+    }
+    tableHeadRow.innerHTML =
+      "<th scope=\"col\">Клиент</th>" +
+      "<th scope=\"col\">Холдинг</th>" +
+      "<th scope=\"col\">Менеджер</th>" +
+      '<th scope="col" data-col="team" class="clients-hidden">Команда</th>' +
+      '<th scope="col" data-col="review" class="clients-hidden">Ревизия</th>' +
+      "<th scope=\"col\">Адрес</th>" +
+      "<th scope=\"col\">Телефон</th>";
+    teamColHeader = document.querySelector('[data-col="team"]');
+    reviewColHeader = document.querySelector('[data-col="review"]');
+  }
+
+  function resultCountLabel(total, entity) {
+    if (entity === "outlets") {
+      return "Найдено " + total + " торговых точек";
+    }
+    return "Найдено " + total + " клиентов";
   }
 
   function listReturnQuery() {
@@ -273,6 +366,64 @@
     reviewColHeader.classList.toggle("clients-hidden", !showReview);
   }
 
+  function renderOutletRows(items) {
+    tableBody.innerHTML = items
+      .map(function (item) {
+        return (
+          "<tr>" +
+          '<td><a class="clients-link" href="' +
+          clientHref(item.guidClient) +
+          '">' +
+          shell.escapeHtml(item.clientName) +
+          "</a></td>" +
+          "<td>" +
+          shell.escapeHtml(item.outletLabel || item.guidStore) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(item.address || "—") +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта")) +
+          "</td>" +
+          "<td>" +
+          shell.escapeHtml(item.manager.name) +
+          " · " +
+          shell.escapeHtml(item.manager.shortId) +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    cardsEl.innerHTML = items
+      .map(function (item) {
+        return (
+          '<article class="clients-card">' +
+          '<h2 class="clients-card__title"><a class="clients-link" href="' +
+          clientHref(item.guidClient) +
+          '">' +
+          shell.escapeHtml(item.clientName) +
+          "</a></h2>" +
+          '<p class="clients-card__line"><strong>Торговая точка:</strong> ' +
+          shell.escapeHtml(item.outletLabel || item.guidStore) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Адрес:</strong> ' +
+          shell.escapeHtml(item.address || "—") +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Статус:</strong> ' +
+          shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта")) +
+          "</p>" +
+          '<p class="clients-card__line"><strong>Менеджер:</strong> ' +
+          shell.escapeHtml(item.manager.name) +
+          " · " +
+          shell.escapeHtml(item.manager.shortId) +
+          "</p>" +
+          "</article>"
+        );
+      })
+      .join("");
+  }
+
   function renderRows(items) {
     var view = currentView();
     showExtendedColumns(view);
@@ -382,6 +533,7 @@
   function buildQueryString(state) {
     var params = new URLSearchParams();
     if (state.view && state.view !== "all") params.set("view", state.view);
+    if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
     if (state.holding) params.set("holding", state.holding);
@@ -883,7 +1035,7 @@
             "После успешного импорта из 1С здесь появится справочник клиентов.",
             "",
           );
-          resultCountEl.textContent = "Найдено 0 клиентов";
+          resultCountEl.textContent = resultCountLabel(0, state.entity || "clients");
           return;
         }
         if (result.data.total === 0) {
@@ -893,7 +1045,7 @@
             "Измените поиск или сбросьте фильтры.",
             '<button type="button" class="workspace-button workspace-button--secondary" id="reset-from-empty">Сбросить фильтры</button>',
           );
-          resultCountEl.textContent = "Найдено 0 клиентов";
+          resultCountEl.textContent = resultCountLabel(0, state.entity || "clients");
           document.getElementById("reset-from-empty")?.addEventListener("click", function () {
             resetFilters();
           });
@@ -901,8 +1053,12 @@
         }
 
         showResultsContent();
-        resultCountEl.textContent = "Найдено " + result.data.total + " клиентов";
-        renderRows(result.data.items || []);
+        resultCountEl.textContent = resultCountLabel(result.data.total, state.entity || "clients");
+        if ((state.entity || "clients") === "outlets") {
+          renderOutletRows(result.data.items || []);
+        } else {
+          renderRows(result.data.items || []);
+        }
         renderPagination(state, result.data.totalPages || 0);
       })
       .catch(function (err) {
@@ -945,6 +1101,7 @@
     }
     loadList({
       view: currentView(),
+      entity: currentEntity(),
       q: "",
       manager: "",
       holding: "",
@@ -959,11 +1116,16 @@
   }
 
   function switchView(view) {
-    if (view === "review" && currentUser && currentUser.role !== "admin") {
+    if (
+      rolePresentation &&
+      rolePresentation.allowedViews &&
+      rolePresentation.allowedViews.indexOf(view) === -1
+    ) {
       return;
     }
     navigateState({
       view: view,
+      entity: currentEntity(),
       q: "",
       manager: "",
       holding: "",
@@ -977,11 +1139,44 @@
     });
   }
 
+  function switchEntity(entity) {
+    if (
+      rolePresentation &&
+      rolePresentation.allowedEntities &&
+      rolePresentation.allowedEntities.indexOf(entity) === -1
+    ) {
+      return;
+    }
+    navigateState(
+      Object.assign({}, currentStateFromForm(), {
+        entity: entity,
+        page: 1,
+      }),
+    );
+  }
+
   function initializeWorkspace() {
     showAppShell();
     showResultsState("loading", "Загрузка…", "", "");
-    return Promise.all([loadOptions(), loadSyncStatus()])
+    return loadPresentation()
+      .then(function (presentationResult) {
+        if (presentationResult.forbidden) {
+          showAccessDenied();
+          return null;
+        }
+        if (!presentationResult.ok) {
+          showInitError(
+            "Не удалось определить роль",
+            presentationResult.message || "Повторите попытку позже.",
+          );
+          return null;
+        }
+        return Promise.all([loadOptions(), loadSyncStatus()]);
+      })
       .then(function (results) {
+        if (!results) {
+          return;
+        }
         var optionsResult = results[0];
         if (!optionsResult.ok) {
           showInitError(
@@ -990,7 +1185,13 @@
           );
           return;
         }
-        loadList(readStateFromUrl(), true);
+        var urlState = readStateFromUrl();
+        var initialState = logic.applyPresentationDefaults(
+          urlState,
+          rolePresentation,
+          window.location.search,
+        );
+        loadList(initialState, true);
       })
       .catch(function (err) {
         showInitError("Ошибка инициализации", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000));
@@ -1031,6 +1232,11 @@
     if (!btn) return;
     switchView(btn.getAttribute("data-view"));
   });
+  entitySwitcherEl.addEventListener("click", function (event) {
+    var btn = event.target.closest("[data-entity]");
+    if (!btn) return;
+    switchEntity(btn.getAttribute("data-entity"));
+  });
   resetFiltersBtn.addEventListener("click", resetFilters);
 
   window.addEventListener("popstate", function () {
@@ -1057,9 +1263,6 @@
       return;
     }
     currentUser = user;
-    if (user && user.role === "admin") {
-      viewReviewTab.classList.remove("clients-hidden");
-    }
     initializeWorkspace();
   });
 })();

@@ -3,14 +3,15 @@ import type { AccessRequest } from "../../access/middleware";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
 import { UNASSIGNED_CATEGORIES, type UnassignedCategory } from "../review/constants";
+import { canUseUnassignedNavigation } from "../role-presentation";
 import { buildUnassignedSummary } from "./repository";
 
 export async function unassignedSummaryHandler(req: AccessRequest, res: Response): Promise<void> {
   const context = req.accessContext!;
-  if (context.role !== "admin") {
+  if (!canUseUnassignedNavigation(context)) {
     setNoStore(res);
     res.status(403).json(
-      apiError(ERROR_CODES.FORBIDDEN, "Нераспределённые назначения доступны только администратору."),
+      apiError(ERROR_CODES.FORBIDDEN, "Нераспределённые назначения недоступны для вашей роли."),
     );
     return;
   }

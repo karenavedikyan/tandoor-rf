@@ -1496,6 +1496,7 @@ export async function listClientsForDelegator(input: {
     }
   }
   return listDelegatorClientsPicker(effectiveScope, {
+    entity: "clients",
     view: "all",
     q: input.q ?? "",
     phone: "all",

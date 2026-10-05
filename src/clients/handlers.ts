@@ -4,6 +4,7 @@ import { loadScheduledExchangeConfig } from "../onec-scheduled-exchange/config";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
+import { listRetailOutlets } from "./outlets/repository";
 import { parseClientsListQuery } from "./query";
 import {
   countAllClients,
@@ -13,6 +14,7 @@ import {
   listClients,
   ListClientsError,
 } from "./repository";
+import { validateClientsListQuery } from "./role-presentation";
 
 function sendValidationError(res: Response, message: string): void {
   setNoStore(res);
@@ -30,9 +32,19 @@ export async function listClientsHandler(
     return;
   }
 
+  const accessError = validateClientsListQuery(context, parsed.query);
+  if (accessError) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, accessError));
+    return;
+  }
+
   let result;
   try {
-    result = await listClients(context, parsed.query);
+    result =
+      parsed.query.entity === "outlets"
+        ? await listRetailOutlets(context, parsed.query)
+        : await listClients(context, parsed.query);
   } catch (error) {
     if (error instanceof ListClientsError) {
       setNoStore(res);
@@ -48,6 +60,7 @@ export async function listClientsHandler(
       parsed.query.holdingId ||
       parsed.query.phone !== "all" ||
       parsed.query.view !== "all" ||
+      parsed.query.entity !== "clients" ||
       parsed.query.ropUserId ||
       parsed.query.unassignedCategory ||
       parsed.query.reviewState ||

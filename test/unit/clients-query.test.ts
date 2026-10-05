@@ -18,6 +18,15 @@ describe("clients query parsing", () => {
     assert.equal(parseClientsListQuery({ manager: { id: "x" } }).ok, false);
   });
 
+  it("parses entity mode and extended view filters", () => {
+    const outlets = parseClientsListQuery({ entity: "outlets" });
+    assert.equal(outlets.ok, true);
+    if (outlets.ok) {
+      assert.equal(outlets.query.entity, "outlets");
+      assert.equal(outlets.query.view, "all");
+    }
+  });
+
   it("parses extended view and review filters", () => {
     const parsed = parseClientsListQuery({
       view: "review",
@@ -37,6 +46,7 @@ describe("clients query parsing", () => {
 
   it("builds phone filter without matching everything on empty normalized phone", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
       view: "all",
       q: "+-()",
       phone: "all",
@@ -50,6 +60,7 @@ describe("clients query parsing", () => {
 
   it("includes normalized phone search when digits remain", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
       view: "all",
       q: "+7 (999)",
       phone: "all",
@@ -62,6 +73,7 @@ describe("clients query parsing", () => {
 
   it("does not treat cyrillic text as phone search input", () => {
     const filter = buildClientsFilter({
+      entity: "clients",
       view: "all",
       q: "альфа",
       phone: "all",

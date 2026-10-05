@@ -16,7 +16,7 @@
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
           <header class="clients-page-header">
-            <h1 class="clients-page-title">Клиенты</h1>
+            <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
           </header>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
@@ -27,8 +27,13 @@
               <button type="button" class="clients-view-switcher__btn" data-view="all">Все клиенты</button>
               <button type="button" class="clients-view-switcher__btn" data-view="teams">По командам</button>
               <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
-                Ревизия
+                Требуют проверки
               </button>
+            </nav>
+
+            <nav id="entity-switcher" class="clients-view-switcher clients-hidden" aria-label="Тип списка">
+              <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
+              <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
             </nav>
 
             <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация"></nav>

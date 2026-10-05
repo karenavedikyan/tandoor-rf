@@ -14,8 +14,9 @@ export function mergeSqlFilters(base: SqlFilter, extraClauses: string[], extraPa
   }
   const offset = base.params.length;
   const rebasedClauses = extraClauses.map((clause) => rebaseSqlPlaceholders(clause, offset));
+  const normalizedBase = base.whereSql.trim();
   const combinedClauses = [
-    base.whereSql ? base.whereSql.replace(/^WHERE\s+/, "") : "",
+    normalizedBase ? normalizedBase.replace(/^WHERE\s+/i, "") : "",
     ...rebasedClauses,
   ].filter(Boolean);
   return {

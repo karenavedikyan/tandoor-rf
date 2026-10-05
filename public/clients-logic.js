@@ -9,6 +9,7 @@
 
   var LIST_QUERY_KEYS = [
     "view",
+    "entity",
     "q",
     "manager",
     "holding",
@@ -27,8 +28,13 @@
     if (view !== "all" && view !== "teams" && view !== "review") {
       view = "all";
     }
+    var entity = params.get("entity") || "clients";
+    if (entity !== "clients" && entity !== "outlets") {
+      entity = "clients";
+    }
     return {
       view: view,
+      entity: entity,
       q: params.get("q") || "",
       manager: params.get("manager") || "",
       holding: params.get("holding") || "",
@@ -42,9 +48,25 @@
     };
   }
 
+  function applyPresentationDefaults(state, presentation, search) {
+    if (!presentation) {
+      return state;
+    }
+    var params = new URLSearchParams(search || "");
+    var next = Object.assign({}, state);
+    if (!params.has("view")) {
+      next.view = presentation.defaultView || next.view;
+    }
+    if (!params.has("entity")) {
+      next.entity = presentation.defaultEntity || next.entity;
+    }
+    return next;
+  }
+
   function buildListQueryString(state) {
     var params = new URLSearchParams();
     if (state.view && state.view !== "all") params.set("view", state.view);
+    if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
     if (state.manager) params.set("manager", state.manager);
     if (state.holding) params.set("holding", state.holding);
@@ -516,6 +538,7 @@
 
   return {
     readStateFromSearch: readStateFromSearch,
+    applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,

@@ -100,6 +100,62 @@ export async function insertFailedImportRun(databaseUrl: string): Promise<void> 
   await pool.end();
 }
 
+export type SyntheticRetailOutletInput = {
+  guid_store: string;
+  guid_client: string;
+  is_closed?: boolean;
+};
+
+export async function insertSyntheticRetailOutlets(
+  databaseUrl: string,
+  outlets: SyntheticRetailOutletInput[],
+): Promise<void> {
+  assertTestDatabaseUrl(databaseUrl, "insertSyntheticRetailOutlets");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  for (const outlet of outlets) {
+    await pool.query(
+      `
+        INSERT INTO onec_retail_outlets (
+          guid_store,
+          guid_client,
+          is_closed,
+          first_source_sha256,
+          last_source_sha256
+        )
+        VALUES ($1::uuid, $2::uuid, $3, $4, $4)
+      `,
+      [
+        outlet.guid_store,
+        outlet.guid_client,
+        outlet.is_closed ?? false,
+        "0".repeat(64),
+      ],
+    );
+  }
+  await pool.end();
+}
+
+export async function updateClientExtendedSnapshot(
+  databaseUrl: string,
+  guidClient: string,
+  extendedSnapshot: unknown,
+): Promise<void> {
+  assertTestDatabaseUrl(databaseUrl, "updateClientExtendedSnapshot");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  await pool.query(
+    `
+      UPDATE onec_clients
+      SET
+        extended_snapshot = $2::jsonb,
+        extended_format_version = 'extended_v1',
+        extended_freshness_state = 'current'
+      WHERE guid_client = $1::uuid
+    `,
+    [guidClient, JSON.stringify(extendedSnapshot)],
+  );
+  await pool.end();
+}
+
 export async function insertValidationFailedImportRun(databaseUrl: string): Promise<void> {
   assertTestDatabaseUrl(databaseUrl, "insertValidationFailedImportRun");
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });

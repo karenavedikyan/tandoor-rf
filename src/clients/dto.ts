@@ -87,6 +87,31 @@ export type ClientsListResponse = {
   isEmptyDatabase: boolean;
 };
 
+export type RetailOutletListItemDto = {
+  guidStore: string;
+  guidClient: string;
+  clientName: string;
+  outletLabel: string;
+  address: string;
+  isClosed: boolean;
+  closureStatusLabel: string;
+  holdingName: string;
+  manager: {
+    id: string;
+    name: string;
+    shortId: string;
+  };
+};
+
+export type RetailOutletsListResponse = {
+  items: RetailOutletListItemDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  isEmptyDatabase: boolean;
+};
+
 export type ClientsOptionsResponse = {
   managers: ClientOptionDto[];
   holdings: ClientOptionDto[];

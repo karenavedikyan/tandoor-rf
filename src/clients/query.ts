@@ -7,8 +7,10 @@ import { isValidUuidParam } from "./uuid-param";
 export type PhoneFilter = "all" | "yes" | "no";
 export type OutletsFilter = "all" | "yes" | "no";
 export type ClientsViewMode = "all" | "teams" | "review";
+export type ClientsEntityMode = "clients" | "outlets";
 
 export type ClientsListQuery = {
+  entity: ClientsEntityMode;
   view: ClientsViewMode;
   q: string;
   managerId?: string;
@@ -132,6 +134,11 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр холдинга." };
   }
 
+  const entityRaw = parseScalarString(input.entity, "clients") ?? "clients";
+  if (entityRaw !== "clients" && entityRaw !== "outlets") {
+    return { ok: false, message: "Некорректный режим списка." };
+  }
+
   const viewRaw = parseScalarString(input.view, "all") ?? "all";
   if (viewRaw !== "all" && viewRaw !== "teams" && viewRaw !== "review") {
     return { ok: false, message: "Некорректный режим просмотра." };
@@ -186,6 +193,7 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   return {
     ok: true,
     query: {
+      entity: entityRaw as ClientsEntityMode,
       view: viewRaw as ClientsViewMode,
       q: rawQ,
       managerId,

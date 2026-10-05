@@ -5,6 +5,7 @@ import {
 } from "../access/middleware";
 import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
+import { requireAdmin } from "../middleware/require-admin";
 import { requireDatabaseReady } from "../middleware/database";
 import {
   getClientCatalogFacetValuesHandler,
@@ -15,6 +16,11 @@ import {
   getClientCatalogProductsHandler,
   getClientCatalogSectionsTreeHandler,
 } from "./catalog-handlers";
+import {
+  getClientCatalogOutletDistributionHandler,
+  getClientCatalogOutletsHandler,
+  postClientCatalogOutletDistributionMarkerHandler,
+} from "./outlet-distribution-handlers";
 import {
   getClientBitrix24ClaimsHandler,
   getClientBitrix24LabelHandler,
@@ -29,6 +35,8 @@ import {
   getClientHandler,
   listClientsHandler,
 } from "./handlers";
+import { clientsPresentationHandler } from "./presentation-handlers";
+import { listWholesaleEmployeesHandler } from "./wholesale-employees-handlers";
 import {
   eligibleReviewManagersHandler,
   eligibleReviewersHandler,
@@ -56,6 +64,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/options", ...readChain, (req, res, next) => {
     void clientOptionsHandler(req, res).catch(next);
+  });
+
+  router.get("/presentation", ...readChain, (req, res, next) => {
+    void clientsPresentationHandler(req, res).catch(next);
   });
 
   router.get("/teams", ...readChain, (req, res, next) => {
@@ -86,6 +98,10 @@ export function createClientsRouter(): express.Router {
     void listClientsHandler(req, res).catch(next);
   });
 
+  router.get("/wholesale-employees", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
+    void listWholesaleEmployeesHandler(req, res).catch(next);
+  });
+
   router.get("/:guid/catalog/meta", ...readChain, (req, res, next) => {
     void getClientCatalogMetaHandler(req, res).catch(next);
   });
@@ -113,6 +129,23 @@ export function createClientsRouter(): express.Router {
   router.get("/:guid/catalog/media/:assetId", ...readChain, (req, res, next) => {
     void getClientCatalogMediaHandler(req, res).catch(next);
   });
+
+  router.get("/:guid/catalog/outlets", ...readChain, (req, res, next) => {
+    void getClientCatalogOutletsHandler(req, res).catch(next);
+  });
+
+  router.get("/:guid/catalog/outlets/:storeGuid/distribution", ...readChain, (req, res, next) => {
+    void getClientCatalogOutletDistributionHandler(req, res).catch(next);
+  });
+
+  router.post(
+    "/:guid/catalog/outlets/:storeGuid/distribution/markers",
+    csrfProtection,
+    ...readChain,
+    (req, res, next) => {
+      void postClientCatalogOutletDistributionMarkerHandler(req, res).catch(next);
+    },
+  );
 
   router.get("/:guid/bitrix24/label", ...readChain, (req, res, next) => {
     void getClientBitrix24LabelHandler(req, res).catch(next);

@@ -11,6 +11,7 @@ import {
   type ReviewDecision,
   type ReviewState,
 } from "./constants";
+import { canUseReviewNavigation } from "../role-presentation";
 import {
   getClientReview,
   listClientReviewHistory,
@@ -198,9 +199,9 @@ export async function upsertClientReviewHandler(req: AccessRequest, res: Respons
 }
 
 export async function reviewOptionsHandler(req: AccessRequest, res: Response): Promise<void> {
-  if (req.accessContext!.role !== "admin") {
+  if (!canUseReviewNavigation(req.accessContext!)) {
     setNoStore(res);
-    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Настройки ревизии доступны только администратору."));
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Настройки ревизии недоступны для вашей роли."));
     return;
   }
   setNoStore(res);

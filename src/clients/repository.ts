@@ -13,6 +13,10 @@ import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassig
 import type { ClientsListQuery } from "./query";
 import { buildClientsFilter } from "./query";
 import {
+  canUseReviewNavigation,
+  canUseUnassignedNavigation,
+} from "./role-presentation";
+import {
   toClientDetail,
   toClientListItem,
   toClientOption,
@@ -59,23 +63,20 @@ async function resolveScopedFilter(
   context: AccessContext,
   input: ClientsListQuery,
 ): Promise<{ whereSql: string; params: unknown[]; joinSql: string; extraSelect: string }> {
-  if (input.view === "review" && context.role !== "admin") {
-    throw new ListClientsError("Очередь ревизии доступна только администратору.", "FORBIDDEN");
+  if (input.view === "review" && !canUseReviewNavigation(context)) {
+    throw new ListClientsError("Очередь ревизии недоступна для вашей роли.", "FORBIDDEN");
   }
 
   const hasReviewFilter =
     (input.reviewState && input.reviewState !== "any") ||
     (input.reviewDecision && input.reviewDecision !== "any");
-  if (hasReviewFilter && context.role !== "admin") {
-    throw new ListClientsError(
-      "Фильтры ревизии доступны только администратору.",
-      "FORBIDDEN",
-    );
+  if (hasReviewFilter && !canUseReviewNavigation(context)) {
+    throw new ListClientsError("Фильтры ревизии недоступны для вашей роли.", "FORBIDDEN");
   }
 
-  if (input.unassignedCategory && context.role !== "admin") {
+  if (input.unassignedCategory && !canUseUnassignedNavigation(context)) {
     throw new ListClientsError(
-      "Фильтр нераспределённых назначений доступен только администратору.",
+      "Фильтр нераспределённых назначений недоступен для вашей роли.",
       "FORBIDDEN",
     );
   }
@@ -90,7 +91,7 @@ async function resolveScopedFilter(
       throw error;
     }
   } else if (input.ropUserId && input.view === "teams") {
-    if (context.role !== "admin" && context.role !== "rop") {
+    if (context.role !== "admin" && context.role !== "rop" && !context.fullClientBase) {
       throw new ListClientsError("Нет доступа к команде.", "FORBIDDEN");
     }
     if (context.role === "rop" && context.userId !== input.ropUserId) {
@@ -125,7 +126,7 @@ async function resolveScopedFilter(
   const combined = combineScopeAndFilter(scope, userFilter);
 
   const includeReview =
-    context.role === "admin" &&
+    canUseReviewNavigation(context) &&
     (input.view === "review" || input.reviewState || input.reviewDecision);
   const includeTeamContext = input.view === "teams" || input.view === "review" || Boolean(input.unassignedCategory);
 
