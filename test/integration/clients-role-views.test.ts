@@ -38,6 +38,65 @@ const STORE_ONE = "44444444-4444-4444-8444-444444444444";
 const STORE_TWO = "55555555-5555-5555-8555-555555555555";
 const STORE_REGIONAL_ONLY = "13131313-1313-4131-8131-131313131313";
 
+function buildRoleViewOutlet(input: {
+  ordinal: number;
+  guidStore: string;
+  storeAddress: string;
+  managerGuid: string;
+  regionalGuid: string;
+  closed?: boolean;
+}) {
+  return {
+    ordinal: input.ordinal,
+    guidStore: input.guidStore,
+    holdingName: "Holding",
+    warehouse: null,
+    outletGuidStatus: "confirmed",
+    closed: input.closed ?? false,
+    closureStatus: input.closed ? "closed" : "open",
+    closureConfirmedInCurrentExport: true,
+    closureHistory: [],
+    address: {
+      storeAddress: input.storeAddress,
+      deliveryAddress: "",
+      routeDirection: "",
+    },
+    loading: {
+      loadingOnMonday: null,
+      loadingOnTuesday: null,
+      loadingOnWednesday: null,
+      loadingOnThursday: null,
+      loadingOnFriday: null,
+      loadingOnSaturday: null,
+      loadingOnSunday: null,
+      loadingTime: null,
+    },
+    managers: {
+      manager: { guid: input.managerGuid, name: "Manager", state: "directory_unverified" },
+      regionalManager: { guid: input.regionalGuid, name: "Regional", state: "directory_unverified" },
+      hardwareManager: { guid: null, name: "", state: "not_provided" },
+      headOfSales: { guid: null, name: "", state: "not_provided" },
+    },
+    contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+    lpr: {
+      name: "",
+      post: "",
+      dateOfBirth: null,
+      phone: "",
+      email: "",
+      bonus: "",
+      conditionsBonus: "",
+    },
+    additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+    provenance: {
+      freshness: "current",
+      sourceSha256: "a".repeat(64),
+      importedAt: "2026-01-01T10:00:00.000Z",
+    },
+    distributionAllowed: false,
+  };
+}
+
 function authHeaders(cookie?: string): Record<string, string> {
   const headers: Record<string, string> = { Origin: ORIGIN };
   if (cookie) {
@@ -160,57 +219,41 @@ describe("clients role views integration", { concurrency: false }, () => {
       { guid_store: STORE_TWO, guid_client: CLIENT_ONE, is_closed: true },
       { guid_store: STORE_REGIONAL_ONLY, guid_client: CLIENT_REGIONAL_ONLY, is_closed: false },
     ]);
-    await updateClientExtendedSnapshot(
-      databaseUrl,
-      CLIENT_ONE,
-      {
-        currentRetailOutlets: [
-          {
-            ordinal: 1,
-            guidStore: STORE_ONE,
-            holdingName: "Holding",
-            outletGuidStatus: "confirmed",
-            closed: false,
-            address: { storeAddress: "Store One Address", deliveryAddress: "", routeDirection: "" },
-            managers: {
-              manager: { guid: MANAGER_A, name: "Manager", state: "directory_unverified" },
-              regionalManager: { guid: REGIONAL_EMPLOYEE, name: "Regional", state: "directory_unverified" },
-              hardwareManager: { guid: null, name: "", state: "not_provided" },
-              headOfSales: { guid: null, name: "", state: "not_provided" },
-            },
-          },
-          {
-            ordinal: 2,
-            guidStore: STORE_TWO,
-            holdingName: "Holding",
-            outletGuidStatus: "confirmed",
-            closed: true,
-            address: { storeAddress: "Store Two Address", deliveryAddress: "", routeDirection: "" },
-            managers: {
-              manager: { guid: MANAGER_A, name: "Manager", state: "directory_unverified" },
-              regionalManager: { guid: MANAGER_B, name: "Other Regional", state: "directory_unverified" },
-              hardwareManager: { guid: null, name: "", state: "not_provided" },
-              headOfSales: { guid: null, name: "", state: "not_provided" },
-            },
-          },
-        ],
-      },
-    );
-    await updateClientExtendedSnapshot(databaseUrl, CLIENT_REGIONAL_ONLY, {
+    const emptyManagerRef = { guid: null, name: "", state: "not_provided" as const };
+    await updateClientExtendedSnapshot(databaseUrl, CLIENT_ONE, {
+      regionalManager: emptyManagerRef,
+      hardwareManager: emptyManagerRef,
+      headOfSales: emptyManagerRef,
       currentRetailOutlets: [
-        {
+        buildRoleViewOutlet({
+          ordinal: 1,
+          guidStore: STORE_ONE,
+          storeAddress: "Store One Address",
+          managerGuid: MANAGER_A,
+          regionalGuid: REGIONAL_EMPLOYEE,
+        }),
+        buildRoleViewOutlet({
+          ordinal: 2,
+          guidStore: STORE_TWO,
+          storeAddress: "Store Two Address",
+          managerGuid: MANAGER_A,
+          regionalGuid: MANAGER_B,
+          closed: true,
+        }),
+      ],
+    });
+    await updateClientExtendedSnapshot(databaseUrl, CLIENT_REGIONAL_ONLY, {
+      regionalManager: emptyManagerRef,
+      hardwareManager: emptyManagerRef,
+      headOfSales: emptyManagerRef,
+      currentRetailOutlets: [
+        buildRoleViewOutlet({
           ordinal: 1,
           guidStore: STORE_REGIONAL_ONLY,
-          outletGuidStatus: "confirmed",
-          closed: false,
-          address: { storeAddress: "Regional Only Store", deliveryAddress: "", routeDirection: "" },
-          managers: {
-            manager: { guid: MANAGER_B, name: "Manager", state: "directory_unverified" },
-            regionalManager: { guid: REGIONAL_EMPLOYEE, name: "Regional", state: "directory_unverified" },
-            hardwareManager: { guid: null, name: "", state: "not_provided" },
-            headOfSales: { guid: null, name: "", state: "not_provided" },
-          },
-        },
+          storeAddress: "Regional Only Store",
+          managerGuid: MANAGER_B,
+          regionalGuid: REGIONAL_EMPLOYEE,
+        }),
       ],
     });
     await insertSuccessfulImportRun(databaseUrl, { recordCount: 3 });
@@ -301,8 +344,11 @@ describe("clients role views integration", { concurrency: false }, () => {
       .get("/api/clients?entity=outlets")
       .set(authHeaders(cookie));
     assert.equal(outlets.status, 200);
-    assert.equal(outlets.body.total, 1);
-    assert.equal(outlets.body.items[0].guidStore, STORE_ONE);
+    assert.equal(outlets.body.total, 2);
+    const outletGuids = outlets.body.items.map((item: { guidStore: string }) => item.guidStore);
+    assert.ok(outletGuids.includes(STORE_ONE));
+    assert.ok(outletGuids.includes(STORE_REGIONAL_ONLY));
+    assert.ok(!outletGuids.includes(STORE_TWO));
 
     const foreignClient = await request(app)
       .get(`/api/clients/${CLIENT_TWO}`)

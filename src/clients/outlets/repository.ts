@@ -113,14 +113,28 @@ function buildOutletScope(context: AccessContext): { whereSql: string; params: u
   }
 
   const clientScope = buildClientScopeSql(context);
-  const innerSql = clientScope.whereSql.replace(/^WHERE onec_clients\.guid_client IN \(/, "").replace(/\)$/, "");
-  return {
+  if (clientScope.whereSql === "WHERE FALSE") {
+    return clientScope;
+  }
+
+  const scopeClause = clientScope.whereSql
+    ? clientScope.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc_scope.")
+    : "TRUE";
+
+  const base = {
     whereSql: `
-      WHERE ro.guid_client IN (${innerSql})
-        AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
+      WHERE EXISTS (
+        SELECT 1
+        FROM onec_clients oc_scope
+        WHERE oc_scope.guid_client = ro.guid_client
+          AND (${scopeClause})
+      )
+      AND ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", "oc.")}
     `,
     params: clientScope.params,
   };
+
+  return appendOcUserDenials(base, context.userId);
 }
 
 function outletAddressFromSnapshot(storeAddress: string | null, fallback: string): string {

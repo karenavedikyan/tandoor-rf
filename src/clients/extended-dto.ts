@@ -786,12 +786,11 @@ export function toClientExtendedDto(
     : null;
   const currentOutletsRaw = readCurrentOutlets(snapshot);
   const clientManagerGuid = row.guid_manager ?? "";
-  const scopedOutlets =
-    context && clientManagerGuid
-      ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw)
-      : outletAccessGranted
-        ? currentOutletsRaw
-        : [];
+  const scopedOutlets = context
+    ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw)
+    : outletAccessGranted
+      ? currentOutletsRaw
+      : [];
   const outletAccessEffective = outletAccessGranted && scopedOutlets.length > 0;
   const currentOutlets = outletAccessEffective ? scopedOutlets : [];
   const historyCount = outletAccessEffective ? readHistoryCount(snapshot) : 0;

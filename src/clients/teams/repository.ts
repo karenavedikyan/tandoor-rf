@@ -1,10 +1,11 @@
 import { combineScopeAndFilter } from "../../access/combine-filters";
-import { buildClientScopeSql } from "../../access/scope-sql";
+import { appendUserDenials, buildClientScopeSql } from "../../access/scope-sql";
 import type { AccessContext } from "../../access/types";
 import { query } from "../../db/pool";
 import {
   ACTIVE_BASELINE_CLIENT_SQL,
   ACTIVE_BASELINE_OC_SQL,
+  appendActiveBaselineFilter,
 } from "../../onec-clients/baseline-active-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../../onec-clients/manager-status";
 import { shortUuidLabel } from "../uuid-param";
@@ -113,6 +114,13 @@ async function loadActiveRopRows(): Promise<
   return result.rows;
 }
 
+function teamPortfolioCountScope(context: AccessContext) {
+  if (context.role === "rop") {
+    return appendActiveBaselineFilter(appendUserDenials({ whereSql: "", params: [] }, context.userId));
+  }
+  return buildClientScopeSql(context);
+}
+
 async function countDistinctClientsForEmployeeGuids(
   context: AccessContext,
   employeeGuids: string[],
@@ -120,7 +128,7 @@ async function countDistinctClientsForEmployeeGuids(
   if (employeeGuids.length === 0) {
     return 0;
   }
-  const scope = buildClientScopeSql(context);
+  const scope = teamPortfolioCountScope(context);
   const filter = combineScopeAndFilter(scope, {
     whereSql: `WHERE ${employeesPortfolioClause("$1")}`,
     params: [employeeGuids],
@@ -136,7 +144,7 @@ async function countDistinctClientsForEmployeeGuids(
 }
 
 async function countClientsForEmployee(context: AccessContext, employeeGuid: string): Promise<number> {
-  const scope = buildClientScopeSql(context);
+  const scope = teamPortfolioCountScope(context);
   const filter = combineScopeAndFilter(scope, {
     whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
     params: [employeeGuid],
