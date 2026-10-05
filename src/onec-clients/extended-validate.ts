@@ -592,7 +592,16 @@ function parseOutletContacts(
   issueCount: { value: number },
 ): ParsedOutletContacts | null {
   if (raw === undefined || raw === null) {
-    return { storePhone: "", accountantPhone: "", accountantEmail: "" };
+    return {
+      storePhone: "",
+      accountantPhone: "",
+      accountantEmail: "",
+      fieldPresence: {
+        storePhone: false,
+        accountantPhone: false,
+        accountantEmail: false,
+      },
+    };
   }
   if (!isPlainObject(raw)) {
     pushIssue(issues, {
@@ -603,16 +612,27 @@ function parseOutletContacts(
     }, issueCount);
     return null;
   }
-  const fields: Array<[keyof ParsedOutletContacts, string]> = [
+  type ContactField = "storePhone" | "accountantPhone" | "accountantEmail";
+  const fields: Array<[ContactField, string]> = [
     ["storePhone", "store_phone"],
     ["accountantPhone", "accountant_phone"],
     ["accountantEmail", "accountant_email"],
   ];
-  const result: ParsedOutletContacts = { storePhone: "", accountantPhone: "", accountantEmail: "" };
+  const result: ParsedOutletContacts = {
+    storePhone: "",
+    accountantPhone: "",
+    accountantEmail: "",
+    fieldPresence: {
+      storePhone: false,
+      accountantPhone: false,
+      accountantEmail: false,
+    },
+  };
   for (const [target, source] of fields) {
     if (!(source in raw)) {
       continue;
     }
+    result.fieldPresence![target] = true;
     const parsed = readOptionalStringField(raw[source]);
     if (parsed.kind === "invalid_type") {
       pushIssue(issues, {

@@ -8,39 +8,11 @@ import {
   appendActiveBaselineFilter,
 } from "../../onec-clients/baseline-active-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../../onec-clients/manager-status";
+import {
+  employeePortfolioClause,
+  employeesPortfolioClause,
+} from "../team-portfolio-sql";
 import { shortUuidLabel } from "../uuid-param";
-
-const RETAIL_OUTLETS_JSON = `
-  CASE
-    WHEN jsonb_typeof(onec_clients.extended_snapshot->'currentRetailOutlets') = 'array'
-      THEN onec_clients.extended_snapshot->'currentRetailOutlets'
-    ELSE '[]'::jsonb
-  END
-`;
-
-function employeePortfolioClause(employeeParamSql: string): string {
-  return `(
-    (guid_manager = ${employeeParamSql} AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
-    OR EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
-      WHERE lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) = lower(${employeeParamSql}::text)
-    )
-  )`;
-}
-
-function employeesPortfolioClause(arrayParamSql: string): string {
-  return `(
-    (guid_manager = ANY(${arrayParamSql}::uuid[]) AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
-    OR EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
-      WHERE lower(coalesce(outlet.elem->'managers'->'regionalManager'->>'guid', '')) = ANY(
-        SELECT lower(g::text) FROM unnest(${arrayParamSql}::uuid[]) AS g
-      )
-    )
-  )`;
-}
 
 export type TeamRopSummary = {
   ropUserId: string;
@@ -311,10 +283,12 @@ export function buildTeamManagerFilter(
 ): ReturnType<typeof combineScopeAndFilter> {
   const scope = buildClientScopeSql(context);
   return combineScopeAndFilter(scope, {
-    whereSql: "WHERE guid_manager = $1::uuid",
+    whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
     params: [managerEmployeeGuid.toLowerCase()],
   });
 }
+
+export { employeePortfolioClause, employeesPortfolioClause };
 
 export async function loadTeamEmployeeGuids(ropUserId: string): Promise<string[]> {
   const members = await loadTeamMemberEmployeeGuids(ropUserId);

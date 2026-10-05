@@ -56,6 +56,11 @@ export type ParsedOutletContacts = {
   storePhone: string;
   accountantPhone: string;
   accountantEmail: string;
+  fieldPresence?: {
+    storePhone: boolean;
+    accountantPhone: boolean;
+    accountantEmail: boolean;
+  };
 };
 
 export type ParsedOutletLpr = {

@@ -362,6 +362,18 @@ describe("clients role views integration", { concurrency: false }, () => {
     assert.equal(card.body.client.extended.retailOutletsAccess, "granted");
     assert.equal(card.body.client.extended.retailOutlets.length, 1);
     assert.equal(card.body.client.extended.retailOutlets[0].guidStore, STORE_ONE);
+
+    const catalogOutlets = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/catalog/outlets`)
+      .set(authHeaders(cookie));
+    assert.equal(catalogOutlets.status, 200);
+    assert.equal(catalogOutlets.body.outlets.length, 1);
+    assert.equal(catalogOutlets.body.outlets[0].guidStore, STORE_ONE);
+
+    const foreignDistribution = await request(app)
+      .get(`/api/clients/${CLIENT_ONE}/catalog/outlets/${STORE_TWO}/distribution`)
+      .set(authHeaders(cookie));
+    assert.equal(foreignDistribution.status, 404);
   });
 
   it("ROP sees team members and scoped clients", async () => {
@@ -385,6 +397,26 @@ describe("clients role views integration", { concurrency: false }, () => {
     assert.equal(clients.status, 200);
     assert.equal(clients.body.total, 1);
     assert.equal(clients.body.items[0].guid, CLIENT_ONE);
+
+    const teamClients = await request(app)
+      .get(`/api/clients?view=teams&rop=${ropUser}`)
+      .set(authHeaders(cookie));
+    assert.equal(teamClients.status, 200);
+    assert.equal(teamClients.body.total, 2, "team list matches uniqueClientCount");
+
+    const regionalClients = await request(app)
+      .get(`/api/clients?view=teams&rop=${ropUser}&manager=${REGIONAL_EMPLOYEE}`)
+      .set(authHeaders(cookie));
+    assert.equal(regionalClients.status, 200);
+    assert.equal(regionalClients.body.total, 2);
+    const regionalGuids = regionalClients.body.items.map((item: { guid: string }) => item.guid);
+    assert.ok(regionalGuids.includes(CLIENT_REGIONAL_ONLY));
+    assert.ok(regionalGuids.includes(CLIENT_ONE));
+
+    const regionalCard = await request(app)
+      .get(`/api/clients/${CLIENT_REGIONAL_ONLY}`)
+      .set(authHeaders(cookie));
+    assert.equal(regionalCard.status, 200);
 
     const ropSummary = teams.body.items[0];
     assert.equal(ropSummary.uniqueClientCount, 2, "team count includes regional-only client once");

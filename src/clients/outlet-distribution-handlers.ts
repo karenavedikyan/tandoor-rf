@@ -6,6 +6,7 @@ import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { canReadClientGuid } from "./repository";
+import { canAccessRetailOutletGuid, listAccessibleOutletGuidsForClient } from "./outlet-scope";
 import {
   assertOutletBelongsToClient,
   assertOutletDistributionWritable,
@@ -19,6 +20,20 @@ import {
   upsertDistributionMarker,
 } from "./outlet-distribution-repository";
 import { isValidUuidParam } from "./uuid-param";
+
+async function assertOutletReadable(
+  req: AccessRequest,
+  res: Response,
+  cardGuid: string,
+  storeGuid: string,
+): Promise<boolean> {
+  if (!(await canAccessRetailOutletGuid(req.accessContext!, cardGuid, storeGuid))) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Outlet not found."));
+    return false;
+  }
+  return true;
+}
 
 async function assertClientAccess(
   req: AccessRequest,
@@ -82,7 +97,8 @@ export async function getClientCatalogOutletsHandler(
   }
   const client = await pool.connect();
   try {
-    const outlets = await loadOutletDistributionOptions(client, cardGuid);
+    const accessible = await listAccessibleOutletGuidsForClient(req.accessContext!, cardGuid);
+    const outlets = await loadOutletDistributionOptions(client, cardGuid, accessible);
     setNoStore(res);
     res.status(200).json({ outlets });
   } finally {
@@ -96,7 +112,13 @@ export async function getClientCatalogOutletDistributionHandler(
 ): Promise<void> {
   const cardGuid = String(req.params.guid ?? "");
   const storeGuid = parseStoreGuid(String(req.params.storeGuid ?? ""), res);
-  if (!storeGuid || !(await assertClientAccess(req, res, cardGuid))) return;
+  if (
+    !storeGuid ||
+    !(await assertClientAccess(req, res, cardGuid)) ||
+    !(await assertOutletReadable(req, res, cardGuid, storeGuid))
+  ) {
+    return;
+  }
 
   const pool = getPool();
   if (!pool) {
@@ -143,7 +165,13 @@ export async function postClientCatalogOutletDistributionMarkerHandler(
 ): Promise<void> {
   const cardGuid = String(req.params.guid ?? "");
   const storeGuid = parseStoreGuid(String(req.params.storeGuid ?? ""), res);
-  if (!storeGuid || !(await assertClientAccess(req, res, cardGuid))) return;
+  if (
+    !storeGuid ||
+    !(await assertClientAccess(req, res, cardGuid)) ||
+    !(await assertOutletReadable(req, res, cardGuid, storeGuid))
+  ) {
+    return;
+  }
 
   const action = req.body?.action;
   const markerKind = parseMarkerKind(req.body?.markerKind);

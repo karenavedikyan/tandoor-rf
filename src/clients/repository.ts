@@ -7,6 +7,7 @@ import { buildReviewStateFilter } from "./review/repository";
 import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
+  employeePortfolioClause,
   TeamAccessError,
 } from "./teams/repository";
 import { buildUnassignedCategoryFilter, buildUnassignedSummary } from "./unassigned/repository";
@@ -99,8 +100,19 @@ async function resolveScopedFilter(
     }
   }
 
-  let userFilter = buildClientsFilter(input);
+  const portfolioManagerId =
+    input.view === "teams" && input.managerId ? input.managerId : undefined;
+  let userFilter = buildClientsFilter(
+    portfolioManagerId ? { ...input, managerId: undefined } : input,
+  );
   const scope = buildClientScopeSql(context);
+
+  if (portfolioManagerId) {
+    userFilter = combineScopeAndFilter(userFilter, {
+      whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
+      params: [portfolioManagerId],
+    });
+  }
 
   if (input.unassignedCategory) {
     const summary = await buildUnassignedSummary({ category: input.unassignedCategory });

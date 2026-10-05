@@ -113,6 +113,7 @@ function assessWritable(
 export async function loadOutletDistributionOptions(
   client: PoolClient,
   cardGuid: string,
+  accessibleStoreGuids?: ReadonlySet<string> | null,
 ): Promise<OutletDistributionReadiness[]> {
   const clientRow = await client.query<ClientExtendedRow>(
     `
@@ -151,7 +152,13 @@ export async function loadOutletDistributionOptions(
     [cardGuid],
   );
 
-  return registryRows.rows.map((registry) => {
+  const rows = accessibleStoreGuids
+    ? registryRows.rows.filter((registry) =>
+        accessibleStoreGuids.has(registry.guid_store.toLowerCase()),
+      )
+    : registryRows.rows;
+
+  return rows.map((registry) => {
     const snapshotOutlet = snapshotByStore.get(registry.guid_store.toLowerCase()) ?? null;
     const assessed = assessWritable(registry, cardGuid, snapshotOutlet, row, snapshot);
     const closureStatus =

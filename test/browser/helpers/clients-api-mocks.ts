@@ -100,6 +100,37 @@ export function syntheticOptionsPayload() {
   };
 }
 
+export function syntheticPresentationPayload(role: MockRole = "admin") {
+  if (role === "manager") {
+    return {
+      presentation: {
+        pageTitle: "Мои клиенты",
+        defaultView: "all",
+        defaultEntity: "clients",
+        allowedViews: ["all"],
+        allowedEntities: ["clients", "outlets"],
+        showViewSwitcher: false,
+        showManagerTeamFilter: false,
+        showTeamNavigation: false,
+        reviewReadOnly: true,
+      },
+    };
+  }
+  return {
+    presentation: {
+      pageTitle: role === "admin" ? "Клиенты" : "Вся клиентская база",
+      defaultView: role === "admin" ? "all" : "teams",
+      defaultEntity: "clients",
+      allowedViews: ["all", "teams", "review"],
+      allowedEntities: ["clients", "outlets"],
+      showViewSwitcher: true,
+      showManagerTeamFilter: true,
+      showTeamNavigation: true,
+      reviewReadOnly: role !== "admin",
+    },
+  };
+}
+
 export function syntheticSyncStatusPayload() {
   return {
     freshnessState: "current",
@@ -374,6 +405,10 @@ export function resolveMockResponse(
       return jsonResponse(200, marketerUserPayload());
     }
     return jsonResponse(200, adminUserPayload());
+  }
+
+  if (path === "/api/clients/presentation") {
+    return jsonResponse(200, syntheticPresentationPayload(options.role ?? "admin"));
   }
 
   if (path === "/api/clients/options") {

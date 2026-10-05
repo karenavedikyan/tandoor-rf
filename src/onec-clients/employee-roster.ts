@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  calendarDateToTimestamptz,
+  parseCalendarDateInput,
+} from "../shared/calendar-date";
 import { MAX_SOURCE_BYTES } from "./constants";
 import { isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
@@ -47,6 +51,21 @@ function readOptionalUuid(raw: Record<string, unknown>, key: string): string | n
   return normalizeUuid(value);
 }
 
+function readDateOfAssumption(raw: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(raw, "date_of_assumption")) {
+    return null;
+  }
+  const value = raw.date_of_assumption;
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = parseCalendarDateInput(value);
+  if (!parsed.ok) {
+    return null;
+  }
+  return calendarDateToTimestamptz(parsed.isoDate);
+}
+
 function toEmployeeRecord(raw: Record<string, unknown>, guid: string): WholesaleEmployeeRecord {
   return {
     guidManager: guid,
@@ -54,7 +73,7 @@ function toEmployeeRecord(raw: Record<string, unknown>, guid: string): Wholesale
     guidPost: readOptionalUuid(raw, "guid_post"),
     post: readOptionalString(raw, "post"),
     condition: readOptionalString(raw, "condition"),
-    dateOfAssumption: readOptionalString(raw, "date_of_assumption"),
+    dateOfAssumption: readDateOfAssumption(raw),
     guidWorkSchedule: readOptionalUuid(raw, "guid_work_schedule"),
     workSchedule: readOptionalString(raw, "work_schedule"),
     decree: readOptionalString(raw, "decree"),

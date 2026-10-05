@@ -411,6 +411,28 @@ function mergeLprField(
   };
 }
 
+function mergeContactsField(
+  incoming: ParsedRetailOutlet["contacts"],
+  previous: ParsedRetailOutlet["contacts"] | undefined,
+): ParsedRetailOutlet["contacts"] {
+  const presence = incoming.fieldPresence;
+  if (!presence) {
+    return incoming;
+  }
+  const hadAnyField =
+    presence.storePhone || presence.accountantPhone || presence.accountantEmail;
+  if (!hadAnyField && previous) {
+    return { ...previous, fieldPresence: presence };
+  }
+  const base = previous ?? incoming;
+  return {
+    storePhone: presence.storePhone ? incoming.storePhone : base.storePhone,
+    accountantPhone: presence.accountantPhone ? incoming.accountantPhone : base.accountantPhone,
+    accountantEmail: presence.accountantEmail ? incoming.accountantEmail : base.accountantEmail,
+    fieldPresence: presence,
+  };
+}
+
 function mergeConfirmedOutlet(
   incoming: ParsedRetailOutlet,
   previous: ParsedRetailOutlet | undefined,
@@ -428,11 +450,13 @@ function mergeConfirmedOutlet(
 
   const loading = mergeLoadingField(incoming.loading, previous?.loading, previous, context);
   const lpr = mergeLprField(incoming.lpr, previous?.lpr, previous, context);
+  const contacts = mergeContactsField(incoming.contacts, previous?.contacts);
 
   return {
     ...incoming,
     loading,
     lpr,
+    contacts,
     closureStatus,
     closed,
     closureConfirmedInCurrentExport,
