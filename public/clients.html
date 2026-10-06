@@ -4,11 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Клиенты — tandoor-rf</title>
-    <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
+    <link rel="stylesheet" href="/fonts/golos/fonts.css" />
     <link rel="stylesheet" href="/brand/legacy-shell.css" />
     <link rel="stylesheet" href="/clients.css" />
+    <link rel="stylesheet" href="/clients-design.css" />
   </head>
-  <body class="legacy-body">
+  <body class="legacy-body clients-design-page">
     <div class="legacy-app">
       <div id="workspace-sidebar"></div>
       <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
@@ -17,6 +18,7 @@
         <main class="legacy-content">
           <header class="clients-page-header">
             <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
+            <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
           </header>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
@@ -34,10 +36,38 @@
               </button>
             </nav>
 
-            <nav id="entity-switcher" class="clients-view-switcher clients-hidden" aria-label="Тип списка">
-              <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
-              <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
-            </nav>
+            <div id="clients-manager-chrome" class="clients-manager-chrome clients-hidden">
+              <div class="clients-employee-card" id="clients-employee-card">
+                <div class="clients-employee-card__main">
+                  <div class="clients-employee-card__avatar" id="clients-employee-avatar" aria-hidden="true"></div>
+                  <div>
+                    <div class="clients-employee-card__name" id="clients-employee-name"></div>
+                    <div class="clients-employee-card__role" id="clients-employee-role"></div>
+                  </div>
+                </div>
+                <div class="clients-employee-card__scope">
+                  <span class="clients-employee-card__scope-label">Область видимости</span>
+                  <span class="clients-employee-card__scope-value">Мои назначения</span>
+                </div>
+              </div>
+              <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
+                <div class="clients-stat">
+                  <span class="clients-stat__label">Мои клиенты</span>
+                  <span class="clients-stat__value" id="clients-stat-clients">—</span>
+                </div>
+                <div class="clients-stat">
+                  <span class="clients-stat__label">Доступные ТТ</span>
+                  <span class="clients-stat__value" id="clients-stat-outlets">—</span>
+                </div>
+                <div class="clients-stat">
+                  <span class="clients-stat__label">Клиенты без ТТ</span>
+                  <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
+                </div>
+              </div>
+              <nav class="clients-workspace-nav" aria-label="Рабочая область">
+                <span class="clients-workspace-nav__tab clients-workspace-nav__tab--active">Моя база</span>
+              </nav>
+            </div>
 
             <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация"></nav>
 
@@ -45,16 +75,26 @@
             <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
 
             <div class="clients-toolbar">
-              <label class="clients-field">
-                <span class="clients-field__label">Поиск</span>
-                <input
-                  id="search-input"
-                  class="clients-field__input"
-                  type="search"
-                  autocomplete="off"
-                  placeholder="Название, холдинг, менеджер, адрес или телефон"
-                />
-              </label>
+              <div class="clients-toolbar__search-row">
+                <label class="clients-field clients-field--search">
+                  <span class="clients-field__label">Поиск</span>
+                  <input
+                    id="search-input"
+                    class="clients-field__input"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Название, холдинг, менеджер, адрес или телефон"
+                  />
+                </label>
+                <nav
+                  id="entity-switcher"
+                  class="clients-view-switcher clients-entity-switcher clients-hidden"
+                  aria-label="Тип списка"
+                >
+                  <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
+                  <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
+                </nav>
+              </div>
               <div class="clients-toolbar__row clients-toolbar__row--filters">
                 <div class="clients-field clients-hidden" id="rop-filter-wrap">
                   <span class="clients-field__label" id="rop-filter-label">РОП</span>

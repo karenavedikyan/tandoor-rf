@@ -32,6 +32,14 @@
   var viewSwitcherEl = document.getElementById("view-switcher");
   var entitySwitcherEl = document.getElementById("entity-switcher");
   var pageTitleEl = document.getElementById("clients-page-title");
+  var pageSubtitleEl = document.getElementById("clients-page-subtitle");
+  var managerChromeEl = document.getElementById("clients-manager-chrome");
+  var employeeAvatarEl = document.getElementById("clients-employee-avatar");
+  var employeeNameEl = document.getElementById("clients-employee-name");
+  var employeeRoleEl = document.getElementById("clients-employee-role");
+  var statClientsEl = document.getElementById("clients-stat-clients");
+  var statOutletsEl = document.getElementById("clients-stat-outlets");
+  var statNoOutletsEl = document.getElementById("clients-stat-no-outlets");
   var viewReviewTab = document.getElementById("view-review-tab");
   var viewCompletenessTab = document.getElementById("view-completeness-tab");
   var tableHeadRow = document.getElementById("clients-table-head-row");
@@ -89,6 +97,22 @@
     limitationNote: "",
   };
   var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
+
+  var ROLE_LABELS = {
+    admin: "Администратор",
+    director: "Директор",
+    rop: "РОП",
+    regional_manager: "Региональный менеджер",
+    manager: "Менеджер",
+    marketer: "Маркетолог",
+    analyst: "Аналитик",
+    category_manager: "Категорийный менеджер",
+    assistant: "Ассистент",
+    coordinator: "Координатор",
+  };
+
+  var MANAGER_PAGE_SUBTITLE =
+    "Клиенты и торговые точки по вашим назначениям из 1С в зоне «Мои назначения».";
 
   function readStateFromUrl() {
     return logic.readStateFromSearch(window.location.search);
@@ -285,6 +309,105 @@
     renderTableHead(state);
   }
 
+  function initialsFromName(name) {
+    var parts = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(function (part) {
+        return part.length > 0;
+      });
+    if (parts.length >= 2) {
+      return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    }
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return "—";
+  }
+
+  function formatStatValue(total) {
+    if (typeof total !== "number" || !Number.isFinite(total)) {
+      return "—";
+    }
+    return String(total);
+  }
+
+  function renderEmployeeCard(user) {
+    if (!user || !employeeNameEl) {
+      return;
+    }
+    var displayName = user.fullName || user.email || "Сотрудник";
+    employeeNameEl.textContent = displayName;
+    if (employeeRoleEl) {
+      employeeRoleEl.textContent = ROLE_LABELS[user.role] || user.role || "";
+    }
+    if (employeeAvatarEl) {
+      employeeAvatarEl.textContent = initialsFromName(displayName);
+    }
+  }
+
+  function applyManagerDesignChrome(presentation, user) {
+    var isManager = presentation && presentation.businessRole === "manager";
+    document.body.classList.toggle("clients-role-manager", Boolean(isManager));
+    if (pageSubtitleEl) {
+      if (isManager) {
+        pageSubtitleEl.textContent = MANAGER_PAGE_SUBTITLE;
+        pageSubtitleEl.classList.remove("clients-hidden");
+      } else {
+        pageSubtitleEl.textContent = "";
+        pageSubtitleEl.classList.add("clients-hidden");
+      }
+    }
+    if (managerChromeEl) {
+      managerChromeEl.classList.toggle("clients-hidden", !isManager);
+    }
+    if (isManager) {
+      renderEmployeeCard(user);
+    }
+  }
+
+  function loadManagerStats() {
+    if (!rolePresentation || rolePresentation.businessRole !== "manager") {
+      return Promise.resolve();
+    }
+    var baseParams = { view: "all", page: "1", pageSize: "1" };
+    function fetchTotal(extra) {
+      var params = new URLSearchParams(baseParams);
+      Object.keys(extra).forEach(function (key) {
+        params.set(key, extra[key]);
+      });
+      return api
+        .apiRequest("/api/clients?" + params.toString())
+        .then(function (result) {
+          if (result.response.status !== 200 || !result.data) {
+            return null;
+          }
+          if (typeof result.data.total !== "number") {
+            return null;
+          }
+          return result.data.total;
+        })
+        .catch(function () {
+          return null;
+        });
+    }
+    return Promise.all([
+      fetchTotal({ entity: "clients" }),
+      fetchTotal({ entity: "outlets" }),
+      fetchTotal({ entity: "clients", hasOutlets: "no" }),
+    ]).then(function (totals) {
+      if (statClientsEl) {
+        statClientsEl.textContent = formatStatValue(totals[0]);
+      }
+      if (statOutletsEl) {
+        statOutletsEl.textContent = formatStatValue(totals[1]);
+      }
+      if (statNoOutletsEl) {
+        statNoOutletsEl.textContent = formatStatValue(totals[2]);
+      }
+    });
+  }
+
   function applyRoleChrome(presentation) {
     rolePresentation = presentation;
     if (!presentation) {
@@ -313,6 +436,7 @@
       "clients-hidden",
       !presentation.showManagerTeamFilter,
     );
+    applyManagerDesignChrome(presentation, currentUser);
   }
 
   function loadPresentation() {
@@ -1939,6 +2063,8 @@
           rolePresentation,
           window.location.search,
         );
+        applyManagerDesignChrome(rolePresentation, currentUser);
+        loadManagerStats();
         loadList(initialState, true);
       })
       .catch(function (err) {
@@ -2033,6 +2159,7 @@
       return;
     }
     currentUser = user;
+    applyManagerDesignChrome(rolePresentation, currentUser);
     initializeWorkspace();
   });
 })();
