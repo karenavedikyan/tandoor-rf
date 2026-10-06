@@ -38,8 +38,10 @@ import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./ma
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 import { assertOperatorImportJobRunnable } from "./import-job-guard";
+import type { WholesaleEmployeeRoster } from "./employee-roster";
+import { upsertWholesaleEmployeeRoster } from "./roster-upsert";
 
-export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
+export type ImportTriggerSource = "manual" | "scheduled" | "operator_job" | "regular_update";
 
 export const DB_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -48,6 +50,9 @@ export type ApplyCounts = {
   changedCount: number;
   unchangedCount: number;
   extendedBlockedCount?: number;
+  rosterNewCount?: number;
+  rosterChangedCount?: number;
+  rosterUnchangedCount?: number;
 };
 
 export type ApplyBlockSummary = {
@@ -690,6 +695,8 @@ export async function applyClientsImport(options: {
   participatingTransaction?: boolean;
   /** Operator job id; validated only after import advisory lock is held on this connection. */
   operatorImportJobId?: string;
+  /** When set with matching payload.employeeRosterSourceSha256, upserts wholesale roster in the same transaction. */
+  wholesaleEmployeeRoster?: WholesaleEmployeeRoster;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -1248,6 +1255,24 @@ export async function applyClientsImport(options: {
 
           phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified, applyExtendedStats);
 
+          let rosterNewCount: number | undefined;
+          let rosterChangedCount: number | undefined;
+          let rosterUnchangedCount: number | undefined;
+          if (options.wholesaleEmployeeRoster) {
+            const payloadRosterSha = options.payload.employeeRosterSourceSha256?.toLowerCase() ?? null;
+            const applyRosterSha = options.wholesaleEmployeeRoster.sourceSha256.toLowerCase();
+            if (!payloadRosterSha || payloadRosterSha !== applyRosterSha) {
+              throw new Error("Wholesale employee roster SHA mismatch between payload and apply input.");
+            }
+            const rosterCounts = await upsertWholesaleEmployeeRoster(
+              managed.client,
+              options.wholesaleEmployeeRoster,
+            );
+            rosterNewCount = rosterCounts.newCount;
+            rosterChangedCount = rosterCounts.changedCount;
+            rosterUnchangedCount = rosterCounts.unchangedCount;
+          }
+
           await queryManaged(
             managed,
             `
@@ -1281,6 +1306,9 @@ export async function applyClientsImport(options: {
             changedCount,
             unchangedCount,
             ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
+            ...(rosterNewCount !== undefined ? { rosterNewCount } : {}),
+            ...(rosterChangedCount !== undefined ? { rosterChangedCount } : {}),
+            ...(rosterUnchangedCount !== undefined ? { rosterUnchangedCount } : {}),
           };
           if (!participating) {
             phase.commitAttempted = true;
