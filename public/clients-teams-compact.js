@@ -70,6 +70,32 @@
     });
   }
 
+  function isRopNameMatch(summary, teamUi) {
+    return Boolean(teamUi.query) && ropMatchesQuery(summary, teamUi.query);
+  }
+
+  function visibleEmployees(items, summary, teamUi) {
+    var employees = mergeResponsiblesByEmployee(items || []);
+    var ropNameMatch = isRopNameMatch(summary, teamUi);
+    return employees.filter(function (employee) {
+      var assignments = filterAssignments(employee.assignments, teamUi.kind);
+      if (assignments.length === 0) {
+        return false;
+      }
+      if (!teamUi.query || ropNameMatch) {
+        return true;
+      }
+      return employeeMatchesQuery(employee, teamUi.query);
+    });
+  }
+
+  function shouldShowRopWithItems(summary, teamUi, items) {
+    if (!teamUi.query && !teamUi.kind) {
+      return true;
+    }
+    return visibleEmployees(items, summary, teamUi).length > 0;
+  }
+
   function createCompactTeams(deps) {
     var cache = Object.create(null);
 
@@ -146,7 +172,7 @@
       });
     }
 
-    function ropHasEmployeeMatch(ropGuid, teamUi) {
+    function ropHasEmployeeNameMatch(ropGuid, teamUi) {
       if (!teamUi.query) {
         return false;
       }
@@ -163,21 +189,52 @@
       if (!teamUi.query && !teamUi.kind) {
         return true;
       }
-      if (ropMatchesQuery(summary, teamUi.query)) {
+      var entry = cacheEntry(summary.employeeGuid);
+      if (entry.status === "loading" || entry.status === "idle") {
         return true;
       }
-      if (teamUi.query && ropHasEmployeeMatch(summary.employeeGuid, teamUi)) {
-        return true;
+      if (entry.status === "error") {
+        return false;
       }
-      if (teamUi.kind) {
-        var entry = cacheEntry(summary.employeeGuid);
+      return shouldShowRopWithItems(summary, teamUi, entry.items);
+    }
+
+    function summarizeSearchLoad(rops, teamUi) {
+      if (!teamUi.query && !teamUi.kind) {
+        return null;
+      }
+      var summary = { total: rops.length, loaded: 0, errors: 0, pending: 0 };
+      rops.forEach(function (rop) {
+        var entry = cacheEntry(rop.employeeGuid);
         if (entry.status === "loaded") {
-          return mergeResponsiblesByEmployee(entry.items).some(function (employee) {
-            return filterAssignments(employee.assignments, teamUi.kind).length > 0;
-          });
+          summary.loaded += 1;
+        } else if (entry.status === "error") {
+          summary.errors += 1;
+        } else {
+          summary.pending += 1;
         }
+      });
+      return summary;
+    }
+
+    function renderSearchLoadBanner(loadSummary) {
+      if (!loadSummary || loadSummary.errors === 0) {
+        return "";
       }
-      return !teamUi.query;
+      if (loadSummary.loaded === 0) {
+        return (
+          '<div class="clients-compact-team__search-error" role="alert">' +
+          '<p class="clients-compact-team__error">Не удалось загрузить состав команд для поиска. Повторите попытку.</p>' +
+          '<button type="button" class="workspace-button workspace-button--ghost clients-compact-team__retry-search">Повторить</button></div>'
+        );
+      }
+      return (
+        '<p class="clients-compact-team__search-warning" role="status">Поиск выполнен не по всем доступным командам: ' +
+        deps.shell.escapeHtml(String(loadSummary.errors)) +
+        " из " +
+        deps.shell.escapeHtml(String(loadSummary.total)) +
+        ' недоступны. <button type="button" class="workspace-button workspace-button--ghost clients-compact-team__retry-search">Повторить загрузку</button></p>'
+      );
     }
 
     function renderAssignmentLinks(ropGuid, employee, state, assignments) {
@@ -219,12 +276,12 @@
         .join("");
     }
 
-    function renderEmployeeRow(ropGuid, employee, teamUi) {
+    function renderEmployeeRow(ropGuid, employee, teamUi, summary) {
       var assignments = filterAssignments(employee.assignments, teamUi.kind);
       if (assignments.length === 0) {
         return "";
       }
-      if (teamUi.query && !employeeMatchesQuery(employee, teamUi.query)) {
+      if (teamUi.query && !isRopNameMatch(summary, teamUi) && !employeeMatchesQuery(employee, teamUi.query)) {
         return "";
       }
       var kindTags = assignments
@@ -263,7 +320,7 @@
       );
     }
 
-    function renderMembersPanel(ropGuid, teamUi, entry, expanded) {
+    function renderMembersPanel(ropGuid, teamUi, entry, expanded, summary) {
       if (!expanded) {
         return "";
       }
@@ -280,13 +337,10 @@
           '">Повторить</button></div>'
         );
       }
-      var employees = mergeResponsiblesByEmployee(entry.items);
-      var rows = employees
+      var visible = visibleEmployees(entry.items, summary, teamUi);
+      var rows = visible
         .map(function (employee) {
-          if (teamUi.query && !employeeMatchesQuery(employee, teamUi.query)) {
-            return "";
-          }
-          return renderEmployeeRow(ropGuid, employee, teamUi);
+          return renderEmployeeRow(ropGuid, employee, teamUi, summary);
         })
         .filter(Boolean)
         .join("");
@@ -349,7 +403,7 @@
         deps.shell.escapeHtml(ropGuid) +
         '">' +
         headerHtml +
-        renderMembersPanel(ropGuid, teamUi, entry, expanded || hideHeader) +
+        renderMembersPanel(ropGuid, teamUi, entry, expanded || hideHeader, summary) +
         "</section>"
       );
     }
@@ -415,30 +469,47 @@
       );
     }
 
+    function shouldAutoExpandRop(summary, teamUi) {
+      if (!teamUi.query && !teamUi.kind) {
+        return false;
+      }
+      var entry = cacheEntry(summary.employeeGuid);
+      if (entry.status !== "loaded") {
+        return false;
+      }
+      return shouldShowRopWithItems(summary, teamUi, entry.items);
+    }
+
     function renderOverview(state, context) {
       var teamUi = readTeamUi(state);
+      var loadSummary = summarizeSearchLoad(context.rops || [], teamUi);
+      var searchBanner = renderSearchLoadBanner(loadSummary);
       var rops = (context.rops || []).filter(function (rop) {
         return shouldShowRop(rop, teamUi);
       });
       var rows = rops
         .map(function (rop) {
           var expandedByState = isExpanded(teamUi, rop.employeeGuid);
-          var expandedBySearch =
-            teamUi.query &&
-            (ropHasEmployeeMatch(rop.employeeGuid, teamUi) || ropMatchesQuery(rop, teamUi.query));
+          var expandedByFilter = shouldAutoExpandRop(rop, teamUi);
           return renderRopRow(rop, teamUi, cacheEntry(rop.employeeGuid), {
-            forceExpanded: expandedByState || expandedBySearch,
+            forceExpanded: expandedByState || expandedByFilter,
           });
         })
         .join("");
-      var emptyHtml = !rows
+      var showEmpty =
+        !rows &&
+        (!loadSummary || loadSummary.errors === 0 || loadSummary.loaded > 0) &&
+        (!loadSummary || loadSummary.pending === 0);
+      var emptyHtml = showEmpty
         ? '<p class="clients-compact-team__empty">Нет команд по текущему фильтру.</p>'
         : "";
-      var noteHtml = context.limitationNote
-        ? '<p class="clients-compact-team__note">' + deps.shell.escapeHtml(context.limitationNote) + "</p>"
-        : "";
+      var noteHtml =
+        context.limitationNote && !teamUi.query && !teamUi.kind
+          ? '<p class="clients-compact-team__note">' + deps.shell.escapeHtml(context.limitationNote) + "</p>"
+          : "";
       return (
         renderToolbar(state, teamUi, { showCollapseAll: true }) +
+        searchBanner +
         noteHtml +
         '<div class="clients-compact-team-list">' +
         rows +
@@ -547,6 +618,16 @@
           callbacks.refresh();
         });
       });
+      container.querySelectorAll(".clients-compact-team__retry-search").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          Object.keys(cache).forEach(function (ropGuid) {
+            if (cache[ropGuid].status === "error") {
+              cache[ropGuid].status = "idle";
+            }
+          });
+          callbacks.refresh();
+        });
+      });
 
       var searchInput = container.querySelector("#clients-team-search-input");
       if (searchInput) {
@@ -582,23 +663,9 @@
           return;
         }
         var autoExpand = [];
-        if (teamUi.query) {
+        if (teamUi.query || teamUi.kind) {
           (context.rops || []).forEach(function (rop) {
-            if (ropHasEmployeeMatch(rop.employeeGuid, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
-              autoExpand.push(rop.employeeGuid);
-            }
-          });
-        }
-        if (teamUi.kind) {
-          (context.rops || []).forEach(function (rop) {
-            var entry = cacheEntry(rop.employeeGuid);
-            if (entry.status !== "loaded") {
-              return;
-            }
-            var hasKindMatch = mergeResponsiblesByEmployee(entry.items).some(function (employee) {
-              return filterAssignments(employee.assignments, teamUi.kind).length > 0;
-            });
-            if (hasKindMatch && autoExpand.indexOf(rop.employeeGuid) === -1) {
+            if (shouldAutoExpandRop(rop, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
               autoExpand.push(rop.employeeGuid);
             }
           });
@@ -610,8 +677,13 @@
           }
         });
         var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
-        container.innerHTML = renderOverview(renderState, context);
-        bindEvents(container, renderState, callbacks);
+        renderOverviewIntoContainer(container, renderState, context, callbacks);
+        if (mergedExpand.length === 0) {
+          if (callbacks.restoreSearchFocus) {
+            callbacks.restoreSearchFocus();
+          }
+          return;
+        }
         return Promise.all(
           mergedExpand.map(function (ropGuid) {
             return ensureResponsibles(ropGuid);
@@ -620,13 +692,20 @@
           if (isStale()) {
             return;
           }
-          container.innerHTML = renderOverview(renderState, context);
-          bindEvents(container, renderState, callbacks);
+          renderOverviewIntoContainer(container, renderState, context, callbacks);
           if (autoExpand.length > 0 && callbacks.syncExpand) {
             callbacks.syncExpand(mergedExpand);
           }
+          if (callbacks.restoreSearchFocus) {
+            callbacks.restoreSearchFocus();
+          }
         });
       });
+    }
+
+    function renderOverviewIntoContainer(container, renderState, context, callbacks) {
+      container.innerHTML = renderOverview(renderState, context);
+      bindEvents(container, renderState, callbacks);
     }
 
     function prepareAndRenderRopPanel(state, context, container, callbacks) {
@@ -653,6 +732,9 @@
           }
           container.innerHTML = renderRopPanel(state, context);
           bindEvents(container, state, callbacks);
+          if (callbacks.restoreSearchFocus) {
+            callbacks.restoreSearchFocus();
+          }
         });
       });
     }
@@ -670,5 +752,12 @@
   root.ClientsTeamsCompact = {
     create: createCompactTeams,
     mergeResponsiblesByEmployee: mergeResponsiblesByEmployee,
+    normalizeText: normalizeText,
+    ropMatchesQuery: ropMatchesQuery,
+    employeeMatchesQuery: employeeMatchesQuery,
+    filterAssignments: filterAssignments,
+    visibleEmployees: visibleEmployees,
+    shouldShowRopWithItems: shouldShowRopWithItems,
+    isRopNameMatch: isRopNameMatch,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -32,8 +32,11 @@ const C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const T1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-const DESKTOP = { width: 1440, height: 1100 };
+const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
+const VIEWPORT_SHOT_DIR =
+  process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
+  path.join("/opt/cursor/artifacts/screenshots");
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
   path.join("/opt/cursor/artifacts/screenshots");
@@ -224,6 +227,106 @@ describe("clients compact teams browser", { concurrency: false }, () => {
     });
   }
 
+  it("search and kind filter semantics", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "admin@example.com");
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+
+    const ropAlphaResponsibles = page.waitForResponse(
+      (r) => r.url().includes("/responsibles") && r.url().includes(ROP_A) && r.status() === 200,
+    );
+    await page.fill("#clients-team-search-input", "ROP Alpha");
+    await page.waitForFunction(
+      () => new URL(window.location.href).searchParams.get("teamQ") === "ROP Alpha",
+    );
+    await ropAlphaResponsibles;
+    await teamCard(page, "ROP Alpha")
+      .locator(".clients-compact-team__member-name", { hasText: "Manager One" })
+      .waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(await teamCard(page, "ROP Alpha").locator(".clients-compact-team__member-name").count(), 1);
+    assert.equal(await teamCard(page, "ROP Beta").count(), 0);
+
+    await page.fill("#clients-team-search-input", "");
+    await page.waitForFunction(() => !new URL(window.location.href).searchParams.get("teamQ"));
+    await page.selectOption("#clients-team-kind-filter", "regional");
+    await page.waitForFunction(
+      () => new URL(window.location.href).searchParams.get("teamKind") === "regional",
+    );
+    assert.equal(await teamCard(page, "ROP Alpha").count(), 0);
+    await teamCard(page, "ROP Beta")
+      .locator(".clients-compact-team__member-name", { hasText: "Regional One" })
+      .waitFor({ state: "visible", timeout: 15000 });
+
+    await page.fill("#clients-team-search-input", "Manager One");
+    await page.selectOption("#clients-team-kind-filter", "regional");
+    await page.waitForFunction(
+      () =>
+        new URL(window.location.href).searchParams.get("teamQ") === "Manager One" &&
+        new URL(window.location.href).searchParams.get("teamKind") === "regional",
+    );
+    await page.waitForSelector(".clients-compact-team__empty", { timeout: 15000 });
+    assert.equal(await page.locator(".clients-compact-team").count(), 0);
+
+    await page.close();
+    await stopServer();
+  });
+
+  it("search load error shows retry and preserves query", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "admin@example.com");
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+
+    await page.route("**/api/clients/org-structure/**/responsibles", (route) => {
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Service unavailable" }),
+      });
+    });
+
+    await page.fill("#clients-team-search-input", "Manager One");
+    await page.waitForFunction(
+      () => new URL(window.location.href).searchParams.get("teamQ") === "Manager One",
+    );
+    await page.waitForSelector(".clients-compact-team__search-error", { timeout: 15000 });
+    assert.equal(await page.locator(".clients-compact-team__empty").count(), 0);
+
+    const retryOk = page.waitForResponse(
+      (r) => r.url().includes("/responsibles") && r.url().includes(ROP_A) && r.status() === 200,
+    );
+    await page.unroute("**/api/clients/org-structure/**/responsibles");
+    await page.click(".clients-compact-team__retry-search");
+    await retryOk;
+    assert.match(page.url(), /teamQ=Manager(\+|%20)One/);
+    await teamCard(page, "ROP Alpha")
+      .locator(".clients-compact-team__member-name", { hasText: "Manager One" })
+      .waitFor({ state: "visible", timeout: 15000 });
+
+    await page.close();
+    await stopServer();
+  });
+
+  it("search input keeps focus while typing with debounce", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "admin@example.com");
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    const input = page.locator("#clients-team-search-input");
+    await input.click();
+    await input.type("Man", { delay: 120 });
+    await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "clients-team-search-input");
+
+    await page.close();
+    await stopServer();
+  });
+
   it("admin/director compact teams: expand, search, filter, restore state", async () => {
     await seed();
     await startServer();
@@ -237,7 +340,18 @@ describe("clients compact teams browser", { concurrency: false }, () => {
       await login(page, "admin@example.com");
       await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
       await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+      if (viewportName === "mobile") {
+        const firstTeamBox = await page.locator(".clients-compact-team").first().boundingBox();
+        assert.ok(firstTeamBox && firstTeamBox.y < viewport.height);
+      }
       assert.equal(await teamCard(page, "ROP Alpha").locator(".clients-compact-team__members").count(), 0);
+
+      if (viewportName === "desktop" || viewportName === "mobile") {
+        await page.screenshot({
+          path: path.join(VIEWPORT_SHOT_DIR, `clients-compact-teams-viewport-${viewportName}.png`),
+          fullPage: false,
+        });
+      }
 
       await page.screenshot({
         path: path.join(SCREENSHOT_DIR, `clients-compact-teams-collapsed-${viewportName}.png`),

@@ -173,13 +173,43 @@
     navigateState(merged);
   }
 
+  function readSearchInputFocus() {
+    var searchInput = teamsPanelEl.querySelector("#clients-team-search-input");
+    if (!searchInput || document.activeElement !== searchInput) {
+      return null;
+    }
+    return {
+      start: searchInput.selectionStart,
+      end: searchInput.selectionEnd,
+    };
+  }
+
+  function restoreSearchInputFocus(caret) {
+    if (!caret) {
+      return;
+    }
+    var searchInput = teamsPanelEl.querySelector("#clients-team-search-input");
+    if (!searchInput) {
+      return;
+    }
+    searchInput.focus();
+    try {
+      searchInput.setSelectionRange(caret.start, caret.end);
+    } catch (err) {
+      // Some input types do not support selection ranges.
+    }
+  }
+
   function renderCompactTeamsOverview(state) {
     var module = getCompactTeams();
     if (!module) {
       return Promise.resolve();
     }
-    teamsPanelEl.innerHTML =
-      '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка команд…</div>';
+    var searchCaret = readSearchInputFocus();
+    if (!teamsPanelEl.querySelector(".clients-compact-team-toolbar")) {
+      teamsPanelEl.innerHTML =
+        '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка команд…</div>';
+    }
     var token = ++compactTeamsRenderToken;
     return module
       .prepareAndRenderOverview(state, teamContext, teamsPanelEl, {
@@ -192,6 +222,12 @@
             return;
           }
           writeStateToUrl(Object.assign({}, state, { teamExpand: expanded }), true);
+        },
+        restoreSearchFocus: function () {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          restoreSearchInputFocus(searchCaret);
         },
         refresh: function () {
           if (token !== compactTeamsRenderToken) {
@@ -212,11 +248,18 @@
     if (!module) {
       return Promise.resolve();
     }
+    var searchCaret = readSearchInputFocus();
     var token = ++compactTeamsRenderToken;
     return module.prepareAndRenderRopPanel(state, teamContext, teamsPanelEl, {
       navigate: compactTeamsNavigatePatch,
       isStale: function () {
         return token !== compactTeamsRenderToken;
+      },
+      restoreSearchFocus: function () {
+        if (token !== compactTeamsRenderToken) {
+          return;
+        }
+        restoreSearchInputFocus(searchCaret);
       },
       refresh: function () {
         if (token !== compactTeamsRenderToken) {
@@ -1683,12 +1726,18 @@
       isRopDesignSession() && isTeams && !branchList && !responsibleList && Boolean(state.ropEmployee);
     var isDirectorTeamsSurface =
       usesDirectorLayout() && isTeams && !branchList && !responsibleList;
+    var isDirectorTeamsOverview = isDirectorTeamsSurface && !state.ropEmployee;
+    var isTeamsSurface = isDirectorTeamsOverview || isRopTeamHome;
+    document.body.classList.toggle("clients-teams-surface", Boolean(isTeamsSurface));
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
     document
       .querySelector(".clients-results-shell")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
+    if (pageSubtitleEl && usesDirectorLayout() && isTeams && !branchList && !responsibleList) {
+      pageSubtitleEl.classList.add("clients-hidden");
+    }
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
     if (usesDirectorLayout()) {
@@ -1708,9 +1757,21 @@
     var role = rolePresentation && rolePresentation.businessRole;
     var branchList = logic.isBranchPortfolioList(state);
     var responsibleList = logic.hasResponsibleSelection(state);
+    var isDirectorTeamsOverview =
+      (role === "director" || role === "admin") &&
+      (state.view || "all") === "teams" &&
+      !branchList &&
+      !responsibleList &&
+      !state.ropEmployee;
     var collapseMobileFilters =
       ((role === "manager" || role === "regional_manager") && (state.view || "all") === "all") ||
       ((role === "director" || role === "admin") && (state.view || "all") === "all") ||
+      isDirectorTeamsOverview ||
+      (role === "rop" &&
+        (state.view || "all") === "teams" &&
+        !branchList &&
+        !responsibleList &&
+        Boolean(state.ropEmployee)) ||
       (role === "rop" && (state.view || "all") === "teams" && (branchList || responsibleList)) ||
       ((role === "director" || role === "admin") &&
         (state.view || "all") === "teams" &&

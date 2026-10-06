@@ -1021,6 +1021,28 @@
   flex-wrap: wrap;
   gap: 8px 12px;
   margin-left: auto;
+  align-items: end;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .clients-compact-team__row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .clients-design-page .clients-compact-team__metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(72px, auto));
+    gap: 8px 12px;
+    margin-left: 0;
+    justify-self: end;
+  }
+
+  .clients-design-page .clients-compact-team__badge {
+    justify-self: end;
+    align-self: center;
+  }
 }
 
 .clients-design-page .clients-compact-team__metric {
@@ -1185,6 +1207,139 @@
   margin: 0 0 10px;
   font-size: 13px;
   color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__search-error {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+}
+
+.clients-design-page .clients-compact-team__search-warning {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__search-warning .workspace-button,
+.clients-design-page .clients-compact-team__search-error .workspace-button {
+  margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .clients-design-page.clients-teams-surface #clients-app {
+    gap: 8px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-page-header {
+    margin-bottom: 8px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-page-title {
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-manager-chrome {
+    gap: 6px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card {
+    padding: 6px 10px;
+    gap: 6px 10px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__main {
+    gap: 8px;
+    flex: 1 1 auto;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__name {
+    font-size: 14px;
+    line-height: 1.2;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__role {
+    display: inline;
+    margin-top: 0;
+    margin-left: 6px;
+    font-size: 12px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__role::before {
+    content: "·";
+    margin-right: 6px;
+    color: var(--rf-text-muted);
+  }
+
+  .clients-design-page.clients-teams-surface .clients-employee-card__scope {
+    display: none;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stats-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stat {
+    padding: 8px 10px;
+    border-right: 1px solid var(--rf-border);
+    border-bottom: 0;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stat:nth-child(2),
+  .clients-design-page.clients-teams-surface .clients-stat:nth-child(3) {
+    border-bottom: 0;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stat:nth-child(3) {
+    grid-column: auto;
+    border-right: 0;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stat__value {
+    font-size: 16px;
+    line-height: 1.2;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-stat__label {
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  .clients-design-page.clients-teams-surface #clients-stats-incomplete-strip {
+    display: none;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-compact-team-toolbar {
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-compact-team-toolbar .clients-field__label {
+    font-size: 12px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-compact-team-toolbar__collapse {
+    min-height: 32px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-compact-team__note {
+    display: none;
+  }
+
+  .clients-design-page.clients-teams-surface .clients-compact-team-list {
+    gap: 6px;
+  }
 }
 
 .clients-design-page .clients-compact-team__error {
