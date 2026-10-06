@@ -36,6 +36,19 @@
               </button>
             </nav>
 
+            <div id="onec-update-panel" class="clients-onec-update clients-admin-onec-bar clients-hidden" aria-live="polite">
+              <button
+                type="button"
+                id="onec-update-button"
+                class="workspace-button workspace-button--primary clients-onec-update__button"
+                data-testid="onec-update-button"
+              >
+                Обновить из 1С
+              </button>
+              <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
+              <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
+            </div>
+
             <div id="clients-manager-chrome" class="clients-manager-chrome clients-hidden">
               <div class="clients-employee-card" id="clients-employee-card">
                 <div class="clients-employee-card__main">
@@ -296,7 +309,9 @@
                   <h2 class="clients-results-shell__title clients-hidden" id="clients-results-title">Мои клиенты</h2>
                   <p id="result-count" class="clients-results-shell__count">Найдено 0 клиентов</p>
                 </div>
-                <p id="sync-status" class="clients-sync"></p>
+                <div class="clients-sync-block">
+                  <p id="sync-status" class="clients-sync"></p>
+                </div>
               </div>
               <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
               <div id="results-panel">

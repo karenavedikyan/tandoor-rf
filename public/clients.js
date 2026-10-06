@@ -24,6 +24,11 @@
   var resetFiltersBtn = document.getElementById("reset-filters");
   var resultCountEl = document.getElementById("result-count");
   var syncStatusEl = document.getElementById("sync-status");
+  var onecUpdatePanelEl = document.getElementById("onec-update-panel");
+  var onecUpdateButtonEl = document.getElementById("onec-update-button");
+  var onecUpdateStatusEl = document.getElementById("onec-update-status");
+  var onecUpdateMetaEl = document.getElementById("onec-update-meta");
+  var onecUpdatePollTimer = null;
   var resultsStateEl = document.getElementById("results-state");
   var resultsContentEl = document.getElementById("results-content");
   var tableBody = document.getElementById("clients-table-body");
@@ -909,6 +914,7 @@
 
   function applyRoleChrome(presentation) {
     rolePresentation = presentation;
+    applyOnecUpdatePanelVisibility();
     if (!presentation) {
       return;
     }
@@ -2757,6 +2763,122 @@
     });
   }
 
+  function shouldShowOnecUpdatePanel() {
+    var preview = shell.getPreviewState();
+    var actor = shell.getActorUser();
+    var isAdminActor =
+      (actor && actor.role === "admin") ||
+      (rolePresentation && rolePresentation.businessRole === "admin");
+    return isAdminActor && (!preview || !preview.active);
+  }
+
+  function applyOnecUpdatePanelVisibility() {
+    if (!onecUpdatePanelEl) {
+      return;
+    }
+    onecUpdatePanelEl.classList.toggle("clients-hidden", !shouldShowOnecUpdatePanel());
+  }
+
+  function renderOnecUpdateStatus(data) {
+    if (!onecUpdateStatusEl || !onecUpdateButtonEl) {
+      return;
+    }
+    var formatted = logic.formatOnecUpdateStatusText(data);
+    onecUpdateStatusEl.textContent = formatted.text;
+    onecUpdateStatusEl.className = "clients-onec-update__status" + (formatted.statusClass ? " " + formatted.statusClass : "");
+    onecUpdateButtonEl.disabled = !!formatted.disableButton;
+
+    if (onecUpdateMetaEl) {
+      var lines = logic.formatOnecUpdateMetaLines(data);
+      if (!lines.length) {
+        onecUpdateMetaEl.classList.add("clients-hidden");
+        onecUpdateMetaEl.innerHTML = "";
+      } else {
+        onecUpdateMetaEl.classList.remove("clients-hidden");
+        onecUpdateMetaEl.innerHTML = lines
+          .map(function (line) {
+            return "<dt>" + shell.escapeHtml(line.label) + "</dt><dd>" + shell.escapeHtml(line.value) + "</dd>";
+          })
+          .join("");
+      }
+    }
+  }
+
+  function scheduleOnecUpdatePoll(data) {
+    if (onecUpdatePollTimer) {
+      clearTimeout(onecUpdatePollTimer);
+      onecUpdatePollTimer = null;
+    }
+    if (!shouldShowOnecUpdatePanel() || !logic.shouldPollOnecUpdateStatus(data)) {
+      return;
+    }
+    onecUpdatePollTimer = setTimeout(function () {
+      loadOnecUpdateStatus(false);
+    }, 2000);
+  }
+
+  function loadOnecUpdateStatus(refreshSync) {
+    applyOnecUpdatePanelVisibility();
+    if (!shouldShowOnecUpdatePanel()) {
+      return Promise.resolve({ ok: true, skipped: true });
+    }
+    return api
+      .apiRequest("/api/admin/clients/onec-update/status")
+      .then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          renderOnecUpdateStatus(null);
+          return { ok: false };
+        }
+        renderOnecUpdateStatus(result.data);
+        scheduleOnecUpdatePoll(result.data);
+        if (refreshSync) {
+          return loadSyncStatus().then(function () {
+            return { ok: true };
+          });
+        }
+        return { ok: true };
+      })
+      .catch(function () {
+        renderOnecUpdateStatus(null);
+        return { ok: false };
+      });
+  }
+
+  function startOnecUpdate() {
+    if (!onecUpdateButtonEl || onecUpdateButtonEl.disabled) {
+      return;
+    }
+    var confirmed = window.confirm(
+      "Запустить обновление клиентов из последнего готового комплекта 1С?\n\n" +
+        "Будет загружен подтверждённый комплект с FTP и применён в ЛК. Формирование новой выгрузки в 1С не запускается.",
+    );
+    if (!confirmed) {
+      return;
+    }
+    onecUpdateButtonEl.disabled = true;
+    api
+      .apiRequest("/api/admin/clients/onec-update", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status === 202 && result.data) {
+          return loadOnecUpdateStatus(false);
+        }
+        var message = api.extractErrorMessage(result.data, "Не удалось запустить обновление из 1С.");
+        renderOnecUpdateStatus({
+          canStart: false,
+          blockedReason: message,
+          job: null,
+        });
+        return { ok: false };
+      })
+      .catch(function (err) {
+        renderOnecUpdateStatus({
+          canStart: false,
+          blockedReason: api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+          job: null,
+        });
+      });
+  }
+
   function loadOptions() {
     return api.apiRequest("/api/clients/options").then(function (result) {
       if (result.response.status !== 200 || !result.data) {
@@ -3155,7 +3277,7 @@
           );
           return null;
         }
-        return Promise.all([loadOptions(), loadSyncStatus()]);
+        return Promise.all([loadOptions(), loadSyncStatus(), loadOnecUpdateStatus(false)]);
       })
       .then(function (results) {
         if (!results) {
@@ -3183,6 +3305,10 @@
         showInitError("Ошибка инициализации", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000));
       });
   }
+
+  onecUpdateButtonEl?.addEventListener("click", function () {
+    startOnecUpdate();
+  });
 
   searchInput.addEventListener("input", function () {
     invalidateInFlightRequests();
@@ -3278,6 +3404,7 @@
       return;
     }
     currentUser = user;
+    applyOnecUpdatePanelVisibility();
     applyPortfolioDesignChrome(rolePresentation, currentUser, readStateFromUrl());
     initializeWorkspace();
   });

@@ -515,6 +515,25 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
   return map;
 }
 
+async function linkOperatorImportJobRun(
+  managed: ManagedClient,
+  operatorImportJobId: string | undefined,
+  runId: string | undefined,
+): Promise<void> {
+  if (!operatorImportJobId || !runId) {
+    return;
+  }
+  await queryManaged(
+    managed,
+    `
+      UPDATE onec_import_jobs
+      SET import_run_id = $2::uuid
+      WHERE id = $1::uuid AND status = 'running'
+    `,
+    [operatorImportJobId, runId],
+  );
+}
+
 async function insertRejectedRunJournal(
   managed: ManagedClient,
   payload: ValidatedClientsPayload,
@@ -893,6 +912,7 @@ export async function applyClientsImport(options: {
               "ROSTER_SHRINK_AMBIGUOUS",
               journal,
             );
+            await linkOperatorImportJobRun(managed, options.operatorImportJobId, phase.runId);
           }
           outcome = {
             ok: false,
@@ -931,6 +951,7 @@ export async function applyClientsImport(options: {
               "RECORD_COUNT_DECREASED",
               journal,
             );
+            await linkOperatorImportJobRun(managed, options.operatorImportJobId, phase.runId);
             outcome = {
               ok: false,
               code: "RECORD_COUNT_DECREASED",
@@ -959,6 +980,7 @@ export async function applyClientsImport(options: {
                 "GUID_SET_SHRINK",
                 journal,
               );
+              await linkOperatorImportJobRun(managed, options.operatorImportJobId, phase.runId);
               outcome = {
                 ok: false,
                 code: "GUID_SET_SHRINK",
@@ -1004,6 +1026,8 @@ export async function applyClientsImport(options: {
             ],
           );
           phase.runId = runInsert.rows[0]?.id;
+
+          await linkOperatorImportJobRun(managed, options.operatorImportJobId, phase.runId);
 
           const participating = options.participatingTransaction === true;
           if (!participating) {

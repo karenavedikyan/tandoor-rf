@@ -6,11 +6,13 @@ import { JSON_BODY_LIMIT } from "./config";
 import { checkReadiness } from "./db/readiness";
 import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
+import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
 import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
 import { requireDatabaseReady } from "./middleware/database";
 import { createAccessAdminRouter, createAccessRouter } from "./access/router";
+import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
@@ -57,6 +59,7 @@ function isStructuredApi(req: Request): boolean {
     req.path.startsWith("/api/profile") ||
     req.path.startsWith("/api/clients") ||
     req.path.startsWith("/api/admin/access") ||
+    req.path.startsWith("/api/admin/clients") ||
     req.path.startsWith("/api/access") ||
     req.path.startsWith("/api/work") ||
     req.path.startsWith("/api/ready")
@@ -195,6 +198,7 @@ export function createApp(): express.Application {
   app.use("/api/profile", profileRouter);
   app.use("/api/clients", createClientsRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
+  app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/access", createAccessRouter());
   app.use("/api/work", createWorkRouter());
 
@@ -297,6 +301,7 @@ export function startServer(): ReturnType<express.Application["listen"]> {
       if (!pool) return;
       const diagnosticStatus = await runOneDiagnosticJob(pool);
       if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
+      await drainPendingImportJobs();
     }).catch(() => console.error("1C background workers unavailable"));
   });
 

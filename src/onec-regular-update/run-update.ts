@@ -62,6 +62,8 @@ export type RunRegularUpdateOptions = {
   employeeRosterBytes?: Buffer;
   manifestBytes?: Buffer;
   applyTestHooks?: ApplyTestHooks;
+  /** Admin regular-update job id; validated under import lock before writes. */
+  operatorImportJobId?: string;
 };
 
 export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): Promise<RegularUpdateResult> {
@@ -236,6 +238,7 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
     employeeRosterSourceSha256: clientsPayload.employeeRosterSourceSha256 ?? null,
     wholesaleEmployeeRoster: roster,
     syncExchangeState: true,
+    operatorImportJobId: options.operatorImportJobId,
     testHooks: options.applyTestHooks,
   });
 
