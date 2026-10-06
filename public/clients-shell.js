@@ -19,6 +19,7 @@
   var mobileEscapeHandler = null;
   var resizeHandlerBound = false;
   var previewState = { active: false };
+  var actorUser = null;
 
   var PREVIEW_ROLE_LABELS = {
     manager: "Менеджер",
@@ -647,6 +648,7 @@
           onReady(null, "service");
           return;
         }
+        actorUser = result.data.user;
         previewState = result.data.preview || { active: false };
         syncPreviewBanner();
         onReady(getEffectiveUser(result.data.user), null);
@@ -657,16 +659,16 @@
   }
 
   function ensureAdminAccess(onReady) {
-    return ensureAuthenticated(function (user, reason) {
+    return ensureAuthenticated(function (_user, reason) {
       if (reason) {
         onReady(null, reason);
         return;
       }
-      if (user.role !== "admin") {
+      if (!actorUser || actorUser.role !== "admin") {
         onReady(null, "forbidden");
         return;
       }
-      onReady(user, null);
+      onReady(actorUser, null);
     });
   }
 
