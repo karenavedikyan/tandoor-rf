@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 require("../../public/clients-teams-compact.js");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const logic = require("../../public/clients-logic.js");
 
 type TeamUi = { query: string; kind: string; expanded: string[] };
 type Summary = { name: string; shortId?: string; employeeGuid: string };
@@ -106,5 +108,25 @@ describe("clients teams compact filter semantics", () => {
     assert.equal(compact.shouldShowRopWithItems(ROP_B, teamUi, ROP_B_TEAM), false);
     assert.equal(compact.visibleEmployees(ROP_A_TEAM, ROP_A, teamUi).length, 0);
     assert.equal(compact.visibleEmployees(ROP_B_TEAM, ROP_B, teamUi).length, 0);
+  });
+});
+
+describe("clients teams dept url state", () => {
+  it("normalizes teamDept and persists in query string", () => {
+    assert.equal(logic.normalizeTeamDept("sales"), "sales");
+    assert.equal(logic.normalizeTeamDept("assistants"), "assistants");
+    assert.equal(logic.normalizeTeamDept("other"), "");
+    const state = logic.readStateFromSearch("?view=teams&teamDept=assistants&teamQ=ROA");
+    assert.equal(state.teamDept, "assistants");
+    assert.equal(state.teamQ, "ROA");
+    const query = logic.buildListQueryString({
+      view: "teams",
+      entity: "clients",
+      teamDept: "assistants",
+      teamExpand: [logic.ASSISTANTS_DEPT_EXPAND_TOKEN],
+      page: 1,
+    });
+    assert.match(query, /teamDept=assistants/);
+    assert.match(query, /teamExpand=__assistants_dept__/);
   });
 });

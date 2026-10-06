@@ -43,7 +43,10 @@
     "teamExpand",
     "teamQ",
     "teamKind",
+    "teamDept",
   ];
+
+  var ASSISTANTS_DEPT_EXPAND_TOKEN = "__assistants_dept__";
 
   var CLIENT_COLUMNS = [
     { id: "name", label: "Клиент", entity: "clients", defaultVisible: true, locked: true, sortable: true, hasSource: true },
@@ -342,11 +345,19 @@
         }),
       teamQ: params.get("teamQ") || "",
       teamKind: params.get("teamKind") || "",
+      teamDept: normalizeTeamDept(params.get("teamDept") || ""),
     };
   }
 
   function normalizeTeamKind(value) {
     if (value === "manager" || value === "regional" || value === "hardware") {
+      return value;
+    }
+    return "";
+  }
+
+  function normalizeTeamDept(value) {
+    if (value === "sales" || value === "assistants") {
       return value;
     }
     return "";
@@ -434,6 +445,7 @@
     }
     if (state.teamQ) params.set("teamQ", state.teamQ);
     if (state.teamKind) params.set("teamKind", state.teamKind);
+    if (state.teamDept) params.set("teamDept", state.teamDept);
     return params.toString();
   }
 
@@ -938,6 +950,8 @@
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     readStateFromSearch: readStateFromSearch,
     normalizeTeamKind: normalizeTeamKind,
+    normalizeTeamDept: normalizeTeamDept,
+    ASSISTANTS_DEPT_EXPAND_TOKEN: ASSISTANTS_DEPT_EXPAND_TOKEN,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,

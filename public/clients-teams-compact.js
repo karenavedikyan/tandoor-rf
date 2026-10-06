@@ -14,6 +14,17 @@
     { value: "hardware", label: "Фурнитура" },
   ];
 
+  var DEPT_FILTER_OPTIONS = [
+    { value: "", label: "Все отделы" },
+    { value: "sales", label: "Продажи" },
+    { value: "assistants", label: "Ассистенты" },
+  ];
+
+  var ASSISTANT_ROLE_LABELS = {
+    roa: "РОА",
+    assistant: "Ассистент",
+  };
+
   function normalizeText(value) {
     return String(value || "")
       .trim()
@@ -115,7 +126,209 @@
         expanded: state.teamExpand || [],
         query: normalizeText(state.teamQ),
         kind: deps.logic.normalizeTeamKind(state.teamKind || ""),
+        dept: deps.logic.normalizeTeamDept(state.teamDept || ""),
       };
+    }
+
+    function assistantsExpandToken() {
+      return deps.logic.ASSISTANTS_DEPT_EXPAND_TOKEN;
+    }
+
+    function isAssistantsExpanded(teamUi) {
+      return teamUi.expanded.indexOf(assistantsExpandToken()) !== -1;
+    }
+
+    function assistantsHeadMatchesQuery(department, query) {
+      if (!query || !department || !department.head) {
+        return false;
+      }
+      var haystack = normalizeText(department.head.name + " " + (department.head.shortId || ""));
+      return haystack.indexOf(query) !== -1;
+    }
+
+    function assistantsMemberMatchesQuery(member, query) {
+      return Boolean(query) && employeeMatchesQuery({ name: member.name, shortId: member.shortId }, query);
+    }
+
+    function shouldShowAssistantsDepartment(department, teamUi) {
+      if (!department) {
+        return false;
+      }
+      if (teamUi.dept === "sales") {
+        return false;
+      }
+      if (!teamUi.query) {
+        return true;
+      }
+      if (assistantsHeadMatchesQuery(department, teamUi.query)) {
+        return true;
+      }
+      return (department.members || []).some(function (member) {
+        return assistantsMemberMatchesQuery(member, teamUi.query);
+      });
+    }
+
+    function visibleAssistantsMembers(department, teamUi) {
+      if (!department || !department.members) {
+        return [];
+      }
+      var headMatch = assistantsHeadMatchesQuery(department, teamUi.query);
+      if (!teamUi.query || headMatch) {
+        return department.members.slice();
+      }
+      return department.members.filter(function (member) {
+        return assistantsMemberMatchesQuery(member, teamUi.query);
+      });
+    }
+
+    function shouldAutoExpandAssistants(department, teamUi) {
+      if (!teamUi.query || !department) {
+        return false;
+      }
+      if (assistantsHeadMatchesQuery(department, teamUi.query)) {
+        return true;
+      }
+      return (department.members || []).some(function (member) {
+        return assistantsMemberMatchesQuery(member, teamUi.query);
+      });
+    }
+
+    function renderAssistantRoleTags(roles) {
+      return (roles || [])
+        .map(function (role) {
+          return (
+            '<span class="clients-compact-team__kind-tag clients-compact-team__kind-tag--assistant">' +
+            deps.shell.escapeHtml(ASSISTANT_ROLE_LABELS[role] || role) +
+            "</span>"
+          );
+        })
+        .join("");
+    }
+
+    function renderAssistantsMemberCount(department) {
+      if (!department) {
+        return "—";
+      }
+      if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
+        return "—";
+      }
+      return String(department.uniqueMemberCount ?? "—");
+    }
+
+    function renderAssistantsStatusNote(department) {
+      if (!department) {
+        return "";
+      }
+      if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
+        return (
+          '<p class="clients-compact-team__assistants-note clients-compact-team__assistants-note--warn" role="status">' +
+          deps.shell.escapeHtml(department.note || "Состав отдела ассистентов недоступен.") +
+          "</p>"
+        );
+      }
+      if (department.loadState === "empty") {
+        return (
+          '<p class="clients-compact-team__assistants-note" role="status">' +
+          deps.shell.escapeHtml(department.note || "Подтверждённый состав отдела ассистентов пуст.") +
+          "</p>"
+        );
+      }
+      return "";
+    }
+
+    function renderAssistantsMembersPanel(department, teamUi, expanded) {
+      if (!expanded || !department || !department.head) {
+        return "";
+      }
+      if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
+        return renderAssistantsStatusNote(department);
+      }
+      var visible = visibleAssistantsMembers(department, teamUi);
+      if (visible.length === 0) {
+        return (
+          '<div class="clients-compact-team__members clients-compact-team__members--empty">Нет сотрудников по текущему фильтру.</div>'
+        );
+      }
+      var rows = visible
+        .map(function (member) {
+          var badges =
+            (member.hasLinkedAccount
+              ? ""
+              : '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>');
+          return (
+            '<div class="clients-compact-team__member" data-employee-guid="' +
+            deps.shell.escapeHtml(member.employeeGuid) +
+            '">' +
+            '<div class="clients-compact-team__member-main">' +
+            '<span class="clients-compact-team__member-name">' +
+            deps.shell.escapeHtml(member.name || member.shortId || member.employeeGuid) +
+            "</span>" +
+            '<span class="clients-compact-team__member-kinds">' +
+            renderAssistantRoleTags(member.roles) +
+            badges +
+            "</span>" +
+            "</div></div>"
+          );
+        })
+        .join("");
+      return '<div class="clients-compact-team__members clients-compact-team__members--assistants" tabindex="0">' + rows + "</div>";
+    }
+
+    function renderAssistantsDepartmentBlock(department, teamUi, options) {
+      if (!shouldShowAssistantsDepartment(department, teamUi)) {
+        return "";
+      }
+      var opts = options || {};
+      var expanded = opts.forceExpanded || isAssistantsExpanded(teamUi);
+      var head = department.head;
+      if (!head) {
+        return (
+          '<section class="clients-compact-team clients-compact-team--assistants">' +
+          '<h3 class="clients-compact-team__dept-title">Отдел ассистентов</h3>' +
+          renderAssistantsStatusNote(department) +
+          "</section>"
+        );
+      }
+      var toggleLabel = expanded ? "Свернуть отдел ассистентов" : "Развернуть отдел ассистентов";
+      var alsoAssistantBadge = head.isAlsoAssistant
+        ? '<span class="clients-compact-team__badge clients-compact-team__badge--also-assistant">Также ассистент</span>'
+        : "";
+      var noAccountBadge = head.hasLinkedAccount === false
+        ? '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>'
+        : "";
+      return (
+        '<section class="clients-compact-team clients-compact-team--assistants' +
+        (expanded ? " clients-compact-team--expanded" : "") +
+        '" data-assistants-dept="1">' +
+        '<div class="clients-compact-team__row clients-compact-team__row--assistants">' +
+        '<button type="button" class="clients-compact-team__toggle" aria-expanded="' +
+        (expanded ? "true" : "false") +
+        '" aria-label="' +
+        deps.shell.escapeHtml(toggleLabel) +
+        '" data-toggle-assistants="1">' +
+        '<span class="clients-compact-team__chevron" aria-hidden="true"></span>' +
+        "</button>" +
+        '<div class="clients-compact-team__identity">' +
+        '<button type="button" class="clients-compact-team__name" data-toggle-assistants="1">' +
+        deps.shell.escapeHtml(head.name || head.shortId || "РОА") +
+        "</button>" +
+        '<span class="clients-compact-team__role-caption">РОА · руководитель отдела ассистентов</span>' +
+        noAccountBadge +
+        alsoAssistantBadge +
+        "</div>" +
+        '<div class="clients-compact-team__metrics clients-compact-team__metrics--assistants" aria-label="Состав отдела">' +
+        '<span class="clients-compact-team__metric"><span class="clients-compact-team__metric-value">' +
+        deps.shell.escapeHtml(renderAssistantsMemberCount(department)) +
+        '</span><span class="clients-compact-team__metric-label">сотрудников</span></span>' +
+        "</div>" +
+        "</div>" +
+        renderAssistantsMembersPanel(department, teamUi, expanded) +
+        (department.loadState === "empty" && !expanded ? renderAssistantsStatusNote(department) : "") +
+        (department.loadState === "unconfigured" || department.loadState === "roster_missing"
+          ? renderAssistantsStatusNote(department)
+          : "") +
+        "</section>"
+      );
     }
 
     function isExpanded(teamUi, ropGuid) {
@@ -413,6 +626,20 @@
     function renderToolbar(state, teamUi, options) {
       var opts = options || {};
       var showCollapseAll = opts.showCollapseAll !== false;
+      var showDeptFilter = opts.showDeptFilter !== false;
+      var showKindFilter = opts.showKindFilter !== false && teamUi.dept !== "assistants";
+      var deptOptions = DEPT_FILTER_OPTIONS.map(function (option) {
+        var selected = option.value === teamUi.dept ? " selected" : "";
+        return (
+          '<option value="' +
+          deps.shell.escapeHtml(option.value) +
+          '"' +
+          selected +
+          ">" +
+          deps.shell.escapeHtml(option.label) +
+          "</option>"
+        );
+      }).join("");
       var kindOptions = KIND_FILTER_OPTIONS.map(function (option) {
         var selected = option.value === teamUi.kind ? " selected" : "";
         return (
@@ -427,18 +654,26 @@
       }).join("");
       return (
         '<div class="clients-compact-team-toolbar">' +
+        (showDeptFilter
+          ? '<label class="clients-field clients-compact-team-toolbar__dept">' +
+            '<span class="clients-field__label">Отдел</span>' +
+            '<select class="clients-field__input" id="clients-team-dept-filter">' +
+            deptOptions +
+            "</select></label>"
+          : "") +
         '<label class="clients-field clients-compact-team-toolbar__search">' +
-        '<span class="clients-field__label">Поиск РОПа или сотрудника</span>' +
+        '<span class="clients-field__label">Поиск руководителя или сотрудника</span>' +
         '<input type="search" class="clients-field__input" id="clients-team-search-input" value="' +
         deps.shell.escapeHtml(state.teamQ || "") +
         '" autocomplete="off" />' +
         "</label>" +
-        '<label class="clients-field clients-compact-team-toolbar__kind">' +
-        '<span class="clients-field__label">Тип назначения</span>' +
-        '<select class="clients-field__input" id="clients-team-kind-filter">' +
-        kindOptions +
-        "</select>" +
-        "</label>" +
+        (showKindFilter
+          ? '<label class="clients-field clients-compact-team-toolbar__kind">' +
+            '<span class="clients-field__label">Тип назначения (продажи)</span>' +
+            '<select class="clients-field__input" id="clients-team-kind-filter">' +
+            kindOptions +
+            "</select></label>"
+          : "") +
         (showCollapseAll
           ? '<button type="button" class="workspace-button workspace-button--ghost clients-compact-team-toolbar__collapse" id="clients-team-collapse-all">Свернуть всё</button>'
           : "") +
@@ -484,11 +719,15 @@
 
     function renderOverview(state, context) {
       var teamUi = readTeamUi(state);
-      var loadSummary = summarizeSearchLoad(context.rops || [], teamUi);
-      var searchBanner = renderSearchLoadBanner(loadSummary);
-      var rops = (context.rops || []).filter(function (rop) {
-        return shouldShowRop(rop, teamUi);
-      });
+      var showSales = teamUi.dept !== "assistants";
+      var showAssistants = teamUi.dept !== "sales";
+      var loadSummary = showSales ? summarizeSearchLoad(context.rops || [], teamUi) : null;
+      var searchBanner = showSales ? renderSearchLoadBanner(loadSummary) : "";
+      var rops = showSales
+        ? (context.rops || []).filter(function (rop) {
+            return shouldShowRop(rop, teamUi);
+          })
+        : [];
       var rows = rops
         .map(function (rop) {
           var expandedByState = isExpanded(teamUi, rop.employeeGuid);
@@ -498,26 +737,44 @@
           });
         })
         .join("");
+      var assistantsBlock = showAssistants
+        ? renderAssistantsDepartmentBlock(context.assistantsDepartment, teamUi, {
+            forceExpanded:
+              isAssistantsExpanded(teamUi) || shouldAutoExpandAssistants(context.assistantsDepartment, teamUi),
+          })
+        : "";
+      var hasAssistantsVisible = Boolean(assistantsBlock);
       var showEmpty =
+        showSales &&
         !rows &&
         (!loadSummary || loadSummary.errors === 0 || loadSummary.loaded > 0) &&
-        (!loadSummary || loadSummary.pending === 0);
+        (!loadSummary || loadSummary.pending === 0) &&
+        (!showAssistants || !hasAssistantsVisible);
+      if (teamUi.dept === "assistants" && !hasAssistantsVisible) {
+        showEmpty = true;
+      }
       var emptyHtml = showEmpty
         ? '<p class="clients-compact-team__empty">Нет команд по текущему фильтру.</p>'
         : "";
       var noteHtml =
-        context.limitationNote && !teamUi.query && !teamUi.kind
+        context.limitationNote && !teamUi.query && !teamUi.kind && showSales
           ? '<p class="clients-compact-team__note">' + deps.shell.escapeHtml(context.limitationNote) + "</p>"
           : "";
+      var undefinedHtml =
+        showSales && !teamUi.query && !teamUi.kind ? renderUndefinedTeam(context.undefinedTeam) : "";
       return (
-        renderToolbar(state, teamUi, { showCollapseAll: true }) +
+        renderToolbar(state, teamUi, { showCollapseAll: true, showDeptFilter: true }) +
         searchBanner +
         noteHtml +
-        '<div class="clients-compact-team-list">' +
-        rows +
-        emptyHtml +
-        "</div>" +
-        renderUndefinedTeam(context.undefinedTeam)
+        (showAssistants && assistantsBlock
+          ? '<div class="clients-compact-team-list clients-compact-team-list--assistants">' + assistantsBlock + "</div>"
+          : "") +
+        (showSales
+          ? '<div class="clients-compact-team-list">' + rows + emptyHtml + "</div>"
+          : teamUi.dept === "assistants" && !hasAssistantsVisible
+            ? emptyHtml
+            : "") +
+        undefinedHtml
       );
     }
 
@@ -573,6 +830,20 @@
           var index = expanded.indexOf(ropGuid);
           if (index === -1) {
             expanded.push(ropGuid);
+          } else {
+            expanded.splice(index, 1);
+          }
+          callbacks.navigate({ teamExpand: expanded });
+        });
+      });
+      container.querySelectorAll("[data-toggle-assistants]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var teamUi = readTeamUi(readStateFromLocation());
+          var expanded = teamUi.expanded.slice();
+          var token = assistantsExpandToken();
+          var index = expanded.indexOf(token);
+          if (index === -1) {
+            expanded.push(token);
           } else {
             expanded.splice(index, 1);
           }
@@ -647,6 +918,17 @@
           callbacks.navigate({ teamKind: kindFilter.value });
         });
       }
+      var deptFilter = container.querySelector("#clients-team-dept-filter");
+      if (deptFilter) {
+        deptFilter.addEventListener("change", function () {
+          var nextDept = deps.logic.normalizeTeamDept(deptFilter.value);
+          var patch = { teamDept: nextDept };
+          if (nextDept === "assistants") {
+            patch.teamKind = "";
+          }
+          callbacks.navigate(patch);
+        });
+      }
       var collapseAll = container.querySelector("#clients-team-collapse-all");
       if (collapseAll) {
         collapseAll.addEventListener("click", function () {
@@ -671,6 +953,12 @@
               autoExpand.push(rop.employeeGuid);
             }
           });
+        }
+        if (shouldAutoExpandAssistants(context.assistantsDepartment, teamUi)) {
+          var assistantsToken = assistantsExpandToken();
+          if (autoExpand.indexOf(assistantsToken) === -1) {
+            autoExpand.push(assistantsToken);
+          }
         }
         var mergedExpand = teamUi.expanded.slice();
         autoExpand.forEach(function (guid) {
@@ -748,6 +1036,9 @@
       prepareAndRenderOverview: prepareAndRenderOverview,
       prepareAndRenderRopPanel: prepareAndRenderRopPanel,
       mergeResponsiblesByEmployee: mergeResponsiblesByEmployee,
+      shouldShowAssistantsDepartment: shouldShowAssistantsDepartment,
+      visibleAssistantsMembers: visibleAssistantsMembers,
+      assistantsHeadMatchesQuery: assistantsHeadMatchesQuery,
     };
   }
 
@@ -761,5 +1052,6 @@
     visibleEmployees: visibleEmployees,
     shouldShowRopWithItems: shouldShowRopWithItems,
     isRopNameMatch: isRopNameMatch,
+    ASSISTANT_ROLE_LABELS: ASSISTANT_ROLE_LABELS,
   };
 })(typeof window !== "undefined" ? window : globalThis);
