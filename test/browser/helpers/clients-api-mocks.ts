@@ -457,6 +457,47 @@ export function syntheticSyncStatusPayload() {
   };
 }
 
+export function syntheticOnecUpdateStatusPayload(
+  phase: NonNullable<MockOptions["onecUpdatePhase"]> = "idle",
+) {
+  if (phase === "idle") {
+    return {
+      job: null,
+      canStart: true,
+      blockedReason: null,
+    };
+  }
+  const phaseLabels: Record<string, string> = {
+    pending: "Ожидает запуска",
+    running: "Выполняется",
+    completed: "Завершено",
+    no_changes: "Нет изменений",
+    rejected: "Отклонено проверками",
+    error: "Ошибка",
+  };
+  return {
+    job: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      phase,
+      message:
+        phase === "rejected"
+          ? "Обновление недоступно: 1С ещё не передала подтверждение готовности комплекта."
+          : phaseLabels[phase] + ". Синтетический статус обновления.",
+      startedAt: "2026-10-06T11:00:00.000Z",
+      finishedAt: phase === "pending" || phase === "running" ? null : "2026-10-06T11:05:00.000Z",
+      sourceExportAt: "2026-10-06T08:00:00.000Z",
+      sourceExportAtLabel: "06.10.2026, 11:00",
+      lastSuccessfulUpdateAt: "2026-09-28T09:00:00.000Z",
+      lastSuccessfulUpdateAtLabel: "28.09.2026, 12:00",
+      dataPreserved: phase === "rejected" || phase === "error",
+      errorCode: phase === "rejected" ? "RELEASE_CONSISTENCY_NOT_CONFIRMED" : null,
+      requestedByUserId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    },
+    canStart: phase !== "pending" && phase !== "running",
+    blockedReason: phase === "pending" || phase === "running" ? "Обновление из 1С уже поставлено в очередь или выполняется." : null,
+  };
+}
+
 export function syntheticDetailPayload(overrides: Record<string, unknown> = {}) {
   return {
     client: {
@@ -598,6 +639,8 @@ export type MockOptions = {
   reviewersStatus?: number;
   eligibleReviewersItems?: Array<{ userId: string; name: string; shortId: string }>;
   reviewGetBody?: Record<string, unknown> | null;
+  previewActive?: boolean;
+  onecUpdatePhase?: "idle" | "pending" | "running" | "completed" | "no_changes" | "rejected" | "error";
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -814,16 +857,29 @@ export function resolveMockResponse(
     if (options.role === "anonymous") {
       return jsonResponse(401, { error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
     }
+    let payload: Record<string, unknown>;
     if (options.clientsBusinessRole) {
-      return jsonResponse(200, userPayloadForBusinessRole(options.clientsBusinessRole));
+      payload = userPayloadForBusinessRole(options.clientsBusinessRole);
+    } else if (options.role === "manager") {
+      payload = managerUserPayload();
+    } else if (options.role === "marketer") {
+      payload = marketerUserPayload();
+    } else {
+      payload = adminUserPayload();
     }
-    if (options.role === "manager") {
-      return jsonResponse(200, managerUserPayload());
+    if (options.previewActive) {
+      payload.preview = {
+        active: true,
+        targetUser: {
+          role: "manager",
+          fullName: "Synthetic Manager",
+          email: "manager@synthetic.test",
+        },
+      };
+    } else {
+      payload.preview = { active: false };
     }
-    if (options.role === "marketer") {
-      return jsonResponse(200, marketerUserPayload());
-    }
-    return jsonResponse(200, adminUserPayload());
+    return jsonResponse(200, payload);
   }
 
   if (path === "/api/clients/presentation") {
@@ -839,6 +895,27 @@ export function resolveMockResponse(
 
   if (path === "/api/clients/sync-status") {
     return jsonResponse(200, syntheticSyncStatusPayload());
+  }
+
+  if (path === "/api/admin/clients/onec-update/status") {
+    if (options.role !== "admin" && options.clientsBusinessRole !== "admin") {
+      return jsonResponse(403, { error: { code: "FORBIDDEN", message: "Forbidden" } });
+    }
+    return jsonResponse(
+      200,
+      syntheticOnecUpdateStatusPayload(options.onecUpdatePhase ?? "idle"),
+    );
+  }
+
+  if (path === "/api/admin/clients/onec-update" && method === "POST") {
+    if (options.role !== "admin" && options.clientsBusinessRole !== "admin") {
+      return jsonResponse(403, { error: { code: "FORBIDDEN", message: "Forbidden" } });
+    }
+    return jsonResponse(202, {
+      jobId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      phase: "pending",
+      message: "Обновление из 1С поставлено в очередь.",
+    });
   }
 
   if (path === "/api/clients/org-structure") {

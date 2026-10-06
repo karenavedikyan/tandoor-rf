@@ -637,6 +637,85 @@
     };
   }
 
+  var ONEc_UPDATE_PHASE_LABELS = {
+    pending: "Ожидает запуска",
+    running: "Выполняется",
+    completed: "Завершено",
+    no_changes: "Нет изменений",
+    rejected: "Отклонено проверками",
+    error: "Ошибка",
+    idle: "Готово к запуску",
+  };
+
+  function formatOnecUpdatePhaseLabel(phase) {
+    return ONEc_UPDATE_PHASE_LABELS[phase] || ONEc_UPDATE_PHASE_LABELS.idle;
+  }
+
+  function shouldPollOnecUpdateStatus(data) {
+    if (!data || !data.job) {
+      return false;
+    }
+    return data.job.phase === "pending" || data.job.phase === "running";
+  }
+
+  function formatOnecUpdateStatusText(data) {
+    if (!data) {
+      return {
+        text: "Не удалось получить статус обновления из 1С.",
+        statusClass: "clients-onec-update__status--error",
+        disableButton: true,
+      };
+    }
+    if (!data.job) {
+      return {
+        text: data.blockedReason || "Можно запустить обновление последнего готового комплекта из 1С.",
+        statusClass: "",
+        disableButton: !data.canStart,
+      };
+    }
+    var job = data.job;
+    var prefix = formatOnecUpdatePhaseLabel(job.phase) + ".";
+    var text = prefix + " " + (job.message || "");
+    var statusClass = "";
+    if (job.phase === "pending" || job.phase === "running") {
+      statusClass = "clients-onec-update__status--running";
+    } else if (job.phase === "completed" || job.phase === "no_changes") {
+      statusClass = "clients-onec-update__status--success";
+    } else if (job.phase === "rejected") {
+      statusClass = "clients-onec-update__status--warning";
+    } else if (job.phase === "error") {
+      statusClass = "clients-onec-update__status--error";
+    }
+    return {
+      text: text,
+      statusClass: statusClass,
+      disableButton: !data.canStart || job.phase === "pending" || job.phase === "running",
+    };
+  }
+
+  function formatOnecUpdateMetaLines(data) {
+    if (!data || !data.job) {
+      return [];
+    }
+    var lines = [];
+    var job = data.job;
+    lines.push({
+      label: "Дата исходной выгрузки",
+      value: job.sourceExportAtLabel || "Не передана",
+    });
+    lines.push({
+      label: "Последнее успешное обновление",
+      value: job.lastSuccessfulUpdateAtLabel || "Ещё не выполнялось",
+    });
+    if (job.dataPreserved) {
+      lines.push({
+        label: "База данных",
+        value: "Прежние данные сохранены",
+      });
+    }
+    return lines;
+  }
+
   function formatSyncStatusParts(data) {
     if (!data) {
       return {
@@ -947,6 +1026,10 @@
     resolveAddressPresentation: resolveAddressPresentation,
     createAddressCopyController: createAddressCopyController,
     formatSyncStatusParts: formatSyncStatusParts,
+    formatOnecUpdatePhaseLabel: formatOnecUpdatePhaseLabel,
+    shouldPollOnecUpdateStatus: shouldPollOnecUpdateStatus,
+    formatOnecUpdateStatusText: formatOnecUpdateStatusText,
+    formatOnecUpdateMetaLines: formatOnecUpdateMetaLines,
     parseReturnQuery: parseReturnQuery,
     shouldAcceptListResponse: shouldAcceptListResponse,
     shouldAcceptDetailResponse: shouldAcceptDetailResponse,

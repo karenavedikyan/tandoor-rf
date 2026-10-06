@@ -11,6 +11,7 @@ import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
 import { requireDatabaseReady } from "./middleware/database";
 import { createAccessAdminRouter, createAccessRouter } from "./access/router";
+import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
@@ -57,6 +58,7 @@ function isStructuredApi(req: Request): boolean {
     req.path.startsWith("/api/profile") ||
     req.path.startsWith("/api/clients") ||
     req.path.startsWith("/api/admin/access") ||
+    req.path.startsWith("/api/admin/clients") ||
     req.path.startsWith("/api/access") ||
     req.path.startsWith("/api/work") ||
     req.path.startsWith("/api/ready")
@@ -195,6 +197,7 @@ export function createApp(): express.Application {
   app.use("/api/profile", profileRouter);
   app.use("/api/clients", createClientsRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
+  app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/access", createAccessRouter());
   app.use("/api/work", createWorkRouter());
 
