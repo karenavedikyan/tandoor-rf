@@ -46,8 +46,12 @@
   var statNoOutletsLabelEl = document.getElementById("clients-stat-no-outlets-label");
   var statsStripEl = document.getElementById("clients-stats-strip");
   var incompleteStatsStripEl = document.getElementById("clients-stats-incomplete-strip");
+  var incompleteStatsCompactEl = document.getElementById("clients-stats-incomplete-compact");
   var statIncompleteClientsEl = document.getElementById("clients-stat-incomplete-clients");
   var statIncompleteOutletsEl = document.getElementById("clients-stat-incomplete-outlets");
+  var statIncompleteCompactClientsEl = document.getElementById("clients-stat-incomplete-compact-clients");
+  var statIncompleteCompactOutletsEl = document.getElementById("clients-stat-incomplete-compact-outlets");
+  var statIncompleteCompactLinkEl = document.getElementById("clients-stat-incomplete-compact-link");
   var employeeScopeValueEl = document.getElementById("clients-employee-scope-value");
   var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
   var workspaceNavEl = document.querySelector(".clients-workspace-nav");
@@ -120,6 +124,155 @@
     loadError: false,
     ropTeams: [],
   };
+  var compactTeams = null;
+  var compactTeamsRenderToken = 0;
+
+  function getCompactTeams() {
+    if (!compactTeams && window.ClientsTeamsCompact) {
+      compactTeams = window.ClientsTeamsCompact.create({
+        api: api,
+        shell: shell,
+        logic: logic,
+        teamContext: teamContext,
+        usesDirectorLayout: usesDirectorLayout,
+        navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
+        navigateDirectorResponsible: navigateDirectorResponsible,
+        navigateRopBranchPortfolio: navigateRopBranchPortfolio,
+        navigateResponsible: navigateResponsible,
+        renderOrgBadge: renderOrgBadge,
+      });
+    }
+    return compactTeams;
+  }
+
+  function mergeTeamUiFromUrl(state) {
+    var urlTeam = logic.readStateFromSearch(window.location.search);
+    state.teamExpand = urlTeam.teamExpand || [];
+    state.teamQ = urlTeam.teamQ || "";
+    state.teamKind = urlTeam.teamKind || "";
+    return state;
+  }
+
+  function isCompactTeamOverviewState(state) {
+    return (
+      state.view === "teams" &&
+      !logic.isBranchPortfolioList(state) &&
+      !logic.hasResponsibleSelection(state) &&
+      ((usesDirectorLayout() && !state.ropEmployee) ||
+        (isRopDesignSession() && state.ropEmployee))
+    );
+  }
+
+  function compactTeamsNavigatePatch(nextState) {
+    var merged = Object.assign({}, currentStateFromForm(), nextState);
+    if (isCompactTeamOverviewState(merged)) {
+      writeStateToUrl(merged, false);
+      if (usesDirectorLayout() && !merged.ropEmployee) {
+        renderCompactTeamsOverview(merged);
+      } else {
+        renderCompactRopTeamPanel(merged);
+      }
+      return;
+    }
+    navigateState(merged);
+  }
+
+  function readSearchInputFocus() {
+    var searchInput = teamsPanelEl.querySelector("#clients-team-search-input");
+    if (!searchInput || document.activeElement !== searchInput) {
+      return null;
+    }
+    return {
+      start: searchInput.selectionStart,
+      end: searchInput.selectionEnd,
+    };
+  }
+
+  function restoreSearchInputFocus(caret) {
+    if (!caret) {
+      return;
+    }
+    var searchInput = teamsPanelEl.querySelector("#clients-team-search-input");
+    if (!searchInput) {
+      return;
+    }
+    searchInput.focus();
+    try {
+      searchInput.setSelectionRange(caret.start, caret.end);
+    } catch (err) {
+      // Some input types do not support selection ranges.
+    }
+  }
+
+  function renderCompactTeamsOverview(state) {
+    var module = getCompactTeams();
+    if (!module) {
+      return Promise.resolve();
+    }
+    var searchCaret = readSearchInputFocus();
+    if (!teamsPanelEl.querySelector(".clients-compact-team-toolbar")) {
+      teamsPanelEl.innerHTML =
+        '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка команд…</div>';
+    }
+    var token = ++compactTeamsRenderToken;
+    return module
+      .prepareAndRenderOverview(state, teamContext, teamsPanelEl, {
+        navigate: compactTeamsNavigatePatch,
+        isStale: function () {
+          return token !== compactTeamsRenderToken;
+        },
+        syncExpand: function (expanded) {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          writeStateToUrl(Object.assign({}, state, { teamExpand: expanded }), true);
+        },
+        restoreSearchFocus: function () {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          restoreSearchInputFocus(searchCaret);
+        },
+        refresh: function () {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          renderCompactTeamsOverview(state);
+        },
+      })
+      .catch(function () {
+        teamContext.loadError = true;
+        teamsPanelEl.innerHTML =
+          '<div class="clients-compact-team__empty">Не удалось загрузить команды.</div>';
+      });
+  }
+
+  function renderCompactRopTeamPanel(state) {
+    var module = getCompactTeams();
+    if (!module) {
+      return Promise.resolve();
+    }
+    var searchCaret = readSearchInputFocus();
+    var token = ++compactTeamsRenderToken;
+    return module.prepareAndRenderRopPanel(state, teamContext, teamsPanelEl, {
+      navigate: compactTeamsNavigatePatch,
+      isStale: function () {
+        return token !== compactTeamsRenderToken;
+      },
+      restoreSearchFocus: function () {
+        if (token !== compactTeamsRenderToken) {
+          return;
+        }
+        restoreSearchInputFocus(searchCaret);
+      },
+      refresh: function () {
+        if (token !== compactTeamsRenderToken) {
+          return;
+        }
+        renderCompactRopTeamPanel(state);
+      },
+    });
+  }
 
   var RESPONSIBLE_GROUP_LABELS = {
     manager: "Менеджеры продаж",
@@ -313,7 +466,7 @@
       cols: appEl.dataset.cols || "",
       page: Number(appEl.dataset.page || "1") || 1,
     };
-    return applyAssignmentSelectionsToState(state);
+    return mergeTeamUiFromUrl(applyAssignmentSelectionsToState(state));
   }
 
   function columnsStorageKey(entity) {
@@ -624,6 +777,12 @@
       if (statIncompleteOutletsEl) {
         statIncompleteOutletsEl.textContent = formatStatValue(incompleteOutlets);
       }
+      if (statIncompleteCompactClientsEl) {
+        statIncompleteCompactClientsEl.textContent = formatStatValue(incompleteClients);
+      }
+      if (statIncompleteCompactOutletsEl) {
+        statIncompleteCompactOutletsEl.textContent = formatStatValue(incompleteOutlets);
+      }
     });
   }
 
@@ -681,6 +840,17 @@
         navigateState({
           view: "completeness",
           entity: "outlets",
+          page: 1,
+          completenessReasons: [],
+        });
+      });
+    }
+    if (statIncompleteCompactLinkEl && !statIncompleteCompactLinkEl.dataset.directorStatBound) {
+      statIncompleteCompactLinkEl.dataset.directorStatBound = "1";
+      statIncompleteCompactLinkEl.addEventListener("click", function () {
+        navigateState({
+          view: "completeness",
+          entity: "clients",
           page: 1,
           completenessReasons: [],
         });
@@ -1577,12 +1747,24 @@
       isRopDesignSession() && isTeams && !branchList && !responsibleList && Boolean(state.ropEmployee);
     var isDirectorTeamsSurface =
       usesDirectorLayout() && isTeams && !branchList && !responsibleList;
+    var isDirectorTeamsOverview = isDirectorTeamsSurface && !state.ropEmployee;
+    var isTeamsSurface = isDirectorTeamsOverview || isRopTeamHome;
+    document.body.classList.toggle("clients-teams-surface", Boolean(isTeamsSurface));
+    if (incompleteStatsCompactEl) {
+      incompleteStatsCompactEl.classList.toggle(
+        "clients-hidden",
+        !usesDirectorLayout() || !isTeamsSurface,
+      );
+    }
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
     document
       .querySelector(".clients-results-shell")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
+    if (pageSubtitleEl && usesDirectorLayout() && isTeams && !branchList && !responsibleList) {
+      pageSubtitleEl.classList.add("clients-hidden");
+    }
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
     if (usesDirectorLayout()) {
@@ -1602,9 +1784,21 @@
     var role = rolePresentation && rolePresentation.businessRole;
     var branchList = logic.isBranchPortfolioList(state);
     var responsibleList = logic.hasResponsibleSelection(state);
+    var isDirectorTeamsOverview =
+      (role === "director" || role === "admin") &&
+      (state.view || "all") === "teams" &&
+      !branchList &&
+      !responsibleList &&
+      !state.ropEmployee;
     var collapseMobileFilters =
       ((role === "manager" || role === "regional_manager") && (state.view || "all") === "all") ||
       ((role === "director" || role === "admin") && (state.view || "all") === "all") ||
+      isDirectorTeamsOverview ||
+      (role === "rop" &&
+        (state.view || "all") === "teams" &&
+        !branchList &&
+        !responsibleList &&
+        Boolean(state.ropEmployee)) ||
       (role === "rop" && (state.view || "all") === "teams" && (branchList || responsibleList)) ||
       ((role === "director" || role === "admin") &&
         (state.view || "all") === "teams" &&
@@ -2011,58 +2205,6 @@
     });
   }
 
-  function renderRopDesignTeamPanel(state) {
-    teamsPanelEl.innerHTML = buildTeamCardShellHtml(teamContext.ropSummary, teamContext.managers, {
-      limitationNote: teamContext.limitationNote,
-    });
-    bindTeamCardPanelEvents(teamsPanelEl, {
-      ropEmployeeGuid: state.ropEmployee,
-      managers: teamContext.managers,
-      state: state,
-    });
-    if (isRopDesignSession()) {
-      mountRopStatLinks(state);
-    }
-  }
-
-  function renderDirectorTeamsOverview(state) {
-    var cardsHtml = (teamContext.ropTeams || [])
-      .map(function (entry) {
-        return buildTeamCardShellHtml(entry.summary, entry.managers, { gridItem: true });
-      })
-      .join("");
-    var undefinedHtml =
-      (teamContext.undefinedTeam || []).length > 0
-        ? '<section class="clients-team-section clients-team-section--undefined">' +
-          '<h3 class="clients-team-section__title">Команда не определена</h3>' +
-          '<div class="clients-undefined-team-list">' +
-          teamContext.undefinedTeam
-            .map(function (member) {
-              return (
-                '<div class="clients-undefined-team-member">' +
-                "<strong>" +
-                shell.escapeHtml(member.name) +
-                "</strong>" +
-                renderOrgBadge(member.rosterPost || "") +
-                renderOrgBadge(member.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
-                "</div>"
-              );
-            })
-            .join("") +
-          "</div></section>"
-        : "";
-    var noteHtml = teamContext.limitationNote
-      ? '<p class="clients-team-overview-note">' + shell.escapeHtml(teamContext.limitationNote) + "</p>"
-      : "";
-    teamsPanelEl.innerHTML =
-      noteHtml +
-      '<div class="clients-director-teams-grid">' +
-      cardsHtml +
-      "</div>" +
-      undefinedHtml;
-    bindTeamCardPanelEvents(teamsPanelEl, { state: state });
-  }
-
   function renderTeamsPanel(state) {
     if (
       state.view !== "teams" ||
@@ -2073,11 +2215,11 @@
       return;
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee) {
-      renderRopDesignTeamPanel(state);
+      renderCompactRopTeamPanel(state);
       return;
     }
     if (usesDirectorLayout() && !state.ropEmployee) {
-      renderDirectorTeamsOverview(state);
+      renderCompactTeamsOverview(state);
       return;
     }
     if (!state.ropEmployee) {
@@ -2490,29 +2632,11 @@
           if (result.response.status === 200 && result.data) {
             syncTeamContextFromOrgStructure(result.data);
             if (usesDirectorLayout()) {
-              var rops = result.data.rops || [];
-              return Promise.all(
-                rops.map(function (rop) {
-                  return api
-                    .apiRequest(
-                      "/api/clients/org-structure/" +
-                        encodeURIComponent(rop.employeeGuid) +
-                        "/responsibles",
-                    )
-                    .then(function (respResult) {
-                      return {
-                        summary: rop,
-                        managers:
-                          respResult.response.status === 200
-                            ? respResult.data.items || []
-                            : [],
-                      };
-                    });
-                }),
-              ).then(function (ropTeams) {
-                teamContext.ropTeams = ropTeams;
-                return true;
-              });
+              teamContext.ropTeams = [];
+              var compactModule = getCompactTeams();
+              if (compactModule) {
+                compactModule.resetCache();
+              }
             }
           } else {
             teamContext.loadError = true;

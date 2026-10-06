@@ -342,102 +342,37 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
 
   async function waitForTeamsOverview(page: Page): Promise<void> {
     await page.waitForSelector("#clients-manager-chrome:not(.clients-hidden)");
-    await page.waitForSelector(".clients-director-teams-grid .clients-team-card-shell");
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
     await page.waitForFunction(
-      () => document.querySelectorAll(".clients-director-teams-grid .clients-team-member-row").length >= 2,
+      () => document.querySelectorAll(".clients-compact-team-list .clients-compact-team").length >= 2,
       undefined,
       { timeout: 30000 },
     );
   }
 
   function teamCard(page: Page, ropTitle: string) {
-    return page.locator(".clients-team-card-shell").filter({
-      has: page.locator(".clients-team-card-shell__title", { hasText: ropTitle }),
+    return page.locator(".clients-compact-team").filter({
+      has: page.locator(".clients-compact-team__name", { hasText: ropTitle }),
     });
   }
 
-  async function readTeamsGridLayout(page: Page) {
-    return page.evaluate(() => {
-      const gridEl = document.querySelector(".clients-director-teams-grid");
-      const cards = Array.from(
-        document.querySelectorAll(".clients-director-teams-grid .clients-team-card-shell"),
-      );
-      const incompleteStrip = document.getElementById("clients-stats-incomplete-strip");
-      return {
-        gridColumns: gridEl ? getComputedStyle(gridEl).gridTemplateColumns : "",
-        incompleteColumns: incompleteStrip ? getComputedStyle(incompleteStrip).gridTemplateColumns : "",
-        cardRects: cards.map((card) => {
-          const rect = card.getBoundingClientRect();
-          return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
-        }),
-        containerWidth: gridEl?.getBoundingClientRect().width ?? 0,
-      };
-    });
-  }
-
-  function countGridTracks(columnsValue: string): number {
-    if (!columnsValue) {
-      return 0;
-    }
-    return columnsValue.split(/\s+/).filter(Boolean).length;
-  }
-
-  async function assertTeamsGridLayout(page: Page, viewport: { width: number }): Promise<void> {
-    const layout = await readTeamsGridLayout(page);
+  async function assertCompactTeamsLayout(page: Page, viewport: { width: number }): Promise<void> {
     const ropACard = teamCard(page, "ROP Alpha");
     const ropBCard = teamCard(page, "ROP Beta");
-    assert.equal(layout.cardRects.length, 2, "expected two ROP cards in overview");
+    assert.equal(await page.locator(".clients-compact-team-list .clients-compact-team").count(), 2);
+    assert.equal(await ropACard.locator(".clients-compact-team__members").count(), 0);
+    assert.equal(await ropBCard.locator(".clients-compact-team__members").count(), 0);
 
+    const layout = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll(".clients-compact-team__row"));
+      return rows.map((row) => {
+        const rect = row.getBoundingClientRect();
+        return { top: rect.top, left: rect.left, width: rect.width };
+      });
+    });
+    assert.equal(layout.length, 2);
     if (viewport.width < 768) {
-      assert.equal(
-        countGridTracks(layout.gridColumns),
-        1,
-        "mobile teams grid should have one column: " + layout.gridColumns,
-      );
-      assert.equal(
-        countGridTracks(layout.incompleteColumns),
-        1,
-        "mobile incomplete stats should have one column: " + layout.incompleteColumns,
-      );
-      assert.ok(
-        layout.cardRects[1].top > layout.cardRects[0].top + layout.cardRects[0].height * 0.4,
-        "ROP Beta card should render below ROP Alpha on mobile",
-      );
-      assert.ok(
-        layout.cardRects[0].width >= layout.containerWidth * 0.92,
-        "ROP Alpha card should span the teams grid width on mobile",
-      );
-      assert.ok(
-        layout.cardRects[1].width >= layout.containerWidth * 0.92,
-        "ROP Beta card should span the teams grid width on mobile",
-      );
-    } else {
-      assert.equal(
-        countGridTracks(layout.gridColumns),
-        2,
-        "desktop teams grid should have two columns: " + layout.gridColumns,
-      );
-      assert.equal(
-        countGridTracks(layout.incompleteColumns),
-        2,
-        "desktop incomplete stats should have two columns: " + layout.incompleteColumns,
-      );
-      assert.ok(
-        Math.abs(layout.cardRects[0].top - layout.cardRects[1].top) < 24,
-        "ROP cards should share a row on desktop",
-      );
-      assert.ok(
-        layout.cardRects[1].left > layout.cardRects[0].left + layout.cardRects[0].width * 0.35,
-        "ROP Beta card should render to the right of ROP Alpha on desktop",
-      );
-    }
-
-    for (const card of [ropACard, ropBCard]) {
-      const memberName = card.locator(".clients-team-member-row__name").first();
-      const memberCount = card.locator(".clients-team-member-row__count").first();
-      assert.equal(await memberName.isVisible(), true);
-      assert.equal(await memberCount.isVisible(), true);
-      assert.ok((await memberName.textContent())?.trim().length);
+      assert.ok(layout[1].top > layout[0].top, "mobile compact rows should stack vertically");
     }
   }
 
@@ -501,13 +436,12 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
         /Весь доступный состав отдела ОПТ/,
       );
       assert.match(page.url(), /view=teams/);
-      assert.equal(await page.locator(".clients-team-card-shell").count(), 2);
-      assert.equal(await page.locator(".clients-team-own-row").count(), 0);
+      assert.equal(await page.locator(".clients-compact-team-list .clients-compact-team").count(), 2);
       assert.equal(await page.locator(".clients-workspace-nav.clients-hidden").count(), 1);
       assert.equal(await page.locator("#view-completeness-tab:not(.clients-hidden)").count(), 1);
       assert.equal(await page.locator("#view-review-tab:not(.clients-hidden)").count(), 1);
       assert.equal(await page.locator('#view-review-tab').textContent(), "Ревизии");
-      assert.ok(await page.locator(".clients-team-section--undefined").filter({ hasText: "Маркетинг" }).count());
+      assert.ok(await page.locator(".clients-compact-team-undefined").filter({ hasText: "Маркетинг" }).count());
 
       const overview = await page.evaluate(async () => {
         const [clientsRes, outletsRes, orgRes, completenessRes] = await Promise.all([
@@ -538,7 +472,7 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
       assert.ok(overview.completenessSummary.clients >= 1);
       assert.ok(overview.completenessSummary.outlets >= 1);
 
-      await assertTeamsGridLayout(page, viewport);
+      await assertCompactTeamsLayout(page, viewport);
 
       await page.screenshot({
         path: path.join(SCREENSHOT_DIR, `clients-design-d4-director-teams-${viewportName}.png`),
@@ -547,9 +481,29 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
 
       const ropACard = teamCard(page, "ROP Alpha");
       const ropBCard = teamCard(page, "ROP Beta");
-      assert.ok(await ropACard.locator(".clients-team-member-row", { hasText: "Manager Three" }).count());
-      assert.ok(await ropBCard.locator(".clients-team-member-row", { hasText: "Manager Three" }).count());
-      assert.ok(await ropACard.locator(".clients-team-member-row", { hasText: "No Account Manager" }).count());
+      const expandAlpha = page.waitForResponse(
+        (response) =>
+          response.url().includes("/responsibles") &&
+          response.url().includes(ROP_A) &&
+          response.status() === 200,
+      );
+      await ropACard.locator(".clients-compact-team__toggle").click();
+      await expandAlpha;
+      await page.waitForFunction(
+        () => new URL(window.location.href).searchParams.getAll("teamExpand").length > 0,
+        undefined,
+        { timeout: 15000 },
+      );
+      await page.waitForSelector(
+        '.clients-compact-team[data-rop-employee="' + ROP_A + '"] .clients-compact-team__members:not(.clients-compact-team__members--loading)',
+        { timeout: 15000 },
+      );
+      await page.waitForSelector(
+        '.clients-compact-team[data-rop-employee="' + ROP_A + '"] .clients-compact-team__member, .clients-compact-team[data-rop-employee="' + ROP_A + '"] .clients-compact-team__members--empty',
+        { timeout: 15000 },
+      );
+      const ropACardExpanded = teamCard(page, "ROP Alpha");
+      assert.ok((await ropACardExpanded.locator(".clients-compact-team__member-name").count()) >= 1);
 
       const branchAListResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -560,7 +514,7 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
           response.status() === 200
         );
       });
-      await ropACard.locator('[data-branch-portfolio="clients"]').click();
+      await ropACard.locator('[data-branch-portfolio="clients"]').first().click();
       await branchAListResponse;
       await waitForListLoaded(page, viewport);
       const branchAList =
@@ -582,7 +536,7 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
           response.status() === 200
         );
       });
-      await ropBCard.locator('[data-branch-portfolio="clients"]').click();
+      await ropBCard.locator('[data-branch-portfolio="clients"]').first().click();
       await branchBListResponse;
       await waitForListLoaded(page, viewport);
       const branchBList =

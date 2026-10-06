@@ -40,6 +40,9 @@
     "missingManager",
     "missingRegional",
     "page",
+    "teamExpand",
+    "teamQ",
+    "teamKind",
   ];
 
   var CLIENT_COLUMNS = [
@@ -329,7 +332,24 @@
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
       page: Math.max(1, Number(params.get("page") || "1") || 1),
+      teamExpand: params
+        .getAll("teamExpand")
+        .map(function (value) {
+          return value.trim();
+        })
+        .filter(function (value) {
+          return value.length > 0;
+        }),
+      teamQ: params.get("teamQ") || "",
+      teamKind: params.get("teamKind") || "",
     };
+  }
+
+  function normalizeTeamKind(value) {
+    if (value === "manager" || value === "regional" || value === "hardware") {
+      return value;
+    }
+    return "";
   }
 
   function applyPresentationDefaults(state, presentation, search) {
@@ -405,6 +425,15 @@
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
     if (state.cols) params.set("cols", state.cols);
     if (state.page > 1) params.set("page", String(state.page));
+    if (state.teamExpand && state.teamExpand.length > 0) {
+      state.teamExpand.forEach(function (guid) {
+        if (guid) {
+          params.append("teamExpand", guid);
+        }
+      });
+    }
+    if (state.teamQ) params.set("teamQ", state.teamQ);
+    if (state.teamKind) params.set("teamKind", state.teamKind);
     return params.toString();
   }
 
@@ -908,6 +937,7 @@
     mapSortFieldForEntity: mapSortFieldForEntity,
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     readStateFromSearch: readStateFromSearch,
+    normalizeTeamKind: normalizeTeamKind,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,

@@ -301,7 +301,7 @@ describe("clients design D3 — ROP team screen", () => {
 
   async function waitForTeamLoaded(page: Page): Promise<void> {
     await page.waitForSelector("#clients-manager-chrome:not(.clients-hidden)");
-    await page.waitForSelector(".clients-team-card-shell");
+    await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member");
   }
 
   async function waitForListLoaded(page: Page, viewport: { width: number }): Promise<void> {
@@ -347,19 +347,15 @@ describe("clients design D3 — ROP team screen", () => {
       assert.equal(await page.locator("#clients-employee-role").textContent(), "РОП");
       assert.match(await page.locator("#clients-employee-scope-value").textContent(), /Моя команда и собственные назначения/);
       assert.match(page.url(), new RegExp("ropEmployee=" + ROP_A.replace(/-/g, "\\-")));
-      assert.match(await page.locator(".clients-team-card-shell__title").textContent(), /ROP Alpha/);
-      assert.match(await page.locator(".clients-team-group__title").first().textContent(), /Менеджеры продаж/);
-      assert.ok((await page.locator(".clients-team-member-row").count()) >= 2);
-      assert.ok(await page.locator(".clients-team-member-row").filter({ hasText: "No Account Manager" }).count());
+      assert.ok((await page.locator(".clients-compact-team__member").count()) >= 2);
+      assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "No Account Manager" }).count());
+      assert.ok(await page.locator(".clients-compact-team__kind-tag", { hasText: "продажи" }).count());
       assert.equal(await page.locator(".clients-team-own-row").count(), 0);
       assert.equal(await page.locator(".clients-workspace-nav.clients-hidden").count(), 1);
       assert.equal(await page.locator("#clients-breadcrumbs.clients-hidden").count(), 1);
       assert.equal(await page.locator('#view-switcher [data-view="all"]').textContent(), "Клиенты команды");
       assert.equal(await page.locator('#view-switcher [data-view="teams"]').textContent(), "Моя команда");
-      assert.match(
-        await page.locator(".clients-team-group", { hasText: "Региональные менеджеры" }).textContent(),
-        /Regional/,
-      );
+      assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "Regional" }).count());
 
       const overview = await page.evaluate(async () => {
         const res = await fetch("/api/clients/org-structure", { credentials: "include" });
@@ -380,7 +376,7 @@ describe("clients design D3 — ROP team screen", () => {
             response.status() === 200,
         );
         await page.click('#view-switcher [data-view="teams"]');
-        await page.waitForSelector(".clients-team-card-shell");
+        await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member");
       }
 
       await page.screenshot({
@@ -388,9 +384,7 @@ describe("clients design D3 — ROP team screen", () => {
         fullPage: true,
       });
 
-      const regionalRow = page.locator(".clients-team-group", { hasText: "Региональные менеджеры" }).locator(
-        ".clients-team-member-row",
-      );
+      const regionalRow = page.locator(".clients-compact-team__member", { hasText: "Regional" });
       const regionalListResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return (
@@ -401,15 +395,15 @@ describe("clients design D3 — ROP team screen", () => {
           response.status() === 200
         );
       });
-      await regionalRow.locator('.clients-team-member-row__count:has-text("клиентов")').click();
+      await regionalRow.locator('.clients-compact-team__count:has-text("клиентов"):has-text("региональный")').click();
       await regionalListResponse;
       await waitForListLoaded(page, viewport);
       assert.match(page.url(), /responsibleKind=regional/);
       assert.match(page.url(), new RegExp("regionalManager=" + R1.replace(/-/g, "\\-")));
       await page.locator("#clients-breadcrumbs-back").click();
-      await page.waitForSelector(".clients-team-card-shell");
+      await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member");
 
-      const managerRow = page.locator(".clients-team-member-row", { hasText: "Manager One" });
+      const managerRow = page.locator(".clients-compact-team__member", { hasText: "Manager One" });
       const listResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return (
@@ -420,7 +414,7 @@ describe("clients design D3 — ROP team screen", () => {
           response.status() === 200
         );
       });
-      await managerRow.locator('.clients-team-member-row__count:has-text("клиентов")').click();
+      await managerRow.locator('.clients-compact-team__count:has-text("клиентов"):has-text("продажи")').first().click();
       await listResponse;
       await waitForListLoaded(page, viewport);
 

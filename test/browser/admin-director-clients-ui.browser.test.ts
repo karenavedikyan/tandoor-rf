@@ -275,9 +275,9 @@ describe("admin director clients UI browser", { concurrency: false }, () => {
 
   async function waitForTeamsOverview(page: Page): Promise<void> {
     await page.waitForSelector("#clients-manager-chrome:not(.clients-hidden)");
-    await page.waitForSelector(".clients-director-teams-grid .clients-team-card-shell");
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
     await page.waitForFunction(
-      () => document.querySelectorAll(".clients-director-teams-grid .clients-team-member-row").length >= 2,
+      () => document.querySelectorAll(".clients-compact-team-list .clients-compact-team").length >= 2,
       undefined,
       { timeout: 30000 },
     );
@@ -306,8 +306,8 @@ describe("admin director clients UI browser", { concurrency: false }, () => {
   }
 
   function teamCard(page: Page, ropTitle: string) {
-    return page.locator(".clients-team-card-shell").filter({
-      has: page.locator(".clients-team-card-shell__title", { hasText: ropTitle }),
+    return page.locator(".clients-compact-team").filter({
+      has: page.locator(".clients-compact-team__name", { hasText: ropTitle }),
     });
   }
 
@@ -354,7 +354,20 @@ describe("admin director clients UI browser", { concurrency: false }, () => {
       });
 
       const ropACard = teamCard(page, "ROP Alpha");
-      const employeeBtn = ropACard.locator(
+      const expandAlpha = page.waitForResponse(
+        (response) =>
+          response.url().includes("/responsibles") &&
+          response.url().includes(ROP_A) &&
+          response.status() === 200,
+      );
+      await ropACard.locator(".clients-compact-team__toggle").click();
+      await expandAlpha;
+      await page.waitForSelector(
+        '.clients-compact-team[data-rop-employee="' + ROP_A + '"] .clients-compact-team__member',
+        { timeout: 15000 },
+      );
+      const ropACardExpanded = teamCard(page, "ROP Alpha");
+      const employeeBtn = ropACardExpanded.locator(
         '[data-responsible-entity="clients"][data-manager="' + M1 + '"]',
       );
       await employeeBtn.waitFor({ state: "visible", timeout: 15000 });
