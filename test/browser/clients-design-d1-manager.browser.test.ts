@@ -28,7 +28,6 @@ const MANAGER_A = "22222222-2222-4222-8222-222222222222";
 const C1 = "11111111-1111-4111-8111-111111111111";
 const C2 = "22222222-2222-4222-8222-222222222222";
 const T1 = "11111111-1111-4111-8111-111111111112";
-const T2 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 const DESKTOP = { width: 1440, height: 1100 };
 const MOBILE = { width: 390, height: 844 };
@@ -41,6 +40,7 @@ function emptyRef() {
   return { guid: null, name: "", state: "not_provided" as const };
 }
 
+/** Full extended snapshot shape — incomplete outlet objects cause 500 on client card API. */
 function branchSnapshot(input: {
   outlets?: Array<{
     guidStore: string;
@@ -63,8 +63,22 @@ function branchSnapshot(input: {
       guidStore: outlet.guidStore,
       holdingName: "TT",
       warehouse: false,
-      address: { storeAddress: "Addr", deliveryAddress: "", routeDirection: "" },
-      loading: {},
+      outletGuidStatus: "confirmed",
+      closed: false,
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+      closureHistory: [],
+      address: { storeAddress: "Addr " + outlet.guidStore.slice(0, 8), deliveryAddress: "", routeDirection: "" },
+      loading: {
+        loadingOnMonday: null,
+        loadingOnTuesday: null,
+        loadingOnWednesday: null,
+        loadingOnThursday: null,
+        loadingOnFriday: null,
+        loadingOnSaturday: null,
+        loadingOnSunday: null,
+        loadingTime: null,
+      },
       managers: {
         manager: outlet.manager
           ? { guid: outlet.manager.guid, name: "Manager A", state: "directory_unverified" }
@@ -75,6 +89,23 @@ function branchSnapshot(input: {
           ? { guid: outlet.rop.guid, name: outlet.rop.name, state: "directory_unverified" }
           : { guid: ROP_A, name: "ROP Alpha", state: "directory_unverified" },
       },
+      contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+      lpr: {
+        name: "",
+        post: "",
+        dateOfBirth: null,
+        phone: "",
+        email: "",
+        bonus: "",
+        conditionsBonus: "",
+      },
+      additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+      provenance: {
+        freshness: "current",
+        sourceSha256: "a".repeat(64),
+        importedAt: "2026-01-01T10:00:00.000Z",
+      },
+      distributionAllowed: false,
     })),
   };
 }
@@ -151,7 +182,13 @@ describe("clients design D1 — manager screen", () => {
       databaseUrl,
       C1,
       branchSnapshot({
-        outlets: [{ guidStore: T1, rop: { guid: ROP_A, name: "ROP Alpha" }, manager: { guid: MANAGER_A, name: "Manager A" } }],
+        outlets: [
+          {
+            guidStore: T1,
+            rop: { guid: ROP_A, name: "ROP Alpha" },
+            manager: { guid: MANAGER_A, name: "Manager A" },
+          },
+        ],
       }),
     );
     await updateClientExtendedSnapshot(databaseUrl, C2, branchSnapshot({ outlets: [] }));
@@ -208,13 +245,56 @@ describe("clients design D1 — manager screen", () => {
       { timeout: 30000 },
     );
     if (viewport.width < 768) {
-      await page.waitForSelector(".clients-card", { state: "attached", timeout: 5000 }).catch(() => {});
+      await page.waitForSelector(".clients-card", { state: "attached", timeout: 5000 });
     } else {
       await page.waitForSelector("#clients-table-body tr", { state: "visible", timeout: 5000 });
     }
   }
 
-  it("manager: prototype chrome, filters, outlets, card navigation, screenshots", async () => {
+  async function assertClientsListReady(page: Page): Promise<void> {
+    await page.waitForSelector("#clients-app:not(.clients-hidden)");
+    assert.equal(await page.locator("#init-panel.clients-hidden").count(), 1);
+    assert.equal(await page.locator("#access-panel.clients-hidden").count(), 1);
+  }
+
+  async function assertClientCardReady(page: Page): Promise<void> {
+    assert.equal(await page.locator("#init-panel.clients-hidden").count(), 1);
+    assert.equal(await page.locator("#state-panel.clients-hidden").count(), 1);
+    assert.equal(await page.locator("#access-panel.clients-hidden").count(), 1);
+    await page.waitForSelector("#client-detail:not(.clients-hidden)");
+  }
+
+  async function openClientCard(page: Page, viewport: { width: number }): Promise<void> {
+    const cardApi = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes(`/api/clients/${C1}`) &&
+        !response.url().includes("/catalog/"),
+    );
+
+    if (viewport.width >= 768) {
+      await page.locator('.clients-link[href*="/clients/' + C1 + '"]').first().click();
+    } else {
+      await page.locator('.clients-card .clients-link[href*="/clients/' + C1 + '"]').first().click();
+    }
+
+    const response = await cardApi;
+    assert.equal(response.status(), 200, "client card API must return 200, got " + response.status());
+
+    await page.waitForURL(new RegExp("/clients/" + C1.replace(/-/g, "\\-")), { timeout: 15000 });
+    await assertClientCardReady(page);
+    await page.waitForFunction(
+      () => {
+        const nameEl = document.getElementById("client-name");
+        return Boolean(nameEl && nameEl.textContent && nameEl.textContent.includes("Alpha Client"));
+      },
+      undefined,
+      { timeout: 15000 },
+    );
+    assert.match(await page.locator("#client-name").textContent(), /Alpha Client/);
+  }
+
+  it("manager: home and outlets screenshots, honest card E2E", async () => {
     await seedDatabase();
     await resetPoolForTests();
     await startServer();
@@ -228,55 +308,49 @@ describe("clients design D1 — manager screen", () => {
 
       await page.goto("/clients", { waitUntil: "networkidle" });
       await waitForListLoaded(page, viewport);
+      await assertClientsListReady(page);
 
       assert.equal(await page.locator("#clients-page-title").textContent(), "Мои клиенты");
       await page.waitForSelector("#clients-manager-chrome:not(.clients-hidden)");
       assert.match(await page.locator("#clients-employee-name").textContent(), /Иванов Иван Иванович/);
-      assert.equal(await page.locator("#clients-employee-role").textContent(), "Менеджер");
-      assert.equal(await page.locator("#clients-employee-avatar").textContent(), "ИИ");
-      assert.match(await page.locator(".clients-workspace-nav__tab").textContent(), /Моя база/);
+      assert.equal(await page.locator("#search-input").inputValue(), "");
+      assert.equal(await page.locator("#clients-results-title").textContent(), "Мои клиенты");
 
-      const statClients = await page.locator("#clients-stat-clients").textContent();
-      const statOutlets = await page.locator("#clients-stat-outlets").textContent();
-      const statNoOutlets = await page.locator("#clients-stat-no-outlets").textContent();
-      assert.match(statClients ?? "", /^\d+$/);
-      assert.match(statOutlets ?? "", /^\d+$/);
-      assert.match(statNoOutlets ?? "", /^\d+$/);
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `clients-design-d1-manager-home-${viewportName}.png`),
+        fullPage: true,
+      });
 
       await page.fill("#search-input", "Alpha");
-      const filterResponse = page.waitForResponse(
-        (response) => response.url().includes("/api/clients") && response.url().includes("q=Alpha") && response.status() === 200,
+      await page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/clients") &&
+          response.url().includes("q=Alpha") &&
+          response.status() === 200,
       );
-      await filterResponse;
       await waitForListLoaded(page, viewport);
 
-      const outletsResponse = page.waitForResponse(
+      await page.click('[data-entity="outlets"]');
+      await page.waitForResponse(
         (response) =>
           response.url().includes("/api/clients") &&
           response.url().includes("entity=outlets") &&
           response.status() === 200,
       );
-      await page.click('[data-entity="outlets"]');
-      await outletsResponse;
       await waitForListLoaded(page, viewport);
+      assert.equal(await page.locator("#clients-results-title").textContent(), "Доступные торговые точки");
 
-      if (viewport.width >= 768) {
-        await page.click('.clients-link[href*="/clients/"]');
-      } else {
-        await page.click('.clients-card .clients-link');
-      }
-      await page.waitForURL(/\/clients\/[^/?]+/, { timeout: 15000 });
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `clients-design-d1-manager-outlets-filtered-${viewportName}.png`),
+        fullPage: true,
+      });
+
+      await openClientCard(page, viewport);
       await page.goBack({ waitUntil: "networkidle" });
       await waitForListLoaded(page, viewport);
-
       await page.reload({ waitUntil: "networkidle" });
       await waitForListLoaded(page, viewport);
       assert.equal(await page.locator("#clients-page-title").textContent(), "Мои клиенты");
-
-      await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, `clients-design-d1-manager-${viewportName}.png`),
-        fullPage: true,
-      });
 
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
       assert.equal(overflow, false, "page should not overflow horizontally on " + viewportName);

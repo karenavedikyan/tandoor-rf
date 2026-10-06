@@ -66,6 +66,12 @@
   var unassignedFilter = document.getElementById("unassigned-filter");
   var completenessReasonFilterWrap = document.getElementById("completeness-reason-filter-wrap");
   var completenessReasonFilter = document.getElementById("completeness-reason-filter");
+  var managerFilterWrap = document.getElementById("manager-filter-wrap");
+  var holdingFilterWrap = document.getElementById("holding-filter-wrap");
+  var resultsTitleEl = document.getElementById("clients-results-title");
+  var filtersToggleBtn = document.getElementById("clients-filters-toggle");
+  var filtersPanelEl = document.getElementById("clients-filters-panel");
+  var filtersActiveCountEl = document.getElementById("clients-filters-active-count");
   var columnsPickerBtn = document.getElementById("columns-picker-btn");
   var columnsPickerEl = document.getElementById("columns-picker");
   var visibleColumnIds = [];
@@ -432,11 +438,70 @@
         !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
       );
     }
-    document.getElementById("manager-combobox")?.classList.toggle(
-      "clients-hidden",
-      !presentation.showManagerTeamFilter,
-    );
     applyManagerDesignChrome(presentation, currentUser);
+  }
+
+  function countActiveFilters(state) {
+    var count = 0;
+    if (state.q && state.q.trim()) {
+      count += 1;
+    }
+    if (state.manager || state.missingManager) {
+      count += 1;
+    }
+    if (state.holding) {
+      count += 1;
+    }
+    if (state.phone && state.phone !== "all") {
+      count += 1;
+    }
+    if (state.hasOutlets && state.hasOutlets !== "all") {
+      count += 1;
+    }
+    if (state.outletStatus && state.outletStatus !== "all") {
+      count += 1;
+    }
+    if (state.warehouse && state.warehouse !== "all") {
+      count += 1;
+    }
+    if (state.regionalManager || state.missingRegional) {
+      count += 1;
+    }
+    if (state.tandoorClub && state.tandoorClub.trim()) {
+      count += 1;
+    }
+    if (state.ropEmployee || state.missingRop) {
+      count += 1;
+    }
+    return count;
+  }
+
+  function updateActiveFiltersBadge(state) {
+    if (!filtersActiveCountEl) {
+      return;
+    }
+    var activeCount = countActiveFilters(state);
+    if (activeCount > 0) {
+      filtersActiveCountEl.textContent = String(activeCount);
+      filtersActiveCountEl.classList.remove("clients-hidden");
+    } else {
+      filtersActiveCountEl.textContent = "";
+      filtersActiveCountEl.classList.add("clients-hidden");
+    }
+  }
+
+  function updateResultsTitle(state) {
+    if (!resultsTitleEl) {
+      return;
+    }
+    var isManager = rolePresentation && rolePresentation.businessRole === "manager";
+    if (!isManager || state.view !== "all") {
+      resultsTitleEl.classList.add("clients-hidden");
+      return;
+    }
+    resultsTitleEl.textContent =
+      (state.entity || "clients") === "outlets" ? "Доступные торговые точки" : "Мои клиенты";
+    resultsTitleEl.classList.remove("clients-hidden");
   }
 
   function loadPresentation() {
@@ -1061,12 +1126,13 @@
       rolePresentation.showManagerTeamFilter &&
       !isTeams &&
       !isReview;
+    var isManagerRole = rolePresentation && rolePresentation.businessRole === "manager";
+    var showManagerFilterInput = showAssignmentFilters || isCompleteness;
     ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
-    document.getElementById("manager-combobox")?.classList.toggle(
-      "clients-hidden",
-      !(showAssignmentFilters || isCompleteness),
-    );
-    document.getElementById("holding-combobox")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    managerFilterWrap?.classList.toggle("clients-hidden", !showManagerFilterInput && !isManagerRole);
+    managerFilterWrap?.classList.toggle("clients-field--label-only", isManagerRole && !showManagerFilterInput);
+    document.getElementById("manager-combobox")?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    holdingFilterWrap?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     entitySwitcherEl.classList.toggle(
       "clients-hidden",
@@ -1103,7 +1169,21 @@
       "clients-hidden",
       (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
+    updateResultsTitle(state);
+    updateActiveFiltersBadge(state);
+    updateMobileFiltersCollapse(state);
     renderBreadcrumbs(state);
+  }
+
+  function updateMobileFiltersCollapse(state) {
+    var collapseMobileFilters =
+      rolePresentation &&
+      rolePresentation.businessRole === "manager" &&
+      (state.view || "all") === "all";
+    document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
+    if (!collapseMobileFilters && filtersPanelEl) {
+      filtersPanelEl.classList.add("clients-filters-panel--expanded");
+    }
   }
 
   function renderBreadcrumbs(state) {
@@ -2133,6 +2213,10 @@
   resetFiltersBtn.addEventListener("click", resetFilters);
   columnsPickerBtn?.addEventListener("click", function () {
     toggleColumnPicker(currentStateFromForm());
+  });
+  filtersToggleBtn?.addEventListener("click", function () {
+    var expanded = filtersPanelEl?.classList.toggle("clients-filters-panel--expanded");
+    filtersToggleBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
   });
 
   window.addEventListener("popstate", function () {

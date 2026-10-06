@@ -52,16 +52,16 @@
               </div>
               <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
                 <div class="clients-stat">
-                  <span class="clients-stat__label">Мои клиенты</span>
                   <span class="clients-stat__value" id="clients-stat-clients">—</span>
+                  <span class="clients-stat__label">Мои клиенты</span>
                 </div>
                 <div class="clients-stat">
-                  <span class="clients-stat__label">Доступные ТТ</span>
                   <span class="clients-stat__value" id="clients-stat-outlets">—</span>
+                  <span class="clients-stat__label">Доступные ТТ</span>
                 </div>
                 <div class="clients-stat">
-                  <span class="clients-stat__label">Клиенты без ТТ</span>
                   <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
+                  <span class="clients-stat__label">Клиенты без ТТ</span>
                 </div>
               </div>
               <nav class="clients-workspace-nav" aria-label="Рабочая область">
@@ -94,8 +94,21 @@
                   <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
                   <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
                 </nav>
+                <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
+                  Колонки
+                </button>
               </div>
-              <div class="clients-toolbar__row clients-toolbar__row--filters">
+              <button
+                type="button"
+                id="clients-filters-toggle"
+                class="clients-filters-toggle"
+                aria-expanded="false"
+                aria-controls="clients-filters-panel"
+              >
+                Фильтры
+                <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
+              </button>
+              <div id="clients-filters-panel" class="clients-toolbar__row clients-toolbar__row--filters">
                 <div class="clients-field clients-hidden" id="rop-filter-wrap">
                   <span class="clients-field__label" id="rop-filter-label">РОП</span>
                   <div class="clients-combobox" id="rop-combobox">
@@ -114,7 +127,7 @@
                     <ul id="rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field">
+                <div class="clients-field" id="manager-filter-wrap">
                   <span class="clients-field__label" id="manager-filter-label">Менеджер 1С</span>
                   <div class="clients-combobox" id="manager-combobox">
                     <input
@@ -132,7 +145,7 @@
                     <ul id="manager-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field">
+                <div class="clients-field" id="holding-filter-wrap">
                   <span class="clients-field__label" id="holding-filter-label">Холдинг</span>
                   <div class="clients-combobox" id="holding-combobox">
                     <input
@@ -243,20 +256,16 @@
               </div>
             </div>
 
-            <div class="clients-meta">
-              <div class="clients-meta__row">
-                <p id="result-count">Найдено 0 клиентов</p>
-                <div class="clients-meta__actions">
-                  <button type="button" class="workspace-button workspace-button--ghost" id="columns-picker-btn">
-                    Колонки
-                  </button>
+            <div class="clients-results-shell">
+              <div class="clients-results-shell__head">
+                <div class="clients-results-shell__title-row">
+                  <h2 class="clients-results-shell__title clients-hidden" id="clients-results-title">Мои клиенты</h2>
+                  <p id="result-count" class="clients-results-shell__count">Найдено 0 клиентов</p>
                 </div>
+                <p id="sync-status" class="clients-sync"></p>
               </div>
               <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
-              <p id="sync-status" class="clients-sync"></p>
-            </div>
-
-            <div id="results-panel">
+              <div id="results-panel">
               <div id="results-state" class="clients-hidden" role="status" aria-live="polite"></div>
               <div id="results-content">
                 <div class="clients-table-wrap">
@@ -278,6 +287,7 @@
                 <div id="clients-cards" class="clients-cards"></div>
               </div>
               <nav id="pagination" class="clients-pagination" aria-label="Пагинация"></nav>
+              </div>
             </div>
           </div>
         </main>

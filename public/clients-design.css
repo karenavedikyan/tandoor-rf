@@ -63,7 +63,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px 20px;
-  padding: 16px 20px;
+  padding: 14px 18px;
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
   border-radius: var(--rf-radius);
@@ -81,18 +81,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: var(--rf-surface-muted);
   color: var(--rf-primary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .clients-design-page .clients-employee-card__name {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -130,7 +130,7 @@
 }
 
 .clients-design-page .clients-stat {
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-right: 1px solid var(--rf-border);
 }
 
@@ -140,16 +140,16 @@
 
 .clients-design-page .clients-stat__label {
   display: block;
+  margin-top: 2px;
   font-size: 12px;
   color: var(--rf-text-muted);
 }
 
 .clients-design-page .clients-stat__value {
   display: block;
-  margin-top: 4px;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
 .clients-design-page .clients-workspace-nav {
@@ -172,22 +172,26 @@
 
 .clients-design-page .clients-toolbar {
   margin-bottom: 0;
-  padding: 16px 20px;
+  padding: 14px 18px;
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
   border-radius: var(--rf-radius);
   box-shadow: none;
-  gap: 12px;
+  gap: 10px;
 }
 
 .clients-design-page .clients-toolbar__search-row {
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  align-items: end;
 }
 
 .clients-design-page.clients-role-manager .clients-toolbar__search-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.clients-design-page .clients-field--search {
+  min-width: 0;
 }
 
 .clients-design-page .clients-field__label {
@@ -202,6 +206,20 @@
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 14px;
+}
+
+.clients-design-page .clients-field--label-only .clients-combobox {
+  display: none;
+}
+
+.clients-design-page .clients-field--label-only {
+  justify-content: end;
+}
+
+.clients-design-page .clients-field--label-only .clients-field__label {
+  margin: 0;
+  padding-bottom: 10px;
+  font-size: 12px;
 }
 
 .clients-design-page .clients-entity-switcher {
@@ -232,8 +250,44 @@
   box-shadow: 0 0 0 1px var(--rf-border);
 }
 
+.clients-design-page .clients-columns-btn {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.clients-design-page .clients-filters-toggle {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: 6px;
+  background: var(--rf-bg);
+  color: var(--rf-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.clients-design-page .clients-filters-toggle__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--rf-surface-muted);
+  color: var(--rf-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .clients-design-page .clients-toolbar__row--filters {
-  gap: 12px;
+  gap: 10px;
 }
 
 .clients-design-page .clients-view-switcher:not(.clients-entity-switcher) {
@@ -246,16 +300,66 @@
   box-shadow: none;
 }
 
-.clients-design-page .clients-meta {
-  margin-bottom: 8px;
+.clients-design-page .clients-results-shell {
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  overflow: hidden;
+}
+
+.clients-design-page .clients-results-shell__head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-results-shell__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.clients-design-page .clients-results-shell__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.clients-design-page .clients-results-shell__count {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-results-shell .clients-sync {
+  margin: 6px 0 0;
   font-size: 12px;
 }
 
-.clients-design-page .clients-table-wrap {
-  border: 1px solid var(--rf-border);
-  border-radius: var(--rf-radius);
+.clients-design-page .clients-results-shell .clients-columns-picker {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--rf-border);
+  border-radius: 0;
+}
+
+.clients-design-page .clients-results-shell .clients-table-wrap {
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
-  max-height: calc(100vh - 18rem);
+  max-height: calc(100vh - 20rem);
+}
+
+.clients-design-page .clients-results-shell .clients-cards {
+  padding: 0 18px 12px;
+}
+
+.clients-design-page .clients-results-shell .clients-pagination {
+  margin: 0;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--rf-border);
 }
 
 .clients-design-page .clients-table {
@@ -338,17 +442,16 @@
   font-size: 12px;
 }
 
-.clients-design-page .clients-pagination {
-  margin-top: 12px;
-}
-
-.clients-design-page .clients-columns-picker {
-  box-shadow: none;
-}
-
 .clients-design-page .clients-team-card {
   border-radius: var(--rf-radius);
   box-shadow: none;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .clients-toolbar__row--filters {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: end;
+  }
 }
 
 @media (max-width: 767px) {
@@ -393,8 +496,22 @@
     text-align: center;
   }
 
-  .clients-design-page .clients-toolbar__row--filters {
+  .clients-design-page .clients-columns-btn {
+    width: 100%;
+  }
+
+  .clients-design-page.clients-mobile-filters-collapsed .clients-filters-toggle {
+    display: flex;
+  }
+
+  .clients-design-page.clients-mobile-filters-collapsed .clients-toolbar__row--filters {
+    display: none;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clients-design-page.clients-mobile-filters-collapsed
+    .clients-toolbar__row--filters.clients-filters-panel--expanded {
+    display: grid;
   }
 
   .clients-design-page .clients-field {
