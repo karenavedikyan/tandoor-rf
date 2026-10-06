@@ -823,4 +823,105 @@
   .clients-design-page .clients-field {
     min-width: 0;
   }
+
+  .clients-design-page .clients-director-teams-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clients-design-page .clients-stats-strip--incomplete {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.clients-design-page .clients-director-teams-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.clients-design-page .clients-team-card-shell--grid-item .clients-team-card-shell__head {
+  cursor: default;
+}
+
+.clients-design-page .clients-stats-strip--incomplete {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clients-design-page .clients-team-section--undefined {
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+}
+
+.clients-design-page .clients-team-section__title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-undefined-team-list {
+  display: grid;
+  gap: 8px;
+}
+
+.clients-design-page .clients-undefined-team-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  background: var(--rf-bg);
+  font-size: 14px;
+}
+
+.clients-design-page .clients-team-overview-note {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-card--completeness {
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  padding: 14px 16px;
+}
+
+.clients-design-page .clients-card--completeness .clients-card__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-card--completeness .clients-card__line {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--rf-text);
+}
+
+.clients-design-page .clients-card--completeness .clients-card__reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.clients-design-page .clients-card__reason-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--rf-warning-bg);
+  color: var(--rf-warning-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clients-design-page.clients-role-director #clients-table-body td:nth-child(5) {
+  color: var(--rf-text-muted);
+  font-size: 13px;
 }
