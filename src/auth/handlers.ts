@@ -17,12 +17,14 @@ import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { toUserDto, type UserDto } from "../shared/user";
 import type { AuthenticatedRequest } from "../middleware/auth";
+import { resolvePreviewState } from "../access/preview";
 
 const INVALID_CREDENTIALS_MESSAGE = "Неверный email или пароль.";
 
-function sendUser(res: Response, user: UserDto): void {
+async function sendUserWithPreview(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const preview = await resolvePreviewState(req.sessionId);
   setNoStore(res);
-  res.status(200).json({ user });
+  res.status(200).json({ user: req.authUser!, preview });
 }
 
 export async function loginHandler(req: Request, res: Response): Promise<void> {
@@ -156,5 +158,5 @@ export async function logoutHandler(req: Request, res: Response): Promise<void> 
 }
 
 export async function meHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
-  sendUser(res, req.authUser!);
+  await sendUserWithPreview(req, res);
 }

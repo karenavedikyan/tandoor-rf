@@ -85,6 +85,7 @@ describe("auth and profile integration", { concurrency: false }, () => {
       "030_outlet_distribution_markers.sql",
       "031_client_review_queue.sql",
       "032_onec_wholesale_employee_roster.sql",
+      "033_sessions_preview_user.sql",
     ]);
     const second = await runMigrations({ databaseUrl });
     assert.deepEqual(second, []);

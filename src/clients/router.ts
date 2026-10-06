@@ -1,6 +1,7 @@
 import express from "express";
 import {
   attachAccessContext,
+  blockPreviewWrites,
   requireClientReadAccess,
 } from "../access/middleware";
 import { csrfProtection } from "../middleware/csrf";
@@ -60,6 +61,14 @@ export function createClientsRouter(): express.Router {
     requireDatabaseReady,
     requireAuth,
     attachAccessContext,
+    requireClientReadAccess,
+  ] as const;
+
+  const writeChain = [
+    requireDatabaseReady,
+    requireAuth,
+    attachAccessContext,
+    blockPreviewWrites,
     requireClientReadAccess,
   ] as const;
 
@@ -158,7 +167,7 @@ export function createClientsRouter(): express.Router {
   router.post(
     "/:guid/catalog/outlets/:storeGuid/distribution/markers",
     csrfProtection,
-    ...readChain,
+    ...writeChain,
     (req, res, next) => {
       void postClientCatalogOutletDistributionMarkerHandler(req, res).catch(next);
     },
@@ -168,7 +177,7 @@ export function createClientsRouter(): express.Router {
     void getClientBitrix24LabelHandler(req, res).catch(next);
   });
 
-  router.post("/:guid/bitrix24/label", csrfProtection, ...readChain, (req, res, next) => {
+  router.post("/:guid/bitrix24/label", csrfProtection, ...writeChain, (req, res, next) => {
     void postClientBitrix24LabelHandler(req, res).catch(next);
   });
 
@@ -180,13 +189,18 @@ export function createClientsRouter(): express.Router {
     void getClientBitrix24ClaimsHandler(req, res).catch(next);
   });
 
-  router.post("/:guid/bitrix24/sync", csrfProtection, ...readChain, (req, res, next) => {
+  router.post("/:guid/bitrix24/sync", csrfProtection, ...writeChain, (req, res, next) => {
     void postClientBitrix24SyncHandler(req, res).catch(next);
   });
 
-  router.put("/:guid/bitrix24/tasks/:taskId/contact", csrfProtection, ...readChain, (req, res, next) => {
-    void putClientBitrix24TaskContactHandler(req, res).catch(next);
-  });
+  router.put(
+    "/:guid/bitrix24/tasks/:taskId/contact",
+    csrfProtection,
+    ...writeChain,
+    (req, res, next) => {
+      void putClientBitrix24TaskContactHandler(req, res).catch(next);
+    },
+  );
 
   router.get("/:guid/review/history", ...readChain, (req, res, next) => {
     void listClientReviewHistoryHandler(req, res).catch(next);
@@ -196,7 +210,7 @@ export function createClientsRouter(): express.Router {
     void getClientReviewHandler(req, res).catch(next);
   });
 
-  router.put("/:guid/review", csrfProtection, ...readChain, (req, res, next) => {
+  router.put("/:guid/review", csrfProtection, ...writeChain, (req, res, next) => {
     void upsertClientReviewHandler(req, res).catch(next);
   });
 

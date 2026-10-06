@@ -24,6 +24,29 @@
           <div id="access-panel" class="clients-panel" hidden></div>
 
           <div id="admin-access-app" class="clients-panel clients-hidden">
+            <section class="clients-card" id="preview-section">
+              <h2 class="clients-card__title">Посмотреть как сотрудник</h2>
+              <p class="clients-subtitle">
+                Read-only просмотр интерфейса и разрешённых данных выбранного сотрудника. Требуется активный
+                пользователь ЛК с подтверждённой связью 1С.
+              </p>
+              <div class="clients-filters">
+                <label class="field">
+                  <span class="field__label">Имя или email сотрудника</span>
+                  <input
+                    id="preview-search-input"
+                    class="field__input"
+                    type="search"
+                    placeholder="ivanov@ или ФИО"
+                  />
+                </label>
+                <button type="button" class="workspace-button workspace-button--primary" id="preview-search-btn">
+                  Найти
+                </button>
+              </div>
+              <div id="preview-search-results" class="clients-table-wrap"></div>
+            </section>
+
             <section class="clients-card">
               <h2 class="clients-card__title">Поиск пользователя</h2>
               <div class="clients-filters">

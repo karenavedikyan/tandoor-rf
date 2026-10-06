@@ -1,4 +1,12 @@
-import type { UserRole, UserStatus } from "../shared/user";
+import type { UserDto, UserRole, UserStatus } from "../shared/user";
+
+export type AccessPreviewMeta = {
+  active: true;
+  actorUserId: string;
+  targetUserId: string;
+  targetUser: UserDto;
+  readOnly: true;
+};
 
 export type AccessContext = {
   userId: string;
@@ -11,6 +19,8 @@ export type AccessContext = {
   /** When true, clients API returns all rows (admin/director with valid link). */
   fullClientBase: boolean;
   explicitlyDeniedAll: boolean;
+  /** Admin read-only preview as another user (session-scoped). */
+  preview?: AccessPreviewMeta;
 };
 
 export type ClientScopeSql = {
