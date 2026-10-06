@@ -120,6 +120,112 @@
     loadError: false,
     ropTeams: [],
   };
+  var compactTeams = null;
+  var compactTeamsRenderToken = 0;
+
+  function getCompactTeams() {
+    if (!compactTeams && window.ClientsTeamsCompact) {
+      compactTeams = window.ClientsTeamsCompact.create({
+        api: api,
+        shell: shell,
+        logic: logic,
+        teamContext: teamContext,
+        usesDirectorLayout: usesDirectorLayout,
+        navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
+        navigateDirectorResponsible: navigateDirectorResponsible,
+        navigateRopBranchPortfolio: navigateRopBranchPortfolio,
+        navigateResponsible: navigateResponsible,
+        renderOrgBadge: renderOrgBadge,
+      });
+    }
+    return compactTeams;
+  }
+
+  function mergeTeamUiFromUrl(state) {
+    var urlTeam = logic.readStateFromSearch(window.location.search);
+    state.teamExpand = urlTeam.teamExpand || [];
+    state.teamQ = urlTeam.teamQ || "";
+    state.teamKind = urlTeam.teamKind || "";
+    return state;
+  }
+
+  function isCompactTeamOverviewState(state) {
+    return (
+      state.view === "teams" &&
+      !logic.isBranchPortfolioList(state) &&
+      !logic.hasResponsibleSelection(state) &&
+      ((usesDirectorLayout() && !state.ropEmployee) ||
+        (isRopDesignSession() && state.ropEmployee))
+    );
+  }
+
+  function compactTeamsNavigatePatch(nextState) {
+    var merged = Object.assign({}, currentStateFromForm(), nextState);
+    if (isCompactTeamOverviewState(merged)) {
+      writeStateToUrl(merged, false);
+      if (usesDirectorLayout() && !merged.ropEmployee) {
+        renderCompactTeamsOverview(merged);
+      } else {
+        renderCompactRopTeamPanel(merged);
+      }
+      return;
+    }
+    navigateState(merged);
+  }
+
+  function renderCompactTeamsOverview(state) {
+    var module = getCompactTeams();
+    if (!module) {
+      return Promise.resolve();
+    }
+    teamsPanelEl.innerHTML =
+      '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка команд…</div>';
+    var token = ++compactTeamsRenderToken;
+    return module
+      .prepareAndRenderOverview(state, teamContext, teamsPanelEl, {
+        navigate: compactTeamsNavigatePatch,
+        isStale: function () {
+          return token !== compactTeamsRenderToken;
+        },
+        syncExpand: function (expanded) {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          writeStateToUrl(Object.assign({}, state, { teamExpand: expanded }), true);
+        },
+        refresh: function () {
+          if (token !== compactTeamsRenderToken) {
+            return;
+          }
+          renderCompactTeamsOverview(state);
+        },
+      })
+      .catch(function () {
+        teamContext.loadError = true;
+        teamsPanelEl.innerHTML =
+          '<div class="clients-compact-team__empty">Не удалось загрузить команды.</div>';
+      });
+  }
+
+  function renderCompactRopTeamPanel(state) {
+    var module = getCompactTeams();
+    if (!module) {
+      return Promise.resolve();
+    }
+    var token = ++compactTeamsRenderToken;
+    return module.prepareAndRenderRopPanel(state, teamContext, teamsPanelEl, {
+      navigate: compactTeamsNavigatePatch,
+      isStale: function () {
+        return token !== compactTeamsRenderToken;
+      },
+      refresh: function () {
+        if (token !== compactTeamsRenderToken) {
+          return;
+        }
+        renderCompactRopTeamPanel(state);
+      },
+    });
+  }
 
   var RESPONSIBLE_GROUP_LABELS = {
     manager: "Менеджеры продаж",
@@ -313,7 +419,7 @@
       cols: appEl.dataset.cols || "",
       page: Number(appEl.dataset.page || "1") || 1,
     };
-    return applyAssignmentSelectionsToState(state);
+    return mergeTeamUiFromUrl(applyAssignmentSelectionsToState(state));
   }
 
   function columnsStorageKey(entity) {
@@ -2011,58 +2117,6 @@
     });
   }
 
-  function renderRopDesignTeamPanel(state) {
-    teamsPanelEl.innerHTML = buildTeamCardShellHtml(teamContext.ropSummary, teamContext.managers, {
-      limitationNote: teamContext.limitationNote,
-    });
-    bindTeamCardPanelEvents(teamsPanelEl, {
-      ropEmployeeGuid: state.ropEmployee,
-      managers: teamContext.managers,
-      state: state,
-    });
-    if (isRopDesignSession()) {
-      mountRopStatLinks(state);
-    }
-  }
-
-  function renderDirectorTeamsOverview(state) {
-    var cardsHtml = (teamContext.ropTeams || [])
-      .map(function (entry) {
-        return buildTeamCardShellHtml(entry.summary, entry.managers, { gridItem: true });
-      })
-      .join("");
-    var undefinedHtml =
-      (teamContext.undefinedTeam || []).length > 0
-        ? '<section class="clients-team-section clients-team-section--undefined">' +
-          '<h3 class="clients-team-section__title">Команда не определена</h3>' +
-          '<div class="clients-undefined-team-list">' +
-          teamContext.undefinedTeam
-            .map(function (member) {
-              return (
-                '<div class="clients-undefined-team-member">' +
-                "<strong>" +
-                shell.escapeHtml(member.name) +
-                "</strong>" +
-                renderOrgBadge(member.rosterPost || "") +
-                renderOrgBadge(member.hasLinkedAccount ? "" : "Нет аккаунта ЛК") +
-                "</div>"
-              );
-            })
-            .join("") +
-          "</div></section>"
-        : "";
-    var noteHtml = teamContext.limitationNote
-      ? '<p class="clients-team-overview-note">' + shell.escapeHtml(teamContext.limitationNote) + "</p>"
-      : "";
-    teamsPanelEl.innerHTML =
-      noteHtml +
-      '<div class="clients-director-teams-grid">' +
-      cardsHtml +
-      "</div>" +
-      undefinedHtml;
-    bindTeamCardPanelEvents(teamsPanelEl, { state: state });
-  }
-
   function renderTeamsPanel(state) {
     if (
       state.view !== "teams" ||
@@ -2073,11 +2127,11 @@
       return;
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee) {
-      renderRopDesignTeamPanel(state);
+      renderCompactRopTeamPanel(state);
       return;
     }
     if (usesDirectorLayout() && !state.ropEmployee) {
-      renderDirectorTeamsOverview(state);
+      renderCompactTeamsOverview(state);
       return;
     }
     if (!state.ropEmployee) {
@@ -2490,29 +2544,11 @@
           if (result.response.status === 200 && result.data) {
             syncTeamContextFromOrgStructure(result.data);
             if (usesDirectorLayout()) {
-              var rops = result.data.rops || [];
-              return Promise.all(
-                rops.map(function (rop) {
-                  return api
-                    .apiRequest(
-                      "/api/clients/org-structure/" +
-                        encodeURIComponent(rop.employeeGuid) +
-                        "/responsibles",
-                    )
-                    .then(function (respResult) {
-                      return {
-                        summary: rop,
-                        managers:
-                          respResult.response.status === 200
-                            ? respResult.data.items || []
-                            : [],
-                      };
-                    });
-                }),
-              ).then(function (ropTeams) {
-                teamContext.ropTeams = ropTeams;
-                return true;
-              });
+              teamContext.ropTeams = [];
+              var compactModule = getCompactTeams();
+              if (compactModule) {
+                compactModule.resetCache();
+              }
             }
           } else {
             teamContext.loadError = true;

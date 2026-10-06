@@ -413,12 +413,12 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     await page.waitForSelector(ROLE_SPECS[role].chromeVisible);
     if (role === "director") {
       await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
-      await page.waitForSelector(".clients-director-teams-grid .clients-team-card-shell", { timeout: 30000 });
+      await page.waitForSelector(".clients-compact-team-list .clients-compact-team", { timeout: 30000 });
       return;
     }
     if (role === "rop") {
       await page.goto("/clients?view=teams&ropEmployee=" + ROP_A, { waitUntil: "networkidle" });
-      await page.waitForSelector(".clients-team-card-shell", { timeout: 30000 });
+      await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member", { timeout: 30000 });
       return;
     }
     await waitForListLoaded(page, { width: page.viewportSize()?.width ?? 1440 });
@@ -487,11 +487,11 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     await login(page, ROLE_SPECS[role].employeeEmail);
     await page.goto("/clients", { waitUntil: "networkidle" });
     if (role === "director") {
-      await page.waitForSelector(".clients-director-teams-grid .clients-team-card-shell");
+      await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
       return [];
     }
     if (role === "rop") {
-      await page.waitForSelector(".clients-team-card-shell");
+      await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member");
       return [];
     }
     const entity = role === "regional" ? "outlets" : "clients";
@@ -539,10 +539,11 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     }
 
     if (role === "rop") {
-      assert.match(await page.locator(".clients-team-card-shell__title").textContent(), /ROP Alpha/);
-      assert.ok(!((await page.locator(".clients-team-card-shell").innerText()).includes("ROP Beta")));
-      const managerRow = page.locator(".clients-team-member-row", { hasText: "Manager One" });
-      await managerRow.locator('.clients-team-member-row__count:has-text("клиентов")').click();
+      assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "Manager One" }).count());
+      assert.equal(await page.locator(".clients-compact-team-list--single").count(), 1);
+      assert.equal(await page.locator(".clients-compact-team-list:not(.clients-compact-team-list--single)").count(), 0);
+      const managerRow = page.locator(".clients-compact-team__member", { hasText: "Manager One" });
+      await managerRow.locator('.clients-compact-team__count:has-text("клиентов")').first().click();
       await waitForListLoaded(page, viewport);
       const listText = viewport.width < 768 ? await page.locator("#clients-cards").innerText() : await page.locator("#clients-table-body").innerText();
       assert.ok(listText.includes("Client C1"));
@@ -550,7 +551,7 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     }
 
     if (role === "director") {
-      assert.ok((await page.locator(".clients-director-teams-grid .clients-team-card-shell").count()) >= 2);
+      assert.ok((await page.locator(".clients-compact-team-list .clients-compact-team").count()) >= 2);
       assert.equal(await page.locator(".clients-workspace-nav:not(.clients-hidden)").count(), 0);
       assert.equal(await page.locator("#view-completeness-tab:not(.clients-hidden)").count(), 1);
       const completenessResponse = page.waitForResponse(
@@ -602,13 +603,13 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     await login(page, "admin@example.com");
     await startPreviewViaApi(page, "rop");
     await waitForRoleReady(page, "rop");
-    assert.match(await page.locator(".clients-team-card-shell__title").textContent(), /ROP Alpha/);
+    assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "Manager One" }).count());
 
     await startPreviewViaApi(page, "manager");
     await waitForRoleReady(page, "manager");
     assert.equal(await page.locator("#clients-page-title").textContent(), "Мои клиенты");
     assert.match(await page.locator(".clients-preview-banner").innerText(), /Иванов/);
-    assert.equal(await page.locator(".clients-team-card-shell").count(), 0);
+    assert.equal(await page.locator(".clients-compact-team-list--single").count(), 0);
     const managerGuids = await fetchApiGuids(page, "clients");
     assert.ok(managerGuids.length >= 1);
     assert.ok(!managerGuids.includes(C2));

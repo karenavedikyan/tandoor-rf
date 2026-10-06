@@ -54,7 +54,7 @@
 
 .clients-design-page .clients-manager-chrome {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .clients-design-page .clients-employee-card {
@@ -62,8 +62,8 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 20px;
-  padding: 14px 18px;
+  gap: 8px 16px;
+  padding: 10px 14px;
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
   border-radius: var(--rf-radius);
@@ -81,8 +81,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: var(--rf-surface-muted);
   color: var(--rf-primary);
@@ -933,4 +933,262 @@
 .clients-design-page.clients-role-director #clients-table-body td:nth-child(5) {
   color: var(--rf-text-muted);
   font-size: 13px;
+}
+
+.clients-design-page .clients-compact-team-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .clients-compact-team-toolbar {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) auto;
+    align-items: end;
+  }
+}
+
+.clients-design-page .clients-compact-team-toolbar__collapse {
+  min-height: 36px;
+  justify-self: start;
+}
+
+.clients-design-page .clients-compact-team-list {
+  display: grid;
+  gap: 8px;
+}
+
+.clients-design-page .clients-compact-team {
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  overflow: hidden;
+}
+
+.clients-design-page .clients-compact-team__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  min-height: 44px;
+}
+
+.clients-design-page .clients-compact-team__toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  background: var(--rf-bg);
+  cursor: pointer;
+}
+
+.clients-design-page .clients-compact-team__chevron {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--rf-text-muted);
+  border-bottom: 2px solid var(--rf-text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.clients-design-page .clients-compact-team--expanded .clients-compact-team__chevron {
+  transform: rotate(45deg);
+}
+
+.clients-design-page .clients-compact-team__name {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rf-text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.clients-design-page .clients-compact-team__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-left: auto;
+}
+
+.clients-design-page .clients-compact-team__metric {
+  display: grid;
+  gap: 1px;
+  min-width: 72px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+}
+
+.clients-design-page .clients-compact-team__metric--link {
+  cursor: pointer;
+  color: inherit;
+}
+
+.clients-design-page .clients-compact-team__metric--link:hover .clients-compact-team__metric-value {
+  color: var(--rf-primary);
+}
+
+.clients-design-page .clients-compact-team__metric-value {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.clients-design-page .clients-compact-team__metric-label {
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--rf-surface-muted);
+  color: var(--rf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-compact-team__members {
+  display: grid;
+  gap: 6px;
+  max-height: min(420px, 55vh);
+  overflow: auto;
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-compact-team__members:focus-visible {
+  outline: 2px solid var(--rf-primary);
+  outline-offset: -2px;
+}
+
+.clients-design-page .clients-compact-team__members--loading,
+.clients-design-page .clients-compact-team__members--empty,
+.clients-design-page .clients-compact-team__members--error {
+  padding: 10px;
+  font-size: 13px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__member {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  background: var(--rf-bg);
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .clients-compact-team__member {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: center;
+  }
+}
+
+.clients-design-page .clients-compact-team__member-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.clients-design-page .clients-compact-team__member-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.clients-design-page .clients-compact-team__member-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.clients-design-page .clients-compact-team__kind-tag {
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__member-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.clients-design-page .clients-compact-team__count {
+  padding: 4px 8px;
+  border: 1px solid var(--rf-border);
+  border-radius: 999px;
+  background: var(--rf-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.clients-design-page .clients-compact-team__count--empty {
+  border-style: dashed;
+  cursor: default;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__count:hover {
+  border-color: var(--rf-primary);
+  color: var(--rf-primary);
+}
+
+.clients-design-page .clients-compact-team-undefined {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+}
+
+.clients-design-page .clients-compact-team-undefined__title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-compact-team-undefined__list {
+  display: grid;
+  gap: 6px;
+}
+
+.clients-design-page .clients-compact-team-undefined__item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.clients-design-page .clients-compact-team__empty,
+.clients-design-page .clients-compact-team__note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__error {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--rf-error-text, var(--rf-warning-text));
 }
