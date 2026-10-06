@@ -463,6 +463,279 @@
   box-shadow: none;
 }
 
+.clients-design-page.clients-role-rop .clients-toolbar__search-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.clients-design-page .clients-stat__value--link {
+  cursor: pointer;
+}
+
+.clients-design-page .clients-stat__value--link:hover {
+  color: var(--rf-primary);
+}
+
+.clients-design-page .clients-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.clients-design-page .clients-breadcrumbs__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.clients-design-page .clients-breadcrumbs__back {
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+.clients-design-page .clients-team-card-shell {
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  overflow: hidden;
+}
+
+.clients-design-page .clients-team-card-shell__head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-team-card-shell__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.clients-design-page .clients-team-card-shell__note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-card__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  background: var(--rf-surface-muted);
+  border-bottom: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-team-card__stat {
+  display: grid;
+  gap: 2px;
+  padding: 12px 16px;
+  border: 0;
+  border-right: 1px solid var(--rf-border);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.clients-design-page .clients-team-card__stat:last-child {
+  border-right: 0;
+}
+
+.clients-design-page .clients-team-card__stat--static {
+  cursor: default;
+}
+
+.clients-design-page .clients-team-card__stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--rf-text);
+}
+
+.clients-design-page .clients-team-card__stat-label {
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-own-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-team-own-row__label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-team-own-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.clients-design-page .clients-team-own-row__action {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: 6px;
+  background: var(--rf-bg);
+  color: var(--rf-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.clients-design-page .clients-team-group {
+  padding: 12px 18px 0;
+}
+
+.clients-design-page .clients-team-group:last-child {
+  padding-bottom: 14px;
+}
+
+.clients-design-page .clients-team-group__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-group__list {
+  display: grid;
+  gap: 8px;
+}
+
+.clients-design-page .clients-team-member-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  background: var(--rf-bg);
+}
+
+.clients-design-page .clients-team-member-row__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clients-design-page .clients-team-member-row__avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--rf-surface);
+  color: var(--rf-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clients-design-page .clients-team-member-row__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.clients-design-page .clients-team-member-row__name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.clients-design-page .clients-team-member-row__kind,
+.clients-design-page .clients-team-member-row__badge {
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-member-row__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.clients-design-page .clients-team-member-row__count {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--rf-border);
+  border-radius: 6px;
+  background: var(--rf-surface);
+  color: var(--rf-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.clients-design-page .clients-team-member-row__count--empty {
+  cursor: default;
+  color: var(--rf-text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.clients-design-page .clients-team-empty {
+  margin: 0;
+  padding: 14px 18px 18px;
+  font-size: 14px;
+  color: var(--rf-text-muted);
+}
+
+@media (max-width: 767px) {
+  .clients-design-page.clients-role-rop .clients-toolbar__search-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clients-design-page .clients-team-card__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clients-design-page .clients-team-card__stat:nth-child(2) {
+    border-right: 0;
+  }
+
+  .clients-design-page .clients-team-card__stat:nth-child(3) {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-top: 1px solid var(--rf-border);
+  }
+
+  .clients-design-page .clients-team-member-row__counts {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .clients-design-page .clients-team-member-row__count {
+    flex: 1 1 0;
+    text-align: center;
+  }
+}
+
 @media (min-width: 768px) {
   .clients-design-page .clients-toolbar__row--filters {
     grid-template-columns: repeat(4, minmax(0, 1fr));

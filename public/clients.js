@@ -43,9 +43,12 @@
   var statClientsLabelEl = document.getElementById("clients-stat-clients-label");
   var statOutletsLabelEl = document.getElementById("clients-stat-outlets-label");
   var statNoOutletsWrapEl = document.getElementById("clients-stat-no-outlets-wrap");
+  var statNoOutletsLabelEl = document.getElementById("clients-stat-no-outlets-label");
   var statsStripEl = document.getElementById("clients-stats-strip");
   var employeeScopeValueEl = document.getElementById("clients-employee-scope-value");
   var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
+  var workspaceNavTabEl = document.getElementById("clients-workspace-nav-tab");
+  var breadcrumbsRowEl = document.getElementById("clients-breadcrumbs-row");
   var viewReviewTab = document.getElementById("view-review-tab");
   var viewCompletenessTab = document.getElementById("view-completeness-tab");
   var tableHeadRow = document.getElementById("clients-table-head-row");
@@ -104,9 +107,23 @@
     rops: [],
     undefinedTeam: [],
     managers: [],
+    ropSummary: null,
     ropName: "",
     managerName: "",
     limitationNote: "",
+    loadError: false,
+  };
+
+  var RESPONSIBLE_GROUP_LABELS = {
+    manager: "Менеджеры продаж",
+    regional: "Региональные менеджеры",
+    hardware: "Менеджеры по фурнитуре",
+  };
+
+  var RESPONSIBLE_KIND_LABELS = {
+    manager: "Менеджер продаж",
+    regional: "Региональный менеджер",
+    hardware: "Менеджер по фурнитуре",
   };
   var unassignedContext = { summary: null, categoryLabel: "", employeeName: "" };
 
@@ -143,11 +160,30 @@
       statNoOutletsLabel: "",
       showThirdStat: false,
     },
+    rop: {
+      subtitle: "Команда, собственные назначения и закреплённые клиенты и торговые точки.",
+      scopeValue: "Моя команда и собственные назначения",
+      statClientLabel: "Клиенты ветки",
+      statOutletLabel: "ТТ ветки",
+      statNoOutletsLabel: "Сотрудники команды",
+      showThirdStat: true,
+      workspaceTabLabel: "Моя команда",
+    },
   };
 
-  function portfolioDesignConfig(presentation) {
+  function isRopDesignSession() {
+    return rolePresentation && rolePresentation.businessRole === "rop";
+  }
+
+  function portfolioDesignConfig(presentation, state) {
     if (!presentation) {
       return null;
+    }
+    if (presentation.businessRole === "rop") {
+      if (!state || (state.view || "all") !== "teams") {
+        return null;
+      }
+      return PORTFOLIO_DESIGN.rop;
     }
     return PORTFOLIO_DESIGN[presentation.businessRole] || null;
   }
@@ -384,12 +420,15 @@
     }
   }
 
-  function applyPortfolioDesignChrome(presentation, user) {
-    var config = portfolioDesignConfig(presentation);
+  function applyPortfolioDesignChrome(presentation, user, state) {
+    var viewState = state || currentStateFromForm();
+    var config = portfolioDesignConfig(presentation, viewState);
     var isManager = presentation && presentation.businessRole === "manager";
     var isRegional = presentation && presentation.businessRole === "regional_manager";
+    var isRop = isRopDesignSession() && (viewState.view || "all") === "teams";
     document.body.classList.toggle("clients-role-manager", Boolean(isManager));
     document.body.classList.toggle("clients-role-regional", Boolean(isRegional));
+    document.body.classList.toggle("clients-role-rop", Boolean(isRop));
     if (pageSubtitleEl) {
       if (config && config.subtitle) {
         pageSubtitleEl.textContent = config.subtitle;
@@ -402,6 +441,10 @@
     if (managerChromeEl) {
       managerChromeEl.classList.toggle("clients-hidden", !config);
     }
+    if (workspaceNavTabEl) {
+      workspaceNavTabEl.textContent =
+        config && config.workspaceTabLabel ? config.workspaceTabLabel : "Моя база";
+    }
     if (config) {
       renderEmployeeCard(user);
       if (employeeScopeValueEl) {
@@ -413,6 +456,9 @@
       if (statOutletsLabelEl) {
         statOutletsLabelEl.textContent = config.statOutletLabel;
       }
+      if (statNoOutletsLabelEl && config.statNoOutletsLabel) {
+        statNoOutletsLabelEl.textContent = config.statNoOutletsLabel;
+      }
       if (statsStripEl) {
         statsStripEl.classList.toggle("clients-stats-strip--two-cols", !config.showThirdStat);
       }
@@ -422,10 +468,61 @@
     }
   }
 
-  function loadPortfolioStats() {
-    var config = portfolioDesignConfig(rolePresentation);
+  function renderRopStatsFromSummary(summary) {
+    if (!summary) {
+      if (statClientsEl) {
+        statClientsEl.textContent = "—";
+      }
+      if (statOutletsEl) {
+        statOutletsEl.textContent = "—";
+      }
+      if (statNoOutletsEl) {
+        statNoOutletsEl.textContent = "—";
+      }
+      return;
+    }
+    if (statClientsEl) {
+      statClientsEl.textContent = formatStatValue(summary.uniqueClientCount);
+    }
+    if (statOutletsEl) {
+      statOutletsEl.textContent = formatStatValue(summary.uniqueOutletCount);
+    }
+    if (statNoOutletsEl) {
+      statNoOutletsEl.textContent = formatStatValue(summary.teamMemberCount);
+    }
+  }
+
+  function loadRopTeamStats(state) {
+    if (!isRopDesignSession() || (state.view || "all") !== "teams") {
+      return Promise.resolve();
+    }
+    if (teamContext.ropSummary && state.ropEmployee) {
+      renderRopStatsFromSummary(teamContext.ropSummary);
+      return Promise.resolve();
+    }
+    return api.apiRequest("/api/clients/org-structure").then(function (result) {
+      if (result.response.status !== 200 || !result.data) {
+        renderRopStatsFromSummary(null);
+        return;
+      }
+      var rops = result.data.rops || [];
+      var match = state.ropEmployee
+        ? rops.find(function (item) {
+            return item.employeeGuid === state.ropEmployee;
+          })
+        : rops[0];
+      teamContext.ropSummary = match || null;
+      renderRopStatsFromSummary(teamContext.ropSummary);
+    });
+  }
+
+  function loadPortfolioStats(state) {
+    var config = portfolioDesignConfig(rolePresentation, state || currentStateFromForm());
     if (!config) {
       return Promise.resolve();
+    }
+    if (isRopDesignSession()) {
+      return loadRopTeamStats(state || currentStateFromForm());
     }
     var baseParams = { view: "all", page: "1", pageSize: "1" };
     function fetchTotal(extra) {
@@ -489,7 +586,7 @@
         !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
       );
     }
-    applyPortfolioDesignChrome(presentation, currentUser);
+    applyPortfolioDesignChrome(presentation, currentUser, currentStateFromForm());
   }
 
   function countActiveFilters(state) {
@@ -547,11 +644,29 @@
     }
     var role = rolePresentation && rolePresentation.businessRole;
     var isPortfolioRole = role === "manager" || role === "regional_manager";
-    if (!isPortfolioRole || state.view !== "all") {
-      resultsTitleEl.classList.add("clients-hidden");
-      return;
+    var isRopList =
+      isRopDesignSession() &&
+      state.view === "teams" &&
+      (logic.isBranchPortfolioList(state) || logic.hasResponsibleSelection(state));
+    if ((!isPortfolioRole && !isRopList) || (isPortfolioRole && state.view !== "all")) {
+      if (!isRopList) {
+        resultsTitleEl.classList.add("clients-hidden");
+        return;
+      }
     }
     var entity = state.entity || "clients";
+    if (isRopList) {
+      if (logic.hasResponsibleSelection(state)) {
+        resultsTitleEl.textContent =
+          entity === "outlets" ? "Торговые точки сотрудника" : "Клиенты сотрудника";
+      } else if (state.portfolio === "outlets" || entity === "outlets") {
+        resultsTitleEl.textContent = "ТТ ветки";
+      } else {
+        resultsTitleEl.textContent = "Клиенты ветки";
+      }
+      resultsTitleEl.classList.remove("clients-hidden");
+      return;
+    }
     if (entity === "outlets") {
       resultsTitleEl.textContent = "Доступные торговые точки";
     } else if (role === "regional_manager") {
@@ -1251,6 +1366,15 @@
       "clients-hidden",
       (isTeams && !branchList && !responsibleList) || reviewEmployeePick,
     );
+    var isRopTeamHome =
+      isRopDesignSession() && isTeams && !branchList && !responsibleList && Boolean(state.ropEmployee);
+    document.querySelector(".clients-toolbar")?.classList.toggle("clients-hidden", isRopTeamHome);
+    document.querySelector(".clients-results-shell")?.classList.toggle("clients-hidden", isRopTeamHome);
+    applyPortfolioDesignChrome(rolePresentation, currentUser, state);
+    if (isRopDesignSession() && isTeams) {
+      loadRopTeamStats(state);
+      mountRopStatLinks(state);
+    }
     updateResultsTitle(state);
     updateActiveFiltersBadge(state);
     updateMobileFiltersCollapse(state);
@@ -1259,36 +1383,67 @@
 
   function updateMobileFiltersCollapse(state) {
     var role = rolePresentation && rolePresentation.businessRole;
+    var branchList = logic.isBranchPortfolioList(state);
+    var responsibleList = logic.hasResponsibleSelection(state);
     var collapseMobileFilters =
-      (role === "manager" || role === "regional_manager") && (state.view || "all") === "all";
+      ((role === "manager" || role === "regional_manager") && (state.view || "all") === "all") ||
+      (role === "rop" && (state.view || "all") === "teams" && (branchList || responsibleList));
     document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
     if (!collapseMobileFilters && filtersPanelEl) {
       filtersPanelEl.classList.add("clients-filters-panel--expanded");
     }
   }
 
+  function ropTeamHomeHref(state) {
+    if (!state.ropEmployee) {
+      return "/clients?view=teams";
+    }
+    return "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee);
+  }
+
   function renderBreadcrumbs(state) {
     if (state.view === "all") {
       breadcrumbsEl.classList.add("clients-hidden");
-      breadcrumbsEl.innerHTML = "";
+      if (breadcrumbsRowEl) {
+        breadcrumbsRowEl.innerHTML = "";
+      }
       return;
     }
     var parts = [];
+    var showBackToTeam = false;
     if (state.view === "teams") {
-      parts.push({ label: "По командам", href: "/clients?view=teams" });
-      if (state.ropEmployee) {
-        parts.push({
-          label: teamContext.ropName || "РОП",
-          href: "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee),
-        });
-      }
-      if (state.portfolio === "clients") {
-        parts.push({ label: "Клиенты ветки", href: null });
-      } else if (state.portfolio === "outlets") {
-        parts.push({ label: "ТТ ветки", href: null });
-      }
-      if (logic.hasResponsibleSelection(state)) {
-        parts.push({ label: teamContext.managerName || "Ответственный", href: null });
+      var teamRootLabel = isRopDesignSession() ? "Моя команда" : "По командам";
+      var teamRootHref = isRopDesignSession() ? ropTeamHomeHref(state) : "/clients?view=teams";
+      if (isRopDesignSession()) {
+        parts.push({ label: teamRootLabel, href: teamRootHref });
+        if (logic.hasResponsibleSelection(state)) {
+          var entityLabel = (state.entity || "clients") === "outlets" ? "Торговые точки" : "Клиенты";
+          parts.push({ label: teamContext.managerName || "Сотрудник", href: null });
+          parts.push({ label: entityLabel, href: null });
+          showBackToTeam = true;
+        } else if (logic.isBranchPortfolioList(state)) {
+          parts.push({
+            label: state.portfolio === "outlets" ? "ТТ ветки" : "Клиенты ветки",
+            href: null,
+          });
+          showBackToTeam = true;
+        }
+      } else {
+        parts.push({ label: teamRootLabel, href: teamRootHref });
+        if (state.ropEmployee) {
+          parts.push({
+            label: teamContext.ropName || "РОП",
+            href: "/clients?view=teams&ropEmployee=" + encodeURIComponent(state.ropEmployee),
+          });
+        }
+        if (state.portfolio === "clients") {
+          parts.push({ label: "Клиенты ветки", href: null });
+        } else if (state.portfolio === "outlets") {
+          parts.push({ label: "ТТ ветки", href: null });
+        }
+        if (logic.hasResponsibleSelection(state)) {
+          parts.push({ label: teamContext.managerName || "Ответственный", href: null });
+        }
       }
     } else if (state.view === "completeness") {
       parts.push({ label: "Незаполненные назначения", href: "/clients?view=completeness" });
@@ -1305,7 +1460,7 @@
         parts.push({ label: unassignedContext.employeeName || "Ответственный", href: null });
       }
     }
-    breadcrumbsEl.innerHTML = parts
+    var trailHtml = parts
       .map(function (part, index) {
         if (!part.href || index === parts.length - 1) {
           return "<span>" + shell.escapeHtml(part.label) + "</span>";
@@ -1313,13 +1468,225 @@
         return '<a class="clients-link" href="' + part.href + '">' + shell.escapeHtml(part.label) + "</a>";
       })
       .join(' <span aria-hidden="true">›</span> ');
-    breadcrumbsEl.classList.remove("clients-hidden");
+    var backHtml = showBackToTeam
+      ? '<button type="button" class="clients-breadcrumbs__back workspace-button workspace-button--ghost" id="clients-breadcrumbs-back">К команде</button>'
+      : "";
+    if (breadcrumbsRowEl) {
+      breadcrumbsRowEl.innerHTML = trailHtml + backHtml;
+    } else {
+      breadcrumbsEl.innerHTML = trailHtml + backHtml;
+    }
+    document.getElementById("clients-breadcrumbs-back")?.addEventListener("click", function () {
+      navigateState({
+        view: "teams",
+        ropEmployee: state.ropEmployee || "",
+        rop: "",
+        manager: "",
+        regionalManager: "",
+        hardwareManager: "",
+        portfolio: "",
+        responsibleKind: "",
+        entity: "clients",
+        page: 1,
+      });
+    });
+    breadcrumbsEl.classList.toggle("clients-hidden", parts.length === 0);
   }
 
   function renderOrgBadge(label) {
     return label
       ? '<span class="clients-phone-muted clients-team-badge">' + shell.escapeHtml(label) + "</span>"
       : "";
+  }
+
+  function navigateRopBranchPortfolio(state, portfolio) {
+    navigateState({
+      view: "teams",
+      ropEmployee: state.ropEmployee,
+      rop: "",
+      manager: "",
+      regionalManager: "",
+      hardwareManager: "",
+      portfolio: portfolio,
+      responsibleKind: "",
+      entity: portfolio === "outlets" ? "outlets" : "clients",
+      page: 1,
+    });
+  }
+
+  function mountRopStatLinks(state) {
+    if (!isRopDesignSession()) {
+      return;
+    }
+    var clientsStat = document.getElementById("clients-stat-clients");
+    var outletsStat = document.getElementById("clients-stat-outlets");
+    clientsStat?.classList.add("clients-stat__value--link");
+    outletsStat?.classList.add("clients-stat__value--link");
+    if (clientsStat && !clientsStat.dataset.ropStatBound) {
+      clientsStat.dataset.ropStatBound = "1";
+      clientsStat.addEventListener("click", function () {
+        navigateRopBranchPortfolio(currentStateFromForm(), "clients");
+      });
+    }
+    if (outletsStat && !outletsStat.dataset.ropStatBound) {
+      outletsStat.dataset.ropStatBound = "1";
+      outletsStat.addEventListener("click", function () {
+        navigateRopBranchPortfolio(currentStateFromForm(), "outlets");
+      });
+    }
+  }
+
+  function renderResponsibleCountButton(manager, entityMode, count, label) {
+    if (count > 0) {
+      return (
+        '<button type="button" class="clients-team-member-row__count" data-responsible-entity="' +
+        shell.escapeHtml(entityMode) +
+        '" data-responsible-kind="' +
+        shell.escapeHtml(manager.kind) +
+        '" data-manager="' +
+        shell.escapeHtml(manager.employeeGuid) +
+        '">' +
+        shell.escapeHtml(String(count) + " " + label) +
+        "</button>"
+      );
+    }
+    return (
+      '<span class="clients-team-member-row__count clients-team-member-row__count--empty">' +
+      shell.escapeHtml("0 " + label) +
+      "</span>"
+    );
+  }
+
+  function renderRopDesignTeamPanel(state) {
+    var summary = teamContext.ropSummary;
+    var ropTitle = summary?.name || teamContext.ropName || "РОП";
+    var statsHtml =
+      '<div class="clients-team-card__stats" aria-label="Итоги ветки">' +
+      '<button type="button" class="clients-team-card__stat" data-branch-portfolio="clients">' +
+      '<span class="clients-team-card__stat-value">' +
+      shell.escapeHtml(String(summary?.uniqueClientCount ?? "—")) +
+      "</span>" +
+      '<span class="clients-team-card__stat-label">Клиенты ветки</span>' +
+      "</button>" +
+      '<button type="button" class="clients-team-card__stat" data-branch-portfolio="outlets">' +
+      '<span class="clients-team-card__stat-value">' +
+      shell.escapeHtml(String(summary?.uniqueOutletCount ?? "—")) +
+      "</span>" +
+      '<span class="clients-team-card__stat-label">ТТ ветки</span>' +
+      "</button>" +
+      '<div class="clients-team-card__stat clients-team-card__stat--static">' +
+      '<span class="clients-team-card__stat-value">' +
+      shell.escapeHtml(String(summary?.teamMemberCount ?? "—")) +
+      "</span>" +
+      '<span class="clients-team-card__stat-label">Сотрудники</span>' +
+      "</div>" +
+      "</div>";
+
+    var ownRow =
+      summary && summary.hasAssignedPortfolio
+        ? '<div class="clients-team-own-row">' +
+          '<div class="clients-team-own-row__label">Собственные назначения</div>' +
+          '<div class="clients-team-own-row__actions">' +
+          '<button type="button" class="clients-team-own-row__action" data-branch-portfolio="clients">Клиенты</button>' +
+          '<button type="button" class="clients-team-own-row__action" data-branch-portfolio="outlets">Торговые точки</button>' +
+          "</div></div>"
+        : "";
+
+    var grouped = { manager: [], regional: [], hardware: [] };
+    (teamContext.managers || []).forEach(function (manager) {
+      if (grouped[manager.kind]) {
+        grouped[manager.kind].push(manager);
+      }
+    });
+
+    var groupsHtml = ["manager", "regional", "hardware"]
+      .map(function (kind) {
+        var members = grouped[kind];
+        if (!members || members.length === 0) {
+          return "";
+        }
+        return (
+          '<section class="clients-team-group">' +
+          '<h3 class="clients-team-group__title">' +
+          shell.escapeHtml(RESPONSIBLE_GROUP_LABELS[kind] || kind) +
+          "</h3>" +
+          '<div class="clients-team-group__list">' +
+          members
+            .map(function (manager) {
+              var displayName = manager.name || manager.shortId || manager.employeeGuid;
+              return (
+                '<div class="clients-team-member-row">' +
+                '<div class="clients-team-member-row__main">' +
+                '<span class="clients-team-member-row__avatar" aria-hidden="true">' +
+                shell.escapeHtml(initialsFromName(displayName)) +
+                "</span>" +
+                '<div class="clients-team-member-row__text">' +
+                '<span class="clients-team-member-row__name">' +
+                shell.escapeHtml(displayName) +
+                "</span>" +
+                '<span class="clients-team-member-row__kind">' +
+                shell.escapeHtml(RESPONSIBLE_KIND_LABELS[manager.kind] || manager.kind) +
+                "</span>" +
+                (manager.hasLinkedAccount
+                  ? ""
+                  : '<span class="clients-team-member-row__badge">Нет аккаунта ЛК</span>') +
+                (manager.rosterInOpt === false
+                  ? '<span class="clients-team-member-row__badge">Вне справочника ОПТ</span>'
+                  : "") +
+                "</div></div>" +
+                '<div class="clients-team-member-row__counts">' +
+                renderResponsibleCountButton(manager, "clients", manager.clientCount, "клиентов") +
+                renderResponsibleCountButton(manager, "outlets", manager.outletCount, "ТТ") +
+                "</div></div>"
+              );
+            })
+            .join("") +
+          "</div></section>"
+        );
+      })
+      .join("");
+
+    var emptyHtml =
+      !groupsHtml && !ownRow
+        ? '<p class="clients-team-empty">Нет назначенных сотрудников в вашей ветке.</p>'
+        : "";
+
+    teamsPanelEl.innerHTML =
+      '<article class="clients-team-card-shell">' +
+      '<header class="clients-team-card-shell__head">' +
+      "<h2 class=\"clients-team-card-shell__title\">" +
+      shell.escapeHtml(ropTitle) +
+      "</h2>" +
+      (teamContext.limitationNote
+        ? '<p class="clients-team-card-shell__note">' + shell.escapeHtml(teamContext.limitationNote) + "</p>"
+        : "") +
+      "</header>" +
+      statsHtml +
+      ownRow +
+      groupsHtml +
+      emptyHtml +
+      "</article>";
+
+    teamsPanelEl.querySelectorAll("[data-branch-portfolio]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        navigateRopBranchPortfolio(state, btn.getAttribute("data-branch-portfolio") || "clients");
+      });
+    });
+    teamsPanelEl.querySelectorAll("[data-responsible-entity]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var managerGuid = btn.getAttribute("data-manager");
+        var kind = btn.getAttribute("data-responsible-kind") || "manager";
+        var entityMode = btn.getAttribute("data-responsible-entity") || "clients";
+        var match = (teamContext.managers || []).find(function (item) {
+          return item.employeeGuid === managerGuid && item.kind === kind;
+        });
+        if (!match) {
+          return;
+        }
+        navigateResponsible(state, match, kind, entityMode);
+      });
+    });
+    mountRopStatLinks(state);
   }
 
   function renderTeamsPanel(state) {
@@ -1329,6 +1696,10 @@
       logic.hasResponsibleSelection(state)
     ) {
       teamsPanelEl.innerHTML = "";
+      return;
+    }
+    if (isRopDesignSession() && state.ropEmployee) {
+      renderRopDesignTeamPanel(state);
       return;
     }
     if (!state.ropEmployee) {
@@ -1707,6 +2078,23 @@
     loadList(Object.assign({}, currentStateFromForm(), nextState), false);
   }
 
+  function syncTeamContextFromOrgStructure(data, ropEmployeeGuid) {
+    teamContext.director = data.director || null;
+    teamContext.rops = data.rops || [];
+    teamContext.undefinedTeam = data.undefinedTeam || [];
+    teamContext.limitationNote = data.limitationNote || "";
+    teamContext.loadError = false;
+    var match = ropEmployeeGuid
+      ? (data.rops || []).find(function (item) {
+          return item.employeeGuid === ropEmployeeGuid;
+        })
+      : (data.rops || [])[0];
+    if (match) {
+      teamContext.ropSummary = match;
+      teamContext.ropName = match.name || teamContext.ropName;
+    }
+  }
+
   function loadTeamsContext(state) {
     if (state.view !== "teams") {
       return Promise.resolve({ ok: true });
@@ -1716,16 +2104,23 @@
       requests.push(
         api.apiRequest("/api/clients/org-structure").then(function (result) {
           if (result.response.status === 200 && result.data) {
-            teamContext.director = result.data.director || null;
-            teamContext.rops = result.data.rops || [];
-            teamContext.undefinedTeam = result.data.undefinedTeam || [];
-            teamContext.limitationNote = result.data.limitationNote || "";
+            syncTeamContextFromOrgStructure(result.data);
+          } else {
+            teamContext.loadError = true;
           }
           return result.response.status === 200;
         }),
       );
     } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
       requests.push(
+        api.apiRequest("/api/clients/org-structure").then(function (result) {
+          if (result.response.status === 200 && result.data) {
+            syncTeamContextFromOrgStructure(result.data, state.ropEmployee);
+          } else {
+            teamContext.loadError = true;
+          }
+          return result.response.status === 200;
+        }),
         api
           .apiRequest(
             "/api/clients/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
@@ -1733,6 +2128,8 @@
           .then(function (result) {
             if (result.response.status === 200 && result.data) {
               teamContext.managers = result.data.items || [];
+            } else {
+              teamContext.loadError = true;
             }
             return result.response.status === 200;
           }),
@@ -1899,7 +2296,7 @@
         if (!ctx.ok) {
           showResultsState(
             "error",
-            "Не удалось загрузить команды",
+            "Не удалось загрузить команду",
             "Повторите попытку.",
             '<button type="button" class="workspace-button workspace-button--primary" id="retry-load">Повторить</button>',
           );
@@ -1908,14 +2305,32 @@
           });
           return;
         }
+        if (isRopDesignSession() && !state.ropEmployee && teamContext.rops.length > 0) {
+          var ownRop = teamContext.rops[0];
+          loadList(
+            Object.assign({}, state, {
+              ropEmployee: ownRop.employeeGuid,
+              entity: "clients",
+              page: 1,
+            }),
+            replaceHistory,
+          );
+          return;
+        }
+        updateViewChrome(state);
         renderTeamsPanel(state);
-        showResultsState(
-          "empty",
-          state.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
-          "Клиенты загружаются после выбора ответственного в ветке РОП.",
-          "",
-        );
-        resultCountEl.textContent = state.ropEmployee ? "Ответственные РОП" : "Структура по назначениям 1С";
+        if (isRopDesignSession() && state.ropEmployee) {
+          resultsStateEl.classList.add("clients-hidden");
+          resultCountEl.textContent = "";
+        } else {
+          showResultsState(
+            "empty",
+            state.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
+            "Клиенты загружаются после выбора ответственного в ветке РОП.",
+            "",
+          );
+          resultCountEl.textContent = state.ropEmployee ? "Ответственные РОП" : "Структура по назначениям 1С";
+        }
       });
     }
 
@@ -2224,8 +2639,8 @@
           rolePresentation,
           window.location.search,
         );
-        applyPortfolioDesignChrome(rolePresentation, currentUser);
-        loadPortfolioStats();
+        applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
+        loadPortfolioStats(initialState);
         loadList(initialState, true);
       })
       .catch(function (err) {
@@ -2324,7 +2739,7 @@
       return;
     }
     currentUser = user;
-    applyPortfolioDesignChrome(rolePresentation, currentUser);
+    applyPortfolioDesignChrome(rolePresentation, currentUser, readStateFromUrl());
     initializeWorkspace();
   });
 })();

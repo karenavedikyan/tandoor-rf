@@ -65,11 +65,17 @@
                 </div>
               </div>
               <nav class="clients-workspace-nav" aria-label="Рабочая область">
-                <span class="clients-workspace-nav__tab clients-workspace-nav__tab--active">Моя база</span>
+                <span
+                  id="clients-workspace-nav-tab"
+                  class="clients-workspace-nav__tab clients-workspace-nav__tab--active"
+                  >Моя база</span
+                >
               </nav>
             </div>
 
-            <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация"></nav>
+            <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация">
+              <div id="clients-breadcrumbs-row" class="clients-breadcrumbs__row"></div>
+            </nav>
 
             <div id="teams-panel" class="clients-teams-panel clients-hidden"></div>
             <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
