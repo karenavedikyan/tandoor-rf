@@ -1,6 +1,10 @@
 import type { PoolClient } from "pg";
 import { getPool } from "../../db/pool";
-import { REGULAR_UPDATE_JOB_KIND } from "../../onec-import/constants";
+import {
+  REGULAR_UPDATE_JOB_KIND,
+  REGULAR_UPDATE_JOB_SOURCE_ADMIN,
+  type RegularUpdateJobSource,
+} from "../../onec-import/constants";
 import type { RegularUpdateResult } from "../../onec-regular-update/types";
 import { formatMskDateTime } from "../dto";
 import type { AdminOnecUpdateJobDto, OnecUpdateUiPhase } from "./types";
@@ -18,6 +22,7 @@ type JobRow = {
   result: RegularUpdateResult | null;
   error_code: string | null;
   requested_by_user_id: string | null;
+  job_source: RegularUpdateJobSource;
 };
 
 export type StartRegularUpdateJobResult =
@@ -28,6 +33,15 @@ export type StartRegularUpdateJobResult =
       message: string;
       existingJobId?: string;
     };
+
+export type EnqueueRegularUpdateJobInput =
+  | { jobSource: typeof REGULAR_UPDATE_JOB_SOURCE_ADMIN; requestedByUserId: string }
+  | { jobSource: "nightly" };
+
+const JOB_SOURCE_LABELS: Record<RegularUpdateJobSource, string> = {
+  admin_manual: "Вручную администратором",
+  nightly: "Ночной обмен",
+};
 
 function resolveErrorCode(row: JobRow): string | null {
   return row.error_code ?? row.result?.errorCode ?? null;
@@ -127,21 +141,28 @@ export function mapJobRowToDto(
     dataPreserved: dataPreserved(phase, errorCode),
     errorCode,
     requestedByUserId: row.requested_by_user_id,
+    jobSource: row.job_source,
+    jobSourceLabel: JOB_SOURCE_LABELS[row.job_source],
+    exportBatchId: row.result?.exportBatchId ?? null,
   };
 }
+
+const JOB_ROW_SELECT = `
+  id::text,
+  status,
+  requested_at,
+  started_at,
+  finished_at,
+  result,
+  error_code,
+  requested_by_user_id::text,
+  job_source
+`;
 
 async function queryActiveRegularUpdateJob(client: PoolClient): Promise<JobRow | null> {
   const result = await client.query<JobRow>(
     `
-      SELECT
-        id::text,
-        status,
-        requested_at,
-        started_at,
-        finished_at,
-        result,
-        error_code,
-        requested_by_user_id::text
+      SELECT ${JOB_ROW_SELECT}
       FROM onec_import_jobs
       WHERE kind = $1
         AND (
@@ -167,15 +188,7 @@ export async function loadLatestRegularUpdateJob(): Promise<JobRow | null> {
     await finalizeStaleRegularUpdateJobs(client);
     const result = await client.query<JobRow>(
       `
-        SELECT
-          id::text,
-          status,
-          requested_at,
-          started_at,
-          finished_at,
-          result,
-          error_code,
-          requested_by_user_id::text
+        SELECT ${JOB_ROW_SELECT}
         FROM onec_import_jobs
         WHERE kind = $1
         ORDER BY requested_at DESC, id DESC
@@ -264,9 +277,73 @@ export async function loadLastSuccessfulUpdateAt(): Promise<Date | null> {
   return run.rows[0]?.finished_at ?? null;
 }
 
-export async function tryStartRegularUpdateJob(
-  requestedByUserId: string,
+async function enqueueRegularUpdateJobOnClient(
+  client: PoolClient,
+  input: EnqueueRegularUpdateJobInput,
 ): Promise<StartRegularUpdateJobResult> {
+  await client.query("SELECT pg_advisory_xact_lock($1)", [REGULAR_UPDATE_ADMIN_LOCK]);
+  await finalizeStaleRegularUpdateJobs(client);
+
+  const active = await queryActiveRegularUpdateJob(client);
+  if (active) {
+    return {
+      ok: false,
+      code: "UPDATE_ALREADY_RUNNING",
+      message: "Обновление из 1С уже поставлено в очередь или выполняется.",
+      existingJobId: active.id,
+    };
+  }
+
+  if ((await countRunningImportRuns(client)) > 0) {
+    return {
+      ok: false,
+      code: "IMPORT_RUNNING",
+      message: "Другой импорт уже выполняется.",
+    };
+  }
+
+  if (await isExchangeApplyBlocked(client)) {
+    return {
+      ok: false,
+      code: "APPLY_BLOCKED",
+      message: "Импорт временно заблокирован до разрешения предыдущей неопределённой операции.",
+    };
+  }
+
+  const requestedByUserId =
+    input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN ? input.requestedByUserId : null;
+
+  const inserted = await client.query<{ id: string }>(
+    `
+      INSERT INTO onec_import_jobs (
+        kind,
+        mode,
+        status,
+        expires_at,
+        requested_by_user_id,
+        job_source
+      )
+      VALUES ($1, 'apply', 'pending', NOW() + INTERVAL '2 hours', $2::uuid, $3)
+      RETURNING id::text
+    `,
+    [REGULAR_UPDATE_JOB_KIND, requestedByUserId, input.jobSource],
+  );
+  const jobId = inserted.rows[0]?.id;
+  if (!jobId) {
+    throw new Error("JOB_INSERT_FAILED");
+  }
+  return { ok: true, jobId };
+}
+
+/** Atomic enqueue for admin manual or nightly scheduler; optional client joins caller transaction. */
+export async function tryEnqueueRegularUpdateJob(
+  input: EnqueueRegularUpdateJobInput,
+  existingClient?: PoolClient,
+): Promise<StartRegularUpdateJobResult> {
+  if (existingClient) {
+    return enqueueRegularUpdateJobOnClient(existingClient, input);
+  }
+
   const pool = getPool();
   if (!pool) {
     throw new Error("DATABASE_UNAVAILABLE");
@@ -275,62 +352,22 @@ export async function tryStartRegularUpdateJob(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock($1)", [REGULAR_UPDATE_ADMIN_LOCK]);
-    await finalizeStaleRegularUpdateJobs(client);
-
-    const active = await queryActiveRegularUpdateJob(client);
-    if (active) {
-      await client.query("COMMIT");
-      return {
-        ok: false,
-        code: "UPDATE_ALREADY_RUNNING",
-        message: "Обновление из 1С уже поставлено в очередь или выполняется.",
-        existingJobId: active.id,
-      };
-    }
-
-    if ((await countRunningImportRuns(client)) > 0) {
-      await client.query("COMMIT");
-      return {
-        ok: false,
-        code: "IMPORT_RUNNING",
-        message: "Другой импорт уже выполняется.",
-      };
-    }
-
-    if (await isExchangeApplyBlocked(client)) {
-      await client.query("COMMIT");
-      return {
-        ok: false,
-        code: "APPLY_BLOCKED",
-        message: "Импорт временно заблокирован до разрешения предыдущей неопределённой операции.",
-      };
-    }
-
-    const inserted = await client.query<{ id: string }>(
-      `
-        INSERT INTO onec_import_jobs (
-          kind,
-          mode,
-          status,
-          expires_at,
-          requested_by_user_id
-        )
-        VALUES ($1, 'apply', 'pending', NOW() + INTERVAL '2 hours', $2::uuid)
-        RETURNING id::text
-      `,
-      [REGULAR_UPDATE_JOB_KIND, requestedByUserId],
-    );
-    const jobId = inserted.rows[0]?.id;
-    if (!jobId) {
-      throw new Error("JOB_INSERT_FAILED");
-    }
+    const result = await enqueueRegularUpdateJobOnClient(client, input);
     await client.query("COMMIT");
-    return { ok: true, jobId };
+    return result;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
   } finally {
     client.release();
   }
+}
+
+export async function tryStartRegularUpdateJob(
+  requestedByUserId: string,
+): Promise<StartRegularUpdateJobResult> {
+  return tryEnqueueRegularUpdateJob({
+    jobSource: REGULAR_UPDATE_JOB_SOURCE_ADMIN,
+    requestedByUserId,
+  });
 }

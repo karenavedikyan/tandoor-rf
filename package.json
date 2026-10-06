@@ -25,6 +25,8 @@
     "onec-scheduled-exchange:local": "node --env-file=.env dist/cli/onec-scheduled-exchange.js",
     "onec-regular-update": "node dist/cli/onec-regular-update.js",
     "onec-regular-update:local": "node --env-file=.env dist/cli/onec-regular-update.js",
+    "onec-nightly-exchange-tick": "node dist/cli/onec-nightly-exchange-tick.js",
+    "onec-nightly-exchange-tick:local": "node --env-file=.env dist/cli/onec-nightly-exchange-tick.js",
     "onec-catalog-import": "node dist/cli/onec-catalog-import.js",
     "onec-catalog-import:local": "node --env-file=.env dist/cli/onec-catalog-import.js",
     "onec-catalog-image-sync": "node dist/cli/onec-catalog-image-sync.js",

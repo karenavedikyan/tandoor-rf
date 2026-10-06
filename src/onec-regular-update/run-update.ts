@@ -7,6 +7,7 @@ import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { PLAIN_FTP_TRANSPORT_WARNING } from "../onec-clients/sanitize";
 import { loadRegularUpdateConfig, type RegularUpdateConfig } from "./config";
 import { parseRegularUpdateCliArgs, REGULAR_UPDATE_CLI_ERRORS } from "./cli-args";
+import type { ImportTriggerSource } from "../onec-clients/apply";
 import type { RegularUpdateResult } from "./types";
 import {
   loadVerifiedExportManifest,
@@ -64,6 +65,7 @@ export type RunRegularUpdateOptions = {
   applyTestHooks?: ApplyTestHooks;
   /** Admin regular-update job id; validated under import lock before writes. */
   operatorImportJobId?: string;
+  importTriggerSource?: Extract<ImportTriggerSource, "regular_update" | "regular_update_nightly">;
 };
 
 export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): Promise<RegularUpdateResult> {
@@ -233,7 +235,7 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
   const applied = await applyClientsImport({
     databaseUrl,
     payload: clientsPayload,
-    triggerSource: "regular_update",
+    triggerSource: options.importTriggerSource ?? "regular_update",
     expectedVerificationFingerprint: cliOptions.expectedFingerprint!,
     employeeRosterSourceSha256: clientsPayload.employeeRosterSourceSha256 ?? null,
     wholesaleEmployeeRoster: roster,

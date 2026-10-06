@@ -41,7 +41,12 @@ import { assertOperatorImportJobRunnable } from "./import-job-guard";
 import type { WholesaleEmployeeRoster } from "./employee-roster";
 import { upsertWholesaleEmployeeRoster } from "./roster-upsert";
 
-export type ImportTriggerSource = "manual" | "scheduled" | "operator_job" | "regular_update";
+export type ImportTriggerSource =
+  | "manual"
+  | "scheduled"
+  | "operator_job"
+  | "regular_update"
+  | "regular_update_nightly";
 
 export const DB_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -895,7 +900,10 @@ export async function applyClientsImport(options: {
           code: "STALE_RUNNING_IMPORT",
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
-      } else if (options.triggerSource === "regular_update" && options.wholesaleEmployeeRoster) {
+      } else if (
+        (options.triggerSource === "regular_update" || options.triggerSource === "regular_update_nightly") &&
+        options.wholesaleEmployeeRoster
+      ) {
         const { runRegularUpdateApplyGate } = await import("../onec-regular-update/regular-update-apply-gate");
         const gate = await runRegularUpdateApplyGate(managed.client, {
           payload: options.payload,

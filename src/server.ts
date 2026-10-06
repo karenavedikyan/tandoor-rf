@@ -7,6 +7,7 @@ import { checkReadiness } from "./db/readiness";
 import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
 import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
+import { startNightlyExchangeScheduler } from "./onec-nightly-exchange/scheduler";
 import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfProtection } from "./middleware/csrf";
@@ -302,6 +303,7 @@ export function startServer(): ReturnType<express.Application["listen"]> {
       const diagnosticStatus = await runOneDiagnosticJob(pool);
       if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
       await drainPendingImportJobs();
+      startNightlyExchangeScheduler(process.env);
     }).catch(() => console.error("1C background workers unavailable"));
   });
 
