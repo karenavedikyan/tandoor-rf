@@ -189,8 +189,13 @@
     return rolePresentation && rolePresentation.businessRole === "rop";
   }
 
-  function isDirectorDesignSession() {
-    return rolePresentation && rolePresentation.businessRole === "director";
+  function usesDirectorLayout() {
+    return Boolean(
+      rolePresentation &&
+        (rolePresentation.directorLayout === true ||
+          rolePresentation.businessRole === "director" ||
+          rolePresentation.businessRole === "admin"),
+    );
   }
 
   function portfolioDesignConfig(presentation, state) {
@@ -203,7 +208,29 @@
       }
       return PORTFOLIO_DESIGN.rop;
     }
+    if (
+      presentation.directorLayout === true ||
+      presentation.businessRole === "director" ||
+      presentation.businessRole === "admin"
+    ) {
+      return PORTFOLIO_DESIGN.director;
+    }
     return PORTFOLIO_DESIGN[presentation.businessRole] || null;
+  }
+
+  function cardUserForDisplay(user) {
+    var preview = shell.getPreviewState();
+    if (
+      rolePresentation &&
+      rolePresentation.businessRole === "admin" &&
+      (!preview || !preview.active)
+    ) {
+      var actor = shell.getActorUser();
+      if (actor) {
+        return actor;
+      }
+    }
+    return user;
   }
 
   function readStateFromUrl() {
@@ -444,7 +471,7 @@
     var isManager = presentation && presentation.businessRole === "manager";
     var isRegional = presentation && presentation.businessRole === "regional_manager";
     var isRop = isRopDesignSession() && (viewState.view || "all") === "teams";
-    var isDirector = isDirectorDesignSession();
+    var isDirector = usesDirectorLayout();
     document.body.classList.toggle("clients-role-manager", Boolean(isManager));
     document.body.classList.toggle("clients-role-regional", Boolean(isRegional));
     document.body.classList.toggle("clients-role-rop", Boolean(isRop));
@@ -471,7 +498,7 @@
       incompleteStatsStripEl.classList.toggle("clients-hidden", !isDirector);
     }
     if (config) {
-      renderEmployeeCard(user);
+      renderEmployeeCard(cardUserForDisplay(user));
       if (employeeScopeValueEl) {
         employeeScopeValueEl.textContent = config.scopeValue;
       }
@@ -542,7 +569,7 @@
   }
 
   function loadDirectorStats() {
-    if (!isDirectorDesignSession()) {
+    if (!usesDirectorLayout()) {
       return Promise.resolve();
     }
     var baseParams = { view: "all", page: "1", pageSize: "1" };
@@ -601,7 +628,7 @@
   }
 
   function mountDirectorStatLinks() {
-    if (!isDirectorDesignSession()) {
+    if (!usesDirectorLayout()) {
       return;
     }
     [statClientsEl, statOutletsEl, statNoOutletsEl, statIncompleteClientsEl, statIncompleteOutletsEl].forEach(
@@ -666,7 +693,7 @@
     if (!config) {
       return Promise.resolve();
     }
-    if (isDirectorDesignSession()) {
+    if (usesDirectorLayout()) {
       return loadDirectorStats();
     }
     if (isRopDesignSession()) {
@@ -798,7 +825,7 @@
       state.view === "teams" &&
       (logic.isBranchPortfolioList(state) || logic.hasResponsibleSelection(state));
     var isDirectorList =
-      isDirectorDesignSession() &&
+      usesDirectorLayout() &&
       state.view === "teams" &&
       (logic.isBranchPortfolioList(state) || logic.hasResponsibleSelection(state));
     if ((!isPortfolioRole && !isRopList && !isDirectorList) || (isPortfolioRole && state.view !== "all")) {
@@ -820,13 +847,13 @@
       resultsTitleEl.classList.remove("clients-hidden");
       return;
     }
-    if (isDirectorDesignSession() && state.view === "all") {
+    if (usesDirectorLayout() && state.view === "all") {
       resultsTitleEl.textContent =
         entity === "outlets" ? "Доступные торговые точки" : "Все клиенты";
       resultsTitleEl.classList.remove("clients-hidden");
       return;
     }
-    if (isDirectorDesignSession() && state.view === "completeness") {
+    if (usesDirectorLayout() && state.view === "completeness") {
       resultsTitleEl.textContent = "Незаполненные назначения";
       resultsTitleEl.classList.remove("clients-hidden");
       return;
@@ -1482,7 +1509,7 @@
       viewTeamsTabEl.textContent = "По командам";
     }
     if (viewReviewTab) {
-      viewReviewTab.textContent = isDirectorDesignSession() ? "Ревизии" : "Требуют проверки";
+      viewReviewTab.textContent = usesDirectorLayout() ? "Ревизии" : "Требуют проверки";
     }
   }
 
@@ -1549,7 +1576,7 @@
     var isRopTeamHome =
       isRopDesignSession() && isTeams && !branchList && !responsibleList && Boolean(state.ropEmployee);
     var isDirectorTeamsSurface =
-      isDirectorDesignSession() && isTeams && !branchList && !responsibleList;
+      usesDirectorLayout() && isTeams && !branchList && !responsibleList;
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
@@ -1558,7 +1585,7 @@
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
-    if (isDirectorDesignSession()) {
+    if (usesDirectorLayout()) {
       loadDirectorStats();
       mountDirectorStatLinks();
     } else if (isRopDesignSession() && isTeams) {
@@ -1577,9 +1604,9 @@
     var responsibleList = logic.hasResponsibleSelection(state);
     var collapseMobileFilters =
       ((role === "manager" || role === "regional_manager") && (state.view || "all") === "all") ||
-      (role === "director" && (state.view || "all") === "all") ||
+      ((role === "director" || role === "admin") && (state.view || "all") === "all") ||
       (role === "rop" && (state.view || "all") === "teams" && (branchList || responsibleList)) ||
-      (role === "director" &&
+      ((role === "director" || role === "admin") &&
         (state.view || "all") === "teams" &&
         (branchList || responsibleList));
     document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
@@ -1606,7 +1633,7 @@
     var parts = [];
     var showBackToTeam = false;
     if (state.view === "teams") {
-      if (isDirectorDesignSession()) {
+      if (usesDirectorLayout()) {
         var directorRootLabel = "Все команды";
         var directorRootHref = "/clients?view=teams";
         if (logic.hasResponsibleSelection(state)) {
@@ -1694,7 +1721,7 @@
         return '<a class="clients-link" href="' + part.href + '">' + shell.escapeHtml(part.label) + "</a>";
       })
       .join(' <span aria-hidden="true">›</span> ');
-    var backLabel = isDirectorDesignSession() ? "К командам" : "К команде";
+    var backLabel = usesDirectorLayout() ? "К командам" : "К команде";
     var backHtml = showBackToTeam
       ? '<button type="button" class="clients-breadcrumbs__back workspace-button workspace-button--ghost" id="clients-breadcrumbs-back">' +
         shell.escapeHtml(backLabel) +
@@ -1708,7 +1735,7 @@
     document.getElementById("clients-breadcrumbs-back")?.addEventListener("click", function () {
       navigateState({
         view: "teams",
-        ropEmployee: isDirectorDesignSession() ? "" : state.ropEmployee || "",
+        ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
         rop: "",
         manager: "",
         regionalManager: "",
@@ -1946,7 +1973,7 @@
         var portfolio = btn.getAttribute("data-branch-portfolio") || "clients";
         var card = btn.closest("[data-rop-employee]");
         var cardRop = card ? card.getAttribute("data-rop-employee") : ropEmployeeGuid;
-        if (isDirectorDesignSession() && cardRop) {
+        if (usesDirectorLayout() && cardRop) {
           navigateDirectorBranchPortfolio(cardRop, portfolio);
           return;
         }
@@ -1975,7 +2002,7 @@
         if (!match) {
           return;
         }
-        if (isDirectorDesignSession() && cardRop) {
+        if (usesDirectorLayout() && cardRop) {
           navigateDirectorResponsible(cardRop, match, kind, entityMode);
           return;
         }
@@ -2045,17 +2072,17 @@
       teamsPanelEl.innerHTML = "";
       return;
     }
-    if ((isRopDesignSession() || isDirectorDesignSession()) && state.ropEmployee) {
+    if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee) {
       renderRopDesignTeamPanel(state);
       return;
     }
-    if (isDirectorDesignSession() && !state.ropEmployee) {
+    if (usesDirectorLayout() && !state.ropEmployee) {
       renderDirectorTeamsOverview(state);
       return;
     }
     if (!state.ropEmployee) {
       var directorHtml = "";
-      if (teamContext.director && !isDirectorDesignSession()) {
+      if (teamContext.director && !usesDirectorLayout()) {
         directorHtml =
           '<div class="clients-team-director">' +
           "<strong>" +
@@ -2462,7 +2489,7 @@
         api.apiRequest("/api/clients/org-structure").then(function (result) {
           if (result.response.status === 200 && result.data) {
             syncTeamContextFromOrgStructure(result.data);
-            if (isDirectorDesignSession()) {
+            if (usesDirectorLayout()) {
               var rops = result.data.rops || [];
               return Promise.all(
                 rops.map(function (rop) {
@@ -2703,7 +2730,7 @@
         renderTeamsPanel(state);
         if (
           (isRopDesignSession() && state.ropEmployee) ||
-          (isDirectorDesignSession() && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state))
+          (usesDirectorLayout() && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state))
         ) {
           resultsStateEl.classList.add("clients-hidden");
           resultCountEl.textContent = "";
@@ -3109,9 +3136,12 @@
 
   mountFilterComboboxes();
 
-  shell.mountShell("clients");
-  shell.ensureClientsReadAccess(function (user, reason) {
+  shell.mountAuthenticatedShell("clients", function (user, reason) {
     if (reason === "forbidden") {
+      showAccessDenied();
+      return;
+    }
+    if (!user || !shell.canReadClients(user)) {
       showAccessDenied();
       return;
     }

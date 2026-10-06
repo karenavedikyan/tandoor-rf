@@ -27,6 +27,8 @@ export type RolePresentation = {
   showManagerTeamFilter: boolean;
   showTeamNavigation: boolean;
   reviewReadOnly: boolean;
+  /** Director-style teams overview, stats strip, and completeness navigation. */
+  directorLayout?: boolean;
   cardFocusHints: readonly string[];
 };
 
@@ -178,17 +180,18 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         showManagerTeamFilter: true,
         showTeamNavigation: true,
         reviewReadOnly: true,
+        directorLayout: true,
         cardFocusHints: DIRECTOR_FOCUS,
       };
 
     case "admin":
       return {
         businessRole,
-        pageTitle: "Клиенты",
+        pageTitle: "Вся клиентская база",
         workHubTitle: null,
         workHubPrimaryActionLabel: null,
-        clientsHref: "/clients?view=all",
-        defaultView: "all",
+        clientsHref: "/clients?view=teams",
+        defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
@@ -196,6 +199,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         showManagerTeamFilter: true,
         showTeamNavigation: true,
         reviewReadOnly: false,
+        directorLayout: true,
         cardFocusHints: DIRECTOR_FOCUS,
       };
 
