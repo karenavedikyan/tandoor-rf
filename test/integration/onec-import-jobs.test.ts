@@ -8,6 +8,7 @@ import {
   sampleClient,
 } from "../helpers/onec-clients-fixtures";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
+import { REGULAR_UPDATE_JOB_KIND } from "../../src/onec-import/constants";
 import { runOneImportJob } from "../../src/onec-import/worker";
 
 const env = {
@@ -176,6 +177,20 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     releaseFtp();
     assert.equal(await workerPromise, "failed");
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+  });
+
+  it("kinds filter skips legacy clients_snapshot jobs for automatic worker", async () => {
+    await pool.query(`
+      INSERT INTO onec_import_jobs (kind, mode, expires_at)
+      VALUES ('clients_snapshot', 'dry_run', NOW() + INTERVAL '1 hour')
+    `);
+    assert.equal(
+      await runOneImportJob(pool, env, reader, undefined, { kinds: [REGULAR_UPDATE_JOB_KIND] }),
+      "idle",
+    );
+    assert.equal(reads, 0);
+    const legacy = (await pool.query("SELECT status FROM onec_import_jobs LIMIT 1")).rows[0];
+    assert.equal(legacy.status, "pending");
   });
 
   it("invalid FTP config fails without reading", async () => {

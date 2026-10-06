@@ -459,6 +459,164 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(afterCount.rows[0]?.count, beforeCount.rows[0]?.count);
   });
 
+  it("blocks retry while running worker is paused past expiry and completes original job", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([
+      sampleClient({ name_client: "Recovered Apply" }),
+      sampleClientTwo(),
+    ]);
+    let releaseImportLock!: () => void;
+    const pausedAtLock = new Promise<void>((resolve) => {
+      releaseImportLock = resolve;
+    });
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)), {
+      beforeImportLock: async () => {
+        await pausedAtLock;
+      },
+    });
+
+    const started = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(started.status, 202);
+    const jobId = started.body.jobId as string;
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const row = await pool.query<{ status: string }>(
+        "SELECT status FROM onec_import_jobs WHERE id = $1::uuid",
+        [jobId],
+      );
+      if (row.rows[0]?.status === "running") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    await pool.query(
+      `
+        UPDATE onec_import_jobs
+        SET
+          requested_at = NOW() - INTERVAL '3 hours',
+          expires_at = NOW() - INTERVAL '1 hour'
+        WHERE id = $1::uuid
+      `,
+      [jobId],
+    );
+
+    const statusWhilePaused = await request(app)
+      .get("/api/admin/clients/onec-update/status")
+      .set(authHeaders(adminCookie));
+    assert.equal(statusWhilePaused.body.job.phase, "running");
+    assert.equal(statusWhilePaused.body.canStart, false);
+
+    const retry = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(retry.status, 409);
+
+    releaseImportLock();
+    const settled = await waitForAdminOnecUpdateSettled(app, adminCookie);
+    assert.equal(settled.body.job.phase, "completed");
+    assert.equal(settled.body.job.id, jobId);
+
+    const jobCount = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM onec_import_jobs WHERE kind = 'regular_update_bundle'`,
+    );
+    assert.equal(jobCount.rows[0]?.count, "1");
+
+    const clientRow = await pool.query<{ name_client: string }>(
+      "SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid",
+      [sampleClient().guid_client],
+    );
+    assert.equal(clientRow.rows[0]?.name_client, "Recovered Apply");
+  });
+
+  it("reconciles running job from successful import run after commit", async () => {
+    const app = await loadApp();
+    const runInsert = await pool.query<{ id: string }>(
+      `
+        INSERT INTO onec_client_import_runs (status, mode, trigger_source, finished_at)
+        VALUES ('success', 'apply', 'regular_update', NOW())
+        RETURNING id::text
+      `,
+    );
+    const importRunId = runInsert.rows[0]!.id;
+    const jobInsert = await pool.query<{ id: string }>(
+      `
+        INSERT INTO onec_import_jobs (
+          kind,
+          mode,
+          status,
+          requested_at,
+          started_at,
+          expires_at,
+          requested_by_user_id,
+          import_run_id
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'running',
+          NOW() - INTERVAL '3 hours',
+          NOW() - INTERVAL '2 hours',
+          NOW() - INTERVAL '1 hour',
+          $1::uuid,
+          $2::uuid
+        )
+        RETURNING id::text
+      `,
+      [adminUserId, importRunId],
+    );
+    const jobId = jobInsert.rows[0]!.id;
+
+    const status = await request(app)
+      .get("/api/admin/clients/onec-update/status")
+      .set(authHeaders(adminCookie));
+    assert.equal(status.body.job.id, jobId);
+    assert.equal(status.body.job.phase, "completed");
+
+    const jobRow = await pool.query<{ status: string }>(
+      "SELECT status FROM onec_import_jobs WHERE id = $1::uuid",
+      [jobId],
+    );
+    assert.equal(jobRow.rows[0]?.status, "success");
+  });
+
+  it("POST kick completes regular_update_bundle but leaves legacy clients_snapshot pending", async () => {
+    const app = await loadApp();
+    await pool.query(`
+      INSERT INTO onec_import_jobs (kind, mode, requested_at, expires_at)
+      VALUES ('clients_snapshot', 'dry_run', NOW() - INTERVAL '5 minutes', NOW() + INTERVAL '1 hour')
+    `);
+
+    const clientsBytes = buildClientsFileBytes([sampleClient({ name_client: "Admin Regular Only" })]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A)));
+
+    const started = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(started.status, 202);
+
+    await waitForAdminOnecUpdateSettled(app, adminCookie);
+
+    const jobs = await pool.query<{ kind: string; status: string }>(
+      `SELECT kind, status FROM onec_import_jobs ORDER BY kind, requested_at, id`,
+    );
+    const legacy = jobs.rows.find((row) => row.kind === "clients_snapshot");
+    const regular = jobs.rows.find((row) => row.kind === "regular_update_bundle");
+    assert.equal(legacy?.status, "pending");
+    assert.equal(regular?.status, "success");
+
+    const clientRow = await pool.query<{ name_client: string }>(
+      "SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid",
+      [sampleClient().guid_client],
+    );
+    assert.equal(clientRow.rows[0]?.name_client, "Admin Regular Only");
+  });
+
   it("reports commit uncertainty without promising preserved data", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);

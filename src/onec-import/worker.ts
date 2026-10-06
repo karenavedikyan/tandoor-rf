@@ -37,6 +37,10 @@ export type ImportJobWorkerTestHooks = {
   regularUpdateExecution?: RegularUpdateJobExecutionOptions;
 };
 
+export type ImportJobWorkerOptions = {
+  kinds?: readonly (typeof IMPORT_JOB_KIND | typeof REGULAR_UPDATE_JOB_KIND)[];
+};
+
 function isTrustedFtpConfig(env: NodeJS.ProcessEnv): boolean {
   const config = loadOnecFtpConfig(env);
   if (!config.ok) {
@@ -157,6 +161,7 @@ async function runRegularUpdateBundleJob(
 ): Promise<{ ok: boolean; result: RegularUpdateResult; importRunId: string | null; errorCode: string }> {
   const updateResult = await executeRegularUpdateBundleJob({
     env,
+    operatorImportJobId: job.id,
     ...testHooks?.regularUpdateExecution,
   });
   const redacted = redactRegularUpdateResult(updateResult, env);
@@ -178,17 +183,20 @@ export async function runOneImportJob(
   env: NodeJS.ProcessEnv = process.env,
   reader: FtpReader = defaultFtpReader,
   testHooks?: ImportJobWorkerTestHooks,
+  workerOptions?: ImportJobWorkerOptions,
 ): Promise<"idle" | "success" | "failed"> {
+  const kinds = workerOptions?.kinds ?? [IMPORT_JOB_KIND, REGULAR_UPDATE_JOB_KIND];
   const db = await pool.connect();
   let jobId: string | undefined;
   try {
-    const claimed = await db.query<ImportJobRow>(`
+    const claimed = await db.query<ImportJobRow>(
+      `
       UPDATE onec_import_jobs
       SET status = 'running', started_at = NOW()
       WHERE id = (
         SELECT id
         FROM onec_import_jobs
-        WHERE kind IN ($1, $2)
+        WHERE kind = ANY($1::text[])
           AND status = 'pending'
           AND expires_at > NOW()
         ORDER BY requested_at, id
@@ -203,7 +211,9 @@ export async function runOneImportJob(
         holding_link_validation_policy,
         employee_roster_source_sha256,
         wholesale_composition_mode
-    `, [IMPORT_JOB_KIND, REGULAR_UPDATE_JOB_KIND]);
+    `,
+      [kinds],
+    );
     const job = claimed.rows[0];
     jobId = job?.id;
     if (!job) {

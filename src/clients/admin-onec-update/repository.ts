@@ -43,9 +43,6 @@ function mapResultMessage(result: RegularUpdateResult | null, errorCode: string 
   if (errorCode === "JOB_EXPIRED") {
     return "Срок ожидания задания обновления из 1С истёк. Можно запустить обновление снова.";
   }
-  if (errorCode === "JOB_WORKER_LOST") {
-    return "Задание обновления из 1С не завершилось в срок. Повторный запуск возможен после проверки состояния базы.";
-  }
   if (result?.message) {
     return result.message;
   }
@@ -147,8 +144,10 @@ async function queryActiveRegularUpdateJob(client: PoolClient): Promise<JobRow |
         requested_by_user_id::text
       FROM onec_import_jobs
       WHERE kind = $1
-        AND status IN ('pending', 'running')
-        AND expires_at > NOW()
+        AND (
+          (status = 'pending' AND expires_at > NOW())
+          OR status = 'running'
+        )
       ORDER BY requested_at DESC, id DESC
       LIMIT 1
     `,
