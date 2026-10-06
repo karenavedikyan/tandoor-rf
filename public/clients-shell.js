@@ -521,7 +521,7 @@
       return;
     }
     var existing = document.getElementById("workspace-preview-banner");
-    if (!previewState || !previewState.active || !previewState.targetUser) {
+    if (!previewState || !previewState.active) {
       if (existing) {
         existing.remove();
       }
@@ -529,17 +529,39 @@
       return;
     }
 
-    var roleLabel =
-      PREVIEW_ROLE_LABELS[previewState.targetUser.role] || previewState.targetUser.role || "";
-    var bannerHtml =
-      '<div class="clients-preview-banner" role="status">' +
-      '<span class="clients-preview-banner__text">Просмотр от имени: ' +
-      escapeHtml(previewState.targetUser.fullName) +
-      " · " +
-      escapeHtml(roleLabel) +
-      ". Изменения запрещены</span>" +
-      '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
-      "</div>";
+    var bannerHtml = "";
+    if (previewState.error) {
+      var errorLabel = previewState.targetUser
+        ? escapeHtml(previewState.targetUser.fullName)
+        : "сотрудника";
+      bannerHtml =
+        '<div class="clients-preview-banner clients-preview-banner--error" role="alert">' +
+        '<span class="clients-preview-banner__text">Просмотр от имени: ' +
+        errorLabel +
+        ". " +
+        escapeHtml(previewState.error.message || "Просмотр недоступен.") +
+        "</span>" +
+        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
+        "</div>";
+    } else if (previewState.targetUser) {
+      var roleLabel =
+        PREVIEW_ROLE_LABELS[previewState.targetUser.role] || previewState.targetUser.role || "";
+      bannerHtml =
+        '<div class="clients-preview-banner" role="status">' +
+        '<span class="clients-preview-banner__text">Просмотр от имени: ' +
+        escapeHtml(previewState.targetUser.fullName) +
+        " · " +
+        escapeHtml(roleLabel) +
+        ". Изменения запрещены</span>" +
+        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
+        "</div>";
+    } else {
+      if (existing) {
+        existing.remove();
+      }
+      document.body.classList.remove("clients-preview-active");
+      return;
+    }
 
     if (!existing) {
       existing = document.createElement("div");

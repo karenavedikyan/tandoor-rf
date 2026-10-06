@@ -5,7 +5,7 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { loadAccessContext } from "./context";
 import { canReadClientsApi } from "./policy";
 import { buildPreviewAccessContext } from "./preview";
-import { getSessionPreviewUserId, setSessionPreviewUser } from "./preview-service";
+import { getSessionPreviewUserId } from "./preview-service";
 import type { AccessContext } from "./types";
 
 export type AccessRequest = AuthenticatedRequest & {
@@ -36,9 +36,6 @@ export async function attachAccessContext(
         loadAccessContext,
       );
       if (!previewResult.ok) {
-        if (previewResult.clearPreview && req.sessionId) {
-          await setSessionPreviewUser(req.sessionId, null);
-        }
         setNoStore(res);
         res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, previewResult.message));
         return;

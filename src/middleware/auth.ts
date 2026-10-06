@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { parseSessionToken } from "../auth/cookie";
 import { resolveSessionUser } from "../auth/session";
+import { enforcePreviewBusinessPolicy } from "../access/preview-policy";
 import type { UserDto } from "../shared/user";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { setNoStore } from "../http/no-store";
@@ -36,6 +37,11 @@ export async function requireAuth(
 
     req.authUser = session.user;
     req.sessionId = session.sessionId;
+
+    if (await enforcePreviewBusinessPolicy(req, res)) {
+      return;
+    }
+
     next();
   } catch {
     setNoStore(res);

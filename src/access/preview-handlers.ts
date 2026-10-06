@@ -36,14 +36,22 @@ export async function previewStartHandler(req: AuthenticatedRequest, res: Respon
     return;
   }
 
-  const result = await startEmployeePreview({
-    sessionId: req.sessionId,
-    actorUserId: req.authUser!.id,
-    targetUserId,
-  });
-  if (!result.ok) {
+  try {
+    const result = await startEmployeePreview({
+      sessionId: req.sessionId,
+      actorUserId: req.authUser!.id,
+      targetUserId,
+    });
+    if (!result.ok) {
+      setNoStore(res);
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, result.message));
+      return;
+    }
+  } catch {
     setNoStore(res);
-    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, result.message));
+    res.status(503).json(
+      apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Не удалось включить режим просмотра."),
+    );
     return;
   }
 
@@ -58,10 +66,18 @@ export async function previewStopHandler(req: AuthenticatedRequest, res: Respons
     res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
     return;
   }
-  await stopEmployeePreview({
-    sessionId: req.sessionId,
-    actorUserId: req.authUser!.id,
-  });
+  try {
+    await stopEmployeePreview({
+      sessionId: req.sessionId,
+      actorUserId: req.authUser!.id,
+    });
+  } catch {
+    setNoStore(res);
+    res.status(503).json(
+      apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Не удалось выйти из режима просмотра."),
+    );
+    return;
+  }
   setNoStore(res);
   res.status(200).json({ ok: true, preview: { active: false } });
 }

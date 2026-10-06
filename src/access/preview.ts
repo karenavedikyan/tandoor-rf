@@ -18,11 +18,30 @@ export type PreviewTargetValidation =
       message: string;
     };
 
+export type PreviewErrorCode =
+  | "NOT_FOUND"
+  | "DISABLED"
+  | "INELIGIBLE_ROLE"
+  | "NO_LINK"
+  | "LINK_CONFLICT";
+
+export type PreviewErrorState = {
+  code: PreviewErrorCode;
+  message: string;
+};
+
 export type PreviewState =
   | {
       active: true;
       targetUser: UserDto;
       readOnly: true;
+      error?: undefined;
+    }
+  | {
+      active: true;
+      targetUser: UserDto | null;
+      readOnly: true;
+      error: PreviewErrorState;
     }
   | {
       active: false;
@@ -161,6 +180,28 @@ export async function searchPreviewCandidates(queryText: string, limit = 20) {
     }));
 }
 
+export async function loadPreviewTargetUserSnapshot(userId: string): Promise<UserDto | null> {
+  const userResult = await query<{
+    id: string;
+    email: string;
+    full_name: string;
+    phone: string | null;
+    role: string;
+    status: string;
+    last_login_at: Date | null;
+  }>(
+    `
+      SELECT id::text, email, full_name, phone, role, status, last_login_at
+      FROM users
+      WHERE id = $1::uuid
+      LIMIT 1
+    `,
+    [userId],
+  );
+  const row = userResult.rows[0];
+  return row ? toUserDto(row) : null;
+}
+
 export async function getSessionPreviewUserId(sessionId: string): Promise<string | null> {
   const result = await query<{ preview_user_id: string | null }>(
     `
@@ -195,8 +236,16 @@ export async function resolvePreviewState(sessionId: string | undefined): Promis
   }
   const validation = await validatePreviewTarget(previewUserId);
   if (!validation.ok) {
-    await setSessionPreviewUser(sessionId, null);
-    return { active: false };
+    const targetUser = await loadPreviewTargetUserSnapshot(previewUserId);
+    return {
+      active: true,
+      readOnly: true,
+      targetUser,
+      error: {
+        code: validation.code,
+        message: validation.message,
+      },
+    };
   }
   return {
     active: true,
@@ -211,21 +260,14 @@ export async function buildPreviewAccessContext(
   loadAccessContext: (userId: string, role?: UserRole) => Promise<AccessContext>,
 ): Promise<
   | { ok: true; context: AccessContext; preview: AccessPreviewMeta }
-  | { ok: false; message: string; clearPreview: boolean }
+  | { ok: false; message: string }
 > {
   const validation = await validatePreviewTarget(targetUserId);
   if (!validation.ok) {
-    return { ok: false, message: validation.message, clearPreview: true };
+    return { ok: false, message: validation.message };
   }
 
   const context = await loadAccessContext(targetUserId, validation.user.role);
-  if (!context.hasScopedClientAccess && !context.fullClientBase) {
-    return {
-      ok: false,
-      message: "У выбранного сотрудника нет доступа к разделу «Клиенты».",
-      clearPreview: true,
-    };
-  }
 
   const preview: AccessPreviewMeta = {
     active: true,

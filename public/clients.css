@@ -779,6 +779,12 @@
   line-height: 1.4;
 }
 
+.clients-preview-banner--error {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .clients-preview-banner__stop {
   flex-shrink: 0;
 }

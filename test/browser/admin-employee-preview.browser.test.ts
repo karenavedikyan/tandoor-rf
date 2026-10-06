@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { Pool } from "pg";
 import { chromium, type Browser, type Page } from "playwright";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
@@ -185,6 +186,51 @@ describe("admin employee preview browser", { concurrency: false }, () => {
         response.url().includes("/api/admin/access/preview/stop") && response.status() === 200,
     );
     await page.goto("/clients", { waitUntil: "networkidle" });
+    await page.click("#clients-preview-stop-btn");
+    await stopResponse;
+    await page.waitForURL(/\/admin\/access/, { timeout: 15000 });
+    assert.equal(await page.locator(".clients-preview-banner").count(), 0);
+
+    await context.close();
+    await stopServer();
+  });
+
+  it("admin preview: target error banner and explicit stop", async () => {
+    await seedDatabase();
+    await resetPoolForTests();
+    await startServer();
+
+    const context = await browser.newContext({ viewport: DESKTOP, baseURL: baseUrl });
+    const page = await context.newPage();
+    await login(page, "admin@example.com");
+
+    await page.goto("/admin/access", { waitUntil: "networkidle" });
+    await page.fill("#preview-search-input", "manager-a");
+    await page.click("#preview-search-btn");
+    await page.waitForSelector('[data-preview-user="' + managerUserId + '"]');
+    await page.click('[data-preview-user="' + managerUserId + '"]');
+    await page.waitForURL(/\/clients/, { timeout: 15000 });
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `UPDATE user_onec_employee_links SET revoked_at = NOW() WHERE user_id = $1::uuid AND revoked_at IS NULL`,
+      [managerUserId],
+    );
+    await pool.end();
+
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector(".clients-preview-banner--error");
+    assert.match(await page.locator(".clients-preview-banner--error").innerText(), /Manager A/);
+    assert.match(await page.locator(".clients-preview-banner--error").innerText(), /связ/i);
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "admin-employee-preview-error-banner.png"),
+      fullPage: true,
+    });
+
+    const stopResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/admin/access/preview/stop") && response.status() === 200,
+    );
     await page.click("#clients-preview-stop-btn");
     await stopResponse;
     await page.waitForURL(/\/admin\/access/, { timeout: 15000 });

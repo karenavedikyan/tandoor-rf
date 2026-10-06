@@ -50,6 +50,36 @@ async function login(email: string): Promise<string> {
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 }
 
+async function installPreviewAuditRejectTrigger(databaseUrl: string): Promise<void> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION reject_preview_audit_insert() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.entity_type = 'user_preview' THEN
+        RAISE EXCEPTION 'preview audit blocked for test';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS reject_preview_audit_insert ON access_audit_log;
+    CREATE TRIGGER reject_preview_audit_insert
+      BEFORE INSERT ON access_audit_log
+      FOR EACH ROW
+      EXECUTE FUNCTION reject_preview_audit_insert();
+  `);
+  await pool.end();
+}
+
+async function removePreviewAuditRejectTrigger(databaseUrl: string): Promise<void> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  await pool.query(`
+    DROP TRIGGER IF EXISTS reject_preview_audit_insert ON access_audit_log;
+    DROP FUNCTION IF EXISTS reject_preview_audit_insert();
+  `);
+  await pool.end();
+}
+
 describe("admin employee preview", { concurrency: false }, () => {
   let databaseUrl = "";
 
@@ -124,6 +154,7 @@ describe("admin employee preview", { concurrency: false }, () => {
   });
 
   after(async () => {
+    await removePreviewAuditRejectTrigger(databaseUrl).catch(() => undefined);
     await closePool();
   });
 
@@ -173,6 +204,17 @@ describe("admin employee preview", { concurrency: false }, () => {
       .set(authHeaders(adminCookie))
       .send({ reviewState: "in_progress", comment: "blocked" });
     assert.equal(write.status, 403);
+
+    const adminOverview = await request(app)
+      .get("/api/admin/access/overview")
+      .set(authHeaders(adminCookie));
+    assert.equal(adminOverview.status, 403);
+
+    const profilePatch = await request(app)
+      .patch("/api/profile/self")
+      .set(authHeaders(adminCookie))
+      .send({ fullName: "Admin Tampered" });
+    assert.equal(profilePatch.status, 403);
 
     const me = await request(app).get("/api/auth/me").set(authHeaders(adminCookie));
     assert.equal(me.body.user.role, "admin");
@@ -235,7 +277,7 @@ describe("admin employee preview", { concurrency: false }, () => {
     assert.equal(switched.body.total, 1);
   });
 
-  it("clears preview when target link is revoked", async () => {
+  it("keeps preview active with error when target link is revoked until explicit stop", async () => {
     const adminCookie = await login("admin@example.com");
     const app = await loadApp();
     const manager = (
@@ -256,12 +298,137 @@ describe("admin employee preview", { concurrency: false }, () => {
     );
     await pool.end();
 
-    const blocked = await request(app)
+    const firstBlocked = await request(app)
       .get("/api/clients?view=all&entity=clients&page=1&pageSize=50")
       .set(authHeaders(adminCookie));
-    assert.equal(blocked.status, 403);
+    assert.equal(firstBlocked.status, 403);
 
-    const preview = await request(app).get("/api/admin/access/preview").set(authHeaders(adminCookie));
+    const secondBlocked = await request(app)
+      .get("/api/clients?view=all&entity=clients&page=1&pageSize=50")
+      .set(authHeaders(adminCookie));
+    assert.equal(secondBlocked.status, 403);
+
+    const me = await request(app).get("/api/auth/me").set(authHeaders(adminCookie));
+    assert.equal(me.body.preview.active, true);
+    assert.equal(me.body.preview.error?.code, "NO_LINK");
+
+    const previewState = await request(app)
+      .get("/api/admin/access/preview")
+      .set(authHeaders(adminCookie));
+    assert.equal(previewState.body.preview.active, true);
+    assert.ok(previewState.body.preview.error);
+
+    const stillAdminScope = await request(app)
+      .get("/api/clients?view=all&entity=clients&page=1&pageSize=50")
+      .set(authHeaders(adminCookie));
+    assert.equal(stillAdminScope.status, 403);
+
+    await request(app)
+      .post("/api/admin/access/preview/stop")
+      .set(authHeaders(adminCookie))
+      .send({});
+
+    const restored = await request(app)
+      .get("/api/clients?view=all&entity=clients&page=1&pageSize=50")
+      .set(authHeaders(adminCookie));
+    assert.equal(restored.status, 200);
+    assert.ok(restored.body.total >= 2);
+  });
+
+  it("rolls back preview start when audit insert fails", async () => {
+    await installPreviewAuditRejectTrigger(databaseUrl);
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+    const manager = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=manager-a")
+        .set(authHeaders(adminCookie))
+    ).body.items[0];
+
+    const start = await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(authHeaders(adminCookie))
+      .send({ userId: manager.id });
+    assert.equal(start.status, 503);
+
+    const preview = await request(app)
+      .get("/api/admin/access/preview")
+      .set(authHeaders(adminCookie));
     assert.equal(preview.body.preview.active, false);
+
+    const adminList = await request(app)
+      .get("/api/clients?view=all&entity=clients&page=1&pageSize=50")
+      .set(authHeaders(adminCookie));
+    assert.equal(adminList.status, 200);
+    assert.ok(adminList.body.total >= 2);
+
+    await removePreviewAuditRejectTrigger(databaseUrl);
+  });
+
+  it("rolls back preview switch when audit insert fails", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+    const director = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=director")
+        .set(authHeaders(adminCookie))
+    ).body.items[0];
+    const manager = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=manager-a")
+        .set(authHeaders(adminCookie))
+    ).body.items[0];
+
+    await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(authHeaders(adminCookie))
+      .send({ userId: director.id });
+
+    await installPreviewAuditRejectTrigger(databaseUrl);
+
+    const switchAttempt = await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(authHeaders(adminCookie))
+      .send({ userId: manager.id });
+    assert.equal(switchAttempt.status, 503);
+
+    const preview = await request(app)
+      .get("/api/admin/access/preview")
+      .set(authHeaders(adminCookie));
+    assert.equal(preview.body.preview.active, true);
+    assert.equal(preview.body.preview.targetUser.email, "director@example.com");
+
+    await removePreviewAuditRejectTrigger(databaseUrl);
+  });
+
+  it("rolls back preview stop when audit insert fails", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+    const manager = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=manager-a")
+        .set(authHeaders(adminCookie))
+    ).body.items[0];
+
+    await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(authHeaders(adminCookie))
+      .send({ userId: manager.id });
+
+    await installPreviewAuditRejectTrigger(databaseUrl);
+
+    const stopAttempt = await request(app)
+      .post("/api/admin/access/preview/stop")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(stopAttempt.status, 503);
+
+    const preview = await request(app)
+      .get("/api/admin/access/preview")
+      .set(authHeaders(adminCookie));
+    assert.equal(preview.body.preview.active, true);
+    assert.equal(preview.body.preview.targetUser.email, "manager-a@example.com");
+
+    await removePreviewAuditRejectTrigger(databaseUrl);
   });
 });
