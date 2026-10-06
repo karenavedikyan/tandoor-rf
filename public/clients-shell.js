@@ -18,6 +18,15 @@
   var mobileTrapHandler = null;
   var mobileEscapeHandler = null;
   var resizeHandlerBound = false;
+  var previewState = { active: false };
+  var actorUser = null;
+
+  var PREVIEW_ROLE_LABELS = {
+    manager: "Менеджер",
+    regional_manager: "Региональный менеджер",
+    rop: "РОП",
+    director: "Директор",
+  };
 
   function escapeHtml(value) {
     return String(value)
@@ -481,6 +490,99 @@
     });
   }
 
+  function getPreviewState() {
+    return previewState;
+  }
+
+  function getEffectiveUser(user) {
+    if (previewState && previewState.active && previewState.targetUser) {
+      return previewState.targetUser;
+    }
+    return user;
+  }
+
+  function stopPreviewSession() {
+    if (!api) {
+      window.location.reload();
+      return Promise.resolve();
+    }
+    return api
+      .apiRequest("/api/admin/access/preview/stop", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось выйти из просмотра."));
+        }
+        window.location.href = "/admin/access";
+      });
+  }
+
+  function syncPreviewBanner() {
+    var frame = document.querySelector(".legacy-frame");
+    if (!frame) {
+      return;
+    }
+    var existing = document.getElementById("workspace-preview-banner");
+    if (!previewState || !previewState.active) {
+      if (existing) {
+        existing.remove();
+      }
+      document.body.classList.remove("clients-preview-active");
+      return;
+    }
+
+    var bannerHtml = "";
+    if (previewState.error) {
+      var errorLabel = previewState.targetUser
+        ? escapeHtml(previewState.targetUser.fullName)
+        : "сотрудника";
+      bannerHtml =
+        '<div class="clients-preview-banner clients-preview-banner--error" role="alert">' +
+        '<span class="clients-preview-banner__text">Просмотр от имени: ' +
+        errorLabel +
+        ". " +
+        escapeHtml(previewState.error.message || "Просмотр недоступен.") +
+        "</span>" +
+        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
+        "</div>";
+    } else if (previewState.targetUser) {
+      var roleLabel =
+        PREVIEW_ROLE_LABELS[previewState.targetUser.role] || previewState.targetUser.role || "";
+      bannerHtml =
+        '<div class="clients-preview-banner" role="status">' +
+        '<span class="clients-preview-banner__text">Просмотр от имени: ' +
+        escapeHtml(previewState.targetUser.fullName) +
+        " · " +
+        escapeHtml(roleLabel) +
+        ". Изменения запрещены</span>" +
+        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
+        "</div>";
+    } else {
+      if (existing) {
+        existing.remove();
+      }
+      document.body.classList.remove("clients-preview-active");
+      return;
+    }
+
+    if (!existing) {
+      existing = document.createElement("div");
+      existing.id = "workspace-preview-banner";
+      var topbar = document.getElementById("workspace-topbar");
+      if (topbar) {
+        topbar.insertAdjacentElement("afterend", existing);
+      } else {
+        frame.insertBefore(existing, frame.firstChild);
+      }
+    }
+    existing.innerHTML = bannerHtml;
+    document.body.classList.add("clients-preview-active");
+    document.getElementById("clients-preview-stop-btn")?.addEventListener("click", function () {
+      stopPreviewSession().catch(function (err) {
+        window.alert(err.message || "Не удалось выйти из просмотра.");
+      });
+    });
+  }
+
   function mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace) {
     var sidebarMount = document.getElementById("workspace-sidebar");
     var topbarMount = document.getElementById("workspace-topbar");
@@ -497,6 +599,7 @@
     bindThemeToggles();
     bindViewportSync();
     syncSidebarLayout();
+    syncPreviewBanner();
   }
 
   var ACCESS_WORKSPACE_ROLES = {
@@ -545,7 +648,10 @@
           onReady(null, "service");
           return;
         }
-        onReady(result.data.user, null);
+        actorUser = result.data.user;
+        previewState = result.data.preview || { active: false };
+        syncPreviewBanner();
+        onReady(getEffectiveUser(result.data.user), null);
       })
       .catch(function () {
         onReady(null, "network");
@@ -553,16 +659,16 @@
   }
 
   function ensureAdminAccess(onReady) {
-    return ensureAuthenticated(function (user, reason) {
+    return ensureAuthenticated(function (_user, reason) {
       if (reason) {
         onReady(null, reason);
         return;
       }
-      if (user.role !== "admin") {
+      if (!actorUser || actorUser.role !== "admin") {
         onReady(null, "forbidden");
         return;
       }
-      onReady(user, null);
+      onReady(actorUser, null);
     });
   }
 
@@ -658,6 +764,9 @@
     ensureClientsReadAccess: ensureClientsReadAccess,
     canReadClients: canReadClients,
     ensureAuthenticated: ensureAuthenticated,
+    getPreviewState: getPreviewState,
+    getEffectiveUser: getEffectiveUser,
+    stopPreviewSession: stopPreviewSession,
     setPanelMessage: setPanelMessage,
     escapeHtml: escapeHtml,
     copyText: copyText,

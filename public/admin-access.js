@@ -318,6 +318,77 @@
       });
   });
 
+  var PREVIEW_ROLE_LABELS = {
+    manager: "Менеджер",
+    regional_manager: "Региональный менеджер",
+    rop: "РОП",
+    director: "Директор",
+  };
+
+  function startEmployeePreview(userId) {
+    return api
+      .apiRequest("/api/admin/access/preview/start", {
+        method: "POST",
+        body: { userId: userId },
+      })
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось начать просмотр."));
+        }
+        window.location.href = "/clients";
+      });
+  }
+
+  document.getElementById("preview-search-btn")?.addEventListener("click", function () {
+    var q = document.getElementById("preview-search-input").value.trim();
+    if (q.length < 2) {
+      setStatus("Введите минимум 2 символа.", "error");
+      return;
+    }
+    api
+      .apiRequest("/api/admin/access/preview/candidates?q=" + encodeURIComponent(q))
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Поиск не удался."));
+        }
+        var items = result.data.items || [];
+        if (items.length === 0) {
+          document.getElementById("preview-search-results").innerHTML =
+            '<p class="clients-subtitle">Подходящие сотрудники не найдены.</p>';
+          return;
+        }
+        document.getElementById("preview-search-results").innerHTML =
+          '<table class="clients-table"><thead><tr><th>ФИО</th><th>Email</th><th>Роль</th><th></th></tr></thead><tbody>' +
+          items
+            .map(function (item) {
+              var roleLabel = PREVIEW_ROLE_LABELS[item.role] || item.role;
+              return (
+                "<tr><td>" +
+                shell.escapeHtml(item.fullName) +
+                "</td><td>" +
+                shell.escapeHtml(item.email) +
+                "</td><td>" +
+                shell.escapeHtml(roleLabel) +
+                '</td><td><button type="button" class="workspace-button workspace-button--primary" data-preview-user="' +
+                shell.escapeHtml(item.id) +
+                '">Посмотреть</button></td></tr>'
+              );
+            })
+            .join("") +
+          "</tbody></table>";
+        document.getElementById("preview-search-results").querySelectorAll("[data-preview-user]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            startEmployeePreview(btn.getAttribute("data-preview-user")).catch(function (err) {
+              setStatus(err.message, "error");
+            });
+          });
+        });
+      })
+      .catch(function (err) {
+        setStatus(err.message, "error");
+      });
+  });
+
   shell.mountShell("admin-access", { showClients: true, showAdminAccess: true });
   shell.ensureAdminAccess(function (_user, reason) {
     if (reason === "forbidden") {

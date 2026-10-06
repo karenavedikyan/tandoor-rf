@@ -29,6 +29,12 @@ import {
   searchUsersHandler,
   submitDelegationHandler,
 } from "./handlers";
+import {
+  previewCandidatesHandler,
+  previewStartHandler,
+  previewStateHandler,
+  previewStopHandler,
+} from "./preview-handlers";
 import { listAccessOverview } from "./admin-repository";
 import { requireAnyRole } from "./role-middleware";
 import type { Response } from "express";
@@ -55,6 +61,22 @@ export function createAccessAdminRouter(): express.Router {
 
   router.get("/users/search", ...adminChain, (req, res, next) => {
     void searchUsersHandler(req, res).catch(next);
+  });
+
+  router.get("/preview", ...adminChain, (req, res, next) => {
+    void previewStateHandler(req, res).catch(next);
+  });
+
+  router.get("/preview/candidates", ...adminChain, (req, res, next) => {
+    void previewCandidatesHandler(req, res).catch(next);
+  });
+
+  router.post("/preview/start", csrfProtection, ...adminChain, (req, res, next) => {
+    void previewStartHandler(req, res).catch(next);
+  });
+
+  router.post("/preview/stop", csrfProtection, ...adminChain, (req, res, next) => {
+    void previewStopHandler(req, res).catch(next);
   });
 
   router.post("/employee-links", csrfProtection, ...adminChain, (req, res, next) => {

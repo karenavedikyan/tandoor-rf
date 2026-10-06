@@ -26,4 +26,6 @@ export const ACCESS_AUDIT_ACTIONS = {
   DELEGATION_SUBMIT: "delegation.submit",
   DELEGATION_APPROVE: "delegation.approve",
   DELEGATION_REVOKE: "delegation.revoke",
+  PREVIEW_START: "preview.start",
+  PREVIEW_STOP: "preview.stop",
 } as const;
