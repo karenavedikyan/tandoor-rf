@@ -1,6 +1,5 @@
 import type { PoolClient } from "pg";
 import type { WholesaleEmployeeRoster } from "../onec-clients/employee-roster";
-import type { ValidatedClientsPayload } from "../onec-clients/types";
 
 export type RosterShrinkGuardResult =
   | { ok: true }
@@ -8,14 +7,17 @@ export type RosterShrinkGuardResult =
       ok: false;
       code: "ROSTER_SHRINK_AMBIGUOUS";
       message: string;
-      affectedManagerGuids: string[];
+      removedGuids: string[];
     };
 
+/**
+ * Until full/partial roster and dismissal rules are agreed with 1C,
+ * reject any disappearance of a previously imported wholesale employee GUID.
+ */
 export async function detectAmbiguousRosterShrink(
   client: PoolClient,
   input: {
     roster: WholesaleEmployeeRoster;
-    clientsPayload: ValidatedClientsPayload;
   },
 ): Promise<RosterShrinkGuardResult> {
   const existing = await client.query<{ guid_manager: string }>(
@@ -32,23 +34,20 @@ export async function detectAmbiguousRosterShrink(
     return { ok: true };
   }
 
-  const removedSet = new Set(removedGuids);
-  const affectedManagerGuids = new Set<string>();
-  for (const record of input.clientsPayload.records) {
-    if (removedSet.has(record.guid_manager.toLowerCase())) {
-      affectedManagerGuids.add(record.guid_manager.toLowerCase());
-    }
-  }
-
-  if (affectedManagerGuids.size === 0) {
-    return { ok: true };
-  }
-
   return {
     ok: false,
     code: "ROSTER_SHRINK_AMBIGUOUS",
     message:
-      "Employee roster shrink is ambiguous: one or more managers absent from the roster still have clients in the incoming snapshot. Full/partial roster and dismissal rules are not agreed yet.",
-    affectedManagerGuids: [...affectedManagerGuids],
+      "Employee roster shrink is ambiguous: one or more previously imported wholesale employee GUIDs are absent from the incoming roster. Full/partial roster and dismissal rules are not agreed yet.",
+    removedGuids,
   };
+}
+
+/** Informational pre-lock signal for operators; not authoritative. */
+export async function previewRosterShrink(
+  client: PoolClient,
+  roster: WholesaleEmployeeRoster,
+): Promise<string[]> {
+  const result = await detectAmbiguousRosterShrink(client, { roster });
+  return result.ok ? [] : result.removedGuids;
 }

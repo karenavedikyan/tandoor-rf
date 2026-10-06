@@ -3,7 +3,11 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import type { Express } from "express";
 import request from "supertest";
 import { Pool, type PoolClient } from "pg";
+import { applyClientsImport } from "../../src/onec-clients/apply";
 import { IMPORT_ADVISORY_LOCK_KEY } from "../../src/onec-clients/constants";
+import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
+import { verificationFingerprintFromPayload } from "../../src/onec-clients/import-verification-fingerprint";
+import { validateClientsFileBytes } from "../../src/onec-clients/validate";
 import { runRegularUpdate } from "../../src/onec-regular-update/run-update";
 import type { RegularUpdateConfig } from "../../src/onec-regular-update/config";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
@@ -18,6 +22,12 @@ import {
   buildEmployeeRosterEntry,
 } from "../helpers/onec-clients-employee-roster-fixtures";
 import { buildExportManifestBytes } from "../helpers/onec-export-manifest-fixtures";
+import {
+  buildExtendedClientsFileBytes,
+  EXTENDED_FIXTURE_GUIDS,
+  sampleExtendedHolding,
+  sampleIdentifiedOutlet,
+} from "../helpers/onec-clients-extended-fixtures";
 import {
   addRopTeamMember,
   linkUserToEmployee,
@@ -34,6 +44,9 @@ const TEST_PASSWORD = "StrongPass123!";
 const MANAGER_A = "22222222-2222-4222-8222-222222222222";
 const MANAGER_B = "55555555-5555-4555-8555-555555555555";
 const CLIENT_ONE = "11111111-1111-4111-8111-111111111111";
+const REGIONAL = EXTENDED_FIXTURE_GUIDS.REGIONAL;
+const ROP = "33333333-3333-4333-8333-333333333333";
+const HOLDING_GUID = EXTENDED_FIXTURE_GUIDS.HOLDING_GUID;
 
 const testConfig: RegularUpdateConfig = {
   stabilityDelayMs: 0,
@@ -123,6 +136,68 @@ async function verifyAndApply(
   assert.equal(dryRun.status, "SUCCESS", JSON.stringify(dryRun));
   assert.equal(dryRun.applyPermitted, true);
   return applyBundle(databaseUrl, input, dryRun.verificationFingerprint!, applyTestHooks);
+}
+
+async function seedExtendedRegularUpdate(
+  databaseUrl: string,
+  clientsBytes: Buffer,
+  rosterBytes: Buffer,
+): Promise<void> {
+  const parsedRoster = parseWholesaleEmployeeRosterBytes(rosterBytes);
+  assert.equal(parsedRoster.ok, true, JSON.stringify(parsedRoster));
+  if (!parsedRoster.ok) {
+    return;
+  }
+  const validated = validateClientsFileBytes(clientsBytes, {
+    employeeRoster: parsedRoster.roster,
+    employeeRosterExplicit: true,
+    extendedContractVerification: "synthetic_confirmed",
+  });
+  assert.equal(validated.ok, true, JSON.stringify(validated));
+  if (!validated.ok) {
+    return;
+  }
+  const applied = await applyClientsImport({
+    databaseUrl,
+    payload: validated.payload,
+    triggerSource: "regular_update",
+    wholesaleEmployeeRoster: parsedRoster.roster,
+    expectedVerificationFingerprint: verificationFingerprintFromPayload({ payload: validated.payload }),
+    syncExchangeState: true,
+  });
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+}
+
+async function readOutletRegionalRosterState(databaseUrl: string): Promise<string> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const row = await pool.query<{ state: string | null }>(
+    `
+      SELECT extended_snapshot->'currentRetailOutlets'->0->'managers'->'regionalManager'->>'state' AS state
+      FROM onec_clients
+      WHERE guid_client = $1::uuid
+    `,
+    [HOLDING_GUID],
+  );
+  await pool.end();
+  return row.rows[0]?.state ?? "";
+}
+
+async function readHeadOfSalesRosterState(databaseUrl: string): Promise<string> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const row = await pool.query<{ state: string | null }>(
+    `
+      SELECT extended_snapshot->'headOfSales'->>'state' AS state
+      FROM onec_clients
+      WHERE guid_client = $1::uuid
+    `,
+    [HOLDING_GUID],
+  );
+  await pool.end();
+  return row.rows[0]?.state ?? "";
+}
+
+function assertNotOutsideWholesaleRoster(state: string, label: string): void {
+  assert.notEqual(state, "outside_wholesale_roster", `${label} must not be outside_wholesale_roster`);
 }
 
 describe("onec regular update integration", { concurrency: false }, () => {
@@ -560,6 +635,135 @@ describe("onec regular update integration", { concurrency: false }, () => {
       assert.equal(applied.status, "SUCCESS");
       assert.equal(applied.counts?.employeesChanged, 1);
       assert.equal(applied.counts?.employeesUnchanged, 0);
+    });
+
+    it("rejects roster shrink when outlet-only regional disappears from incoming roster", async () => {
+      const clientsBytes = buildExtendedClientsFileBytes([
+        sampleExtendedHolding({
+          guid_manager: MANAGER_A,
+          guid_regional_manager: "",
+          name_regional_manager: "",
+          retail_outlets: [
+            sampleIdentifiedOutlet({
+              managers: {
+                guid_manager: "",
+                name_manager: "",
+                guid_regional_manager: REGIONAL,
+                name_regional_manager: "Regional Lead",
+                guid_hardware_manager: "",
+                name_hardware_manager: "",
+                guid_head_of_the_sales_department: "",
+                name_head_of_the_sales_department: "",
+              },
+            }),
+          ],
+        }),
+      ]);
+      const fullRoster = rosterForManagers(MANAGER_A, REGIONAL);
+      await seedExtendedRegularUpdate(databaseUrl, clientsBytes, fullRoster);
+      assertNotOutsideWholesaleRoster(await readOutletRegionalRosterState(databaseUrl), "outlet regional");
+
+      const reducedInput = bundle(clientsBytes, rosterForManagers(MANAGER_A));
+      const dryRun = await dryRunBundle(databaseUrl, reducedInput);
+      const rejected = await applyBundle(databaseUrl, reducedInput, dryRun.verificationFingerprint!);
+
+      assert.equal(rejected.status, "REJECTED_BY_CHECKS");
+      assert.equal(rejected.errorCode, "ROSTER_SHRINK_AMBIGUOUS");
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const regionalInRoster = await pool.query<{ exists: boolean }>(
+        `
+          SELECT EXISTS(
+            SELECT 1 FROM onec_wholesale_employee_roster WHERE guid_manager = $1::uuid
+          ) AS exists
+        `,
+        [REGIONAL],
+      );
+      await pool.end();
+      assert.equal(regionalInRoster.rows[0]?.exists, true);
+      assertNotOutsideWholesaleRoster(await readOutletRegionalRosterState(databaseUrl), "outlet regional");
+    });
+
+    it("rejects roster shrink when holding ROP disappears without client-level guid_manager", async () => {
+      const clientsBytes = buildExtendedClientsFileBytes([
+        sampleExtendedHolding({
+          guid_manager: MANAGER_A,
+          guid_regional_manager: "",
+          name_regional_manager: "",
+          guid_head_of_the_sales_department: ROP,
+          name_head_of_the_sales_department: "ROP Lead",
+        }),
+      ]);
+      const fullRoster = rosterForManagers(MANAGER_A, ROP);
+      await seedExtendedRegularUpdate(databaseUrl, clientsBytes, fullRoster);
+      assertNotOutsideWholesaleRoster(await readHeadOfSalesRosterState(databaseUrl), "holding ROP");
+
+      const reducedInput = bundle(clientsBytes, rosterForManagers(MANAGER_A));
+      const dryRun = await dryRunBundle(databaseUrl, reducedInput);
+      const rejected = await applyBundle(databaseUrl, reducedInput, dryRun.verificationFingerprint!);
+
+      assert.equal(rejected.status, "REJECTED_BY_CHECKS");
+      assert.equal(rejected.errorCode, "ROSTER_SHRINK_AMBIGUOUS");
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const ropInRoster = await pool.query<{ exists: boolean }>(
+        `
+          SELECT EXISTS(
+            SELECT 1 FROM onec_wholesale_employee_roster WHERE guid_manager = $1::uuid
+          ) AS exists
+        `,
+        [ROP],
+      );
+      await pool.end();
+      assert.equal(ropInRoster.rows[0]?.exists, true);
+      assertNotOutsideWholesaleRoster(await readHeadOfSalesRosterState(databaseUrl), "holding ROP");
+    });
+
+    it("rejects stale roster shrink under lock when concurrent import adds employee", async () => {
+      const clientsBytes = buildClientsFileBytes([
+        sampleClient({ guid_manager: MANAGER_A }),
+        sampleClientTwo({ guid_manager: MANAGER_B }),
+      ]);
+      await verifyAndApply(databaseUrl, clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B));
+
+      const reducedInput = bundle(clientsBytes, rosterForManagers(MANAGER_A));
+      const dryRun = await dryRunBundle(databaseUrl, reducedInput);
+      assert.equal(dryRun.status, "SUCCESS");
+
+      const rejected = await applyBundle(databaseUrl, reducedInput, dryRun.verificationFingerprint!, {
+        beforeImportLock: async () => {
+          const refreshedClients = buildClientsFileBytes([
+            sampleClient({ guid_manager: MANAGER_A, name_client: "Client Alpha Refreshed" }),
+            sampleClientTwo({ guid_manager: MANAGER_B }),
+          ]);
+          await verifyAndApply(databaseUrl, refreshedClients, rosterForManagers(MANAGER_A, MANAGER_B));
+        },
+      });
+
+      assert.equal(rejected.status, "REJECTED_BY_CHECKS");
+      assert.equal(rejected.errorCode, "ROSTER_SHRINK_AMBIGUOUS");
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const rosterCount = await pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_roster",
+      );
+      const hasManagerB = await pool.query<{ exists: boolean }>(
+        `
+          SELECT EXISTS(
+            SELECT 1 FROM onec_wholesale_employee_roster WHERE guid_manager = $1::uuid
+          ) AS exists
+        `,
+        [MANAGER_B],
+      );
+      const rosterState = await pool.query<{ manager_roster_state: string }>(
+        "SELECT manager_roster_state FROM onec_clients WHERE guid_client = $1",
+        [sampleClientTwo().guid_client],
+      );
+      await pool.end();
+
+      assert.equal(Number(rosterCount.rows[0]?.count), 2);
+      assert.equal(hasManagerB.rows[0]?.exists, true);
+      assert.equal(rosterState.rows[0]?.manager_roster_state, "in_wholesale_roster");
     });
 
     it("rejects invalid roster date before apply and preserves previous roster value", async () => {

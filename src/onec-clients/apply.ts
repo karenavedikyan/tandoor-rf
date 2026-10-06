@@ -65,7 +65,14 @@ export type ApplyBlockSummary = {
 };
 
 export type ApplyResult =
-  | { ok: true; runId: string; counts: ApplyCounts; blockSummary?: ApplyBlockSummary; cleanupWarning?: string }
+  | {
+      ok: true;
+      runId?: string;
+      unchangedBundle?: true;
+      counts: ApplyCounts;
+      blockSummary?: ApplyBlockSummary;
+      cleanupWarning?: string;
+    }
   | {
       ok: false;
       code:
@@ -73,6 +80,7 @@ export type ApplyResult =
         | "STALE_RUNNING_IMPORT"
         | "RECORD_COUNT_DECREASED"
         | "GUID_SET_SHRINK"
+        | "ROSTER_SHRINK_AMBIGUOUS"
         | "DATABASE_ERROR"
         | "COMMIT_UNCERTAIN"
         | "SUPERSEDED_BY_NEWER_IMPORT"
@@ -510,7 +518,7 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
 async function insertRejectedRunJournal(
   managed: ManagedClient,
   payload: ValidatedClientsPayload,
-  errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK",
+  errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK" | "ROSTER_SHRINK_AMBIGUOUS",
   journal: ApplyJournalContext,
 ): Promise<string | undefined> {
   const preparedWarnings = journalWarningsForPayload(payload);
@@ -868,10 +876,50 @@ export async function applyClientsImport(options: {
           code: "STALE_RUNNING_IMPORT",
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
-      } else {
-        const skipShrinkGuards =
-          options.baselineReplacementApply === true || options.cleanReloadApply === true;
-        if (!skipShrinkGuards) {
+      } else if (options.triggerSource === "regular_update" && options.wholesaleEmployeeRoster) {
+        const { runRegularUpdateApplyGate } = await import("../onec-regular-update/regular-update-apply-gate");
+        const gate = await runRegularUpdateApplyGate(managed.client, {
+          payload: options.payload,
+          roster: options.wholesaleEmployeeRoster,
+          expectedVerificationFingerprint: options.expectedVerificationFingerprint,
+          holdingLinkValidationPolicy: options.holdingLinkValidationPolicy,
+          employeeRosterSourceSha256: options.employeeRosterSourceSha256,
+        });
+        if (!gate.ok) {
+          if (gate.code === "ROSTER_SHRINK_AMBIGUOUS") {
+            phase.runId = await insertRejectedRunJournal(
+              managed,
+              options.payload,
+              "ROSTER_SHRINK_AMBIGUOUS",
+              journal,
+            );
+          }
+          outcome = {
+            ok: false,
+            code: gate.code,
+            message: gate.message,
+            runId: phase.runId,
+            actualFingerprint:
+              gate.code === "VERIFICATION_FINGERPRINT_MISMATCH" ? gate.actualFingerprint : undefined,
+          };
+        } else if (gate.unchangedBundle) {
+          outcome = {
+            ok: true,
+            unchangedBundle: true,
+            counts: {
+              newCount: 0,
+              changedCount: 0,
+              unchangedCount: options.payload.recordCount,
+            },
+          };
+        }
+      }
+    }
+
+    if (!outcome) {
+      const skipShrinkGuards =
+        options.baselineReplacementApply === true || options.cleanReloadApply === true;
+      if (!skipShrinkGuards) {
           const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
           if (
             lastSuccessfulCount !== null &&
@@ -919,10 +967,10 @@ export async function applyClientsImport(options: {
               };
             }
           }
-        }
+      }
 
-        if (!outcome) {
-          const existing = await loadExistingClients(managed);
+      if (!outcome) {
+        const existing = await loadExistingClients(managed);
           const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
             managed,
@@ -1342,7 +1390,6 @@ export async function applyClientsImport(options: {
             blockSummary: phase.blockSummary,
             cleanupWarning: postCommitCleanupWarning,
           };
-          }
         }
       }
   } catch (error) {

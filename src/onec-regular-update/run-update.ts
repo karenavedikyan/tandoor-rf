@@ -1,7 +1,5 @@
-import { Pool, type PoolClient } from "pg";
 import { getDatabaseUrl } from "../config";
-import { createPgPoolOptions } from "../config/pg-ssl";
-import { applyClientsImport, DB_CONNECT_TIMEOUT_MS, type ApplyTestHooks } from "../onec-clients/apply";
+import { applyClientsImport, type ApplyTestHooks } from "../onec-clients/apply";
 import type { EmployeeRosterReader } from "../onec-clients/read-stable-roster";
 import { readStableImportBundle } from "../onec-clients/read-stable-bundle";
 import type { FtpReader } from "../onec-clients/ftp-read";
@@ -15,8 +13,6 @@ import {
   type ExportManifestReader,
   type ExportManifestVerificationResult,
 } from "./export-manifest";
-import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
-
 const RELEASE_NOT_CONFIRMED_MESSAGE =
   "Структура файлов проверена. Согласованность выпуска не подтверждена: требуется export_bundle_manifest.json с export_batch_id и SHA-256 обоих файлов. Применение запрещено.";
 
@@ -40,21 +36,6 @@ function buildCounts(input: {
   employeesUnchanged?: number;
 }): RegularUpdateResult["counts"] {
   return input;
-}
-
-async function loadLastCommittedVerificationFingerprint(client: PoolClient): Promise<string | null> {
-  const row = await client.query<{ verification_fingerprint: string | null }>(
-    `
-      SELECT verification_fingerprint
-      FROM onec_client_import_runs
-      WHERE status = 'success'
-        AND mode = 'apply'
-        AND verification_fingerprint IS NOT NULL
-      ORDER BY finished_at DESC NULLS LAST, id DESC
-      LIMIT 1
-    `,
-  );
-  return row.rows[0]?.verification_fingerprint?.toLowerCase() ?? null;
 }
 
 function rejectedResult(input: Omit<RegularUpdateResult, "finishedAt" | "durationMs"> & { startedAtMs: number }): RegularUpdateResult {
@@ -247,51 +228,6 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
     });
   }
 
-  const pgOptions = createPgPoolOptions(databaseUrl);
-  const pool = new Pool({
-    connectionString: pgOptions.connectionString,
-    max: 1,
-    connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
-    ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
-  });
-
-  try {
-    const client = await pool.connect();
-    try {
-      const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
-      if (lastFingerprint && lastFingerprint === verificationFingerprint.toLowerCase()) {
-        return rejectedResult({
-          status: "NO_CHANGES",
-          mode: "apply",
-          startedAt,
-          startedAtMs,
-          ...baseResult,
-          message: "Bundle verification fingerprint matches the last successful apply; no changes applied.",
-        });
-      }
-
-      const shrinkGuard = await detectAmbiguousRosterShrink(client, {
-        roster,
-        clientsPayload,
-      });
-      if (!shrinkGuard.ok) {
-        return rejectedResult({
-          status: "REJECTED_BY_CHECKS",
-          mode: "apply",
-          startedAt,
-          startedAtMs,
-          ...baseResult,
-          errorCode: shrinkGuard.code,
-          message: shrinkGuard.message,
-        });
-      }
-    } finally {
-      client.release();
-    }
-  } finally {
-    await pool.end();
-  }
-
   const applied = await applyClientsImport({
     databaseUrl,
     payload: clientsPayload,
@@ -303,10 +239,22 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
     testHooks: options.applyTestHooks,
   });
 
+  if (applied.ok && applied.unchangedBundle) {
+    return rejectedResult({
+      status: "NO_CHANGES",
+      mode: "apply",
+      startedAt,
+      startedAtMs,
+      ...baseResult,
+      message: "Bundle verification fingerprint matches the last successful apply; no changes applied.",
+    });
+  }
+
   if (!applied.ok) {
     const rejectedCodes = new Set([
       "RECORD_COUNT_DECREASED",
       "GUID_SET_SHRINK",
+      "ROSTER_SHRINK_AMBIGUOUS",
       "VERIFICATION_FINGERPRINT_MISMATCH",
       "VERIFICATION_FINGERPRINT_REQUIRED",
       "VERIFICATION_PARAMETERS_MISMATCH",
