@@ -15,13 +15,15 @@ const PREVIEW_ALLOWLIST: Array<{ method: string; pattern: RegExp }> = [
   { method: "POST", pattern: /^\/api\/admin\/access\/preview\/stop$/ },
 ];
 
-function requestPath(originalUrl: string): string {
-  return originalUrl.split("?")[0] ?? originalUrl;
+/** Lowercase path without query — matches Express case-insensitive route matching. */
+export function normalizePreviewRequestPath(originalUrl: string): string {
+  const path = originalUrl.split("?")[0] ?? originalUrl;
+  return path.toLowerCase();
 }
 
 export function isPreviewAllowlisted(method: string, originalUrl: string): boolean {
   const normalizedMethod = method.toUpperCase();
-  const path = requestPath(originalUrl);
+  const path = normalizePreviewRequestPath(originalUrl);
   return PREVIEW_ALLOWLIST.some(
     (entry) => entry.method === normalizedMethod && entry.pattern.test(path),
   );
@@ -44,7 +46,7 @@ export async function enforcePreviewBusinessPolicy(
     return false;
   }
 
-  const path = requestPath(req.originalUrl);
+  const path = normalizePreviewRequestPath(req.originalUrl);
   setNoStore(res);
 
   if (path.startsWith("/api/admin/") || path.startsWith("/api/profile/")) {

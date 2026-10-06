@@ -234,6 +234,60 @@ describe("admin employee preview", { concurrency: false }, () => {
     assert.ok(afterStop.body.total >= 2);
   });
 
+  it("blocks admin and profile routes during preview regardless of URL casing", async () => {
+    const adminCookie = await login("admin@example.com");
+    const app = await loadApp();
+    const manager = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=manager-a")
+        .set(authHeaders(adminCookie))
+    ).body.items[0];
+    assert.ok(manager);
+
+    await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(authHeaders(adminCookie))
+      .send({ userId: manager.id });
+
+    const blockedPaths = [
+      "/api/admin/access/overview",
+      "/api/ADMIN/access/overview",
+      "/API/ADMIN/access/overview",
+      "/api/Admin/Access/Overview",
+      "/api/profile/self",
+      "/api/PROFILE/self",
+      "/API/PROFILE/self",
+    ];
+
+    for (const path of blockedPaths) {
+      const getRes = await request(app).get(path).set(authHeaders(adminCookie));
+      assert.equal(getRes.status, 403, `GET ${path} must stay forbidden in preview`);
+      assert.equal(getRes.body.users, undefined);
+      assert.equal(getRes.body.links, undefined);
+      assert.equal(getRes.body.email, undefined);
+
+      const headRes = await request(app).head(path).set(authHeaders(adminCookie));
+      assert.equal(headRes.status, 403, `HEAD ${path} must stay forbidden in preview`);
+    }
+
+    const allowlisted = await request(app)
+      .get("/api/ADMIN/access/preview/candidates?q=manager-a")
+      .set(authHeaders(adminCookie));
+    assert.equal(allowlisted.status, 200);
+    assert.ok(Array.isArray(allowlisted.body.items));
+
+    const previewState = await request(app)
+      .get("/api/Admin/Access/Preview")
+      .set(authHeaders(adminCookie));
+    assert.equal(previewState.status, 200);
+    assert.equal(previewState.body.preview.active, true);
+
+    await request(app)
+      .post("/api/admin/access/preview/stop")
+      .set(authHeaders(adminCookie))
+      .send({});
+  });
+
   it("keeps preview across reload and isolates parallel admin sessions", async () => {
     const adminCookieA = await login("admin@example.com");
     const adminCookieB = await login("admin@example.com");
