@@ -356,6 +356,91 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
     });
   }
 
+  async function readTeamsGridLayout(page: Page) {
+    return page.evaluate(() => {
+      const gridEl = document.querySelector(".clients-director-teams-grid");
+      const cards = Array.from(
+        document.querySelectorAll(".clients-director-teams-grid .clients-team-card-shell"),
+      );
+      const incompleteStrip = document.getElementById("clients-stats-incomplete-strip");
+      return {
+        gridColumns: gridEl ? getComputedStyle(gridEl).gridTemplateColumns : "",
+        incompleteColumns: incompleteStrip ? getComputedStyle(incompleteStrip).gridTemplateColumns : "",
+        cardRects: cards.map((card) => {
+          const rect = card.getBoundingClientRect();
+          return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+        }),
+        containerWidth: gridEl?.getBoundingClientRect().width ?? 0,
+      };
+    });
+  }
+
+  function countGridTracks(columnsValue: string): number {
+    if (!columnsValue) {
+      return 0;
+    }
+    return columnsValue.split(/\s+/).filter(Boolean).length;
+  }
+
+  async function assertTeamsGridLayout(page: Page, viewport: { width: number }): Promise<void> {
+    const layout = await readTeamsGridLayout(page);
+    const ropACard = teamCard(page, "ROP Alpha");
+    const ropBCard = teamCard(page, "ROP Beta");
+    assert.equal(layout.cardRects.length, 2, "expected two ROP cards in overview");
+
+    if (viewport.width < 768) {
+      assert.equal(
+        countGridTracks(layout.gridColumns),
+        1,
+        "mobile teams grid should have one column: " + layout.gridColumns,
+      );
+      assert.equal(
+        countGridTracks(layout.incompleteColumns),
+        1,
+        "mobile incomplete stats should have one column: " + layout.incompleteColumns,
+      );
+      assert.ok(
+        layout.cardRects[1].top > layout.cardRects[0].top + layout.cardRects[0].height * 0.4,
+        "ROP Beta card should render below ROP Alpha on mobile",
+      );
+      assert.ok(
+        layout.cardRects[0].width >= layout.containerWidth * 0.92,
+        "ROP Alpha card should span the teams grid width on mobile",
+      );
+      assert.ok(
+        layout.cardRects[1].width >= layout.containerWidth * 0.92,
+        "ROP Beta card should span the teams grid width on mobile",
+      );
+    } else {
+      assert.equal(
+        countGridTracks(layout.gridColumns),
+        2,
+        "desktop teams grid should have two columns: " + layout.gridColumns,
+      );
+      assert.equal(
+        countGridTracks(layout.incompleteColumns),
+        2,
+        "desktop incomplete stats should have two columns: " + layout.incompleteColumns,
+      );
+      assert.ok(
+        Math.abs(layout.cardRects[0].top - layout.cardRects[1].top) < 24,
+        "ROP cards should share a row on desktop",
+      );
+      assert.ok(
+        layout.cardRects[1].left > layout.cardRects[0].left + layout.cardRects[0].width * 0.35,
+        "ROP Beta card should render to the right of ROP Alpha on desktop",
+      );
+    }
+
+    for (const card of [ropACard, ropBCard]) {
+      const memberName = card.locator(".clients-team-member-row__name").first();
+      const memberCount = card.locator(".clients-team-member-row__count").first();
+      assert.equal(await memberName.isVisible(), true);
+      assert.equal(await memberCount.isVisible(), true);
+      assert.ok((await memberName.textContent())?.trim().length);
+    }
+  }
+
   async function waitForListLoaded(page: Page, viewport: { width: number }): Promise<void> {
     await page.waitForFunction(
       () => {
@@ -452,6 +537,8 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
       assert.equal(overview.rops.length, 2);
       assert.ok(overview.completenessSummary.clients >= 1);
       assert.ok(overview.completenessSummary.outlets >= 1);
+
+      await assertTeamsGridLayout(page, viewport);
 
       await page.screenshot({
         path: path.join(SCREENSHOT_DIR, `clients-design-d4-director-teams-${viewportName}.png`),
