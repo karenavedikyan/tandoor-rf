@@ -10,6 +10,15 @@ import { PLAIN_FTP_TRANSPORT_WARNING } from "../onec-clients/sanitize";
 import { loadRegularUpdateConfig, type RegularUpdateConfig } from "./config";
 import { parseRegularUpdateCliArgs, REGULAR_UPDATE_CLI_ERRORS } from "./cli-args";
 import type { RegularUpdateResult } from "./types";
+import {
+  loadVerifiedExportManifest,
+  type ExportManifestReader,
+  type ExportManifestVerificationResult,
+} from "./export-manifest";
+import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
+
+const RELEASE_NOT_CONFIRMED_MESSAGE =
+  "Структура файлов проверена. Согласованность выпуска не подтверждена: требуется export_bundle_manifest.json с export_batch_id и SHA-256 обоих файлов. Применение запрещено.";
 
 function countOutlets(payload: import("../onec-clients/types").ValidatedClientsPayload): number {
   let total = 0;
@@ -57,14 +66,20 @@ function rejectedResult(input: Omit<RegularUpdateResult, "finishedAt" | "duratio
   };
 }
 
+function manifestErrorCode(result: ExportManifestVerificationResult & { ok: false }): string {
+  return result.code;
+}
+
 export type RunRegularUpdateOptions = {
   env?: NodeJS.ProcessEnv;
   argv?: string[];
   config?: RegularUpdateConfig;
   clientsReader?: FtpReader;
   rosterReader?: EmployeeRosterReader;
+  manifestReader?: ExportManifestReader;
   clientsBytes?: Buffer;
   employeeRosterBytes?: Buffer;
+  manifestBytes?: Buffer;
   applyTestHooks?: ApplyTestHooks;
 };
 
@@ -136,17 +151,41 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
       clientsSourceSha256: bundleRead.clientsSha256,
       employeeRosterSourceSha256: bundleRead.rosterSha256,
       sourceExportAt: null,
+      releaseConsistencyConfirmed: false,
+      applyPermitted: false,
       errorCode: bundleRead.code,
       message: bundleRead.message,
     });
   }
 
   const { clientsPayload, roster, verificationFingerprint } = bundleRead;
+
+  const manifestVerification = await loadVerifiedExportManifest(
+    loadedConfig.config,
+    {
+      clientsSha256: clientsPayload.sha256,
+      employeeRosterSha256: roster.sourceSha256,
+    },
+    {
+      reader: options.manifestReader,
+      manifestBytes: options.manifestBytes,
+      readDeadlineMs: config.readDeadlineMs,
+    },
+  );
+
+  const releaseConsistencyConfirmed = manifestVerification.ok;
+  const exportBatchId = manifestVerification.ok ? manifestVerification.manifest.exportBatchId : null;
+  const sourceExportAt = manifestVerification.ok ? manifestVerification.manifest.exportFormedAt : null;
+  const applyPermitted = releaseConsistencyConfirmed;
+
   const baseResult = {
     verificationFingerprint,
     clientsSourceSha256: clientsPayload.sha256,
     employeeRosterSourceSha256: roster.sourceSha256,
-    sourceExportAt: null as string | null,
+    exportBatchId,
+    sourceExportAt,
+    releaseConsistencyConfirmed,
+    applyPermitted,
     clientsReadCount: bundleRead.clientsReadCount,
     rosterReadCount: bundleRead.rosterReadCount,
     counts: buildCounts({
@@ -156,6 +195,20 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
     }),
   };
 
+  if (!manifestVerification.ok && manifestVerification.code !== "MANIFEST_NOT_FOUND" && manifestVerification.code !== "MANIFEST_UNREADABLE") {
+    return rejectedResult({
+      status: "REJECTED_BY_CHECKS",
+      mode: cliOptions.mode,
+      startedAt,
+      startedAtMs,
+      ...baseResult,
+      releaseConsistencyConfirmed: false,
+      applyPermitted: false,
+      errorCode: manifestErrorCode(manifestVerification),
+      message: manifestVerification.message,
+    });
+  }
+
   if (cliOptions.mode === "dry_run") {
     return rejectedResult({
       status: "SUCCESS",
@@ -163,7 +216,21 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
       startedAt,
       startedAtMs,
       ...baseResult,
-      message: `Regular update bundle verified (${PLAIN_FTP_TRANSPORT_WARNING.trim()}). No database changes.`,
+      message: releaseConsistencyConfirmed
+        ? `Regular update bundle verified; export batch ${exportBatchId} confirmed (${PLAIN_FTP_TRANSPORT_WARNING.trim()}). Apply requires matching --expected-fingerprint from this dry-run.`
+        : RELEASE_NOT_CONFIRMED_MESSAGE,
+    });
+  }
+
+  if (!releaseConsistencyConfirmed) {
+    return rejectedResult({
+      status: "REJECTED_BY_CHECKS",
+      mode: "apply",
+      startedAt,
+      startedAtMs,
+      ...baseResult,
+      errorCode: "RELEASE_CONSISTENCY_NOT_CONFIRMED",
+      message: RELEASE_NOT_CONFIRMED_MESSAGE,
     });
   }
 
@@ -200,6 +267,22 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
           startedAtMs,
           ...baseResult,
           message: "Bundle verification fingerprint matches the last successful apply; no changes applied.",
+        });
+      }
+
+      const shrinkGuard = await detectAmbiguousRosterShrink(client, {
+        roster,
+        clientsPayload,
+      });
+      if (!shrinkGuard.ok) {
+        return rejectedResult({
+          status: "REJECTED_BY_CHECKS",
+          mode: "apply",
+          startedAt,
+          startedAtMs,
+          ...baseResult,
+          errorCode: shrinkGuard.code,
+          message: shrinkGuard.message,
         });
       }
     } finally {

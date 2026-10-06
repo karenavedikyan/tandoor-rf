@@ -77,7 +77,7 @@ export async function readStableEmployeeRosterFile(
   if (!firstParsed.ok) {
     return {
       ok: false,
-      code: "VALIDATION_FAILED",
+      code: firstParsed.code === "FILE_TOO_LARGE" ? "FILE_TOO_LARGE" : "VALIDATION_FAILED",
       message: firstParsed.message,
       readCount,
     };

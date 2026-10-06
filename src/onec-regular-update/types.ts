@@ -15,8 +15,13 @@ export type RegularUpdateResult = {
   verificationFingerprint?: string;
   clientsSourceSha256?: string;
   employeeRosterSourceSha256?: string;
-  /** Populated when 1C provides export timestamp metadata; not inferred from download time. */
+  exportBatchId?: string | null;
+  /** Populated when 1C provides export timestamp metadata in a verified manifest; not inferred from download time. */
   sourceExportAt?: string | null;
+  /** True only when export_bundle_manifest.json verifies batch ID and both file hashes. */
+  releaseConsistencyConfirmed?: boolean;
+  /** False until release consistency is confirmed by manifest; dry-run must not imply apply permission. */
+  applyPermitted?: boolean;
   clientsReadCount?: number;
   rosterReadCount?: number;
   counts?: {

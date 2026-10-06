@@ -43,15 +43,39 @@ function readOptionalString(raw: Record<string, unknown>, key: string): string |
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function readOptionalUuid(raw: Record<string, unknown>, key: string): string | null {
-  const value = readOptionalString(raw, key);
-  if (!value || !isValidNonZeroUuid(value)) {
+type RosterFieldIssue = {
+  field: string;
+  code: "INVALID_TYPE" | "INVALID_UUID" | "INVALID_DATE_FORMAT";
+};
+
+function validateOptionalUuidField(
+  raw: Record<string, unknown>,
+  key: string,
+  issues: RosterFieldIssue[],
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) {
     return null;
   }
-  return normalizeUuid(value);
+  const value = raw[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    issues.push({ field: key, code: "INVALID_TYPE" });
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (!isValidNonZeroUuid(trimmed)) {
+    issues.push({ field: key, code: "INVALID_UUID" });
+    return null;
+  }
+  return normalizeUuid(trimmed);
 }
 
-function readDateOfAssumption(raw: Record<string, unknown>): string | null {
+function readDateOfAssumption(raw: Record<string, unknown>, issues: RosterFieldIssue[]): string | null {
   if (!Object.prototype.hasOwnProperty.call(raw, "date_of_assumption")) {
     return null;
   }
@@ -59,22 +83,35 @@ function readDateOfAssumption(raw: Record<string, unknown>): string | null {
   if (value === null || value === undefined) {
     return null;
   }
-  const parsed = parseCalendarDateInput(value);
+  if (typeof value !== "string") {
+    issues.push({ field: "date_of_assumption", code: "INVALID_TYPE" });
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const parsed = parseCalendarDateInput(trimmed);
   if (!parsed.ok) {
+    issues.push({ field: "date_of_assumption", code: "INVALID_DATE_FORMAT" });
     return null;
   }
   return calendarDateToTimestamptz(parsed.isoDate);
 }
 
-function toEmployeeRecord(raw: Record<string, unknown>, guid: string): WholesaleEmployeeRecord {
+function toEmployeeRecord(
+  raw: Record<string, unknown>,
+  guid: string,
+  issues: RosterFieldIssue[],
+): WholesaleEmployeeRecord {
   return {
     guidManager: guid,
     nameManager: readOptionalString(raw, "name_manager") ?? "",
-    guidPost: readOptionalUuid(raw, "guid_post"),
+    guidPost: validateOptionalUuidField(raw, "guid_post", issues),
     post: readOptionalString(raw, "post"),
     condition: readOptionalString(raw, "condition"),
-    dateOfAssumption: readDateOfAssumption(raw),
-    guidWorkSchedule: readOptionalUuid(raw, "guid_work_schedule"),
+    dateOfAssumption: readDateOfAssumption(raw, issues),
+    guidWorkSchedule: validateOptionalUuidField(raw, "guid_work_schedule", issues),
     workSchedule: readOptionalString(raw, "work_schedule"),
     decree: readOptionalString(raw, "decree"),
     email: readOptionalString(raw, "email"),
@@ -89,7 +126,14 @@ export type EmployeeRosterParseFailureCode =
   | "INVALID_ROOT"
   | "FILE_TOO_LARGE"
   | "INVALID_RECORD"
+  | "INVALID_FIELD_FORMAT"
   | "DUPLICATE_GUID";
+
+export type EmployeeRosterFieldIssue = {
+  index: number;
+  field: string;
+  code: "INVALID_TYPE" | "INVALID_UUID" | "INVALID_DATE_FORMAT";
+};
 
 export type EmployeeRosterParseResult =
   | { ok: true; roster: WholesaleEmployeeRoster }
@@ -98,6 +142,7 @@ export type EmployeeRosterParseResult =
       code: EmployeeRosterParseFailureCode;
       message: string;
       invalidRecordIndexes?: number[];
+      fieldIssues?: EmployeeRosterFieldIssue[];
     };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -151,6 +196,7 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
   const wholesaleGuids = new Set<string>();
   const records: WholesaleEmployeeRecord[] = [];
   const invalidRecordIndexes: number[] = [];
+  const fieldIssues: EmployeeRosterFieldIssue[] = [];
 
   for (let index = 0; index < parsed.length; index += 1) {
     const item = parsed[index];
@@ -172,7 +218,20 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
       };
     }
     wholesaleGuids.add(guid);
-    records.push(toEmployeeRecord(item, guid));
+    const recordIssues: RosterFieldIssue[] = [];
+    records.push(toEmployeeRecord(item, guid, recordIssues));
+    for (const issue of recordIssues) {
+      fieldIssues.push({ index, field: issue.field, code: issue.code });
+    }
+  }
+
+  if (fieldIssues.length > 0) {
+    return {
+      ok: false,
+      code: "INVALID_FIELD_FORMAT",
+      message: `Employee roster contains ${fieldIssues.length} field format error(s).`,
+      fieldIssues,
+    };
   }
 
   if (invalidRecordIndexes.length > 0) {
