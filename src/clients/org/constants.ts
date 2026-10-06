@@ -14,7 +14,7 @@ export const ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID = (
   .trim()
   .toLowerCase() || null;
 
-/** When "1", the configured ROA counts as a confirmed team member without assistant roster post. */
+/** Legacy env flag; team membership is confirmed only from roster post «Ассистент». */
 export const ORG_ASSISTANTS_HEAD_IN_TEAM =
   (process.env.TANDOOR_ORG_ASSISTANTS_HEAD_IN_TEAM ?? "").trim() === "1";
 
