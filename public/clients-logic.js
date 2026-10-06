@@ -644,6 +644,7 @@
     no_changes: "Нет изменений",
     rejected: "Отклонено проверками",
     error: "Ошибка",
+    uncertain: "Результат уточняется",
     idle: "Готово к запуску",
   };
 
@@ -683,13 +684,19 @@
       statusClass = "clients-onec-update__status--success";
     } else if (job.phase === "rejected") {
       statusClass = "clients-onec-update__status--warning";
+    } else if (job.phase === "uncertain") {
+      statusClass = "clients-onec-update__status--warning";
     } else if (job.phase === "error") {
       statusClass = "clients-onec-update__status--error";
     }
     return {
       text: text,
       statusClass: statusClass,
-      disableButton: !data.canStart || job.phase === "pending" || job.phase === "running",
+      disableButton:
+        !data.canStart ||
+        job.phase === "pending" ||
+        job.phase === "running" ||
+        job.phase === "uncertain",
     };
   }
 

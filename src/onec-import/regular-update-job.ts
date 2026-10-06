@@ -10,17 +10,26 @@ export const DATA_PRESERVED_SUFFIX =
 
 export type RegularUpdateJobExecutionOptions = RunRegularUpdateOptions;
 
-function withDataPreservedMessage(result: RegularUpdateResult): RegularUpdateResult {
-  if (
-    result.status === "REJECTED_BY_CHECKS" ||
-    (result.status === "ERROR" && result.mode === "apply")
-  ) {
-    if (result.message.includes("Прежние данные")) {
-      return result;
-    }
-    return { ...result, message: result.message + DATA_PRESERVED_SUFFIX };
+function shouldAppendDataPreserved(result: RegularUpdateResult): boolean {
+  if (result.errorCode === "COMMIT_UNCERTAIN") {
+    return false;
   }
-  return result;
+  return (
+    result.status === "REJECTED_BY_CHECKS" ||
+    (result.status === "ERROR" &&
+      result.errorCode !== "IMPORT_JOB_FAILED" &&
+      result.errorCode !== "DATABASE_ERROR")
+  );
+}
+
+function withDataPreservedMessage(result: RegularUpdateResult): RegularUpdateResult {
+  if (!shouldAppendDataPreserved(result)) {
+    return result;
+  }
+  if (result.message.includes("Прежние данные")) {
+    return result;
+  }
+  return { ...result, message: result.message + DATA_PRESERVED_SUFFIX };
 }
 
 /** Verify bundle, obtain fingerprint, then apply — single worker attempt. */
@@ -34,8 +43,18 @@ export async function executeRegularUpdateBundleJob(
     argv: ["--dry-run"],
   });
 
-  if (dryRun.status === "ERROR") {
-    return withDataPreservedMessage(dryRun);
+  if (dryRun.status === "REJECTED_BY_CHECKS" || dryRun.status === "ERROR") {
+    return withDataPreservedMessage({ ...dryRun, mode: "apply" });
+  }
+
+  if (dryRun.status !== "SUCCESS" || dryRun.mode !== "dry_run") {
+    return withDataPreservedMessage({
+      ...dryRun,
+      status: "ERROR",
+      mode: "apply",
+      errorCode: dryRun.errorCode ?? "IMPORT_JOB_FAILED",
+      message: dryRun.message || "Не удалось проверить комплект перед обновлением.",
+    });
   }
 
   if (!dryRun.releaseConsistencyConfirmed || !dryRun.applyPermitted) {
@@ -64,7 +83,7 @@ export async function executeRegularUpdateBundleJob(
     argv: ["--apply", "--expected-fingerprint", dryRun.verificationFingerprint],
   });
 
-  return withDataPreservedMessage(applied);
+  return withDataPreservedMessage({ ...applied, mode: "apply" });
 }
 
 export function redactRegularUpdateResult(

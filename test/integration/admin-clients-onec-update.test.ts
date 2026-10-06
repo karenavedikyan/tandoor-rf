@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import type { Express } from "express";
 import { Pool } from "pg";
 import request from "supertest";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
-import { runOneImportJob } from "../../src/onec-import/worker";
+import { setImportJobWorkerTestHooks } from "../../src/onec-import/worker-scheduler";
 import { sha256Hex } from "../../src/onec-clients/sha256";
 import {
   buildClientsFileBytes,
@@ -80,28 +81,42 @@ function bundleInput(clientsBytes: Buffer, rosterBytes: Buffer, withManifest = t
       ? buildExportManifestBytes({
           clientsSha256: sha256Hex(clientsBytes),
           rosterSha256: sha256Hex(rosterBytes),
-          exportFormedAt: "2026-10-06T14:30:00+03:00",
+          exportFormedAt: "2026-10-06T14:30:00",
         })
       : undefined,
   };
 }
 
-async function runPendingRegularUpdateJob(
-  pool: Pool,
-  databaseUrl: string,
-  bundle: ReturnType<typeof bundleInput>,
-) {
-  return runOneImportJob(pool, { ...workerEnv, DATABASE_URL: databaseUrl }, async () => ({
-    ok: false,
-    code: "FTP_ERROR" as const,
-    message: "unused",
-  }), {
+function configureWorkerBundle(bundle: ReturnType<typeof bundleInput>, applyTestHooks?: Record<string, unknown>) {
+  setImportJobWorkerTestHooks({
     regularUpdateExecution: {
+      env: workerEnv,
       clientsBytes: bundle.clientsBytes,
       employeeRosterBytes: bundle.rosterBytes,
       manifestBytes: bundle.manifestBytes,
+      applyTestHooks,
     },
   });
+}
+
+async function waitForAdminOnecUpdateSettled(
+  app: Express,
+  adminCookie: string,
+  timeoutMs = 30_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await request(app)
+      .get("/api/admin/clients/onec-update/status")
+      .set(authHeaders(adminCookie));
+    assert.equal(status.status, 200);
+    const phase = status.body.job?.phase;
+    if (phase && phase !== "pending" && phase !== "running") {
+      return status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("admin onec update did not settle in time");
 }
 
 describe("admin clients onec update", { concurrency: false }, () => {
@@ -120,6 +135,8 @@ describe("admin clients onec update", { concurrency: false }, () => {
 
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
+    Object.assign(process.env, workerEnv, { DATABASE_URL: databaseUrl });
+    setImportJobWorkerTestHooks(undefined);
     await prepareDatabase(databaseUrl);
     await pool.query("TRUNCATE onec_import_jobs RESTART IDENTITY CASCADE");
     await pool.query("TRUNCATE onec_client_import_runs RESTART IDENTITY CASCADE");
@@ -153,17 +170,19 @@ describe("admin clients onec update", { concurrency: false }, () => {
   });
 
   after(async () => {
+    setImportJobWorkerTestHooks(undefined);
     await pool?.end();
     await closePool();
   });
 
-  it("admin can start update, worker completes, and status restores after reload", async () => {
+  it("admin POST runs queued worker to completion and status restores after reload", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([
       sampleClient({ name_client: "Updated From 1C" }),
       sampleClientTwo(),
     ]);
     const bundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B));
+    configureWorkerBundle(bundle);
 
     const started = await request(app)
       .post("/api/admin/clients/onec-update")
@@ -172,12 +191,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(started.status, 202);
     assert.ok(started.body.jobId);
 
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, bundle), "success");
-
-    const status = await request(app)
-      .get("/api/admin/clients/onec-update/status")
-      .set(authHeaders(adminCookie));
-    assert.equal(status.status, 200);
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "completed");
     assert.match(status.body.job.message, /applied successfully|успеш/i);
     assert.equal(status.body.job.sourceExportAtLabel?.length > 0, true);
@@ -202,6 +216,41 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(jobRow.rows[0]?.requested_by_user_id, adminUserId);
     assert.equal(jobRow.rows[0]?.result.status, "SUCCESS");
     assert.equal(JSON.stringify(jobRow.rows[0]?.result).includes("secret-test-value"), false);
+  });
+
+  it("allows only one active job across parallel admin POSTs", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)));
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        request(app)
+          .post("/api/admin/clients/onec-update")
+          .set(authHeaders(adminCookie))
+          .send({}),
+      ),
+    );
+
+    const accepted = responses.filter((response) => response.status === 202);
+    const conflicts = responses.filter((response) => response.status === 409);
+    assert.equal(accepted.length, 1);
+    assert.equal(conflicts.length, 4);
+    const jobId = accepted[0]!.body.jobId as string;
+    assert.ok(jobId);
+    for (const conflict of conflicts) {
+      assert.equal(conflict.body.jobId, jobId);
+    }
+
+    const activeCount = await pool.query<{ count: number }>(
+      `
+        SELECT COUNT(*)::int AS count
+        FROM onec_import_jobs
+        WHERE kind = 'regular_update_bundle'
+          AND status IN ('pending', 'running')
+      `,
+    );
+    assert.equal(activeCount.rows[0]?.count, 1);
   });
 
   it("rejects start for manager, director role, and admin preview", async () => {
@@ -231,7 +280,13 @@ describe("admin clients onec update", { concurrency: false }, () => {
     const previewStart = await request(app)
       .post("/api/admin/access/preview/start")
       .set(authHeaders(adminCookie))
-      .send({ targetUserId: (await pool.query<{ id: string }>("SELECT id::text FROM users WHERE email = $1", ["manager-onec-update@example.com"])).rows[0]!.id });
+      .send({
+        targetUserId: (
+          await pool.query<{ id: string }>("SELECT id::text FROM users WHERE email = $1", [
+            "manager-onec-update@example.com",
+          ])
+        ).rows[0]!.id,
+      });
     assert.equal(previewStart.status, 200);
 
     const previewAttempt = await request(app)
@@ -245,6 +300,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const bundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false);
+    configureWorkerBundle(bundle);
 
     const started = await request(app)
       .post("/api/admin/clients/onec-update")
@@ -252,15 +308,35 @@ describe("admin clients onec update", { concurrency: false }, () => {
       .send({});
     assert.equal(started.status, 202);
 
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, bundle), "failed");
-
-    const status = await request(app)
-      .get("/api/admin/clients/onec-update/status")
-      .set(authHeaders(adminCookie));
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "rejected");
     assert.match(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
     assert.equal(status.body.job.dataPreserved, true);
     assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+  });
+
+  it("preserves manifest validation reason for invalid export_formed_at", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const rosterBytes = rosterForManagers(MANAGER_A);
+    const manifestBytes = buildExportManifestBytes({
+      clientsSha256: sha256Hex(clientsBytes),
+      rosterSha256: sha256Hex(rosterBytes),
+      exportFormedAt: "31.02.2026",
+    });
+    configureWorkerBundle({ clientsBytes, rosterBytes, manifestBytes });
+
+    const started = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(started.status, 202);
+
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
+    assert.equal(status.body.job.phase, "rejected");
+    assert.equal(status.body.job.errorCode, "MANIFEST_INVALID_SCHEMA");
+    assert.match(status.body.job.message, /export_formed_at|calendar date/i);
+    assert.doesNotMatch(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
   });
 
   it("blocks duplicate start while job is pending or running", async () => {
@@ -276,6 +352,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
       .set(authHeaders(adminCookie))
       .send({});
     assert.equal(second.status, 409);
+    assert.equal(second.body.jobId, first.body.jobId);
 
     await pool.query(`UPDATE onec_import_jobs SET status = 'running', started_at = NOW()`);
     const third = await request(app)
@@ -285,31 +362,63 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(third.status, 409);
   });
 
+  it("finalizes expired pending jobs and allows restart", async () => {
+    const app = await loadApp();
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind, mode, status, requested_at, expires_at, requested_by_user_id
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() - INTERVAL '3 hours',
+          NOW() - INTERVAL '1 hour',
+          $1::uuid
+        )
+      `,
+      [adminUserId],
+    );
+
+    const status = await request(app)
+      .get("/api/admin/clients/onec-update/status")
+      .set(authHeaders(adminCookie));
+    assert.equal(status.status, 200);
+    assert.equal(status.body.job.phase, "error");
+    assert.equal(status.body.job.errorCode, "JOB_EXPIRED");
+    assert.equal(status.body.canStart, true);
+
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A)));
+    const restart = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(restart.status, 202);
+  });
+
   it("returns no_changes when bundle fingerprint matches last successful apply", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
     const bundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B));
+    configureWorkerBundle(bundle);
 
     const firstStart = await request(app)
       .post("/api/admin/clients/onec-update")
       .set(authHeaders(adminCookie))
       .send({});
     assert.equal(firstStart.status, 202);
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, bundle), "success");
-
-    await pool.query(`UPDATE onec_import_jobs SET status = 'success', finished_at = NOW()`);
+    await waitForAdminOnecUpdateSettled(app, adminCookie);
 
     const secondStart = await request(app)
       .post("/api/admin/clients/onec-update")
       .set(authHeaders(adminCookie))
       .send({});
     assert.equal(secondStart.status, 202);
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, bundle), "success");
-
-    const status = await request(app)
-      .get("/api/admin/clients/onec-update/status")
-      .set(authHeaders(adminCookie));
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "no_changes");
+    assert.equal(status.body.canStart, true);
   });
 
   it("preserves previous clients when roster shrink is rejected", async () => {
@@ -321,28 +430,25 @@ describe("admin clients onec update", { concurrency: false }, () => {
     const fullBundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B));
     const shrinkBundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A));
 
+    configureWorkerBundle(fullBundle);
     const seedStart = await request(app)
       .post("/api/admin/clients/onec-update")
       .set(authHeaders(adminCookie))
       .send({});
     assert.equal(seedStart.status, 202);
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, fullBundle), "success");
-    await pool.query(`UPDATE onec_import_jobs SET status = 'success', finished_at = NOW()`);
+    await waitForAdminOnecUpdateSettled(app, adminCookie);
 
     const beforeCount = await pool.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_roster",
     );
 
+    configureWorkerBundle(shrinkBundle);
     const shrinkStart = await request(app)
       .post("/api/admin/clients/onec-update")
       .set(authHeaders(adminCookie))
       .send({});
     assert.equal(shrinkStart.status, 202);
-    assert.equal(await runPendingRegularUpdateJob(pool, databaseUrl, shrinkBundle), "failed");
-
-    const status = await request(app)
-      .get("/api/admin/clients/onec-update/status")
-      .set(authHeaders(adminCookie));
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "rejected");
     assert.equal(status.body.job.dataPreserved, true);
     assert.match(status.body.job.message, /Прежние данные/);
@@ -351,5 +457,31 @@ describe("admin clients onec update", { concurrency: false }, () => {
       "SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_roster",
     );
     assert.equal(afterCount.rows[0]?.count, beforeCount.rows[0]?.count);
+  });
+
+  it("reports commit uncertainty without promising preserved data", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    const bundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B));
+    configureWorkerBundle(bundle, { failCommit: true });
+
+    const started = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(started.status, 202);
+
+    const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
+    assert.equal(status.body.job.phase, "uncertain");
+    assert.equal(status.body.job.errorCode, "COMMIT_UNCERTAIN");
+    assert.match(status.body.job.message, /уточняется/i);
+    assert.equal(status.body.job.dataPreserved, false);
+    assert.equal(status.body.canStart, false);
+
+    const retry = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(retry.status, 409);
   });
 });

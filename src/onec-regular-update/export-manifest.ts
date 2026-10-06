@@ -3,6 +3,7 @@ import { readRemoteFileFromFtp } from "../onec-clients/ftp-read";
 import { isSha256Hex } from "../onec-clients/sha256";
 import { isValidNonZeroUuid, normalizeUuid } from "../onec-clients/uuid";
 import { FTP_READ_DEADLINE_MS } from "../onec-clients/constants";
+import { parseCalendarDateInput } from "../shared/calendar-date";
 
 export const EXPORT_MANIFEST_RELATIVE_PATH = "clients/export_bundle_manifest.json";
 export const EXPORT_MANIFEST_VERSION = 1;
@@ -75,6 +76,60 @@ function readManifestFileHashes(raw: Record<string, unknown>): { clientsSha256?:
   };
 }
 
+function validateExportFormedAt(value: string):
+  | { ok: true }
+  | { ok: false; message: string } {
+  const dotted = /^(\d{2})\.(\d{2})\.(\d{4})(?:$|[T\s])/.exec(value);
+  if (dotted) {
+    const parsed = parseCalendarDateInput(`${dotted[1]}.${dotted[2]}.${dotted[3]}`);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        message: "Export bundle manifest export_formed_at is not a valid calendar date.",
+      };
+    }
+    return { ok: true };
+  }
+
+  const withoutTimezone = value.replace(/(?:[+-]\d{2}:\d{2}|Z)$/i, "");
+  const isoDateTime = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(withoutTimezone);
+  if (isoDateTime) {
+    const parsed = parseCalendarDateInput(isoDateTime[1]!);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        message: "Export bundle manifest export_formed_at is not a valid calendar date.",
+      };
+    }
+    const hour = Number(isoDateTime[2]);
+    const minute = Number(isoDateTime[3]);
+    const second = Number(isoDateTime[4]);
+    if (hour > 23 || minute > 59 || second > 59) {
+      return {
+        ok: false,
+        message: "Export bundle manifest export_formed_at has an invalid time component.",
+      };
+    }
+    return { ok: true };
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = parseCalendarDateInput(value);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        message: "Export bundle manifest export_formed_at is not a valid calendar date.",
+      };
+    }
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    message: "Export bundle manifest export_formed_at has an unsupported format.",
+  };
+}
+
 export function verifyExportBundleManifestBytes(
   bytes: Buffer,
   expected: { clientsSha256: string; employeeRosterSha256: string },
@@ -143,10 +198,23 @@ export function verifyExportBundleManifestBytes(
     };
   }
 
-  const exportFormedAt =
+  const exportFormedAtRaw =
     typeof raw.export_formed_at === "string" && raw.export_formed_at.trim().length > 0
       ? raw.export_formed_at.trim()
       : null;
+
+  if (exportFormedAtRaw) {
+    const formedAtValidation = validateExportFormedAt(exportFormedAtRaw);
+    if (!formedAtValidation.ok) {
+      return {
+        ok: false,
+        code: "MANIFEST_INVALID_SCHEMA",
+        message: formedAtValidation.message,
+      };
+    }
+  }
+
+  const exportFormedAt = exportFormedAtRaw;
 
   return {
     ok: true,

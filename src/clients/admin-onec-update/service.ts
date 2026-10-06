@@ -1,11 +1,12 @@
+import { kickImportJobWorker } from "../../onec-import/worker-scheduler";
 import {
   countRunningImportRuns,
-  insertRegularUpdateJob,
   isExchangeApplyBlocked,
   loadActiveRegularUpdateJob,
   loadLastSuccessfulUpdateAt,
   loadLatestRegularUpdateJob,
   mapJobRowToDto,
+  tryStartRegularUpdateJob,
 } from "./repository";
 import type {
   AdminOnecUpdateStartResponse,
@@ -42,22 +43,26 @@ export async function getAdminOnecUpdateStatus(): Promise<AdminOnecUpdateStatusR
 export async function startAdminOnecUpdate(input: {
   requestedByUserId: string;
 }): Promise<AdminOnecUpdateStartResponse> {
-  const blockedReason = await buildBlockedReason();
-  if (blockedReason) {
-    throw Object.assign(new Error(blockedReason), { code: "UPDATE_ALREADY_RUNNING" });
+  const started = await tryStartRegularUpdateJob(input.requestedByUserId);
+  if (!started.ok) {
+    throw Object.assign(new Error(started.message), {
+      code: started.code,
+      existingJobId: started.existingJobId,
+    });
   }
 
-  const jobId = await insertRegularUpdateJob(input.requestedByUserId);
   console.info(
     JSON.stringify({
       event: "admin_onec_update_requested",
-      jobId,
+      jobId: started.jobId,
       requestedByUserId: input.requestedByUserId,
     }),
   );
 
+  kickImportJobWorker();
+
   return {
-    jobId,
+    jobId: started.jobId,
     phase: "pending",
     message: "Обновление из 1С поставлено в очередь.",
   };

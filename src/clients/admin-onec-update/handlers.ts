@@ -28,16 +28,22 @@ export async function adminOnecUpdateStartHandler(
     setNoStore(res);
     res.status(202).json(started);
   } catch (error) {
-    const isDuplicate =
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string }).code === "UPDATE_ALREADY_RUNNING";
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+    const existingJobId =
+      error !== null && typeof error === "object" && "existingJobId" in error
+        ? (error as { existingJobId?: string }).existingJobId
+        : undefined;
+    const conflictCodes = new Set(["UPDATE_ALREADY_RUNNING", "APPLY_BLOCKED", "IMPORT_RUNNING"]);
+    const isConflict = code != null && conflictCodes.has(code);
     const message =
       error instanceof Error ? error.message : "Не удалось запустить обновление из 1С.";
     setNoStore(res);
-    res
-      .status(isDuplicate ? 409 : 503)
-      .json(apiError(isDuplicate ? "UPDATE_ALREADY_RUNNING" : ERROR_CODES.SERVICE_UNAVAILABLE, message));
+    res.status(isConflict ? 409 : 503).json({
+      ...apiError(isConflict ? (code ?? "UPDATE_ALREADY_RUNNING") : ERROR_CODES.SERVICE_UNAVAILABLE, message),
+      ...(existingJobId ? { jobId: existingJobId } : {}),
+    });
   }
 }

@@ -5,7 +5,8 @@ export type OnecUpdateUiPhase =
   | "completed"
   | "no_changes"
   | "rejected"
-  | "error";
+  | "error"
+  | "uncertain";
 
 export type AdminOnecUpdateJobDto = {
   id: string;
