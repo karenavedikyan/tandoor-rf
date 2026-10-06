@@ -363,6 +363,12 @@
     return "";
   }
 
+  function filterRopExpandGuids(expanded) {
+    return (expanded || []).filter(function (guid) {
+      return Boolean(guid) && guid !== ASSISTANTS_DEPT_EXPAND_TOKEN;
+    });
+  }
+
   function applyPresentationDefaults(state, presentation, search) {
     if (!presentation) {
       return state;
@@ -951,6 +957,7 @@
     readStateFromSearch: readStateFromSearch,
     normalizeTeamKind: normalizeTeamKind,
     normalizeTeamDept: normalizeTeamDept,
+    filterRopExpandGuids: filterRopExpandGuids,
     ASSISTANTS_DEPT_EXPAND_TOKEN: ASSISTANTS_DEPT_EXPAND_TOKEN,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,

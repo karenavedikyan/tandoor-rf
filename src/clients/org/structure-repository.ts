@@ -24,7 +24,6 @@ import {
 } from "./assignment-sql";
 import {
   ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID,
-  ORG_ASSISTANTS_HEAD_IN_TEAM,
   ORG_DIRECTOR_EMPLOYEE_GUID,
   ROSTER_ASSISTANT_MEMBER_POST_LABEL,
   ROSTER_ASSISTANTS_HEAD_POST_LABEL,
@@ -103,6 +102,8 @@ export type OrgAssistantsDepartmentHead = {
 export type OrgAssistantsDepartmentLoadState =
   | "unconfigured"
   | "roster_missing"
+  | "head_conflict"
+  | "head_unknown"
   | "empty"
   | "ready";
 
@@ -110,7 +111,7 @@ export type OrgAssistantsDepartment = {
   loadState: OrgAssistantsDepartmentLoadState;
   head: OrgAssistantsDepartmentHead | null;
   members: OrgAssistantsDepartmentMember[];
-  /** Unique employee GUIDs in the confirmed team roster (head counted once). */
+  /** Unique employee GUIDs in the displayed team composition (members list). */
   uniqueMemberCount: number;
   note: string;
 };
@@ -512,11 +513,49 @@ function resolveAssistantsHeadGuid(): string | null {
   );
 }
 
-function resolveAssistantsHeadInTeam(): boolean {
-  if ((process.env.TANDOOR_ORG_ASSISTANTS_HEAD_IN_TEAM ?? "").trim() === "1") {
+function buildAssistantCompositionMembers(
+  linked: Set<string>,
+  assistantMembers: RosterPersonRow[],
+  headGuid: string | null,
+  headRow: RosterPersonRow | null,
+  isHeadAlsoAssistant: boolean,
+): OrgAssistantsDepartmentMember[] {
+  const members: OrgAssistantsDepartmentMember[] = [];
+  if (headGuid && headRow && isHeadAlsoAssistant) {
+    members.push({
+      employeeGuid: headGuid,
+      name: headRow.name,
+      shortId: shortUuidLabel(headGuid),
+      hasLinkedAccount: linked.has(headGuid),
+      roles: ["roa", "assistant"],
+    });
+  }
+  for (const row of assistantMembers) {
+    if (headGuid && row.employee_guid === headGuid) {
+      continue;
+    }
+    members.push({
+      employeeGuid: row.employee_guid,
+      name: row.name,
+      shortId: shortUuidLabel(row.employee_guid),
+      hasLinkedAccount: linked.has(row.employee_guid),
+      roles: ["assistant"],
+    });
+  }
+  return members.sort(
+    (a, b) => a.name.localeCompare(b.name, "ru") || a.employeeGuid.localeCompare(b.employeeGuid),
+  );
+}
+
+function headMembershipConfirmedByRoster(
+  headGuid: string,
+  headRow: RosterPersonRow,
+  assistantMembers: RosterPersonRow[],
+): boolean {
+  if (headRow.post === ROSTER_ASSISTANT_MEMBER_POST_LABEL) {
     return true;
   }
-  return ORG_ASSISTANTS_HEAD_IN_TEAM;
+  return assistantMembers.some((row) => row.employee_guid === headGuid);
 }
 
 async function loadAssistantsDepartment(
@@ -529,13 +568,9 @@ async function loadAssistantsDepartment(
   const rosterHeadCandidates = rosterLoaded
     ? await loadRosterPeopleByPost(ROSTER_ASSISTANTS_HEAD_POST_LABEL)
     : [];
+  const envHeadGuid = resolveAssistantsHeadGuid();
 
-  let headGuid = resolveAssistantsHeadGuid();
-  if (!headGuid && rosterHeadCandidates.length > 0) {
-    headGuid = rosterHeadCandidates[0]!.employee_guid;
-  }
-
-  if (!headGuid) {
+  if (!envHeadGuid && rosterHeadCandidates.length === 0) {
     return {
       loadState: "unconfigured",
       head: null,
@@ -547,14 +582,24 @@ async function loadAssistantsDepartment(
   }
 
   if (!rosterLoaded) {
-    const headName = shortUuidLabel(headGuid);
+    const provisionalHeadGuid = envHeadGuid ?? rosterHeadCandidates[0]?.employee_guid ?? null;
+    if (!provisionalHeadGuid) {
+      return {
+        loadState: "unconfigured",
+        head: null,
+        members: [],
+        uniqueMemberCount: 0,
+        note:
+          "Отдел ассистентов не настроен: задайте TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID или должность «Руководитель отдела ассистентов» в справочнике ОПТ.",
+      };
+    }
     return {
       loadState: "roster_missing",
       head: {
-        employeeGuid: headGuid,
-        name: headName,
-        shortId: shortUuidLabel(headGuid),
-        hasLinkedAccount: linked.has(headGuid),
+        employeeGuid: provisionalHeadGuid,
+        name: shortUuidLabel(provisionalHeadGuid),
+        shortId: shortUuidLabel(provisionalHeadGuid),
+        hasLinkedAccount: linked.has(provisionalHeadGuid),
         isAlsoAssistant: false,
       },
       members: [],
@@ -563,67 +608,60 @@ async function loadAssistantsDepartment(
     };
   }
 
-  const headRow =
-    (await loadRosterPersonByGuid(headGuid)) ??
-    rosterHeadCandidates.find((row) => row.employee_guid === headGuid) ??
-    null;
-  const headName = headRow?.name ?? shortUuidLabel(headGuid);
-  const assistantGuidSet = new Set(assistantMembers.map((row) => row.employee_guid));
-  const isHeadAlsoAssistant =
-    assistantGuidSet.has(headGuid) ||
-    headRow?.post === ROSTER_ASSISTANT_MEMBER_POST_LABEL ||
-    resolveAssistantsHeadInTeam();
-
-  const memberMap = new Map<string, OrgAssistantsDepartmentMember>();
-
-  function upsertMember(guid: string, rosterRow: RosterPersonRow | null, extraRoles: AssistantsMemberRole[]) {
-    const existing = memberMap.get(guid);
-    const roles = new Set<AssistantsMemberRole>(existing?.roles ?? []);
-    for (const role of extraRoles) {
-      roles.add(role);
-    }
-    memberMap.set(guid, {
-      employeeGuid: guid,
-      name: rosterRow?.name ?? existing?.name ?? shortUuidLabel(guid),
-      shortId: shortUuidLabel(guid),
-      hasLinkedAccount: linked.has(guid),
-      roles: [...roles],
-    });
+  if (!envHeadGuid && rosterHeadCandidates.length > 1) {
+    const members = buildAssistantCompositionMembers(linked, assistantMembers, null, null, false);
+    return {
+      loadState: "head_conflict",
+      head: null,
+      members,
+      uniqueMemberCount: members.length,
+      note:
+        "Найдено несколько сотрудников с должностью «Руководитель отдела ассистентов». Уточните назначение РОА в 1С или задайте TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID.",
+    };
   }
 
-  upsertMember(headGuid, headRow, ["roa", ...(isHeadAlsoAssistant ? (["assistant"] as const) : [])]);
-  for (const row of assistantMembers) {
-    if (row.employee_guid === headGuid) {
-      continue;
-    }
-    upsertMember(row.employee_guid, row, ["assistant"]);
+  const headGuid = envHeadGuid ?? rosterHeadCandidates[0]!.employee_guid;
+  const headRow = await loadRosterPersonByGuid(headGuid);
+
+  if (!headRow) {
+    const members = buildAssistantCompositionMembers(linked, assistantMembers, null, null, false);
+    return {
+      loadState: "head_unknown",
+      head: null,
+      members,
+      uniqueMemberCount: members.length,
+      note: `Руководитель отдела ассистентов (${shortUuidLabel(headGuid)}) не найден в актуальном справочнике ОПТ.`,
+    };
   }
 
-  const members = [...memberMap.values()].sort(
-    (a, b) => a.name.localeCompare(b.name, "ru") || a.employeeGuid.localeCompare(b.employeeGuid),
+  const confirmedHeadMembership = headMembershipConfirmedByRoster(
+    headGuid,
+    headRow,
+    assistantMembers,
   );
 
-  const teamGuids = new Set<string>();
-  for (const member of members) {
-    if (member.roles.includes("assistant")) {
-      teamGuids.add(member.employeeGuid);
-    }
-  }
-
+  const members = buildAssistantCompositionMembers(
+    linked,
+    assistantMembers,
+    headGuid,
+    headRow,
+    confirmedHeadMembership,
+  );
+  const uniqueMemberCount = members.length;
   const loadState: OrgAssistantsDepartmentLoadState =
-    teamGuids.size === 0 ? "empty" : "ready";
+    uniqueMemberCount === 0 ? "empty" : "ready";
 
   return {
     loadState,
     head: {
       employeeGuid: headGuid,
-      name: headName,
+      name: headRow.name,
       shortId: shortUuidLabel(headGuid),
       hasLinkedAccount: linked.has(headGuid),
-      isAlsoAssistant: isHeadAlsoAssistant,
+      isAlsoAssistant: confirmedHeadMembership,
     },
     members,
-    uniqueMemberCount: teamGuids.size,
+    uniqueMemberCount,
     note:
       loadState === "empty"
         ? "Подтверждённый состав отдела ассистентов пуст."

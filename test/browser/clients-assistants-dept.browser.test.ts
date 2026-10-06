@@ -211,6 +211,34 @@ describe("clients assistants department browser", { concurrency: false }, () => 
     await stopServer();
   });
 
+  it("expanding assistants dept does not call ROP responsibles API with expand token", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    const responsiblesRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/clients/org-structure/") && request.url().includes("/responsibles")) {
+        responsiblesRequests.push(request.url());
+      }
+    });
+
+    await login(page, "admin@example.com");
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    await page.locator(".clients-compact-team--assistants [data-toggle-assistants]").first().click();
+    await page.waitForFunction(() =>
+      new URL(window.location.href).searchParams.getAll("teamExpand").includes("__assistants_dept__"),
+    );
+    await page.waitForTimeout(500);
+
+    assert.ok(
+      responsiblesRequests.every((url) => !url.includes("__assistants_dept__")),
+      "unexpected responsibles request: " + responsiblesRequests.join(", "),
+    );
+
+    await page.close();
+    await stopServer();
+  });
+
   it("mobile layout has no horizontal overflow for assistants block", async () => {
     await seed();
     await startServer();

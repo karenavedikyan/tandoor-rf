@@ -209,7 +209,15 @@
       if (!department) {
         return "—";
       }
-      if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
+      if (
+        department.loadState === "unconfigured" ||
+        department.loadState === "roster_missing" ||
+        department.loadState === "head_conflict" ||
+        department.loadState === "head_unknown"
+      ) {
+        if (department.loadState === "head_conflict" || department.loadState === "head_unknown") {
+          return String(department.uniqueMemberCount ?? "—");
+        }
         return "—";
       }
       return String(department.uniqueMemberCount ?? "—");
@@ -219,7 +227,12 @@
       if (!department) {
         return "";
       }
-      if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
+      if (
+        department.loadState === "unconfigured" ||
+        department.loadState === "roster_missing" ||
+        department.loadState === "head_conflict" ||
+        department.loadState === "head_unknown"
+      ) {
         return (
           '<p class="clients-compact-team__assistants-note clients-compact-team__assistants-note--warn" role="status">' +
           deps.shell.escapeHtml(department.note || "Состав отдела ассистентов недоступен.") +
@@ -237,7 +250,7 @@
     }
 
     function renderAssistantsMembersPanel(department, teamUi, expanded) {
-      if (!expanded || !department || !department.head) {
+      if (!expanded || !department) {
         return "";
       }
       if (department.loadState === "unconfigured" || department.loadState === "roster_missing") {
@@ -282,10 +295,33 @@
       var expanded = opts.forceExpanded || isAssistantsExpanded(teamUi);
       var head = department.head;
       if (!head) {
+        var headlessToggleLabel = expanded ? "Свернуть отдел ассистентов" : "Развернуть отдел ассистентов";
+        var headlessMetrics =
+          (department.members || []).length > 0
+            ? '<div class="clients-compact-team__metrics clients-compact-team__metrics--assistants" aria-label="Состав отдела">' +
+              '<span class="clients-compact-team__metric"><span class="clients-compact-team__metric-value">' +
+              deps.shell.escapeHtml(renderAssistantsMemberCount(department)) +
+              '</span><span class="clients-compact-team__metric-label">сотрудников</span></span></div>'
+            : "";
         return (
-          '<section class="clients-compact-team clients-compact-team--assistants">' +
+          '<section class="clients-compact-team clients-compact-team--assistants' +
+          (expanded ? " clients-compact-team--expanded" : "") +
+          '" data-assistants-dept="1">' +
           '<h3 class="clients-compact-team__dept-title">Отдел ассистентов</h3>' +
           renderAssistantsStatusNote(department) +
+          ((department.members || []).length > 0
+            ? '<div class="clients-compact-team__row clients-compact-team__row--assistants">' +
+              '<button type="button" class="clients-compact-team__toggle" aria-expanded="' +
+              (expanded ? "true" : "false") +
+              '" aria-label="' +
+              deps.shell.escapeHtml(headlessToggleLabel) +
+              '" data-toggle-assistants="1">' +
+              '<span class="clients-compact-team__chevron" aria-hidden="true"></span></button>' +
+              '<div class="clients-compact-team__identity"><span class="clients-compact-team__role-caption">Состав без назначенного РОА</span></div>' +
+              headlessMetrics +
+              "</div>"
+            : "") +
+          renderAssistantsMembersPanel(department, teamUi, expanded) +
           "</section>"
         );
       }
@@ -324,11 +360,18 @@
         "</div>" +
         renderAssistantsMembersPanel(department, teamUi, expanded) +
         (department.loadState === "empty" && !expanded ? renderAssistantsStatusNote(department) : "") +
-        (department.loadState === "unconfigured" || department.loadState === "roster_missing"
+        (department.loadState === "unconfigured" ||
+        department.loadState === "roster_missing" ||
+        department.loadState === "head_conflict" ||
+        department.loadState === "head_unknown"
           ? renderAssistantsStatusNote(department)
           : "") +
         "</section>"
       );
+    }
+
+    function ropExpandGuids(expanded) {
+      return deps.logic.filterRopExpandGuids(expanded || []);
     }
 
     function isExpanded(teamUi, ropGuid) {
@@ -967,15 +1010,16 @@
           }
         });
         var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
+        var ropGuidsToLoad = ropExpandGuids(mergedExpand);
         renderOverviewIntoContainer(container, renderState, context, callbacks);
-        if (mergedExpand.length === 0) {
+        if (ropGuidsToLoad.length === 0) {
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
           }
           return;
         }
         return Promise.all(
-          mergedExpand.map(function (ropGuid) {
+          ropGuidsToLoad.map(function (ropGuid) {
             return ensureResponsibles(ropGuid);
           }),
         ).then(function () {

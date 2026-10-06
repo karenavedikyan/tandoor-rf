@@ -17,8 +17,10 @@ let databaseUrl = "";
 let adminUserId = "";
 
 const ROA_HEAD = "dddddddd-dddd-4ddd-8ddd-dddddddddd01";
+const ROA_HEAD_B = "cccccccc-cccc-4ccc-8ccc-cccccccc0002";
 const ASSISTANT_ONE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02";
 const ASSISTANT_NO_ACCOUNT = "ffffffff-ffff-4fff-8fff-ffffffff0003";
+const UNKNOWN_HEAD = "abababab-abab-4aba-8aba-abababababab";
 const MARKETING = "99999999-9999-4999-8999-999999999999";
 
 function authHeaders(cookie?: string): Record<string, string> {
@@ -203,7 +205,75 @@ describe("clients org-structure assistants department", () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.assistantsDepartment.loadState, "empty");
     assert.equal(res.body.assistantsDepartment.uniqueMemberCount, 0);
+    assert.equal(res.body.assistantsDepartment.members.length, 0);
     assert.equal(res.body.assistantsDepartment.head.isAlsoAssistant, false);
+  });
+
+  it("reports head conflict when multiple roster ROA candidates exist without env guid", async () => {
+    delete process.env.TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID;
+    await seedAssistantsRoster(
+      [
+        [ROA_HEAD, "ROA Alpha", ROSTER_ASSISTANTS_HEAD_POST_LABEL],
+        [ROA_HEAD_B, "ROA Beta", ROSTER_ASSISTANTS_HEAD_POST_LABEL],
+        [ASSISTANT_ONE, "Assistant One", ROSTER_ASSISTANT_MEMBER_POST_LABEL],
+      ],
+      3,
+    );
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(res.status, 200);
+    const dept = res.body.assistantsDepartment;
+    assert.equal(dept.loadState, "head_conflict");
+    assert.equal(dept.head, null);
+    assert.notEqual(dept.loadState, "ready");
+    assert.equal(dept.uniqueMemberCount, 1);
+    assert.equal(dept.members.length, 1);
+    assert.equal(dept.members[0].employeeGuid, ASSISTANT_ONE);
+  });
+
+  it("does not fabricate head membership for unknown env guid even with HEAD_IN_TEAM", async () => {
+    process.env.TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID = UNKNOWN_HEAD;
+    process.env.TANDOOR_ORG_ASSISTANTS_HEAD_IN_TEAM = "1";
+    await seedAssistantsRoster(
+      [[ASSISTANT_ONE, "Assistant One", ROSTER_ASSISTANT_MEMBER_POST_LABEL]],
+      1,
+    );
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(res.status, 200);
+    const dept = res.body.assistantsDepartment;
+    assert.equal(dept.loadState, "head_unknown");
+    assert.equal(dept.head, null);
+    assert.equal(dept.uniqueMemberCount, 1);
+    assert.equal(dept.members.length, 1);
+    assert.ok(!dept.members.some((item: { employeeGuid: string }) => item.employeeGuid === UNKNOWN_HEAD));
+  });
+
+  it("keeps head in header only without confirmed membership and matches member count", async () => {
+    await seedAssistantsRoster(
+      [
+        [ROA_HEAD, "ROA Head", ROSTER_ASSISTANTS_HEAD_POST_LABEL],
+        [ASSISTANT_ONE, "Assistant One", ROSTER_ASSISTANT_MEMBER_POST_LABEL],
+      ],
+      2,
+    );
+
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/org-structure").set(authHeaders(cookie));
+    assert.equal(res.status, 200);
+    const dept = res.body.assistantsDepartment;
+    assert.equal(dept.loadState, "ready");
+    assert.equal(dept.head.employeeGuid, ROA_HEAD);
+    assert.equal(dept.head.isAlsoAssistant, false);
+    assert.equal(dept.uniqueMemberCount, 1);
+    assert.equal(dept.members.length, 1);
+    assert.equal(dept.members[0].employeeGuid, ASSISTANT_ONE);
+    assert.ok(!dept.members.some((item: { employeeGuid: string }) => item.employeeGuid === ROA_HEAD));
   });
 
   it("hides assistants department from ROP and during admin preview", async () => {

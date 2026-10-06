@@ -129,4 +129,12 @@ describe("clients teams dept url state", () => {
     assert.match(query, /teamDept=assistants/);
     assert.match(query, /teamExpand=__assistants_dept__/);
   });
+
+  it("filters assistants expand token from ROP responsibles preload", () => {
+    const filtered = logic.filterRopExpandGuids([
+      "11a0c069-11bc-11ea-80ec-00155d0a0a4e",
+      logic.ASSISTANTS_DEPT_EXPAND_TOKEN,
+    ]);
+    assert.deepEqual(filtered, ["11a0c069-11bc-11ea-80ec-00155d0a0a4e"]);
+  });
 });
