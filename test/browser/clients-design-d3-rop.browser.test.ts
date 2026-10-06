@@ -222,9 +222,15 @@ describe("clients design D3 — ROP team screen", () => {
       branchSnapshot({
         clientRop: { guid: ROP_A, name: "ROP Alpha" },
         clientManager: { guid: M1, name: "Manager One" },
+        clientRegional: { guid: R1, name: "Regional One" },
         outlets: [
           { guidStore: T1, rop: { guid: ROP_B, name: "ROP Beta" }, manager: { guid: M3, name: "Manager Three" } },
-          { guidStore: T2, rop: { guid: ROP_A, name: "ROP Alpha" }, manager: { guid: M3, name: "Manager Three" } },
+          {
+            guidStore: T2,
+            rop: { guid: ROP_A, name: "ROP Alpha" },
+            manager: { guid: M3, name: "Manager Three" },
+            regional: { guid: R1, name: "Regional One" },
+          },
         ],
       }),
     );
@@ -345,6 +351,15 @@ describe("clients design D3 — ROP team screen", () => {
       assert.match(await page.locator(".clients-team-group__title").first().textContent(), /Менеджеры продаж/);
       assert.ok((await page.locator(".clients-team-member-row").count()) >= 2);
       assert.ok(await page.locator(".clients-team-member-row").filter({ hasText: "No Account Manager" }).count());
+      assert.equal(await page.locator(".clients-team-own-row").count(), 0);
+      assert.equal(await page.locator(".clients-workspace-nav.clients-hidden").count(), 1);
+      assert.equal(await page.locator("#clients-breadcrumbs.clients-hidden").count(), 1);
+      assert.equal(await page.locator('#view-switcher [data-view="all"]').textContent(), "Клиенты команды");
+      assert.equal(await page.locator('#view-switcher [data-view="teams"]').textContent(), "Моя команда");
+      assert.match(
+        await page.locator(".clients-team-group", { hasText: "Региональные менеджеры" }).textContent(),
+        /Regional/,
+      );
 
       const overview = await page.evaluate(async () => {
         const res = await fetch("/api/clients/org-structure", { credentials: "include" });
@@ -356,10 +371,43 @@ describe("clients design D3 — ROP team screen", () => {
       assert.equal(await page.locator("#clients-stat-clients").textContent(), "2");
       assert.equal(await page.locator("#clients-stat-outlets").textContent(), "1");
 
+      if (viewportName === "desktop") {
+        await page.click('#view-switcher [data-view="all"]');
+        await page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === "/api/clients" &&
+            new URL(response.url()).searchParams.get("view") === "all" &&
+            response.status() === 200,
+        );
+        await page.click('#view-switcher [data-view="teams"]');
+        await page.waitForSelector(".clients-team-card-shell");
+      }
+
       await page.screenshot({
         path: path.join(SCREENSHOT_DIR, `clients-design-d3-rop-team-${viewportName}.png`),
         fullPage: true,
       });
+
+      const regionalRow = page.locator(".clients-team-group", { hasText: "Региональные менеджеры" }).locator(
+        ".clients-team-member-row",
+      );
+      const regionalListResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/api/clients" &&
+          url.searchParams.get("view") === "teams" &&
+          url.searchParams.get("regionalManager") === R1 &&
+          url.searchParams.get("responsibleKind") === "regional" &&
+          response.status() === 200
+        );
+      });
+      await regionalRow.locator('.clients-team-member-row__count:has-text("клиентов")').click();
+      await regionalListResponse;
+      await waitForListLoaded(page, viewport);
+      assert.match(page.url(), /responsibleKind=regional/);
+      assert.match(page.url(), new RegExp("regionalManager=" + R1.replace(/-/g, "\\-")));
+      await page.locator("#clients-breadcrumbs-back").click();
+      await page.waitForSelector(".clients-team-card-shell");
 
       const managerRow = page.locator(".clients-team-member-row", { hasText: "Manager One" });
       const listResponse = page.waitForResponse((response) => {
@@ -385,11 +433,6 @@ describe("clients design D3 — ROP team screen", () => {
           : await page.locator("#clients-table-body").innerText();
       assert.ok(listBody.includes("Client C1") || listBody.includes("No Account"));
       assert.ok(!listBody.includes("Client C2"));
-
-      await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, `clients-design-d3-rop-employee-list-${viewportName}.png`),
-        fullPage: true,
-      });
 
       const cardApi = page.waitForResponse(
         (response) =>

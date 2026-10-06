@@ -47,7 +47,10 @@
   var statsStripEl = document.getElementById("clients-stats-strip");
   var employeeScopeValueEl = document.getElementById("clients-employee-scope-value");
   var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
+  var workspaceNavEl = document.querySelector(".clients-workspace-nav");
   var workspaceNavTabEl = document.getElementById("clients-workspace-nav-tab");
+  var viewAllTabEl = viewSwitcherEl?.querySelector('[data-view="all"]');
+  var viewTeamsTabEl = viewSwitcherEl?.querySelector('[data-view="teams"]');
   var breadcrumbsRowEl = document.getElementById("clients-breadcrumbs-row");
   var viewReviewTab = document.getElementById("view-review-tab");
   var viewCompletenessTab = document.getElementById("view-completeness-tab");
@@ -167,7 +170,6 @@
       statOutletLabel: "ТТ ветки",
       statNoOutletsLabel: "Сотрудники команды",
       showThirdStat: true,
-      workspaceTabLabel: "Моя команда",
     },
   };
 
@@ -441,9 +443,11 @@
     if (managerChromeEl) {
       managerChromeEl.classList.toggle("clients-hidden", !config);
     }
-    if (workspaceNavTabEl) {
-      workspaceNavTabEl.textContent =
-        config && config.workspaceTabLabel ? config.workspaceTabLabel : "Моя база";
+    if (workspaceNavEl) {
+      workspaceNavEl.classList.toggle("clients-hidden", isRopDesignSession());
+    }
+    if (workspaceNavTabEl && !isRopDesignSession()) {
+      workspaceNavTabEl.textContent = "Моя база";
     }
     if (config) {
       renderEmployeeCard(user);
@@ -586,6 +590,7 @@
         !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
       );
     }
+    updateRopViewSwitcherLabels();
     applyPortfolioDesignChrome(presentation, currentUser, currentStateFromForm());
   }
 
@@ -1306,6 +1311,19 @@
     });
   }
 
+  function updateRopViewSwitcherLabels() {
+    if (!viewAllTabEl || !viewTeamsTabEl) {
+      return;
+    }
+    if (isRopDesignSession()) {
+      viewAllTabEl.textContent = "Клиенты команды";
+      viewTeamsTabEl.textContent = "Моя команда";
+      return;
+    }
+    viewAllTabEl.textContent = "Все клиенты";
+    viewTeamsTabEl.textContent = "По командам";
+  }
+
   function updateViewChrome(state) {
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
@@ -1370,6 +1388,7 @@
       isRopDesignSession() && isTeams && !branchList && !responsibleList && Boolean(state.ropEmployee);
     document.querySelector(".clients-toolbar")?.classList.toggle("clients-hidden", isRopTeamHome);
     document.querySelector(".clients-results-shell")?.classList.toggle("clients-hidden", isRopTeamHome);
+    updateRopViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
     if (isRopDesignSession() && isTeams) {
       loadRopTeamStats(state);
@@ -1415,13 +1434,14 @@
       var teamRootLabel = isRopDesignSession() ? "Моя команда" : "По командам";
       var teamRootHref = isRopDesignSession() ? ropTeamHomeHref(state) : "/clients?view=teams";
       if (isRopDesignSession()) {
-        parts.push({ label: teamRootLabel, href: teamRootHref });
         if (logic.hasResponsibleSelection(state)) {
+          parts.push({ label: teamRootLabel, href: teamRootHref });
           var entityLabel = (state.entity || "clients") === "outlets" ? "Торговые точки" : "Клиенты";
           parts.push({ label: teamContext.managerName || "Сотрудник", href: null });
           parts.push({ label: entityLabel, href: null });
           showBackToTeam = true;
         } else if (logic.isBranchPortfolioList(state)) {
+          parts.push({ label: teamRootLabel, href: teamRootHref });
           parts.push({
             label: state.portfolio === "outlets" ? "ТТ ветки" : "Клиенты ветки",
             href: null,
@@ -1582,16 +1602,6 @@
       "</div>" +
       "</div>";
 
-    var ownRow =
-      summary && summary.hasAssignedPortfolio
-        ? '<div class="clients-team-own-row">' +
-          '<div class="clients-team-own-row__label">Собственные назначения</div>' +
-          '<div class="clients-team-own-row__actions">' +
-          '<button type="button" class="clients-team-own-row__action" data-branch-portfolio="clients">Клиенты</button>' +
-          '<button type="button" class="clients-team-own-row__action" data-branch-portfolio="outlets">Торговые точки</button>' +
-          "</div></div>"
-        : "";
-
     var grouped = { manager: [], regional: [], hardware: [] };
     (teamContext.managers || []).forEach(function (manager) {
       if (grouped[manager.kind]) {
@@ -1646,10 +1656,9 @@
       })
       .join("");
 
-    var emptyHtml =
-      !groupsHtml && !ownRow
-        ? '<p class="clients-team-empty">Нет назначенных сотрудников в вашей ветке.</p>'
-        : "";
+    var emptyHtml = !groupsHtml
+      ? '<p class="clients-team-empty">Нет назначенных сотрудников в вашей ветке.</p>'
+      : "";
 
     teamsPanelEl.innerHTML =
       '<article class="clients-team-card-shell">' +
@@ -1662,7 +1671,6 @@
         : "") +
       "</header>" +
       statsHtml +
-      ownRow +
       groupsHtml +
       emptyHtml +
       "</article>";
