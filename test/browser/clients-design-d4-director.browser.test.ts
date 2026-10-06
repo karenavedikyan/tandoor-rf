@@ -644,13 +644,14 @@ describe("clients design D4 — director screen", { concurrency: false }, () => 
       ).count();
       assert.equal(bothMissingRows, 1);
 
-      await page.click('[data-entity="outlets"]');
-      await page.waitForResponse(
+      const outletsQueueResponse = page.waitForResponse(
         (response) =>
           response.url().includes("/api/clients/completeness-queue") &&
           response.url().includes("entity=outlets") &&
           response.status() === 200,
       );
+      await page.click('[data-entity="outlets"]');
+      await outletsQueueResponse;
       if (viewport.width < 768) {
         await waitForVisibleCompletenessCards(page);
       } else {

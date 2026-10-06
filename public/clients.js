@@ -3141,16 +3141,16 @@
       showAccessDenied();
       return;
     }
-    if (!user || !shell.canReadClients(user)) {
-      showAccessDenied();
-      return;
-    }
     if (reason === "service") {
       showInitError("Сервис временно недоступен", "Не удалось проверить доступ. Повторите попытку.");
       return;
     }
     if (reason === "network") {
       showInitError("Ошибка сети", "Не удалось связаться с сервером. Проверьте подключение.");
+      return;
+    }
+    if (!user || !shell.canReadClients(user)) {
+      showAccessDenied();
       return;
     }
     currentUser = user;
