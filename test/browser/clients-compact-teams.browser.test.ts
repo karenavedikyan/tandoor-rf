@@ -227,6 +227,70 @@ describe("clients compact teams browser", { concurrency: false }, () => {
     });
   }
 
+  it("desktop metrics columns align with and without account badge", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "admin@example.com");
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+
+    assert.equal(
+      await teamCard(page, "ROP Alpha").locator(".clients-compact-team__badge", { hasText: "Нет аккаунта ЛК" }).count(),
+      0,
+    );
+    assert.ok(
+      await teamCard(page, "ROP Beta").locator(".clients-compact-team__badge", { hasText: "Нет аккаунта ЛК" }).count(),
+    );
+
+    const metricsAlpha = await teamCard(page, "ROP Alpha").locator(".clients-compact-team__metrics").boundingBox();
+    const metricsBeta = await teamCard(page, "ROP Beta").locator(".clients-compact-team__metrics").boundingBox();
+    assert.ok(metricsAlpha && metricsBeta);
+    assert.equal(Math.round(metricsAlpha.x), Math.round(metricsBeta.x));
+
+    const employeesAlpha = await teamCard(page, "ROP Alpha")
+      .locator(".clients-compact-team__metric-label", { hasText: "сотрудников" })
+      .boundingBox();
+    const employeesBeta = await teamCard(page, "ROP Beta")
+      .locator(".clients-compact-team__metric-label", { hasText: "сотрудников" })
+      .boundingBox();
+    assert.ok(employeesAlpha && employeesBeta);
+    assert.equal(Math.round(employeesAlpha.x), Math.round(employeesBeta.x));
+
+    await page.screenshot({
+      path: path.join(VIEWPORT_SHOT_DIR, "clients-compact-teams-desktop-badges.png"),
+      fullPage: false,
+    });
+
+    await page.close();
+    await stopServer();
+  });
+
+  it("mobile teams surface shows compact incomplete line and first ROP in viewport", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: MOBILE, baseURL: baseUrl });
+    await login(page, "admin@example.com");
+    const statsReady = page.waitForResponse(
+      (r) => r.url().includes("/api/clients/completeness-queue") && r.status() === 200,
+    );
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    await statsReady;
+    await page.waitForSelector("#clients-stats-incomplete-compact:not(.clients-hidden)");
+    assert.match(await page.locator("#clients-stat-incomplete-compact-link").innerText(), /Не заполнено:/);
+
+    const firstTeamBox = await page.locator(".clients-compact-team").first().boundingBox();
+    assert.ok(firstTeamBox && firstTeamBox.y + firstTeamBox.height <= MOBILE.height);
+
+    await page.screenshot({
+      path: path.join(VIEWPORT_SHOT_DIR, "clients-compact-teams-mobile-first-screen.png"),
+      fullPage: false,
+    });
+
+    await page.close();
+    await stopServer();
+  });
+
   it("search and kind filter semantics", async () => {
     await seed();
     await startServer();

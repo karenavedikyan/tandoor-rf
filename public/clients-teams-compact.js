@@ -385,15 +385,17 @@
           '">' +
           '<span class="clients-compact-team__chevron" aria-hidden="true"></span>' +
           "</button>" +
+          '<div class="clients-compact-team__identity">' +
           '<button type="button" class="clients-compact-team__name" data-toggle-rop="' +
           deps.shell.escapeHtml(ropGuid) +
           '">' +
           deps.shell.escapeHtml(summary.name || summary.shortId || "РОП") +
           "</button>" +
-          metricsHtml +
           (summary.hasLinkedAccount === false
             ? '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>'
             : "") +
+          "</div>" +
+          metricsHtml +
           "</div>";
       return (
         '<section class="clients-compact-team' +

@@ -46,8 +46,12 @@
   var statNoOutletsLabelEl = document.getElementById("clients-stat-no-outlets-label");
   var statsStripEl = document.getElementById("clients-stats-strip");
   var incompleteStatsStripEl = document.getElementById("clients-stats-incomplete-strip");
+  var incompleteStatsCompactEl = document.getElementById("clients-stats-incomplete-compact");
   var statIncompleteClientsEl = document.getElementById("clients-stat-incomplete-clients");
   var statIncompleteOutletsEl = document.getElementById("clients-stat-incomplete-outlets");
+  var statIncompleteCompactClientsEl = document.getElementById("clients-stat-incomplete-compact-clients");
+  var statIncompleteCompactOutletsEl = document.getElementById("clients-stat-incomplete-compact-outlets");
+  var statIncompleteCompactLinkEl = document.getElementById("clients-stat-incomplete-compact-link");
   var employeeScopeValueEl = document.getElementById("clients-employee-scope-value");
   var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
   var workspaceNavEl = document.querySelector(".clients-workspace-nav");
@@ -773,6 +777,12 @@
       if (statIncompleteOutletsEl) {
         statIncompleteOutletsEl.textContent = formatStatValue(incompleteOutlets);
       }
+      if (statIncompleteCompactClientsEl) {
+        statIncompleteCompactClientsEl.textContent = formatStatValue(incompleteClients);
+      }
+      if (statIncompleteCompactOutletsEl) {
+        statIncompleteCompactOutletsEl.textContent = formatStatValue(incompleteOutlets);
+      }
     });
   }
 
@@ -830,6 +840,17 @@
         navigateState({
           view: "completeness",
           entity: "outlets",
+          page: 1,
+          completenessReasons: [],
+        });
+      });
+    }
+    if (statIncompleteCompactLinkEl && !statIncompleteCompactLinkEl.dataset.directorStatBound) {
+      statIncompleteCompactLinkEl.dataset.directorStatBound = "1";
+      statIncompleteCompactLinkEl.addEventListener("click", function () {
+        navigateState({
+          view: "completeness",
+          entity: "clients",
           page: 1,
           completenessReasons: [],
         });
@@ -1729,6 +1750,12 @@
     var isDirectorTeamsOverview = isDirectorTeamsSurface && !state.ropEmployee;
     var isTeamsSurface = isDirectorTeamsOverview || isRopTeamHome;
     document.body.classList.toggle("clients-teams-surface", Boolean(isTeamsSurface));
+    if (incompleteStatsCompactEl) {
+      incompleteStatsCompactEl.classList.toggle(
+        "clients-hidden",
+        !usesDirectorLayout() || !isTeamsSurface,
+      );
+    }
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);

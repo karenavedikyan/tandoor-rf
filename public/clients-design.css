@@ -1001,8 +1001,16 @@
   transform: rotate(45deg);
 }
 
-.clients-design-page .clients-compact-team__name {
+.clients-design-page .clients-compact-team__identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
   flex: 1 1 160px;
+}
+
+.clients-design-page .clients-compact-team__name {
   min-width: 0;
   padding: 0;
   border: 0;
@@ -1027,22 +1035,46 @@
 @media (min-width: 768px) {
   .clients-design-page .clients-compact-team__row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) 252px;
     align-items: center;
+    column-gap: 12px;
+  }
+
+  .clients-design-page .clients-compact-team__identity {
+    flex: initial;
   }
 
   .clients-design-page .clients-compact-team__metrics {
     display: grid;
-    grid-template-columns: repeat(3, minmax(72px, auto));
-    gap: 8px 12px;
+    grid-template-columns: repeat(3, 72px);
+    gap: 12px;
     margin-left: 0;
+    width: 252px;
     justify-self: end;
   }
+}
 
-  .clients-design-page .clients-compact-team__badge {
-    justify-self: end;
-    align-self: center;
-  }
+.clients-design-page .clients-stats-incomplete-compact {
+  display: none;
+  margin: 0;
+}
+
+.clients-design-page .clients-stats-incomplete-compact__link {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--rf-text);
+  cursor: pointer;
+}
+
+.clients-design-page .clients-stats-incomplete-compact__link:hover {
+  color: var(--rf-primary);
 }
 
 .clients-design-page .clients-compact-team__metric {
@@ -1314,8 +1346,16 @@
     line-height: 1.2;
   }
 
+  .clients-design-page.clients-teams-surface .clients-stats-incomplete-compact:not(.clients-hidden) {
+    display: block;
+    padding: 6px 10px;
+    border: 1px solid var(--rf-border);
+    border-radius: var(--rf-radius);
+    background: var(--rf-surface);
+  }
+
   .clients-design-page.clients-teams-surface #clients-stats-incomplete-strip {
-    display: none;
+    display: none !important;
   }
 
   .clients-design-page.clients-teams-surface .clients-compact-team-toolbar {
