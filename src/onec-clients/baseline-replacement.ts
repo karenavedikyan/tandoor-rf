@@ -962,6 +962,11 @@ export async function runBaselineReplacement(
       if (!importResult.ok) {
         throw Object.assign(new Error(importResult.message), { code: importResult.code });
       }
+      if (!importResult.runId) {
+        throw Object.assign(new Error("Import apply succeeded without run journal id."), {
+          code: "DATABASE_ERROR",
+        });
+      }
 
       const archiveResult = await archiveClientsNotInAccepted(pg, {
         acceptedGuids: freshContext.acceptedGuids,

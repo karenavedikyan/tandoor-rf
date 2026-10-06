@@ -38,8 +38,10 @@ import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./ma
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
 import { assertOperatorImportJobRunnable } from "./import-job-guard";
+import type { WholesaleEmployeeRoster } from "./employee-roster";
+import { upsertWholesaleEmployeeRoster } from "./roster-upsert";
 
-export type ImportTriggerSource = "manual" | "scheduled" | "operator_job";
+export type ImportTriggerSource = "manual" | "scheduled" | "operator_job" | "regular_update";
 
 export const DB_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -48,6 +50,9 @@ export type ApplyCounts = {
   changedCount: number;
   unchangedCount: number;
   extendedBlockedCount?: number;
+  rosterNewCount?: number;
+  rosterChangedCount?: number;
+  rosterUnchangedCount?: number;
 };
 
 export type ApplyBlockSummary = {
@@ -60,7 +65,14 @@ export type ApplyBlockSummary = {
 };
 
 export type ApplyResult =
-  | { ok: true; runId: string; counts: ApplyCounts; blockSummary?: ApplyBlockSummary; cleanupWarning?: string }
+  | {
+      ok: true;
+      runId?: string;
+      unchangedBundle?: true;
+      counts: ApplyCounts;
+      blockSummary?: ApplyBlockSummary;
+      cleanupWarning?: string;
+    }
   | {
       ok: false;
       code:
@@ -68,6 +80,7 @@ export type ApplyResult =
         | "STALE_RUNNING_IMPORT"
         | "RECORD_COUNT_DECREASED"
         | "GUID_SET_SHRINK"
+        | "ROSTER_SHRINK_AMBIGUOUS"
         | "DATABASE_ERROR"
         | "COMMIT_UNCERTAIN"
         | "SUPERSEDED_BY_NEWER_IMPORT"
@@ -505,7 +518,7 @@ async function loadExistingClients(managed: ManagedClient): Promise<Map<string, 
 async function insertRejectedRunJournal(
   managed: ManagedClient,
   payload: ValidatedClientsPayload,
-  errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK",
+  errorCode: "RECORD_COUNT_DECREASED" | "GUID_SET_SHRINK" | "ROSTER_SHRINK_AMBIGUOUS",
   journal: ApplyJournalContext,
 ): Promise<string | undefined> {
   const preparedWarnings = journalWarningsForPayload(payload);
@@ -690,6 +703,8 @@ export async function applyClientsImport(options: {
   participatingTransaction?: boolean;
   /** Operator job id; validated only after import advisory lock is held on this connection. */
   operatorImportJobId?: string;
+  /** When set with matching payload.employeeRosterSourceSha256, upserts wholesale roster in the same transaction. */
+  wholesaleEmployeeRoster?: WholesaleEmployeeRoster;
   testHooks?: ApplyTestHooks;
 }): Promise<ApplyResult> {
   const prepApplyRejection = rejectWholesaleCompositionPrepApply({
@@ -861,10 +876,50 @@ export async function applyClientsImport(options: {
           code: "STALE_RUNNING_IMPORT",
           message: "A previous import run is still marked as running; resolve it before applying again.",
         };
-      } else {
-        const skipShrinkGuards =
-          options.baselineReplacementApply === true || options.cleanReloadApply === true;
-        if (!skipShrinkGuards) {
+      } else if (options.triggerSource === "regular_update" && options.wholesaleEmployeeRoster) {
+        const { runRegularUpdateApplyGate } = await import("../onec-regular-update/regular-update-apply-gate");
+        const gate = await runRegularUpdateApplyGate(managed.client, {
+          payload: options.payload,
+          roster: options.wholesaleEmployeeRoster,
+          expectedVerificationFingerprint: options.expectedVerificationFingerprint,
+          holdingLinkValidationPolicy: options.holdingLinkValidationPolicy,
+          employeeRosterSourceSha256: options.employeeRosterSourceSha256,
+        });
+        if (!gate.ok) {
+          if (gate.code === "ROSTER_SHRINK_AMBIGUOUS") {
+            phase.runId = await insertRejectedRunJournal(
+              managed,
+              options.payload,
+              "ROSTER_SHRINK_AMBIGUOUS",
+              journal,
+            );
+          }
+          outcome = {
+            ok: false,
+            code: gate.code,
+            message: gate.message,
+            runId: phase.runId,
+            actualFingerprint:
+              gate.code === "VERIFICATION_FINGERPRINT_MISMATCH" ? gate.actualFingerprint : undefined,
+          };
+        } else if (gate.unchangedBundle) {
+          outcome = {
+            ok: true,
+            unchangedBundle: true,
+            counts: {
+              newCount: 0,
+              changedCount: 0,
+              unchangedCount: options.payload.recordCount,
+            },
+          };
+        }
+      }
+    }
+
+    if (!outcome) {
+      const skipShrinkGuards =
+        options.baselineReplacementApply === true || options.cleanReloadApply === true;
+      if (!skipShrinkGuards) {
           const lastSuccessfulCount = await getLastSuccessfulRecordCount(managed);
           if (
             lastSuccessfulCount !== null &&
@@ -912,10 +967,10 @@ export async function applyClientsImport(options: {
               };
             }
           }
-        }
+      }
 
-        if (!outcome) {
-          const existing = await loadExistingClients(managed);
+      if (!outcome) {
+        const existing = await loadExistingClients(managed);
           const preparedWarnings = journalWarningsForPayload(options.payload);
           const runInsert = await queryManaged<{ id: string }>(
             managed,
@@ -1248,6 +1303,24 @@ export async function applyClientsImport(options: {
 
           phase.blockSummary = buildApplyBlockSummary(extendedApply, contractVerified, applyExtendedStats);
 
+          let rosterNewCount: number | undefined;
+          let rosterChangedCount: number | undefined;
+          let rosterUnchangedCount: number | undefined;
+          if (options.wholesaleEmployeeRoster) {
+            const payloadRosterSha = options.payload.employeeRosterSourceSha256?.toLowerCase() ?? null;
+            const applyRosterSha = options.wholesaleEmployeeRoster.sourceSha256.toLowerCase();
+            if (!payloadRosterSha || payloadRosterSha !== applyRosterSha) {
+              throw new Error("Wholesale employee roster SHA mismatch between payload and apply input.");
+            }
+            const rosterCounts = await upsertWholesaleEmployeeRoster(
+              managed.client,
+              options.wholesaleEmployeeRoster,
+            );
+            rosterNewCount = rosterCounts.newCount;
+            rosterChangedCount = rosterCounts.changedCount;
+            rosterUnchangedCount = rosterCounts.unchangedCount;
+          }
+
           await queryManaged(
             managed,
             `
@@ -1281,6 +1354,9 @@ export async function applyClientsImport(options: {
             changedCount,
             unchangedCount,
             ...(extendedBlockedCount > 0 ? { extendedBlockedCount } : {}),
+            ...(rosterNewCount !== undefined ? { rosterNewCount } : {}),
+            ...(rosterChangedCount !== undefined ? { rosterChangedCount } : {}),
+            ...(rosterUnchangedCount !== undefined ? { rosterUnchangedCount } : {}),
           };
           if (!participating) {
             phase.commitAttempted = true;
@@ -1314,7 +1390,6 @@ export async function applyClientsImport(options: {
             blockSummary: phase.blockSummary,
             cleanupWarning: postCommitCleanupWarning,
           };
-          }
         }
       }
   } catch (error) {

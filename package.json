@@ -23,6 +23,8 @@
     "onec-import-job-worker:local": "node --env-file=.env dist/cli/onec-import-job-worker.js",
     "onec-scheduled-exchange": "node dist/cli/onec-scheduled-exchange.js",
     "onec-scheduled-exchange:local": "node --env-file=.env dist/cli/onec-scheduled-exchange.js",
+    "onec-regular-update": "node dist/cli/onec-regular-update.js",
+    "onec-regular-update:local": "node --env-file=.env dist/cli/onec-regular-update.js",
     "onec-catalog-import": "node dist/cli/onec-catalog-import.js",
     "onec-catalog-import:local": "node --env-file=.env dist/cli/onec-catalog-import.js",
     "onec-catalog-image-sync": "node dist/cli/onec-catalog-image-sync.js",
