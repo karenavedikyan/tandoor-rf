@@ -40,6 +40,12 @@
   var statClientsEl = document.getElementById("clients-stat-clients");
   var statOutletsEl = document.getElementById("clients-stat-outlets");
   var statNoOutletsEl = document.getElementById("clients-stat-no-outlets");
+  var statClientsLabelEl = document.getElementById("clients-stat-clients-label");
+  var statOutletsLabelEl = document.getElementById("clients-stat-outlets-label");
+  var statNoOutletsWrapEl = document.getElementById("clients-stat-no-outlets-wrap");
+  var statsStripEl = document.getElementById("clients-stats-strip");
+  var employeeScopeValueEl = document.getElementById("clients-employee-scope-value");
+  var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
   var viewReviewTab = document.getElementById("view-review-tab");
   var viewCompletenessTab = document.getElementById("view-completeness-tab");
   var tableHeadRow = document.getElementById("clients-table-head-row");
@@ -119,6 +125,32 @@
 
   var MANAGER_PAGE_SUBTITLE =
     "Клиенты и торговые точки по вашим назначениям из 1С в зоне «Мои назначения».";
+
+  var PORTFOLIO_DESIGN = {
+    manager: {
+      subtitle: MANAGER_PAGE_SUBTITLE,
+      scopeValue: "Мои назначения",
+      statClientLabel: "Мои клиенты",
+      statOutletLabel: "Доступные ТТ",
+      statNoOutletsLabel: "Клиенты без ТТ",
+      showThirdStat: true,
+    },
+    regional_manager: {
+      subtitle: "Закреплённые торговые точки и совместная работа с менеджерами.",
+      scopeValue: "Только закреплённые клиенты и торговые точки",
+      statClientLabel: "Доступные клиенты",
+      statOutletLabel: "Мои ТТ",
+      statNoOutletsLabel: "",
+      showThirdStat: false,
+    },
+  };
+
+  function portfolioDesignConfig(presentation) {
+    if (!presentation) {
+      return null;
+    }
+    return PORTFOLIO_DESIGN[presentation.businessRole] || null;
+  }
 
   function readStateFromUrl() {
     return logic.readStateFromSearch(window.location.search);
@@ -352,12 +384,15 @@
     }
   }
 
-  function applyManagerDesignChrome(presentation, user) {
+  function applyPortfolioDesignChrome(presentation, user) {
+    var config = portfolioDesignConfig(presentation);
     var isManager = presentation && presentation.businessRole === "manager";
+    var isRegional = presentation && presentation.businessRole === "regional_manager";
     document.body.classList.toggle("clients-role-manager", Boolean(isManager));
+    document.body.classList.toggle("clients-role-regional", Boolean(isRegional));
     if (pageSubtitleEl) {
-      if (isManager) {
-        pageSubtitleEl.textContent = MANAGER_PAGE_SUBTITLE;
+      if (config && config.subtitle) {
+        pageSubtitleEl.textContent = config.subtitle;
         pageSubtitleEl.classList.remove("clients-hidden");
       } else {
         pageSubtitleEl.textContent = "";
@@ -365,15 +400,31 @@
       }
     }
     if (managerChromeEl) {
-      managerChromeEl.classList.toggle("clients-hidden", !isManager);
+      managerChromeEl.classList.toggle("clients-hidden", !config);
     }
-    if (isManager) {
+    if (config) {
       renderEmployeeCard(user);
+      if (employeeScopeValueEl) {
+        employeeScopeValueEl.textContent = config.scopeValue;
+      }
+      if (statClientsLabelEl) {
+        statClientsLabelEl.textContent = config.statClientLabel;
+      }
+      if (statOutletsLabelEl) {
+        statOutletsLabelEl.textContent = config.statOutletLabel;
+      }
+      if (statsStripEl) {
+        statsStripEl.classList.toggle("clients-stats-strip--two-cols", !config.showThirdStat);
+      }
+      if (statNoOutletsWrapEl) {
+        statNoOutletsWrapEl.classList.toggle("clients-hidden", !config.showThirdStat);
+      }
     }
   }
 
-  function loadManagerStats() {
-    if (!rolePresentation || rolePresentation.businessRole !== "manager") {
+  function loadPortfolioStats() {
+    var config = portfolioDesignConfig(rolePresentation);
+    if (!config) {
       return Promise.resolve();
     }
     var baseParams = { view: "all", page: "1", pageSize: "1" };
@@ -397,18 +448,18 @@
           return null;
         });
     }
-    return Promise.all([
-      fetchTotal({ entity: "clients" }),
-      fetchTotal({ entity: "outlets" }),
-      fetchTotal({ entity: "clients", hasOutlets: "no" }),
-    ]).then(function (totals) {
+    var requests = [fetchTotal({ entity: "clients" }), fetchTotal({ entity: "outlets" })];
+    if (config.showThirdStat) {
+      requests.push(fetchTotal({ entity: "clients", hasOutlets: "no" }));
+    }
+    return Promise.all(requests).then(function (totals) {
       if (statClientsEl) {
         statClientsEl.textContent = formatStatValue(totals[0]);
       }
       if (statOutletsEl) {
         statOutletsEl.textContent = formatStatValue(totals[1]);
       }
-      if (statNoOutletsEl) {
+      if (config.showThirdStat && statNoOutletsEl) {
         statNoOutletsEl.textContent = formatStatValue(totals[2]);
       }
     });
@@ -438,7 +489,7 @@
         !(presentation.allowedViews && presentation.allowedViews.indexOf("completeness") !== -1),
       );
     }
-    applyManagerDesignChrome(presentation, currentUser);
+    applyPortfolioDesignChrome(presentation, currentUser);
   }
 
   function countActiveFilters(state) {
@@ -494,13 +545,20 @@
     if (!resultsTitleEl) {
       return;
     }
-    var isManager = rolePresentation && rolePresentation.businessRole === "manager";
-    if (!isManager || state.view !== "all") {
+    var role = rolePresentation && rolePresentation.businessRole;
+    var isPortfolioRole = role === "manager" || role === "regional_manager";
+    if (!isPortfolioRole || state.view !== "all") {
       resultsTitleEl.classList.add("clients-hidden");
       return;
     }
-    resultsTitleEl.textContent =
-      (state.entity || "clients") === "outlets" ? "Доступные торговые точки" : "Мои клиенты";
+    var entity = state.entity || "clients";
+    if (entity === "outlets") {
+      resultsTitleEl.textContent = "Доступные торговые точки";
+    } else if (role === "regional_manager") {
+      resultsTitleEl.textContent = "Доступные клиенты";
+    } else {
+      resultsTitleEl.textContent = "Мои клиенты";
+    }
     resultsTitleEl.classList.remove("clients-hidden");
   }
 
@@ -654,7 +712,13 @@
       );
     }
     if (columnId === "outlet") {
-      return shell.escapeHtml(item.outletLabel || item.guidStore);
+      return (
+        '<a class="clients-link" href="' +
+        outletHref(item.guidClient, item.guidStore) +
+        '">' +
+        shell.escapeHtml(item.outletLabel || item.guidStore) +
+        "</a>"
+      );
     }
     if (columnId === "guidStore") {
       return shell.escapeHtml(item.guidStore);
@@ -715,6 +779,17 @@
 
   function clientHref(guid) {
     return "/clients/" + encodeURIComponent(guid) + "?return=" + encodeURIComponent(listReturnQuery());
+  }
+
+  function outletHref(guidClient, guidStore) {
+    return (
+      "/clients/" +
+      encodeURIComponent(guidClient) +
+      "?store=" +
+      encodeURIComponent(guidStore) +
+      "&return=" +
+      encodeURIComponent(listReturnQuery())
+    );
   }
 
   function applyComboboxFilter() {
@@ -1126,12 +1201,19 @@
       rolePresentation.showManagerTeamFilter &&
       !isTeams &&
       !isReview;
-    var isManagerRole = rolePresentation && rolePresentation.businessRole === "manager";
-    var showManagerFilterInput = showAssignmentFilters || isCompleteness;
+    var isRegionalRole = rolePresentation && rolePresentation.businessRole === "regional_manager";
+    var showManagerFilterInput =
+      showAssignmentFilters ||
+      isCompleteness ||
+      (isRegionalRole && !isTeams && !isReview);
     ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
-    managerFilterWrap?.classList.toggle("clients-hidden", !showManagerFilterInput && !isManagerRole);
-    managerFilterWrap?.classList.toggle("clients-field--label-only", isManagerRole && !showManagerFilterInput);
+    managerFilterWrap?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    managerFilterWrap?.classList.remove("clients-field--label-only");
     document.getElementById("manager-combobox")?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    filtersScopeLabelEl?.classList.toggle(
+      "clients-hidden",
+      !isRegionalRole || isTeams || isReview || isCompleteness,
+    );
     holdingFilterWrap?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     entitySwitcherEl.classList.toggle(
@@ -1150,7 +1232,7 @@
     warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
     regionalFilterWrap.classList.toggle(
       "clients-hidden",
-      !isOutlets || !(showAssignmentFilters || isCompleteness),
+      !isOutlets || !(showAssignmentFilters || isCompleteness) || isRegionalRole,
     );
     tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
@@ -1176,10 +1258,9 @@
   }
 
   function updateMobileFiltersCollapse(state) {
+    var role = rolePresentation && rolePresentation.businessRole;
     var collapseMobileFilters =
-      rolePresentation &&
-      rolePresentation.businessRole === "manager" &&
-      (state.view || "all") === "all";
+      (role === "manager" || role === "regional_manager") && (state.view || "all") === "all";
     document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
     if (!collapseMobileFilters && filtersPanelEl) {
       filtersPanelEl.classList.add("clients-filters-panel--expanded");
@@ -2143,8 +2224,8 @@
           rolePresentation,
           window.location.search,
         );
-        applyManagerDesignChrome(rolePresentation, currentUser);
-        loadManagerStats();
+        applyPortfolioDesignChrome(rolePresentation, currentUser);
+        loadPortfolioStats();
         loadList(initialState, true);
       })
       .catch(function (err) {
@@ -2243,7 +2324,7 @@
       return;
     }
     currentUser = user;
-    applyManagerDesignChrome(rolePresentation, currentUser);
+    applyPortfolioDesignChrome(rolePresentation, currentUser);
     initializeWorkspace();
   });
 })();

@@ -47,21 +47,21 @@
                 </div>
                 <div class="clients-employee-card__scope">
                   <span class="clients-employee-card__scope-label">Область видимости</span>
-                  <span class="clients-employee-card__scope-value">Мои назначения</span>
+                  <span class="clients-employee-card__scope-value" id="clients-employee-scope-value">Мои назначения</span>
                 </div>
               </div>
               <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
                 <div class="clients-stat">
                   <span class="clients-stat__value" id="clients-stat-clients">—</span>
-                  <span class="clients-stat__label">Мои клиенты</span>
+                  <span class="clients-stat__label" id="clients-stat-clients-label">Мои клиенты</span>
                 </div>
                 <div class="clients-stat">
                   <span class="clients-stat__value" id="clients-stat-outlets">—</span>
-                  <span class="clients-stat__label">Доступные ТТ</span>
+                  <span class="clients-stat__label" id="clients-stat-outlets-label">Доступные ТТ</span>
                 </div>
-                <div class="clients-stat">
+                <div class="clients-stat" id="clients-stat-no-outlets-wrap">
                   <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
-                  <span class="clients-stat__label">Клиенты без ТТ</span>
+                  <span class="clients-stat__label" id="clients-stat-no-outlets-label">Клиенты без ТТ</span>
                 </div>
               </div>
               <nav class="clients-workspace-nav" aria-label="Рабочая область">
@@ -108,6 +108,9 @@
                 Фильтры
                 <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
               </button>
+              <p id="clients-filters-scope-label" class="clients-filters-scope-label clients-hidden">
+                Моя закреплённая область
+              </p>
               <div id="clients-filters-panel" class="clients-toolbar__row clients-toolbar__row--filters">
                 <div class="clients-field clients-hidden" id="rop-filter-wrap">
                   <span class="clients-field__label" id="rop-filter-label">РОП</span>
