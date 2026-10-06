@@ -328,8 +328,17 @@
 
   var currentUser = null;
 
+  function isAdminActorSession() {
+    var preview = shell.getPreviewState();
+    if (preview && preview.active) {
+      return false;
+    }
+    var actor = shell.getActorUser();
+    return Boolean(actor && actor.role === "admin");
+  }
+
   function maybeMountReviewPanel(client) {
-    if (!currentUser || currentUser.role !== "admin" || !window.ClientReviewPanel) {
+    if (!isAdminActorSession() || !window.ClientReviewPanel) {
       return;
     }
     var host = document.getElementById("client-review-host");
@@ -421,6 +430,7 @@
     },
   });
 
-  shell.mountShell("clients", { showClients: true });
-  detailController.bootstrap();
+  shell.mountAuthenticatedShell("clients", function () {
+    detailController.bootstrap();
+  });
 })();

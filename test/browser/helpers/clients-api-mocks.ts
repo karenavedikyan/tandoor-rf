@@ -413,6 +413,7 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
     case "director":
       return {
         presentation: {
+          businessRole: "director",
           pageTitle: "Вся клиентская база",
           defaultView: "teams",
           defaultEntity: "clients",
@@ -422,13 +423,15 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           showManagerTeamFilter: true,
           showTeamNavigation: true,
           reviewReadOnly: true,
+          directorLayout: true,
         },
       };
     default:
       return {
         presentation: {
-          pageTitle: "Клиенты",
-          defaultView: "all",
+          businessRole: "admin",
+          pageTitle: "Вся клиентская база",
+          defaultView: "teams",
           defaultEntity: "clients",
           allowedViews: ["all", "teams", "review", "completeness"],
           allowedEntities: ["clients", "outlets"],
@@ -436,6 +439,7 @@ export function syntheticPresentationPayload(role: ClientsBusinessRole = "admin"
           showManagerTeamFilter: true,
           showTeamNavigation: true,
           reviewReadOnly: false,
+          directorLayout: true,
         },
       };
   }

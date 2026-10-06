@@ -61,6 +61,19 @@ describe("clients role presentation", () => {
     assert.ok(presentation);
     assert.equal(presentation.reviewReadOnly, true);
     assert.equal(presentation.pageTitle, "Вся клиентская база");
+    assert.equal(presentation.directorLayout, true);
+  });
+
+  it("maps admin to director layout with review write access", () => {
+    const admin = context({ role: "admin", fullClientBase: true });
+    const presentation = resolveRolePresentation(admin);
+    assert.ok(presentation);
+    assert.equal(presentation.businessRole, "admin");
+    assert.equal(presentation.pageTitle, "Вся клиентская база");
+    assert.equal(presentation.defaultView, "teams");
+    assert.equal(presentation.reviewReadOnly, false);
+    assert.equal(presentation.directorLayout, true);
+    assert.deepEqual(presentation.allowedViews, ["all", "teams", "review", "completeness"]);
   });
 
   it("rejects disallowed list modes per role", () => {

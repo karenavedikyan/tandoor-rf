@@ -494,6 +494,10 @@
     return previewState;
   }
 
+  function getActorUser() {
+    return actorUser;
+  }
+
   function getEffectiveUser(user) {
     if (previewState && previewState.active && previewState.targetUser) {
       return previewState.targetUser;
@@ -765,6 +769,7 @@
     canReadClients: canReadClients,
     ensureAuthenticated: ensureAuthenticated,
     getPreviewState: getPreviewState,
+    getActorUser: getActorUser,
     getEffectiveUser: getEffectiveUser,
     stopPreviewSession: stopPreviewSession,
     setPanelMessage: setPanelMessage,
