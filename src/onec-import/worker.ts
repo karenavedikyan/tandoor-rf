@@ -1,9 +1,12 @@
 import type { Pool } from "pg";
 import { EMPLOYEES_RELATIVE_PATH, parseWholesaleEmployeeRosterBytes } from "../onec-clients/employee-roster";
+import { prepareRegularUpdateWorkerQueue } from "../clients/admin-onec-update/nightly-job-lifecycle";
 import {
   IMPORT_JOB_SUPERSEDED_CODE,
   markOperatorImportJobSuperseded,
+  markOperatorImportJobWindowMissed,
 } from "../onec-clients/import-job-guard";
+import { isNightlyExchangeScheduleEnabled } from "../onec-nightly-exchange/config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { defaultFtpReader, readRemoteFileFromFtp, type FtpReader } from "../onec-clients/ftp-read";
 import { runClientsImport } from "../onec-clients/run-import";
@@ -34,6 +37,7 @@ type ImportJobRow = {
   employee_roster_source_sha256: string | null;
   wholesale_composition_mode: WholesaleCompositionMode;
   job_source: RegularUpdateJobSource;
+  nightly_window_deadline_at: Date | null;
 };
 
 function importTriggerSourceForJob(
@@ -199,6 +203,12 @@ export async function runOneImportJob(
   const db = await pool.connect();
   let jobId: string | undefined;
   try {
+    await db.query("BEGIN");
+    await prepareRegularUpdateWorkerQueue(db, {
+      nightlyScheduleEnabled: isNightlyExchangeScheduleEnabled(env),
+    });
+    await db.query("COMMIT");
+
     const claimed = await db.query<ImportJobRow>(
       `
       UPDATE onec_import_jobs
@@ -209,6 +219,13 @@ export async function runOneImportJob(
         WHERE kind = ANY($1::text[])
           AND status = 'pending'
           AND expires_at > NOW()
+          AND (
+            job_source <> 'nightly'
+            OR (
+              nightly_window_deadline_at IS NOT NULL
+              AND nightly_window_deadline_at > NOW()
+            )
+          )
         ORDER BY requested_at, id
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -221,7 +238,8 @@ export async function runOneImportJob(
         holding_link_validation_policy,
         employee_roster_source_sha256,
         wholesale_composition_mode,
-        job_source
+        job_source,
+        nightly_window_deadline_at
     `,
       [kinds],
     );
@@ -229,6 +247,15 @@ export async function runOneImportJob(
     jobId = job?.id;
     if (!job) {
       return "idle";
+    }
+
+    if (
+      job.job_source === REGULAR_UPDATE_JOB_SOURCE_NIGHTLY &&
+      job.nightly_window_deadline_at &&
+      job.nightly_window_deadline_at <= new Date()
+    ) {
+      await markOperatorImportJobWindowMissed(db, job.id);
+      return "failed";
     }
 
     if (!isTrustedFtpConfig(env)) {

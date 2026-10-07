@@ -2,13 +2,18 @@ import type { PoolClient } from "pg";
 import { getPool } from "../db/pool";
 import { kickImportJobWorker } from "../onec-import/worker-scheduler";
 import { tryEnqueueRegularUpdateJob } from "../clients/admin-onec-update/repository";
-import { loadNightlyExchangeConfig, type NightlyExchangeConfig } from "./config";
-import { isWithinNightlyWindow, nightlyWindowKey } from "./msk-time";
+import {
+  loadNightlyExchangeConfig,
+  type NightlyExchangeConfig,
+  type NightlyExchangeEnabledConfig,
+} from "./config";
+import { resolveActiveNightlyWindow } from "./msk-time";
 
 export const NIGHTLY_EXCHANGE_SCHEDULER_LOCK = 902_451_005;
 
 export type NightlyExchangeTickResult =
   | { status: "disabled" }
+  | { status: "config_error"; error: string }
   | { status: "outside_window" }
   | { status: "already_claimed"; windowKey: string }
   | { status: "blocked"; code: string; message: string; windowKey: string }
@@ -33,23 +38,54 @@ async function claimNightlyWindow(client: PoolClient, windowKey: string): Promis
   );
 }
 
-export async function tickNightlyExchangeScheduler(input?: {
+type TickInput = {
   now?: Date;
   env?: NodeJS.ProcessEnv;
+  /** Test injection bypassing env loader. */
   config?: NightlyExchangeConfig;
-}): Promise<NightlyExchangeTickResult> {
-  const env = input?.env ?? process.env;
-  const config = input?.config ?? loadNightlyExchangeConfig(env);
-  if (!config.enabled) {
+};
+
+function resolveTickConfig(input: TickInput): NightlyExchangeTickResult | { enabled: true; config: NightlyExchangeEnabledConfig } {
+  if (input.config) {
+    if (!input.config.enabled) {
+      return { status: "disabled" };
+    }
+    return {
+      enabled: true,
+      config: {
+        scheduleTime: input.config.scheduleTime,
+        timezone: input.config.timezone,
+        windowMinutes: input.config.windowMinutes,
+      },
+    };
+  }
+
+  const loaded = loadNightlyExchangeConfig(input.env ?? process.env);
+  if (!loaded.ok) {
+    return { status: "config_error", error: loaded.error };
+  }
+  if (!loaded.enabled) {
     return { status: "disabled" };
+  }
+  return { enabled: true, config: loaded.config };
+}
+
+export async function tickNightlyExchangeScheduler(input?: TickInput): Promise<NightlyExchangeTickResult> {
+  const resolved = resolveTickConfig(input ?? {});
+  if ("status" in resolved) {
+    return resolved;
   }
 
   const now = input?.now ?? new Date();
-  if (!isWithinNightlyWindow({ now, scheduleTime: config.scheduleTime, windowMinutes: config.windowMinutes })) {
+  const activeWindow = resolveActiveNightlyWindow({
+    now,
+    scheduleTime: resolved.config.scheduleTime,
+    windowMinutes: resolved.config.windowMinutes,
+  });
+  if (!activeWindow) {
     return { status: "outside_window" };
   }
 
-  const windowKey = nightlyWindowKey(now);
   const pool = getPool();
   if (!pool) {
     return { status: "database_unavailable" };
@@ -61,17 +97,22 @@ export async function tickNightlyExchangeScheduler(input?: {
     await client.query("SELECT pg_advisory_xact_lock($1)", [NIGHTLY_EXCHANGE_SCHEDULER_LOCK]);
 
     const claimed = await readClaimedWindow(client);
-    if (claimed === windowKey) {
+    if (claimed === activeWindow.windowKey) {
       await client.query("COMMIT");
-      return { status: "already_claimed", windowKey };
+      return { status: "already_claimed", windowKey: activeWindow.windowKey };
     }
 
     const enqueued = await tryEnqueueRegularUpdateJob(
-      { jobSource: "nightly" },
+      {
+        jobSource: "nightly",
+        windowKey: activeWindow.windowKey,
+        windowDeadlineAt: activeWindow.deadlineAt,
+        requestedAt: now,
+      },
       client,
     );
 
-    await claimNightlyWindow(client, windowKey);
+    await claimNightlyWindow(client, activeWindow.windowKey);
 
     if (!enqueued.ok) {
       await client.query("COMMIT");
@@ -79,13 +120,13 @@ export async function tickNightlyExchangeScheduler(input?: {
         status: "blocked",
         code: enqueued.code,
         message: enqueued.message,
-        windowKey,
+        windowKey: activeWindow.windowKey,
       };
     }
 
     await client.query("COMMIT");
     kickImportJobWorker();
-    return { status: "enqueued", jobId: enqueued.jobId, windowKey };
+    return { status: "enqueued", jobId: enqueued.jobId, windowKey: activeWindow.windowKey };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -96,10 +137,19 @@ export async function tickNightlyExchangeScheduler(input?: {
 
 let schedulerTimer: NodeJS.Timeout | null = null;
 
-/** In-process tick loop; disabled unless ONEC_NIGHTLY_EXCHANGE_ENABLED=true. No catch-up outside the window. */
+/** In-process tick loop; disabled unless ONEC_NIGHTLY_EXCHANGE_ENABLED=true with valid config. */
 export function startNightlyExchangeScheduler(env: NodeJS.ProcessEnv = process.env): void {
-  const config = loadNightlyExchangeConfig(env);
-  if (!config.enabled) {
+  const loaded = loadNightlyExchangeConfig(env);
+  if (!loaded.ok) {
+    console.error(
+      JSON.stringify({
+        event: "onec_nightly_exchange_config_invalid",
+        error: loaded.error,
+      }),
+    );
+    return;
+  }
+  if (!loaded.enabled) {
     return;
   }
   if (schedulerTimer) {

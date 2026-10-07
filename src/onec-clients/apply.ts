@@ -37,7 +37,7 @@ import {
 import { resolveConfirmedHoldingForApply, resolveImportLinkMetadata } from "./manager-status";
 import type { HoldingLinkValidationPolicy } from "./holding-link-policy";
 import { rejectWholesaleCompositionPrepApply } from "./wholesale-composition";
-import { assertOperatorImportJobRunnable } from "./import-job-guard";
+import { checkOperatorImportJobRunnable } from "./import-job-guard";
 import type { WholesaleEmployeeRoster } from "./employee-roster";
 import { upsertWholesaleEmployeeRoster } from "./roster-upsert";
 
@@ -93,7 +93,8 @@ export type ApplyResult =
         | "VERIFICATION_FINGERPRINT_REQUIRED"
         | "VERIFICATION_FINGERPRINT_MISMATCH"
         | "VERIFICATION_PARAMETERS_MISMATCH"
-        | "IMPORT_JOB_SUPERSEDED";
+        | "IMPORT_JOB_SUPERSEDED"
+        | "NIGHTLY_WINDOW_MISSED";
       message: string;
       runId?: string;
       actualFingerprint?: string;
@@ -836,12 +837,15 @@ export async function applyClientsImport(options: {
       await options.testHooks?.afterImportLock?.(managed.client);
 
       if (options.operatorImportJobId) {
-        const runnable = await assertOperatorImportJobRunnable(managed.client, options.operatorImportJobId);
-        if (!runnable) {
+        const runnable = await checkOperatorImportJobRunnable(managed.client, options.operatorImportJobId);
+        if (!runnable.runnable) {
           outcome = {
             ok: false,
-            code: "IMPORT_JOB_SUPERSEDED",
-            message: "Import job is no longer runnable.",
+            code: runnable.code,
+            message:
+              runnable.code === "NIGHTLY_WINDOW_MISSED"
+                ? "Ночное окно обмена с 1С уже закрыто; автоматический запуск пропущен."
+                : "Import job is no longer runnable.",
           };
         }
       }

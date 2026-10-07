@@ -5,6 +5,10 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ event: "onec_nightly_exchange_tick", ...result }));
   if (result.status === "database_unavailable") {
     process.exitCode = 1;
+    return;
+  }
+  if (result.status === "config_error") {
+    process.exitCode = 2;
   }
 }
 

@@ -36,7 +36,13 @@ export type StartRegularUpdateJobResult =
 
 export type EnqueueRegularUpdateJobInput =
   | { jobSource: typeof REGULAR_UPDATE_JOB_SOURCE_ADMIN; requestedByUserId: string }
-  | { jobSource: "nightly" };
+  | {
+      jobSource: "nightly";
+      windowKey: string;
+      windowDeadlineAt: Date;
+      /** Wall clock at enqueue (MSK window evaluation instant). */
+      requestedAt: Date;
+    };
 
 const JOB_SOURCE_LABELS: Record<RegularUpdateJobSource, string> = {
   admin_manual: "Вручную администратором",
@@ -56,6 +62,12 @@ function mapResultMessage(result: RegularUpdateResult | null, errorCode: string 
   }
   if (errorCode === "JOB_EXPIRED") {
     return "Срок ожидания задания обновления из 1С истёк. Можно запустить обновление снова.";
+  }
+  if (errorCode === "NIGHTLY_WINDOW_MISSED") {
+    return "Ночное окно обмена с 1С уже закрыто; автоматический запуск пропущен.";
+  }
+  if (errorCode === "NIGHTLY_SCHEDULE_DISABLED") {
+    return "Ночной обмен с 1С отключён; ожидающее задание не будет выполнено автоматически.";
   }
   if (result?.message) {
     return result.message;
@@ -313,20 +325,45 @@ async function enqueueRegularUpdateJobOnClient(
   const requestedByUserId =
     input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN ? input.requestedByUserId : null;
 
+  const requestedAt =
+    input.jobSource === "nightly" ? input.requestedAt : new Date();
+  const nightlyWindow =
+    input.jobSource === "nightly"
+      ? { key: input.windowKey, deadlineAt: input.windowDeadlineAt }
+      : null;
+  const genericExpiryMs = requestedAt.getTime() + 2 * 60 * 60 * 1000;
+  const expiresAt = nightlyWindow
+    ? new Date(Math.min(genericExpiryMs, nightlyWindow.deadlineAt.getTime()))
+    : new Date(genericExpiryMs);
+  if (expiresAt.getTime() <= requestedAt.getTime()) {
+    throw new Error("NIGHTLY_WINDOW_ALREADY_CLOSED");
+  }
+
   const inserted = await client.query<{ id: string }>(
     `
       INSERT INTO onec_import_jobs (
         kind,
         mode,
         status,
+        requested_at,
         expires_at,
         requested_by_user_id,
-        job_source
+        job_source,
+        nightly_window_key,
+        nightly_window_deadline_at
       )
-      VALUES ($1, 'apply', 'pending', NOW() + INTERVAL '2 hours', $2::uuid, $3)
+      VALUES ($1, 'apply', 'pending', $4, $5, $2::uuid, $3, $6, $7)
       RETURNING id::text
     `,
-    [REGULAR_UPDATE_JOB_KIND, requestedByUserId, input.jobSource],
+    [
+      REGULAR_UPDATE_JOB_KIND,
+      requestedByUserId,
+      input.jobSource,
+      requestedAt,
+      expiresAt,
+      nightlyWindow?.key ?? null,
+      nightlyWindow?.deadlineAt ?? null,
+    ],
   );
   const jobId = inserted.rows[0]?.id;
   if (!jobId) {

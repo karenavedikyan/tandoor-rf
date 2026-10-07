@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { REGULAR_UPDATE_JOB_KIND } from "../../onec-import/constants";
+import { finalizeExpiredNightlyWindowJobs } from "./nightly-job-lifecycle";
 
 export const JOB_EXPIRED_CODE = "JOB_EXPIRED";
 
@@ -61,6 +62,7 @@ async function reconcileRunningRegularUpdateJob(
 
 /** Finalize expired pending jobs and reconcile running jobs from linked import runs. */
 export async function finalizeStaleRegularUpdateJobs(client: PoolClient): Promise<void> {
+  await finalizeExpiredNightlyWindowJobs(client);
   await client.query(
     `
       UPDATE onec_import_jobs AS jobs

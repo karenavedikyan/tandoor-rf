@@ -16,6 +16,7 @@ export const IMPORT_STATUSES = [
   "APPLY_BLOCKED",
   "ARGUMENT_ERROR",
   "IMPORT_JOB_SUPERSEDED",
+  "NIGHTLY_WINDOW_MISSED",
 ] as const;
 
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];

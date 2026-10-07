@@ -10,6 +10,12 @@ import {
   tickNightlyExchangeScheduler,
 } from "../../src/onec-nightly-exchange/scheduler";
 import type { NightlyExchangeConfig } from "../../src/onec-nightly-exchange/config";
+import {
+  getMoscowWallClock,
+  resolveActiveNightlyWindow,
+  windowBoundsForStartDate,
+} from "../../src/onec-nightly-exchange/msk-time";
+import { drainPendingImportJobs } from "../../src/onec-import/worker-scheduler";
 import { sha256Hex } from "../../src/onec-clients/sha256";
 import {
   buildClientsFileBytes,
@@ -61,6 +67,45 @@ function nightlyConfig(enabled: boolean): NightlyExchangeConfig {
     timezone: "Europe/Moscow",
     windowMinutes: WINDOW_MINUTES,
   };
+}
+
+function syncNightlyScheduleEnv(config: Omit<NightlyExchangeConfig, "enabled">): void {
+  Object.assign(process.env, {
+    ONEC_NIGHTLY_EXCHANGE_ENABLED: "true",
+    ONEC_NIGHTLY_EXCHANGE_TIME: config.scheduleTime,
+    ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: String(config.windowMinutes),
+  });
+}
+
+/** Window anchored to real clock so worker/deadline checks stay consistent with PostgreSQL NOW(). */
+function activeTestWindow(windowMinutes = 180, offsetMinutes = 90): {
+  now: Date;
+  config: NightlyExchangeConfig;
+} {
+  const now = new Date();
+  const wall = getMoscowWallClock(now);
+  const startMinutes = Math.max(0, wall.minutesSinceMidnight - offsetMinutes);
+  const scheduleTime = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+  const config: NightlyExchangeConfig = {
+    enabled: true,
+    scheduleTime,
+    timezone: "Europe/Moscow",
+    windowMinutes,
+  };
+  syncNightlyScheduleEnv(config);
+  return { now, config };
+}
+
+function sampleInstantInsideWindow(scheduleTime: string, windowMinutes: number): Date {
+  const now = new Date();
+  if (resolveActiveNightlyWindow({ now, scheduleTime, windowMinutes })) {
+    return now;
+  }
+  const wall = getMoscowWallClock(now);
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const startKey = getMoscowWallClock(yesterday).dateKey;
+  const bounds = windowBoundsForStartDate(startKey, scheduleTime, windowMinutes);
+  return new Date(bounds.startAt.getTime() + 45 * 60 * 1000);
 }
 
 function rosterForManagers(...guids: string[]): Buffer {
@@ -207,10 +252,8 @@ describe("onec nightly exchange", { concurrency: false }, () => {
     ]);
     configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)));
 
-    const tick = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const window = activeTestWindow();
+    const tick = await tickNightlyExchangeScheduler(window);
     assert.equal(tick.status, "enqueued");
 
     assert.equal(await waitForNightlyJobSettled(pool), "success");
@@ -257,21 +300,16 @@ describe("onec nightly exchange", { concurrency: false }, () => {
       ),
     );
 
-    const first = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const window = activeTestWindow();
+    const first = await tickNightlyExchangeScheduler(window);
     assert.equal(first.status, "enqueued");
 
-    const second = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const second = await tickNightlyExchangeScheduler(window);
     assert.equal(second.status, "already_claimed");
 
     const parallel = await Promise.all([
-      tickNightlyExchangeScheduler({ now: inWindow, config: nightlyConfig(true) }),
-      tickNightlyExchangeScheduler({ now: inWindow, config: nightlyConfig(true) }),
+      tickNightlyExchangeScheduler(window),
+      tickNightlyExchangeScheduler(window),
     ]);
     assert.ok(parallel.every((result) => result.status === "already_claimed"));
 
@@ -304,10 +342,7 @@ describe("onec nightly exchange", { concurrency: false }, () => {
       [adminUser.id],
     );
 
-    const tick = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const tick = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(tick.status, "blocked");
     assert.equal(tick.code, "UPDATE_ALREADY_RUNNING");
 
@@ -331,10 +366,7 @@ describe("onec nightly exchange", { concurrency: false }, () => {
     configureWorkerBundle(
       bundleInput(buildClientsFileBytes([sampleClient()]), rosterForManagers(MANAGER_A), false),
     );
-    const tick = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const tick = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(tick.status, "enqueued");
     assert.equal(await waitForNightlyJobSettled(pool), "failed");
     assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
@@ -346,20 +378,13 @@ describe("onec nightly exchange", { concurrency: false }, () => {
       sampleClientTwo({ guid_manager: MANAGER_B }),
     ]);
     configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)));
-    const seed = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const seed = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(seed.status, "enqueued");
     assert.equal(await waitForNightlyJobSettled(pool), "success");
 
     await pool.query(`UPDATE onec_exchange_state SET nightly_exchange_last_window = NULL WHERE id = 1`);
     configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A)));
-    const nextWindow = mskInstant("2026-10-08", 2, 45);
-    const shrink = await tickNightlyExchangeScheduler({
-      now: nextWindow,
-      config: nightlyConfig(true),
-    });
+    const shrink = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(shrink.status, "enqueued");
     assert.equal(await waitForNightlyJobSettled(pool), "failed");
 
@@ -377,18 +402,12 @@ describe("onec nightly exchange", { concurrency: false }, () => {
       ),
       { failCommit: true },
     );
-    const uncertain = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const uncertain = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(uncertain.status, "enqueued");
     assert.equal(await waitForNightlyJobSettled(pool), "failed");
 
     await pool.query(`UPDATE onec_exchange_state SET nightly_exchange_last_window = NULL WHERE id = 1`);
-    const retry = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const retry = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(retry.status, "blocked");
     assert.ok(retry.code === "APPLY_BLOCKED" || retry.code === "IMPORT_RUNNING");
 
@@ -416,6 +435,197 @@ describe("onec nightly exchange", { concurrency: false }, () => {
     assert.equal(claimed.rows[0]?.nightly_exchange_last_window, null);
   });
 
+  it("finalizes expired nightly pending on drain without FTP or data changes", async () => {
+    const bounds = windowBoundsForStartDate("2026-10-06", SCHEDULE_TIME, WINDOW_MINUTES);
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind,
+          mode,
+          status,
+          expires_at,
+          job_source,
+          nightly_window_key,
+          nightly_window_deadline_at
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() + INTERVAL '1 hour',
+          'nightly',
+          $1,
+          NOW() - INTERVAL '5 minutes'
+        )
+      `,
+      [bounds.windowKey],
+    );
+
+    configureWorkerBundle(
+      bundleInput(
+        buildClientsFileBytes([sampleClient({ name_client: "Should Not Apply" })]),
+        rosterForManagers(MANAGER_A),
+      ),
+    );
+
+    await drainPendingImportJobs(1);
+
+    const job = await pool.query<{ status: string; error_code: string | null }>(
+      `SELECT status, error_code FROM onec_import_jobs LIMIT 1`,
+    );
+    assert.equal(job.rows[0]?.status, "failed");
+    assert.equal(job.rows[0]?.error_code, "NIGHTLY_WINDOW_MISSED");
+    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+  });
+
+  it("blocks apply when nightly window closes while worker waits on import lock", async () => {
+    let releaseImportLock!: () => void;
+    const pausedAtLock = new Promise<void>((resolve) => {
+      releaseImportLock = resolve;
+    });
+    configureWorkerBundle(
+      bundleInput(
+        buildClientsFileBytes([sampleClient({ name_client: "Window Closed" })]),
+        rosterForManagers(MANAGER_A),
+      ),
+      {
+        beforeImportLock: async () => {
+          await pausedAtLock;
+        },
+      },
+    );
+
+    const tick = await tickNightlyExchangeScheduler(activeTestWindow());
+    assert.equal(tick.status, "enqueued");
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const row = await pool.query<{ status: string }>(
+        "SELECT status FROM onec_import_jobs WHERE job_source = 'nightly' LIMIT 1",
+      );
+      if (row.rows[0]?.status === "running") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    await pool.query(
+      `UPDATE onec_import_jobs SET nightly_window_deadline_at = NOW() - INTERVAL '1 minute' WHERE job_source = 'nightly'`,
+    );
+    releaseImportLock();
+    assert.equal(await waitForNightlyJobSettled(pool), "failed");
+
+    const job = await pool.query<{ error_code: string | null }>(
+      `SELECT error_code FROM onec_import_jobs WHERE job_source = 'nightly' LIMIT 1`,
+    );
+    assert.equal(job.rows[0]?.error_code, "NIGHTLY_WINDOW_MISSED");
+    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+  });
+
+  it("finalizes pending nightly jobs when schedule is disabled on drain", async () => {
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind,
+          mode,
+          status,
+          requested_at,
+          expires_at,
+          job_source,
+          nightly_window_key,
+          nightly_window_deadline_at
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW(),
+          NOW() + INTERVAL '30 minutes',
+          'nightly',
+          '2026-10-07',
+          NOW() + INTERVAL '30 minutes'
+        )
+      `,
+    );
+    process.env.ONEC_NIGHTLY_EXCHANGE_ENABLED = "false";
+    await drainPendingImportJobs(1);
+    const job = await pool.query<{ status: string; error_code: string | null }>(
+      `SELECT status, error_code FROM onec_import_jobs LIMIT 1`,
+    );
+    assert.equal(job.rows[0]?.status, "failed");
+    assert.equal(job.rows[0]?.error_code, "NIGHTLY_SCHEDULE_DISABLED");
+  });
+
+  it("does not break manual update when nightly schedule config is invalid", async () => {
+    delete process.env.ONEC_NIGHTLY_EXCHANGE_ENABLED;
+    delete process.env.ONEC_NIGHTLY_EXCHANGE_TIME;
+    delete process.env.ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES;
+    Object.assign(process.env, {
+      ONEC_NIGHTLY_EXCHANGE_ENABLED: "true",
+      ONEC_NIGHTLY_EXCHANGE_TIME: "25:99",
+      ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: "60",
+    });
+    configureWorkerBundle(
+      bundleInput(
+        buildClientsFileBytes([sampleClient({ name_client: "Manual Despite Bad Nightly Config" })]),
+        rosterForManagers(MANAGER_A),
+      ),
+    );
+    const app = await loadApp();
+    const started = await request(app)
+      .post("/api/admin/clients/onec-update")
+      .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })
+      .send({});
+    assert.equal(started.status, 202);
+
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const row = await pool.query<{ status: string }>(
+        `SELECT status FROM onec_import_jobs WHERE job_source = 'admin_manual' LIMIT 1`,
+      );
+      if (row.rows[0]?.status === "success") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const clientRow = await pool.query<{ name_client: string }>(
+      "SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid",
+      [sampleClient().guid_client],
+    );
+    assert.equal(clientRow.rows[0]?.name_client, "Manual Despite Bad Nightly Config");
+  });
+
+  it("stores start-date window key for midnight-spanning schedule", async () => {
+    const midnightWindow = {
+      enabled: true,
+      scheduleTime: "23:30",
+      timezone: "Europe/Moscow" as const,
+      windowMinutes: 120,
+    };
+    syncNightlyScheduleEnv(midnightWindow);
+    const now = sampleInstantInsideWindow("23:30", 120);
+    configureWorkerBundle(
+      bundleInput(
+        buildClientsFileBytes([sampleClient({ name_client: "Midnight Window" })]),
+        rosterForManagers(MANAGER_A),
+      ),
+    );
+    const tick = await tickNightlyExchangeScheduler({ now, config: midnightWindow });
+    assert.equal(tick.status, "enqueued");
+    assert.equal(tick.status, "enqueued");
+    const active = resolveActiveNightlyWindow({
+      now,
+      scheduleTime: "23:30",
+      windowMinutes: 120,
+    });
+    assert.ok(active);
+    if (tick.status === "enqueued") {
+      assert.equal(tick.windowKey, active.windowKey);
+    }
+    const row = await pool.query<{ nightly_window_key: string }>(
+      `SELECT nightly_window_key FROM onec_import_jobs WHERE job_source = 'nightly' LIMIT 1`,
+    );
+    assert.equal(row.rows[0]?.nightly_window_key, active.windowKey);
+  });
+
   it("leaves legacy clients_snapshot pending when nightly job runs", async () => {
     await pool.query(`
       INSERT INTO onec_import_jobs (kind, mode, requested_at, expires_at)
@@ -427,10 +637,7 @@ describe("onec nightly exchange", { concurrency: false }, () => {
         rosterForManagers(MANAGER_A),
       ),
     );
-    const tick = await tickNightlyExchangeScheduler({
-      now: inWindow,
-      config: nightlyConfig(true),
-    });
+    const tick = await tickNightlyExchangeScheduler(activeTestWindow());
     assert.equal(tick.status, "enqueued");
     assert.equal(await waitForNightlyJobSettled(pool), "success");
 
