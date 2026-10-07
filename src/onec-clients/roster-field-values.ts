@@ -4,6 +4,8 @@ export type ResolvedRosterFieldValues = {
   nameManager: string;
   guidPost: string | null;
   post: string | null;
+  guidTeam: string | null;
+  nameTeam: string | null;
   condition: string | null;
   dateOfAssumption: string | null;
   guidWorkSchedule: string | null;
@@ -17,6 +19,8 @@ type ExistingRosterFieldValues = {
   name_manager: string;
   guid_post: string | null;
   post: string | null;
+  guid_team: string | null;
+  name_team: string | null;
   condition: string | null;
   date_of_assumption: string | null;
   guid_work_schedule: string | null;
@@ -57,17 +61,59 @@ function resolveApplyValue<T>(
   return existing;
 }
 
+/** Team pair: guid_team defines membership; name_team is display-only. */
+export function resolveTeamFieldValues(
+  raw: Record<string, unknown>,
+  parsed: { guidTeam: string | null; nameTeam: string | null },
+  existing: ExistingRosterFieldValues | undefined,
+): { guidTeam: string | null; nameTeam: string | null } {
+  const hasGuidKey = hasRosterRawKey(raw, "guid_team");
+  const hasNameKey = hasRosterRawKey(raw, "name_team");
+  const existingGuid = canonicalUuid(existing?.guid_team ?? null);
+  const existingName = existing?.name_team ?? null;
+
+  if (!hasGuidKey && !hasNameKey) {
+    return { guidTeam: existingGuid, nameTeam: existingName };
+  }
+
+  if (hasGuidKey) {
+    const newGuid = parsed.guidTeam;
+    if (newGuid === null) {
+      return { guidTeam: null, nameTeam: null };
+    }
+    if (!hasNameKey) {
+      if (existingGuid === newGuid) {
+        return { guidTeam: newGuid, nameTeam: existingName };
+      }
+      return { guidTeam: newGuid, nameTeam: null };
+    }
+    return { guidTeam: newGuid, nameTeam: parsed.nameTeam };
+  }
+
+  if (existingGuid === null) {
+    return { guidTeam: null, nameTeam: existingName };
+  }
+  return { guidTeam: existingGuid, nameTeam: parsed.nameTeam };
+}
+
 export function resolveRosterFieldValues(
   record: WholesaleEmployeeRecord,
   existing: ExistingRosterFieldValues | undefined,
 ): ResolvedRosterFieldValues {
   const current = existing;
+  const team = resolveTeamFieldValues(
+    record.raw,
+    { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
+    current,
+  );
   return {
     nameManager: hasRosterRawKey(record.raw, "name_manager")
       ? record.nameManager
       : (current?.name_manager ?? ""),
     guidPost: resolveApplyValue(record.raw, "guid_post", record.guidPost, current?.guid_post ?? null),
     post: resolveApplyValue(record.raw, "post", record.post, current?.post ?? null),
+    guidTeam: team.guidTeam,
+    nameTeam: team.nameTeam,
     condition: resolveApplyValue(record.raw, "condition", record.condition, current?.condition ?? null),
     dateOfAssumption: resolveApplyValue(
       record.raw,
@@ -101,6 +147,8 @@ export function resolvedRosterValuesEqual(
     left.nameManager === right.nameManager &&
     canonicalUuid(left.guidPost) === canonicalUuid(right.guidPost) &&
     (left.post ?? null) === (right.post ?? null) &&
+    canonicalUuid(left.guidTeam) === canonicalUuid(right.guidTeam) &&
+    (left.nameTeam ?? null) === (right.nameTeam ?? null) &&
     (left.condition ?? null) === (right.condition ?? null) &&
     canonicalAssumptionTimestamptz(left.dateOfAssumption) ===
       canonicalAssumptionTimestamptz(right.dateOfAssumption) &&
@@ -121,6 +169,8 @@ export function rosterRecordValuesEqual(
     nameManager: existing.name_manager,
     guidPost: existing.guid_post,
     post: existing.post,
+    guidTeam: existing.guid_team,
+    nameTeam: existing.name_team,
     condition: existing.condition,
     dateOfAssumption: existing.date_of_assumption,
     guidWorkSchedule: existing.guid_work_schedule,

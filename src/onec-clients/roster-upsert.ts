@@ -16,6 +16,8 @@ type ExistingRosterRow = {
   name_manager: string;
   guid_post: string | null;
   post: string | null;
+  guid_team: string | null;
+  name_team: string | null;
   condition: string | null;
   date_of_assumption: string | null;
   guid_work_schedule: string | null;
@@ -34,6 +36,8 @@ async function loadExistingRoster(client: PoolClient): Promise<Map<string, Exist
         name_manager,
         guid_post::text,
         post,
+        guid_team::text,
+        name_team,
         condition,
         date_of_assumption::text,
         guid_work_schedule::text,
@@ -80,6 +84,8 @@ export async function upsertWholesaleEmployeeRoster(
           name_manager,
           guid_post,
           post,
+          guid_team,
+          name_team,
           condition,
           date_of_assumption,
           guid_work_schedule,
@@ -95,20 +101,24 @@ export async function upsertWholesaleEmployeeRoster(
           $2,
           $3::uuid,
           $4,
-          $5,
-          $6::timestamptz,
-          $7::uuid,
-          $8,
-          $9,
+          $5::uuid,
+          $6,
+          $7,
+          $8::timestamptz,
+          $9::uuid,
           $10,
           $11,
-          $12::jsonb,
+          $12,
+          $13,
+          $14::jsonb,
           NOW()
         )
         ON CONFLICT (guid_manager) DO UPDATE SET
           name_manager = EXCLUDED.name_manager,
           guid_post = EXCLUDED.guid_post,
           post = EXCLUDED.post,
+          guid_team = EXCLUDED.guid_team,
+          name_team = EXCLUDED.name_team,
           condition = EXCLUDED.condition,
           date_of_assumption = EXCLUDED.date_of_assumption,
           guid_work_schedule = EXCLUDED.guid_work_schedule,
@@ -124,6 +134,8 @@ export async function upsertWholesaleEmployeeRoster(
         values.nameManager,
         values.guidPost,
         values.post,
+        values.guidTeam,
+        values.nameTeam,
         values.condition,
         values.dateOfAssumption,
         values.guidWorkSchedule,

@@ -37,6 +37,8 @@ export const REQUIRED_SCHEMA_COLUMNS = [
   { table: "onec_wholesale_employee_roster", column: "name_manager" },
   { table: "onec_wholesale_employee_roster", column: "guid_post" },
   { table: "onec_wholesale_employee_roster", column: "post" },
+  { table: "onec_wholesale_employee_roster", column: "guid_team" },
+  { table: "onec_wholesale_employee_roster", column: "name_team" },
   { table: "onec_wholesale_employee_roster", column: "condition" },
   { table: "onec_wholesale_employee_roster", column: "date_of_assumption" },
   { table: "onec_wholesale_employee_roster", column: "guid_work_schedule" },

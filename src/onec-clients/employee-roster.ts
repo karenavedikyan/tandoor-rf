@@ -14,6 +14,8 @@ export type WholesaleEmployeeRecord = {
   nameManager: string;
   guidPost: string | null;
   post: string | null;
+  guidTeam: string | null;
+  nameTeam: string | null;
   condition: string | null;
   dateOfAssumption: string | null;
   guidWorkSchedule: string | null;
@@ -37,6 +39,26 @@ export type WholesaleEmployeeRoster = {
 function readOptionalString(raw: Record<string, unknown>, key: string): string | null {
   const value = raw[key];
   if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalStringField(
+  raw: Record<string, unknown>,
+  key: string,
+  issues: RosterFieldIssue[],
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) {
+    return null;
+  }
+  const value = raw[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    issues.push({ field: key, code: "INVALID_TYPE" });
     return null;
   }
   const trimmed = value.trim();
@@ -109,6 +131,8 @@ function toEmployeeRecord(
     nameManager: readOptionalString(raw, "name_manager") ?? "",
     guidPost: validateOptionalUuidField(raw, "guid_post", issues),
     post: readOptionalString(raw, "post"),
+    guidTeam: validateOptionalUuidField(raw, "guid_team", issues),
+    nameTeam: readOptionalStringField(raw, "name_team", issues),
     condition: readOptionalString(raw, "condition"),
     dateOfAssumption: readDateOfAssumption(raw, issues),
     guidWorkSchedule: validateOptionalUuidField(raw, "guid_work_schedule", issues),
