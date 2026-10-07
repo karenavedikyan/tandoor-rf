@@ -176,6 +176,29 @@ describe("client card extended render", () => {
     assert.match(label, /Начало приёмки/);
   });
 
+  it("shows empty snapshot message for granted admin without role denial", () => {
+    const html = prototype.render({
+      guid: "aaef4bd4-99f1-11ec-8114-00155d0a0a4e",
+      name: "Абдулмеджитов Февзий Тохирович ИП",
+      manager: { name: "Manager" },
+      holding: { name: "Holding" },
+      address: "HQ",
+      phones: [],
+      extended: {
+        formatVersion: "extended_v1",
+        retailOutletsAccess: "granted",
+        retailOutletsEmptyReason: "empty_snapshot",
+        retailOutlets: [],
+        retailOutletsTotalCount: 0,
+        retailOutletsTruncated: false,
+        dataQualityLabel: "В текущих данных 1С торговые точки не указаны",
+        sensitiveFieldsWithheld: true,
+      },
+    });
+    assert.match(html, /В текущих данных 1С торговые точки не указаны/);
+    assert.doesNotMatch(html, /недоступны для вашей роли/i);
+  });
+
   it("uses neutral multi-outlet summary instead of first outlet delivery", () => {
     const html = prototype.render({
       guid: "11111111-1111-4111-8111-111111111111",

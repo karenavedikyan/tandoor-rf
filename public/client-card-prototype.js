@@ -82,9 +82,31 @@
     return String(total);
   }
 
+  function outletStatusMessage(ext) {
+    if (!ext || ext.retailOutletsAccess === "denied") {
+      return "Торговые точки недоступны для вашей роли";
+    }
+    if (ext.retailOutletsEmptyReason === "empty_snapshot") {
+      return "В текущих данных 1С торговые точки не указаны";
+    }
+    if (ext.retailOutletsEmptyReason === "empty_scope") {
+      return "Нет доступных торговых точек в вашей области";
+    }
+    return ext.dataQualityLabel || "Структура торговых точек не передана";
+  }
+
   function renderShopCard(ext, outletCount) {
     if (ext && ext.retailOutletsAccess === "denied") {
       return field("Торговые точки", "Недоступны для вашей роли", true) +
+        field("Место поставки", "") +
+        field("Приёмка", "") +
+        field("Контакт приёмки", "") +
+        field("График / направление", "") +
+        '<p class="pc-label">Адрес из обмена показан в контактах. Он не считается автоматически торговой точкой или местом доставки.</p>';
+    }
+    if (ext && ext.retailOutletsAccess === "granted" && outletCount === 0) {
+      var emptyMessage = outletStatusMessage(ext);
+      return field("Торговые точки", emptyMessage, true) +
         field("Место поставки", "") +
         field("Приёмка", "") +
         field("Контакт приёмки", "") +
@@ -126,7 +148,9 @@
       ? "данные торговых точек недоступны"
       : outletTotal > 0
         ? "Торговые точки: " + outletCountLabel(ext, outletCount) + " (без постоянного GUID)"
-        : "данные не переданы";
+        : ext
+          ? outletStatusMessage(ext)
+          : "данные не переданы";
     var meta = '<div class="pc-meta"><span class="pc-tag">Источник: 1С</span><span>Холдинг: ' +
       esc(holding || "Не указан") + '</span><span>Менеджер: ' + esc(manager || "Не указан") +
       '</span><span>Структура: ' + esc(structureLabel) + '</span></div>';
@@ -151,7 +175,9 @@
       ? "Торговые точки недоступны для вашей роли"
       : outletTotal > 0
         ? outletCountLabel(ext, outletCount) + " точек из выгрузки 1С (идентификатор не передан)"
-        : "Структура торговых точек не передана";
+        : ext
+          ? outletStatusMessage(ext)
+          : "Структура торговых точек не передана";
 
     var stats = '<div class="pc-stats">' + [
       ["Отгрузки / план", "1С / планы"], ["Дистрибьюция", "Осмотры торговых точек"],

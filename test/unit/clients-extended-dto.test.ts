@@ -11,7 +11,10 @@ const adminContext: AccessContext = {
   status: "active",
   fullClientBase: true,
   employeeId: null,
-  teamIds: [],
+  employeeLinkConflict: false,
+  hasEmployeeLink: false,
+  hasScopedClientAccess: false,
+  explicitlyDeniedAll: false,
 };
 
 const managerContext: AccessContext = {
@@ -20,7 +23,22 @@ const managerContext: AccessContext = {
   status: "active",
   fullClientBase: false,
   employeeId: "22222222-2222-4222-8222-222222222222",
-  teamIds: [],
+  employeeLinkConflict: false,
+  hasEmployeeLink: true,
+  hasScopedClientAccess: true,
+  explicitlyDeniedAll: false,
+};
+
+const regionalContext: AccessContext = {
+  userId: "regional",
+  role: "regional_manager",
+  status: "active",
+  fullClientBase: false,
+  employeeId: EXTENDED_FIXTURE_GUIDS.REGIONAL,
+  employeeLinkConflict: false,
+  hasEmployeeLink: true,
+  hasScopedClientAccess: true,
+  explicitlyDeniedAll: false,
 };
 
 describe("clients extended dto", () => {
@@ -96,7 +114,128 @@ describe("clients extended dto", () => {
     assert.doesNotMatch(serialized, /Secret|secret@x|conditions_bonus|bonus_tandoor/i);
   });
 
-  it("denies nested outlets for manager without fullClientBase", () => {
+  it("grants admin access with empty snapshot without role denial", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: true, outletNormalizedReady: false },
+        },
+      },
+      adminContext,
+    );
+
+    assert.equal(dto!.retailOutletsAccess, "granted");
+    assert.equal(dto!.retailOutletsEmptyReason, "empty_snapshot");
+    assert.equal(dto!.retailOutlets.length, 0);
+    assert.equal(
+      dto!.dataQualityLabel,
+      "В текущих данных 1С торговые точки не указаны",
+    );
+    assert.doesNotMatch(dto!.dataQualityLabel, /недоступны для вашей роли/i);
+  });
+
+  it("shows empty scope without leaking hidden outlet payload for scoped role", () => {
+    const hiddenOutlet: ParsedRetailOutlet = {
+      ordinal: 0,
+      guidStore: EXTENDED_FIXTURE_GUIDS.STORE_ONE,
+      holdingName: "Hidden Holding",
+      warehouse: null,
+      address: { storeAddress: "Secret store street", deliveryAddress: "", routeDirection: "" },
+      loading: {
+        loadingOnMonday: null,
+        loadingOnTuesday: null,
+        loadingOnWednesday: null,
+        loadingOnThursday: null,
+        loadingOnFriday: null,
+        loadingOnSaturday: null,
+        loadingOnSunday: null,
+        loadingTime: null,
+      },
+      managers: {
+        manager: { guid: null, name: "", state: "unassigned" },
+        regionalManager: {
+          guid: "99999999-9999-4999-8999-999999999999",
+          name: "Other Regional",
+          state: "directory_unverified",
+        },
+        hardwareManager: { guid: null, name: "", state: "unassigned" },
+        headOfSales: { guid: null, name: "", state: "unassigned" },
+      },
+      contacts: { storePhone: "secret-phone", accountantPhone: "", accountantEmail: "" },
+      lpr: {
+        name: "",
+        post: "",
+        dateOfBirth: null,
+        phone: "",
+        email: "",
+        bonus: "",
+        conditionsBonus: "",
+      },
+      additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+      outletGuidStatus: "confirmed",
+      closureStatus: "open",
+      closureConfirmedInCurrentExport: true,
+      closureHistory: [],
+      provenance: { freshness: "current", sourceSha256: "abc", importedAt: "2026-01-01T10:00:00.000Z" },
+      distributionAllowed: false,
+    };
+
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_A,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [hiddenOutlet],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: true, outletNormalizedReady: false },
+        },
+      },
+      regionalContext,
+    );
+
+    assert.equal(dto!.retailOutletsAccess, "granted");
+    assert.equal(dto!.retailOutletsEmptyReason, "empty_scope");
+    assert.equal(dto!.retailOutlets.length, 0);
+    assert.equal(dto!.retailOutletsTotalCount, 0);
+    assert.equal(
+      dto!.dataQualityLabel,
+      "Нет доступных торговых точек в вашей области",
+    );
+    const serialized = JSON.stringify(dto);
+    assert.doesNotMatch(serialized, /Secret store street|secret-phone|Hidden Holding/i);
+  });
+
+  it("denies nested outlets for manager without employee link", () => {
+    const unlinkedManagerContext: AccessContext = {
+      ...managerContext,
+      employeeId: null,
+      hasEmployeeLink: false,
+    };
     const dto = toClientExtendedDto(
       {
         is_holding: true,
@@ -157,12 +296,86 @@ describe("clients extended dto", () => {
           blocks: { clientExtendedReady: false, outletNormalizedReady: false },
         },
       },
-      managerContext,
+      unlinkedManagerContext,
     );
 
     assert.equal(dto!.retailOutletsAccess, "denied");
+    assert.equal(dto!.retailOutletsEmptyReason, "none");
     assert.equal(dto!.retailOutlets.length, 0);
     assert.equal(dto!.retailOutletHistoryCount, 0);
+    assert.match(dto!.dataQualityLabel, /недоступны для вашей роли/i);
+    assert.doesNotMatch(JSON.stringify(dto), /secret/);
+  });
+
+  it("shows empty scope for linked manager without visible outlets", () => {
+    const dto = toClientExtendedDto(
+      {
+        is_holding: true,
+        guid_manager: EXTENDED_FIXTURE_GUIDS.MANAGER_B,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: true,
+          regionalManager: { guid: null, name: "", state: "unassigned" },
+          hardwareManager: { guid: null, name: "", state: "unassigned" },
+          headOfSales: { guid: null, name: "", state: "unassigned" },
+          currentRetailOutlets: [
+            {
+              ordinal: 0,
+              holdingName: "H",
+              warehouse: null,
+              address: { storeAddress: "secret", deliveryAddress: "", routeDirection: "" },
+              loading: {
+                loadingOnMonday: null,
+                loadingOnTuesday: null,
+                loadingOnWednesday: null,
+                loadingOnThursday: null,
+                loadingOnFriday: null,
+                loadingOnSaturday: null,
+                loadingOnSunday: null,
+                loadingTime: null,
+              },
+              managers: {
+                manager: { guid: EXTENDED_FIXTURE_GUIDS.MANAGER_B, name: "Other", state: "directory_unverified" },
+                regionalManager: { guid: null, name: "", state: "unassigned" },
+                hardwareManager: { guid: null, name: "", state: "unassigned" },
+                headOfSales: { guid: null, name: "", state: "unassigned" },
+              },
+              contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+              lpr: {
+                name: "",
+                post: "",
+                dateOfBirth: null,
+                phone: "",
+                email: "",
+                bonus: "",
+                conditionsBonus: "",
+              },
+              additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+              outletGuidStatus: "not_provided",
+              closureStatus: "not_provided",
+              closureConfirmedInCurrentExport: false,
+              closureHistory: [],
+              provenance: { freshness: "not_provided_in_snapshot", sourceSha256: "", importedAt: "" },
+              distributionAllowed: false,
+            },
+          ],
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+        },
+      },
+      managerContext,
+    );
+
+    assert.equal(dto!.retailOutletsAccess, "granted");
+    assert.equal(dto!.retailOutletsEmptyReason, "empty_scope");
+    assert.equal(dto!.retailOutlets.length, 0);
+    assert.match(dto!.dataQualityLabel, /Нет доступных торговых точек в вашей области/);
     assert.doesNotMatch(JSON.stringify(dto), /secret/);
   });
 

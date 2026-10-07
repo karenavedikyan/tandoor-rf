@@ -8,6 +8,7 @@ import {
   resolveMockResponse,
   syntheticDetailPayload,
   syntheticExtendedDetailPayload,
+  syntheticExtendedEmptyOutletsPayload,
   syntheticOutletMock,
 } from "./helpers/clients-api-mocks";
 
@@ -77,6 +78,32 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     assert.match(text, /Торговая точка 2/);
     assert.match(text, /2 точек в текущем снимке/);
     assert.doesNotMatch(text, /Дни приёмки не переданы/);
+    await context.close();
+  });
+
+  it("shows empty snapshot message for admin with granted access at desktop width", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyOutletsPayload());
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /В текущих данных 1С торговые точки не указаны/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
+    assert.equal(await page.locator('[data-testid^="pc-outlet-"]').count(), 0);
+    await context.close();
+  });
+
+  it("shows empty snapshot message for admin with granted access on mobile", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyOutletsPayload());
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /В текущих данных 1С торговые точки не указаны/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
+    assert.equal(await page.locator('[data-testid^="pc-outlet-"]').count(), 0);
     await context.close();
   });
 
