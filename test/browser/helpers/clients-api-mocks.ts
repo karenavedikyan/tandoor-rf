@@ -987,6 +987,34 @@ export function resolveMockResponse(
         },
       ],
       undefinedTeam: [],
+      assistantsDepartment: {
+        loadState: "ready",
+        head: {
+          employeeGuid: "dddddddd-dddd-4ddd-8ddd-dddddddddd01",
+          name: "ROA Head",
+          shortId: "DDDDDDDD",
+          hasLinkedAccount: true,
+          isAlsoAssistant: true,
+        },
+        members: [
+          {
+            employeeGuid: "dddddddd-dddd-4ddd-8ddd-dddddddddd01",
+            name: "ROA Head",
+            shortId: "DDDDDDDD",
+            hasLinkedAccount: true,
+            roles: ["roa", "assistant"],
+          },
+          {
+            employeeGuid: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+            name: "Assistant Two",
+            shortId: "EEEEEEEE",
+            hasLinkedAccount: false,
+            roles: ["assistant"],
+          },
+        ],
+        uniqueMemberCount: 2,
+        note: "Состав отдела ассистентов определён по справочнику ОПТ.",
+      },
       rosterLoaded: true,
       limitationNote: "Структура построена по назначениям 1С.",
     });

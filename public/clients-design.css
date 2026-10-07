@@ -1123,6 +1123,46 @@
   font-weight: 600;
 }
 
+.clients-design-page .clients-compact-team-toolbar__dept {
+  min-width: 140px;
+}
+
+.clients-design-page .clients-compact-team--assistants {
+  margin-bottom: 8px;
+}
+
+.clients-design-page .clients-compact-team__row--assistants .clients-compact-team__identity {
+  display: grid;
+  gap: 2px;
+  align-content: center;
+}
+
+.clients-design-page .clients-compact-team__role-caption {
+  font-size: 12px;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-compact-team__metrics--assistants {
+  grid-template-columns: auto;
+}
+
+.clients-design-page .clients-compact-team__kind-tag--assistant {
+  font-weight: 600;
+  color: var(--rf-text);
+}
+
+.clients-design-page .clients-compact-team__assistants-note {
+  margin: 0;
+  padding: 8px 10px 10px;
+  font-size: 13px;
+  color: var(--rf-text-muted);
+  border-top: 1px solid var(--rf-border);
+}
+
+.clients-design-page .clients-compact-team__assistants-note--warn {
+  color: var(--rf-warning-text, #8a5a00);
+}
+
 .clients-design-page .clients-compact-team__members {
   display: grid;
   gap: 6px;

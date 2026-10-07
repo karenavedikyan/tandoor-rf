@@ -22,7 +22,14 @@ import {
   outletStoreGuidSql,
   RETAIL_OUTLETS_JSON,
 } from "./assignment-sql";
-import { ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL } from "./constants";
+import {
+  ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID,
+  ORG_DIRECTOR_EMPLOYEE_GUID,
+  ROSTER_ASSISTANT_MEMBER_POST_LABEL,
+  ROSTER_ASSISTANTS_HEAD_POST_LABEL,
+  ROSTER_ROP_POST_LABEL,
+  type AssistantsMemberRole,
+} from "./constants";
 
 export type OrgDirectorSummary = {
   employeeGuid: string;
@@ -75,10 +82,45 @@ export type OrgUndefinedTeamMember = {
   hasLinkedAccount: boolean;
 };
 
+export type OrgAssistantsDepartmentMember = {
+  employeeGuid: string;
+  name: string;
+  shortId: string;
+  hasLinkedAccount: boolean;
+  roles: AssistantsMemberRole[];
+};
+
+export type OrgAssistantsDepartmentHead = {
+  employeeGuid: string;
+  name: string;
+  shortId: string;
+  hasLinkedAccount: boolean;
+  /** Confirmed by roster assistant post or explicit member row. */
+  isAlsoAssistant: boolean;
+};
+
+export type OrgAssistantsDepartmentLoadState =
+  | "unconfigured"
+  | "roster_missing"
+  | "head_conflict"
+  | "head_unknown"
+  | "empty"
+  | "ready";
+
+export type OrgAssistantsDepartment = {
+  loadState: OrgAssistantsDepartmentLoadState;
+  head: OrgAssistantsDepartmentHead | null;
+  members: OrgAssistantsDepartmentMember[];
+  /** Unique employee GUIDs in the displayed team composition (members list). */
+  uniqueMemberCount: number;
+  note: string;
+};
+
 export type OrgStructureOverview = {
   director: OrgDirectorSummary | null;
   rops: OrgRopSummary[];
   undefinedTeam: OrgUndefinedTeamMember[];
+  assistantsDepartment: OrgAssistantsDepartment | null;
   rosterLoaded: boolean;
   limitationNote: string;
 };
@@ -418,7 +460,231 @@ async function countTeamMembersForRop(context: AccessContext, ropGuid: string): 
   );
 }
 
-async function loadUndefinedTeamMembers(linked: Set<string>): Promise<OrgUndefinedTeamMember[]> {
+type RosterPersonRow = {
+  employee_guid: string;
+  name: string;
+  post: string | null;
+};
+
+async function loadRosterPeopleByPost(postLabel: string): Promise<RosterPersonRow[]> {
+  const result = await query<RosterPersonRow>(
+    `
+      SELECT
+        lower(guid_manager::text) AS employee_guid,
+        name_manager AS name,
+        post
+      FROM onec_wholesale_employee_roster
+      WHERE post = $1
+      ORDER BY name_manager ASC, guid_manager ASC
+    `,
+    [postLabel],
+  );
+  return result.rows;
+}
+
+async function loadRosterPersonByGuid(employeeGuid: string): Promise<RosterPersonRow | null> {
+  const result = await query<RosterPersonRow>(
+    `
+      SELECT
+        lower(guid_manager::text) AS employee_guid,
+        name_manager AS name,
+        post
+      FROM onec_wholesale_employee_roster
+      WHERE lower(guid_manager::text) = $1
+      LIMIT 1
+    `,
+    [employeeGuid.toLowerCase()],
+  );
+  return result.rows[0] ?? null;
+}
+
+function canViewAssistantsDepartment(context: AccessContext): boolean {
+  if (context.preview?.active) {
+    return false;
+  }
+  return context.role === "admin" || context.fullClientBase;
+}
+
+function resolveAssistantsHeadGuid(): string | null {
+  return (
+    (process.env.TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID ?? ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID ?? "")
+      .trim()
+      .toLowerCase() || null
+  );
+}
+
+function buildAssistantCompositionMembers(
+  linked: Set<string>,
+  assistantMembers: RosterPersonRow[],
+  headGuid: string | null,
+  headRow: RosterPersonRow | null,
+  isHeadAlsoAssistant: boolean,
+): OrgAssistantsDepartmentMember[] {
+  const members: OrgAssistantsDepartmentMember[] = [];
+  if (headGuid && headRow && isHeadAlsoAssistant) {
+    members.push({
+      employeeGuid: headGuid,
+      name: headRow.name,
+      shortId: shortUuidLabel(headGuid),
+      hasLinkedAccount: linked.has(headGuid),
+      roles: ["roa", "assistant"],
+    });
+  }
+  for (const row of assistantMembers) {
+    if (headGuid && row.employee_guid === headGuid) {
+      continue;
+    }
+    members.push({
+      employeeGuid: row.employee_guid,
+      name: row.name,
+      shortId: shortUuidLabel(row.employee_guid),
+      hasLinkedAccount: linked.has(row.employee_guid),
+      roles: ["assistant"],
+    });
+  }
+  return members.sort(
+    (a, b) => a.name.localeCompare(b.name, "ru") || a.employeeGuid.localeCompare(b.employeeGuid),
+  );
+}
+
+function headMembershipConfirmedByRoster(
+  headGuid: string,
+  headRow: RosterPersonRow,
+  assistantMembers: RosterPersonRow[],
+): boolean {
+  if (headRow.post === ROSTER_ASSISTANT_MEMBER_POST_LABEL) {
+    return true;
+  }
+  return assistantMembers.some((row) => row.employee_guid === headGuid);
+}
+
+async function loadAssistantsDepartment(
+  linked: Set<string>,
+  rosterLoaded: boolean,
+): Promise<OrgAssistantsDepartment> {
+  const assistantMembers = rosterLoaded
+    ? await loadRosterPeopleByPost(ROSTER_ASSISTANT_MEMBER_POST_LABEL)
+    : [];
+  const rosterHeadCandidates = rosterLoaded
+    ? await loadRosterPeopleByPost(ROSTER_ASSISTANTS_HEAD_POST_LABEL)
+    : [];
+  const envHeadGuid = resolveAssistantsHeadGuid();
+
+  if (!envHeadGuid && rosterHeadCandidates.length === 0) {
+    return {
+      loadState: "unconfigured",
+      head: null,
+      members: [],
+      uniqueMemberCount: 0,
+      note:
+        "Отдел ассистентов не настроен: задайте TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID или должность «Руководитель отдела ассистентов» в справочнике ОПТ.",
+    };
+  }
+
+  if (!rosterLoaded) {
+    const provisionalHeadGuid = envHeadGuid ?? rosterHeadCandidates[0]?.employee_guid ?? null;
+    if (!provisionalHeadGuid) {
+      return {
+        loadState: "unconfigured",
+        head: null,
+        members: [],
+        uniqueMemberCount: 0,
+        note:
+          "Отдел ассистентов не настроен: задайте TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID или должность «Руководитель отдела ассистентов» в справочнике ОПТ.",
+      };
+    }
+    return {
+      loadState: "roster_missing",
+      head: {
+        employeeGuid: provisionalHeadGuid,
+        name: shortUuidLabel(provisionalHeadGuid),
+        shortId: shortUuidLabel(provisionalHeadGuid),
+        hasLinkedAccount: linked.has(provisionalHeadGuid),
+        isAlsoAssistant: false,
+      },
+      members: [],
+      uniqueMemberCount: 0,
+      note: "Справочник ОПТ не загружен: состав отдела ассистентов недоступен.",
+    };
+  }
+
+  if (!envHeadGuid && rosterHeadCandidates.length > 1) {
+    const members = buildAssistantCompositionMembers(linked, assistantMembers, null, null, false);
+    return {
+      loadState: "head_conflict",
+      head: null,
+      members,
+      uniqueMemberCount: members.length,
+      note:
+        "Найдено несколько сотрудников с должностью «Руководитель отдела ассистентов». Уточните назначение РОА в 1С или задайте TANDOOR_ORG_ASSISTANTS_HEAD_EMPLOYEE_GUID.",
+    };
+  }
+
+  const headGuid = envHeadGuid ?? rosterHeadCandidates[0]!.employee_guid;
+  const headRow = await loadRosterPersonByGuid(headGuid);
+
+  if (!headRow) {
+    const members = buildAssistantCompositionMembers(linked, assistantMembers, null, null, false);
+    return {
+      loadState: "head_unknown",
+      head: null,
+      members,
+      uniqueMemberCount: members.length,
+      note: `Руководитель отдела ассистентов (${shortUuidLabel(headGuid)}) не найден в актуальном справочнике ОПТ.`,
+    };
+  }
+
+  const confirmedHeadMembership = headMembershipConfirmedByRoster(
+    headGuid,
+    headRow,
+    assistantMembers,
+  );
+
+  const members = buildAssistantCompositionMembers(
+    linked,
+    assistantMembers,
+    headGuid,
+    headRow,
+    confirmedHeadMembership,
+  );
+  const uniqueMemberCount = members.length;
+  const loadState: OrgAssistantsDepartmentLoadState =
+    uniqueMemberCount === 0 ? "empty" : "ready";
+
+  return {
+    loadState,
+    head: {
+      employeeGuid: headGuid,
+      name: headRow.name,
+      shortId: shortUuidLabel(headGuid),
+      hasLinkedAccount: linked.has(headGuid),
+      isAlsoAssistant: confirmedHeadMembership,
+    },
+    members,
+    uniqueMemberCount,
+    note:
+      loadState === "empty"
+        ? "Подтверждённый состав отдела ассистентов пуст."
+        : "Состав отдела ассистентов определён по справочнику ОПТ (должность «Ассистент» и назначение руководителя).",
+  };
+}
+
+function assistantsDepartmentGuids(department: OrgAssistantsDepartment | null): Set<string> {
+  const guids = new Set<string>();
+  if (!department?.head) {
+    return guids;
+  }
+  guids.add(department.head.employeeGuid);
+  for (const member of department.members) {
+    guids.add(member.employeeGuid);
+  }
+  return guids;
+}
+
+async function loadUndefinedTeamMembers(
+  linked: Set<string>,
+  excludeGuids: Set<string>,
+): Promise<OrgUndefinedTeamMember[]> {
   const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc");
   const result = await query<{ employee_guid: string; name: string; post: string | null }>(
     `
@@ -468,13 +734,15 @@ async function loadUndefinedTeamMembers(linked: Set<string>): Promise<OrgUndefin
     `,
     [ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL],
   );
-  return result.rows.map((row) => ({
-    employeeGuid: row.employee_guid,
-    name: row.name,
-    shortId: shortUuidLabel(row.employee_guid),
-    rosterPost: row.post,
-    hasLinkedAccount: linked.has(row.employee_guid),
-  }));
+  return result.rows
+    .filter((row) => !excludeGuids.has(row.employee_guid))
+    .map((row) => ({
+      employeeGuid: row.employee_guid,
+      name: row.name,
+      shortId: shortUuidLabel(row.employee_guid),
+      rosterPost: row.post,
+      hasLinkedAccount: linked.has(row.employee_guid),
+    }));
 }
 
 export async function getOrgStructureOverview(context: AccessContext): Promise<OrgStructureOverview> {
@@ -518,15 +786,19 @@ export async function getOrgStructureOverview(context: AccessContext): Promise<O
     });
   }
 
-  const undefinedTeam =
-    context.role === "admin" || context.fullClientBase
-      ? await loadUndefinedTeamMembers(linked)
-      : [];
+  const showDirectorOverview = context.role === "admin" || context.fullClientBase;
+  const assistantsDepartment = showDirectorOverview
+    ? await loadAssistantsDepartment(linked, rosterLoaded)
+    : null;
+  const undefinedTeam = showDirectorOverview
+    ? await loadUndefinedTeamMembers(linked, assistantsDepartmentGuids(assistantsDepartment))
+    : [];
 
   return {
-    director: context.role === "admin" || context.fullClientBase ? director : null,
+    director: showDirectorOverview ? director : null,
     rops,
     undefinedTeam,
+    assistantsDepartment,
     rosterLoaded,
     limitationNote: rosterLoaded
       ? "Структура построена по назначениям 1С и справочнику ОПТ. Отсутствие аккаунта ЛК не скрывает сотрудника."

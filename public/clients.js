@@ -121,6 +121,7 @@
     director: null,
     rops: [],
     undefinedTeam: [],
+    assistantsDepartment: null,
     managers: [],
     ropSummary: null,
     ropName: "",
@@ -155,6 +156,7 @@
     state.teamExpand = urlTeam.teamExpand || [];
     state.teamQ = urlTeam.teamQ || "";
     state.teamKind = urlTeam.teamKind || "";
+    state.teamDept = urlTeam.teamDept || "";
     return state;
   }
 
@@ -2614,6 +2616,7 @@
     teamContext.director = data.director || null;
     teamContext.rops = data.rops || [];
     teamContext.undefinedTeam = data.undefinedTeam || [];
+    teamContext.assistantsDepartment = data.assistantsDepartment || null;
     teamContext.limitationNote = data.limitationNote || "";
     teamContext.loadError = false;
     var match = ropEmployeeGuid
