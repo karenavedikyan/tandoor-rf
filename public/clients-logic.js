@@ -707,9 +707,19 @@
     var lines = [];
     var job = data.job;
     lines.push({
+      label: "Источник",
+      value: job.jobSourceLabel || "—",
+    });
+    lines.push({
       label: "Дата исходной выгрузки",
       value: job.sourceExportAtLabel || "Не передана",
     });
+    if (job.exportBatchId) {
+      lines.push({
+        label: "Пакет 1С",
+        value: job.exportBatchId,
+      });
+    }
     lines.push({
       label: "Последнее успешное обновление",
       value: job.lastSuccessfulUpdateAtLabel || "Ещё не выполнялось",

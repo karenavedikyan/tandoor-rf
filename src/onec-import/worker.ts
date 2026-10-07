@@ -1,9 +1,12 @@
 import type { Pool } from "pg";
 import { EMPLOYEES_RELATIVE_PATH, parseWholesaleEmployeeRosterBytes } from "../onec-clients/employee-roster";
+import { prepareRegularUpdateWorkerQueue } from "../clients/admin-onec-update/nightly-job-lifecycle";
 import {
   IMPORT_JOB_SUPERSEDED_CODE,
   markOperatorImportJobSuperseded,
+  markOperatorImportJobWindowMissed,
 } from "../onec-clients/import-job-guard";
+import { isNightlyExchangeScheduleEnabled } from "../onec-nightly-exchange/config";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { defaultFtpReader, readRemoteFileFromFtp, type FtpReader } from "../onec-clients/ftp-read";
 import { runClientsImport } from "../onec-clients/run-import";
@@ -14,6 +17,8 @@ import type { RegularUpdateResult } from "../onec-regular-update/types";
 import {
   IMPORT_JOB_KIND,
   REGULAR_UPDATE_JOB_KIND,
+  REGULAR_UPDATE_JOB_SOURCE_NIGHTLY,
+  type RegularUpdateJobSource,
   TRUSTED_ONEC_FTP_BASE_PATH,
   TRUSTED_ONEC_FTP_HOST,
 } from "./constants";
@@ -31,7 +36,15 @@ type ImportJobRow = {
   holding_link_validation_policy: HoldingLinkValidationPolicy;
   employee_roster_source_sha256: string | null;
   wholesale_composition_mode: WholesaleCompositionMode;
+  job_source: RegularUpdateJobSource;
+  nightly_window_deadline_at: Date | null;
 };
+
+function importTriggerSourceForJob(
+  jobSource: RegularUpdateJobSource,
+): "regular_update" | "regular_update_nightly" {
+  return jobSource === REGULAR_UPDATE_JOB_SOURCE_NIGHTLY ? "regular_update_nightly" : "regular_update";
+}
 
 export type ImportJobWorkerTestHooks = {
   regularUpdateExecution?: RegularUpdateJobExecutionOptions;
@@ -162,6 +175,7 @@ async function runRegularUpdateBundleJob(
   const updateResult = await executeRegularUpdateBundleJob({
     env,
     operatorImportJobId: job.id,
+    importTriggerSource: importTriggerSourceForJob(job.job_source),
     ...testHooks?.regularUpdateExecution,
   });
   const redacted = redactRegularUpdateResult(updateResult, env);
@@ -189,6 +203,12 @@ export async function runOneImportJob(
   const db = await pool.connect();
   let jobId: string | undefined;
   try {
+    await db.query("BEGIN");
+    await prepareRegularUpdateWorkerQueue(db, {
+      nightlyScheduleEnabled: isNightlyExchangeScheduleEnabled(env),
+    });
+    await db.query("COMMIT");
+
     const claimed = await db.query<ImportJobRow>(
       `
       UPDATE onec_import_jobs
@@ -199,6 +219,13 @@ export async function runOneImportJob(
         WHERE kind = ANY($1::text[])
           AND status = 'pending'
           AND expires_at > NOW()
+          AND (
+            job_source <> 'nightly'
+            OR (
+              nightly_window_deadline_at IS NOT NULL
+              AND nightly_window_deadline_at > NOW()
+            )
+          )
         ORDER BY requested_at, id
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -210,7 +237,9 @@ export async function runOneImportJob(
         expected_sha256,
         holding_link_validation_policy,
         employee_roster_source_sha256,
-        wholesale_composition_mode
+        wholesale_composition_mode,
+        job_source,
+        nightly_window_deadline_at
     `,
       [kinds],
     );
@@ -218,6 +247,15 @@ export async function runOneImportJob(
     jobId = job?.id;
     if (!job) {
       return "idle";
+    }
+
+    if (
+      job.job_source === REGULAR_UPDATE_JOB_SOURCE_NIGHTLY &&
+      job.nightly_window_deadline_at &&
+      job.nightly_window_deadline_at <= new Date()
+    ) {
+      await markOperatorImportJobWindowMissed(db, job.id);
+      return "failed";
     }
 
     if (!isTrustedFtpConfig(env)) {

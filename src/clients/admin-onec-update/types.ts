@@ -8,6 +8,8 @@ export type OnecUpdateUiPhase =
   | "error"
   | "uncertain";
 
+export type RegularUpdateJobSourceDto = "admin_manual" | "nightly";
+
 export type AdminOnecUpdateJobDto = {
   id: string;
   phase: OnecUpdateUiPhase;
@@ -21,6 +23,9 @@ export type AdminOnecUpdateJobDto = {
   dataPreserved: boolean;
   errorCode: string | null;
   requestedByUserId: string | null;
+  jobSource: RegularUpdateJobSourceDto;
+  jobSourceLabel: string;
+  exportBatchId: string | null;
 };
 
 export type AdminOnecUpdateStatusResponse = {
