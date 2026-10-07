@@ -39,7 +39,7 @@ npm run grant-admin-access:local -- inspect --email a.zaychenko@tandoors.ru
 
 До подтверждения доставки учётная запись создаётся со статусом `disabled` — войти нельзя. После успешной записи пароля CLI активирует аккаунт и пишет `user.provision_delivery_confirmed`.
 
-Если подтверждение COMMIT потеряно — **не полагаться на ROLLBACK** и не проверять только наличие email. CLI сверяет **`provision_operation_id`** в `user.provision_operation_committed`. При неизвестном исходе — fail-closed (пароль не выдаётся, аккаунт не активируется). Повторный `grant` при `pending_delivery` продолжает ту же выдачу (`user.provision_recovery`).
+Если подтверждение COMMIT потеряно — **не полагаться на ROLLBACK** и не проверять только наличие email. CLI сверяет **`provision_operation_id`** в `user.provision_operation_committed`. При неизвестном исходе — fail-closed (пароль не выдаётся, аккаунт не активируется). Повторный `grant` при `pending_delivery` продолжает **актуальную** операцию; замещённые (`user.provision_operation_superseded` / `resumed_operation_id`) не восстанавливаются.
 
 Если доставка не удалась — аккаунт остаётся `disabled`, в аудит пишется `user.provision_incomplete` (без удаления пользователя).
 

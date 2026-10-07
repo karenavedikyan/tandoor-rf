@@ -90,6 +90,62 @@ async function writeProvisionOperationCommitted(
   });
 }
 
+async function writeProvisionOperationSuperseded(
+  client: PoolClient,
+  input: {
+    actorUserId: string;
+    entityId: string;
+    supersededOperationId: string;
+    supersededByOperationId: string;
+    basis: string;
+  },
+): Promise<void> {
+  await writeUserAudit({
+    client,
+    actorUserId: input.actorUserId,
+    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_SUPERSEDED,
+    entityId: input.entityId,
+    before: {
+      [PROVISION_OPERATION_ID_KEY]: input.supersededOperationId,
+      pending_delivery: true,
+    },
+    after: {
+      [PROVISION_OPERATION_ID_KEY]: input.supersededOperationId,
+      superseded_by_operation_id: input.supersededByOperationId,
+      pending_delivery: false,
+    },
+    basis: `${input.basis} (операция ${input.supersededOperationId} замещена ${input.supersededByOperationId})`,
+  });
+}
+
+function isProvisionOperationClosedSql(committedAlias: string): string {
+  return `
+    (
+      EXISTS (
+        SELECT 1
+        FROM access_audit_log delivered
+        WHERE delivered.entity_id = ${committedAlias}.entity_id
+          AND delivered.action = $5
+          AND delivered.after_json->>$3 = ${committedAlias}.after_json->>$3
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM access_audit_log superseded
+        WHERE superseded.entity_id = ${committedAlias}.entity_id
+          AND superseded.action = $6
+          AND superseded.after_json->>$3 = ${committedAlias}.after_json->>$3
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM access_audit_log successor
+        WHERE successor.entity_id = ${committedAlias}.entity_id
+          AND successor.action = $4
+          AND successor.after_json->>'resumed_operation_id' = ${committedAlias}.after_json->>$3
+      )
+    )
+  `;
+}
+
 async function writeUserAudit(input: AuditWriteInput): Promise<void> {
   await input.client.query(
     `
@@ -204,13 +260,7 @@ export async function findPendingProvisionOperation(
         AND committed.entity_id = $1::uuid
         AND committed.action = $4
         AND committed.after_json->>'mode' IN ('created', 'delivery_resumed')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM access_audit_log delivered
-          WHERE delivered.entity_id = committed.entity_id
-            AND delivered.action = $5
-            AND delivered.after_json->>$3 = committed.after_json->>$3
-        )
+        AND NOT ${isProvisionOperationClosedSql("committed")}
       ORDER BY committed.created_at DESC
       LIMIT 1
     `,
@@ -220,6 +270,7 @@ export async function findPendingProvisionOperation(
       PROVISION_OPERATION_ID_KEY,
       ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_COMMITTED,
       ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
+      ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_SUPERSEDED,
     ],
   );
   const row = result.rows[0];
@@ -477,13 +528,21 @@ export async function grantAdminAccess(
           },
           basis: `${basis} (новый временный пароль при восстановлении)`,
         });
+        const resumedFrom = input.resumeOperationId ?? pendingOperation.operationId;
         await writeProvisionOperationCommitted(client, {
           operationId: input.operationId,
           actorUserId: input.actorUserId,
           entityId: existing.id,
           mode: "delivery_resumed",
           basis,
-          resumedOperationId: input.resumeOperationId ?? pendingOperation.operationId,
+          resumedOperationId: resumedFrom,
+        });
+        await writeProvisionOperationSuperseded(client, {
+          actorUserId: input.actorUserId,
+          entityId: existing.id,
+          supersededOperationId: resumedFrom,
+          supersededByOperationId: input.operationId,
+          basis,
         });
         return {
           ok: true,

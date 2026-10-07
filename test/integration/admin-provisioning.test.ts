@@ -675,6 +675,185 @@ describe("admin provisioning", { concurrency: false }, () => {
     await assert.rejects(() => fs.access(recoveryFile));
   });
 
+  it("chain A→B: after successful B delivery inspect is delivered and repeat grant is refused", async () => {
+    const email = "chain-ab-delivered@example.com";
+    const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
+    const deliveryFile = `${tempDir}/chain-b-delivered.txt`;
+    const blockedRepeatFile = `${tempDir}/chain-repeat-blocked.txt`;
+
+    const seeded = await seedPendingDelivery(pool, {
+      email,
+      fullName: "Chain AB Delivered",
+      actorUserId: actorAdminId,
+      basis: "Operation A create without delivery",
+      temporaryPassword: "TempPass123!A1",
+    });
+
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: deliveryFile });
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: blockedRepeatFile });
+
+    const grantClient = await pool.connect();
+    try {
+      const resumed = await runAdminGrant(pool, grantClient, {
+        email,
+        fullName: "Chain AB Delivered",
+        actorUserId: actorAdminId,
+        basis: "Operation B delivery_resumed with delivery",
+        auditReviewConfirmed: true,
+        passwordDelivery: { kind: "file", filePath: deliveryFile },
+      });
+      assert.equal(resumed.ok, true);
+      if (resumed.ok) {
+        assert.equal(resumed.mode, "delivery_resumed");
+      }
+    } finally {
+      grantClient.release();
+    }
+
+    const snapshotClient = await pool.connect();
+    let passwordHashBefore = "";
+    let statusBefore = "";
+    try {
+      const inspect = await inspectUserByEmail(snapshotClient, email);
+      assert.equal(inspect.provisionState, "delivered");
+      assert.equal(inspect.pendingOperation, null);
+
+      const row = await snapshotClient.query<{ password_hash: string; status: string }>(
+        `SELECT password_hash, status FROM users WHERE id = $1::uuid`,
+        [seeded.userId],
+      );
+      passwordHashBefore = row.rows[0]?.password_hash ?? "";
+      statusBefore = row.rows[0]?.status ?? "";
+      assert.equal(statusBefore, "active");
+    } finally {
+      snapshotClient.release();
+    }
+
+    const repeatClient = await pool.connect();
+    try {
+      const repeat = await runAdminGrant(pool, repeatClient, {
+        email,
+        fullName: "Chain AB Delivered",
+        actorUserId: actorAdminId,
+        basis: "Повторная выдача после завершённой цепочки A→B",
+        auditReviewConfirmed: true,
+        passwordDelivery: { kind: "file", filePath: blockedRepeatFile },
+      });
+      assert.equal(repeat.ok, false);
+      if (!repeat.ok) {
+        assert.equal(repeat.code, "USER_ALREADY_ADMIN");
+      }
+    } finally {
+      repeatClient.release();
+    }
+
+    await assert.rejects(() => fs.access(blockedRepeatFile));
+    const verifyClient = await pool.connect();
+    try {
+      const row = await verifyClient.query<{ password_hash: string; status: string }>(
+        `SELECT password_hash, status FROM users WHERE id = $1::uuid`,
+        [seeded.userId],
+      );
+      assert.equal(row.rows[0]?.password_hash, passwordHashBefore);
+      assert.equal(row.rows[0]?.status, statusBefore);
+    } finally {
+      verifyClient.release();
+    }
+  });
+
+  it("chain A→B: rolled-back B leaves original operation A recoverable", async () => {
+    const email = "chain-a-rollback@example.com";
+    const seeded = await seedPendingDelivery(pool, {
+      email,
+      fullName: "Chain A Rollback",
+      actorUserId: actorAdminId,
+      basis: "Operation A before rolled-back B",
+      temporaryPassword: "TempPass123!A2",
+    });
+
+    const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
+    const recoveryFile = `${tempDir}/chain-b-rollback.txt`;
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: recoveryFile });
+
+    setTestSimulateCommitFailure(true);
+    const grantClient = await pool.connect();
+    try {
+      const result = await runAdminGrant(pool, grantClient, {
+        email,
+        fullName: "Chain A Rollback",
+        actorUserId: actorAdminId,
+        basis: "Operation B delivery_resumed rolled back",
+        auditReviewConfirmed: true,
+        passwordDelivery: { kind: "file", filePath: recoveryFile },
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.code, "PROVISION_OUTCOME_ROLLED_BACK");
+      }
+    } finally {
+      grantClient.release();
+      setTestSimulateCommitFailure(false);
+    }
+
+    await assert.rejects(() => fs.access(recoveryFile));
+    const client = await pool.connect();
+    try {
+      const inspect = await inspectUserByEmail(client, email);
+      assert.equal(inspect.provisionState, "pending_delivery");
+      assert.equal(inspect.pendingOperation?.operationId, seeded.operationId);
+      assert.equal(inspect.pendingOperation?.mode, "created");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("chain A→B: committed undelivered B is pending instead of superseded A", async () => {
+    const email = "chain-b-pending@example.com";
+    const seeded = await seedPendingDelivery(pool, {
+      email,
+      fullName: "Chain B Pending",
+      actorUserId: actorAdminId,
+      basis: "Operation A before undelivered B",
+      temporaryPassword: "TempPass123!A3",
+    });
+
+    const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
+    const blockedFile = `${tempDir}/chain-b-blocked.txt`;
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: blockedFile });
+    await deliverTemporaryPasswordToChannel("blocker", { kind: "file", filePath: blockedFile });
+
+    const grantClient = await pool.connect();
+    try {
+      await assert.rejects(() =>
+        runAdminGrant(pool, grantClient, {
+          email,
+          fullName: "Chain B Pending",
+          actorUserId: actorAdminId,
+          basis: "Operation B committed but delivery failed",
+          auditReviewConfirmed: true,
+          passwordDelivery: { kind: "file", filePath: blockedFile },
+        }),
+      );
+    } finally {
+      grantClient.release();
+    }
+
+    const client = await pool.connect();
+    try {
+      const inspect = await inspectUserByEmail(client, email);
+      assert.equal(inspect.provisionState, "pending_delivery");
+      assert.notEqual(inspect.pendingOperation?.operationId, seeded.operationId);
+      assert.equal(inspect.pendingOperation?.mode, "delivery_resumed");
+
+      const pending = await findPendingProvisionOperation(client, seeded.userId);
+      assert.ok(pending);
+      assert.equal(pending?.operationId, inspect.pendingOperation?.operationId);
+      assert.equal(pending?.mode, "delivery_resumed");
+    } finally {
+      client.release();
+    }
+  });
+
   it("keeps account disabled when incomplete audit write fails after delivery error", async () => {
     const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
     const target = `${tempDir}/password.txt`;
