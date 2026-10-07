@@ -135,6 +135,15 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     });
   }
 
+  async function openTeamsRop(page: Page): Promise<void> {
+    const orgReady = page.waitForResponse(
+      (response) => response.url().includes("/api/clients/org-structure") && response.status() === 200,
+    );
+    await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+    await orgReady;
+    await page.waitForSelector(".clients-team-mode-switch");
+  }
+
   async function openOnecTeams(page: Page): Promise<void> {
     const teamsReady = page.waitForResponse(
       (response) => response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
@@ -143,6 +152,56 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     await teamsReady;
     await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
   }
+
+  async function expectModeSwitchVisible(page: Page): Promise<void> {
+    await page.waitForSelector(".clients-team-mode-switch");
+    assert.equal(await page.locator('[data-team-source="rop"]').count(), 1);
+    assert.equal(await page.locator('[data-team-source="onec"]').count(), 1);
+  }
+
+  it("keeps team source switch available across modes, reload and reset", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "director@example.com");
+    await openTeamsRop(page);
+    await expectModeSwitchVisible(page);
+    assert.equal(await page.locator('[data-team-source="rop"].clients-team-mode-switch__btn--active').count(), 1);
+
+    const onecReady = page.waitForResponse(
+      (response) => response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
+    );
+    await page.click('[data-team-source="onec"]');
+    await onecReady;
+    await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
+    await expectModeSwitchVisible(page);
+    assert.equal(await page.locator('[data-team-source="onec"].clients-team-mode-switch__btn--active').count(), 1);
+
+    await page.click('[data-team-source="rop"]');
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+    await expectModeSwitchVisible(page);
+
+    await page.reload({ waitUntil: "networkidle" });
+    await expectModeSwitchVisible(page);
+
+    await page.click('[data-team-source="onec"]');
+    await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
+    await page.click("#clients-team-collapse-all");
+    await page.waitForFunction(
+      () =>
+        !new URL(window.location.href).searchParams.get("teamQ") &&
+        (document.querySelector("#clients-team-search-input")?.value || "") === "",
+    );
+    await expectModeSwitchVisible(page);
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "clients-onec-teams-mode-switch-after-reset.png"),
+      fullPage: false,
+    });
+
+    await page.close();
+    await stopServer();
+  });
 
   it("desktop expand, search, reload and reset", async () => {
     await seed();
@@ -192,6 +251,68 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
     const viewportWidth = await page.evaluate(() => window.innerWidth);
     assert.ok(bodyWidth <= viewportWidth + 1);
+
+    await page.close();
+    await stopServer();
+  });
+
+  it("ignores stale onec search responses and mode exit", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await login(page, "director@example.com");
+    await openOnecTeams(page);
+
+    await page.route("**/api/clients/org-structure/onec-teams**", async (route) => {
+      const url = new URL(route.request().url());
+      const q = url.searchParams.get("teamQ") || "";
+      if (q === "Slow Alpha") {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      } else if (q === "Beta") {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      await route.continue();
+    });
+
+    const slowResponse = page.waitForResponse((response) => {
+      if (!response.url().includes("/api/clients/org-structure/onec-teams") || response.status() !== 200) {
+        return false;
+      }
+      return new URL(response.url()).searchParams.get("teamQ") === "Slow Alpha";
+    });
+    await page.fill("#clients-team-search-input", "Slow Alpha");
+    await page.waitForTimeout(280);
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("teamQ") === "Slow Alpha");
+
+    await page.fill("#clients-team-search-input", "Beta");
+    await page.waitForTimeout(280);
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("teamQ") === "Beta");
+    await page.waitForResponse((response) => {
+      if (!response.url().includes("/api/clients/org-structure/onec-teams") || response.status() !== 200) {
+        return false;
+      }
+      return new URL(response.url()).searchParams.get("teamQ") === "Beta";
+    });
+    await page.waitForFunction(() => {
+      const names = Array.from(document.querySelectorAll(".clients-onec-team .clients-compact-team__name")).map(
+        (node) => node.textContent || "",
+      );
+      return names.length === 1 && names[0] === "Team Beta";
+    });
+
+    await page.click('[data-team-source="rop"]');
+    await page.waitForFunction(
+      () => new URL(window.location.href).searchParams.get("teamSource") !== "onec",
+    );
+    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+    await expectModeSwitchVisible(page);
+
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator(".clients-onec-team-list").count(), 0);
+    assert.equal(new URL(page.url()).searchParams.get("teamSource"), null);
+    assert.equal(new URL(page.url()).searchParams.get("teamQ"), null);
+    await expectModeSwitchVisible(page);
+    await slowResponse.catch(() => undefined);
 
     await page.close();
     await stopServer();

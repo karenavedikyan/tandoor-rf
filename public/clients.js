@@ -320,6 +320,8 @@
   var compactTeams = null;
   var compactOnecTeams = null;
   var compactTeamsRenderToken = 0;
+  var onecTeamsFetchGeneration = 0;
+  var onecTeamsFetchAbortController = null;
 
   function getCompactTeams() {
     if (!compactTeams && window.ClientsTeamsCompact) {
@@ -334,6 +336,16 @@
         navigateRopBranchPortfolio: navigateRopBranchPortfolio,
         navigateResponsible: navigateResponsible,
         renderOrgBadge: renderOrgBadge,
+        renderTeamSourceSwitch: function (state) {
+          var onecModule = getOnecTeams();
+          return onecModule ? onecModule.renderModeSwitch(state) : "";
+        },
+        bindTeamSourceSwitch: function (container, readState, callbacks) {
+          var onecModule = getOnecTeams();
+          if (onecModule) {
+            onecModule.bindTeamSourceSwitch(container, readState, callbacks);
+          }
+        },
       });
     }
     return compactTeams;
@@ -364,6 +376,40 @@
     return state;
   }
 
+  function getCurrentTeamsOverviewState() {
+    return mergeTeamUiFromUrl(Object.assign({}, currentStateFromForm()));
+  }
+
+  function abortOnecTeamsFetch() {
+    if (onecTeamsFetchAbortController) {
+      onecTeamsFetchAbortController.abort();
+      onecTeamsFetchAbortController = null;
+    }
+  }
+
+  function nextOnecTeamsFetchSignal() {
+    abortOnecTeamsFetch();
+    onecTeamsFetchAbortController = new AbortController();
+    return onecTeamsFetchAbortController.signal;
+  }
+
+  function bumpOnecTeamsFetchGeneration() {
+    abortOnecTeamsFetch();
+    onecTeamsFetchGeneration += 1;
+    return onecTeamsFetchGeneration;
+  }
+
+  function isOnecTeamsFetchCurrent(generation, requestState) {
+    if (generation !== onecTeamsFetchGeneration) {
+      return false;
+    }
+    var current = getCurrentTeamsOverviewState();
+    if (current.view !== "teams" || current.ropEmployee || !usesOnecTeamSource(current)) {
+      return false;
+    }
+    return buildOnecTeamsApiUrl(current) === buildOnecTeamsApiUrl(requestState);
+  }
+
   function isCompactTeamOverviewState(state) {
     return (
       state.view === "teams" &&
@@ -377,15 +423,38 @@
   function compactTeamsNavigatePatch(nextState) {
     var merged = Object.assign({}, currentStateFromForm(), nextState);
     if (isCompactTeamOverviewState(merged)) {
+      var previous = getCurrentTeamsOverviewState();
+      var onecFetchNeeded =
+        usesOnecTeamSource(merged) &&
+        usesDirectorLayout() &&
+        !merged.ropEmployee &&
+        (merged.teamSource !== previous.teamSource ||
+          merged.teamQ !== previous.teamQ ||
+          merged.onecTeam !== previous.onecTeam);
+      if (onecFetchNeeded || (previous.teamSource === "onec" && merged.teamSource !== "onec")) {
+        bumpOnecTeamsFetchGeneration();
+        compactTeamsRenderToken += 1;
+      }
       writeStateToUrl(merged, false);
       if (usesOnecTeamSource(merged) && usesDirectorLayout() && !merged.ropEmployee) {
-        loadTeamsContext(merged).then(function () {
-          renderOnecTeamsOverview(merged);
+        var fetchGen = onecTeamsFetchGeneration;
+        var requestState = Object.assign({}, merged);
+        loadTeamsContext(requestState, fetchGen).then(function () {
+          if (!isOnecTeamsFetchCurrent(fetchGen, requestState)) {
+            return;
+          }
+          renderOnecTeamsOverview(getCurrentTeamsOverviewState());
         });
         return;
       }
       if (usesDirectorLayout() && !merged.ropEmployee) {
-        renderCompactTeamsOverview(merged);
+        var ropState = getCurrentTeamsOverviewState();
+        loadTeamsContext(ropState).then(function () {
+          if (usesOnecTeamSource(getCurrentTeamsOverviewState())) {
+            return;
+          }
+          renderCompactTeamsOverview(getCurrentTeamsOverviewState());
+        });
       } else {
         renderCompactRopTeamPanel(merged);
       }
@@ -426,6 +495,10 @@
     if (!module) {
       return Promise.resolve();
     }
+    var renderState = state || getCurrentTeamsOverviewState();
+    if (!usesOnecTeamSource(renderState)) {
+      return Promise.resolve();
+    }
     var searchCaret = readSearchInputFocus();
     if (!teamsPanelEl.querySelector(".clients-compact-team-toolbar")) {
       teamsPanelEl.innerHTML =
@@ -434,7 +507,7 @@
     var token = ++compactTeamsRenderToken;
     return module
       .prepareAndRenderOverview(
-        state,
+        renderState,
         {
           director: teamContext.director,
           groups: teamContext.onecGroups,
@@ -445,19 +518,24 @@
         teamsPanelEl,
         {
           navigate: compactTeamsNavigatePatch,
+          isStale: function () {
+            return token !== compactTeamsRenderToken || !usesOnecTeamSource(getCurrentTeamsOverviewState());
+          },
           refresh: function () {
-            if (token !== compactTeamsRenderToken) {
+            if (token !== compactTeamsRenderToken || !usesOnecTeamSource(getCurrentTeamsOverviewState())) {
               return;
             }
-            loadTeamsContext(state).then(function () {
-              if (token !== compactTeamsRenderToken) {
+            var fetchGen = bumpOnecTeamsFetchGeneration();
+            var requestState = getCurrentTeamsOverviewState();
+            loadTeamsContext(requestState, fetchGen).then(function () {
+              if (token !== compactTeamsRenderToken || !isOnecTeamsFetchCurrent(fetchGen, requestState)) {
                 return;
               }
-              renderOnecTeamsOverview(state);
+              renderOnecTeamsOverview(getCurrentTeamsOverviewState());
             });
           },
           restoreSearchFocus: function () {
-            if (token !== compactTeamsRenderToken) {
+            if (token !== compactTeamsRenderToken || !usesOnecTeamSource(getCurrentTeamsOverviewState())) {
               return;
             }
             restoreSearchInputFocus(searchCaret);
@@ -465,6 +543,9 @@
         },
       )
       .catch(function () {
+        if (token !== compactTeamsRenderToken || !usesOnecTeamSource(getCurrentTeamsOverviewState())) {
+          return;
+        }
         teamContext.onecLoadError = true;
         teamsPanelEl.innerHTML =
           '<div class="clients-compact-team__empty">Не удалось загрузить группы из 1С.</div>';
@@ -849,6 +930,7 @@
       listFetchAbortController = null;
     }
     activeRequestId += 1;
+    bumpOnecTeamsFetchGeneration();
   }
 
   function nextListFetchSignal() {
@@ -3247,24 +3329,43 @@
     teamContext.onecErrorMessage = "";
   }
 
-  function loadTeamsContext(state) {
+  function loadTeamsContext(state, fetchGeneration) {
     if (state.view !== "teams") {
       return Promise.resolve({ ok: true });
     }
     var requests = [];
     if (!state.ropEmployee && usesOnecTeamSource(state)) {
+      var fetchGen = fetchGeneration != null ? fetchGeneration : bumpOnecTeamsFetchGeneration();
+      var requestState = Object.assign({}, state);
+      var requestUrl = buildOnecTeamsApiUrl(requestState);
       requests.push(
-        api.apiRequest(buildOnecTeamsApiUrl(state)).then(function (result) {
-          if (result.response.status === 200 && result.data) {
-            syncOnecTeamContext(result.data);
-          } else {
+        api
+          .apiRequest(requestUrl, { signal: nextOnecTeamsFetchSignal() })
+          .then(function (result) {
+            if (!isOnecTeamsFetchCurrent(fetchGen, requestState)) {
+              return result.response.status === 200;
+            }
+            if (result.response.status === 200 && result.data) {
+              syncOnecTeamContext(result.data);
+            } else {
+              teamContext.onecLoadError = true;
+              teamContext.onecErrorMessage =
+                api.extractErrorMessage(result.data, "Не удалось загрузить группы из 1С.") ||
+                "Не удалось загрузить группы из 1С.";
+            }
+            return result.response.status === 200;
+          })
+          .catch(function (error) {
+            if (error && error.name === "AbortError") {
+              return false;
+            }
+            if (!isOnecTeamsFetchCurrent(fetchGen, requestState)) {
+              return false;
+            }
             teamContext.onecLoadError = true;
-            teamContext.onecErrorMessage =
-              api.extractErrorMessage(result.data, "Не удалось загрузить группы из 1С.") ||
-              "Не удалось загрузить группы из 1С.";
-          }
-          return result.response.status === 200;
-        }),
+            teamContext.onecErrorMessage = "Не удалось загрузить группы из 1С.";
+            return false;
+          }),
       );
     } else if (!state.ropEmployee) {
       requests.push(
@@ -3586,8 +3687,12 @@
 
     if (state.view === "teams" && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state)) {
       showResultsState("loading", "Загрузка команд…", "", "");
-      return loadTeamsContext(state).then(function (ctx) {
+      var teamsFetchGen = usesOnecTeamSource(state) ? bumpOnecTeamsFetchGeneration() : onecTeamsFetchGeneration;
+      return loadTeamsContext(state, teamsFetchGen).then(function (ctx) {
         if (!logic.shouldAcceptListResponse(requestId, activeRequestId)) {
+          return;
+        }
+        if (usesOnecTeamSource(state) && !isOnecTeamsFetchCurrent(teamsFetchGen, state)) {
           return;
         }
         if (!ctx.ok) {

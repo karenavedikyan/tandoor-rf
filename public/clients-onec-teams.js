@@ -151,7 +151,7 @@
         (current === "rop" ? " clients-team-mode-switch__btn--active" : "") +
         '" data-team-source="rop" role="tab" aria-selected="' +
         (current === "rop" ? "true" : "false") +
-        '">По РОПам</button>' +
+        '">Команды РОПов</button>' +
         '<button type="button" class="clients-team-mode-switch__btn' +
         (current === "onec" ? " clients-team-mode-switch__btn--active" : "") +
         '" data-team-source="onec" role="tab" aria-selected="' +
@@ -234,18 +234,19 @@
       );
     }
 
-    function bindEvents(container, state, callbacks) {
+    function bindTeamSourceSwitch(container, readState, callbacks) {
       container.querySelectorAll("[data-team-source]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var source = btn.getAttribute("data-team-source") || "rop";
-          if (source === state.teamSource) {
+          var currentState = readState();
+          if (source === (currentState.teamSource === "onec" ? "onec" : "rop")) {
             return;
           }
           callbacks.navigate({
             teamSource: source,
             teamExpand: [],
             onecTeam: "",
-            teamQ: state.teamQ || "",
+            teamQ: "",
             teamKind: "",
             ropEmployee: "",
             portfolio: "",
@@ -256,6 +257,12 @@
           });
         });
       });
+    }
+
+    function bindEvents(container, state, callbacks) {
+      bindTeamSourceSwitch(container, function () {
+        return deps.logic.readStateFromSearch(window.location.search);
+      }, callbacks);
 
       container.querySelectorAll("[data-toggle-onec-team]").forEach(function (btn) {
         btn.addEventListener("click", function () {
@@ -310,12 +317,21 @@
     }
 
     function renderIntoContainer(container, state, context, callbacks) {
+      if (callbacks.isStale && callbacks.isStale()) {
+        return;
+      }
       container.innerHTML = renderOverview(state, context);
       bindEvents(container, state, callbacks);
     }
 
     function prepareAndRenderOverview(state, context, container, callbacks) {
+      if (callbacks.isStale && callbacks.isStale()) {
+        return Promise.resolve();
+      }
       renderIntoContainer(container, state, context, callbacks);
+      if (callbacks.isStale && callbacks.isStale()) {
+        return Promise.resolve();
+      }
       if (callbacks.restoreSearchFocus) {
         callbacks.restoreSearchFocus();
       }
@@ -328,6 +344,8 @@
       teamExpandKey: teamExpandKey,
       groupNameMatchesQuery: groupNameMatchesQuery,
       memberMatchesQuery: memberMatchesQuery,
+      renderModeSwitch: renderModeSwitch,
+      bindTeamSourceSwitch: bindTeamSourceSwitch,
     };
   }
 

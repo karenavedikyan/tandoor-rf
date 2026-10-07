@@ -425,7 +425,12 @@
           "</option>"
         );
       }).join("");
+      var modeSwitch =
+        deps.usesDirectorLayout() && deps.renderTeamSourceSwitch
+          ? deps.renderTeamSourceSwitch(state)
+          : "";
       return (
+        modeSwitch +
         '<div class="clients-compact-team-toolbar">' +
         '<label class="clients-field clients-compact-team-toolbar__search">' +
         '<span class="clients-field__label">Поиск РОПа или сотрудника</span>' +
@@ -562,6 +567,16 @@
     }
 
     function bindEvents(container, state, callbacks) {
+      if (deps.usesDirectorLayout() && deps.bindTeamSourceSwitch) {
+        deps.bindTeamSourceSwitch(
+          container,
+          function () {
+            return readStateFromLocation();
+          },
+          callbacks,
+        );
+      }
+
       container.querySelectorAll("[data-toggle-rop]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var ropGuid = btn.getAttribute("data-toggle-rop");
