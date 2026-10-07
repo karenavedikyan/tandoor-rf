@@ -11,6 +11,7 @@
     "start:local": "node --env-file=.env dist/server.js",
     "migrate": "node dist/cli/migrate.js",
     "migrate:local": "node --env-file=.env dist/cli/migrate.js",
+    "seed:dev": "node dist/cli/seed-dev-demo.js",
     "bootstrap-admin": "node dist/cli/bootstrap-admin.js",
     "bootstrap-admin:local": "node --env-file=.env dist/cli/bootstrap-admin.js",
     "grant-admin-access": "node dist/cli/grant-admin-access.js",
