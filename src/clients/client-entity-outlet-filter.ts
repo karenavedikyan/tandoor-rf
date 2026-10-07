@@ -205,6 +205,7 @@ function outletFilledExpr(field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'deliveryAddress'), '') IS NOT NULL`,
     routeDirection: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'routeDirection'), '') IS NOT NULL`,
     tandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'statusTandoorClub'), '') IS NOT NULL`,
+    bonusTandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'bonusTandoorClub'), '') IS NOT NULL`,
     warehouse: `${OUTLET_ALIAS} ? 'warehouse' AND ${OUTLET_ALIAS}->'warehouse' IS NOT NULL AND ${OUTLET_ALIAS}->'warehouse' <> 'null'::jsonb`,
     storePhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'storePhone'), '') IS NOT NULL`,
     accountantPhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'accountantPhone'), '') IS NOT NULL`,
@@ -228,6 +229,7 @@ function outletEmptyExpr(field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'deliveryAddress'), '') IS NULL`,
     routeDirection: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'routeDirection'), '') IS NULL`,
     tandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'statusTandoorClub'), '') IS NULL`,
+    bonusTandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'bonusTandoorClub'), '') IS NULL`,
     warehouse: `(${OUTLET_ALIAS}->'warehouse' IS NULL OR ${OUTLET_ALIAS}->'warehouse' = 'null'::jsonb)`,
     storePhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'storePhone'), '') IS NULL`,
     accountantPhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'accountantPhone'), '') IS NULL`,
@@ -300,6 +302,34 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
       );
     } else if (field === "holding") {
       filter = mergeSqlFilters(filter, [`NULLIF(BTRIM(onec_clients.guid_holding::text), '') IS NOT NULL`], []);
+    } else if (field === "discountProgram") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'discountProgram') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'commercial'->>'discountProgram'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "discountAmount") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'discountAmount') = 'true'
+           AND (onec_clients.extended_snapshot->'commercial'->>'discountAmount') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "markups") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'markups') = 'true'
+           AND jsonb_typeof(onec_clients.extended_snapshot->'commercial'->'markups') = 'array'
+           AND jsonb_array_length(onec_clients.extended_snapshot->'commercial'->'markups') > 0`,
+        ],
+        [],
+      );
     }
   }
   for (const field of parseFilledEmptyFieldList(query.empty)) {
@@ -318,6 +348,36 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
       );
     } else if (field === "holding") {
       filter = mergeSqlFilters(filter, [`NULLIF(BTRIM(onec_clients.guid_holding::text), '') IS NULL`], []);
+    } else if (field === "discountProgram") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'discountProgram') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'commercial'->>'discountProgram'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "discountAmount") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'discountAmount') = 'true'
+           AND (onec_clients.extended_snapshot->'commercial'->>'discountAmount') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "markups") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'commercial'->'fieldPresence'->>'markups') = 'true'
+           AND (
+             jsonb_typeof(onec_clients.extended_snapshot->'commercial'->'markups') <> 'array'
+             OR jsonb_array_length(onec_clients.extended_snapshot->'commercial'->'markups') = 0
+           )`,
+        ],
+        [],
+      );
     }
   }
   return filter;

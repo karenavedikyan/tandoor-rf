@@ -5,6 +5,9 @@ export const CLIENT_FILLED_EMPTY_FIELDS = new Set([
   "address",
   "telephone",
   "holding",
+  "discountProgram",
+  "discountAmount",
+  "markups",
 ]);
 
 /** Outlet snapshot fields (same-outlet on entity=clients). */
@@ -13,6 +16,7 @@ export const OUTLET_FILLED_EMPTY_FIELDS = new Set([
   "deliveryAddress",
   "routeDirection",
   "tandoorClub",
+  "bonusTandoorClub",
   "warehouse",
   "storePhone",
   "accountantPhone",

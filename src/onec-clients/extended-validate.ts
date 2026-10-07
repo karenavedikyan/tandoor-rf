@@ -51,6 +51,11 @@ import {
   outletsFieldsComplete,
 } from "./outlet-identity";
 import { isEmptyOrValidNonZeroUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import {
+  COMMERCIAL_JSON_KEYS,
+  parseClientCommercialFields,
+  type ParsedClientCommercial,
+} from "./commercial-fields";
 
 export type ExtendedValidationFailure = {
   ok: false;
@@ -229,7 +234,8 @@ function validateLegacyCore(
       key !== "guid_hardware_manager" &&
       key !== "name_hardware_manager" &&
       key !== "guid_head_of_the_sales_department" &&
-      key !== "name_head_of_the_sales_department",
+      key !== "name_head_of_the_sales_department" &&
+      !COMMERCIAL_JSON_KEYS.includes(key as (typeof COMMERCIAL_JSON_KEYS)[number]),
   );
   if (extraKeys.length > 0) {
     pushWarning(warnings, {
@@ -1282,6 +1288,12 @@ function validateExtendedRecord(
     retailOutletsPresence = "missing";
   }
 
+  const commercialParsed = parseClientCommercialFields(raw);
+  if (commercialParsed.invalid) {
+    pushIssue(issues, { code: "INVALID_COMMERCIAL_FIELD", index }, issueCount);
+    return null;
+  }
+
   const fieldPresence: ExtendedRecordFieldPresence = {
     holding: holdingPresence,
     retailOutlets: retailOutletsPresence,
@@ -1296,6 +1308,7 @@ function validateExtendedRecord(
     regionalManager: regional.ref,
     hardwareManager: hardware.ref,
     headOfSales: head.ref,
+    commercial: commercialParsed.commercial,
     retailOutlets,
     recordFormat: recordExtended ? "extended_v1" : "legacy",
     hasExtendedManagerFields: recordHasExtendedManagerFields,

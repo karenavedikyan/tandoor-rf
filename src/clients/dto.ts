@@ -1,6 +1,14 @@
 import type { AccessContext } from "../access/types";
 import { telHrefFromPhone } from "./phone";
-import { toClientExtendedDto, type ClientExtendedDto, type ClientExtendedDtoOptions } from "./extended-dto";
+import {
+  toClientExtendedDto,
+  type ClientExtendedDto,
+  type ClientExtendedDtoOptions,
+} from "./extended-dto";
+import {
+  hasAnyCommercialField,
+  type ParsedClientCommercial,
+} from "../onec-clients/commercial-fields";
 import {
   REVIEW_DECISION_LABELS,
   REVIEW_STATE_LABELS,
@@ -44,6 +52,16 @@ export type ClientListItemDto = {
     decisionLabel: string | null;
     isStale: boolean;
     transferStatus: "none" | "proposed" | "confirmed_in_1c";
+  };
+  discountProgram?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  discountAmount?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
   };
 };
 
@@ -125,6 +143,10 @@ export type RetailOutletListItemDto = {
     hasSource: boolean;
   };
   tandoorClub: {
+    value: string | null;
+    hasSource: boolean;
+  };
+  bonusTandoorClub: {
     value: string | null;
     hasSource: boolean;
   };
@@ -216,6 +238,7 @@ type ClientRow = {
   ext_regional_manager?: unknown;
   ext_hardware_manager?: unknown;
   ext_head_of_sales?: unknown;
+  ext_commercial?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -309,6 +332,37 @@ function isReviewStaleFromRow(row: ClientRow): boolean {
   return false;
 }
 
+function readCommercialListFields(raw: unknown): Pick<ClientListItemDto, "discountProgram" | "discountAmount"> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const commercial = raw as ParsedClientCommercial;
+  if (!hasAnyCommercialField(commercial)) {
+    return {};
+  }
+  const discountProgramProvided = commercial.fieldPresence.discountProgram;
+  const discountAmountProvided = commercial.fieldPresence.discountAmount;
+  const result: Pick<ClientListItemDto, "discountProgram" | "discountAmount"> = {};
+  if (discountProgramProvided) {
+    const value = commercial.discountProgram;
+    result.discountProgram = {
+      value: value && value.trim().length > 0 ? value : null,
+      hasSource: true,
+      label:
+        value && value.trim().length > 0 ? value : "Не заполнено",
+    };
+  }
+  if (discountAmountProvided) {
+    const rawAmount = commercial.discountAmount;
+    result.discountAmount = {
+      value: rawAmount === null ? null : String(rawAmount),
+      hasSource: true,
+      label: rawAmount === null ? "Не заполнено" : String(rawAmount),
+    };
+  }
+  return result;
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
   const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
@@ -348,6 +402,8 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   if (headOfSales) {
     item.headOfSales = headOfSales;
   }
+
+  Object.assign(item, readCommercialListFields(row.ext_commercial));
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);
@@ -508,6 +564,28 @@ function readTandoorClubFromSnapshot(snapshot: Record<string, unknown> | null): 
   return { value: trimmed.length > 0 ? trimmed : null, hasSource: true };
 }
 
+function readBonusTandoorClubFromSnapshot(snapshot: Record<string, unknown> | null): {
+  value: string | null;
+  hasSource: boolean;
+} {
+  if (!snapshot) {
+    return { value: null, hasSource: false };
+  }
+  const additional = snapshot.additional;
+  if (!additional || typeof additional !== "object" || Array.isArray(additional)) {
+    return { value: null, hasSource: false };
+  }
+  if (!("bonusTandoorClub" in (additional as Record<string, unknown>))) {
+    return { value: null, hasSource: false };
+  }
+  const raw = (additional as { bonusTandoorClub?: unknown }).bonusTandoorClub;
+  if (typeof raw !== "string") {
+    return { value: null, hasSource: true };
+  }
+  const trimmed = raw.trim();
+  return { value: trimmed.length > 0 ? trimmed : null, hasSource: true };
+}
+
 function outletAddressLabel(storeAddress: string | null, fallback: string): string {
   const trimmed = (storeAddress ?? "").trim();
   if (trimmed.length > 0) {
@@ -520,6 +598,7 @@ export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItem
   const snapshot = readOutletSnapshotField(row.outlet_snapshot);
   const warehouse = readWarehouseFromSnapshot(snapshot);
   const tandoorClub = readTandoorClubFromSnapshot(snapshot);
+  const bonusTandoorClub = readBonusTandoorClubFromSnapshot(snapshot);
   const address = outletAddressLabel(row.store_address, "");
 
   return {
@@ -555,6 +634,10 @@ export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItem
     tandoorClub: {
       value: tandoorClub.value,
       hasSource: tandoorClub.hasSource,
+    },
+    bonusTandoorClub: {
+      value: bonusTandoorClub.value,
+      hasSource: bonusTandoorClub.hasSource,
     },
   };
 }

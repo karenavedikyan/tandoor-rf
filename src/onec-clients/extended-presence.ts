@@ -21,6 +21,7 @@ export type ExtendedBusinessProjection = {
   regionalManager: Pick<ParsedManagerRef, "guid" | "name" | "state">;
   hardwareManager: Pick<ParsedManagerRef, "guid" | "name" | "state">;
   headOfSales: Pick<ParsedManagerRef, "guid" | "name" | "state">;
+  commercial: import("./commercial-fields").SnapshotCommercial | null;
   currentRetailOutlets: OutletBusinessProjection[];
 };
 
@@ -37,6 +38,7 @@ export function extendedBusinessProjection(snapshot: ExtendedSnapshot | null): E
     regionalManager: managerBusinessRef(snapshot.regionalManager),
     hardwareManager: managerBusinessRef(snapshot.hardwareManager),
     headOfSales: managerBusinessRef(snapshot.headOfSales),
+    commercial: snapshot.commercial ?? null,
     currentRetailOutlets: snapshot.currentRetailOutlets.map(outletBusinessProjection),
   };
 }

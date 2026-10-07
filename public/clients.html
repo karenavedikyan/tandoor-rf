@@ -156,9 +156,14 @@
                 Моя закреплённая область
               </p>
               <div id="clients-filters-panel" class="clients-toolbar__row clients-toolbar__row--filters">
-                <div class="clients-field clients-hidden" id="rop-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="rop-filter-wrap">
                   <span class="clients-field__label" id="rop-filter-label">РОП клиента</span>
-                  <div class="clients-combobox" id="rop-combobox">
+                  <select
+                    id="rop-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра РОП"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="rop-combobox">
                     <input
                       id="rop-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -171,12 +176,18 @@
                       placeholder="Все РОП"
                     />
                     <input type="hidden" id="rop-filter" value="" />
+                    <div id="rop-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field" id="manager-filter-wrap">
+                <div class="clients-field clients-assignment-filter-wrap" id="manager-filter-wrap">
                   <span class="clients-field__label" id="manager-filter-label">Менеджер клиента</span>
-                  <div class="clients-combobox" id="manager-combobox">
+                  <select
+                    id="manager-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра менеджера"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="manager-combobox">
                     <input
                       id="manager-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -189,6 +200,7 @@
                       placeholder="Все менеджеры"
                     />
                     <input type="hidden" id="manager-filter" value="" />
+                    <div id="manager-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="manager-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
@@ -243,9 +255,14 @@
                     <option value="unknown">Нет данных</option>
                   </select>
                 </label>
-                <div class="clients-field clients-hidden" id="regional-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="regional-filter-wrap">
                   <span class="clients-field__label" id="regional-filter-label">Региональный клиента</span>
-                  <div class="clients-combobox" id="regional-combobox">
+                  <select
+                    id="regional-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра регионального менеджера"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="regional-combobox">
                     <input
                       id="regional-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -258,12 +275,18 @@
                       placeholder="Все региональные"
                     />
                     <input type="hidden" id="regional-filter" value="" />
+                    <div id="regional-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field clients-hidden" id="hardware-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="hardware-filter-wrap">
                   <span class="clients-field__label" id="hardware-filter-label">По фурнитуре клиента</span>
-                  <div class="clients-combobox" id="hardware-combobox">
+                  <select
+                    id="hardware-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра менеджера по фурнитуре"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="hardware-combobox">
                     <input
                       id="hardware-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -276,12 +299,18 @@
                       placeholder="Все менеджеры по фурнитуре"
                     />
                     <input type="hidden" id="hardware-filter" value="" />
+                    <div id="hardware-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="hardware-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field clients-hidden" id="outlet-manager-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="outlet-manager-filter-wrap">
                   <span class="clients-field__label">Менеджер ТТ</span>
-                  <div class="clients-combobox" id="outlet-manager-combobox">
+                  <select
+                    id="outlet-manager-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра менеджера ТТ"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="outlet-manager-combobox">
                     <input
                       id="outlet-manager-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -293,12 +322,18 @@
                       placeholder="Все менеджеры ТТ"
                     />
                     <input type="hidden" id="outlet-manager-filter" value="" />
+                    <div id="outlet-manager-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="outlet-manager-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field clients-hidden" id="outlet-regional-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="outlet-regional-filter-wrap">
                   <span class="clients-field__label">Региональный ТТ</span>
-                  <div class="clients-combobox" id="outlet-regional-combobox">
+                  <select
+                    id="outlet-regional-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра регионального ТТ"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="outlet-regional-combobox">
                     <input
                       id="outlet-regional-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -310,12 +345,18 @@
                       placeholder="Все региональные ТТ"
                     />
                     <input type="hidden" id="outlet-regional-filter" value="" />
+                    <div id="outlet-regional-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="outlet-regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field clients-hidden" id="outlet-hardware-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="outlet-hardware-filter-wrap">
                   <span class="clients-field__label">По фурнитуре ТТ</span>
-                  <div class="clients-combobox" id="outlet-hardware-combobox">
+                  <select
+                    id="outlet-hardware-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра менеджера по фурнитуре ТТ"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="outlet-hardware-combobox">
                     <input
                       id="outlet-hardware-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -327,12 +368,18 @@
                       placeholder="Все менеджеры по фурнитуре ТТ"
                     />
                     <input type="hidden" id="outlet-hardware-filter" value="" />
+                    <div id="outlet-hardware-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="outlet-hardware-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
-                <div class="clients-field clients-hidden" id="outlet-rop-filter-wrap">
+                <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="outlet-rop-filter-wrap">
                   <span class="clients-field__label">РОП ТТ</span>
-                  <div class="clients-combobox" id="outlet-rop-combobox">
+                  <select
+                    id="outlet-rop-filter-mode"
+                    class="clients-field__select clients-assignment-filter__mode"
+                    aria-label="Режим фильтра РОП ТТ"
+                  ></select>
+                  <div class="clients-combobox clients-assignment-filter" id="outlet-rop-combobox">
                     <input
                       id="outlet-rop-filter-input"
                       class="clients-field__input clients-combobox__input"
@@ -344,6 +391,7 @@
                       placeholder="Все РОП ТТ"
                     />
                     <input type="hidden" id="outlet-rop-filter" value="" />
+                    <div id="outlet-rop-filter-tags" class="clients-assignment-filter__tags clients-hidden"></div>
                     <ul id="outlet-rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>

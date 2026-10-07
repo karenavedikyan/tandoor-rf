@@ -891,6 +891,143 @@ describe("regular update manager reassignment access", { concurrency: false }, (
     await closePool();
   });
 
+  it("persists commercial via regular-update and keeps hardware outlet access after M1 to M2 reassignment", async () => {
+    const HARDWARE = "77777777-7777-4777-8777-777777777777";
+    const outletStore = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const hardwareUserId = (
+      await createTestUser({
+        databaseUrl,
+        email: "hardware-regular@example.com",
+        password: TEST_PASSWORD,
+        fullName: "Hardware Lead",
+        role: "manager",
+      })
+    ).id;
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: hardwareUserId,
+      employeeId: HARDWARE,
+      confirmedByUserId: adminUserId,
+    });
+    const loginHardware = async () => {
+      const res = await request(app)
+        .post("/api/auth/login")
+        .set({ Origin: ORIGIN, "Content-Type": "application/json" })
+        .send({ email: "hardware-regular@example.com", password: TEST_PASSWORD });
+      assert.equal(res.status, 200);
+      return (res.headers["set-cookie"]?.[0] ?? "").split(";")[0] ?? "";
+    };
+
+    const initialClients = buildExtendedClientsFileBytes([
+      {
+        ...sampleClient({ guid_manager: MANAGER_A, name_manager: "Manager A" }),
+        Discount: "S3-PROMO",
+        DiscountAmount: 0,
+        guid_regional_manager: "",
+        name_regional_manager: "",
+        guid_hardware_manager: HARDWARE,
+        name_hardware_manager: "Hardware Lead",
+        guid_head_of_the_sales_department: "",
+        name_head_of_the_sales_department: "",
+        retail_outlets: [
+          {
+            guid_store: outletStore,
+            closed: false,
+            holding: "",
+            warehouse: false,
+            address: { store_address: "Store", delivery_address: "", direction_of_the_route: "" },
+            managers: {
+              guid_manager: MANAGER_A,
+              name_manager: "Manager A",
+              guid_regional_manager: "",
+              name_regional_manager: "",
+              guid_hardware_manager: HARDWARE,
+              name_hardware_manager: "Hardware Lead",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+            LPR_information: {},
+            additional_information: { status_tandoor_club: "", bonus_tandoor_club: "0" },
+          },
+        ],
+      },
+    ]);
+    const roster = rosterForManagers(MANAGER_A, MANAGER_B, HARDWARE);
+    await seedExtendedRegularUpdate(databaseUrl, initialClients, roster);
+
+    const poolAfterFirst = new Pool({ connectionString: databaseUrl, max: 1 });
+    const commercialRow = await poolAfterFirst.query<{ discount: string | null; amount: string | null }>(
+      `
+        SELECT
+          extended_snapshot->'commercial'->>'discountProgram' AS discount,
+          extended_snapshot->'commercial'->>'discountAmount' AS amount
+        FROM onec_clients
+        WHERE guid_client = $1::uuid
+      `,
+      [CLIENT_ONE],
+    );
+    await poolAfterFirst.end();
+    assert.equal(commercialRow.rows[0]?.discount, "S3-PROMO");
+    assert.equal(commercialRow.rows[0]?.amount, "0");
+
+    const hardwareCookie = await loginHardware();
+    assert.equal(
+      (await request(app).get("/api/clients").set({ Origin: ORIGIN, Cookie: hardwareCookie })).body.total,
+      1,
+    );
+
+    const reassignedClients = buildExtendedClientsFileBytes([
+      {
+        ...sampleClient({ guid_manager: MANAGER_B, name_manager: "Manager B" }),
+        Discount: "S3-PROMO",
+        DiscountAmount: 0,
+        guid_regional_manager: "",
+        name_regional_manager: "",
+        guid_hardware_manager: HARDWARE,
+        name_hardware_manager: "Hardware Lead",
+        guid_head_of_the_sales_department: "",
+        name_head_of_the_sales_department: "",
+        retail_outlets: [
+          {
+            guid_store: outletStore,
+            closed: false,
+            holding: "",
+            warehouse: false,
+            address: { store_address: "Store", delivery_address: "", direction_of_the_route: "" },
+            managers: {
+              guid_manager: MANAGER_B,
+              name_manager: "Manager B",
+              guid_regional_manager: "",
+              name_regional_manager: "",
+              guid_hardware_manager: HARDWARE,
+              name_hardware_manager: "Hardware Lead",
+              guid_head_of_the_sales_department: "",
+              name_head_of_the_sales_department: "",
+            },
+            contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+            LPR_information: {},
+            additional_information: { status_tandoor_club: "", bonus_tandoor_club: "0" },
+          },
+        ],
+      },
+    ]);
+    await seedExtendedRegularUpdate(databaseUrl, reassignedClients, roster);
+
+    assert.equal(
+      (await request(app).get("/api/clients").set({ Origin: ORIGIN, Cookie: managerACookie })).body.total,
+      0,
+    );
+    assert.equal(
+      (await request(app).get("/api/clients").set({ Origin: ORIGIN, Cookie: managerBCookie })).body.total,
+      1,
+    );
+    assert.equal(
+      (await request(app).get("/api/clients").set({ Origin: ORIGIN, Cookie: hardwareCookie })).body.total,
+      1,
+    );
+  });
+
   it("moves client access after confirmed manager reassignment", async () => {
     const initialClients = buildClientsFileBytes([
       sampleClient({ guid_manager: MANAGER_A, name_manager: "Manager A" }),

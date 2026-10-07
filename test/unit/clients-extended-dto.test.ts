@@ -42,7 +42,7 @@ const regionalContext: AccessContext = {
 };
 
 describe("clients extended dto", () => {
-  it("withholds LPR and bonus fields from API dto", () => {
+  it("withholds LPR fields from API dto", () => {
     const outlet: ParsedRetailOutlet = {
       ordinal: 0,
       holdingName: "H1",
@@ -111,7 +111,134 @@ describe("clients extended dto", () => {
     assert.equal(dto!.retailOutletsAccess, "granted");
     assert.equal(dto!.retailOutlets.length, 1);
     const serialized = JSON.stringify(dto);
-    assert.doesNotMatch(serialized, /Secret|secret@x|conditions_bonus|bonus_tandoor/i);
+    assert.doesNotMatch(serialized, /Secret|secret@x|conditions_bonus/i);
+    assert.equal(dto!.retailOutlets[0]?.bonusTandoorClub.hasSource, false);
+  });
+
+  it("preserves bonusTandoorClub zero as value and distinguishes not_provided from empty", () => {
+    const baseOutlet: ParsedRetailOutlet = {
+      ordinal: 0,
+      holdingName: "H1",
+      warehouse: null,
+      address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
+      loading: {
+        loadingOnMonday: null,
+        loadingOnTuesday: null,
+        loadingOnWednesday: null,
+        loadingOnThursday: null,
+        loadingOnFriday: null,
+        loadingOnSaturday: null,
+        loadingOnSunday: null,
+        loadingTime: "",
+      },
+      managers: {
+        manager: { guid: null, name: "", state: "unassigned" },
+        regionalManager: { guid: null, name: "", state: "unassigned" },
+        hardwareManager: { guid: null, name: "", state: "unassigned" },
+        headOfSales: { guid: null, name: "", state: "unassigned" },
+      },
+      contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+      lpr: {
+        name: "",
+        post: "",
+        dateOfBirth: "",
+        phone: "",
+        email: "",
+        bonus: "",
+        conditionsBonus: "",
+      },
+      additional: { statusTandoorClub: "", bonusTandoorClub: "" },
+      outletGuidStatus: "not_provided",
+      closureStatus: "not_provided",
+      closureConfirmedInCurrentExport: false,
+      closureHistory: [],
+      provenance: { freshness: "not_provided_in_snapshot", sourceSha256: "", importedAt: "" },
+      distributionAllowed: false,
+    };
+    const snapshot = {
+      formatVersion: "extended_v1" as const,
+      sourceSha256: "abc",
+      importedAt: "2026-01-01T10:00:00.000Z",
+      isHolding: true,
+      regionalManager: { guid: null, name: "", state: "unassigned" } satisfies ParsedManagerRef,
+      hardwareManager: { guid: null, name: "", state: "unassigned" },
+      headOfSales: { guid: null, name: "", state: "unassigned" },
+      currentRetailOutlets: [] as ParsedRetailOutlet[],
+      retailOutletHistory: [],
+      blocks: { clientExtendedReady: false, outletNormalizedReady: false },
+    };
+
+    const zeroDto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          ...snapshot,
+          currentRetailOutlets: [
+            {
+              ...baseOutlet,
+              additional: {
+                statusTandoorClub: "",
+                bonusTandoorClub: "0",
+                fieldPresence: { statusTandoorClub: false, bonusTandoorClub: true },
+              },
+            },
+          ],
+        },
+      },
+      adminContext,
+    );
+    assert.equal(zeroDto!.retailOutlets[0]?.bonusTandoorClub.value, "0");
+    assert.equal(zeroDto!.retailOutlets[0]?.bonusTandoorClub.hasSource, true);
+    assert.equal(zeroDto!.retailOutlets[0]?.bonusTandoorClub.label, "0");
+
+    const notProvidedDto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          ...snapshot,
+          currentRetailOutlets: [baseOutlet],
+        },
+      },
+      adminContext,
+    );
+    assert.equal(notProvidedDto!.retailOutlets[0]?.bonusTandoorClub.value, null);
+    assert.equal(notProvidedDto!.retailOutlets[0]?.bonusTandoorClub.hasSource, false);
+    assert.equal(notProvidedDto!.retailOutlets[0]?.bonusTandoorClub.label, "Не передано");
+
+    const emptyDto = toClientExtendedDto(
+      {
+        is_holding: true,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: new Date("2026-01-01T10:00:00Z"),
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          ...snapshot,
+          currentRetailOutlets: [
+            {
+              ...baseOutlet,
+              additional: {
+                statusTandoorClub: "",
+                bonusTandoorClub: "",
+                fieldPresence: { statusTandoorClub: false, bonusTandoorClub: true },
+              },
+            },
+          ],
+        },
+      },
+      adminContext,
+    );
+    assert.equal(emptyDto!.retailOutlets[0]?.bonusTandoorClub.value, null);
+    assert.equal(emptyDto!.retailOutlets[0]?.bonusTandoorClub.hasSource, true);
+    assert.equal(emptyDto!.retailOutlets[0]?.bonusTandoorClub.label, "Не заполнено");
   });
 
   it("grants admin access with empty snapshot without role denial", () => {

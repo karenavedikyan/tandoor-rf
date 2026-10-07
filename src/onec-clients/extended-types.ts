@@ -202,6 +202,7 @@ export type ExtendedSnapshot = {
   regionalManager: ParsedManagerRef;
   hardwareManager: ParsedManagerRef;
   headOfSales: ParsedManagerRef;
+  commercial?: import("./commercial-fields").SnapshotCommercial;
   currentRetailOutlets: ParsedRetailOutlet[];
   retailOutletHistory: RetailOutletHistoryEntry[];
   blocks: ExtendedSnapshotBlocks;
@@ -225,6 +226,7 @@ export type ParsedExtendedClientRecord = {
   regionalManager: ParsedManagerRef;
   hardwareManager: ParsedManagerRef;
   headOfSales: ParsedManagerRef;
+  commercial: import("./commercial-fields").ParsedClientCommercial;
   retailOutlets: ParsedRetailOutlet[];
   recordFormat: "legacy" | "extended_v1";
   hasExtendedManagerFields: boolean;
@@ -234,6 +236,7 @@ export type ParsedExtendedClientRecord = {
 };
 
 export type ExtendedValidationIssueCode =
+  | "INVALID_COMMERCIAL_FIELD"
   | "INVALID_HOLDING_BOOLEAN"
   | "INVALID_RETAIL_OUTLETS"
   | "INVALID_OUTLET_SHAPE"

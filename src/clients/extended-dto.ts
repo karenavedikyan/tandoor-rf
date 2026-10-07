@@ -24,6 +24,11 @@ import {
   MAX_OUTLETS_IN_DETAIL_RESPONSE,
 } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
+import {
+  hasAnyCommercialField,
+  readSnapshotCommercial,
+  type ParsedClientCommercial,
+} from "../onec-clients/commercial-fields";
 
 export type ManagerRefDto = {
   displayName: string;
@@ -75,6 +80,7 @@ export type RetailOutletDto = {
   managers: RetailOutletManagersDto;
   contacts: RetailOutletContactsDto;
   tandoorClub: { value: string | null; hasSource: boolean; label: string };
+  bonusTandoorClub: { value: string | null; hasSource: boolean; label: string };
   distributionAllowed: false;
   distributionNote: string;
   presentInCurrentExport: boolean;
@@ -86,6 +92,22 @@ export type ClientExtendedManagersDto = {
   regionalManager: ManagerRefDto;
   hardwareManager: ManagerRefDto;
   headOfSales: ManagerRefDto;
+};
+
+export type ClientCommercialFieldDto = {
+  value: string | null;
+  hasSource: boolean;
+  label: string;
+};
+
+export type ClientCommercialDto = {
+  discountProgram: ClientCommercialFieldDto;
+  discountAmount: ClientCommercialFieldDto;
+  markups: {
+    hasSource: boolean;
+    label: string;
+    items: Array<{ name: string; percentageLabel: string | null }>;
+  };
 };
 
 export type BlockFreshnessEntryDto = {
@@ -125,6 +147,7 @@ export type ClientExtendedDto = {
   isHolding: boolean | null;
   holdingCardLabel: string | null;
   managers: ClientExtendedManagersDto;
+  commercial?: ClientCommercialDto | null;
   retailOutlets: RetailOutletDto[];
   retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
@@ -194,6 +217,66 @@ function blockFreshnessEntryLabel(state: ExtendedFreshnessState): string {
     return "Сохранено из предыдущей выгрузки";
   }
   return "Не передано в текущем снимке";
+}
+
+function commercialStringPresentation(provided: boolean, raw: string | null): ClientCommercialFieldDto {
+  if (!provided) {
+    return { value: null, hasSource: false, label: "Не передано" };
+  }
+  if (raw === null || raw.trim().length === 0) {
+    return { value: null, hasSource: true, label: "Не заполнено" };
+  }
+  return { value: raw, hasSource: true, label: raw };
+}
+
+function commercialNumberPresentation(provided: boolean, raw: number | null): ClientCommercialFieldDto {
+  if (!provided) {
+    return { value: null, hasSource: false, label: "Не передано" };
+  }
+  if (raw === null) {
+    return { value: null, hasSource: true, label: "Не заполнено" };
+  }
+  const label = String(raw);
+  return { value: label, hasSource: true, label };
+}
+
+function markupsPresentation(commercial: ParsedClientCommercial): ClientCommercialDto["markups"] {
+  if (!commercial.fieldPresence.markups) {
+    return { hasSource: false, label: "Не передано", items: [] };
+  }
+  if (commercial.markups.length === 0) {
+    return { hasSource: true, label: "Не заполнено", items: [] };
+  }
+  const items = commercial.markups.map((entry) => ({
+    name: entry.name,
+    percentageLabel: entry.percentage === null ? null : String(entry.percentage),
+  }));
+  const label = items
+    .map((entry) => {
+      const name = entry.name.length > 0 ? entry.name : "—";
+      const value = entry.percentageLabel ?? "—";
+      return `${name} · ${value}`;
+    })
+    .join("; ");
+  return { hasSource: true, label, items };
+}
+
+function toClientCommercialDto(snapshot: ExtendedSnapshot | null): ClientCommercialDto | null {
+  const commercial = readSnapshotCommercial(snapshot);
+  if (!commercial || !hasAnyCommercialField(commercial)) {
+    return null;
+  }
+  return {
+    discountProgram: commercialStringPresentation(
+      commercial.fieldPresence.discountProgram,
+      commercial.discountProgram,
+    ),
+    discountAmount: commercialNumberPresentation(
+      commercial.fieldPresence.discountAmount,
+      commercial.discountAmount,
+    ),
+    markups: markupsPresentation(commercial),
+  };
 }
 
 function formatImportedAtLabel(value: string | null): string | null {
@@ -656,6 +739,23 @@ function tandoorClubPresentation(outlet: ParsedRetailOutlet): {
   return { value: trimmed, hasSource: true, label: trimmed };
 }
 
+function bonusTandoorClubPresentation(outlet: ParsedRetailOutlet): {
+  value: string | null;
+  hasSource: boolean;
+  label: string;
+} {
+  const provided = outlet.additional?.fieldPresence?.bonusTandoorClub === true;
+  const raw = outlet.additional?.bonusTandoorClub ?? "";
+  const trimmed = raw.trim();
+  if (!provided) {
+    return { value: null, hasSource: false, label: "Не передано" };
+  }
+  if (trimmed.length === 0) {
+    return { value: null, hasSource: true, label: "Не заполнено" };
+  }
+  return { value: trimmed, hasSource: true, label: trimmed };
+}
+
 function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationContext): RetailOutletDto {
   const effective = resolveEffectiveOutletPresentation(outlet, context);
   const warehouseLabel =
@@ -666,6 +766,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
         : "Признак склада не передан";
   const closure = outletClosurePresentation(outlet, effective.closureConfirmedInCurrentExport);
   const tandoorClub = tandoorClubPresentation(outlet);
+  const bonusTandoorClub = bonusTandoorClubPresentation(outlet);
 
   return {
     ordinal: outlet.ordinal,
@@ -696,6 +797,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
       accountantEmail: outlet.contacts.accountantEmail,
     },
     tandoorClub,
+    bonusTandoorClub,
     distributionAllowed: false,
     distributionNote: outletDistributionNote(outlet),
     presentInCurrentExport: effective.provenance.freshness === "current",
@@ -953,6 +1055,7 @@ export function toClientExtendedDto(
       hardwareManager: toManagerRefDto(hardwareManager),
       headOfSales: toManagerRefDto(headOfSales),
     },
+    commercial: toClientCommercialDto(snapshot),
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
     retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,

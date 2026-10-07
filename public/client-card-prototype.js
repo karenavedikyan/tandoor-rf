@@ -69,7 +69,7 @@
       field("Телефон бухгалтерии", outlet.contacts && outlet.contacts.accountantPhone, !!(outlet.contacts && outlet.contacts.accountantPhone)) +
       field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail));
     var club = field("Tandoor Club", outlet.tandoorClub && outlet.tandoorClub.label, !!(outlet.tandoorClub && outlet.tandoorClub.hasSource)) +
-      field("Бонусные условия клуба", "Персональные бонусы не публикуются без отдельного разрешения", false);
+      field("Bonus Tandoor Club", outlet.bonusTandoorClub && outlet.bonusTandoorClub.label, !!(outlet.bonusTandoorClub && outlet.bonusTandoorClub.hasSource));
     return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
       detailsBlock("Основные сведения", basics, index === 0) +
       detailsBlock("Ответственные", managers, false) +
@@ -265,6 +265,13 @@
           field("РОП клиента", clientRopField, !!(ext && ext.managers && ext.managers.headOfSales && ext.managers.headOfSales.assignmentState !== "not_provided")) +
           field("Временно замещает", "Не передано"),
           false) +
+        (ext && ext.commercial
+          ? detailsBlock("Коммерческие условия (1С)",
+            field("Discount", ext.commercial.discountProgram && ext.commercial.discountProgram.label, !!(ext.commercial.discountProgram && ext.commercial.discountProgram.hasSource)) +
+            field("DiscountAmount", ext.commercial.discountAmount && ext.commercial.discountAmount.label, !!(ext.commercial.discountAmount && ext.commercial.discountAmount.hasSource)) +
+            field("Markups", ext.commercial.markups && ext.commercial.markups.label, !!(ext.commercial.markups && ext.commercial.markups.hasSource)),
+            false)
+          : "") +
         detailsBlock("Контакты и ограничения",
           field("ЛПР и рабочая почта", ext && ext.sensitiveFieldsWithheld ? "Не публикуются без отдельного разрешения" : "Не передано") +
           field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length),
