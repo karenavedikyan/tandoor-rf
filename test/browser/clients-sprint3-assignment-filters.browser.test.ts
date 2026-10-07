@@ -193,8 +193,19 @@ describe("sprint3 assignment filters browser", { concurrency: false }, () => {
     await page.close();
   });
 
+  function isDiscountProgramClientsListRequest(url: URL): boolean {
+    if (url.pathname !== "/api/clients") {
+      return false;
+    }
+    if (url.searchParams.get("discountProgram") !== "PROMO") {
+      return false;
+    }
+    const entity = url.searchParams.get("entity");
+    return entity === null || entity === "clients";
+  }
+
   it("persists discountProgram value filter in URL and reload", async () => {
-    const { page, state } = await setupPage();
+    const { page } = await setupPage();
 
     await page.setViewportSize(DESKTOP);
     await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
@@ -203,12 +214,37 @@ describe("sprint3 assignment filters browser", { concurrency: false }, () => {
       (el as HTMLDetailsElement).open = true;
     });
     await page.waitForSelector("#discount-program-filter:not(.clients-hidden)");
+
+    const discountProgramListResponse = page.waitForResponse((response) => {
+      if (response.request().method() !== "GET") {
+        return false;
+      }
+      return isDiscountProgramClientsListRequest(new URL(response.url()));
+    });
+
     await page.fill("#discount-program-filter", "PROMO");
+    const listResponse = await discountProgramListResponse;
+    assert.equal(listResponse.status(), 200);
+    const listRequestUrl = new URL(listResponse.request().url());
+    assert.equal(listRequestUrl.searchParams.get("discountProgram"), "PROMO");
+    const entityParam = listRequestUrl.searchParams.get("entity");
+    assert.ok(entityParam === null || entityParam === "clients");
+
     await page.waitForFunction(() => window.location.search.includes("discountProgram=PROMO"));
     assert.match(page.url(), /discountProgram=PROMO/);
-    assert.match(state.lastListUrl, /discountProgram=PROMO/);
 
+    const reloadListResponse = page.waitForResponse((response) => {
+      if (response.request().method() !== "GET") {
+        return false;
+      }
+      return isDiscountProgramClientsListRequest(new URL(response.url()));
+    });
     await page.reload({ waitUntil: "networkidle" });
+    const reloadedListResponse = await reloadListResponse;
+    assert.equal(reloadedListResponse.status(), 200);
+    const reloadRequestUrl = new URL(reloadedListResponse.request().url());
+    assert.equal(reloadRequestUrl.searchParams.get("discountProgram"), "PROMO");
+
     assert.match(page.url(), /discountProgram=PROMO/);
     assert.equal(await page.inputValue("#discount-program-filter"), "PROMO");
 
