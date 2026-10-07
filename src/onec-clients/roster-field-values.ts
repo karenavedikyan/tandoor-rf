@@ -1,4 +1,4 @@
-import type { WholesaleEmployeeRecord } from "./employee-roster";
+import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
 
 export type ResolvedRosterFieldValues = {
   nameManager: string;
@@ -160,12 +160,10 @@ export function resolvedRosterValuesEqual(
   );
 }
 
-export function rosterRecordValuesEqual(
+export function existingRosterFieldValuesToResolved(
   existing: ExistingRosterFieldValues,
-  record: WholesaleEmployeeRecord,
-): boolean {
-  const resolved = resolveRosterFieldValues(record, existing);
-  const existingResolved: ResolvedRosterFieldValues = {
+): ResolvedRosterFieldValues {
+  return {
     nameManager: existing.name_manager,
     guidPost: existing.guid_post,
     post: existing.post,
@@ -179,5 +177,26 @@ export function rosterRecordValuesEqual(
     email: existing.email,
     telephone: existing.telephone,
   };
-  return resolvedRosterValuesEqual(resolved, existingResolved);
+}
+
+export function rosterRecordValuesEqual(
+  existing: ExistingRosterFieldValues,
+  record: WholesaleEmployeeRecord,
+): boolean {
+  const resolved = resolveRosterFieldValues(record, existing);
+  return resolvedRosterValuesEqual(resolved, existingRosterFieldValuesToResolved(existing));
+}
+
+/** True when incoming roster would change persisted field values (including post-migration backfill). */
+export function rosterIncomingDiffersFromStored(
+  existingByManager: Map<string, ExistingRosterFieldValues>,
+  roster: WholesaleEmployeeRoster,
+): boolean {
+  for (const record of roster.records) {
+    const current = existingByManager.get(record.guidManager.toLowerCase());
+    if (!current || !rosterRecordValuesEqual(current, record)) {
+      return true;
+    }
+  }
+  return false;
 }
