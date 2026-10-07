@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildClientScopeSql } from "../../src/access/scope-sql";
 import type { AccessContext } from "../../src/access/types";
-import { filterRetailOutletsForContext } from "../../src/clients/outlet-access";
+import {
+  countVisibleRetailOutletsForContext,
+  filterRetailOutletsForContext,
+} from "../../src/clients/outlet-access";
+import { managerOutletRowAccessibleClause } from "../../src/clients/org/assignment-sql";
+import { toClientExtendedDto } from "../../src/clients/extended-dto";
 import type { ParsedRetailOutlet } from "../../src/onec-clients/extended-types";
 
 const M1 = "22222222-2222-4222-8222-222222222222";
@@ -56,7 +61,17 @@ function outlet(input: {
         : { guid: null, name: "", state: "not_provided" },
       headOfSales: { guid: null, name: "", state: "not_provided" },
     },
-    contacts: {},
+    contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
+    lpr: {
+      name: "",
+      post: "",
+      dateOfBirth: null,
+      phone: "",
+      email: "",
+      bonus: "",
+      conditionsBonus: "",
+    },
+    provenance: { freshness: "current", sourceSha256: "abc", importedAt: "2026-01-01T10:00:00.000Z" },
     outletGuidStatus: "confirmed",
     closed: false,
     closureStatus: "open",
@@ -119,6 +134,52 @@ describe("manager outlet personal base filter", () => {
       filtered.map((item) => item.guidStore),
       [T1],
     );
+  });
+
+  it("inherits via hardware when sales slot is assigned to another manager", () => {
+    const outlets = [
+      outlet({ guidStore: T2, managerGuid: M2, hardwareGuid: null, hardwareState: "unassigned" }),
+    ];
+    const options = { clientHardwareManagerGuid: M1 };
+
+    const filtered = filterRetailOutletsForContext(managerContext(M1), M1, outlets, options);
+    assert.deepEqual(filtered.map((item) => item.guidStore), [T2]);
+
+    assert.equal(
+      countVisibleRetailOutletsForContext(managerContext(M1), M1, outlets, options),
+      1,
+    );
+
+    const cardDto = toClientExtendedDto(
+      {
+        is_holding: false,
+        guid_manager: M1,
+        extended_format_version: "extended_v1",
+        extended_source_sha256: "abc",
+        extended_imported_at: null,
+        extended_freshness_state: "current",
+        extended_snapshot: {
+          formatVersion: "extended_v1",
+          sourceSha256: "abc",
+          importedAt: "2026-01-01T10:00:00.000Z",
+          isHolding: false,
+          regionalManager: { guid: null, name: "", state: "not_provided" },
+          hardwareManager: { guid: M1, name: "Hardware M1", state: "directory_unverified" },
+          headOfSales: { guid: null, name: "", state: "not_provided" },
+          currentRetailOutlets: outlets,
+          retailOutletHistory: [],
+          blocks: { clientExtendedReady: true, outletNormalizedReady: true },
+        },
+      },
+      managerContext(M1),
+    );
+    assert.equal(cardDto!.retailOutlets.length, 1);
+    assert.equal(cardDto!.retailOutlets[0]!.guidStore, T2);
+
+    const sql = managerOutletRowAccessibleClause("$1", "ro", "onec_clients");
+    assert.match(sql, /guid_manager/);
+    assert.match(sql, /extended_snapshot->'hardwareManager'/);
+    assert.ok(sql.includes("OR"), "SQL keeps sales and hardware inheritance as independent OR branches");
   });
 
   it("combined sales and hardware roles on same TT count once", () => {

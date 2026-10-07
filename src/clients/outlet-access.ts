@@ -96,13 +96,15 @@ function filterManagerRetailOutlets(
     if (normalizeGuid(outlet.managers.hardwareManager.guid) === employeeId) {
       return true;
     }
-    if (clientManager === employeeId) {
-      return !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "manager");
-    }
-    if (clientHardware === employeeId) {
-      return !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "hardwareManager");
-    }
-    return false;
+
+    const inheritedSales =
+      clientManager === employeeId &&
+      !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "manager");
+    const inheritedHardware =
+      clientHardware === employeeId &&
+      !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "hardwareManager");
+
+    return inheritedSales || inheritedHardware;
   });
 }
 
