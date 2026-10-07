@@ -19,6 +19,7 @@ import {
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import {
   canReadNestedRetailOutlets,
+  countVisibleRetailOutletHistoryForContext,
   filterRetailOutletsForContext,
   MAX_OUTLETS_IN_DETAIL_RESPONSE,
 } from "./outlet-access";
@@ -694,11 +695,33 @@ function readCurrentOutlets(snapshot: ExtendedSnapshot | null): ParsedRetailOutl
   return Array.isArray(legacy) ? legacy : [];
 }
 
-function readHistoryCount(snapshot: ExtendedSnapshot | null): number {
-  if (!snapshot || !Array.isArray(snapshot.retailOutletHistory)) {
+function resolveRetailOutletHistoryCount(
+  context: AccessContext | undefined,
+  outletAccessGranted: boolean,
+  retailOutletsEmptyReason: RetailOutletsEmptyReason,
+  snapshot: ExtendedSnapshot | null,
+  clientManagerGuid: string,
+  options?: ClientExtendedDtoOptions,
+  clientHeadOfSalesGuid?: string | null,
+): number {
+  if (!outletAccessGranted || retailOutletsEmptyReason === "empty_scope") {
     return 0;
   }
-  return snapshot.retailOutletHistory.length;
+  if (!snapshot || !Array.isArray(snapshot.retailOutletHistory) || snapshot.retailOutletHistory.length === 0) {
+    return 0;
+  }
+  if (!context) {
+    return 0;
+  }
+  return countVisibleRetailOutletHistoryForContext(
+    context,
+    clientManagerGuid,
+    snapshot.retailOutletHistory,
+    {
+      clientHeadOfSalesGuid,
+      ropTeamEmployeeGuids: options?.ropTeamEmployeeGuids,
+    },
+  );
 }
 
 function resolveRetailOutletsEmptyReason(
@@ -831,7 +854,15 @@ export function toClientExtendedDto(
     currentOutletsRaw,
   );
   const currentOutlets = outletAccessGranted ? scopedOutlets : [];
-  const historyCount = outletAccessGranted ? readHistoryCount(snapshot) : 0;
+  const historyCount = resolveRetailOutletHistoryCount(
+    context,
+    outletAccessGranted,
+    retailOutletsEmptyReason,
+    snapshot,
+    clientManagerGuid,
+    options,
+    clientHeadOfSalesGuid,
+  );
 
   const regionalManager = snapshot?.regionalManager ?? { guid: null, name: "", state: "not_provided" as const };
   const hardwareManager = snapshot?.hardwareManager ?? { guid: null, name: "", state: "not_provided" as const };
@@ -904,7 +935,7 @@ export function toClientExtendedDto(
     retailOutletsTruncated: truncated,
     retailOutletsAccess,
     retailOutletsEmptyReason,
-    retailOutletHistoryCount: outletAccessGranted ? historyCount : 0,
+    retailOutletHistoryCount: historyCount,
     dataQualityLabel,
     sensitiveFieldsWithheld: true,
     outletNormalizedReady,
