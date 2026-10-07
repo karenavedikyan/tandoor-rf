@@ -41,6 +41,8 @@ export type UserDto = {
   role: UserRole;
   status: UserStatus;
   lastLoginAt: string | null;
+  /** True when the user must change a provisioned temporary password before using the LK. */
+  mustChangePassword?: boolean;
 };
 
 export function toUserDto(row: {
@@ -51,8 +53,9 @@ export function toUserDto(row: {
   role: string;
   status: string;
   last_login_at: Date | string | null;
+  password_must_change?: boolean;
 }): UserDto {
-  return {
+  const dto: UserDto = {
     id: row.id,
     email: row.email,
     fullName: row.full_name,
@@ -65,4 +68,8 @@ export function toUserDto(row: {
         : String(row.last_login_at)
       : null,
   };
+  if (row.password_must_change) {
+    dto.mustChangePassword = true;
+  }
+  return dto;
 }

@@ -71,9 +71,10 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     status: string;
     last_login_at: Date | null;
     password_hash: string;
+    password_must_change: boolean;
   }>(
     `
-      SELECT id, email, full_name, phone, role, status, last_login_at, password_hash
+      SELECT id, email, full_name, phone, role, status, last_login_at, password_hash, password_must_change
       FROM users
       WHERE LOWER(BTRIM(email)) = $1
       LIMIT 1
@@ -121,9 +122,10 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     role: string;
     status: string;
     last_login_at: Date | null;
+    password_must_change: boolean;
   }>(
     `
-      SELECT id, email, full_name, phone, role, status, last_login_at
+      SELECT id, email, full_name, phone, role, status, last_login_at, password_must_change
       FROM users
       WHERE id = $1
     `,

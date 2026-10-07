@@ -5,6 +5,20 @@ import { enforcePreviewBusinessPolicy } from "../access/preview-policy";
 import type { UserDto } from "../shared/user";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { setNoStore } from "../http/no-store";
+import { query } from "../db/pool";
+
+const PASSWORD_CHANGE_EXEMPT_PATHS = [
+  "/api/profile/change-password",
+  "/api/profile/self",
+  "/api/auth/logout",
+  "/api/auth/me",
+];
+
+function isPasswordChangeExemptPath(path: string): boolean {
+  return PASSWORD_CHANGE_EXEMPT_PATHS.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}
 
 export type AuthenticatedRequest = Request & {
   authUser?: UserDto;
@@ -40,6 +54,24 @@ export async function requireAuth(
 
     if (await enforcePreviewBusinessPolicy(req, res)) {
       return;
+    }
+
+    const requestPath = req.originalUrl.split("?")[0] ?? req.path;
+    if (!isPasswordChangeExemptPath(requestPath)) {
+      const mustChange = await query<{ password_must_change: boolean }>(
+        `SELECT password_must_change FROM users WHERE id = $1::uuid`,
+        [session.user.id],
+      );
+      if (mustChange.rows[0]?.password_must_change) {
+        setNoStore(res);
+        res.status(403).json(
+          apiError(
+            ERROR_CODES.PASSWORD_CHANGE_REQUIRED,
+            "Смените временный пароль перед продолжением работы.",
+          ),
+        );
+        return;
+      }
     }
 
     next();
