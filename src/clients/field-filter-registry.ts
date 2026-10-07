@@ -74,6 +74,12 @@ export function hasOutletDerivedClientFilters(query: {
   warehouseFilter: string;
   outletStatus: string;
   tandoorClub?: string;
+  bonusTandoorClub?: string;
+  discountProgram?: string;
+  discountAmountMin?: number;
+  discountAmountMax?: number;
+  markupName?: string;
+  markupPercentage?: number;
   routeDirection?: string;
   storeAddressContains?: string;
   storePhoneContains?: string;
@@ -105,7 +111,12 @@ export function hasOutletDerivedClientFilters(query: {
   if (query.warehouseFilter !== "all" || query.outletStatus !== "all") {
     return true;
   }
-  if (query.tandoorClub || query.routeDirection || query.storeAddressContains) {
+  if (
+    query.tandoorClub ||
+    query.bonusTandoorClub ||
+    query.routeDirection ||
+    query.storeAddressContains
+  ) {
     return true;
   }
   if (

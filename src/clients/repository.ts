@@ -13,6 +13,7 @@ import {
   applyClientEntityScopedOutletFilter,
   applyClientLevelFilledEmptyFilters,
 } from "./client-entity-outlet-filter";
+import { applyClientCommercialFilters } from "./commercial-list-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
 import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
 import { applyClientListAssignmentFilters } from "./list-assignment-filters";
@@ -203,6 +204,7 @@ async function resolveScopedFilter(
       userFilter = applyClientEntityScopedOutletFilter(userFilter, input, context);
     }
     userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
+    userFilter = applyClientCommercialFilters(userFilter, input);
   }
 
   const reviewJoin = buildReviewStateFilter(

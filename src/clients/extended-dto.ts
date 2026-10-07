@@ -24,6 +24,7 @@ import {
   MAX_OUTLETS_IN_DETAIL_RESPONSE,
 } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
+import { bonusTandoorClubPresentationFromAdditional } from "./bonus-tandoor-club";
 import {
   hasAnyCommercialField,
   readSnapshotCommercial,
@@ -744,16 +745,7 @@ function bonusTandoorClubPresentation(outlet: ParsedRetailOutlet): {
   hasSource: boolean;
   label: string;
 } {
-  const provided = outlet.additional?.fieldPresence?.bonusTandoorClub === true;
-  const raw = outlet.additional?.bonusTandoorClub ?? "";
-  const trimmed = raw.trim();
-  if (!provided) {
-    return { value: null, hasSource: false, label: "Не передано" };
-  }
-  if (trimmed.length === 0) {
-    return { value: null, hasSource: true, label: "Не заполнено" };
-  }
-  return { value: trimmed, hasSource: true, label: trimmed };
+  return bonusTandoorClubPresentationFromAdditional(outlet.additional);
 }
 
 function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationContext): RetailOutletDto {

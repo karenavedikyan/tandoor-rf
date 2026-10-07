@@ -16,16 +16,20 @@ export type ParsedClientCommercial = {
   };
 };
 
-export const EMPTY_COMMERCIAL: ParsedClientCommercial = {
-  discountProgram: null,
-  discountAmount: null,
-  markups: [],
-  fieldPresence: {
-    discountProgram: false,
-    discountAmount: false,
-    markups: false,
-  },
-};
+export function createEmptyCommercial(): ParsedClientCommercial {
+  return {
+    discountProgram: null,
+    discountAmount: null,
+    markups: [],
+    fieldPresence: {
+      discountProgram: false,
+      discountAmount: false,
+      markups: false,
+    },
+  };
+}
+
+export const EMPTY_COMMERCIAL: ParsedClientCommercial = createEmptyCommercial();
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -63,10 +67,8 @@ export function parseClientCommercialFields(raw: Record<string, unknown>): {
   commercial: ParsedClientCommercial;
   invalid: boolean;
 } {
-  const commercial: ParsedClientCommercial = {
-    ...EMPTY_COMMERCIAL,
-    fieldPresence: { ...EMPTY_COMMERCIAL.fieldPresence },
-  };
+  const commercial = createEmptyCommercial();
+  const markups: ParsedMarkupEntry[] = [];
 
   if ("Discount" in raw) {
     commercial.fieldPresence.discountProgram = true;
@@ -76,7 +78,7 @@ export function parseClientCommercialFields(raw: Record<string, unknown>): {
     commercial.fieldPresence.discountAmount = true;
     const amount = readNumberField(raw.DiscountAmount);
     if (amount === "invalid") {
-      return { commercial: EMPTY_COMMERCIAL, invalid: true };
+      return { commercial: createEmptyCommercial(), invalid: true };
     }
     commercial.discountAmount = amount;
   }
@@ -85,19 +87,20 @@ export function parseClientCommercialFields(raw: Record<string, unknown>): {
     if (raw.Markups === null) {
       commercial.markups = [];
     } else if (!Array.isArray(raw.Markups)) {
-      return { commercial: EMPTY_COMMERCIAL, invalid: true };
+      return { commercial: createEmptyCommercial(), invalid: true };
     } else {
       for (const entry of raw.Markups) {
         if (!isPlainObject(entry)) {
-          return { commercial: EMPTY_COMMERCIAL, invalid: true };
+          return { commercial: createEmptyCommercial(), invalid: true };
         }
         const name = typeof entry.Name === "string" ? entry.Name.trim() : "";
         const percentage = readNumberField(entry.Percentage);
         if (percentage === "invalid") {
-          return { commercial: EMPTY_COMMERCIAL, invalid: true };
+          return { commercial: createEmptyCommercial(), invalid: true };
         }
-        commercial.markups.push({ name, percentage });
+        markups.push({ name, percentage });
       }
+      commercial.markups = markups;
     }
   }
 
@@ -128,7 +131,7 @@ export function mergeCommercialFields(
   incoming: ParsedClientCommercial,
   previous: ParsedClientCommercial | undefined,
 ): ParsedClientCommercial {
-  const prev = previous ?? EMPTY_COMMERCIAL;
+  const prev = previous ?? createEmptyCommercial();
   if (!hasAnyCommercialField(incoming)) {
     return {
       discountProgram: prev.discountProgram,

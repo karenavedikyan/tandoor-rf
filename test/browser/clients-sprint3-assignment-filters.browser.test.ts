@@ -192,4 +192,30 @@ describe("sprint3 assignment filters browser", { concurrency: false }, () => {
 
     await page.close();
   });
+
+  it("persists discountProgram value filter in URL and reload", async () => {
+    const { page, state } = await setupPage();
+
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
+    await ensureFiltersPanelExpanded(page);
+    await page.locator("#field-filters-wrap").evaluate((el) => {
+      (el as HTMLDetailsElement).open = true;
+    });
+    await page.waitForSelector("#discount-program-filter:not(.clients-hidden)");
+    await page.fill("#discount-program-filter", "PROMO");
+    await page.waitForFunction(() => window.location.search.includes("discountProgram=PROMO"));
+    assert.match(page.url(), /discountProgram=PROMO/);
+    assert.match(state.lastListUrl, /discountProgram=PROMO/);
+
+    await page.reload({ waitUntil: "networkidle" });
+    assert.match(page.url(), /discountProgram=PROMO/);
+    assert.equal(await page.inputValue("#discount-program-filter"), "PROMO");
+
+    await page.click("#reset-filters");
+    await page.waitForFunction(() => !window.location.search.includes("discountProgram="));
+    assert.doesNotMatch(page.url(), /discountProgram=/);
+
+    await page.close();
+  });
 });

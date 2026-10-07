@@ -65,6 +65,12 @@
     "accountantEmailContains",
     "loadingTime",
     "loadingSchedule",
+    "discountProgram",
+    "discountAmountMin",
+    "discountAmountMax",
+    "markupName",
+    "markupPercentage",
+    "bonusTandoorClub",
     "filled",
     "empty",
     "portfolio",
@@ -430,6 +436,12 @@
       accountantEmailContains: params.get("accountantEmailContains") || "",
       loadingTime: params.get("loadingTime") || "",
       loadingSchedule: params.get("loadingSchedule") || "all",
+      discountProgram: params.get("discountProgram") || "",
+      discountAmountMin: params.get("discountAmountMin") || "",
+      discountAmountMax: params.get("discountAmountMax") || "",
+      markupName: params.get("markupName") || "",
+      markupPercentage: params.get("markupPercentage") || "",
+      bonusTandoorClub: params.get("bonusTandoorClub") || "",
       filled: params.get("filled") || "",
       empty: params.get("empty") || "",
       missingRop: params.get("missingRop") === "1" || params.get("missingClientRop") === "1",
@@ -716,6 +728,12 @@
     if (state.loadingSchedule && state.loadingSchedule !== "all") {
       params.set("loadingSchedule", state.loadingSchedule);
     }
+    if (state.discountProgram) params.set("discountProgram", state.discountProgram);
+    if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
+    if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
+    if (state.markupName) params.set("markupName", state.markupName);
+    if (state.markupPercentage) params.set("markupPercentage", state.markupPercentage);
+    if (state.bonusTandoorClub) params.set("bonusTandoorClub", state.bonusTandoorClub);
     if (state.filled) params.set("filled", state.filled);
     if (state.empty) params.set("empty", state.empty);
     if (state.sortBy) params.set("sortBy", state.sortBy);

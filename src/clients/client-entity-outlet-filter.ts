@@ -20,6 +20,11 @@ import {
   resolveOutletElemAccessParams,
   type OutletElemAccessParams,
 } from "./outlet-elem-access";
+import {
+  bonusTandoorClubEmptySql,
+  bonusTandoorClubFilledSql,
+  bonusTandoorClubSearchSql,
+} from "./bonus-tandoor-club";
 import { escapeIlikePattern } from "./phone";
 import type { ClientsListQuery, SqlFilter } from "./query";
 import { outletsJsonArraySql } from "./outlets/scope-sql";
@@ -166,6 +171,12 @@ function appendOutletFieldConditions(query: ClientsListQuery, conditions: string
       `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'statusTandoorClub'), '') ILIKE $${params.length} ESCAPE '\\'`,
     );
   }
+  if (query.bonusTandoorClub) {
+    params.push(`%${escapeIlikePattern(query.bonusTandoorClub)}%`);
+    conditions.push(
+      bonusTandoorClubSearchSql(`${OUTLET_ALIAS}->'additional'`, `$${params.length}`),
+    );
+  }
   if (query.outletStatus === "open") {
     conditions.push(`
       (
@@ -205,7 +216,7 @@ function outletFilledExpr(field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'deliveryAddress'), '') IS NOT NULL`,
     routeDirection: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'routeDirection'), '') IS NOT NULL`,
     tandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'statusTandoorClub'), '') IS NOT NULL`,
-    bonusTandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'bonusTandoorClub'), '') IS NOT NULL`,
+    bonusTandoorClub: bonusTandoorClubFilledSql(`${OUTLET_ALIAS}->'additional'`),
     warehouse: `${OUTLET_ALIAS} ? 'warehouse' AND ${OUTLET_ALIAS}->'warehouse' IS NOT NULL AND ${OUTLET_ALIAS}->'warehouse' <> 'null'::jsonb`,
     storePhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'storePhone'), '') IS NOT NULL`,
     accountantPhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'accountantPhone'), '') IS NOT NULL`,
@@ -229,7 +240,7 @@ function outletEmptyExpr(field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'deliveryAddress'), '') IS NULL`,
     routeDirection: `NULLIF(BTRIM(${OUTLET_ALIAS}->'address'->>'routeDirection'), '') IS NULL`,
     tandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'statusTandoorClub'), '') IS NULL`,
-    bonusTandoorClub: `NULLIF(BTRIM(${OUTLET_ALIAS}->'additional'->>'bonusTandoorClub'), '') IS NULL`,
+    bonusTandoorClub: bonusTandoorClubEmptySql(`${OUTLET_ALIAS}->'additional'`),
     warehouse: `(${OUTLET_ALIAS}->'warehouse' IS NULL OR ${OUTLET_ALIAS}->'warehouse' = 'null'::jsonb)`,
     storePhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'storePhone'), '') IS NULL`,
     accountantPhone: `NULLIF(BTRIM(${OUTLET_ALIAS}->'contacts'->>'accountantPhone'), '') IS NULL`,

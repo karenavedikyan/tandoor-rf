@@ -20,9 +20,9 @@ Live-источник (`AUDIT_CLIENTS_PATH`) в среде агента не н�
 
 | Поле JSON | Уровень | Тип | GUID-связь | Карточка | Список clients | Фильтр | UI |
 |-----------|---------|-----|------------|----------|----------------|--------|-----|
-| `Discount` | client | string \| null | — | Discount (read-only) | discountProgram | `filled`/`empty=discountProgram` | label |
-| `DiscountAmount` | client | number \| null | — | DiscountAmount | discountAmount | `filled`/`empty=discountAmount` | label; `0` = значение |
-| `Markups[]` | client | `{ Name, Percentage }[]` | — | Markups (read-only) | — | `filled`/`empty=markups` | список без интерпретации единиц |
+| `Discount` | client | string \| null | — | Discount (read-only) | discountProgram | `discountProgram=…`, `filled`/`empty=discountProgram` | label |
+| `DiscountAmount` | client | number \| null | — | DiscountAmount | discountAmount | `discountAmountMin`/`Max`, `filled`/`empty=discountAmount` | label; `0` = значение |
+| `Markups[]` | client | `{ Name, Percentage }[]` | — | Markups (read-only) | — | `markupName`, `markupPercentage` (same element), `filled`/`empty=markups` | список без интерпретации единиц |
 
 **Путь snapshot:** `extended_snapshot.commercial.*` · **parser:** `src/onec-clients/commercial-fields.ts`
 
@@ -32,9 +32,9 @@ Live-источник (`AUDIT_CLIENTS_PATH`) в среде агента не н�
 
 | Поле JSON | Уровень | Тип | Карточка | Список outlets | Фильтр clients | Фильтр outlets |
 |-----------|---------|-----|----------|----------------|----------------|----------------|
-| `retail_outlets[].additional_information.bonus_tandoor_club` | outlet | string | Bonus Tandoor Club | bonusTandoorClub | `filled`/`empty=bonusTandoorClub` (scoped EXISTS) | same |
+| `retail_outlets[].additional_information.bonus_tandoor_club` | outlet | string | Bonus Tandoor Club | bonusTandoorClub | `bonusTandoorClub=…`, `filled`/`empty=bonusTandoorClub` (scoped EXISTS) | same |
 
-**Представление:** `hasSource` из `fieldPresence.bonusTandoorClub`; «Не передано» / «Не заполнено» / значение; `"0"` — значение, не пусто.
+**Представление:** `hasSource` из `fieldPresence.bonusTandoorClub`; legacy snapshot без fieldPresence → `hasSource=false`; «Не передано» / «Не заполнено» / значение; `"0"` — значение, не пусто.
 
 ---
 
@@ -72,8 +72,8 @@ Preview использует права целевого сотрудника (�
 
 | Поле | Источник JSON | Экран | Фильтр |
 |------|---------------|-------|--------|
-| Discount | `Discount` | карточка / список clients | `filled`/`empty=discountProgram` |
-| DiscountAmount | `DiscountAmount` | карточка / список clients | `filled`/`empty=discountAmount` |
-| Markups | `Markups[]` | карточка (details) | `filled`/`empty=markups` |
-| Bonus Tandoor Club | `additional_information.bonus_tandoor_club` | карточка ТТ / список outlets | `filled`/`empty=bonusTandoorClub` |
+| Discount | `Discount` | карточка / список clients | `discountProgram`, `filled`/`empty=discountProgram` |
+| DiscountAmount | `DiscountAmount` | карточка / список clients | `discountAmountMin`/`Max`, `filled`/`empty=discountAmount` |
+| Markups | `Markups[]` | карточка (details) | `markupName`, `markupPercentage`, `filled`/`empty=markups` |
+| Bonus Tandoor Club | `additional_information.bonus_tandoor_club` | карточка ТТ / список outlets | `bonusTandoorClub`, `filled`/`empty=bonusTandoorClub` |
 | 8× ответственные | managers.* / client extended | combobox + mode | `*Manager`, `missing*`, `*Mode` |

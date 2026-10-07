@@ -5,6 +5,7 @@ import {
   type ClientExtendedDto,
   type ClientExtendedDtoOptions,
 } from "./extended-dto";
+import { bonusTandoorClubFromAdditional } from "./bonus-tandoor-club";
 import {
   hasAnyCommercialField,
   type ParsedClientCommercial,
@@ -571,19 +572,7 @@ function readBonusTandoorClubFromSnapshot(snapshot: Record<string, unknown> | nu
   if (!snapshot) {
     return { value: null, hasSource: false };
   }
-  const additional = snapshot.additional;
-  if (!additional || typeof additional !== "object" || Array.isArray(additional)) {
-    return { value: null, hasSource: false };
-  }
-  if (!("bonusTandoorClub" in (additional as Record<string, unknown>))) {
-    return { value: null, hasSource: false };
-  }
-  const raw = (additional as { bonusTandoorClub?: unknown }).bonusTandoorClub;
-  if (typeof raw !== "string") {
-    return { value: null, hasSource: true };
-  }
-  const trimmed = raw.trim();
-  return { value: trimmed.length > 0 ? trimmed : null, hasSource: true };
+  return bonusTandoorClubFromAdditional(snapshot.additional);
 }
 
 function outletAddressLabel(storeAddress: string | null, fallback: string): string {

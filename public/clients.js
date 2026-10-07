@@ -126,6 +126,12 @@
   var loadingScheduleFilter = document.getElementById("loading-schedule-filter");
   var filledFieldFilter = document.getElementById("filled-field-filter");
   var emptyFieldFilter = document.getElementById("empty-field-filter");
+  var discountProgramFilter = document.getElementById("discount-program-filter");
+  var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
+  var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
+  var markupNameFilter = document.getElementById("markup-name-filter");
+  var markupPercentageFilter = document.getElementById("markup-percentage-filter");
+  var bonusTandoorFilter = document.getElementById("bonus-tandoor-filter");
   var ropFilterLabelEl = document.getElementById("rop-filter-label");
   var managerFilterLabelEl = document.getElementById("manager-filter-label");
   var regionalFilterLabelEl = document.getElementById("regional-filter-label");
@@ -694,6 +700,12 @@
       accountantEmailContains: accountantEmailFilter ? accountantEmailFilter.value.trim() : "",
       loadingTime: loadingTimeFilter ? loadingTimeFilter.value.trim() : "",
       loadingSchedule: loadingScheduleFilter ? loadingScheduleFilter.value || "all" : "all",
+      discountProgram: discountProgramFilter ? discountProgramFilter.value.trim() : "",
+      discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
+      discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
+      markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
+      markupPercentage: markupPercentageFilter ? markupPercentageFilter.value.trim() : "",
+      bonusTandoorClub: bonusTandoorFilter ? bonusTandoorFilter.value.trim() : "",
       filled: filledFieldFilter ? filledFieldFilter.value || "" : "",
       empty: emptyFieldFilter ? emptyFieldFilter.value || "" : "",
       tandoorClub: tandoorFilter.value.trim(),
@@ -830,6 +842,12 @@
     if (loadingScheduleFilter) loadingScheduleFilter.value = state.loadingSchedule || "all";
     if (filledFieldFilter) filledFieldFilter.value = state.filled || "";
     if (emptyFieldFilter) emptyFieldFilter.value = state.empty || "";
+    if (discountProgramFilter) discountProgramFilter.value = state.discountProgram || "";
+    if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
+    if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
+    if (markupNameFilter) markupNameFilter.value = state.markupName || "";
+    if (markupPercentageFilter) markupPercentageFilter.value = state.markupPercentage || "";
+    if (bonusTandoorFilter) bonusTandoorFilter.value = state.bonusTandoorClub || "";
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
@@ -1607,7 +1625,7 @@
       if (!item.bonusTandoorClub || !item.bonusTandoorClub.hasSource) {
         return renderNoDataCell();
       }
-      if (!item.bonusTandoorClub.value) {
+      if (item.bonusTandoorClub.value === null || item.bonusTandoorClub.value === undefined) {
         return '<span class="clients-phone-muted">—</span>';
       }
       return shell.escapeHtml(item.bonusTandoorClub.value);
@@ -2221,6 +2239,9 @@
     );
     tandoorFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
     fieldFiltersWrap?.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+    document.querySelectorAll(".clients-field--clients-only").forEach(function (el) {
+      el.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness || isOutlets);
+    });
     var showOutletLevelAssignments = showAssignmentFilters && !isOutlets;
     outletManagerFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
     outletRegionalFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
@@ -3700,6 +3721,12 @@
     if (accountantEmailFilter) accountantEmailFilter.value = "";
     if (loadingTimeFilter) loadingTimeFilter.value = "";
     if (loadingScheduleFilter) loadingScheduleFilter.value = "all";
+    if (discountProgramFilter) discountProgramFilter.value = "";
+    if (discountAmountMinFilter) discountAmountMinFilter.value = "";
+    if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
+    if (markupNameFilter) markupNameFilter.value = "";
+    if (markupPercentageFilter) markupPercentageFilter.value = "";
+    if (bonusTandoorFilter) bonusTandoorFilter.value = "";
     if (filledFieldFilter) filledFieldFilter.value = "";
     if (emptyFieldFilter) emptyFieldFilter.value = "";
     loadList({
@@ -3751,6 +3778,12 @@
       warehouse: "all",
       regionalManager: "",
       tandoorClub: "",
+      discountProgram: "",
+      discountAmountMin: "",
+      discountAmountMax: "",
+      markupName: "",
+      markupPercentage: "",
+      bonusTandoorClub: "",
       sortBy: "",
       sortDir: "",
       cols: "",
@@ -3881,7 +3914,20 @@
     invalidateInFlightRequests();
     scheduleLoad(true, true);
   });
-  [routeDirectionFilter, storeAddressFilter, storePhoneFilter, accountantPhoneFilter, accountantEmailFilter, loadingTimeFilter]
+  [
+    routeDirectionFilter,
+    storeAddressFilter,
+    storePhoneFilter,
+    accountantPhoneFilter,
+    accountantEmailFilter,
+    loadingTimeFilter,
+    discountProgramFilter,
+    discountAmountMinFilter,
+    discountAmountMaxFilter,
+    markupNameFilter,
+    markupPercentageFilter,
+    bonusTandoorFilter,
+  ]
     .filter(Boolean)
     .forEach(function (el) {
       el.addEventListener("input", function () {
