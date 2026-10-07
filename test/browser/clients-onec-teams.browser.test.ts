@@ -31,6 +31,86 @@ const MOBILE = { width: 390, height: 844 };
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ?? path.join("/opt/cursor/artifacts/screenshots");
 
+type ReleaseGate = {
+  wait: Promise<void>;
+  release: () => void;
+};
+
+function makeReleaseGate(): ReleaseGate {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { wait, release: () => release() };
+}
+
+function onecTeamsRequest(page: Page, teamQ: string | null) {
+  return page.waitForRequest((request) => {
+    if (!request.url().includes("/api/clients/org-structure/onec-teams")) {
+      return false;
+    }
+    const q = new URL(request.url()).searchParams.get("teamQ");
+    return (teamQ ?? null) === (q ?? null);
+  });
+}
+
+function onecTeamsResponse(page: Page, teamQ: string | null) {
+  return page.waitForResponse((response) => {
+    if (!response.url().includes("/api/clients/org-structure/onec-teams") || response.status() !== 200) {
+      return false;
+    }
+    const q = new URL(response.url()).searchParams.get("teamQ");
+    return (teamQ ?? null) === (q ?? null);
+  });
+}
+
+async function awaitOnecSearchInUrl(page: Page, teamQ: string): Promise<void> {
+  await page.waitForFunction((q) => new URL(window.location.href).searchParams.get("teamQ") === q, teamQ);
+}
+
+async function expectOnecGroupNames(page: Page, names: string[]): Promise<void> {
+  await page.waitForFunction((expected) => {
+    const actual = Array.from(
+      document.querySelectorAll(".clients-onec-team .clients-compact-team__name"),
+    ).map((node) => node.textContent || "");
+    return actual.length === expected.length && expected.every((name, index) => actual[index] === name);
+  }, names);
+}
+
+/** Test-only: let stale onec-teams HTTP responses finish after AbortController cancel. */
+async function allowStaleOnecTeamsCompletionInTest(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch;
+    window.fetch = function (input, init) {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/api/clients/org-structure/onec-teams") && init && init.signal) {
+        const nextInit = Object.assign({}, init);
+        delete nextInit.signal;
+        return originalFetch.call(this, input, nextInit);
+      }
+      return originalFetch.call(this, input, init);
+    };
+  });
+}
+
+async function installOnecTeamsGateRoute(page: Page, gateForTeamQ: string, gate: ReleaseGate): Promise<void> {
+  await page.route("**/api/clients/org-structure/onec-teams**", async (route) => {
+    const q = new URL(route.request().url()).searchParams.get("teamQ") || "";
+    if (q === gateForTeamQ) {
+      const upstream = await route.fetch();
+      const body = await upstream.body();
+      await gate.wait;
+      await route.fulfill({
+        status: upstream.status(),
+        headers: upstream.headers(),
+        body,
+      });
+      return;
+    }
+    await route.continue();
+  });
+}
+
 describe("clients onec teams browser", { concurrency: false }, () => {
   let browser: Browser;
   let server: http.Server;
@@ -256,63 +336,94 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     await stopServer();
   });
 
-  it("ignores stale onec search responses and mode exit", async () => {
+  it("ignores stale onec response after faster search while staying in 1C mode", async () => {
     await seed();
     await startServer();
     const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await allowStaleOnecTeamsCompletionInTest(page);
     await login(page, "director@example.com");
     await openOnecTeams(page);
 
-    await page.route("**/api/clients/org-structure/onec-teams**", async (route) => {
-      const url = new URL(route.request().url());
-      const q = url.searchParams.get("teamQ") || "";
-      if (q === "Slow Alpha") {
-        await new Promise((resolve) => setTimeout(resolve, 700));
-      } else if (q === "Beta") {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      await route.continue();
-    });
+    const slowAlphaGate = makeReleaseGate();
+    await installOnecTeamsGateRoute(page, "Slow Alpha", slowAlphaGate);
 
-    const slowResponse = page.waitForResponse((response) => {
-      if (!response.url().includes("/api/clients/org-structure/onec-teams") || response.status() !== 200) {
-        return false;
-      }
-      return new URL(response.url()).searchParams.get("teamQ") === "Slow Alpha";
-    });
+    const slowRequest = onecTeamsRequest(page, "Slow Alpha");
     await page.fill("#clients-team-search-input", "Slow Alpha");
-    await page.waitForTimeout(280);
-    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("teamQ") === "Slow Alpha");
+    await awaitOnecSearchInUrl(page, "Slow Alpha");
+    await slowRequest;
 
+    const betaResponse = onecTeamsResponse(page, "Beta");
     await page.fill("#clients-team-search-input", "Beta");
-    await page.waitForTimeout(280);
-    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("teamQ") === "Beta");
-    await page.waitForResponse((response) => {
-      if (!response.url().includes("/api/clients/org-structure/onec-teams") || response.status() !== 200) {
-        return false;
-      }
-      return new URL(response.url()).searchParams.get("teamQ") === "Beta";
-    });
-    await page.waitForFunction(() => {
-      const names = Array.from(document.querySelectorAll(".clients-onec-team .clients-compact-team__name")).map(
-        (node) => node.textContent || "",
-      );
-      return names.length === 1 && names[0] === "Team Beta";
-    });
+    await awaitOnecSearchInUrl(page, "Beta");
+    await betaResponse;
+    await expectOnecGroupNames(page, ["Team Beta"]);
+    assert.equal(await page.inputValue("#clients-team-search-input"), "Beta");
 
+    const staleSlowResponse = onecTeamsResponse(page, "Slow Alpha");
+    slowAlphaGate.release();
+    await staleSlowResponse;
+
+    assert.equal(new URL(page.url()).searchParams.get("teamSource"), "onec");
+    assert.equal(new URL(page.url()).searchParams.get("teamQ"), "Beta");
+    assert.equal(await page.inputValue("#clients-team-search-input"), "Beta");
+    await expectOnecGroupNames(page, ["Team Beta"]);
+
+    await page.close();
+    await stopServer();
+  });
+
+  it("ignores stale onec response after switching back to ROP teams", async () => {
+    await seed();
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await allowStaleOnecTeamsCompletionInTest(page);
+    await login(page, "director@example.com");
+    await openTeamsRop(page);
+
+    const enterOnecResponse = onecTeamsResponse(page, null);
+    await page.click('[data-team-source="onec"]');
+    await enterOnecResponse;
+    await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
+
+    const slowAlphaGate = makeReleaseGate();
+    await installOnecTeamsGateRoute(page, "Slow Alpha", slowAlphaGate);
+
+    const slowRequest = onecTeamsRequest(page, "Slow Alpha");
+    await page.fill("#clients-team-search-input", "Slow Alpha");
+    await awaitOnecSearchInUrl(page, "Slow Alpha");
+    await slowRequest;
+
+    const betaResponse = onecTeamsResponse(page, "Beta");
+    await page.fill("#clients-team-search-input", "Beta");
+    await awaitOnecSearchInUrl(page, "Beta");
+    await betaResponse;
+    await expectOnecGroupNames(page, ["Team Beta"]);
+
+    const ropStructureResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/clients/org-structure") &&
+        !response.url().includes("/onec-teams") &&
+        response.status() === 200,
+    );
     await page.click('[data-team-source="rop"]');
+    await ropStructureResponse;
     await page.waitForFunction(
       () => new URL(window.location.href).searchParams.get("teamSource") !== "onec",
     );
-    await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
-    await expectModeSwitchVisible(page);
+    await page.waitForFunction(() => document.querySelectorAll(".clients-onec-team").length === 0);
+    await page.waitForSelector(".clients-team-mode-switch");
+    assert.equal(await page.locator('[data-team-source="rop"].clients-team-mode-switch__btn--active').count(), 1);
 
-    await page.waitForTimeout(900);
+    const staleSlowResponse = onecTeamsResponse(page, "Slow Alpha");
+    slowAlphaGate.release();
+    await staleSlowResponse;
+
     assert.equal(await page.locator(".clients-onec-team-list").count(), 0);
+    assert.equal(await page.locator(".clients-onec-team").count(), 0);
     assert.equal(new URL(page.url()).searchParams.get("teamSource"), null);
     assert.equal(new URL(page.url()).searchParams.get("teamQ"), null);
+    assert.equal(await page.locator('[data-team-source="rop"].clients-team-mode-switch__btn--active').count(), 1);
     await expectModeSwitchVisible(page);
-    await slowResponse.catch(() => undefined);
 
     await page.close();
     await stopServer();
