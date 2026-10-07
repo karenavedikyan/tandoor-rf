@@ -4,8 +4,10 @@ import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employ
 import {
   resolveRosterFieldValues,
   resolveTeamFieldValues,
+  rosterIncomingDiffersFromStored,
   rosterRecordValuesEqual,
 } from "../../src/onec-clients/roster-field-values";
+import type { WholesaleEmployeeRoster } from "../../src/onec-clients/employee-roster";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
 
 const MANAGER = "22222222-2222-4222-8222-222222222222";
@@ -102,6 +104,60 @@ describe("roster team field values", () => {
     assert.equal(changed.ok, true);
     if (!changed.ok) return;
     assert.equal(rosterRecordValuesEqual(baseExisting, changed.roster.records[0]!), false);
+  });
+});
+
+describe("roster storage drift", () => {
+  it("detects team backfill when columns are null but raw carries team fields", () => {
+    const parsed = parseWholesaleEmployeeRosterBytes(
+      buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, { guid_team: TEAM_A, name_team: "Team Alpha" })]),
+    );
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const existing = new Map([
+      [
+        MANAGER,
+        {
+          ...baseExisting,
+          guid_team: null,
+          name_team: null,
+        },
+      ],
+    ]);
+    assert.equal(rosterIncomingDiffersFromStored(existing, parsed.roster as WholesaleEmployeeRoster), true);
+  });
+
+  it("does not drift when stored values already match effective team semantics", () => {
+    const entry = buildEmployeeRosterEntry(MANAGER, { guid_team: TEAM_A, name_team: "Team Alpha" });
+    const parsed = parseWholesaleEmployeeRosterBytes(buildEmployeeRosterBytes([entry]));
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+
+    const record = parsed.roster.records[0]!;
+    const resolved = resolveRosterFieldValues(record, undefined);
+    const existing = new Map([
+      [
+        MANAGER,
+        {
+          guid_manager: MANAGER,
+          name_manager: resolved.nameManager,
+          guid_post: resolved.guidPost,
+          post: resolved.post,
+          guid_team: resolved.guidTeam,
+          name_team: resolved.nameTeam,
+          condition: resolved.condition,
+          date_of_assumption: resolved.dateOfAssumption,
+          guid_work_schedule: resolved.guidWorkSchedule,
+          work_schedule: resolved.workSchedule,
+          decree: resolved.decree,
+          email: resolved.email,
+          telephone: resolved.telephone,
+          raw_json: record.raw,
+        },
+      ],
+    ]);
+    assert.equal(rosterIncomingDiffersFromStored(existing, parsed.roster as WholesaleEmployeeRoster), false);
   });
 });
 

@@ -5,6 +5,8 @@ import {
   verificationFingerprintFromPayload,
   verifyApplyVerification,
 } from "../onec-clients/import-verification-fingerprint";
+import { rosterIncomingDiffersFromStored } from "../onec-clients/roster-field-values";
+import { loadExistingRoster } from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
 import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
 
@@ -70,7 +72,10 @@ export async function runRegularUpdateApplyGate(
   const actualFingerprint = verificationFingerprintFromPayload({ payload: input.payload }).toLowerCase();
   const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
   if (lastFingerprint && lastFingerprint === actualFingerprint) {
-    return { ok: true, unchangedBundle: true };
+    const existingRoster = await loadExistingRoster(client);
+    if (!rosterIncomingDiffersFromStored(existingRoster, input.roster)) {
+      return { ok: true, unchangedBundle: true };
+    }
   }
 
   const shrinkGuard = await detectAmbiguousRosterShrink(client, {

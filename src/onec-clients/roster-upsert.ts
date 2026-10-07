@@ -11,7 +11,7 @@ export type RosterUpsertCounts = {
   unchangedCount: number;
 };
 
-type ExistingRosterRow = {
+export type ExistingRosterRow = {
   guid_manager: string;
   name_manager: string;
   guid_post: string | null;
@@ -28,7 +28,7 @@ type ExistingRosterRow = {
   raw_json: Record<string, unknown>;
 };
 
-async function loadExistingRoster(client: PoolClient): Promise<Map<string, ExistingRosterRow>> {
+export async function loadExistingRoster(client: PoolClient): Promise<Map<string, ExistingRosterRow>> {
   const result = await client.query<ExistingRosterRow>(
     `
       SELECT
