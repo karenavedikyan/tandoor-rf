@@ -222,20 +222,28 @@ async function main(): Promise<void> {
       if (!user.employeeId) {
         continue;
       }
-      await client.query(
+      const link = await client.query(
         `
-          INSERT INTO user_onec_employee_links (user_id, employee_id, basis, confirmed_by_user_id)
-          VALUES ($1::uuid, $2::uuid, $3, $4::uuid)
-          ON CONFLICT (user_id) DO UPDATE
-          SET employee_id = EXCLUDED.employee_id,
-              basis = EXCLUDED.basis,
-              confirmed_by_user_id = EXCLUDED.confirmed_by_user_id,
+          UPDATE user_onec_employee_links
+          SET employee_id = $2::uuid,
+              basis = $3,
+              confirmed_by_user_id = $4::uuid,
               revoked_at = NULL,
               revoked_by_user_id = NULL,
               revoke_reason = NULL
+          WHERE user_id = $1::uuid AND revoked_at IS NULL
         `,
         [id, user.employeeId, "local demo seed", ids.get("admin@example.com")],
       );
+      if (link.rowCount === 0) {
+        await client.query(
+          `
+            INSERT INTO user_onec_employee_links (user_id, employee_id, basis, confirmed_by_user_id)
+            VALUES ($1::uuid, $2::uuid, $3, $4::uuid)
+          `,
+          [id, user.employeeId, "local demo seed", ids.get("admin@example.com")],
+        );
+      }
     }
 
     await client.query(
