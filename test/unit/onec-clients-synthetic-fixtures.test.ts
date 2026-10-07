@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { KNOWN_CLIENT_KEYS } from "../../src/onec-clients/constants";
 import type { ParsedClientRecord } from "../../src/onec-clients/types";
+import { validateExtendedClientsFileBytes } from "../../src/onec-clients/extended-validate";
 import { validateClientsFileBytes } from "../../src/onec-clients/validate";
 import {
   CLIENTS_FIXTURE_NAMES,
@@ -76,20 +77,22 @@ describe("onec clients synthetic fixtures (R0.2)", () => {
     }
   });
 
-  it("extra-unknown-fields.json warns and drops extra keys from normalized record", () => {
-    const result = validateClientsFileBytes(
+  it("extra-unknown-fields.json stores commercial keys on extended record without EXTRA_FIELDS warning", () => {
+    const result = validateExtendedClientsFileBytes(
       loadClientsFixture(CLIENTS_FIXTURE_NAMES.extraUnknownFields),
     );
     assert.equal(result.ok, true);
     if (result.ok) {
-      assert.equal(result.payload.warningCount, 1);
-      assert.ok(result.payload.warnings.some((w) => w.code === "EXTRA_FIELDS"));
+      assert.equal(result.payload.warningCount, 0);
       assert.equal(result.payload.records.length, 1);
       const record = result.payload.records[0]!;
-      assertParsedRecordShape(record);
       assert.equal("Discount" in record, false);
-      assert.equal("DiscountAmount" in record, false);
-      assert.equal("Markups" in record, false);
+      assert.equal(record.commercial.fieldPresence.discountProgram, true);
+      assert.equal(record.commercial.discountProgram, "SYNTHETIC-DISCOUNT-PROGRAM");
+      assert.equal(record.commercial.fieldPresence.discountAmount, true);
+      assert.equal(record.commercial.discountAmount, 0);
+      assert.equal(record.commercial.fieldPresence.markups, true);
+      assert.equal(record.commercial.markups.length, 1);
     }
   });
 

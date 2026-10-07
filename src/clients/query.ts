@@ -102,6 +102,12 @@ export type ClientsListQuery = {
   loadingSchedule?: LoadingScheduleFilter;
   filled?: string;
   empty?: string;
+  discountProgram?: string;
+  discountAmountMin?: number;
+  discountAmountMax?: number;
+  markupName?: string;
+  markupPercentage?: number;
+  bonusTandoorClub?: string;
   sortBy: ClientSortField | OutletSortField;
   sortDir: "asc" | "desc";
   page: number;
@@ -357,6 +363,24 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return raw;
   }
 
+  function parseOptionalStrictNumber(value: unknown): number | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const str = String(value).trim();
+    if (!/^-?\d+(?:\.\d+)?$/.test(str)) {
+      return null;
+    }
+    const parsed = Number(str);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    return parsed;
+  }
+
   let tandoorClub: string | undefined;
   if (input.tandoorClub !== undefined && input.tandoorClub !== null && input.tandoorClub !== "") {
     if (rejectNonScalar(input.tandoorClub)) {
@@ -389,6 +413,57 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   const filledEmptyValidation = validateFilledEmptyFields(filled, empty, entityRaw as ClientsEntityMode);
   if (!filledEmptyValidation.ok) {
     return { ok: false, message: filledEmptyValidation.message };
+  }
+
+  const discountProgram = parseOptionalSearchField(input.discountProgram, "discountProgram");
+  if (discountProgram === null) {
+    return { ok: false, message: "Некорректный фильтр Discount." };
+  }
+  if (entityRaw === "outlets" && discountProgram) {
+    return { ok: false, message: "Поле «discountProgram» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const discountAmountMin = parseOptionalStrictNumber(input.discountAmountMin);
+  if (discountAmountMin === null) {
+    return { ok: false, message: "Некорректный минимум DiscountAmount." };
+  }
+  const discountAmountMax = parseOptionalStrictNumber(input.discountAmountMax);
+  if (discountAmountMax === null) {
+    return { ok: false, message: "Некорректный максимум DiscountAmount." };
+  }
+  if (entityRaw === "outlets" && (discountAmountMin !== undefined || discountAmountMax !== undefined)) {
+    return { ok: false, message: "Диапазон DiscountAmount недоступен в режиме торговых точек." };
+  }
+  if (
+    discountAmountMin !== undefined &&
+    discountAmountMax !== undefined &&
+    discountAmountMin > discountAmountMax
+  ) {
+    return { ok: false, message: "Минимум DiscountAmount не может быть больше максимума." };
+  }
+
+  const markupName = parseOptionalSearchField(input.markupName, "markupName");
+  if (markupName === null) {
+    return { ok: false, message: "Некорректный фильтр Markups." };
+  }
+  const markupPercentage = parseOptionalStrictNumber(input.markupPercentage);
+  if (markupPercentage === null) {
+    return { ok: false, message: "Некорректный фильтр Percentage." };
+  }
+  if (entityRaw === "outlets" && (markupName || markupPercentage !== undefined)) {
+    return { ok: false, message: "Фильтр Markups недоступен в режиме торговых точек." };
+  }
+
+  let bonusTandoorClub: string | undefined;
+  if (input.bonusTandoorClub !== undefined && input.bonusTandoorClub !== null && input.bonusTandoorClub !== "") {
+    if (rejectNonScalar(input.bonusTandoorClub)) {
+      return { ok: false, message: "Некорректный фильтр Bonus Tandoor Club." };
+    }
+    const raw = String(input.bonusTandoorClub).trim();
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return { ok: false, message: "Слишком длинный фильтр Bonus Tandoor Club." };
+    }
+    bonusTandoorClub = raw;
   }
 
   const storePhoneContains = parseOptionalSearchField(input.storePhoneContains, "storePhoneContains");
@@ -611,6 +686,12 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       loadingSchedule: loadingScheduleRaw as LoadingScheduleFilter,
       filled,
       empty,
+      discountProgram,
+      discountAmountMin,
+      discountAmountMax,
+      markupName,
+      markupPercentage,
+      bonusTandoorClub,
       sortBy,
       sortDir,
       page,
@@ -755,6 +836,12 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.loadingSchedule !== "all" ||
       query.filled ||
       query.empty ||
+      query.discountProgram ||
+      query.discountAmountMin !== undefined ||
+      query.discountAmountMax !== undefined ||
+      query.markupName ||
+      query.markupPercentage !== undefined ||
+      query.bonusTandoorClub ||
       (query.completenessReasons && query.completenessReasons.length > 0) ||
       query.clientManagerMode ||
       query.outletManagerMode ||

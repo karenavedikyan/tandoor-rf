@@ -1,3 +1,8 @@
+import {
+  bonusTandoorClubEmptySql,
+  bonusTandoorClubFilledSql,
+  bonusTandoorClubSearchSql,
+} from "../bonus-tandoor-club";
 import { escapeIlikePattern } from "../phone";
 import { OUTLET_FILLED_EMPTY_FIELDS, parseFilledEmptyFieldList } from "../field-filter-registry";
 import type { ClientsListQuery, SqlFilter } from "../query";
@@ -66,6 +71,13 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
   if (query.tandoorClub && query.tandoorClub.trim().length > 0) {
     params.push(`%${escapeIlikePattern(query.tandoorClub.trim())}%`);
     clauses.push(`${outletTandoorClubSql(snapshotExpr)} ILIKE $${params.length} ESCAPE '\\'`);
+  }
+
+  if (query.bonusTandoorClub && query.bonusTandoorClub.trim().length > 0) {
+    params.push(`%${escapeIlikePattern(query.bonusTandoorClub.trim())}%`);
+    clauses.push(
+      bonusTandoorClubSearchSql(`${snapshotExpr}->'additional'`, `$${params.length}`),
+    );
   }
 
   if (query.storeAddressContains) {
@@ -162,6 +174,7 @@ function outletFilledExpr(snapshotExpr: string, field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'deliveryAddress'), '') IS NOT NULL`,
     routeDirection: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'routeDirection'), '') IS NOT NULL`,
     tandoorClub: `NULLIF(BTRIM(${snapshotExpr}->'additional'->>'statusTandoorClub'), '') IS NOT NULL`,
+    bonusTandoorClub: bonusTandoorClubFilledSql(`${snapshotExpr}->'additional'`),
     warehouse: `${snapshotExpr} ? 'warehouse' AND ${snapshotExpr}->'warehouse' IS NOT NULL AND ${snapshotExpr}->'warehouse' <> 'null'::jsonb`,
     storePhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'storePhone'), '') IS NOT NULL`,
     accountantPhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantPhone'), '') IS NOT NULL`,
@@ -185,6 +198,7 @@ function outletEmptyExpr(snapshotExpr: string, field: string): string {
     deliveryAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'deliveryAddress'), '') IS NULL`,
     routeDirection: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'routeDirection'), '') IS NULL`,
     tandoorClub: `NULLIF(BTRIM(${snapshotExpr}->'additional'->>'statusTandoorClub'), '') IS NULL`,
+    bonusTandoorClub: bonusTandoorClubEmptySql(`${snapshotExpr}->'additional'`),
     warehouse: `(${snapshotExpr}->'warehouse' IS NULL OR ${snapshotExpr}->'warehouse' = 'null'::jsonb)`,
     storePhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'storePhone'), '') IS NULL`,
     accountantPhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantPhone'), '') IS NULL`,

@@ -65,6 +65,12 @@
     "accountantEmailContains",
     "loadingTime",
     "loadingSchedule",
+    "discountProgram",
+    "discountAmountMin",
+    "discountAmountMax",
+    "markupName",
+    "markupPercentage",
+    "bonusTandoorClub",
     "filled",
     "empty",
     "portfolio",
@@ -89,7 +95,62 @@
     { value: "accountantEmail", label: "Email бухгалтерии пуст" },
     { value: "loadingTime", label: "Время приёмки пусто" },
     { value: "loadingSchedule", label: "Дни приёмки не заданы" },
+    { value: "tandoorClub", label: "Tandoor Club пуст" },
+    { value: "bonusTandoorClub", label: "Bonus Tandoor Club пуст" },
+    { value: "discountProgram", label: "Discount пуст" },
+    { value: "discountAmount", label: "DiscountAmount пуст" },
+    { value: "markups", label: "Markups пуст" },
   ];
+
+  var CLIENT_FILLED_EMPTY_FIELD_IDS = {
+    address: true,
+    telephone: true,
+    holding: true,
+    discountProgram: true,
+    discountAmount: true,
+    markups: true,
+  };
+
+  var CLIENT_ONLY_VALUE_FILTER_KEYS = [
+    "discountProgram",
+    "discountAmountMin",
+    "discountAmountMax",
+    "markupName",
+    "markupPercentage",
+  ];
+
+  function stripFilledEmptyFieldsForEntity(value, entity) {
+    if (!value || entity !== "outlets") {
+      return value || "";
+    }
+    return value
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(function (part) {
+        return part.length > 0 && !CLIENT_FILLED_EMPTY_FIELD_IDS[part];
+      })
+      .join(",");
+  }
+
+  function clearClientCommercialFilters(state) {
+    state.discountProgram = "";
+    state.discountAmountMin = "";
+    state.discountAmountMax = "";
+    state.markupName = "";
+    state.markupPercentage = "";
+  }
+
+  function sanitizeStateForEntity(state) {
+    var next = Object.assign({}, state);
+    if (next.entity === "outlets") {
+      clearClientCommercialFilters(next);
+      next.filled = stripFilledEmptyFieldsForEntity(next.filled, "outlets");
+      next.empty = stripFilledEmptyFieldsForEntity(next.empty, "outlets");
+    }
+    return next;
+  }
 
   var FIELD_FILTER_FILLED_OPTIONS = [
     { value: "", label: "—" },
@@ -100,6 +161,11 @@
     { value: "accountantEmail", label: "Email бухгалтерии заполнен" },
     { value: "loadingTime", label: "Время приёмки задано" },
     { value: "loadingSchedule", label: "Дни приёмки заданы" },
+    { value: "tandoorClub", label: "Tandoor Club заполнен" },
+    { value: "bonusTandoorClub", label: "Bonus Tandoor Club заполнен" },
+    { value: "discountProgram", label: "Discount заполнен" },
+    { value: "discountAmount", label: "DiscountAmount заполнен" },
+    { value: "markups", label: "Markups заполнен" },
   ];
 
   var CLIENT_COLUMNS = [
@@ -122,6 +188,8 @@
     { id: "warehouse", label: "Склад", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "tandoorClub", label: "Tandoor Club", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "cashback", label: "Cashback", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "discountProgram", label: "Discount", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "discountAmount", label: "DiscountAmount", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "nextStep", label: "Следующий шаг", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
   ];
 
@@ -139,6 +207,7 @@
     { id: "rop", label: "РОП ТТ", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
     { id: "warehouse", label: "Склад", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
     { id: "tandoorClub", label: "Tandoor Club", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
+    { id: "bonusTandoorClub", label: "Bonus Tandoor Club", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
     { id: "cashback", label: "Cashback", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
   ];
 
@@ -340,6 +409,9 @@
       next.sortBy = defaultSortFieldForEntity(next.entity);
       next.sortDir = "asc";
     }
+    if (next.entity !== previousEntity) {
+      next = sanitizeStateForEntity(next);
+    }
     return next;
   }
 
@@ -366,7 +438,7 @@
     var outletHardware =
       params.get("outletHardwareManager") || (entity === "outlets" ? legacyHardware : "");
     var legacyRop = params.get("ropEmployee") || "";
-    return {
+    return sanitizeStateForEntity({
       view: view,
       entity: entity,
       q: params.get("q") || "",
@@ -417,6 +489,12 @@
       accountantEmailContains: params.get("accountantEmailContains") || "",
       loadingTime: params.get("loadingTime") || "",
       loadingSchedule: params.get("loadingSchedule") || "all",
+      discountProgram: params.get("discountProgram") || "",
+      discountAmountMin: params.get("discountAmountMin") || "",
+      discountAmountMax: params.get("discountAmountMax") || "",
+      markupName: params.get("markupName") || "",
+      markupPercentage: params.get("markupPercentage") || "",
+      bonusTandoorClub: params.get("bonusTandoorClub") || "",
       filled: params.get("filled") || "",
       empty: params.get("empty") || "",
       missingRop: params.get("missingRop") === "1" || params.get("missingClientRop") === "1",
@@ -445,7 +523,7 @@
         }),
       teamQ: params.get("teamQ") || "",
       teamKind: params.get("teamKind") || "",
-    };
+    });
   }
 
   function normalizeTeamKind(value) {
@@ -497,47 +575,178 @@
 
   function appendAssignmentParams(params, state) {
     var entity = state.entity || "clients";
+    var managerSlice = assignmentFilterSliceFromState(
+      state,
+      {
+        clients: {
+          guid: "clientManager",
+          mode: "clientManagerMode",
+          missing: "missingClientManager",
+          legacyGuid: "manager",
+          legacyMissing: "missingManager",
+        },
+        outlets: {
+          guid: "outletManager",
+          mode: "outletManagerMode",
+          missing: "missingOutletManager",
+          legacyGuid: "manager",
+          legacyMissing: "missingManager",
+        },
+      },
+      entity,
+    );
+    var regionalSlice = assignmentFilterSliceFromState(
+      state,
+      {
+        clients: {
+          guid: "clientRegionalManager",
+          mode: "clientRegionalManagerMode",
+          missing: "missingClientRegional",
+          legacyGuid: "regionalManager",
+          legacyMissing: "missingRegional",
+        },
+        outlets: {
+          guid: "outletRegionalManager",
+          mode: "outletRegionalManagerMode",
+          missing: "missingOutletRegional",
+          legacyGuid: "regionalManager",
+          legacyMissing: "missingRegional",
+        },
+      },
+      entity,
+    );
+    var hardwareSlice = assignmentFilterSliceFromState(
+      state,
+      {
+        clients: {
+          guid: "clientHardwareManager",
+          mode: "clientHardwareManagerMode",
+          missing: "missingClientHardware",
+          legacyGuid: "hardwareManager",
+          legacyMissing: "missingHardware",
+        },
+        outlets: {
+          guid: "outletHardwareManager",
+          mode: "outletHardwareManagerMode",
+          missing: "missingOutletHardware",
+          legacyGuid: "hardwareManager",
+          legacyMissing: "missingHardware",
+        },
+      },
+      entity,
+    );
+    var ropSlice = assignmentFilterSliceFromState(
+      state,
+      {
+        clients: {
+          guid: "clientRopEmployee",
+          mode: "clientRopEmployeeMode",
+          missing: "missingClientRop",
+          legacyGuid: "ropEmployee",
+          legacyMissing: "missingRop",
+        },
+        outlets: {
+          guid: "outletRopEmployee",
+          mode: "outletRopEmployeeMode",
+          missing: "missingOutletRop",
+          legacyGuid: "ropEmployee",
+          legacyMissing: "missingRop",
+        },
+      },
+      entity,
+    );
+
     if (entity === "clients") {
-      if (state.clientManager) params.set("clientManager", state.clientManager);
-      if (state.outletManager) params.set("outletManager", state.outletManager);
-      if (state.clientRegionalManager) params.set("clientRegionalManager", state.clientRegionalManager);
-      if (state.outletRegionalManager) params.set("outletRegionalManager", state.outletRegionalManager);
-      if (state.clientHardwareManager) params.set("clientHardwareManager", state.clientHardwareManager);
-      if (state.outletHardwareManager) params.set("outletHardwareManager", state.outletHardwareManager);
-      if (state.clientRopEmployee) params.set("clientRopEmployee", state.clientRopEmployee);
-      if (state.outletRopEmployee) params.set("outletRopEmployee", state.outletRopEmployee);
-      if (state.missingClientManager) params.set("missingClientManager", "1");
-      if (state.missingOutletManager) params.set("missingOutletManager", "1");
-      if (state.missingClientRegional) params.set("missingClientRegional", "1");
-      if (state.missingOutletRegional) params.set("missingOutletRegional", "1");
-      if (state.missingClientHardware) params.set("missingClientHardware", "1");
-      if (state.missingOutletHardware) params.set("missingOutletHardware", "1");
-      if (state.missingClientRop) params.set("missingClientRop", "1");
-      if (state.missingOutletRop) params.set("missingOutletRop", "1");
+      writeAssignmentFilterParams(params, { guid: "clientManager", mode: "clientManagerMode" }, managerSlice);
+      writeAssignmentFilterParams(params, { guid: "clientRegionalManager", mode: "clientRegionalManagerMode" }, regionalSlice);
+      writeAssignmentFilterParams(params, { guid: "clientHardwareManager", mode: "clientHardwareManagerMode" }, hardwareSlice);
+      writeAssignmentFilterParams(params, { guid: "clientRopEmployee", mode: "clientRopEmployeeMode" }, ropSlice);
+      writeAssignmentFilterParams(
+        params,
+        { guid: "outletManager", mode: "outletManagerMode" },
+        assignmentFilterSliceFromState(
+          state,
+          {
+            clients: {
+              guid: "outletManager",
+              mode: "outletManagerMode",
+              missing: "missingOutletManager",
+            },
+            outlets: {
+              guid: "outletManager",
+              mode: "outletManagerMode",
+              missing: "missingOutletManager",
+            },
+          },
+          "clients",
+        ),
+      );
+      writeAssignmentFilterParams(
+        params,
+        { guid: "outletRegionalManager", mode: "outletRegionalManagerMode" },
+        assignmentFilterSliceFromState(
+          state,
+          {
+            clients: {
+              guid: "outletRegionalManager",
+              mode: "outletRegionalManagerMode",
+              missing: "missingOutletRegional",
+            },
+            outlets: {
+              guid: "outletRegionalManager",
+              mode: "outletRegionalManagerMode",
+              missing: "missingOutletRegional",
+            },
+          },
+          "clients",
+        ),
+      );
+      writeAssignmentFilterParams(
+        params,
+        { guid: "outletHardwareManager", mode: "outletHardwareManagerMode" },
+        assignmentFilterSliceFromState(
+          state,
+          {
+            clients: {
+              guid: "outletHardwareManager",
+              mode: "outletHardwareManagerMode",
+              missing: "missingOutletHardware",
+            },
+            outlets: {
+              guid: "outletHardwareManager",
+              mode: "outletHardwareManagerMode",
+              missing: "missingOutletHardware",
+            },
+          },
+          "clients",
+        ),
+      );
+      writeAssignmentFilterParams(
+        params,
+        { guid: "outletRopEmployee", mode: "outletRopEmployeeMode" },
+        assignmentFilterSliceFromState(
+          state,
+          {
+            clients: {
+              guid: "outletRopEmployee",
+              mode: "outletRopEmployeeMode",
+              missing: "missingOutletRop",
+            },
+            outlets: {
+              guid: "outletRopEmployee",
+              mode: "outletRopEmployeeMode",
+              missing: "missingOutletRop",
+            },
+          },
+          "clients",
+        ),
+      );
     } else {
-      if (state.outletManager || state.manager) params.set("outletManager", state.outletManager || state.manager);
-      if (state.outletRegionalManager || state.regionalManager) {
-        params.set("outletRegionalManager", state.outletRegionalManager || state.regionalManager);
-      }
-      if (state.outletHardwareManager || state.hardwareManager) {
-        params.set("outletHardwareManager", state.outletHardwareManager || state.hardwareManager);
-      }
-      if (state.outletRopEmployee || state.ropEmployee) {
-        params.set("outletRopEmployee", state.outletRopEmployee || state.ropEmployee);
-      }
-      if (state.missingOutletManager) params.set("missingOutletManager", "1");
-      if (state.missingOutletRegional) params.set("missingOutletRegional", "1");
-      if (state.missingOutletHardware) params.set("missingOutletHardware", "1");
-      if (state.missingOutletRop) params.set("missingOutletRop", "1");
+      writeAssignmentFilterParams(params, { guid: "outletManager", mode: "outletManagerMode" }, managerSlice);
+      writeAssignmentFilterParams(params, { guid: "outletRegionalManager", mode: "outletRegionalManagerMode" }, regionalSlice);
+      writeAssignmentFilterParams(params, { guid: "outletHardwareManager", mode: "outletHardwareManagerMode" }, hardwareSlice);
+      writeAssignmentFilterParams(params, { guid: "outletRopEmployee", mode: "outletRopEmployeeMode" }, ropSlice);
     }
-    if (state.clientManagerMode) params.set("clientManagerMode", state.clientManagerMode);
-    if (state.outletManagerMode) params.set("outletManagerMode", state.outletManagerMode);
-    if (state.clientRegionalManagerMode) params.set("clientRegionalManagerMode", state.clientRegionalManagerMode);
-    if (state.outletRegionalManagerMode) params.set("outletRegionalManagerMode", state.outletRegionalManagerMode);
-    if (state.clientHardwareManagerMode) params.set("clientHardwareManagerMode", state.clientHardwareManagerMode);
-    if (state.outletHardwareManagerMode) params.set("outletHardwareManagerMode", state.outletHardwareManagerMode);
-    if (state.clientRopEmployeeMode) params.set("clientRopEmployeeMode", state.clientRopEmployeeMode);
-    if (state.outletRopEmployeeMode) params.set("outletRopEmployeeMode", state.outletRopEmployeeMode);
   }
 
   function buildListQueryString(state) {
@@ -572,6 +781,12 @@
     if (state.loadingSchedule && state.loadingSchedule !== "all") {
       params.set("loadingSchedule", state.loadingSchedule);
     }
+    if (state.discountProgram) params.set("discountProgram", state.discountProgram);
+    if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
+    if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
+    if (state.markupName) params.set("markupName", state.markupName);
+    if (state.markupPercentage) params.set("markupPercentage", state.markupPercentage);
+    if (state.bonusTandoorClub) params.set("bonusTandoorClub", state.bonusTandoorClub);
     if (state.filled) params.set("filled", state.filled);
     if (state.empty) params.set("empty", state.empty);
     if (state.sortBy) params.set("sortBy", state.sortBy);
@@ -728,6 +943,449 @@
     }
     model.activeIndex = (model.activeIndex + delta + entryCount) % entryCount;
     return model;
+  }
+
+  var ASSIGNMENT_MODE_OPTIONS = [
+    { value: "", label: "Все" },
+    { value: "assigned", label: "Назначен" },
+    { value: "unassigned", label: "Не назначен" },
+    { value: "not_provided", label: "Не передан из 1С" },
+  ];
+
+  function parseGuidListParam(value) {
+    if (!value) {
+      return [];
+    }
+    return String(value)
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(function (part) {
+        return part.length > 0;
+      });
+  }
+
+  function formatGuidListParam(guids) {
+    if (!guids || !guids.length) {
+      return "";
+    }
+    return guids.join(",");
+  }
+
+  function normalizeAssignmentPresenceMode(value) {
+    if (!value) {
+      return "";
+    }
+    if (value === "assigned" || value === "unassigned" || value === "not_provided") {
+      return value;
+    }
+    return "";
+  }
+
+  function assignmentFilterSliceFromState(state, keys, entity) {
+    var scope = entity === "outlets" ? keys.outlets : keys.clients;
+    var mode = normalizeAssignmentPresenceMode(state[scope.mode] || "");
+    var missing = Boolean(state[scope.missing] || state[scope.legacyMissing]);
+    var guids = parseGuidListParam(state[scope.guid] || state[scope.legacyGuid] || "");
+    if (mode) {
+      return { guids: [], mode: mode };
+    }
+    if (missing) {
+      return { guids: [], mode: "unassigned" };
+    }
+    return { guids: guids, mode: "" };
+  }
+
+  function applyAssignmentFilterSliceToState(state, keys, entity, slice) {
+    var scope = entity === "outlets" ? keys.outlets : keys.clients;
+    var guids = slice.mode ? [] : slice.guids || [];
+    var mode = slice.mode || "";
+    state[scope.guid] = formatGuidListParam(guids);
+    state[scope.mode] = mode;
+    state[scope.missing] = false;
+    if (scope.legacyGuid) {
+      state[scope.legacyGuid] = state[scope.guid];
+    }
+    if (scope.legacyMissing) {
+      state[scope.legacyMissing] = false;
+    }
+    return state;
+  }
+
+  function writeAssignmentFilterParams(params, scope, slice) {
+    var guids = slice.mode ? [] : slice.guids || [];
+    var mode = slice.mode || "";
+    if (guids.length > 0) {
+      params.set(scope.guid, formatGuidListParam(guids));
+    }
+    if (mode) {
+      params.set(scope.mode, mode);
+    }
+  }
+
+  function createAssignmentFilterModel(multiSelect) {
+    return {
+      selectedGuids: [],
+      mode: "",
+      searchText: "",
+      activeIndex: -1,
+      open: false,
+      multiSelect: Boolean(multiSelect),
+    };
+  }
+
+  function populateAssignmentModeSelect(selectEl, ownerDocument) {
+    if (!selectEl) {
+      return;
+    }
+    selectEl.innerHTML = "";
+    ASSIGNMENT_MODE_OPTIONS.forEach(function (opt) {
+      var optionEl = (ownerDocument || selectEl.ownerDocument).createElement("option");
+      optionEl.value = opt.value;
+      optionEl.textContent = opt.label;
+      selectEl.appendChild(optionEl);
+    });
+  }
+
+  function assignmentFilterLabelsForGuids(guids, options) {
+    return guids.map(function (guid) {
+      return comboboxLabelForId(guid, options, null);
+    });
+  }
+
+  function mountAssignmentFilter(config) {
+    var model = config.model;
+    var modeSelect = config.modeSelect;
+    var input = config.input;
+    var hidden = config.hidden;
+    var tagsEl = config.tagsEl;
+    var listEl = config.listEl;
+    var options = config.options;
+    var allLabel = config.allLabel;
+    var missingEntry = config.missingEntry || null;
+    var listboxId = config.listboxId;
+    var onApply = config.onApply;
+    var ownerDocument = config.root.ownerDocument || (typeof document !== "undefined" ? document : null);
+
+    populateAssignmentModeSelect(modeSelect, ownerDocument);
+
+    function syncHidden() {
+      hidden.value = formatGuidListParam(model.selectedGuids);
+    }
+
+    function renderTags() {
+      if (!tagsEl) {
+        return;
+      }
+      tagsEl.innerHTML = "";
+      if (model.mode || !model.selectedGuids.length) {
+        tagsEl.classList.add("clients-hidden");
+        return;
+      }
+      tagsEl.classList.remove("clients-hidden");
+      model.selectedGuids.forEach(function (guid) {
+        var chip = (ownerDocument || tagsEl.ownerDocument).createElement("span");
+        chip.className = "clients-assignment-filter__tag";
+        chip.dataset.guid = guid;
+        var label = comboboxLabelForId(guid, options(), missingEntry);
+        var labelEl = (ownerDocument || tagsEl.ownerDocument).createElement("span");
+        labelEl.className = "clients-assignment-filter__tag-label";
+        labelEl.textContent = label;
+        chip.appendChild(labelEl);
+        var removeBtn = (ownerDocument || tagsEl.ownerDocument).createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "clients-assignment-filter__tag-remove";
+        removeBtn.setAttribute("aria-label", "Убрать " + label);
+        removeBtn.textContent = "×";
+        removeBtn.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          model.selectedGuids = model.selectedGuids.filter(function (item) {
+            return item !== guid;
+          });
+          syncDom();
+          onApply();
+        });
+        chip.appendChild(removeBtn);
+        tagsEl.appendChild(chip);
+      });
+    }
+
+    function updateComboboxDisabled() {
+      var disabled = Boolean(model.mode);
+      input.disabled = disabled;
+      input.classList.toggle("is-disabled", disabled);
+      if (disabled) {
+        model.open = false;
+        listEl.classList.add("clients-hidden");
+      }
+    }
+
+    function syncDom() {
+      if (modeSelect) {
+        modeSelect.value = model.mode || "";
+      }
+      if (model.mode) {
+        input.value = "";
+        model.searchText = "";
+      } else if (model.multiSelect) {
+        input.value = model.searchText;
+      } else {
+        input.value =
+          model.searchText ||
+          comboboxLabelForId(model.selectedGuids[0] || "", options(), missingEntry);
+      }
+      syncHidden();
+      renderTags();
+      updateComboboxDisabled();
+      input.setAttribute("aria-expanded", model.open ? "true" : "false");
+    }
+
+    function renderList() {
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
+      if (model.multiSelect) {
+        entries = entries.filter(function (entry) {
+          return entry.id !== "";
+        });
+        entries.unshift({ id: "", label: allLabel });
+      }
+      listEl.innerHTML = "";
+      entries.forEach(function (entry, index) {
+        var li = (ownerDocument || listEl.ownerDocument).createElement("li");
+        li.className = "clients-combobox__option";
+        if (model.multiSelect && entry.id && model.selectedGuids.indexOf(entry.id) !== -1) {
+          li.classList.add("is-selected");
+        }
+        li.setAttribute("role", "option");
+        li.id = listboxId + "-opt-" + index;
+        li.dataset.value = entry.id;
+        var prefix =
+          model.multiSelect && entry.id && model.selectedGuids.indexOf(entry.id) !== -1 ? "✓ " : "";
+        li.textContent = prefix + entry.label;
+        if (index === model.activeIndex) {
+          li.classList.add("is-active");
+          li.setAttribute("aria-selected", "true");
+          input.setAttribute("aria-activedescendant", li.id);
+        } else {
+          li.setAttribute("aria-selected", "false");
+        }
+        listEl.appendChild(li);
+      });
+      listEl.classList.toggle("clients-hidden", !model.open);
+      if (model.activeIndex < 0) {
+        input.removeAttribute("aria-activedescendant");
+      }
+      return entries;
+    }
+
+    function openList() {
+      if (model.mode) {
+        return;
+      }
+      model.open = true;
+      renderList();
+      syncDom();
+    }
+
+    function closeList(restoreLabel) {
+      if (restoreLabel) {
+        if (model.multiSelect) {
+          model.searchText = "";
+        } else {
+          comboboxOnBlur(
+            {
+              selectedId: model.selectedGuids[0] || "",
+              searchText: model.searchText,
+            },
+            options(),
+            missingEntry,
+          );
+          model.searchText = comboboxLabelForId(model.selectedGuids[0] || "", options(), missingEntry);
+        }
+      }
+      model.open = false;
+      model.activeIndex = -1;
+      listEl.classList.add("clients-hidden");
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+      syncDom();
+    }
+
+    function clearSelection() {
+      model.selectedGuids = [];
+      model.mode = "";
+      model.searchText = "";
+    }
+
+    function applyMode(mode) {
+      model.mode = normalizeAssignmentPresenceMode(mode);
+      if (model.mode) {
+        model.selectedGuids = [];
+        model.searchText = "";
+      }
+      syncDom();
+      onApply();
+    }
+
+    function toggleGuid(guid) {
+      if (!guid) {
+        clearSelection();
+        syncDom();
+        onApply();
+        return;
+      }
+      if (missingEntry && guid === missingEntry.id) {
+        applyMode("unassigned");
+        closeList(false);
+        return;
+      }
+      model.mode = "";
+      if (modeSelect) {
+        modeSelect.value = "";
+      }
+      if (model.multiSelect) {
+        if (model.selectedGuids.indexOf(guid) === -1) {
+          model.selectedGuids = model.selectedGuids.concat([guid]);
+        } else {
+          model.selectedGuids = model.selectedGuids.filter(function (item) {
+            return item !== guid;
+          });
+        }
+        model.searchText = "";
+        syncDom();
+        renderList();
+        onApply();
+        return;
+      }
+      model.selectedGuids = [guid];
+      model.searchText = comboboxLabelForId(guid, options(), missingEntry);
+      syncDom();
+      closeList(false);
+      onApply();
+    }
+
+    modeSelect?.addEventListener("change", function () {
+      applyMode(modeSelect.value || "");
+      closeList(false);
+    });
+
+    input.addEventListener("focus", function () {
+      openList();
+    });
+
+    input.addEventListener("input", function () {
+      if (model.mode) {
+        return;
+      }
+      model.searchText = input.value;
+      model.activeIndex = -1;
+      syncDom();
+      openList();
+    });
+
+    input.addEventListener("keydown", function (event) {
+      if (model.mode) {
+        return;
+      }
+      var entries = comboboxListEntries(options(), model.searchText, allLabel, missingEntry);
+      if (model.multiSelect) {
+        entries = entries.filter(function (entry) {
+          return entry.id !== "";
+        });
+        entries.unshift({ id: "", label: allLabel });
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        model.open = true;
+        comboboxMoveActive(model, entries.length, 1);
+        renderList();
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        model.open = true;
+        comboboxMoveActive(model, entries.length, -1);
+        renderList();
+        return;
+      }
+      if (event.key === "Enter") {
+        if (model.open && model.activeIndex >= 0 && entries[model.activeIndex]) {
+          event.preventDefault();
+          toggleGuid(entries[model.activeIndex].id);
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeList(true);
+        return;
+      }
+      if (event.key === "Tab") {
+        closeList(true);
+      }
+    });
+
+    listEl.addEventListener("mousedown", function (event) {
+      var target = event.target;
+      if (!target || typeof target.closest !== "function") {
+        return;
+      }
+      var option = target.closest(".clients-combobox__option");
+      if (!option) {
+        return;
+      }
+      event.preventDefault();
+      toggleGuid(option.dataset.value || "");
+    });
+
+    if (ownerDocument) {
+      ownerDocument.addEventListener("click", function (event) {
+        if (config.root.contains(event.target)) {
+          return;
+        }
+        if (model.open) {
+          closeList(true);
+        }
+      });
+    }
+
+    return {
+      model: model,
+      getState: function () {
+        return {
+          guids: model.selectedGuids.slice(),
+          mode: model.mode || "",
+        };
+      },
+      syncFromUrl: function (slice) {
+        var activeElement =
+          (input.ownerDocument && input.ownerDocument.activeElement) ||
+          (typeof document !== "undefined" ? document.activeElement : null);
+        var focused =
+          model.open ||
+          activeElement === input ||
+          (modeSelect && activeElement === modeSelect);
+        if (focused) {
+          return;
+        }
+        model.mode = normalizeAssignmentPresenceMode(slice.mode || "");
+        model.selectedGuids = model.mode ? [] : (slice.guids || []).slice();
+        model.searchText = model.multiSelect
+          ? ""
+          : comboboxLabelForId(model.selectedGuids[0] || "", options(), missingEntry);
+        model.activeIndex = -1;
+        model.open = false;
+        syncDom();
+      },
+      reset: function () {
+        clearSelection();
+        syncDom();
+        closeList(false);
+      },
+      syncDom: syncDom,
+      renderList: renderList,
+    };
   }
 
   function formatLoadedInLkLabel(lastImportedAtLabel) {
@@ -1208,6 +1866,7 @@
     defaultSortFieldForEntity: defaultSortFieldForEntity,
     mapSortFieldForEntity: mapSortFieldForEntity,
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
+    sanitizeStateForEntity: sanitizeStateForEntity,
     readStateFromSearch: readStateFromSearch,
     normalizeTeamKind: normalizeTeamKind,
     applyPresentationDefaults: applyPresentationDefaults,
@@ -1237,6 +1896,15 @@
     resolveComboboxSelection: resolveComboboxSelection,
     comboboxSelectedIdFromState: comboboxSelectedIdFromState,
     comboboxMoveActive: comboboxMoveActive,
+    ASSIGNMENT_MODE_OPTIONS: ASSIGNMENT_MODE_OPTIONS,
+    parseGuidListParam: parseGuidListParam,
+    formatGuidListParam: formatGuidListParam,
+    normalizeAssignmentPresenceMode: normalizeAssignmentPresenceMode,
+    assignmentFilterSliceFromState: assignmentFilterSliceFromState,
+    applyAssignmentFilterSliceToState: applyAssignmentFilterSliceToState,
+    createAssignmentFilterModel: createAssignmentFilterModel,
+    populateAssignmentModeSelect: populateAssignmentModeSelect,
+    mountAssignmentFilter: mountAssignmentFilter,
     createDetailController: createDetailController,
     mountCombobox: mountCombobox,
     FIELD_FILTER_EMPTY_OPTIONS: FIELD_FILTER_EMPTY_OPTIONS,

@@ -24,6 +24,11 @@ import type {
   RetailOutletHistoryEntry,
 } from "./extended-types";
 import type { ValidatedClientsPayload } from "./types";
+import {
+  hasAnyCommercialField,
+  mergeCommercialFields,
+  readSnapshotCommercial,
+} from "./commercial-fields";
 
 type ExistingExtendedRow = {
   guid_client: string;
@@ -361,6 +366,7 @@ export function buildExtendedSnapshotJson(
     previous?.headOfSales,
     isNewClient,
   );
+  const commercial = mergeCommercialFields(record.commercial, readSnapshotCommercial(previous) ?? undefined);
   const outletMerge = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
@@ -383,6 +389,7 @@ export function buildExtendedSnapshotJson(
     regionalManager,
     hardwareManager,
     headOfSales,
+    commercial,
     currentRetailOutlets,
     retailOutletHistory,
     blocks: previous?.blocks ?? {
@@ -413,6 +420,7 @@ export function buildExtendedSnapshotJson(
     regionalManager,
     hardwareManager,
     headOfSales,
+    commercial,
     currentRetailOutlets,
     retailOutletHistory: appendHistoryWhenBusinessChanged(
       previous,
@@ -449,7 +457,11 @@ export function resolveExtendedRecordsForApply(
     return map;
   }
   for (const record of payload.extendedRecords!) {
-    if (record.recordFormat !== "extended_v1" && !record.hasExtendedManagerFields) {
+    if (
+      record.recordFormat !== "extended_v1" &&
+      !record.hasExtendedManagerFields &&
+      !hasAnyCommercialField(record.commercial)
+    ) {
       continue;
     }
     map.set(record.guid_client, record);

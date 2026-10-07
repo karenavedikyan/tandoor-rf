@@ -13,6 +13,7 @@ import {
   applyClientEntityScopedOutletFilter,
   applyClientLevelFilledEmptyFilters,
 } from "./client-entity-outlet-filter";
+import { applyClientCommercialFilters } from "./commercial-list-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
 import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
 import { applyClientListAssignmentFilters } from "./list-assignment-filters";
@@ -203,6 +204,7 @@ async function resolveScopedFilter(
       userFilter = applyClientEntityScopedOutletFilter(userFilter, input, context);
     }
     userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
+    userFilter = applyClientCommercialFilters(userFilter, input);
   }
 
   const reviewJoin = buildReviewStateFilter(
@@ -368,7 +370,8 @@ export async function listClients(
         onec_clients.last_imported_at,
         onec_clients.extended_snapshot->'regionalManager' AS ext_regional_manager,
         onec_clients.extended_snapshot->'hardwareManager' AS ext_hardware_manager,
-        onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales
+        onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales,
+        onec_clients.extended_snapshot->'commercial' AS ext_commercial
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}
