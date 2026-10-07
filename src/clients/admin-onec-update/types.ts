@@ -26,6 +26,8 @@ export type AdminOnecUpdateJobDto = {
   jobSource: RegularUpdateJobSourceDto;
   jobSourceLabel: string;
   exportBatchId: string | null;
+  failureStage: string | null;
+  diagnosticId: string | null;
 };
 
 export type AdminOnecUpdateStatusResponse = {
@@ -38,4 +40,28 @@ export type AdminOnecUpdateStartResponse = {
   jobId: string;
   phase: "pending";
   message: string;
+};
+
+export type AdminOnecConfigCheckResponse = {
+  ok: boolean;
+  checks: Array<{
+    id: string;
+    label: string;
+    passed: boolean;
+    detail: string;
+  }>;
+  message: string;
+  canProbe: boolean;
+};
+
+export type AdminOnecUpdateProbeResponse = {
+  ok: boolean;
+  message: string;
+  config: AdminOnecConfigCheckResponse;
+  probe: {
+    status: string;
+    errorCode?: string;
+    stage?: string;
+    message: string;
+  } | null;
 };

@@ -193,7 +193,7 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     assert.equal(legacy.status, "pending");
   });
 
-  it("invalid FTP config fails without reading", async () => {
+  it("invalid FTP config fails without reading and preserves diagnostics", async () => {
     await pool.query(`
       INSERT INTO onec_import_jobs (mode, expires_at)
       VALUES ('dry_run', NOW() + INTERVAL '1 hour')
@@ -201,6 +201,10 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     assert.equal(await runOneImportJob(pool, { ...env, ONEC_FTP_BASE_PATH: "/other" }, reader), "failed");
     assert.equal(reads, 0);
     const job = (await pool.query("SELECT error_code, result FROM onec_import_jobs")).rows[0];
-    assert.deepEqual(job, { error_code: "IMPORT_JOB_FAILED", result: null });
+    assert.equal(job.error_code, "CONFIG_INVALID");
+    assert.equal(job.result.status, "ERROR");
+    assert.equal(job.result.stage, "config");
+    assert.match(job.result.message, /FTP|конфигура/i);
+    assert.doesNotMatch(JSON.stringify(job.result), /secret-test-value/);
   });
 });

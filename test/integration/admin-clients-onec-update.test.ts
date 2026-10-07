@@ -617,6 +617,64 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(clientRow.rows[0]?.name_client, "Admin Regular Only");
   });
 
+  it("returns read-only config check without secrets", async () => {
+    const app = await loadApp();
+    const res = await request(app)
+      .get("/api/admin/clients/onec-update/config-check")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.ok(Array.isArray(res.body.checks));
+    assert.equal(res.body.canProbe, true);
+    assert.doesNotMatch(JSON.stringify(res.body), /secret-test-value/);
+  });
+
+  it("returns config check failure for untrusted base path", async () => {
+    Object.assign(process.env, workerEnv, {
+      DATABASE_URL: databaseUrl,
+      ONEC_FTP_BASE_PATH: "/other",
+    });
+    const app = await loadApp();
+    const res = await request(app)
+      .get("/api/admin/clients/onec-update/config-check")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.canProbe, false);
+    assert.equal(
+      res.body.checks.find((check: { id: string }) => check.id === "trusted_base_path")?.passed,
+      false,
+    );
+  });
+
+  it("runs explicit read-only probe without apply", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)));
+    const beforeCount = (
+      await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients")
+    ).rows[0]?.count;
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.probe.status, "SUCCESS");
+    assert.doesNotMatch(JSON.stringify(res.body), /secret-test-value/);
+
+    const afterCount = (
+      await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients")
+    ).rows[0]?.count;
+    assert.equal(afterCount, beforeCount);
+    assert.equal(
+      (await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_import_jobs")).rows[0]
+        ?.count,
+      "0",
+    );
+  });
+
   it("reports commit uncertainty without promising preserved data", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);

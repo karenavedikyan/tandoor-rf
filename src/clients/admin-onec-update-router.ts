@@ -4,6 +4,8 @@ import { requireAuth } from "../middleware/auth";
 import { requireAdmin } from "../middleware/require-admin";
 import { requireDatabaseReady } from "../middleware/database";
 import {
+  adminOnecUpdateConfigCheckHandler,
+  adminOnecUpdateProbeHandler,
   adminOnecUpdateStartHandler,
   adminOnecUpdateStatusHandler,
 } from "./admin-onec-update/handlers";
@@ -14,6 +16,14 @@ export function createAdminClientsRouter(): express.Router {
 
   router.get("/onec-update/status", ...adminChain, (req, res, next) => {
     void adminOnecUpdateStatusHandler(req, res).catch(next);
+  });
+
+  router.get("/onec-update/config-check", ...adminChain, (req, res, next) => {
+    void adminOnecUpdateConfigCheckHandler(req, res).catch(next);
+  });
+
+  router.post("/onec-update/probe", csrfProtection, ...adminChain, (req, res, next) => {
+    void adminOnecUpdateProbeHandler(req, res).catch(next);
   });
 
   router.post("/onec-update", csrfProtection, ...adminChain, (req, res, next) => {

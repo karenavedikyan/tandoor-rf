@@ -72,6 +72,15 @@ function mapResultMessage(result: RegularUpdateResult | null, errorCode: string 
   if (result?.message) {
     return result.message;
   }
+  if (errorCode === "CONFIG_INVALID") {
+    return "Настройки FTP для 1С не проходят проверку безопасности. Обновление не запускалось.";
+  }
+  if (errorCode === "CONFIG_ERROR") {
+    return "Параметры FTP 1С заданы неполностью или некорректно.";
+  }
+  if (errorCode === "IMPORT_JOB_UNKNOWN") {
+    return result?.message || "Внутренняя ошибка при выполнении обновления.";
+  }
   if (errorCode === "IMPORT_JOB_FAILED") {
     return "Не удалось выполнить обновление из 1С.";
   }
@@ -101,6 +110,13 @@ function mapUiPhase(status: JobRow["status"], result: RegularUpdateResult | null
 }
 
 const DATA_PRESERVED_REJECTION_CODES = new Set([
+  "CONFIG_INVALID",
+  "CONFIG_ERROR",
+  "FTP_ERROR",
+  "FTP_READ_FAILED",
+  "TIMEOUT",
+  "EMPLOYEE_ROSTER_UNREADABLE",
+  "EMPLOYEE_ROSTER_MISMATCH",
   "RELEASE_CONSISTENCY_NOT_CONFIRMED",
   "MANIFEST_NOT_FOUND",
   "MANIFEST_UNREADABLE",
@@ -122,10 +138,14 @@ function dataPreserved(phase: OnecUpdateUiPhase, errorCode: string | null): bool
   if (phase === "uncertain") {
     return false;
   }
-  if (errorCode === "COMMIT_UNCERTAIN") {
+  if (errorCode === "COMMIT_UNCERTAIN" || errorCode === "IMPORT_JOB_UNKNOWN") {
     return false;
   }
-  if (phase === "rejected" && errorCode && DATA_PRESERVED_REJECTION_CODES.has(errorCode)) {
+  if (
+    (phase === "rejected" || phase === "error") &&
+    errorCode &&
+    DATA_PRESERVED_REJECTION_CODES.has(errorCode)
+  ) {
     return true;
   }
   return false;
@@ -156,6 +176,8 @@ export function mapJobRowToDto(
     jobSource: row.job_source,
     jobSourceLabel: JOB_SOURCE_LABELS[row.job_source],
     exportBatchId: row.result?.exportBatchId ?? null,
+    failureStage: row.result?.stage ?? null,
+    diagnosticId: row.result?.diagnosticId ?? null,
   };
 }
 

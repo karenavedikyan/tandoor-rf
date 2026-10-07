@@ -2,7 +2,12 @@ import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/auth";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
-import { getAdminOnecUpdateStatus, startAdminOnecUpdate } from "./service";
+import {
+  getAdminOnecConfigCheck,
+  getAdminOnecUpdateStatus,
+  runAdminOnecUpdateProbe,
+  startAdminOnecUpdate,
+} from "./service";
 
 export async function adminOnecUpdateStatusHandler(
   _req: AuthenticatedRequest,
@@ -11,6 +16,24 @@ export async function adminOnecUpdateStatusHandler(
   const status = await getAdminOnecUpdateStatus();
   setNoStore(res);
   res.status(200).json(status);
+}
+
+export async function adminOnecUpdateConfigCheckHandler(
+  _req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> {
+  const payload = await getAdminOnecConfigCheck();
+  setNoStore(res);
+  res.status(200).json(payload);
+}
+
+export async function adminOnecUpdateProbeHandler(
+  _req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> {
+  const payload = await runAdminOnecUpdateProbe();
+  setNoStore(res);
+  res.status(payload.ok ? 200 : 409).json(payload);
 }
 
 export async function adminOnecUpdateStartHandler(
