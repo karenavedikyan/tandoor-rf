@@ -279,6 +279,119 @@
                     <ul id="hardware-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
+                <div class="clients-field clients-hidden" id="outlet-manager-filter-wrap">
+                  <span class="clients-field__label">Менеджер ТТ</span>
+                  <div class="clients-combobox" id="outlet-manager-combobox">
+                    <input
+                      id="outlet-manager-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-controls="outlet-manager-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все менеджеры ТТ"
+                    />
+                    <input type="hidden" id="outlet-manager-filter" value="" />
+                    <ul id="outlet-manager-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <div class="clients-field clients-hidden" id="outlet-regional-filter-wrap">
+                  <span class="clients-field__label">Региональный ТТ</span>
+                  <div class="clients-combobox" id="outlet-regional-combobox">
+                    <input
+                      id="outlet-regional-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-controls="outlet-regional-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все региональные ТТ"
+                    />
+                    <input type="hidden" id="outlet-regional-filter" value="" />
+                    <ul id="outlet-regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <div class="clients-field clients-hidden" id="outlet-hardware-filter-wrap">
+                  <span class="clients-field__label">По фурнитуре ТТ</span>
+                  <div class="clients-combobox" id="outlet-hardware-combobox">
+                    <input
+                      id="outlet-hardware-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-controls="outlet-hardware-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все менеджеры по фурнитуре ТТ"
+                    />
+                    <input type="hidden" id="outlet-hardware-filter" value="" />
+                    <ul id="outlet-hardware-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <div class="clients-field clients-hidden" id="outlet-rop-filter-wrap">
+                  <span class="clients-field__label">РОП ТТ</span>
+                  <div class="clients-combobox" id="outlet-rop-combobox">
+                    <input
+                      id="outlet-rop-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-controls="outlet-rop-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все РОП ТТ"
+                    />
+                    <input type="hidden" id="outlet-rop-filter" value="" />
+                    <ul id="outlet-rop-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <details class="clients-field-filters clients-hidden" id="field-filters-wrap">
+                  <summary class="clients-field-filters__summary">Поля ТТ и контакты</summary>
+                  <div class="clients-field-filters__grid">
+                    <label class="clients-field">
+                      <span class="clients-field__label">Маршрут содержит</span>
+                      <input id="route-direction-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Адрес ТТ содержит</span>
+                      <input id="store-address-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Телефон магазина</span>
+                      <input id="store-phone-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Телефон бухгалтерии</span>
+                      <input id="accountant-phone-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Email бухгалтерии</span>
+                      <input id="accountant-email-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Время приёмки</span>
+                      <input id="loading-time-filter" class="clients-field__input" type="search" autocomplete="off" />
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Дни приёмки</span>
+                      <select id="loading-schedule-filter" class="clients-field__select">
+                        <option value="all">Все</option>
+                        <option value="yes">Заданы</option>
+                        <option value="no">Не заданы</option>
+                      </select>
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Заполнено</span>
+                      <select id="filled-field-filter" class="clients-field__select"></select>
+                    </label>
+                    <label class="clients-field">
+                      <span class="clients-field__label">Пусто</span>
+                      <select id="empty-field-filter" class="clients-field__select"></select>
+                    </label>
+                  </div>
+                </details>
                 <label class="clients-field clients-hidden" id="tandoor-filter-wrap">
                   <span class="clients-field__label">Tandoor Club</span>
                   <input id="tandoor-filter" class="clients-field__input" type="search" autocomplete="off" placeholder="Статус клуба" />

@@ -34,7 +34,9 @@ async function waitForResetListState(
     if (
       state.listCalls > callsBeforeReset &&
       !state.lastListUrl.includes("ropEmployee=") &&
-      !state.lastListUrl.includes("manager=")
+      !state.lastListUrl.includes("clientRopEmployee=") &&
+      !state.lastListUrl.includes("manager=") &&
+      !state.lastListUrl.includes("clientManager=")
     ) {
       return;
     }
@@ -126,22 +128,24 @@ describe("clients list filters browser", { concurrency: false }, () => {
     await page.goto(`${baseUrl}/clients?view=all`, { waitUntil: "networkidle" });
     await page.waitForSelector("#rop-filter-wrap:not(.clients-hidden)");
     const ropFilteredResponse = page.waitForResponse(
-      (response) => response.url().includes("/api/clients") && response.url().includes("ropEmployee="),
+      (response) =>
+        response.url().includes("/api/clients") &&
+        (response.url().includes("clientRopEmployee=") || response.url().includes("ropEmployee=")),
     );
     await selectComboboxOption(page, "rop-filter-input", "ROP Alpha");
     await ropFilteredResponse;
-    assert.match(page.url(), new RegExp(`ropEmployee=${NAV_ROP_A}`));
+    assert.match(page.url(), new RegExp(`(clientRopEmployee|ropEmployee)=${NAV_ROP_A}`));
 
     const filteredResponse = page.waitForResponse(
       (response) =>
         response.url().includes("/api/clients") &&
-        response.url().includes("ropEmployee=") &&
-        response.url().includes("manager="),
+        (response.url().includes("clientRopEmployee=") || response.url().includes("ropEmployee=")) &&
+        (response.url().includes("clientManager=") || response.url().includes("manager=")),
     );
     await selectComboboxOption(page, "manager-filter-input", "Менеджер Иванов");
     await filteredResponse;
-    assert.match(state.lastListUrl, new RegExp(`ropEmployee=${NAV_ROP_A}`));
-    assert.match(state.lastListUrl, new RegExp(`manager=${SYNTHETIC_MANAGER_A}`));
+    assert.match(state.lastListUrl, new RegExp(`(clientRopEmployee|ropEmployee)=${NAV_ROP_A}`));
+    assert.match(state.lastListUrl, new RegExp(`(clientManager|manager)=${SYNTHETIC_MANAGER_A}`));
 
     await page.click('[data-entity="outlets"]');
     await page.waitForFunction(() => window.location.search.includes("entity=outlets"));
@@ -149,7 +153,7 @@ describe("clients list filters browser", { concurrency: false }, () => {
 
     await page.reload({ waitUntil: "networkidle" });
     assert.match(page.url(), /entity=outlets/);
-    assert.match(page.url(), new RegExp(`ropEmployee=${NAV_ROP_A}`));
+    assert.match(page.url(), new RegExp(`(outletRopEmployee|ropEmployee)=${NAV_ROP_A}`));
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "clients-list-active-filters.png"),
@@ -158,7 +162,11 @@ describe("clients list filters browser", { concurrency: false }, () => {
 
     const listCallsBeforeReset = state.listCalls;
     await page.click("#reset-filters");
-    await page.waitForFunction(() => !window.location.search.includes("ropEmployee="));
+    await page.waitForFunction(
+      () =>
+        !window.location.search.includes("ropEmployee=") &&
+        !window.location.search.includes("clientRopEmployee="),
+    );
     await waitForResetListState(state, listCallsBeforeReset);
     assert.equal(await page.locator("#rop-filter-input").inputValue(), "");
     assert.equal(await page.locator("#manager-filter-input").inputValue(), "");
@@ -185,11 +193,15 @@ describe("clients list filters browser", { concurrency: false }, () => {
 
     const hardwareFiltered = page.waitForResponse(
       (response) =>
-        response.url().includes("/api/clients") && response.url().includes("hardwareManager="),
+        response.url().includes("/api/clients") &&
+        (response.url().includes("clientHardwareManager=") || response.url().includes("hardwareManager=")),
     );
     await selectComboboxOption(page, "hardware-filter-input", "Hardware Lead");
     await hardwareFiltered;
-    assert.match(page.url(), /hardwareManager=77777777-7777-4777-8777-777777777777/);
+    assert.match(
+      page.url(),
+      /(clientHardwareManager|hardwareManager)=77777777-7777-4777-8777-777777777777/,
+    );
 
     await page.click('[data-entity="outlets"]');
     await page.waitForFunction(() => window.location.search.includes("entity=outlets"));
@@ -199,7 +211,7 @@ describe("clients list filters browser", { concurrency: false }, () => {
     await firstClientLink.click();
     await page.waitForURL(/\/clients\//);
     await page.goBack({ waitUntil: "networkidle" });
-    assert.match(page.url(), /hardwareManager=/);
+    assert.match(page.url(), /(clientHardwareManager|outletHardwareManager|hardwareManager)=/);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "networkidle" });
@@ -210,7 +222,12 @@ describe("clients list filters browser", { concurrency: false }, () => {
       fullPage: true,
     });
     await page.click("#reset-filters");
-    await page.waitForFunction(() => !window.location.search.includes("hardwareManager="));
+    await page.waitForFunction(
+      () =>
+        !window.location.search.includes("hardwareManager=") &&
+        !window.location.search.includes("clientHardwareManager=") &&
+        !window.location.search.includes("outletHardwareManager="),
+    );
     assert.equal(await page.locator("#hardware-filter-input").inputValue(), "");
     await page.close();
   });

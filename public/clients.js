@@ -84,6 +84,32 @@
   var hardwareFilter = document.getElementById("hardware-filter");
   var hardwareFilterInput = document.getElementById("hardware-filter-input");
   var hardwareFilterList = document.getElementById("hardware-filter-list");
+  var outletManagerFilterWrap = document.getElementById("outlet-manager-filter-wrap");
+  var outletManagerFilter = document.getElementById("outlet-manager-filter");
+  var outletManagerFilterInput = document.getElementById("outlet-manager-filter-input");
+  var outletManagerFilterList = document.getElementById("outlet-manager-filter-list");
+  var outletRegionalFilterWrap = document.getElementById("outlet-regional-filter-wrap");
+  var outletRegionalFilter = document.getElementById("outlet-regional-filter");
+  var outletRegionalFilterInput = document.getElementById("outlet-regional-filter-input");
+  var outletRegionalFilterList = document.getElementById("outlet-regional-filter-list");
+  var outletHardwareFilterWrap = document.getElementById("outlet-hardware-filter-wrap");
+  var outletHardwareFilter = document.getElementById("outlet-hardware-filter");
+  var outletHardwareFilterInput = document.getElementById("outlet-hardware-filter-input");
+  var outletHardwareFilterList = document.getElementById("outlet-hardware-filter-list");
+  var outletRopFilterWrap = document.getElementById("outlet-rop-filter-wrap");
+  var outletRopFilter = document.getElementById("outlet-rop-filter");
+  var outletRopFilterInput = document.getElementById("outlet-rop-filter-input");
+  var outletRopFilterList = document.getElementById("outlet-rop-filter-list");
+  var fieldFiltersWrap = document.getElementById("field-filters-wrap");
+  var routeDirectionFilter = document.getElementById("route-direction-filter");
+  var storeAddressFilter = document.getElementById("store-address-filter");
+  var storePhoneFilter = document.getElementById("store-phone-filter");
+  var accountantPhoneFilter = document.getElementById("accountant-phone-filter");
+  var accountantEmailFilter = document.getElementById("accountant-email-filter");
+  var loadingTimeFilter = document.getElementById("loading-time-filter");
+  var loadingScheduleFilter = document.getElementById("loading-schedule-filter");
+  var filledFieldFilter = document.getElementById("filled-field-filter");
+  var emptyFieldFilter = document.getElementById("empty-field-filter");
   var ropFilterLabelEl = document.getElementById("rop-filter-label");
   var managerFilterLabelEl = document.getElementById("manager-filter-label");
   var regionalFilterLabelEl = document.getElementById("regional-filter-label");
@@ -121,11 +147,22 @@
   var regionalCombobox = null;
   var hardwareCombobox = null;
   var ropCombobox = null;
+  var outletManagerCombobox = null;
+  var outletRegionalCombobox = null;
+  var outletHardwareCombobox = null;
+  var outletRopCombobox = null;
 
   var ropMissingEntry = { id: logic.MISSING_ROP_ID, label: "РОП не указан" };
   var managerMissingEntry = { id: logic.MISSING_MANAGER_ID, label: "Менеджер не указан" };
   var regionalMissingEntry = { id: logic.MISSING_REGIONAL_ID, label: "Региональный не указан" };
   var hardwareMissingEntry = { id: logic.MISSING_HARDWARE_ID, label: "Менеджер по фурнитуре не указан" };
+  var outletManagerMissingEntry = { id: logic.MISSING_MANAGER_ID + "_outlet", label: "Менеджер ТТ не указан" };
+  var outletRegionalMissingEntry = { id: logic.MISSING_REGIONAL_ID + "_outlet", label: "Региональный ТТ не указан" };
+  var outletHardwareMissingEntry = {
+    id: logic.MISSING_HARDWARE_ID + "_outlet",
+    label: "Менеджер по фурнитуре ТТ не указан",
+  };
+  var outletRopMissingEntry = { id: logic.MISSING_ROP_ID + "_outlet", label: "РОП ТТ не указан" };
   var currentUser = null;
   var rolePresentation = null;
   var teamContext = {
@@ -428,8 +465,16 @@
     if (state.view === "teams" || state.view === "review") {
       return state;
     }
+    var isOutlets = (state.entity || "clients") === "outlets";
     if (ropCombobox) {
       var ropSelection = logic.resolveComboboxSelection(ropCombobox.model.selectedId, ropMissingEntry);
+      if (isOutlets) {
+        state.outletRopEmployee = ropSelection.missing ? "" : ropSelection.guid;
+        state.missingOutletRop = ropSelection.missing;
+      } else {
+        state.clientRopEmployee = ropSelection.missing ? "" : ropSelection.guid;
+        state.missingClientRop = ropSelection.missing;
+      }
       state.ropEmployee = ropSelection.missing ? "" : ropSelection.guid;
       state.missingRop = ropSelection.missing;
     }
@@ -438,6 +483,13 @@
         managerCombobox.model.selectedId,
         managerMissingEntry,
       );
+      if (isOutlets) {
+        state.outletManager = managerSelection.missing ? "" : managerSelection.guid;
+        state.missingOutletManager = managerSelection.missing;
+      } else {
+        state.clientManager = managerSelection.missing ? "" : managerSelection.guid;
+        state.missingClientManager = managerSelection.missing;
+      }
       state.manager = managerSelection.missing ? "" : managerSelection.guid;
       state.missingManager = managerSelection.missing;
     }
@@ -446,6 +498,13 @@
         regionalCombobox.model.selectedId,
         regionalMissingEntry,
       );
+      if (isOutlets) {
+        state.outletRegionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
+        state.missingOutletRegional = regionalSelection.missing;
+      } else {
+        state.clientRegionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
+        state.missingClientRegional = regionalSelection.missing;
+      }
       state.regionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
       state.missingRegional = regionalSelection.missing;
     }
@@ -454,8 +513,47 @@
         hardwareCombobox.model.selectedId,
         hardwareMissingEntry,
       );
+      if (isOutlets) {
+        state.outletHardwareManager = hardwareSelection.missing ? "" : hardwareSelection.guid;
+        state.missingOutletHardware = hardwareSelection.missing;
+      } else {
+        state.clientHardwareManager = hardwareSelection.missing ? "" : hardwareSelection.guid;
+        state.missingClientHardware = hardwareSelection.missing;
+      }
       state.hardwareManager = hardwareSelection.missing ? "" : hardwareSelection.guid;
       state.missingHardware = hardwareSelection.missing;
+    }
+    if (!isOutlets && outletManagerCombobox) {
+      var outletManagerSelection = logic.resolveComboboxSelection(
+        outletManagerCombobox.model.selectedId,
+        outletManagerMissingEntry,
+      );
+      state.outletManager = outletManagerSelection.missing ? "" : outletManagerSelection.guid;
+      state.missingOutletManager = outletManagerSelection.missing;
+    }
+    if (!isOutlets && outletRegionalCombobox) {
+      var outletRegionalSelection = logic.resolveComboboxSelection(
+        outletRegionalCombobox.model.selectedId,
+        outletRegionalMissingEntry,
+      );
+      state.outletRegionalManager = outletRegionalSelection.missing ? "" : outletRegionalSelection.guid;
+      state.missingOutletRegional = outletRegionalSelection.missing;
+    }
+    if (!isOutlets && outletHardwareCombobox) {
+      var outletHardwareSelection = logic.resolveComboboxSelection(
+        outletHardwareCombobox.model.selectedId,
+        outletHardwareMissingEntry,
+      );
+      state.outletHardwareManager = outletHardwareSelection.missing ? "" : outletHardwareSelection.guid;
+      state.missingOutletHardware = outletHardwareSelection.missing;
+    }
+    if (!isOutlets && outletRopCombobox) {
+      var outletRopSelection = logic.resolveComboboxSelection(
+        outletRopCombobox.model.selectedId,
+        outletRopMissingEntry,
+      );
+      state.outletRopEmployee = outletRopSelection.missing ? "" : outletRopSelection.guid;
+      state.missingOutletRop = outletRopSelection.missing;
     }
     return state;
   }
@@ -485,6 +583,31 @@
       missingManager: false,
       missingRegional: false,
       missingHardware: false,
+      clientManager: "",
+      outletManager: "",
+      clientRegionalManager: "",
+      outletRegionalManager: "",
+      clientHardwareManager: "",
+      outletHardwareManager: "",
+      clientRopEmployee: "",
+      outletRopEmployee: "",
+      missingClientManager: false,
+      missingOutletManager: false,
+      missingClientRegional: false,
+      missingOutletRegional: false,
+      missingClientHardware: false,
+      missingOutletHardware: false,
+      missingClientRop: false,
+      missingOutletRop: false,
+      routeDirection: routeDirectionFilter ? routeDirectionFilter.value.trim() : "",
+      storeAddressContains: storeAddressFilter ? storeAddressFilter.value.trim() : "",
+      storePhoneContains: storePhoneFilter ? storePhoneFilter.value.trim() : "",
+      accountantPhoneContains: accountantPhoneFilter ? accountantPhoneFilter.value.trim() : "",
+      accountantEmailContains: accountantEmailFilter ? accountantEmailFilter.value.trim() : "",
+      loadingTime: loadingTimeFilter ? loadingTimeFilter.value.trim() : "",
+      loadingSchedule: loadingScheduleFilter ? loadingScheduleFilter.value || "all" : "all",
+      filled: filledFieldFilter ? filledFieldFilter.value || "" : "",
+      empty: emptyFieldFilter ? emptyFieldFilter.value || "" : "",
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
@@ -566,16 +689,56 @@
     appEl.dataset.cols = state.cols || "";
     visibleColumnIds = resolveColumnsForState(state);
     searchInput.value = state.q || "";
-    managerFilter.value = state.missingManager ? "" : state.manager || "";
+    var isOutletsEntity = (state.entity || "clients") === "outlets";
+    managerFilter.value = isOutletsEntity
+      ? state.missingOutletManager
+        ? ""
+        : state.outletManager || state.manager || ""
+      : state.missingClientManager
+        ? ""
+        : state.clientManager || state.manager || "";
     holdingFilter.value = state.holding;
     phoneFilter.value = state.phone || "all";
     outletsFilter.value = state.hasOutlets || "all";
     outletStatusFilter.value = state.outletStatus || "all";
     warehouseFilter.value = state.warehouse || "all";
-    regionalFilter.value = state.missingRegional ? "" : state.regionalManager || "";
+    regionalFilter.value = isOutletsEntity
+      ? state.missingOutletRegional
+        ? ""
+        : state.outletRegionalManager || state.regionalManager || ""
+      : state.missingClientRegional
+        ? ""
+        : state.clientRegionalManager || state.regionalManager || "";
     if (hardwareFilter) {
-      hardwareFilter.value = state.missingHardware ? "" : state.hardwareManager || "";
+      hardwareFilter.value = isOutletsEntity
+        ? state.missingOutletHardware
+          ? ""
+          : state.outletHardwareManager || state.hardwareManager || ""
+        : state.missingClientHardware
+          ? ""
+          : state.clientHardwareManager || state.hardwareManager || "";
     }
+    if (outletManagerFilter) {
+      outletManagerFilter.value = state.missingOutletManager ? "" : state.outletManager || "";
+    }
+    if (outletRegionalFilter) {
+      outletRegionalFilter.value = state.missingOutletRegional ? "" : state.outletRegionalManager || "";
+    }
+    if (outletHardwareFilter) {
+      outletHardwareFilter.value = state.missingOutletHardware ? "" : state.outletHardwareManager || "";
+    }
+    if (outletRopFilter) {
+      outletRopFilter.value = state.missingOutletRop ? "" : state.outletRopEmployee || "";
+    }
+    if (routeDirectionFilter) routeDirectionFilter.value = state.routeDirection || "";
+    if (storeAddressFilter) storeAddressFilter.value = state.storeAddressContains || "";
+    if (storePhoneFilter) storePhoneFilter.value = state.storePhoneContains || "";
+    if (accountantPhoneFilter) accountantPhoneFilter.value = state.accountantPhoneContains || "";
+    if (accountantEmailFilter) accountantEmailFilter.value = state.accountantEmailContains || "";
+    if (loadingTimeFilter) loadingTimeFilter.value = state.loadingTime || "";
+    if (loadingScheduleFilter) loadingScheduleFilter.value = state.loadingSchedule || "all";
+    if (filledFieldFilter) filledFieldFilter.value = state.filled || "";
+    if (emptyFieldFilter) emptyFieldFilter.value = state.empty || "";
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
@@ -583,12 +746,20 @@
     applyCompletenessReasonsToFilter(state.completenessReasons || []);
     if (ropCombobox && state.view !== "teams" && state.view !== "review") {
       ropCombobox.syncFromUrl(
-        logic.comboboxSelectedIdFromState(state.ropEmployee, state.missingRop, logic.MISSING_ROP_ID),
+        logic.comboboxSelectedIdFromState(
+          isOutletsEntity ? state.outletRopEmployee || state.ropEmployee : state.clientRopEmployee || state.ropEmployee,
+          isOutletsEntity ? state.missingOutletRop || state.missingRop : state.missingClientRop || state.missingRop,
+          logic.MISSING_ROP_ID,
+        ),
       );
     }
     if (managerCombobox) {
       managerCombobox.syncFromUrl(
-        logic.comboboxSelectedIdFromState(state.manager, state.missingManager, logic.MISSING_MANAGER_ID),
+        logic.comboboxSelectedIdFromState(
+          isOutletsEntity ? state.outletManager || state.manager : state.clientManager || state.manager,
+          isOutletsEntity ? state.missingOutletManager || state.missingManager : state.missingClientManager || state.missingManager,
+          logic.MISSING_MANAGER_ID,
+        ),
       );
     }
     if (holdingCombobox) {
@@ -597,8 +768,12 @@
     if (regionalCombobox) {
       regionalCombobox.syncFromUrl(
         logic.comboboxSelectedIdFromState(
-          state.regionalManager,
-          state.missingRegional,
+          isOutletsEntity
+            ? state.outletRegionalManager || state.regionalManager
+            : state.clientRegionalManager || state.regionalManager,
+          isOutletsEntity
+            ? state.missingOutletRegional || state.missingRegional
+            : state.missingClientRegional || state.missingRegional,
           logic.MISSING_REGIONAL_ID,
         ),
       );
@@ -606,9 +781,49 @@
     if (hardwareCombobox) {
       hardwareCombobox.syncFromUrl(
         logic.comboboxSelectedIdFromState(
-          state.hardwareManager,
-          state.missingHardware,
+          isOutletsEntity
+            ? state.outletHardwareManager || state.hardwareManager
+            : state.clientHardwareManager || state.hardwareManager,
+          isOutletsEntity
+            ? state.missingOutletHardware || state.missingHardware
+            : state.missingClientHardware || state.missingHardware,
           logic.MISSING_HARDWARE_ID,
+        ),
+      );
+    }
+    if (outletManagerCombobox && !isOutletsEntity) {
+      outletManagerCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.outletManager,
+          state.missingOutletManager,
+          outletManagerMissingEntry.id,
+        ),
+      );
+    }
+    if (outletRegionalCombobox && !isOutletsEntity) {
+      outletRegionalCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.outletRegionalManager,
+          state.missingOutletRegional,
+          outletRegionalMissingEntry.id,
+        ),
+      );
+    }
+    if (outletHardwareCombobox && !isOutletsEntity) {
+      outletHardwareCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.outletHardwareManager,
+          state.missingOutletHardware,
+          outletHardwareMissingEntry.id,
+        ),
+      );
+    }
+    if (outletRopCombobox && !isOutletsEntity) {
+      outletRopCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.outletRopEmployee,
+          state.missingOutletRop,
+          outletRopMissingEntry.id,
         ),
       );
     }
@@ -1439,6 +1654,88 @@
         onApplySelection: applyComboboxFilter,
       });
     }
+
+    if (outletManagerFilterInput && outletManagerFilter && outletManagerFilterList) {
+      outletManagerCombobox = logic.mountCombobox({
+        model: logic.createComboboxModel(),
+        input: outletManagerFilterInput,
+        hidden: outletManagerFilter,
+        listEl: outletManagerFilterList,
+        root: document.getElementById("outlet-manager-combobox"),
+        listboxId: "outlet-manager-filter-list",
+        allLabel: "Все менеджеры ТТ",
+        missingEntry: outletManagerMissingEntry,
+        options: function () {
+          return managerOptions;
+        },
+        onApplySelection: applyComboboxFilter,
+      });
+    }
+    if (outletRegionalFilterInput && outletRegionalFilter && outletRegionalFilterList) {
+      outletRegionalCombobox = logic.mountCombobox({
+        model: logic.createComboboxModel(),
+        input: outletRegionalFilterInput,
+        hidden: outletRegionalFilter,
+        listEl: outletRegionalFilterList,
+        root: document.getElementById("outlet-regional-combobox"),
+        listboxId: "outlet-regional-filter-list",
+        allLabel: "Все региональные ТТ",
+        missingEntry: outletRegionalMissingEntry,
+        options: function () {
+          return regionalOptions;
+        },
+        onApplySelection: applyComboboxFilter,
+      });
+    }
+    if (outletHardwareFilterInput && outletHardwareFilter && outletHardwareFilterList) {
+      outletHardwareCombobox = logic.mountCombobox({
+        model: logic.createComboboxModel(),
+        input: outletHardwareFilterInput,
+        hidden: outletHardwareFilter,
+        listEl: outletHardwareFilterList,
+        root: document.getElementById("outlet-hardware-combobox"),
+        listboxId: "outlet-hardware-filter-list",
+        allLabel: "Все менеджеры по фурнитуре ТТ",
+        missingEntry: outletHardwareMissingEntry,
+        options: function () {
+          return hardwareOptions;
+        },
+        onApplySelection: applyComboboxFilter,
+      });
+    }
+    if (outletRopFilterInput && outletRopFilter && outletRopFilterList) {
+      outletRopCombobox = logic.mountCombobox({
+        model: logic.createComboboxModel(),
+        input: outletRopFilterInput,
+        hidden: outletRopFilter,
+        listEl: outletRopFilterList,
+        root: document.getElementById("outlet-rop-combobox"),
+        listboxId: "outlet-rop-filter-list",
+        allLabel: "Все РОП ТТ",
+        missingEntry: outletRopMissingEntry,
+        options: function () {
+          return ropOptions;
+        },
+        onApplySelection: applyComboboxFilter,
+      });
+    }
+
+    if (filledFieldFilter) {
+      logic.FIELD_FILTER_FILLED_OPTIONS.forEach(function (opt) {
+        var optionEl = document.createElement("option");
+        optionEl.value = opt.value;
+        optionEl.textContent = opt.label;
+        filledFieldFilter.appendChild(optionEl);
+      });
+    }
+    if (emptyFieldFilter) {
+      logic.FIELD_FILTER_EMPTY_OPTIONS.forEach(function (opt) {
+        var optionEl = document.createElement("option");
+        optionEl.value = opt.value;
+        optionEl.textContent = opt.label;
+        emptyFieldFilter.appendChild(optionEl);
+      });
+    }
   }
 
   function showAccessDenied() {
@@ -1836,6 +2133,12 @@
       !(showAssignmentFilters || isCompleteness) || isRegionalRole,
     );
     tandoorFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+    fieldFiltersWrap?.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+    var showOutletLevelAssignments = showAssignmentFilters && !isOutlets;
+    outletManagerFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
+    outletRegionalFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
+    outletHardwareFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
+    outletRopFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
     updateResponsibleFilterLabels(isOutlets);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
@@ -3292,9 +3595,22 @@
     if (ropCombobox) {
       ropCombobox.reset();
     }
+    if (outletManagerCombobox) outletManagerCombobox.reset();
+    if (outletRegionalCombobox) outletRegionalCombobox.reset();
+    if (outletHardwareCombobox) outletHardwareCombobox.reset();
+    if (outletRopCombobox) outletRopCombobox.reset();
     outletStatusFilter.value = "all";
     warehouseFilter.value = "all";
     tandoorFilter.value = "";
+    if (routeDirectionFilter) routeDirectionFilter.value = "";
+    if (storeAddressFilter) storeAddressFilter.value = "";
+    if (storePhoneFilter) storePhoneFilter.value = "";
+    if (accountantPhoneFilter) accountantPhoneFilter.value = "";
+    if (accountantEmailFilter) accountantEmailFilter.value = "";
+    if (loadingTimeFilter) loadingTimeFilter.value = "";
+    if (loadingScheduleFilter) loadingScheduleFilter.value = "all";
+    if (filledFieldFilter) filledFieldFilter.value = "";
+    if (emptyFieldFilter) emptyFieldFilter.value = "";
     loadList({
       view: currentView(),
       entity: currentEntity(),
@@ -3451,6 +3767,23 @@
     invalidateInFlightRequests();
     scheduleLoad(true, true);
   });
+  [routeDirectionFilter, storeAddressFilter, storePhoneFilter, accountantPhoneFilter, accountantEmailFilter, loadingTimeFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("input", function () {
+        invalidateInFlightRequests();
+        scheduleLoad(true, true);
+      });
+    });
+  [loadingScheduleFilter, filledFieldFilter, emptyFieldFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("change", function () {
+        cancelScheduledLoad();
+        invalidateInFlightRequests();
+        scheduleLoad(true, false);
+      });
+    });
   reviewStateFilter.addEventListener("change", function () {
     cancelScheduledLoad();
     invalidateInFlightRequests();

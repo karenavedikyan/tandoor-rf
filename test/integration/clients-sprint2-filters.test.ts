@@ -9,11 +9,13 @@ import {
   insertSyntheticRetailOutlets,
   updateClientExtendedSnapshot,
 } from "../helpers/clients-db-fixtures";
+import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
 let databaseUrl = "";
+let adminUserId = "";
 
 const ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
 const M1 = "11111111-1111-4111-8111-111111111111";
@@ -174,13 +176,15 @@ describe("clients sprint2 filters integration", { concurrency: false }, () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
     await resetPoolForTests();
     await prepareDatabase(databaseUrl);
-    await createTestUser({
-      databaseUrl,
-      email: "admin@example.com",
-      password: TEST_PASSWORD,
-      fullName: "Admin User",
-      role: "admin",
-    });
+    adminUserId = (
+      await createTestUser({
+        databaseUrl,
+        email: "admin@example.com",
+        password: TEST_PASSWORD,
+        fullName: "Admin User",
+        role: "admin",
+      })
+    ).id;
     await insertSuccessfulImportRun(databaseUrl);
     await seedFixture();
   });
@@ -274,5 +278,169 @@ describe("clients sprint2 filters integration", { concurrency: false }, () => {
       missingHardware: "1",
     });
     assert.equal(res.status, 400);
+  });
+
+  it("A: scoped manager does not match hidden sibling outlet warehouse", async () => {
+    const M_SCOPE = "22222222-2222-4222-8222-222222222222";
+    const M_OTHER = "55555555-5555-4555-8555-555555555555";
+    const C_SCOPE = "12121212-1212-4212-8212-121212121212";
+    const T_VISIBLE = "13131313-1313-4313-8313-131313131313";
+    const T_HIDDEN = "14141414-1414-4414-8414-141414141414";
+    const HIDDEN_HW = "15151515-1515-4515-8515-151515151515";
+
+    const managerUser = await createTestUser({
+      databaseUrl,
+      email: "manager-scope@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Scope",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerUser.id,
+      employeeId: M_SCOPE,
+      confirmedByUserId: adminUserId,
+    });
+
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: C_SCOPE,
+        name_client: "Client Scope",
+        guid_manager: M_SCOPE,
+        name_manager: "Manager Scope",
+      },
+    ]);
+    const scopeSnapshot = branchSnapshot({
+      outlets: [
+        { guidStore: T_VISIBLE, warehouse: false },
+        { guidStore: T_HIDDEN, warehouse: true, hardware: { guid: HIDDEN_HW, name: "Hidden Hardware" } },
+      ],
+    });
+    scopeSnapshot.currentRetailOutlets[1].managers.manager = {
+      guid: M_OTHER,
+      name: "Manager Other",
+      state: "directory_unverified",
+    };
+    scopeSnapshot.currentRetailOutlets[1].additional = { statusTandoorClub: "Gold", bonusTandoorClub: "" };
+    await updateClientExtendedSnapshot(databaseUrl, C_SCOPE, scopeSnapshot);
+    await insertSyntheticRetailOutlets(databaseUrl, [
+      { guid_store: T_VISIBLE, guid_client: C_SCOPE },
+      { guid_store: T_HIDDEN, guid_client: C_SCOPE },
+    ]);
+
+    const cookie = await login("manager-scope@example.com");
+    const app = await loadApp();
+    const listRes = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      warehouse: "yes",
+    });
+    assert.equal(listRes.status, 200);
+    assert.equal(listRes.body.total, 0);
+
+    const optionsRes = await request(app)
+      .get("/api/clients/options")
+      .set(authHeaders(cookie));
+    assert.equal(optionsRes.status, 200);
+    const hwIds = (optionsRes.body.hardwareManagers as Array<{ id: string }>).map((row) => row.id);
+    assert.ok(!hwIds.includes(HIDDEN_HW));
+  });
+
+  it("B: warehouse=yes and filled=routeDirection require same accessible outlet", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const c3 = "31313131-3131-4313-8313-313131313131";
+    const tRoute = "32323232-3232-4322-8322-323232323232";
+    const tWh = "33333333-3333-4333-8333-333333333333";
+    await insertSyntheticClients(databaseUrl, [
+      { guid_client: c3, name_client: "Client Split", guid_manager: M1, name_manager: "Manager One" },
+    ]);
+    const splitSnapshot = branchSnapshot({
+      outlets: [
+        { guidStore: tRoute, warehouse: false },
+        { guidStore: tWh, warehouse: true },
+      ],
+    });
+    splitSnapshot.currentRetailOutlets[0].address.routeDirection = "North route";
+    splitSnapshot.currentRetailOutlets[1].address.routeDirection = "";
+    await updateClientExtendedSnapshot(databaseUrl, c3, splitSnapshot);
+    await insertSyntheticRetailOutlets(databaseUrl, [
+      { guid_store: tRoute, guid_client: c3 },
+      { guid_store: tWh, guid_client: c3 },
+    ]);
+
+    const res = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      warehouse: "yes",
+      filled: "routeDirection",
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total, 0);
+  });
+
+  it("C: empty=deliveryAddress narrows list; unknown filled field returns 400", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const withDelivery = branchSnapshot({
+      outlets: [
+        { guidStore: T1, warehouse: false },
+        { guidStore: T2, warehouse: true, regional: { guid: R1, name: "Regional One" } },
+        { guidStore: T_WH, warehouse: true, hardware: { guid: H1, name: "Hardware Lead" } },
+      ],
+    });
+    withDelivery.currentRetailOutlets.forEach(function (outlet) {
+      outlet.address.deliveryAddress = "Delivery addr";
+    });
+    await updateClientExtendedSnapshot(databaseUrl, C1, withDelivery);
+
+    const c2WithEmptyDelivery = branchSnapshot({
+      clientRegional: { guid: R1, name: "Regional One" },
+      outlets: [{ guidStore: "abababab-abab-4aba-8aba-abababababab", warehouse: false }],
+    });
+    c2WithEmptyDelivery.hardwareManager = { guid: null, name: "", state: "unassigned" };
+    await updateClientExtendedSnapshot(databaseUrl, C2, c2WithEmptyDelivery);
+    await insertSyntheticRetailOutlets(databaseUrl, [
+      { guid_store: "abababab-abab-4aba-8aba-abababababab", guid_client: C2 },
+    ]);
+
+    const filtered = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      empty: "deliveryAddress",
+    });
+    assert.equal(filtered.status, 200);
+    assert.equal(filtered.body.total, 1);
+    assert.equal(filtered.body.items[0].guid, C2);
+
+    const bad = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      empty: "lprName",
+    });
+    assert.equal(bad.status, 400);
+  });
+
+  it("D: client manager and outlet manager filters combine with AND", async () => {
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const res = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      clientManager: M1,
+      outletManager: M2,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total, 0);
+
+    const match = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      clientManager: M1,
+      outletManager: M1,
+    });
+    assert.equal(match.status, 200);
+    assert.equal(match.body.total, 1);
+    assert.equal(match.body.items[0].guid, C1);
   });
 });

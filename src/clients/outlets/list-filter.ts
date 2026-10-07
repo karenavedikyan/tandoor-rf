@@ -1,4 +1,5 @@
 import { escapeIlikePattern } from "../phone";
+import { OUTLET_FILLED_EMPTY_FIELDS, parseFilledEmptyFieldList } from "../field-filter-registry";
 import type { ClientsListQuery, SqlFilter } from "../query";
 import {
   outletSnapshotSubquery,
@@ -67,6 +68,75 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
     clauses.push(`${outletTandoorClubSql(snapshotExpr)} ILIKE $${params.length} ESCAPE '\\'`);
   }
 
+  if (query.storeAddressContains) {
+    params.push(`%${escapeIlikePattern(query.storeAddressContains)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'address'->>'storeAddress'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.routeDirection) {
+    params.push(`%${escapeIlikePattern(query.routeDirection)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'address'->>'routeDirection'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.storePhoneContains) {
+    params.push(`%${escapeIlikePattern(query.storePhoneContains)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'storePhone'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.accountantPhoneContains) {
+    params.push(`%${escapeIlikePattern(query.accountantPhoneContains)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantPhone'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.accountantEmailContains) {
+    params.push(`%${escapeIlikePattern(query.accountantEmailContains)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantEmail'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.loadingTime) {
+    params.push(`%${escapeIlikePattern(query.loadingTime)}%`);
+    clauses.push(
+      `NULLIF(BTRIM(${snapshotExpr}->'loading'->>'loadingTime'), '') ILIKE $${params.length} ESCAPE '\\'`,
+    );
+  }
+  if (query.loadingSchedule === "yes") {
+    clauses.push(`
+      EXISTS (
+        SELECT 1
+        FROM jsonb_each(${snapshotExpr}->'loading') loading_item(key, value)
+        WHERE loading_item.key LIKE 'loadingOn%'
+          AND loading_item.value = 'true'::jsonb
+      )
+    `);
+  } else if (query.loadingSchedule === "no") {
+    clauses.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM jsonb_each(${snapshotExpr}->'loading') loading_item(key, value)
+        WHERE loading_item.key LIKE 'loadingOn%'
+          AND loading_item.value = 'true'::jsonb
+      )
+    `);
+  }
+
+  for (const field of parseFilledEmptyFieldList(query.filled)) {
+    if (!OUTLET_FILLED_EMPTY_FIELDS.has(field)) {
+      continue;
+    }
+    clauses.push(outletFilledExpr(snapshotExpr, field));
+  }
+  for (const field of parseFilledEmptyFieldList(query.empty)) {
+    if (!OUTLET_FILLED_EMPTY_FIELDS.has(field)) {
+      continue;
+    }
+    clauses.push(outletEmptyExpr(snapshotExpr, field));
+  }
+
   if (query.q.length > 0) {
     params.push(`%${escapeIlikePattern(query.q)}%`);
     const textParam = `$${params.length}`;
@@ -84,6 +154,52 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
 
   const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return { whereSql, params };
+}
+
+function outletFilledExpr(snapshotExpr: string, field: string): string {
+  const map: Record<string, string> = {
+    storeAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'storeAddress'), '') IS NOT NULL`,
+    deliveryAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'deliveryAddress'), '') IS NOT NULL`,
+    routeDirection: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'routeDirection'), '') IS NOT NULL`,
+    tandoorClub: `NULLIF(BTRIM(${snapshotExpr}->'additional'->>'statusTandoorClub'), '') IS NOT NULL`,
+    warehouse: `${snapshotExpr} ? 'warehouse' AND ${snapshotExpr}->'warehouse' IS NOT NULL AND ${snapshotExpr}->'warehouse' <> 'null'::jsonb`,
+    storePhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'storePhone'), '') IS NOT NULL`,
+    accountantPhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantPhone'), '') IS NOT NULL`,
+    accountantEmail: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantEmail'), '') IS NOT NULL`,
+    loadingTime: `NULLIF(BTRIM(${snapshotExpr}->'loading'->>'loadingTime'), '') IS NOT NULL`,
+    loadingSchedule: `
+      EXISTS (
+        SELECT 1
+        FROM jsonb_each(${snapshotExpr}->'loading') loading_item(key, value)
+        WHERE loading_item.key LIKE 'loadingOn%'
+          AND loading_item.value = 'true'::jsonb
+      )
+    `,
+  };
+  return map[field] ?? "TRUE";
+}
+
+function outletEmptyExpr(snapshotExpr: string, field: string): string {
+  const map: Record<string, string> = {
+    storeAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'storeAddress'), '') IS NULL`,
+    deliveryAddress: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'deliveryAddress'), '') IS NULL`,
+    routeDirection: `NULLIF(BTRIM(${snapshotExpr}->'address'->>'routeDirection'), '') IS NULL`,
+    tandoorClub: `NULLIF(BTRIM(${snapshotExpr}->'additional'->>'statusTandoorClub'), '') IS NULL`,
+    warehouse: `(${snapshotExpr}->'warehouse' IS NULL OR ${snapshotExpr}->'warehouse' = 'null'::jsonb)`,
+    storePhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'storePhone'), '') IS NULL`,
+    accountantPhone: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantPhone'), '') IS NULL`,
+    accountantEmail: `NULLIF(BTRIM(${snapshotExpr}->'contacts'->>'accountantEmail'), '') IS NULL`,
+    loadingTime: `NULLIF(BTRIM(${snapshotExpr}->'loading'->>'loadingTime'), '') IS NULL`,
+    loadingSchedule: `
+      NOT EXISTS (
+        SELECT 1
+        FROM jsonb_each(${snapshotExpr}->'loading') loading_item(key, value)
+        WHERE loading_item.key LIKE 'loadingOn%'
+          AND loading_item.value = 'true'::jsonb
+      )
+    `,
+  };
+  return map[field] ?? "TRUE";
 }
 
 export function outletSortExpressions(): {

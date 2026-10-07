@@ -9,8 +9,14 @@ import {
   applyOrgTeamsClientFilter,
 } from "./org/teams-list-filters";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
-import { applyFilledEmptyFieldFilters, applyClientEntityOutletFieldFilters } from "./field-filters";
-import { applyClientListAssignmentFilters, buildScopedRopOptionsSql } from "./list-assignment-filters";
+import {
+  applyClientEntityScopedOutletFilter,
+  applyClientLevelFilledEmptyFilters,
+} from "./client-entity-outlet-filter";
+import { hasOutletDerivedClientFilters } from "./field-filter-registry";
+import { scopedOutletLateralJoinSql } from "./outlet-elem-access";
+import { applyClientListAssignmentFilters } from "./list-assignment-filters";
+import { clientHeadOfSalesGuidSql, outletHeadOfSalesGuidSql } from "./org/assignment-sql";
 import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
@@ -189,9 +195,11 @@ async function resolveScopedFilter(
 
   userFilter = applyClientListAssignmentFilters(userFilter, input);
   if (input.entity === "clients") {
-    userFilter = applyClientEntityOutletFieldFilters(userFilter, input);
+    if (hasOutletDerivedClientFilters(input)) {
+      userFilter = applyClientEntityScopedOutletFilter(userFilter, input, context);
+    }
+    userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
   }
-  userFilter = applyFilledEmptyFieldFilters(userFilter, input);
 
   const reviewJoin = buildReviewStateFilter(
     input.reviewState ?? (input.view === "review" ? "any" : "any"),
@@ -415,6 +423,9 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     ? `WITH scoped_clients AS (SELECT * FROM onec_clients ${managerFilter.whereSql})`
     : `WITH scoped_clients AS (SELECT * FROM onec_clients)`;
 
+  const outletJoin = scopedOutletLateralJoinSql(context, "scoped_clients", managerFilter.params);
+  const optionsParams = [...managerFilter.params, ...outletJoin.extraParams];
+
   const regionalManagers = await query<OptionRow>(
     `
       ${scopeClientsCte}
@@ -423,10 +434,11 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
         COALESCE(regional_name, regional_guid) AS name
       FROM (
         SELECT
-          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
-          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'name'), '') AS regional_name
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'regionalManager'->>'name'), '') AS regional_name
         FROM scoped_clients
-        CROSS JOIN LATERAL jsonb_array_elements(${outletsJsonArraySql("scoped_clients")}) outlet
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
         UNION ALL
         SELECT
           NULLIF(BTRIM(extended_snapshot->'regionalManager'->>'guid'), '') AS regional_guid,
@@ -436,7 +448,7 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
       WHERE regional_guid IS NOT NULL
       ORDER BY regional_guid ASC, regional_name ASC
     `,
-    managerFilter.params,
+    optionsParams,
   );
 
   const hardwareManagers = await query<OptionRow>(
@@ -447,10 +459,11 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
         COALESCE(hardware_name, hardware_guid) AS name
       FROM (
         SELECT
-          NULLIF(BTRIM(outlet->'managers'->'hardwareManager'->>'guid'), '') AS hardware_guid,
-          NULLIF(BTRIM(outlet->'managers'->'hardwareManager'->>'name'), '') AS hardware_name
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'hardwareManager'->>'guid'), '') AS hardware_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'hardwareManager'->>'name'), '') AS hardware_name
         FROM scoped_clients
-        CROSS JOIN LATERAL jsonb_array_elements(${outletsJsonArraySql("scoped_clients")}) outlet
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
         UNION ALL
         SELECT
           NULLIF(BTRIM(extended_snapshot->'hardwareManager'->>'guid'), '') AS hardware_guid,
@@ -460,11 +473,33 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
       WHERE hardware_guid IS NOT NULL
       ORDER BY hardware_guid ASC, hardware_name ASC
     `,
-    managerFilter.params,
+    optionsParams,
   );
 
-  const ropOptionsQuery = buildScopedRopOptionsSql(managerFilter.whereSql, managerFilter.params);
-  const rops = await query<OptionRow>(ropOptionsQuery.sql, ropOptionsQuery.params);
+  const rops = await query<OptionRow>(
+    `
+      ${scopeClientsCte}
+      SELECT DISTINCT ON (rop_guid)
+        rop_guid AS id,
+        COALESCE(rop_name, rop_guid) AS name
+      FROM (
+        SELECT
+          ${clientHeadOfSalesGuidSql("scoped_clients")} AS rop_guid,
+          NULLIF(BTRIM(scoped_clients.extended_snapshot->'headOfSales'->>'name'), '') AS rop_name
+        FROM scoped_clients
+        UNION ALL
+        SELECT
+          ${outletHeadOfSalesGuidSql(outletJoin.outletAlias)} AS rop_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'headOfSales'->>'name'), '') AS rop_name
+        FROM scoped_clients
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
+      ) scoped_rop
+      WHERE rop_guid IS NOT NULL
+      ORDER BY rop_guid ASC, rop_name ASC
+    `,
+    optionsParams,
+  );
 
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
