@@ -1,6 +1,7 @@
 export const SYNTHETIC_CLIENT_GUID = "11111111-1111-4111-8111-111111111111";
 export const SYNTHETIC_CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
+export const SYNTHETIC_OUTLET_MANAGER_M2 = "66666666-6666-4666-8666-666666666666";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
 export const NAV_ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
@@ -255,20 +256,25 @@ export function portfolioAwareClientsListPayload(url: URL) {
   return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
 }
 
-export function syntheticOptionsPayload() {
+export function syntheticOptionsPayload(
+  overrides: {
+    managers?: Array<{ id: string; name: string; shortId: string }>;
+    outletManagers?: Array<{ id: string; name: string; shortId: string }>;
+  } = {},
+) {
   return {
-    managers: [
+    managers: overrides.managers ?? [
       {
         id: SYNTHETIC_MANAGER_A,
         name: "Менеджер Иванов",
         shortId: "22222222",
       },
     ],
-    outletManagers: [
+    outletManagers: overrides.outletManagers ?? [
       {
-        id: SYNTHETIC_MANAGER_A,
-        name: "Менеджер Иванов",
-        shortId: "22222222",
+        id: SYNTHETIC_OUTLET_MANAGER_M2,
+        name: "Менеджер ТТ Петров",
+        shortId: "66666666",
       },
     ],
     holdings: [
@@ -716,6 +722,7 @@ export type MockOptions = {
   reviewGetBody?: Record<string, unknown> | null;
   previewActive?: boolean;
   onecUpdatePhase?: "idle" | "pending" | "running" | "completed" | "no_changes" | "rejected" | "error";
+  optionsPayload?: ReturnType<typeof syntheticOptionsPayload>;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -965,7 +972,7 @@ export function resolveMockResponse(
   }
 
   if (path === "/api/clients/options") {
-    return jsonResponse(200, syntheticOptionsPayload());
+    return jsonResponse(200, options.optionsPayload ?? syntheticOptionsPayload());
   }
 
   if (path === "/api/clients/sync-status") {

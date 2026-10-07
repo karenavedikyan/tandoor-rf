@@ -462,6 +462,19 @@
     return appEl.dataset.entity || "clients";
   }
 
+  function managerComboboxOptions() {
+    return currentEntity() === "outlets" ? outletManagerOptions : managerOptions;
+  }
+
+  function resetComboboxStaleSuggestions(combobox) {
+    if (!combobox) {
+      return;
+    }
+    combobox.model.open = false;
+    combobox.model.activeIndex = -1;
+    combobox.renderList();
+  }
+
   function applyAssignmentSelectionsToState(state) {
     if (state.view === "teams" || state.view === "review") {
       return state;
@@ -677,8 +690,11 @@
   }
 
   function applyStateToForm(state) {
+    var previousEntity = appEl.dataset.entity || "clients";
+    var nextEntity = state.entity || "clients";
+    var entityChanged = previousEntity !== nextEntity;
     appEl.dataset.view = state.view || "all";
-    appEl.dataset.entity = state.entity || "clients";
+    appEl.dataset.entity = nextEntity;
     appEl.dataset.rop = state.rop || "";
     appEl.dataset.ropEmployee = state.ropEmployee || "";
     appEl.dataset.portfolio = state.portfolio || "";
@@ -753,6 +769,10 @@
           logic.MISSING_ROP_ID,
         ),
       );
+    }
+    if (entityChanged) {
+      resetComboboxStaleSuggestions(managerCombobox);
+      resetComboboxStaleSuggestions(outletManagerCombobox);
     }
     if (managerCombobox) {
       managerCombobox.syncFromUrl(
@@ -1605,7 +1625,7 @@
       allLabel: "Все менеджеры",
       missingEntry: managerMissingEntry,
       options: function () {
-        return managerOptions;
+        return managerComboboxOptions();
       },
       onApplySelection: applyComboboxFilter,
     });
@@ -1667,7 +1687,7 @@
         allLabel: "Все менеджеры ТТ",
         missingEntry: outletManagerMissingEntry,
         options: function () {
-          return outletManagerOptions.length > 0 ? outletManagerOptions : managerOptions;
+          return outletManagerOptions;
         },
         onApplySelection: applyComboboxFilter,
       });
@@ -3303,6 +3323,9 @@
       }
       if (managerCombobox) {
         managerCombobox.syncFromUrl(managerFilter.value);
+      }
+      if (outletManagerCombobox) {
+        outletManagerCombobox.syncFromUrl(outletManagerFilter.value);
       }
       if (holdingCombobox) {
         holdingCombobox.syncFromUrl(holdingFilter.value);

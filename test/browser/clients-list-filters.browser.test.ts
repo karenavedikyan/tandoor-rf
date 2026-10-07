@@ -10,6 +10,7 @@ import {
   NAV_ROP_A,
   NAV_ROP_B,
   SYNTHETIC_MANAGER_A,
+  syntheticOptionsPayload,
   resolveMockResponse,
   type MockOptions,
 } from "./helpers/clients-api-mocks";
@@ -122,6 +123,25 @@ describe("clients list filters browser", { concurrency: false }, () => {
     await page.locator("#" + inputId.replace("-input", "-list") + " .clients-combobox__option").filter({ hasText: label }).first().click();
   }
 
+  async function ensureFiltersPanelExpanded(page: Page): Promise<void> {
+    const toggle = page.locator("#clients-filters-toggle");
+    if (await toggle.isVisible()) {
+      await toggle.click();
+      await page.waitForSelector("#clients-filters-panel.clients-filters-panel--expanded");
+    }
+  }
+
+  async function comboboxOptionLabels(page: Page, inputId: string): Promise<string[]> {
+    await ensureFiltersPanelExpanded(page);
+    await page.click("#" + inputId);
+    await page.waitForSelector("#" + inputId.replace("-input", "-list") + ":not(.clients-hidden)");
+    const labels = await page
+      .locator("#" + inputId.replace("-input", "-list") + " .clients-combobox__option")
+      .allTextContents();
+    await page.keyboard.press("Escape");
+    return labels.map((label) => label.trim()).filter(Boolean);
+  }
+
   it("applies ROP and manager filters with URL persistence and reset", async () => {
     const { page, state } = await setupPage();
 
@@ -230,6 +250,97 @@ describe("clients list filters browser", { concurrency: false }, () => {
     );
     assert.equal(await page.locator("#hardware-filter-input").inputValue(), "");
     await page.close();
+  });
+
+  it("routes manager combobox options by entity and keeps outlet manager filter scoped", async () => {
+    const { page } = await setupPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    const optionsLoaded = page.waitForResponse(
+      (response) => response.url().includes("/api/clients/options") && response.status() === 200,
+    );
+    await page.goto(`${baseUrl}/clients?view=all`, { waitUntil: "networkidle" });
+    await optionsLoaded;
+    await page.waitForSelector("#clients-table-body tr");
+    await ensureFiltersPanelExpanded(page);
+    await page.waitForSelector("#manager-filter-wrap:not(.clients-hidden)");
+    await page.waitForSelector("#outlet-manager-filter-wrap:not(.clients-hidden)");
+
+    function hasOption(labels: string[], text: string): boolean {
+      return labels.some((label) => label.includes(text));
+    }
+
+    const clientManagerLabels = await comboboxOptionLabels(page, "manager-filter-input");
+    assert.ok(hasOption(clientManagerLabels, "Менеджер Иванов"));
+    assert.equal(hasOption(clientManagerLabels, "Менеджер ТТ Петров"), false);
+
+    const outletManagerLabels = await comboboxOptionLabels(page, "outlet-manager-filter-input");
+    assert.ok(hasOption(outletManagerLabels, "Менеджер ТТ Петров"));
+    assert.equal(hasOption(outletManagerLabels, "Менеджер Иванов"), false);
+
+    await page.click('[data-entity="outlets"]');
+    await page.waitForFunction(() => window.location.search.includes("entity=outlets"));
+    await page.waitForSelector("#clients-table-body tr");
+
+    const outletsManagerLabels = await comboboxOptionLabels(page, "manager-filter-input");
+    assert.ok(hasOption(outletsManagerLabels, "Менеджер ТТ Петров"));
+    assert.equal(hasOption(outletsManagerLabels, "Менеджер Иванов"), false);
+
+    await page.close();
+
+    const emptyOutletPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const emptyState: ListRouteState = {
+      listCalls: 0,
+      catalogProductsCalls: 0,
+      lastCompletenessQueueUrl: "",
+      lastListUrl: "",
+    };
+    const emptyOptions: MockOptions = {
+      role: "admin",
+      clientsBusinessRole: "director",
+      optionsPayload: syntheticOptionsPayload({ outletManagers: [] }),
+    };
+
+    await emptyOutletPage.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/api/clients") {
+        emptyState.listCalls += 1;
+        emptyState.lastListUrl = url.search;
+      }
+      const mock = resolveMockResponse(
+        url,
+        emptyOptions,
+        emptyState,
+        route.request().method(),
+        route.request().postData() ?? undefined,
+      );
+      await route.fulfill(
+        mock ?? {
+          status: 404,
+          contentType: "application/json",
+          body: '{"error":"not mocked"}',
+        },
+      );
+    });
+
+    const emptyOptionsLoaded = emptyOutletPage.waitForResponse(
+      (response) => response.url().includes("/api/clients/options") && response.status() === 200,
+    );
+    await emptyOutletPage.goto(`${baseUrl}/clients?view=all`, { waitUntil: "networkidle" });
+    await emptyOptionsLoaded;
+    await ensureFiltersPanelExpanded(emptyOutletPage);
+    await emptyOutletPage.waitForSelector("#outlet-manager-filter-wrap:not(.clients-hidden)");
+
+    const emptyOutletManagerLabels = await comboboxOptionLabels(
+      emptyOutletPage,
+      "outlet-manager-filter-input",
+    );
+    assert.equal(
+      emptyOutletManagerLabels.some((label) => label.includes("Менеджер Иванов")),
+      false,
+    );
+
+    await emptyOutletPage.close();
   });
 
   it("hides unsupported outlet filters in completeness view", async () => {
