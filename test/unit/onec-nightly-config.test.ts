@@ -56,4 +56,49 @@ describe("nightly exchange config", () => {
       assert.equal(loaded.config.windowMinutes, 60);
     }
   });
+
+  it("rejects loose parseInt window values when enabled", () => {
+    for (const windowMinutes of ["60abc", "1.5", "1e2"]) {
+      const loaded = loadNightlyExchangeConfig({
+        ONEC_NIGHTLY_EXCHANGE_ENABLED: "true",
+        ONEC_NIGHTLY_EXCHANGE_TIME: "02:30",
+        ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: windowMinutes,
+      });
+      assert.equal(loaded.ok, false, `expected config_error for ${windowMinutes}`);
+      if (!loaded.ok) {
+        assert.match(loaded.error, /Invalid ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES/);
+      }
+    }
+  });
+
+  it("accepts window minute boundaries 1 and 180 when enabled", () => {
+    for (const [windowMinutes, expected] of [
+      ["1", 1],
+      ["180", 180],
+    ] as const) {
+      const loaded = loadNightlyExchangeConfig({
+        ONEC_NIGHTLY_EXCHANGE_ENABLED: "true",
+        ONEC_NIGHTLY_EXCHANGE_TIME: "02:30",
+        ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: windowMinutes,
+      });
+      assert.equal(loaded.ok, true, `expected ok for ${windowMinutes}`);
+      if (loaded.ok && loaded.enabled) {
+        assert.equal(loaded.config.windowMinutes, expected);
+      }
+    }
+  });
+
+  it("rejects window minutes 0 and 181 when enabled", () => {
+    for (const windowMinutes of ["0", "181"]) {
+      const loaded = loadNightlyExchangeConfig({
+        ONEC_NIGHTLY_EXCHANGE_ENABLED: "true",
+        ONEC_NIGHTLY_EXCHANGE_TIME: "02:30",
+        ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: windowMinutes,
+      });
+      assert.equal(loaded.ok, false, `expected config_error for ${windowMinutes}`);
+      if (!loaded.ok) {
+        assert.match(loaded.error, /Invalid ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES/);
+      }
+    }
+  });
 });

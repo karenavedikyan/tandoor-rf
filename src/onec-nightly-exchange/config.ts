@@ -15,6 +15,7 @@ export type NightlyExchangeConfig = NightlyExchangeEnabledConfig & {
 };
 
 const SCHEDULE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const WINDOW_MINUTES_DECIMAL_PATTERN = /^\d+$/;
 const MIN_WINDOW_MINUTES = 1;
 const MAX_WINDOW_MINUTES = 180;
 
@@ -45,11 +46,11 @@ function parseRequiredScheduleTime(raw: string | undefined): string | null {
 
 function parseRequiredWindowMinutes(raw: string | undefined): number | null {
   const value = raw?.trim();
-  if (!value) {
+  if (!value || !WINDOW_MINUTES_DECIMAL_PATTERN.test(value)) {
     return null;
   }
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < MIN_WINDOW_MINUTES || parsed > MAX_WINDOW_MINUTES) {
+  if (parsed < MIN_WINDOW_MINUTES || parsed > MAX_WINDOW_MINUTES) {
     return null;
   }
   return parsed;
