@@ -116,6 +116,18 @@ async function countSuccessfulApplyRuns(databaseUrl: string): Promise<number> {
   return Number(row.rows[0]?.count ?? 0);
 }
 
+async function readClientName(databaseUrl: string, clientGuid: string): Promise<string | null> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const row = await pool.query<{ name_client: string }>(
+    `SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid`,
+    [clientGuid],
+  );
+  await pool.end();
+  return row.rows[0]?.name_client ?? null;
+}
+
+const CLIENT_ONE = "11111111-1111-4111-8111-111111111111";
+
 describe("onec roster team upgrade backfill integration", { concurrency: false }, () => {
   let databaseUrl = "";
 
@@ -234,7 +246,7 @@ describe("onec roster team upgrade backfill integration", { concurrency: false }
     assert.equal(await countSuccessfulApplyRuns(databaseUrl), 2);
   });
 
-  it("D: rolls back and preserves pre-upgrade team columns on apply failure", async () => {
+  it("D: rolls back roster team backfill after in-transaction write, then recovers", async () => {
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A, name_team: "Team Alpha" }),
@@ -245,19 +257,60 @@ describe("onec roster team upgrade backfill integration", { concurrency: false }
 
     const before = await readTeamRow(databaseUrl, MANAGER_A);
     assert.equal(before?.guid_team, null);
+    assert.equal(before?.name_team, null);
 
+    let inTxnTeamValues: { guid_team: string | null; name_team: string | null } | null = null;
     const failed = await applyBundle(
       databaseUrl,
       clientsBytes,
       rosterBytes,
       dryRun.verificationFingerprint!,
-      { afterRecordIndex: 0 },
+      {
+        afterRosterUpsert: async (client) => {
+          const row = await client.query<{ guid_team: string | null; name_team: string | null }>(
+            `
+              SELECT guid_team::text, name_team
+              FROM onec_wholesale_employee_roster
+              WHERE guid_manager = $1::uuid
+            `,
+            [MANAGER_A],
+          );
+          inTxnTeamValues = row.rows[0] ?? null;
+          assert.equal(inTxnTeamValues?.guid_team, TEAM_A);
+          assert.equal(inTxnTeamValues?.name_team, "Team Alpha");
+        },
+        failExchangeStateUpdate: true,
+      },
     );
     assert.equal(failed.status, "ERROR");
+    assert.equal(failed.errorCode, "DATABASE_ERROR");
+    assert.ok(inTxnTeamValues);
 
     const after = await readTeamRow(databaseUrl, MANAGER_A);
     assert.equal(after?.guid_team, null);
     assert.equal(after?.name_team, null);
+    assert.equal(await readClientName(databaseUrl, CLIENT_ONE), "Client Alpha");
     assert.equal(await countSuccessfulApplyRuns(databaseUrl), 1);
+
+    const recovered = await applyBundle(
+      databaseUrl,
+      clientsBytes,
+      rosterBytes,
+      dryRun.verificationFingerprint!,
+    );
+    assert.equal(recovered.status, "SUCCESS");
+    assert.equal(recovered.counts?.employeesChanged, 1);
+    const filled = await readTeamRow(databaseUrl, MANAGER_A);
+    assert.equal(filled?.guid_team, TEAM_A);
+    assert.equal(filled?.name_team, "Team Alpha");
+
+    const repeat = await applyBundle(
+      databaseUrl,
+      clientsBytes,
+      rosterBytes,
+      dryRun.verificationFingerprint!,
+    );
+    assert.equal(repeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), 2);
   });
 });

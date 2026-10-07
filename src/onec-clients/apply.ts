@@ -113,6 +113,8 @@ export type ApplyTestHooks = {
   beforeImportLock?: () => Promise<void>;
   /** Test-only: pause after import lock is held, before operator job gate and writes. */
   afterImportLock?: (client: PoolClient) => Promise<void>;
+  /** Test-only: pause after roster upsert within the apply transaction, before commit. */
+  afterRosterUpsert?: (client: PoolClient) => Promise<void>;
 };
 
 type ExistingClientRow = {
@@ -1355,6 +1357,7 @@ export async function applyClientsImport(options: {
             rosterNewCount = rosterCounts.newCount;
             rosterChangedCount = rosterCounts.changedCount;
             rosterUnchangedCount = rosterCounts.unchangedCount;
+            await options.testHooks?.afterRosterUpsert?.(managed.client);
           }
 
           await queryManaged(
