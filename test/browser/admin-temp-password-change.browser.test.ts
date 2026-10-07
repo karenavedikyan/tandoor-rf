@@ -8,7 +8,10 @@ import { chromium, type Browser, type Page } from "playwright";
 import { buildSessionCookie } from "../../src/auth/cookie";
 import { createSession } from "../../src/auth/session";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
-import { grantAdminAccess } from "../../src/access/user-provisioning";
+import {
+  confirmAdminProvisionDelivery,
+  grantAdminAccess,
+} from "../../src/access/user-provisioning";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -66,6 +69,13 @@ describe("admin temp password browser flow", { concurrency: false }, () => {
       await client.query("COMMIT");
       if (created.ok && created.mode === "created") {
         tempUserId = created.userId;
+        await client.query("BEGIN");
+        await confirmAdminProvisionDelivery(client, {
+          userId: created.userId,
+          actorUserId: actorAdminId,
+          basis: "Browser E2E temp password provisioning",
+        });
+        await client.query("COMMIT");
       }
     } finally {
       client.release();

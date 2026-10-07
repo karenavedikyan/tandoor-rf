@@ -2,17 +2,11 @@ import { Pool } from "pg";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { getDatabaseUrl } from "../config";
 import {
-  deliverTemporaryPasswordToChannel,
   parsePasswordDeliverySpec,
   verifyPasswordDeliveryChannel,
 } from "../access/password-delivery";
-import {
-  grantAdminAccess,
-  inspectUserByEmail,
-  rollbackProvisionedAdminUser,
-  type GrantAdminAccessResult,
-  type UserInspectResult,
-} from "../access/user-provisioning";
+import { runAdminGrant, type GrantOrchestrationResult } from "../access/grant-orchestration";
+import { inspectUserByEmail, type UserInspectResult } from "../access/user-provisioning";
 
 type CliArgs = {
   command: "inspect" | "grant";
@@ -66,6 +60,11 @@ function parseArgs(argv: string[]): CliArgs {
 
 function printInspect(result: UserInspectResult): void {
   console.log(JSON.stringify(result, null, 2));
+  if (result.provisionState === "pending_delivery") {
+    console.error(
+      "WARN: незавершённая выдача — пароль не доставлен или не подтверждён; повтор grant безопасно продолжит выдачу.",
+    );
+  }
   if (result.employeeLinks.length > 0) {
     console.error(
       "WARN: у пользователя есть привязки к сотрудникам 1С; новая выдача admin не создаёт и не меняет их.",
@@ -73,7 +72,7 @@ function printInspect(result: UserInspectResult): void {
   }
 }
 
-function printGrantResult(result: GrantAdminAccessResult): void {
+function printGrantResult(result: GrantOrchestrationResult): void {
   if (!result.ok) {
     console.error(JSON.stringify({ status: "refused", ...result }));
     process.exitCode = 1;
@@ -88,6 +87,7 @@ function printGrantResult(result: GrantAdminAccessResult): void {
         userId: result.userId,
         email: result.email,
         passwordChanged: false,
+        transactionOutcome: result.transactionOutcome,
       }),
     );
     return;
@@ -101,6 +101,7 @@ function printGrantResult(result: GrantAdminAccessResult): void {
       email: result.email,
       passwordChanged: true,
       passwordDelivery: "see separate channel",
+      transactionOutcome: result.transactionOutcome,
     }),
   );
 }
@@ -115,7 +116,7 @@ async function main(): Promise<void> {
   const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
     connectionString: pgOptions.connectionString,
-    max: 1,
+    max: 2,
     ssl: pgOptions.ssl === false ? false : pgOptions.ssl,
   });
   const client = await pool.connect();
@@ -142,53 +143,17 @@ async function main(): Promise<void> {
       await verifyPasswordDeliveryChannel(deliverySpec);
     }
 
-    await client.query("BEGIN");
-    const result = await grantAdminAccess(client, {
+    const result = await runAdminGrant(pool, client, {
       email: args.email,
       fullName: args.fullName,
       actorUserId: args.actorUserId,
       basis: args.basis,
       auditReviewConfirmed: args.confirmAuditReviewed === true,
       assignAdminRoleOnly: args.assignAdminRoleOnly,
+      passwordDelivery: deliverySpec,
     });
 
-    if (!result.ok) {
-      await client.query("ROLLBACK");
-      printGrantResult(result);
-      return;
-    }
-
-    try {
-      await client.query("COMMIT");
-    } catch (commitError) {
-      await client.query("ROLLBACK");
-      throw commitError;
-    }
-
-    if (result.mode === "created") {
-      try {
-        await deliverTemporaryPasswordToChannel(result.temporaryPassword, deliverySpec!);
-      } catch (deliveryError) {
-        await client.query("BEGIN");
-        await rollbackProvisionedAdminUser(client, {
-          userId: result.userId,
-          actorUserId: args.actorUserId!,
-          basis: args.basis!,
-          reason: "password delivery failed",
-        });
-        await client.query("COMMIT");
-        throw deliveryError;
-      }
-    }
-
     printGrantResult(result);
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore
-    }
-    throw error;
   } finally {
     client.release();
     await pool.end();

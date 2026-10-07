@@ -35,12 +35,15 @@ export type PersonalAuditEntry = {
   created_at: Date;
 };
 
+export type ProvisionState = "none" | "pending_delivery" | "delivered";
+
 export type UserInspectResult = {
   email: string;
   exists: boolean;
   user: UserLookupRow | null;
   employeeLinks: EmployeeLinkSummary[];
   personalAudit: PersonalAuditEntry[];
+  provisionState: ProvisionState;
 };
 
 type AuditWriteInput = {
@@ -152,6 +155,52 @@ export async function loadPersonalAuditForUser(
   return result.rows;
 }
 
+async function loadProvisionAuditFlags(
+  client: PoolClient,
+  userId: string,
+): Promise<{ hasCreate: boolean; hasDeliveryConfirmed: boolean }> {
+  const result = await client.query<{ action: string }>(
+    `
+      SELECT action
+      FROM access_audit_log
+      WHERE entity_type = $2
+        AND entity_id = $1::uuid
+        AND action = ANY($3::text[])
+    `,
+    [
+      userId,
+      USER_AUDIT_ENTITY_TYPE,
+      [
+        ACCESS_AUDIT_ACTIONS.USER_CREATE,
+        ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
+      ],
+    ],
+  );
+  const actions = new Set(result.rows.map((row) => row.action));
+  return {
+    hasCreate: actions.has(ACCESS_AUDIT_ACTIONS.USER_CREATE),
+    hasDeliveryConfirmed: actions.has(ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED),
+  };
+}
+
+/** Whether admin account was created but password delivery was never confirmed. */
+export async function getProvisionStateForUser(
+  client: PoolClient,
+  user: UserLookupRow,
+): Promise<ProvisionState> {
+  if (user.role !== "admin") {
+    return "none";
+  }
+  const flags = await loadProvisionAuditFlags(client, user.id);
+  if (!flags.hasCreate) {
+    return "delivered";
+  }
+  if (flags.hasDeliveryConfirmed) {
+    return "delivered";
+  }
+  return "pending_delivery";
+}
+
 export async function inspectUserByEmail(
   client: PoolClient,
   emailRaw: string,
@@ -162,13 +211,21 @@ export async function inspectUserByEmail(
   }
   const user = await lookupUserByEmail(client, email);
   if (!user) {
-    return { email, exists: false, user: null, employeeLinks: [], personalAudit: [] };
+    return {
+      email,
+      exists: false,
+      user: null,
+      employeeLinks: [],
+      personalAudit: [],
+      provisionState: "none",
+    };
   }
-  const [employeeLinks, personalAudit] = await Promise.all([
+  const [employeeLinks, personalAudit, provisionState] = await Promise.all([
     loadEmployeeLinksForUser(client, user.id),
     loadPersonalAuditForUser(client, user.id),
+    getProvisionStateForUser(client, user),
   ]);
-  return { email, exists: true, user, employeeLinks, personalAudit };
+  return { email, exists: true, user, employeeLinks, personalAudit, provisionState };
 }
 
 export function generateTemporaryPassword(): string {
@@ -201,7 +258,7 @@ export type GrantAdminAccessInput = {
 export type GrantAdminAccessResult =
   | {
       ok: true;
-      mode: "created";
+      mode: "created" | "delivery_resumed";
       userId: string;
       email: string;
       temporaryPassword: string;
@@ -223,6 +280,8 @@ export type GrantAdminAccessResult =
         | "VALIDATION_ERROR";
       message: string;
     };
+
+export type TransactionFinalizeOutcome = "committed" | "rolled_back" | "unknown";
 
 async function assertActorIsAdmin(client: PoolClient, actorUserId: string): Promise<boolean> {
   const result = await client.query<{ role: string; status: string }>(
@@ -274,18 +333,69 @@ export async function grantAdminAccess(
   const existing = await lookupUserByEmail(client, email);
 
   if (existing) {
+    if (existing.role === "admin") {
+      const provisionState = await getProvisionStateForUser(client, existing);
+      if (provisionState === "pending_delivery") {
+        const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
+        const passwordCheck = validatePasswordInput(temporaryPassword);
+        if (!passwordCheck.ok) {
+          return { ok: false, code: "VALIDATION_ERROR", message: passwordCheck.message };
+        }
+        const passwordHash = await hashPassword(temporaryPassword);
+        await client.query(
+          `
+            UPDATE users
+            SET
+              password_hash = $2,
+              full_name = $3,
+              status = 'disabled',
+              password_must_change = TRUE,
+              updated_at = NOW()
+            WHERE id = $1::uuid
+          `,
+          [existing.id, passwordHash, fullName],
+        );
+        await writeUserAudit({
+          client,
+          actorUserId: input.actorUserId,
+          action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_RECOVERY,
+          entityId: existing.id,
+          before: { status: existing.status, provision_state: "pending_delivery" },
+          after: {
+            status: "disabled",
+            provision_state: "pending_delivery",
+            password_must_change: true,
+          },
+          basis: `${basis} (восстановление незавершённой выдачи)`,
+        });
+        await writeUserAudit({
+          client,
+          actorUserId: input.actorUserId,
+          action: ACCESS_AUDIT_ACTIONS.USER_PASSWORD_SET,
+          entityId: existing.id,
+          before: { password_set: true, delivery_confirmed: false },
+          after: { password_set: true, delivery: "temporary", password_must_change: true },
+          basis: `${basis} (новый временный пароль при восстановлении)`,
+        });
+        return {
+          ok: true,
+          mode: "delivery_resumed",
+          userId: existing.id,
+          email: existing.email,
+          temporaryPassword,
+        };
+      }
+      return {
+        ok: false,
+        code: "USER_ALREADY_ADMIN",
+        message: "Пользователь с этим email уже является администратором.",
+      };
+    }
     if (existing.status === "disabled") {
       return {
         ok: false,
         code: "USER_DISABLED",
         message: "Учётная запись отключена; автоматическая выдача admin запрещена.",
-      };
-    }
-    if (existing.role === "admin") {
-      return {
-        ok: false,
-        code: "USER_ALREADY_ADMIN",
-        message: "Пользователь с этим email уже является администратором.",
       };
     }
     if (!input.assignAdminRoleOnly) {
@@ -345,7 +455,7 @@ export async function grantAdminAccess(
         status,
         password_must_change
       )
-      VALUES ($1, $2, $3, 'admin', 'active', TRUE)
+      VALUES ($1, $2, $3, 'admin', 'disabled', TRUE)
       RETURNING id::text
     `,
     [email, passwordHash, fullName],
@@ -362,8 +472,9 @@ export async function grantAdminAccess(
       email,
       full_name: fullName,
       role: "admin",
-      status: "active",
+      status: "disabled",
       password_must_change: true,
+      pending_delivery: true,
     },
     basis,
   });
@@ -387,19 +498,94 @@ export async function grantAdminAccess(
   };
 }
 
-/** Remove a freshly provisioned user when password delivery failed after commit. */
+let testFaultBeforeProvisionIncompleteAudit = false;
+
+/** Test hook: simulate audit write failure when marking incomplete provision. */
+export function setTestFaultBeforeProvisionIncompleteAudit(enabled: boolean): void {
+  testFaultBeforeProvisionIncompleteAudit = enabled;
+}
+
+/** Keep account disabled after failed delivery; do not delete the user. */
+export async function markAdminProvisionIncomplete(
+  client: PoolClient,
+  input: { userId: string; actorUserId: string; basis: string; reason: string },
+): Promise<void> {
+  await client.query(
+    `
+      UPDATE users
+      SET status = 'disabled', updated_at = NOW()
+      WHERE id = $1::uuid
+    `,
+    [input.userId],
+  );
+  if (testFaultBeforeProvisionIncompleteAudit) {
+    throw new Error("TEST_FAULT: provision incomplete audit write blocked");
+  }
+  await writeUserAudit({
+    client,
+    actorUserId: input.actorUserId,
+    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_INCOMPLETE,
+    entityId: input.userId,
+    before: { status: "disabled" },
+    after: { status: "disabled", reason: input.reason, pending_delivery: true },
+    basis: `${input.basis} (${input.reason})`,
+  });
+}
+
+/** Activate account only after password was delivered out-of-band. */
+export async function confirmAdminProvisionDelivery(
+  client: PoolClient,
+  input: { userId: string; actorUserId: string; basis: string },
+): Promise<void> {
+  await client.query(
+    `
+      UPDATE users
+      SET status = 'active', updated_at = NOW()
+      WHERE id = $1::uuid
+    `,
+    [input.userId],
+  );
+  await writeUserAudit({
+    client,
+    actorUserId: input.actorUserId,
+    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
+    entityId: input.userId,
+    before: { status: "disabled", pending_delivery: true },
+    after: { status: "active", pending_delivery: false },
+    basis: `${input.basis} (доставка временного пароля подтверждена)`,
+  });
+}
+
+/**
+ * Commit grant transaction; if acknowledgment is lost, verify persistence separately.
+ * ROLLBACK after an actual COMMIT does not prove the account was not created.
+ */
+export async function finalizeGrantTransaction(
+  client: PoolClient,
+  verifyClient: PoolClient,
+  emailRaw: string,
+): Promise<{ outcome: TransactionFinalizeOutcome; userExists: boolean }> {
+  try {
+    await client.query("COMMIT");
+    return { outcome: "committed", userExists: true };
+  } catch {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // connection may be unusable after ambiguous COMMIT
+    }
+    const user = await lookupUserByEmail(verifyClient, emailRaw);
+    if (user) {
+      return { outcome: "unknown", userExists: true };
+    }
+    return { outcome: "rolled_back", userExists: false };
+  }
+}
+
+/** @deprecated Use markAdminProvisionIncomplete — blind delete is unsafe for recovery. */
 export async function rollbackProvisionedAdminUser(
   client: PoolClient,
   input: { userId: string; actorUserId: string; basis: string; reason: string },
 ): Promise<void> {
-  await writeUserAudit({
-    client,
-    actorUserId: input.actorUserId,
-    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_ROLLBACK,
-    entityId: input.userId,
-    before: { status: "active" },
-    after: { status: "rolled_back", reason: input.reason },
-    basis: `${input.basis} (${input.reason})`,
-  });
-  await client.query(`DELETE FROM users WHERE id = $1::uuid`, [input.userId]);
+  await markAdminProvisionIncomplete(client, input);
 }

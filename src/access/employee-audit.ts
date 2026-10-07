@@ -48,11 +48,18 @@ export const EMPLOYEE_AUDIT_COVERAGE: EmployeeAuditCoverageEntry[] = [
     notes: "preview.start/stop; target in entity_id, не подменяет автора действий сотрудника",
   },
   {
+    domain: "reviews",
+    label: "Ревизии клиентов",
+    source: "client_review_history",
+    actorField: "changed_by_user_id",
+    notes: "author, client guid, change_type, before_json/after_json",
+  },
+  {
     domain: "exports",
     label: "Экспорт / выгрузки",
-    source: "onec_client_import_runs + journals",
-    actorField: "trigger_source / journals",
-    notes: "частично через import runs без actor; см. job_source nightly/admin_manual",
+    source: "—",
+    actorField: "—",
+    notes: "не реализован: отдельный журнал выгрузок в ЛК отсутствует",
   },
 ];
 
@@ -66,6 +73,9 @@ export type EmployeeAuditEvent = {
   occurredAt: string;
   basis: string | null;
   summary: string;
+  entityType: string | null;
+  entityId: string | null;
+  details: Record<string, unknown> | null;
 };
 
 export type EmployeeAuditQueryInput = {
@@ -113,6 +123,8 @@ export async function queryEmployeeAccountChanges(
   const result = await query<{
     id: string;
     action: string;
+    entity_type: string;
+    entity_id: string | null;
     actor_user_id: string;
     actor_email: string;
     basis: string | null;
@@ -122,6 +134,8 @@ export async function queryEmployeeAccountChanges(
       SELECT
         a.id::text,
         a.action,
+        a.entity_type,
+        a.entity_id::text,
         a.actor_user_id::text,
         actor.email AS actor_email,
         a.basis,
@@ -147,6 +161,9 @@ export async function queryEmployeeAccountChanges(
     occurredAt: row.created_at.toISOString(),
     basis: row.basis,
     summary: row.action,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    details: null,
   }));
 }
 
@@ -164,6 +181,7 @@ export async function queryEmployeeActionsPerformed(
     id: string;
     action: string;
     entity_type: string;
+    entity_id: string | null;
     actor_user_id: string;
     actor_email: string;
     basis: string | null;
@@ -174,6 +192,7 @@ export async function queryEmployeeActionsPerformed(
         a.id::text,
         a.action,
         a.entity_type,
+        a.entity_id::text,
         a.actor_user_id::text,
         actor.email AS actor_email,
         a.basis,
@@ -187,6 +206,41 @@ export async function queryEmployeeActionsPerformed(
       LIMIT $${accessLimitIndex}
     `,
     accessParams,
+  );
+
+  const reviewParams: unknown[] = [input.userId];
+  const reviewDates = buildDateFilters("h.created_at", input.from, input.to, reviewParams.length + 1);
+  reviewParams.push(...reviewDates.params);
+  reviewParams.push(limit);
+  const reviewLimitIndex = reviewParams.length;
+  const reviewRows = await query<{
+    id: string;
+    guid_client: string;
+    change_type: string;
+    before_json: Record<string, unknown> | null;
+    after_json: Record<string, unknown> | null;
+    created_at: Date;
+    actor_user_id: string;
+    actor_email: string;
+  }>(
+    `
+      SELECT
+        h.id::text,
+        h.guid_client::text,
+        h.change_type,
+        h.before_json,
+        h.after_json,
+        h.created_at,
+        h.changed_by_user_id::text AS actor_user_id,
+        u.email AS actor_email
+      FROM client_review_history h
+      JOIN users u ON u.id = h.changed_by_user_id
+      WHERE h.changed_by_user_id = $1::uuid
+        ${reviewDates.sql}
+      ORDER BY h.created_at DESC
+      LIMIT $${reviewLimitIndex}
+    `,
+    reviewParams,
   );
 
   const importParams: unknown[] = [input.userId];
@@ -265,6 +319,9 @@ export async function queryEmployeeActionsPerformed(
       occurredAt: row.created_at.toISOString(),
       basis: row.basis,
       summary: row.action,
+      entityType: row.entity_type,
+      entityId: row.entity_id,
+      details: null,
     })),
     ...importRows.rows.map((row) => ({
       id: `onec_job:${row.id}`,
@@ -276,6 +333,9 @@ export async function queryEmployeeActionsPerformed(
       occurredAt: row.requested_at.toISOString(),
       basis: null,
       summary: `${row.kind} → ${row.status}`,
+      entityType: "onec_import_job",
+      entityId: row.id,
+      details: null,
     })),
     ...distributionRows.rows.map((row) => ({
       id: `distribution:${row.id}`,
@@ -287,6 +347,27 @@ export async function queryEmployeeActionsPerformed(
       occurredAt: row.occurred_at.toISOString(),
       basis: null,
       summary: `${row.event_kind} ${row.product_code}`,
+      entityType: "outlet_product",
+      entityId: row.product_code,
+      details: null,
+    })),
+    ...reviewRows.rows.map((row) => ({
+      id: `review:${row.id}`,
+      source: "client_review_history",
+      domain: "reviews",
+      action: `review.${row.change_type}`,
+      actorUserId: row.actor_user_id,
+      actorEmail: row.actor_email,
+      occurredAt: row.created_at.toISOString(),
+      basis: null,
+      summary: `${row.change_type} client ${row.guid_client}`,
+      entityType: "client",
+      entityId: row.guid_client,
+      details: {
+        changeType: row.change_type,
+        before: row.before_json,
+        after: row.after_json,
+      },
     })),
   ];
 

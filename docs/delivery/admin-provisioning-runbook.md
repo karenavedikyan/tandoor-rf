@@ -22,7 +22,8 @@ npm run grant-admin-access:local -- inspect --email a.zaychenko@tandoors.ru
 Интерпретация JSON:
 
 - `exists: false` — можно создавать новую учётную запись.
-- `exists: true`, `role: admin` — **остановиться**, дубликат не создавать.
+- `exists: true`, `role: admin`, `provisionState: delivered` — **остановиться**, дубликат не создавать.
+- `exists: true`, `provisionState: pending_delivery` — незавершённая выдача; повтор `grant` безопасно продолжит доставку пароля.
 - `exists: true`, другая роль — только `--assign-admin-role` (пароль **не** меняется).
 - `employeeLinks` не пустой — проверить, что привязка корректна; CLI **не создаёт** новых связей.
 
@@ -34,7 +35,13 @@ npm run grant-admin-access:local -- inspect --email a.zaychenko@tandoors.ru
 
 ## 3. Создание admin (новый пользователь)
 
-Перед `grant` CLI проверяет канал доставки (TTY или путь к файлу). Файл создаётся **эксклюзивно** (`O_EXCL`, mode `0600`); существующий файл и symlink не принимаются. Если доставка после commit не удалась — учётная запись откатывается (`user.provision_rollback`).
+Перед `grant` CLI проверяет канал доставки (TTY или путь к файлу). Файл создаётся **эксклюзивно** (`O_EXCL`, mode `0600`); существующий файл и symlink не принимаются.
+
+До подтверждения доставки учётная запись создаётся со статусом `disabled` — войти нельзя. После успешной записи пароля CLI активирует аккаунт и пишет `user.provision_delivery_confirmed`.
+
+Если подтверждение COMMIT потеряно, но запись в БД уже есть — **не полагаться на ROLLBACK**. Повторный `grant` с тем же email распознаёт `pending_delivery`, выдаёт новый временный пароль и завершает выдачу (`user.provision_recovery`).
+
+Если доставка не удалась — аккаунт остаётся `disabled`, в аудит пишется `user.provision_incomplete` (без удаления пользователя).
 
 ```bash
 npm run grant-admin-access:local -- grant \
@@ -81,7 +88,9 @@ npm run grant-admin-access:local -- grant \
 В «Доступ → Аудит действий сотрудника» (фильтр по userId и дате):
 
 - **Изменения учётной записи** — события, где сотрудник является субъектом (`entity_type=user`).
-- **Действия сотрудника** — события, где он `actor_user_id` (права, импорт 1С, дистрибуция и т.д.).
+- **Действия сотрудника** — события, где он `actor_user_id` (права, импорт 1С, дистрибуция, ревизии клиентов и т.д.).
+
+Ревизии клиентов берутся из `client_review_history` (`changed_by_user_id`, GUID клиента, `change_type`, before/after). Экспорт/выгрузки в ЛК **не реализованы** — отдельного журнала нет.
 
 Матрица покрытия отображается в UI; `--confirm-audit-reviewed` **не** означает полный аудит всех подсистем. Preview фиксирует admin как исполнителя.
 

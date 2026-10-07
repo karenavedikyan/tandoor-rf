@@ -394,6 +394,7 @@
     { key: "actorEmail", label: "Исполнитель" },
     { key: "domain", label: "Область" },
     { key: "action", label: "Действие" },
+    { key: "entityId", label: "Объект" },
     { key: "source", label: "Источник" },
     { key: "basis", label: "Основание" },
   ];
