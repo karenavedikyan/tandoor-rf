@@ -82,4 +82,29 @@ describe("onec import job failure diagnostics", () => {
       console.info = originalInfo;
     }
   });
+
+  for (const code of ["DATABASE_ERROR", "UNRECOGNIZED_FIXTURE_CODE", "constructor"]) {
+    it(`never trusts typed exception text for ${code} with invalid config`, () => {
+      const secret = "fixture-password-not-in-catalog";
+      const invalidEnv = { ONEC_FTP_ENABLED: "true", ONEC_FTP_PASSWORD: secret };
+      const error = new ImportJobError(code, "apply", `Credential ${secret}`);
+      error.name = `UntrustedName ${secret}`;
+      const logs: string[] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+      try {
+        const failure = buildImportJobFailure(error, "apply", invalidEnv);
+        assert.equal(failure.errorCode, code === "DATABASE_ERROR" ? code : IMPORT_JOB_UNKNOWN_CODE);
+        assert.equal(failure.stage, code === "DATABASE_ERROR" ? "apply" : "unknown");
+        assert.ok(failure.diagnosticId);
+        assert.equal(failure.result.diagnosticId, failure.diagnosticId);
+        assert.match(failure.message, /Идентификатор диагностики/);
+        assert.equal(JSON.stringify(failure).includes(secret), false);
+        assert.equal(logs.join("\n").includes(secret), false);
+        assert.doesNotMatch(JSON.stringify(failure), /Credential|UntrustedName/);
+      } finally {
+        console.info = originalInfo;
+      }
+    });
+  }
 });

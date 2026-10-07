@@ -93,11 +93,17 @@ export function resolveImportJobStage(errorCode: string | null | undefined): Imp
   if (!errorCode) {
     return "unknown";
   }
-  return STAGE_BY_ERROR_CODE[errorCode] ?? "unknown";
+  return Object.hasOwn(STAGE_BY_ERROR_CODE, errorCode)
+    ? STAGE_BY_ERROR_CODE[errorCode] ?? "unknown"
+    : "unknown";
 }
 
-function resolveUserMessage(errorCode: string, fallback?: string): string {
-  return USER_MESSAGES[errorCode] ?? fallback ?? "Не удалось выполнить обновление из 1С.";
+function resolveUserMessage(errorCode: string): string | undefined {
+  return Object.hasOwn(USER_MESSAGES, errorCode) ? USER_MESSAGES[errorCode] : undefined;
+}
+
+function diagnosticMessage(diagnosticId: string): string {
+  return `Внутренняя ошибка при выполнении обновления. Идентификатор диагностики: ${diagnosticId}.`;
 }
 
 export function inferImportJobStage(result: RegularUpdateResult): ImportJobFailureStage {
@@ -130,40 +136,25 @@ export function buildImportJobFailure(
   const startedAtMs = finishedAtMs;
   const startedAt = new Date(startedAtMs).toISOString();
 
-  if (error instanceof ImportJobError) {
-    const message = resolveUserMessage(error.errorCode, error.message);
-    const result: RegularUpdateResult = {
-      status: "ERROR",
-      mode,
-      startedAt,
-      finishedAt: new Date(finishedAtMs).toISOString(),
-      durationMs: 0,
-      errorCode: error.errorCode,
-      message,
-      stage: error.stage,
-    };
-    return {
-      errorCode: error.errorCode,
-      stage: error.stage,
-      message,
-      diagnosticId: null,
-      result,
-    };
-  }
-
+  // A typed exception is not a trusted message source. Only catalogued codes
+  // and messages may cross into persisted results or the worker's final log.
   const rawCode =
-    error instanceof Error
-      ? error.message
-      : error !== null && typeof error === "object" && "errorCode" in error
-        ? String((error as { errorCode?: unknown }).errorCode ?? "")
-        : "";
+    error instanceof ImportJobError
+      ? error.errorCode
+      : error instanceof Error
+        ? error.message
+        : error !== null && typeof error === "object" && "errorCode" in error
+          ? String((error as { errorCode?: unknown }).errorCode ?? "")
+          : "";
 
   const knownCode =
-    rawCode && STAGE_BY_ERROR_CODE[rawCode] !== undefined ? rawCode : null;
+    rawCode && Object.hasOwn(STAGE_BY_ERROR_CODE, rawCode) ? rawCode : null;
 
   if (knownCode) {
     const stage = resolveImportJobStage(knownCode);
-    const message = resolveUserMessage(knownCode);
+    const catalogMessage = resolveUserMessage(knownCode);
+    const diagnosticId = catalogMessage ? null : randomUUID();
+    const message = catalogMessage ?? diagnosticMessage(diagnosticId!);
     const result: RegularUpdateResult = {
       status: "ERROR",
       mode,
@@ -173,18 +164,19 @@ export function buildImportJobFailure(
       errorCode: knownCode,
       message,
       stage,
+      ...(diagnosticId ? { diagnosticId } : {}),
     };
     return {
       errorCode: knownCode,
       stage,
       message,
-      diagnosticId: null,
+      diagnosticId,
       result,
     };
   }
 
   const diagnosticId = randomUUID();
-  const message = `Внутренняя ошибка при выполнении обновления. Идентификатор диагностики: ${diagnosticId}.`;
+  const message = diagnosticMessage(diagnosticId);
   const result: RegularUpdateResult = {
     status: "ERROR",
     mode,

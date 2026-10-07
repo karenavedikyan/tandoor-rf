@@ -7,9 +7,10 @@ import {
   buildImportVerificationFingerprint,
   sampleClient,
 } from "../helpers/onec-clients-fixtures";
-import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
+import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import { REGULAR_UPDATE_JOB_KIND } from "../../src/onec-import/constants";
 import { runOneImportJob } from "../../src/onec-import/worker";
+import { ImportJobError } from "../../src/onec-import/job-failure";
 
 const env = {
   ONEC_FTP_ENABLED: "true",
@@ -55,6 +56,62 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     assert.equal(await runOneImportJob(pool, env, reader), "idle");
     assert.equal(reads, 0);
   });
+
+  for (const code of ["DATABASE_ERROR", "UNRECOGNIZED_FIXTURE_CODE"]) {
+    it(`keeps typed ${code} secrets out of persisted results and the final worker log`, async () => {
+      const actor = await createTestUser({
+        databaseUrl: getIntegrationDatabaseUrl(),
+        email: `${code.toLowerCase()}@fixture.example`,
+        fullName: "Diagnostic fixture admin",
+        role: "admin",
+        password: "FixturePassword123!",
+      });
+      const inserted = await pool.query<{ id: string }>(
+        `INSERT INTO onec_import_jobs (kind, mode, expires_at, requested_by_user_id)
+         VALUES ('regular_update_bundle', 'apply', NOW() + INTERVAL '1 hour', $1)
+         RETURNING id`,
+        [actor.id],
+      );
+      const jobId = inserted.rows[0]!.id;
+      const secret = env.ONEC_FTP_PASSWORD;
+      const thrown = new ImportJobError(code, "apply", `Credential ${secret} ${getIntegrationDatabaseUrl()}`);
+      thrown.name = `SecretName ${secret}`;
+      let ftpCalls = 0;
+      const logs: string[] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+      try {
+        assert.equal(await runOneImportJob(pool, env, reader, {
+          regularUpdateExecution: {
+            clientsReader: async () => {
+              ftpCalls++;
+              throw thrown;
+            },
+          },
+        }, { kinds: [REGULAR_UPDATE_JOB_KIND] }), "failed");
+      } finally {
+        console.info = originalInfo;
+      }
+      assert.equal(ftpCalls, 1);
+      const job = (await pool.query("SELECT status, error_code, result, import_run_id FROM onec_import_jobs WHERE id=$1", [jobId])).rows[0];
+      const expectedCode = code === "DATABASE_ERROR" ? code : "IMPORT_JOB_UNKNOWN";
+      assert.equal(job.status, "failed");
+      assert.equal(job.error_code, expectedCode);
+      assert.equal(job.import_run_id, null);
+      assert.ok(job.result.diagnosticId);
+      assert.equal(job.result.stage, code === "DATABASE_ERROR" ? "apply" : "unknown");
+      const events = logs.map((line) => JSON.parse(line));
+      const finished = events.find((event) => event.event === "onec_import_job_finished" && event.jobId === jobId);
+      assert.ok(finished, "must inspect the actual worker completion log");
+      assert.equal(finished.errorCode, expectedCode);
+      assert.equal(finished.diagnosticId, job.result.diagnosticId);
+      assert.equal(finished.message, job.result.message);
+      assert.equal(JSON.stringify(job.result).includes(secret), false);
+      assert.equal(logs.join("\n").includes(secret), false);
+      assert.doesNotMatch(logs.join("\n"), /Credential|SecretName|postgres(?:ql)?:\/\//);
+      assert.equal((await pool.query("SELECT count(*)::int AS count FROM onec_client_import_runs")).rows[0].count, 0);
+    });
+  }
 
   it("expired job is ignored", async () => {
     await pool.query(`
@@ -198,7 +255,14 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
       INSERT INTO onec_import_jobs (mode, expires_at)
       VALUES ('dry_run', NOW() + INTERVAL '1 hour')
     `);
-    assert.equal(await runOneImportJob(pool, { ...env, ONEC_FTP_BASE_PATH: "/other" }, reader), "failed");
+    const logs: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+    try {
+      assert.equal(await runOneImportJob(pool, { ...env, ONEC_FTP_HOST: "" }, reader), "failed");
+    } finally {
+      console.info = originalInfo;
+    }
     assert.equal(reads, 0);
     const job = (await pool.query("SELECT error_code, result FROM onec_import_jobs")).rows[0];
     assert.equal(job.error_code, "CONFIG_INVALID");
@@ -206,5 +270,11 @@ describe("operator-only scheduled import jobs", { concurrency: false }, () => {
     assert.equal(job.result.stage, "config");
     assert.match(job.result.message, /FTP|конфигура/i);
     assert.doesNotMatch(JSON.stringify(job.result), /secret-test-value/);
+    const finished = logs.map((line) => JSON.parse(line))
+      .find((event) => event.event === "onec_import_job_finished");
+    assert.ok(finished);
+    assert.equal(finished.errorCode, "CONFIG_INVALID");
+    assert.equal(finished.stage, "config");
+    assert.doesNotMatch(logs.join("\n"), /secret-test-value/);
   });
 });
