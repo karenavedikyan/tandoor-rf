@@ -155,20 +155,16 @@
       esc(holding || "Не указан") + '</span><span>Менеджер: ' + esc(manager || "Не указан") +
       '</span><span>Структура: ' + esc(structureLabel) + '</span></div>';
 
-    var clientManagersText = manager || "Менеджер не указан";
-    if (ext && ext.managers) {
-      var parts = [clientManagersText];
-      if (ext.managers.regionalManager && ext.managers.regionalManager.assignmentState !== "unassigned") {
-        parts.push("региональный: " + managerLabel(ext.managers.regionalManager));
-      }
-      if (ext.managers.headOfSales && ext.managers.headOfSales.assignmentState !== "unassigned") {
-        parts.push("РОП: " + managerLabel(ext.managers.headOfSales));
-      }
-      if (ext.managers.hardwareManager && ext.managers.hardwareManager.assignmentState !== "unassigned") {
-        parts.push("фурнитура: " + managerLabel(ext.managers.hardwareManager));
-      }
-      clientManagersText = parts.join(" · ");
-    }
+    var clientManagerField = manager || "Менеджер не указан";
+    var clientRegionalField = ext && ext.managers
+      ? managerLabel(ext.managers.regionalManager)
+      : "Данные не переданы";
+    var clientHardwareField = ext && ext.managers
+      ? managerLabel(ext.managers.hardwareManager)
+      : "Данные не переданы";
+    var clientRopField = ext && ext.managers
+      ? managerLabel(ext.managers.headOfSales)
+      : "Данные не переданы";
 
     var holdingCard = ext && ext.holdingCardLabel ? ext.holdingCardLabel + " · " : "";
     var overviewOutlets = outletAccessDenied
@@ -248,7 +244,10 @@
       card("Холдинг и ответственность", '<div class="pc-pad">' +
         field("Клиент / категория", (client.name || "Не указан") + " · категория не передана", true) +
         field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext) +
-        field("Ответственные (клиент)", clientManagersText, !!manager || !!ext) +
+        field("Менеджер клиента", clientManagerField, !!manager) +
+        field("Региональный менеджер клиента", clientRegionalField, !!(ext && ext.managers && ext.managers.regionalManager)) +
+        field("Менеджер по фурнитуре клиента", clientHardwareField, !!(ext && ext.managers && ext.managers.hardwareManager && ext.managers.hardwareManager.assignmentState !== "not_provided")) +
+        field("РОП клиента", clientRopField, !!(ext && ext.managers && ext.managers.headOfSales && ext.managers.headOfSales.assignmentState !== "not_provided")) +
         field("ЛПР и рабочая почта", ext && ext.sensitiveFieldsWithheld ? "Не публикуются без отдельного разрешения" : "") +
         field("Временно замещает", "") + '</div>', "1С / ЛК") +
       card("Магазин и доставка", '<div class="pc-pad">' + shopCard + '</div>', "1С") +

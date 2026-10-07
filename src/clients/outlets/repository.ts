@@ -131,6 +131,7 @@ export async function listRetailOutlets(
   const orderBy = buildClientsOrderBy(input, {
     includeTeamSort: false,
     outletStoreAddressExpr: sortExprs.storeAddress,
+    outletManagerNameExpr: sortExprs.managerName,
     outletRegionalNameExpr: sortExprs.regionalName,
     outletWarehouseExpr: sortExprs.warehouseSortKey,
     outletTandoorClubExpr: sortExprs.tandoorClub,

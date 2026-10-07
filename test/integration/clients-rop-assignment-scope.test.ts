@@ -491,4 +491,39 @@ describe("clients ROP assignment read scope integration", { concurrency: false }
       .send({ reviewState: "in_progress", expectedVersion: null });
     assert.equal(write.status, 403);
   });
+
+  it("outlet list uses outlet-level manager for Менеджер ТТ, separate from client manager", async () => {
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C1,
+      branchSnapshot({
+        clientRop: { guid: ROP_A, name: "ROP Alpha" },
+        clientManager: { guid: M_SHARED, name: "Shared Manager" },
+        outlets: [
+          {
+            guidStore: T1,
+            rop: { guid: ROP_A, name: "ROP Alpha" },
+            manager: { guid: M_OTHER, name: "Other Manager" },
+          },
+        ],
+      }),
+    );
+    await resetPoolForTests();
+    const app = await loadApp();
+    const adminCookie = await login("admin@example.com");
+    const outlets = await request(app)
+      .get("/api/clients?entity=outlets&view=all")
+      .set(authHeaders(adminCookie));
+    assert.equal(outlets.status, 200);
+    const row = (
+      outlets.body.items as Array<{
+        guidStore: string;
+        clientManager: { id: string };
+        manager: { id: string | null };
+      }>
+    ).find((item) => item.guidStore === T1);
+    assert.ok(row);
+    assert.equal(row.clientManager.id.toLowerCase(), M_SHARED.toLowerCase());
+    assert.equal(row.manager.id?.toLowerCase(), M_OTHER.toLowerCase());
+  });
 });

@@ -337,7 +337,10 @@ export async function listClients(
         onec_clients.name_manager,
         onec_clients.address,
         onec_clients.telephone,
-        onec_clients.last_imported_at
+        onec_clients.last_imported_at,
+        onec_clients.extended_snapshot->'regionalManager' AS ext_regional_manager,
+        onec_clients.extended_snapshot->'hardwareManager' AS ext_hardware_manager,
+        onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}

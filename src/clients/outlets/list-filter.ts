@@ -28,6 +28,10 @@ export function outletRegionalNameSql(snapshotExpr: string): string {
   return `NULLIF(BTRIM(${snapshotExpr}->'managers'->'regionalManager'->>'name'), '')`;
 }
 
+export function outletManagerNameSql(snapshotExpr: string): string {
+  return `NULLIF(BTRIM(${snapshotExpr}->'managers'->'manager'->>'name'), '')`;
+}
+
 export function outletTandoorClubSql(snapshotExpr: string): string {
   return `NULLIF(BTRIM(${snapshotExpr}->'additional'->>'statusTandoorClub'), '')`;
 }
@@ -84,6 +88,7 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
 
 export function outletSortExpressions(): {
   storeAddress: string;
+  managerName: string;
   regionalName: string;
   warehouseSortKey: string;
   tandoorClub: string;
@@ -91,6 +96,7 @@ export function outletSortExpressions(): {
   const snapshotExpr = outletSnapshotSubquery("ro", "oc");
   return {
     storeAddress: outletStoreAddressSql("ro", "oc"),
+    managerName: outletManagerNameSql(snapshotExpr),
     regionalName: outletRegionalNameSql(snapshotExpr),
     warehouseSortKey: `
       CASE

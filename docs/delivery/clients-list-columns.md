@@ -10,8 +10,12 @@
 | Город | `onec_clients.address` (частично) | string | все роли в области |
 | Категория | — | — | нет в API списка |
 | РОП | `rop_team_members` + `users.full_name` (режим teams/review) | string | РОП, директор, admin |
-| Менеджер | `onec_clients.name_manager` / `guid_manager` | uuid + string | все роли в области |
-| Региональный менеджер | `extended_snapshot.currentRetailOutlets[].managers.regionalManager` | per-outlet | режим ТТ, карточка |
+| Менеджер клиента | `onec_clients.name_manager` / `guid_manager` | uuid + string | entity=clients |
+| Региональный менеджер клиента | `extended_snapshot.regionalManager` | client-level | entity=clients (optional columns) |
+| Менеджер по фурнитуре / РОП клиента | `extended_snapshot.hardwareManager` / `headOfSales` | client-level | entity=clients (optional columns) |
+| Менеджер ТТ | outlet snapshot `managers.manager` | per-outlet | entity=outlets; **не** подставляет менеджера клиента |
+| Менеджер клиента (колонка ТТ) | `onec_clients.guid_manager` | uuid + string | entity=outlets, доп. колонка |
+| Региональный ТТ | outlet snapshot `managers.regionalManager` | per-outlet | entity=outlets |
 | Кол-во доступных ТТ | `COUNT(onec_retail_outlets)` в scope | number | clients list (partial) |
 | Состояние назначения | `manager_roster_state`, review/unassigned | enum | teams/review |
 | Холдинг | `onec_clients.name_holding` / `guid_holding` | uuid + string | clients list |

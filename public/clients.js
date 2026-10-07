@@ -1128,6 +1128,23 @@
     });
   }
 
+  function renderAssignmentRefCell(ref) {
+    if (!ref || !ref.hasSource) {
+      return renderNoDataCell();
+    }
+    if (ref.assignmentLabel) {
+      return shell.escapeHtml(ref.assignmentLabel);
+    }
+    if (!ref.id && !ref.name) {
+      return '<span class="clients-phone-muted">—</span>';
+    }
+    var label = ref.name || ref.id || "—";
+    if (ref.shortId && ref.name) {
+      label += " · " + ref.shortId;
+    }
+    return shell.escapeHtml(label);
+  }
+
   function renderClientColumnCell(columnId, item) {
     var def = columnDefById("clients", columnId);
     if (def && !def.hasSource) {
@@ -1147,6 +1164,15 @@
     }
     if (columnId === "manager") {
       return shell.escapeHtml(item.manager.name) + " · " + shell.escapeHtml(item.manager.shortId);
+    }
+    if (columnId === "regional") {
+      return renderAssignmentRefCell(item.regionalManager);
+    }
+    if (columnId === "hardware") {
+      return renderAssignmentRefCell(item.hardwareManager);
+    }
+    if (columnId === "rop") {
+      return renderAssignmentRefCell(item.headOfSales);
     }
     if (columnId === "team") {
       return renderTeamCell(item);
@@ -1212,23 +1238,22 @@
       return shell.escapeHtml(item.closureStatusLabel || (item.isClosed ? "Закрыта" : "Открыта"));
     }
     if (columnId === "manager") {
-      return shell.escapeHtml(item.manager.name) + " · " + shell.escapeHtml(item.manager.shortId);
+      return renderAssignmentRefCell(item.manager);
+    }
+    if (columnId === "clientManager") {
+      return shell.escapeHtml(item.clientManager.name) + " · " + shell.escapeHtml(item.clientManager.shortId);
     }
     if (columnId === "holding") {
       return shell.escapeHtml(item.holdingName || "—");
     }
     if (columnId === "regional") {
-      if (!item.regionalManager || !item.regionalManager.hasSource) {
-        return renderNoDataCell();
-      }
-      if (!item.regionalManager.id && !item.regionalManager.name) {
-        return '<span class="clients-phone-muted">—</span>';
-      }
-      var regionalLabel = item.regionalManager.name || item.regionalManager.id;
-      if (item.regionalManager.shortId) {
-        regionalLabel += " · " + item.regionalManager.shortId;
-      }
-      return shell.escapeHtml(regionalLabel);
+      return renderAssignmentRefCell(item.regionalManager);
+    }
+    if (columnId === "hardware") {
+      return renderAssignmentRefCell(item.hardwareManager);
+    }
+    if (columnId === "rop") {
+      return renderAssignmentRefCell(item.headOfSales);
     }
     if (columnId === "warehouse") {
       if (!item.warehouse || !item.warehouse.hasSource) {
