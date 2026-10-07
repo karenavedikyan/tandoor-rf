@@ -13,6 +13,8 @@
     "migrate:local": "node --env-file=.env dist/cli/migrate.js",
     "bootstrap-admin": "node dist/cli/bootstrap-admin.js",
     "bootstrap-admin:local": "node --env-file=.env dist/cli/bootstrap-admin.js",
+    "grant-admin-access": "node dist/cli/grant-admin-access.js",
+    "grant-admin-access:local": "node --env-file=.env dist/cli/grant-admin-access.js",
     "onec-ftp-probe": "node dist/cli/onec-ftp-probe.js",
     "onec-ftp-probe:local": "node --env-file=.env dist/cli/onec-ftp-probe.js",
     "onec-clients-import": "node dist/cli/onec-clients-import.js",

@@ -16,6 +16,7 @@ import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
+import { changePasswordHandler } from "./profile/password-handlers";
 import { apiError, ERROR_CODES } from "./shared/errors";
 
 const HEALTH_BODY = { status: "ok", app: "tandoor-rf" } as const;
@@ -191,6 +192,15 @@ export function createApp(): express.Application {
     requireAuth,
     (req, res, next) => {
       void patchSelfProfileHandler(req, res).catch(next);
+    },
+  );
+  profileRouter.post(
+    "/change-password",
+    csrfProtection,
+    requireDatabaseReady,
+    requireAuth,
+    (req, res, next) => {
+      void changePasswordHandler(req, res).catch(next);
     },
   );
 

@@ -28,4 +28,8 @@ export const ACCESS_AUDIT_ACTIONS = {
   DELEGATION_REVOKE: "delegation.revoke",
   PREVIEW_START: "preview.start",
   PREVIEW_STOP: "preview.stop",
+  USER_CREATE: "user.create",
+  USER_ROLE_ASSIGN: "user.role_assign",
+  USER_PASSWORD_SET: "user.password_set",
+  USER_PASSWORD_CHANGE: "user.password_change",
 } as const;

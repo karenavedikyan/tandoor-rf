@@ -84,6 +84,7 @@ export async function resolveSessionUser(token: string): Promise<{
     role: string;
     status: string;
     last_login_at: Date | null;
+    password_must_change: boolean;
   }>(
     `
       SELECT
@@ -97,7 +98,8 @@ export async function resolveSessionUser(token: string): Promise<{
         u.phone,
         u.role,
         u.status,
-        u.last_login_at
+        u.last_login_at,
+        u.password_must_change
       FROM sessions s
       INNER JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = $1
