@@ -45,7 +45,9 @@
       })
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.user) {
-          window.location.href = "/profile";
+          window.location.href = result.data.user.mustChangePassword
+            ? "/change-password"
+            : "/profile";
           return;
         }
 

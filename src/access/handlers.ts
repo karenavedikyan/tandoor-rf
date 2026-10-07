@@ -9,6 +9,7 @@ import { assertCallerCanExplainClient, assertCanExplainAccess } from "./explain-
 import { explainClientAccess } from "./policy";
 import * as service from "./service";
 import { parseDelegationWindow, parseStrictClientGuids } from "./validation";
+import { queryEmployeeAuditReport } from "./employee-audit";
 
 function parseUuid(value: unknown): string | null {
   if (typeof value !== "string" || !isValidUuidParam(value.trim())) {
@@ -91,6 +92,33 @@ export async function searchUsersHandler(req: AuthenticatedRequest, res: Respons
   const users = await service.searchUsers(q);
   setNoStore(res);
   res.status(200).json({ users });
+}
+
+function parseOptionalIsoDate(value: unknown): Date | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+  return parsed;
+}
+
+export async function employeeAuditHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const userId = parseUuid(req.query.userId);
+  if (!userId) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Нужен userId."));
+    return;
+  }
+  const report = await queryEmployeeAuditReport({
+    userId,
+    from: parseOptionalIsoDate(req.query.from),
+    to: parseOptionalIsoDate(req.query.to),
+  });
+  setNoStore(res);
+  res.status(200).json(report);
 }
 
 export async function searchAssistantsHandler(req: AuthenticatedRequest, res: Response): Promise<void> {

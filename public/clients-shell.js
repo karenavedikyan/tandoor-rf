@@ -654,6 +654,13 @@
         }
         actorUser = result.data.user;
         previewState = result.data.preview || { active: false };
+        if (
+          actorUser.mustChangePassword &&
+          window.location.pathname !== "/change-password"
+        ) {
+          window.location.replace("/change-password");
+          return;
+        }
         syncPreviewBanner();
         onReady(getEffectiveUser(result.data.user), null);
       })

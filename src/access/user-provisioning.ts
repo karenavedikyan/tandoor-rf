@@ -386,3 +386,20 @@ export async function grantAdminAccess(
     temporaryPassword,
   };
 }
+
+/** Remove a freshly provisioned user when password delivery failed after commit. */
+export async function rollbackProvisionedAdminUser(
+  client: PoolClient,
+  input: { userId: string; actorUserId: string; basis: string; reason: string },
+): Promise<void> {
+  await writeUserAudit({
+    client,
+    actorUserId: input.actorUserId,
+    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_ROLLBACK,
+    entityId: input.userId,
+    before: { status: "active" },
+    after: { status: "rolled_back", reason: input.reason },
+    basis: `${input.basis} (${input.reason})`,
+  });
+  await client.query(`DELETE FROM users WHERE id = $1::uuid`, [input.userId]);
+}

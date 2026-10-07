@@ -34,6 +34,8 @@ npm run grant-admin-access:local -- inspect --email a.zaychenko@tandoors.ru
 
 ## 3. Создание admin (новый пользователь)
 
+Перед `grant` CLI проверяет канал доставки (TTY или путь к файлу). Файл создаётся **эксклюзивно** (`O_EXCL`, mode `0600`); существующий файл и symlink не принимаются. Если доставка после commit не удалась — учётная запись откатывается (`user.provision_rollback`).
+
 ```bash
 npm run grant-admin-access:local -- grant \
   --email a.zaychenko@tandoors.ru \
@@ -68,13 +70,20 @@ npm run grant-admin-access:local -- grant \
 
 ## 5. Смена временного пароля
 
-После первого входа пользователь с `password_must_change` обязан сменить пароль:
-
-`POST /api/profile/change-password` — `{ "currentPassword", "newPassword" }`
+После первого входа UI перенаправляет на `/change-password`. Новый пароль не может совпадать с текущим. Смена пароля, снятие `password_must_change`, отзыв остальных сессий и запись аудита выполняются **атомарно**; при ошибке аудита транзакция откатывается.
 
 До смены пароля API (кроме `/api/auth/me`, `/api/profile/self`, `/api/profile/change-password`, logout) возвращает `403 PASSWORD_CHANGE_REQUIRED`.
 
 Аудит: `user.password_change`.
+
+## 5.1 Аудит действий сотрудника
+
+В «Доступ → Аудит действий сотрудника» (фильтр по userId и дате):
+
+- **Изменения учётной записи** — события, где сотрудник является субъектом (`entity_type=user`).
+- **Действия сотрудника** — события, где он `actor_user_id` (права, импорт 1С, дистрибуция и т.д.).
+
+Матрица покрытия отображается в UI; `--confirm-audit-reviewed` **не** означает полный аудит всех подсистем. Preview фиксирует admin как исполнителя.
 
 ## 6. Проверка
 

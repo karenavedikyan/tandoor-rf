@@ -389,6 +389,64 @@
       });
   });
 
+  var auditEventColumns = [
+    { key: "occurredAt", label: "Когда" },
+    { key: "actorEmail", label: "Исполнитель" },
+    { key: "domain", label: "Область" },
+    { key: "action", label: "Действие" },
+    { key: "source", label: "Источник" },
+    { key: "basis", label: "Основание" },
+  ];
+
+  function loadEmployeeAudit() {
+    var userId = document.getElementById("employee-audit-user-id").value.trim();
+    if (!userId) {
+      setStatus("Укажите User ID.", "error");
+      return Promise.resolve();
+    }
+    var from = document.getElementById("employee-audit-from").value.trim();
+    var to = document.getElementById("employee-audit-to").value.trim();
+    var query = "?userId=" + encodeURIComponent(userId);
+    if (from) {
+      query += "&from=" + encodeURIComponent(from);
+    }
+    if (to) {
+      query += "&to=" + encodeURIComponent(to);
+    }
+    return api.apiRequest("/api/admin/access/employee-audit" + query).then(function (result) {
+      if (result.response.status !== 200) {
+        throw new Error(api.extractErrorMessage(result.data, "Не удалось загрузить аудит."));
+      }
+      document.getElementById("employee-audit-disclaimer").textContent =
+        result.data.disclaimer || "";
+      document.getElementById("employee-audit-coverage").innerHTML = renderTable(
+        [
+          { key: "domain", label: "Область" },
+          { key: "label", label: "Раздел" },
+          { key: "source", label: "Журнал" },
+          { key: "actorField", label: "Поле actor" },
+          { key: "notes", label: "Примечание" },
+        ],
+        result.data.coverage || [],
+      );
+      document.getElementById("employee-audit-account").innerHTML = renderTable(
+        auditEventColumns,
+        result.data.accountChanges || [],
+      );
+      document.getElementById("employee-audit-actions").innerHTML = renderTable(
+        auditEventColumns,
+        result.data.actionsPerformed || [],
+      );
+      setStatus("Аудит сотрудника загружен.", "success");
+    });
+  }
+
+  document.getElementById("employee-audit-load-btn")?.addEventListener("click", function () {
+    loadEmployeeAudit().catch(function (err) {
+      setStatus(err.message, "error");
+    });
+  });
+
   shell.mountShell("admin-access", { showClients: true, showAdminAccess: true });
   shell.ensureAdminAccess(function (_user, reason) {
     if (reason === "forbidden") {

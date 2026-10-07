@@ -32,4 +32,5 @@ export const ACCESS_AUDIT_ACTIONS = {
   USER_ROLE_ASSIGN: "user.role_assign",
   USER_PASSWORD_SET: "user.password_set",
   USER_PASSWORD_CHANGE: "user.password_change",
+  USER_PROVISION_ROLLBACK: "user.provision_rollback",
 } as const;

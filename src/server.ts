@@ -226,6 +226,10 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "login.html");
   });
 
+  app.get("/change-password", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "change-password.html");
+  });
+
   app.get("/profile", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "profile.html");
   });

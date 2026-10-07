@@ -61,6 +61,38 @@
               <div id="user-search-results" class="clients-table-wrap"></div>
             </section>
 
+            <section class="clients-card" id="employee-audit-section">
+              <h2 class="clients-card__title">Аудит действий сотрудника</h2>
+              <p class="clients-subtitle">
+                Отдельно: изменения учётной записи и действия, выполненные сотрудником как исполнителем.
+                Preview фиксирует admin как исполнителя и не подменяет автора действий сотрудника.
+              </p>
+              <div class="clients-filters">
+                <label class="field">
+                  <span class="field__label">User ID</span>
+                  <input id="employee-audit-user-id" class="field__input" type="text" />
+                </label>
+                <label class="field">
+                  <span class="field__label">С даты (ISO)</span>
+                  <input id="employee-audit-from" class="field__input" type="text" placeholder="2026-01-01T00:00:00Z" />
+                </label>
+                <label class="field">
+                  <span class="field__label">По дату (ISO)</span>
+                  <input id="employee-audit-to" class="field__input" type="text" placeholder="2026-12-31T23:59:59Z" />
+                </label>
+                <button type="button" class="workspace-button workspace-button--primary" id="employee-audit-load-btn">
+                  Загрузить
+                </button>
+              </div>
+              <div id="employee-audit-disclaimer" class="clients-subtitle"></div>
+              <h3 class="clients-card__title">Матрица покрытия</h3>
+              <div id="employee-audit-coverage" class="clients-table-wrap"></div>
+              <h3 class="clients-card__title">Изменения учётной записи</h3>
+              <div id="employee-audit-account" class="clients-table-wrap"></div>
+              <h3 class="clients-card__title">Действия сотрудника</h3>
+              <div id="employee-audit-actions" class="clients-table-wrap"></div>
+            </section>
+
             <section class="clients-card">
               <h2 class="clients-card__title">Обзор конфигурации</h2>
               <div id="overview-tabs" class="clients-toolbar__row"></div>

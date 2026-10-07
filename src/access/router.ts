@@ -28,6 +28,7 @@ import {
   searchAssistantsHandler,
   searchUsersHandler,
   submitDelegationHandler,
+  employeeAuditHandler,
 } from "./handlers";
 import {
   previewCandidatesHandler,
@@ -61,6 +62,10 @@ export function createAccessAdminRouter(): express.Router {
 
   router.get("/users/search", ...adminChain, (req, res, next) => {
     void searchUsersHandler(req, res).catch(next);
+  });
+
+  router.get("/employee-audit", ...adminChain, (req, res, next) => {
+    void employeeAuditHandler(req, res).catch(next);
   });
 
   router.get("/preview", ...adminChain, (req, res, next) => {

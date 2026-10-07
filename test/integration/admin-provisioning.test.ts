@@ -5,9 +5,22 @@ import request from "supertest";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { ACCESS_AUDIT_ACTIONS } from "../../src/access/constants";
 import {
+  changePasswordAtomically,
+  setTestFaultBeforePasswordChangeAudit,
+} from "../../src/access/password-change-service";
+import { queryEmployeeAuditReport } from "../../src/access/employee-audit";
+import {
+  deliverTemporaryPasswordToChannel,
+  verifyPasswordDeliveryChannel,
+} from "../../src/access/password-delivery";
+import {
   grantAdminAccess,
   inspectUserByEmail,
+  lookupUserByEmail,
+  rollbackProvisionedAdminUser,
 } from "../../src/access/user-provisioning";
+import { buildSessionCookie } from "../../src/auth/cookie";
+import { createSession } from "../../src/auth/session";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -33,14 +46,15 @@ describe("admin provisioning", { concurrency: false }, () => {
 
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
-    setIntegrationEnv(databaseUrl, ORIGIN);
-    await prepareDatabase(databaseUrl);
-    pool = new Pool({ connectionString: databaseUrl, max: 3 });
   });
 
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
     await prepareDatabase(databaseUrl);
+    if (pool) {
+      await pool.end();
+    }
+    pool = new Pool({ connectionString: databaseUrl, max: 3 });
     const actor = await createTestUser({
       databaseUrl,
       email: "provisioning-actor@example.com",
@@ -225,11 +239,247 @@ describe("admin provisioning", { concurrency: false }, () => {
         newPassword: "NewStrongPass123!",
       });
     assert.equal(changed.status, 200);
-    assert.equal(changed.body.user.mustChangePassword, false);
+    assert.equal(changed.body.user.mustChangePassword, undefined);
 
     const overview = await request(app)
       .get("/api/admin/access/overview")
       .set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(overview.status, 200);
+  });
+
+  it("rejects new password identical to current password", async () => {
+    const app = await loadApp();
+    const login = await request(app)
+      .post("/api/auth/login")
+      .set({ Origin: ORIGIN, "Content-Type": "application/json" })
+      .send({ email: "provisioning-actor@example.com", password: TEST_PASSWORD });
+    const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    const changed = await request(app)
+      .post("/api/profile/change-password")
+      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
+      .send({ currentPassword: TEST_PASSWORD, newPassword: TEST_PASSWORD });
+    assert.equal(changed.status, 400);
+    assert.equal(changed.body.error.code, "SAME_PASSWORD");
+  });
+
+  it("revokes parallel sessions atomically on password change", async () => {
+    const client = await pool.connect();
+    let userId = "";
+    try {
+      await client.query("BEGIN");
+      const created = await grantAdminAccess(client, {
+        email: "parallel-session-user@example.com",
+        fullName: "Parallel Session User",
+        actorUserId: actorAdminId,
+        basis: "Проверка отзыва параллельных сессий",
+        auditReviewConfirmed: true,
+        temporaryPassword: "TempPass123!CD",
+      });
+      assert.equal(created.ok, true);
+      await client.query("COMMIT");
+      if (!created.ok || created.mode !== "created") {
+        return;
+      }
+      userId = created.userId;
+    } finally {
+      client.release();
+    }
+
+    const sessionA = await createSession(userId);
+    const sessionB = await createSession(userId);
+    const app = await loadApp();
+    const change = await changePasswordAtomically(pool, {
+      userId,
+      sessionId: sessionA.sessionId,
+      currentPassword: "TempPass123!CD",
+      newPassword: "NewStrongPass123!",
+    });
+    assert.equal(change.ok, true);
+
+    const stale = await request(app)
+      .get("/api/auth/me")
+      .set({ Origin: ORIGIN, Cookie: buildSessionCookie(sessionB.token).split(";")[0] });
+    assert.equal(stale.status, 401);
+
+    const current = await request(app)
+      .get("/api/auth/me")
+      .set({ Origin: ORIGIN, Cookie: buildSessionCookie(sessionA.token).split(";")[0] });
+    assert.equal(current.status, 200);
+    assert.equal(current.body.user.mustChangePassword, undefined);
+  });
+
+  it("rolls back password change when audit write fails", async () => {
+    const client = await pool.connect();
+    let userId = "";
+    try {
+      await client.query("BEGIN");
+      const created = await grantAdminAccess(client, {
+        email: "audit-fault-user@example.com",
+        fullName: "Audit Fault User",
+        actorUserId: actorAdminId,
+        basis: "Проверка отката при ошибке аудита",
+        auditReviewConfirmed: true,
+        temporaryPassword: "TempPass123!EF",
+      });
+      assert.equal(created.ok, true);
+      await client.query("COMMIT");
+      if (!created.ok || created.mode !== "created") {
+        return;
+      }
+      userId = created.userId;
+    } finally {
+      client.release();
+    }
+
+    const session = await createSession(userId);
+    setTestFaultBeforePasswordChangeAudit(true);
+    await assert.rejects(() =>
+      changePasswordAtomically(pool, {
+        userId,
+        sessionId: session.sessionId,
+        currentPassword: "TempPass123!EF",
+        newPassword: "NewStrongPass123!",
+      }),
+    );
+    setTestFaultBeforePasswordChangeAudit(false);
+
+    const auditClient = await pool.connect();
+    try {
+      const row = await lookupUserByEmail(auditClient, "audit-fault-user@example.com");
+      assert.equal(row?.password_must_change, true);
+    } finally {
+      auditClient.release();
+    }
+  });
+
+  it("rolls back provisioned user when password delivery fails", async () => {
+    const tempDir = await import("node:fs/promises").then((fs) =>
+      fs.mkdtemp("/tmp/tandoor-provision-"),
+    );
+    const target = `${tempDir}/password.txt`;
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: target });
+    await deliverTemporaryPasswordToChannel("blocker", { kind: "file", filePath: target });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const created = await grantAdminAccess(client, {
+        email: "delivery-fail-user@example.com",
+        fullName: "Delivery Fail User",
+        actorUserId: actorAdminId,
+        basis: "Проверка отката при ошибке доставки пароля",
+        auditReviewConfirmed: true,
+        temporaryPassword: "TempPass123!GH",
+      });
+      assert.equal(created.ok, true);
+      await client.query("COMMIT");
+      if (!created.ok || created.mode !== "created") {
+        return;
+      }
+
+      await assert.rejects(
+        () =>
+          deliverTemporaryPasswordToChannel(created.temporaryPassword, {
+            kind: "file",
+            filePath: target,
+          }),
+        /already exists/,
+      );
+
+      await client.query("BEGIN");
+      await rollbackProvisionedAdminUser(client, {
+        userId: created.userId,
+        actorUserId: actorAdminId,
+        basis: "Проверка отката при ошибке доставки пароля",
+        reason: "password delivery failed",
+      });
+      await client.query("COMMIT");
+
+      const missing = await lookupUserByEmail(client, "delivery-fail-user@example.com");
+      assert.equal(missing, null);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("separates account changes from actions performed by two admins", async () => {
+    const adminTwo = await createTestUser({
+      databaseUrl,
+      email: "audit-admin-two@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Audit Admin Two",
+      role: "admin",
+    });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const created = await grantAdminAccess(client, {
+        email: "audit-target@example.com",
+        fullName: "Audit Target",
+        actorUserId: actorAdminId,
+        basis: "Первичная выдача admin для аудита",
+        auditReviewConfirmed: true,
+        temporaryPassword: "TempPass123!AB",
+      });
+      assert.equal(created.ok, true);
+      await client.query("COMMIT");
+      if (!created.ok || created.mode !== "created") {
+        return;
+      }
+
+      await pool.query(
+        `
+          INSERT INTO access_audit_log (actor_user_id, action, entity_type, entity_id, basis)
+          VALUES ($1::uuid, $2, 'grant', gen_random_uuid(), 'grant by admin two')
+        `,
+        [adminTwo.id, ACCESS_AUDIT_ACTIONS.GRANT_CREATE],
+      );
+
+      const report = await queryEmployeeAuditReport({ userId: created.userId });
+      assert.ok(report.accountChanges.length >= 2);
+      assert.equal(report.accountChanges.every((row) => row.domain === "account"), true);
+      assert.ok(
+        report.accountChanges.some((row) => row.actorEmail === "provisioning-actor@example.com"),
+      );
+      assert.equal(report.actionsPerformed.length, 0);
+
+      const adminTwoReport = await queryEmployeeAuditReport({ userId: adminTwo.id });
+      assert.ok(
+        adminTwoReport.actionsPerformed.some(
+          (row) => row.action === ACCESS_AUDIT_ACTIONS.GRANT_CREATE,
+        ),
+      );
+      assert.ok(report.disclaimer.includes("Preview"));
+    } finally {
+      client.release();
+    }
+  });
+
+  it("records preview with admin as actor, not target employee", async () => {
+    const target = await createTestUser({
+      databaseUrl,
+      email: "preview-target@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Preview Target",
+      role: "manager",
+    });
+    await pool.query(
+      `
+        INSERT INTO access_audit_log (actor_user_id, action, entity_type, entity_id, basis)
+        VALUES ($1::uuid, $2, 'user_preview', $3::uuid, 'preview session')
+      `,
+      [actorAdminId, ACCESS_AUDIT_ACTIONS.PREVIEW_START, target.id],
+    );
+
+    const targetReport = await queryEmployeeAuditReport({ userId: target.id });
+    assert.equal(
+      targetReport.actionsPerformed.some((row) => row.action === ACCESS_AUDIT_ACTIONS.PREVIEW_START),
+      false,
+    );
+
+    const adminReport = await queryEmployeeAuditReport({ userId: actorAdminId });
+    assert.ok(
+      adminReport.actionsPerformed.some((row) => row.action === ACCESS_AUDIT_ACTIONS.PREVIEW_START),
+    );
   });
 });

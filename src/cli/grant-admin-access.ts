@@ -1,11 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { Pool } from "pg";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { getDatabaseUrl } from "../config";
 import {
+  deliverTemporaryPasswordToChannel,
+  parsePasswordDeliverySpec,
+  verifyPasswordDeliveryChannel,
+} from "../access/password-delivery";
+import {
   grantAdminAccess,
   inspectUserByEmail,
+  rollbackProvisionedAdminUser,
   type GrantAdminAccessResult,
   type UserInspectResult,
 } from "../access/user-provisioning";
@@ -69,43 +73,6 @@ function printInspect(result: UserInspectResult): void {
   }
 }
 
-async function deliverTemporaryPassword(
-  password: string,
-  delivery: string | undefined,
-): Promise<void> {
-  if (delivery?.startsWith("file:")) {
-    const targetPath = delivery.slice("file:".length);
-    if (!targetPath) {
-      throw new Error("--password-delivery file:<path> requires a path.");
-    }
-    await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(
-      targetPath,
-      [
-        "# Временный пароль ЛК Tandoor (одноразовая выдача)",
-        "# Пер передайте получателю по защищённому каналу и удалите файл.",
-        password,
-        "",
-      ].join("\n"),
-      { encoding: "utf8", mode: 0o600 },
-    );
-    console.log(`Temporary password written to ${targetPath} (mode 0600).`);
-    return;
-  }
-
-  if (!process.stdout.isTTY) {
-    throw new Error(
-      "Refusing to print temporary password to non-TTY stdout. Use --password-delivery file:<path>.",
-    );
-  }
-
-  console.log("---");
-  console.log("Временный пароль (показывается один раз; не логируйте и не коммитьте):");
-  console.log(password);
-  console.log("---");
-  console.log("Передайте пароль получателю по защищённому каналу. Смена обязательна при первом входе.");
-}
-
 function printGrantResult(result: GrantAdminAccessResult): void {
   if (!result.ok) {
     console.error(JSON.stringify({ status: "refused", ...result }));
@@ -163,6 +130,18 @@ async function main(): Promise<void> {
       throw new Error("grant requires --full-name, --actor-user-id and --basis.");
     }
 
+    const deliverySpec = args.assignAdminRoleOnly
+      ? null
+      : parsePasswordDeliverySpec(args.passwordDelivery);
+    if (!args.assignAdminRoleOnly) {
+      if (!deliverySpec) {
+        throw new Error(
+          "Password delivery channel is required for new accounts. Use --password-delivery file:<path> or an interactive TTY.",
+        );
+      }
+      await verifyPasswordDeliveryChannel(deliverySpec);
+    }
+
     await client.query("BEGIN");
     const result = await grantAdminAccess(client, {
       email: args.email,
@@ -179,10 +158,27 @@ async function main(): Promise<void> {
       return;
     }
 
-    await client.query("COMMIT");
+    try {
+      await client.query("COMMIT");
+    } catch (commitError) {
+      await client.query("ROLLBACK");
+      throw commitError;
+    }
 
     if (result.mode === "created") {
-      await deliverTemporaryPassword(result.temporaryPassword, args.passwordDelivery);
+      try {
+        await deliverTemporaryPasswordToChannel(result.temporaryPassword, deliverySpec!);
+      } catch (deliveryError) {
+        await client.query("BEGIN");
+        await rollbackProvisionedAdminUser(client, {
+          userId: result.userId,
+          actorUserId: args.actorUserId!,
+          basis: args.basis!,
+          reason: "password delivery failed",
+        });
+        await client.query("COMMIT");
+        throw deliveryError;
+      }
     }
 
     printGrantResult(result);
