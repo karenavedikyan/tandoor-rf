@@ -102,6 +102,56 @@
     { value: "markups", label: "Markups пуст" },
   ];
 
+  var CLIENT_FILLED_EMPTY_FIELD_IDS = {
+    address: true,
+    telephone: true,
+    holding: true,
+    discountProgram: true,
+    discountAmount: true,
+    markups: true,
+  };
+
+  var CLIENT_ONLY_VALUE_FILTER_KEYS = [
+    "discountProgram",
+    "discountAmountMin",
+    "discountAmountMax",
+    "markupName",
+    "markupPercentage",
+  ];
+
+  function stripFilledEmptyFieldsForEntity(value, entity) {
+    if (!value || entity !== "outlets") {
+      return value || "";
+    }
+    return value
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(function (part) {
+        return part.length > 0 && !CLIENT_FILLED_EMPTY_FIELD_IDS[part];
+      })
+      .join(",");
+  }
+
+  function clearClientCommercialFilters(state) {
+    state.discountProgram = "";
+    state.discountAmountMin = "";
+    state.discountAmountMax = "";
+    state.markupName = "";
+    state.markupPercentage = "";
+  }
+
+  function sanitizeStateForEntity(state) {
+    var next = Object.assign({}, state);
+    if (next.entity === "outlets") {
+      clearClientCommercialFilters(next);
+      next.filled = stripFilledEmptyFieldsForEntity(next.filled, "outlets");
+      next.empty = stripFilledEmptyFieldsForEntity(next.empty, "outlets");
+    }
+    return next;
+  }
+
   var FIELD_FILTER_FILLED_OPTIONS = [
     { value: "", label: "—" },
     { value: "deliveryAddress", label: "Адрес доставки заполнен" },
@@ -359,6 +409,9 @@
       next.sortBy = defaultSortFieldForEntity(next.entity);
       next.sortDir = "asc";
     }
+    if (next.entity !== previousEntity) {
+      next = sanitizeStateForEntity(next);
+    }
     return next;
   }
 
@@ -385,7 +438,7 @@
     var outletHardware =
       params.get("outletHardwareManager") || (entity === "outlets" ? legacyHardware : "");
     var legacyRop = params.get("ropEmployee") || "";
-    return {
+    return sanitizeStateForEntity({
       view: view,
       entity: entity,
       q: params.get("q") || "",
@@ -470,7 +523,7 @@
         }),
       teamQ: params.get("teamQ") || "",
       teamKind: params.get("teamKind") || "",
-    };
+    });
   }
 
   function normalizeTeamKind(value) {
@@ -1813,6 +1866,7 @@
     defaultSortFieldForEntity: defaultSortFieldForEntity,
     mapSortFieldForEntity: mapSortFieldForEntity,
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
+    sanitizeStateForEntity: sanitizeStateForEntity,
     readStateFromSearch: readStateFromSearch,
     normalizeTeamKind: normalizeTeamKind,
     applyPresentationDefaults: applyPresentationDefaults,

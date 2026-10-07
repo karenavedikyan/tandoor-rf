@@ -61,6 +61,7 @@ const logic = require("../../public/clients-logic.js") as {
     currentSortDir: string,
     columnId: string,
   ) => { sortBy: string; sortDir: string };
+  sanitizeStateForEntity: (state: Record<string, unknown>) => Record<string, unknown>;
   normalizeStateForEntitySwitch: (
     state: {
       entity: string;
@@ -68,6 +69,11 @@ const logic = require("../../public/clients-logic.js") as {
       sortDir?: string;
       cols?: string;
       page?: number;
+      discountProgram?: string;
+      discountAmountMin?: string;
+      filled?: string;
+      empty?: string;
+      bonusTandoorClub?: string;
       outletStatus?: string;
       warehouse?: string;
       regionalManager?: string;
@@ -166,21 +172,44 @@ describe("clients frontend logic", () => {
     assert.equal(fromClients.cols, "");
     assert.equal(fromClients.page, 1);
 
-    const fromOutlets = logic.normalizeStateForEntitySwitch(
+    const fromClientsCommercial = logic.normalizeStateForEntitySwitch(
       {
-        entity: "clients",
-        sortBy: "status",
+        entity: "outlets",
+        sortBy: "clientName",
         sortDir: "asc",
         page: 2,
+        discountProgram: "PROMO",
+        discountAmountMin: "0",
+        discountAmountMax: "10",
+        markupName: "Base",
+        markupPercentage: "5",
+        filled: "discountProgram",
+        empty: "markups",
+        bonusTandoorClub: "0",
       },
-      "outlets",
+      "clients",
     );
-    assert.equal(fromOutlets.sortBy, "name");
-    assert.equal(fromOutlets.sortDir, "asc");
-    assert.equal(fromOutlets.outletStatus, "all");
-    assert.equal(fromOutlets.warehouse, "all");
-    assert.equal(fromOutlets.regionalManager, "");
-    assert.equal(fromOutlets.tandoorClub, "");
+    assert.equal(fromClientsCommercial.discountProgram, "");
+    assert.equal(fromClientsCommercial.discountAmountMin, "");
+    assert.equal(fromClientsCommercial.discountAmountMax, "");
+    assert.equal(fromClientsCommercial.markupName, "");
+    assert.equal(fromClientsCommercial.markupPercentage, "");
+    assert.equal(fromClientsCommercial.filled, "");
+    assert.equal(fromClientsCommercial.empty, "");
+    assert.equal(fromClientsCommercial.bonusTandoorClub, "0");
+  });
+
+  it("sanitizes unsupported outlet URL params on read", () => {
+    const state = logic.readStateFromSearch(
+      "?entity=outlets&discountProgram=PROMO&discountAmountMin=0&markupName=Base&filled=discountProgram&empty=markups,bonusTandoorClub&bonusTandoorClub=0",
+    );
+    assert.equal(state.entity, "outlets");
+    assert.equal(state.discountProgram, "");
+    assert.equal(state.discountAmountMin, "");
+    assert.equal(state.markupName, "");
+    assert.equal(state.filled, "");
+    assert.equal(state.empty, "bonusTandoorClub");
+    assert.equal(state.bonusTandoorClub, "0");
   });
 
   it("labels sync status as LK import, not 1C file time", () => {

@@ -218,4 +218,45 @@ describe("sprint3 assignment filters browser", { concurrency: false }, () => {
 
     await page.close();
   });
+
+  it("clears client commercial filters when switching entity to outlets", async () => {
+    const { page, state } = await setupPage();
+
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
+    await ensureFiltersPanelExpanded(page);
+    await page.locator("#field-filters-wrap").evaluate((el) => {
+      (el as HTMLDetailsElement).open = true;
+    });
+    await page.waitForSelector("#discount-program-filter:not(.clients-hidden)");
+    await page.fill("#discount-program-filter", "PROMO");
+    await page.fill("#bonus-tandoor-filter", "0");
+    await page.waitForFunction(() => window.location.search.includes("discountProgram=PROMO"));
+
+    await page.click('#entity-switcher [data-entity="outlets"]');
+    await page.waitForFunction(() => window.location.search.includes("entity=outlets"));
+    await page.waitForFunction(
+      () =>
+        !window.location.search.includes("discountProgram=") &&
+        window.location.search.includes("bonusTandoorClub=0"),
+    );
+
+    assert.doesNotMatch(page.url(), /discountProgram=/);
+    assert.match(page.url(), /bonusTandoorClub=0/);
+    assert.doesNotMatch(state.lastListUrl, /discountProgram=/);
+    assert.match(state.lastListUrl, /bonusTandoorClub=0/);
+    assert.equal(await page.inputValue("#discount-program-filter"), "");
+    assert.equal(await page.inputValue("#bonus-tandoor-filter"), "0");
+
+    await page.reload({ waitUntil: "networkidle" });
+    assert.doesNotMatch(page.url(), /discountProgram=/);
+    assert.match(page.url(), /bonusTandoorClub=0/);
+
+    await page.click('#entity-switcher [data-entity="clients"]');
+    await page.waitForFunction(() => !window.location.search.includes("entity=outlets"));
+    assert.doesNotMatch(page.url(), /discountProgram=/);
+    assert.equal(await page.inputValue("#discount-program-filter"), "");
+
+    await page.close();
+  });
 });
