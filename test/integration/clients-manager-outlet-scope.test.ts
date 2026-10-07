@@ -323,6 +323,19 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
     assert.ok(!cardGuids.includes(T2));
   });
 
+  it("M2 options: outletManagers from assigned TT, hidden sibling manager excluded", async () => {
+    const app = await loadApp();
+    const cookie = await login("manager-m2@example.com");
+
+    const options = await request(app).get("/api/clients/options").set(authHeaders(cookie));
+    assert.equal(options.status, 200);
+    const outletManagerIds = (options.body.outletManagers as Array<{ id: string }>).map((row) =>
+      row.id.toLowerCase(),
+    );
+    assert.ok(outletManagerIds.includes(M2.toLowerCase()));
+    assert.ok(!outletManagerIds.includes(M1.toLowerCase()));
+  });
+
   it("M2 outlet-only: TT2 in outlets, C1 absent from client list but card context works", async () => {
     const app = await loadApp();
     const cookie = await login("manager-m2@example.com");

@@ -275,7 +275,8 @@ export function applyClientEntityScopedOutletFilter(
     return userFilter;
   }
 
-  const resolvedAccess = resolveOutletElemAccessParams(context, [...userFilter.params, ...params]);
+  // Number placeholders locally from $1; mergeSqlFilters rebases once against userFilter.params.
+  const resolvedAccess = resolveOutletElemAccessParams(context, params);
   const accessParams = resolvedAccess.accessParams;
   const clause = buildScopedOutletExistsSql(conditions, accessParams, context);
   return mergeSqlFilters(userFilter, [clause], [...params, ...resolvedAccess.extraParams]);

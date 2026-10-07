@@ -55,7 +55,7 @@ Legacy `manager`, `regionalManager`, `hardwareManager`, `ropEmployee`, `missing*
 | `managers.*` | Ответственные ТТ | manager/regional/hardware/rop | `outletManager`, `outletRegionalManager`, `outletHardwareManager`, `outletRopEmployee` + `missingOutlet*` + `*Mode` | same (outlet* params) | combobox ×4 |
 | `additional_information.status_tandoor_club` | Club | tandoorClub | `tandoorClub`, `filled`/`empty=tandoorClub` | same | input |
 
-**Options API:** regional/hardware/ROP из snapshot-ТТ только для **доступных** точек (не все `currentRetailOutlets` родителя).
+**Options API:** `outletManagers` — из `managers.manager` доступных snapshot-ТТ (card-read scope, включая outlet-only родителей); regional/hardware/ROP outlet-часть — из `scoped_card_clients` + accessibility; client `managers` — direct list scope. Multi-select / Mode-select в UI **не завершены**.
 
 ---
 

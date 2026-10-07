@@ -264,6 +264,13 @@ export function syntheticOptionsPayload() {
         shortId: "22222222",
       },
     ],
+    outletManagers: [
+      {
+        id: SYNTHETIC_MANAGER_A,
+        name: "Менеджер Иванов",
+        shortId: "22222222",
+      },
+    ],
     holdings: [
       {
         id: SYNTHETIC_HOLDING_A,

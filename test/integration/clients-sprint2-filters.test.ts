@@ -421,6 +421,45 @@ describe("clients sprint2 filters integration", { concurrency: false }, () => {
     assert.equal(bad.status, 400);
   });
 
+  it("manager q+warehouse and clientManager+warehouse return 200 (no placeholder drift)", async () => {
+    const managerUser = await createTestUser({
+      databaseUrl,
+      email: "m1-filter@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager Filter",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerUser.id,
+      employeeId: M1,
+      confirmedByUserId: adminUserId,
+    });
+
+    const cookie = await login("m1-filter@example.com");
+    const app = await loadApp();
+
+    const searchWarehouse = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      q: "Client C1",
+      warehouse: "yes",
+    });
+    assert.equal(searchWarehouse.status, 200);
+    assert.equal(searchWarehouse.body.total, 1);
+    assert.equal(searchWarehouse.body.items[0].guid, C1);
+
+    const managerWarehouse = await listClients(app, cookie, {
+      view: "all",
+      entity: "clients",
+      clientManager: M1,
+      warehouse: "yes",
+    });
+    assert.equal(managerWarehouse.status, 200);
+    assert.equal(managerWarehouse.body.total, 1);
+    assert.equal(managerWarehouse.body.items[0].guid, C1);
+  });
+
   it("D: client manager and outlet manager filters combine with AND", async () => {
     const cookie = await login("admin@example.com");
     const app = await loadApp();

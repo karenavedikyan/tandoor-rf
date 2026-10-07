@@ -138,6 +138,7 @@
   var activeRequestId = 0;
   var listFetchAbortController = null;
   var managerOptions = [];
+  var outletManagerOptions = [];
   var holdingOptions = [];
   var regionalOptions = [];
   var hardwareOptions = [];
@@ -1666,7 +1667,7 @@
         allLabel: "Все менеджеры ТТ",
         missingEntry: outletManagerMissingEntry,
         options: function () {
-          return managerOptions;
+          return outletManagerOptions.length > 0 ? outletManagerOptions : managerOptions;
         },
         onApplySelection: applyComboboxFilter,
       });
@@ -3292,6 +3293,7 @@
         return { ok: false, message: api.extractErrorMessage(result.data, "Не удалось загрузить фильтры.") };
       }
       managerOptions = result.data.managers || [];
+      outletManagerOptions = result.data.outletManagers || [];
       holdingOptions = result.data.holdings || [];
       regionalOptions = result.data.regionalManagers || [];
       hardwareOptions = result.data.hardwareManagers || [];

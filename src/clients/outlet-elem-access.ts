@@ -113,6 +113,21 @@ export function outletElemAccessibleWhereSql(
   return outletElemAccessibleSql(context, clientAlias, outletAlias, accessParams);
 }
 
+/** CTE pair: direct client list scope + card/outlet read scope (same bind params when aligned). */
+export function buildOptionsDualScopeCte(
+  directWhereSql: string,
+  cardWhereSql: string,
+): string {
+  const directClause = directWhereSql ? directWhereSql.replace(/^WHERE\s+/, "") : "";
+  const cardClause = cardWhereSql ? cardWhereSql.replace(/^WHERE\s+/, "") : "";
+  const directBody = directClause ? `SELECT * FROM onec_clients WHERE ${directClause}` : "SELECT * FROM onec_clients";
+  const cardBody = cardClause ? `SELECT * FROM onec_clients WHERE ${cardClause}` : "SELECT * FROM onec_clients";
+  return `
+    WITH scoped_clients AS (${directBody}),
+    scoped_card_clients AS (${cardBody})
+  `;
+}
+
 /** Lateral join over snapshot outlets limited to accessible rows (Sprint 1 scope). */
 export function scopedOutletLateralJoinSql(
   context: AccessContext,
