@@ -335,6 +335,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "rejected");
     assert.equal(status.body.job.errorCode, "MANIFEST_INVALID_SCHEMA");
+    assert.equal(status.body.job.failureStage, "manifest_validation");
     assert.match(status.body.job.message, /export_formed_at|calendar date/i);
     assert.doesNotMatch(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
   });
@@ -615,6 +616,104 @@ describe("admin clients onec update", { concurrency: false }, () => {
       [sampleClient().guid_client],
     );
     assert.equal(clientRow.rows[0]?.name_client, "Admin Regular Only");
+  });
+
+  it("returns read-only config check without secrets", async () => {
+    const app = await loadApp();
+    const res = await request(app)
+      .get("/api/admin/clients/onec-update/config-check")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.ok(Array.isArray(res.body.checks));
+    assert.equal(res.body.canProbe, true);
+    assert.doesNotMatch(JSON.stringify(res.body), /secret-test-value/);
+  });
+
+  it("returns config check failure for untrusted base path", async () => {
+    Object.assign(process.env, workerEnv, {
+      DATABASE_URL: databaseUrl,
+      ONEC_FTP_BASE_PATH: "/other",
+    });
+    const app = await loadApp();
+    const res = await request(app)
+      .get("/api/admin/clients/onec-update/config-check")
+      .set(authHeaders(adminCookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.canProbe, false);
+    assert.equal(
+      res.body.checks.find((check: { id: string }) => check.id === "trusted_base_path")?.passed,
+      false,
+    );
+  });
+
+  it("runs explicit read-only probe without apply", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient(), sampleClientTwo()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A, MANAGER_B)));
+    const beforeCount = (
+      await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients")
+    ).rows[0]?.count;
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.readOk, true);
+    assert.equal(res.body.probe.status, "SUCCESS");
+    assert.equal(res.body.probe.applyPermitted, true);
+    assert.equal(res.body.probe.releaseConsistencyConfirmed, true);
+    assert.doesNotMatch(JSON.stringify(res.body), /secret-test-value/);
+
+    const afterCount = (
+      await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_clients")
+    ).rows[0]?.count;
+    assert.equal(afterCount, beforeCount);
+    assert.equal(
+      (await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM onec_import_jobs")).rows[0]
+        ?.count,
+      "0",
+    );
+  });
+
+  it("probe reports readOk but not ready when manifest is missing", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false));
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 409);
+    assert.equal(res.body.readOk, true);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.probe.applyPermitted, false);
+    assert.equal(res.body.probe.releaseConsistencyConfirmed, false);
+    assert.equal(res.body.probe.stage, "manifest_validation");
+  });
+
+  it("probe reports unreadable manifest with manifest_validation stage", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    configureWorkerBundle({
+      clientsBytes,
+      rosterBytes: rosterForManagers(MANAGER_A),
+      manifestBytes: Buffer.from("{ unreadable"),
+    });
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 409);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.readOk, false);
+    assert.equal(res.body.probe.errorCode, "MANIFEST_INVALID_JSON");
+    assert.equal(res.body.probe.stage, "manifest_validation");
   });
 
   it("reports commit uncertainty without promising preserved data", async () => {

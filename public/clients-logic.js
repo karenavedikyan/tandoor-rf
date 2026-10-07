@@ -637,6 +637,16 @@
     };
   }
 
+  var ONEc_UPDATE_STAGE_LABELS = {
+    config: "Проверка конфигурации",
+    file_read: "Чтение файлов",
+    manifest_validation: "Проверка manifest",
+    bundle_validation: "Проверка комплекта",
+    apply: "Применение",
+    employee_roster: "Справочник сотрудников",
+    unknown: "Неизвестный этап",
+  };
+
   var ONEc_UPDATE_PHASE_LABELS = {
     pending: "Ожидает запуска",
     running: "Выполняется",
@@ -724,6 +734,18 @@
       label: "Последнее успешное обновление",
       value: job.lastSuccessfulUpdateAtLabel || "Ещё не выполнялось",
     });
+    if (job.failureStage) {
+      lines.push({
+        label: "Этап",
+        value: ONEc_UPDATE_STAGE_LABELS[job.failureStage] || job.failureStage,
+      });
+    }
+    if (job.diagnosticId) {
+      lines.push({
+        label: "Диагностика",
+        value: job.diagnosticId,
+      });
+    }
     if (job.dataPreserved) {
       lines.push({
         label: "База данных",

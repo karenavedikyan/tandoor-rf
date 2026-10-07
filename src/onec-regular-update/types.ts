@@ -37,6 +37,10 @@ export type RegularUpdateResult = {
   };
   applyRunId?: string;
   errorCode?: string;
+  /** Worker/admin diagnostics: where the failure occurred without exposing secrets. */
+  stage?: import("../onec-import/job-failure").ImportJobFailureStage;
+  /** Opaque id for unknown internal failures; safe to show admins. */
+  diagnosticId?: string;
   message: string;
   cleanupWarning?: string;
 };

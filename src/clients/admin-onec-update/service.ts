@@ -8,7 +8,13 @@ import {
   mapJobRowToDto,
   tryStartRegularUpdateJob,
 } from "./repository";
+import {
+  runOnecIntegrationConfigCheck,
+  runOnecUpdateReadOnlyProbe,
+} from "./config-diagnostics";
 import type {
+  AdminOnecConfigCheckResponse,
+  AdminOnecUpdateProbeResponse,
   AdminOnecUpdateStartResponse,
   AdminOnecUpdateStatusResponse,
 } from "./types";
@@ -37,6 +43,35 @@ export async function getAdminOnecUpdateStatus(): Promise<AdminOnecUpdateStatusR
     job: latest ? mapJobRowToDto(latest, lastSuccessfulUpdateAt) : null,
     canStart: blockedReason === null,
     blockedReason,
+  };
+}
+
+export async function getAdminOnecConfigCheck(): Promise<AdminOnecConfigCheckResponse> {
+  return runOnecIntegrationConfigCheck();
+}
+
+export async function runAdminOnecUpdateProbe(): Promise<AdminOnecUpdateProbeResponse> {
+  const outcome = await runOnecUpdateReadOnlyProbe();
+  return {
+    ok: outcome.ok,
+    readOk: outcome.readOk,
+    message: outcome.message,
+    config: {
+      ok: outcome.config.ok,
+      checks: outcome.config.checks,
+      message: outcome.config.message,
+      canProbe: outcome.config.ok,
+    },
+    probe: outcome.probe
+      ? {
+          status: outcome.probe.status,
+          errorCode: outcome.probe.errorCode,
+          stage: outcome.probe.stage,
+          message: outcome.probe.message,
+          applyPermitted: outcome.probe.applyPermitted,
+          releaseConsistencyConfirmed: outcome.probe.releaseConsistencyConfirmed,
+        }
+      : null,
   };
 }
 

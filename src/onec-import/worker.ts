@@ -19,9 +19,14 @@ import {
   REGULAR_UPDATE_JOB_KIND,
   REGULAR_UPDATE_JOB_SOURCE_NIGHTLY,
   type RegularUpdateJobSource,
-  TRUSTED_ONEC_FTP_BASE_PATH,
-  TRUSTED_ONEC_FTP_HOST,
 } from "./constants";
+import {
+  buildImportJobFailure,
+  finalizeRegularUpdateResult,
+  ImportJobError,
+  redactImportJobResult,
+} from "./job-failure";
+import { validateTrustedOnecFtpConfig } from "./trusted-config";
 import {
   executeRegularUpdateBundleJob,
   redactRegularUpdateResult,
@@ -53,18 +58,6 @@ export type ImportJobWorkerTestHooks = {
 export type ImportJobWorkerOptions = {
   kinds?: readonly (typeof IMPORT_JOB_KIND | typeof REGULAR_UPDATE_JOB_KIND)[];
 };
-
-function isTrustedFtpConfig(env: NodeJS.ProcessEnv): boolean {
-  const config = loadOnecFtpConfig(env);
-  if (!config.ok) {
-    return false;
-  }
-  return (
-    config.config.host === TRUSTED_ONEC_FTP_HOST &&
-    config.config.basePath.replace(/\/+$/, "") === TRUSTED_ONEC_FTP_BASE_PATH &&
-    config.config.security === "plain"
-  );
-}
 
 function buildImportArgv(job: ImportJobRow): string[] {
   const argv: string[] =
@@ -104,10 +97,7 @@ function regularUpdateJobSucceeded(result: RegularUpdateResult): boolean {
 }
 
 function serializeJobResult(result: unknown, env: NodeJS.ProcessEnv): string {
-  const serialized = JSON.stringify(result);
-  const config = loadOnecFtpConfig(env);
-  const secret = config.ok ? config.config.password : "";
-  return secret ? serialized.split(secret).join("[REDACTED]") : serialized;
+  return JSON.stringify(redactImportJobResult(result, env));
 }
 
 async function runLegacyClientsSnapshotJob(
@@ -119,11 +109,19 @@ async function runLegacyClientsSnapshotJob(
   if (job.employee_roster_source_sha256) {
     employeeRosterBytes = await readEmployeeRosterFromFtp(env);
     if (!employeeRosterBytes) {
-      throw new Error("EMPLOYEE_ROSTER_UNREADABLE");
+      throw new ImportJobError(
+        "EMPLOYEE_ROSTER_UNREADABLE",
+        "employee_roster",
+        "Не удалось прочитать справочник сотрудников из 1С.",
+      );
     }
     const parsed = parseWholesaleEmployeeRosterBytes(employeeRosterBytes);
     if (!parsed.ok || parsed.roster.sourceSha256 !== job.employee_roster_source_sha256) {
-      throw new Error("EMPLOYEE_ROSTER_MISMATCH");
+      throw new ImportJobError(
+        "EMPLOYEE_ROSTER_MISMATCH",
+        "employee_roster",
+        "Справочник сотрудников не совпадает с ожидаемым снимком.",
+      );
     }
   }
 
@@ -178,7 +176,7 @@ async function runRegularUpdateBundleJob(
     importTriggerSource: importTriggerSourceForJob(job.job_source),
     ...testHooks?.regularUpdateExecution,
   });
-  const redacted = redactRegularUpdateResult(updateResult, env);
+  const redacted = finalizeRegularUpdateResult(updateResult, env);
   return {
     ok: regularUpdateJobSucceeded(redacted),
     result: redacted,
@@ -258,8 +256,9 @@ export async function runOneImportJob(
       return "failed";
     }
 
-    if (!isTrustedFtpConfig(env)) {
-      throw new Error("CONFIG_INVALID");
+    const trustedConfig = validateTrustedOnecFtpConfig(env);
+    if (!trustedConfig.ok) {
+      throw new ImportJobError("CONFIG_INVALID", "config", trustedConfig.message);
     }
 
     const outcome =
@@ -320,26 +319,42 @@ export async function runOneImportJob(
         kind: job.kind,
         status: "failed",
         errorCode: outcome.errorCode,
+        stage: (outcome.result as { stage?: string }).stage ?? null,
         importRunId: outcome.importRunId,
       }),
     );
     return "failed";
-  } catch {
+  } catch (error) {
     if (jobId) {
+      const failedJob = (
+        await db.query<{ mode: "dry_run" | "apply" }>(
+          `SELECT mode FROM onec_import_jobs WHERE id = $1::uuid`,
+          [jobId],
+        )
+      ).rows[0];
+      const failure = buildImportJobFailure(error, failedJob?.mode ?? "dry_run", env);
+      const redacted = serializeJobResult(failure.result, env);
       await db.query(
         `
           UPDATE onec_import_jobs
-          SET status = 'failed', finished_at = NOW(), error_code = 'IMPORT_JOB_FAILED', result = NULL
+          SET
+            status = 'failed',
+            finished_at = NOW(),
+            error_code = $2,
+            result = $3::jsonb
           WHERE id = $1::uuid AND status = 'running'
         `,
-        [jobId],
+        [jobId, failure.errorCode, redacted],
       );
       console.info(
         JSON.stringify({
           event: "onec_import_job_finished",
           jobId,
           status: "failed",
-          errorCode: "IMPORT_JOB_FAILED",
+          errorCode: failure.errorCode,
+          stage: failure.stage,
+          diagnosticId: failure.diagnosticId,
+          message: failure.message,
         }),
       );
     }
