@@ -292,6 +292,33 @@ describe("onec nightly exchange", { concurrency: false }, () => {
     assert.equal(status.body.job.exportBatchId, "aaaaaaaa-aaaa-4aaa-8aaa-bbbbbbbbbbbb");
   });
 
+  it("completes nightly update without export_bundle_manifest", async () => {
+    const clientsBytes = buildClientsFileBytes([
+      sampleClient({ name_client: "Nightly Without Manifest" }),
+    ]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false));
+
+    const window = activeTestWindow();
+    const tick = await tickNightlyExchangeScheduler(window);
+    assert.equal(tick.status, "enqueued");
+    assert.equal(await waitForNightlyJobSettled(pool), "success");
+
+    const job = (
+      await pool.query<{ result: { status: string; releaseConsistencyConfirmed?: boolean; sourceExportAt?: string | null } }>(
+        `SELECT result FROM onec_import_jobs WHERE job_source = 'nightly' ORDER BY requested_at DESC LIMIT 1`,
+      )
+    ).rows[0];
+    assert.equal(job?.result.status, "SUCCESS");
+    assert.equal(job?.result.releaseConsistencyConfirmed, false);
+    assert.equal(job?.result.sourceExportAt, null);
+
+    const clientRow = await pool.query<{ name_client: string }>(
+      "SELECT name_client FROM onec_clients WHERE guid_client = $1::uuid",
+      [sampleClient().guid_client],
+    );
+    assert.equal(clientRow.rows[0]?.name_client, "Nightly Without Manifest");
+  });
+
   it("does not duplicate jobs on repeat tick or parallel instances in same window", async () => {
     configureWorkerBundle(
       bundleInput(
@@ -360,16 +387,6 @@ describe("onec nightly exchange", { concurrency: false }, () => {
       `SELECT COUNT(*)::text AS count FROM onec_import_jobs WHERE job_source = 'nightly'`,
     );
     assert.equal(nightlyCount.rows[0]?.count, "0");
-  });
-
-  it("rejects bundle without manifest and preserves empty database", async () => {
-    configureWorkerBundle(
-      bundleInput(buildClientsFileBytes([sampleClient()]), rosterForManagers(MANAGER_A), false),
-    );
-    const tick = await tickNightlyExchangeScheduler(activeTestWindow());
-    assert.equal(tick.status, "enqueued");
-    assert.equal(await waitForNightlyJobSettled(pool), "failed");
-    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
   });
 
   it("rejects roster shrink without partial apply", async () => {

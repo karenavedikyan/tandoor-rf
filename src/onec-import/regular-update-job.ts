@@ -2,9 +2,6 @@ import { finalizeRegularUpdateResult } from "./job-failure";
 import { runRegularUpdate, type RunRegularUpdateOptions } from "../onec-regular-update/run-update";
 import type { RegularUpdateResult } from "../onec-regular-update/types";
 
-export const MANIFEST_UNAVAILABLE_USER_MESSAGE =
-  "Обновление недоступно: 1С ещё не передала подтверждение готовности комплекта.";
-
 export const DATA_PRESERVED_SUFFIX =
   " Прежние данные клиентов и назначений сохранены без изменений.";
 
@@ -64,15 +61,15 @@ export async function executeRegularUpdateBundleJob(
     );
   }
 
-  if (!dryRun.releaseConsistencyConfirmed || !dryRun.applyPermitted) {
+  if (!dryRun.applyPermitted) {
     return withDataPreservedMessage(
       finalizeRegularUpdateResult(
         {
           ...dryRun,
           status: "REJECTED_BY_CHECKS",
           mode: "apply",
-          errorCode: "RELEASE_CONSISTENCY_NOT_CONFIRMED",
-          message: MANIFEST_UNAVAILABLE_USER_MESSAGE,
+          errorCode: dryRun.errorCode ?? "VALIDATION_FAILED",
+          message: dryRun.message || "Комплект не прошёл проверку перед обновлением.",
         },
         env,
       ),

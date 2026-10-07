@@ -8,7 +8,6 @@ import {
 import type { RegularUpdateResult } from "../../onec-regular-update/types";
 import { formatMskDateTime } from "../dto";
 import type { AdminOnecUpdateJobDto, OnecUpdateUiPhase } from "./types";
-import { MANIFEST_UNAVAILABLE_USER_MESSAGE } from "../../onec-import/regular-update-job";
 import { finalizeStaleRegularUpdateJobs } from "./job-lifecycle";
 
 const REGULAR_UPDATE_ADMIN_LOCK = 902_451_004;
@@ -56,9 +55,6 @@ function resolveErrorCode(row: JobRow): string | null {
 function mapResultMessage(result: RegularUpdateResult | null, errorCode: string | null): string {
   if (errorCode === "COMMIT_UNCERTAIN") {
     return "Результат обновления уточняется. Повторный запуск заблокирован до проверки оператором.";
-  }
-  if (errorCode === "RELEASE_CONSISTENCY_NOT_CONFIRMED") {
-    return MANIFEST_UNAVAILABLE_USER_MESSAGE;
   }
   if (errorCode === "JOB_EXPIRED") {
     return "Срок ожидания задания обновления из 1С истёк. Можно запустить обновление снова.";

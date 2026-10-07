@@ -296,7 +296,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(previewAttempt.status, 403);
   });
 
-  it("reports manifest unavailable without export_bundle_manifest", async () => {
+  it("applies bundle without export_bundle_manifest via manual button worker", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const bundle = bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false);
@@ -309,13 +309,13 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(started.status, 202);
 
     const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
-    assert.equal(status.body.job.phase, "rejected");
-    assert.match(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
-    assert.equal(status.body.job.dataPreserved, true);
-    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 0);
+    assert.equal(status.body.job.phase, "completed");
+    assert.equal(status.body.job.sourceExportAt, null);
+    assert.equal(status.body.job.exportBatchId, null);
+    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 1);
   });
 
-  it("preserves manifest validation reason for invalid export_formed_at", async () => {
+  it("ignores invalid manifest on FTP and still applies when bundle is valid", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = rosterForManagers(MANAGER_A);
@@ -333,11 +333,10 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(started.status, 202);
 
     const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
-    assert.equal(status.body.job.phase, "rejected");
-    assert.equal(status.body.job.errorCode, "MANIFEST_INVALID_SCHEMA");
-    assert.equal(status.body.job.failureStage, "manifest_validation");
-    assert.match(status.body.job.message, /export_formed_at|calendar date/i);
-    assert.doesNotMatch(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
+    assert.equal(status.body.job.phase, "completed");
+    assert.equal(status.body.job.sourceExportAt, null);
+    assert.equal(status.body.job.exportBatchId, null);
+    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM onec_clients")).rows[0].count, 1);
   });
 
   it("blocks duplicate start while job is pending or running", async () => {
@@ -679,7 +678,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     );
   });
 
-  it("probe reports readOk but not ready when manifest is missing", async () => {
+  it("probe reports ready bundle when manifest is missing", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false));
@@ -688,15 +687,15 @@ describe("admin clients onec update", { concurrency: false }, () => {
       .post("/api/admin/clients/onec-update/probe")
       .set(authHeaders(adminCookie))
       .send({});
-    assert.equal(res.status, 409);
+    assert.equal(res.status, 200);
     assert.equal(res.body.readOk, true);
-    assert.equal(res.body.ok, false);
-    assert.equal(res.body.probe.applyPermitted, false);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.probe.applyPermitted, true);
     assert.equal(res.body.probe.releaseConsistencyConfirmed, false);
-    assert.equal(res.body.probe.stage, "manifest_validation");
+    assert.match(res.body.probe.message, /Согласованность выпуска не подтверждена/);
   });
 
-  it("probe reports unreadable manifest with manifest_validation stage", async () => {
+  it("probe ignores invalid manifest and still reports ready bundle", async () => {
     const app = await loadApp();
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     configureWorkerBundle({
@@ -709,11 +708,11 @@ describe("admin clients onec update", { concurrency: false }, () => {
       .post("/api/admin/clients/onec-update/probe")
       .set(authHeaders(adminCookie))
       .send({});
-    assert.equal(res.status, 409);
-    assert.equal(res.body.ok, false);
-    assert.equal(res.body.readOk, false);
-    assert.equal(res.body.probe.errorCode, "MANIFEST_INVALID_JSON");
-    assert.equal(res.body.probe.stage, "manifest_validation");
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.readOk, true);
+    assert.equal(res.body.probe.applyPermitted, true);
+    assert.equal(res.body.probe.releaseConsistencyConfirmed, false);
   });
 
   it("reports commit uncertainty without promising preserved data", async () => {

@@ -22,6 +22,10 @@
 
 FTP и БД — те же, что для regular update (`ONEC_FTP_*`, `DATABASE_URL`).
 
+Файлы: `/LC/clients/all_clients.json`, `/LC/clients/all_employees.json`.  
+`export_bundle_manifest.json` **не обязателен** — nightly использует тот же путь, что ручная кнопка и CLI.  
+Стабильное чтение не доказывает единый выпуск 1С; `sourceExportAt` остаётся null без manifest от 1С.
+
 ## Включение (после согласования)
 
 1. Убедиться, что ручное обновление из 1С и regular update проходят на staging.

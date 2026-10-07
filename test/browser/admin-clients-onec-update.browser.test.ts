@@ -146,12 +146,12 @@ describe("admin clients onec update button browser", () => {
     await previewCtx.close();
   });
 
-  it("shows manifest rejection message and preserved-data note", async () => {
+  it("shows rejection message and preserved-data note", async () => {
     const { page, context } = await openPage({ onecUpdatePhase: "rejected" });
     await openClientsPage(page, baseUrl, DESKTOP);
     assert.match(
       await page.locator("[data-testid='onec-update-status']").textContent(),
-      /1С ещё не передала подтверждение готовности комплекта/,
+      /Отклонено проверками/,
     );
     assert.match(await page.locator("#onec-update-meta").textContent(), /Прежние данные сохранены/);
     await page.close();
