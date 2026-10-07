@@ -1,4 +1,4 @@
-import { loadOnecFtpConfig } from "../onec-ftp/config";
+import { finalizeRegularUpdateResult } from "./job-failure";
 import { runRegularUpdate, type RunRegularUpdateOptions } from "../onec-regular-update/run-update";
 import type { RegularUpdateResult } from "../onec-regular-update/types";
 
@@ -44,37 +44,54 @@ export async function executeRegularUpdateBundleJob(
   });
 
   if (dryRun.status === "REJECTED_BY_CHECKS" || dryRun.status === "ERROR") {
-    return withDataPreservedMessage({ ...dryRun, mode: "apply" });
+    return withDataPreservedMessage(
+      finalizeRegularUpdateResult({ ...dryRun, mode: "apply" }, env),
+    );
   }
 
   if (dryRun.status !== "SUCCESS" || dryRun.mode !== "dry_run") {
-    return withDataPreservedMessage({
-      ...dryRun,
-      status: "ERROR",
-      mode: "apply",
-      errorCode: dryRun.errorCode ?? "IMPORT_JOB_FAILED",
-      message: dryRun.message || "Не удалось проверить комплект перед обновлением.",
-    });
+    return withDataPreservedMessage(
+      finalizeRegularUpdateResult(
+        {
+          ...dryRun,
+          status: "ERROR",
+          mode: "apply",
+          errorCode: dryRun.errorCode ?? "IMPORT_JOB_FAILED",
+          message: dryRun.message || "Не удалось проверить комплект перед обновлением.",
+        },
+        env,
+      ),
+    );
   }
 
   if (!dryRun.releaseConsistencyConfirmed || !dryRun.applyPermitted) {
-    return withDataPreservedMessage({
-      ...dryRun,
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      errorCode: "RELEASE_CONSISTENCY_NOT_CONFIRMED",
-      message: MANIFEST_UNAVAILABLE_USER_MESSAGE,
-    });
+    return withDataPreservedMessage(
+      finalizeRegularUpdateResult(
+        {
+          ...dryRun,
+          status: "REJECTED_BY_CHECKS",
+          mode: "apply",
+          errorCode: "RELEASE_CONSISTENCY_NOT_CONFIRMED",
+          message: MANIFEST_UNAVAILABLE_USER_MESSAGE,
+        },
+        env,
+      ),
+    );
   }
 
   if (!dryRun.verificationFingerprint) {
-    return withDataPreservedMessage({
-      ...dryRun,
-      status: "ERROR",
-      mode: "apply",
-      errorCode: "VERIFICATION_FINGERPRINT_REQUIRED",
-      message: "Не удалось получить отпечаток проверки комплекта." + DATA_PRESERVED_SUFFIX,
-    });
+    return withDataPreservedMessage(
+      finalizeRegularUpdateResult(
+        {
+          ...dryRun,
+          status: "ERROR",
+          mode: "apply",
+          errorCode: "VERIFICATION_FINGERPRINT_REQUIRED",
+          message: "Не удалось получить отпечаток проверки комплекта." + DATA_PRESERVED_SUFFIX,
+        },
+        env,
+      ),
+    );
   }
 
   const applied = await runRegularUpdate({
@@ -83,18 +100,14 @@ export async function executeRegularUpdateBundleJob(
     argv: ["--apply", "--expected-fingerprint", dryRun.verificationFingerprint],
   });
 
-  return withDataPreservedMessage({ ...applied, mode: "apply" });
+  return withDataPreservedMessage(
+    finalizeRegularUpdateResult({ ...applied, mode: "apply" }, env),
+  );
 }
 
 export function redactRegularUpdateResult(
   result: RegularUpdateResult,
   env: NodeJS.ProcessEnv = process.env,
 ): RegularUpdateResult {
-  const config = loadOnecFtpConfig(env);
-  const secret = config.ok ? config.config.password : "";
-  if (!secret) {
-    return result;
-  }
-  const serialized = JSON.stringify(result);
-  return JSON.parse(serialized.split(secret).join("[REDACTED]")) as RegularUpdateResult;
+  return finalizeRegularUpdateResult(result, env);
 }

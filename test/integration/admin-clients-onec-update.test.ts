@@ -335,6 +335,7 @@ describe("admin clients onec update", { concurrency: false }, () => {
     const status = await waitForAdminOnecUpdateSettled(app, adminCookie);
     assert.equal(status.body.job.phase, "rejected");
     assert.equal(status.body.job.errorCode, "MANIFEST_INVALID_SCHEMA");
+    assert.equal(status.body.job.failureStage, "manifest_validation");
     assert.match(status.body.job.message, /export_formed_at|calendar date/i);
     assert.doesNotMatch(status.body.job.message, /1С ещё не передала подтверждение готовности комплекта/);
   });
@@ -661,7 +662,10 @@ describe("admin clients onec update", { concurrency: false }, () => {
       .send({});
     assert.equal(res.status, 200);
     assert.equal(res.body.ok, true);
+    assert.equal(res.body.readOk, true);
     assert.equal(res.body.probe.status, "SUCCESS");
+    assert.equal(res.body.probe.applyPermitted, true);
+    assert.equal(res.body.probe.releaseConsistencyConfirmed, true);
     assert.doesNotMatch(JSON.stringify(res.body), /secret-test-value/);
 
     const afterCount = (
@@ -673,6 +677,43 @@ describe("admin clients onec update", { concurrency: false }, () => {
         ?.count,
       "0",
     );
+  });
+
+  it("probe reports readOk but not ready when manifest is missing", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    configureWorkerBundle(bundleInput(clientsBytes, rosterForManagers(MANAGER_A), false));
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 409);
+    assert.equal(res.body.readOk, true);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.probe.applyPermitted, false);
+    assert.equal(res.body.probe.releaseConsistencyConfirmed, false);
+    assert.equal(res.body.probe.stage, "manifest_validation");
+  });
+
+  it("probe reports unreadable manifest with manifest_validation stage", async () => {
+    const app = await loadApp();
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    configureWorkerBundle({
+      clientsBytes,
+      rosterBytes: rosterForManagers(MANAGER_A),
+      manifestBytes: Buffer.from("{ unreadable"),
+    });
+
+    const res = await request(app)
+      .post("/api/admin/clients/onec-update/probe")
+      .set(authHeaders(adminCookie))
+      .send({});
+    assert.equal(res.status, 409);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.readOk, false);
+    assert.equal(res.body.probe.errorCode, "MANIFEST_INVALID_JSON");
+    assert.equal(res.body.probe.stage, "manifest_validation");
   });
 
   it("reports commit uncertainty without promising preserved data", async () => {

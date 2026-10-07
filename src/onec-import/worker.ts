@@ -22,6 +22,7 @@ import {
 } from "./constants";
 import {
   buildImportJobFailure,
+  finalizeRegularUpdateResult,
   ImportJobError,
   redactImportJobResult,
 } from "./job-failure";
@@ -175,7 +176,7 @@ async function runRegularUpdateBundleJob(
     importTriggerSource: importTriggerSourceForJob(job.job_source),
     ...testHooks?.regularUpdateExecution,
   });
-  const redacted = redactRegularUpdateResult(updateResult, env);
+  const redacted = finalizeRegularUpdateResult(updateResult, env);
   return {
     ok: regularUpdateJobSucceeded(redacted),
     result: redacted,
@@ -318,6 +319,7 @@ export async function runOneImportJob(
         kind: job.kind,
         status: "failed",
         errorCode: outcome.errorCode,
+        stage: (outcome.result as { stage?: string }).stage ?? null,
         importRunId: outcome.importRunId,
       }),
     );

@@ -1,5 +1,6 @@
 import { isOnecFtpEnabled, loadOnecFtpConfig } from "../onec-ftp/config";
 import { redactSecrets } from "../onec-ftp/sanitize";
+import { collectEnvRedactionSecrets } from "./job-failure";
 import { TRUSTED_ONEC_FTP_BASE_PATH, TRUSTED_ONEC_FTP_HOST } from "./constants";
 
 export type TrustedConfigCheck = {
@@ -17,9 +18,7 @@ export type TrustedConfigValidationResult = {
 };
 
 function safeConfigDetail(message: string, env: NodeJS.ProcessEnv): string {
-  const password = env.ONEC_FTP_PASSWORD ?? "";
-  const redacted = redactSecrets(message, password ? [password] : []);
-  return redacted.slice(0, 300);
+  return redactSecrets(message, collectEnvRedactionSecrets(env)).slice(0, 300);
 }
 
 /**

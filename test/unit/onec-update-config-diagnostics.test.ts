@@ -25,6 +25,22 @@ describe("onec update config diagnostics", () => {
     assert.equal(outcome.config.ok, false);
   });
 
+  it("reports readOk without bundle readiness when manifest is absent", async () => {
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const rosterBytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222"),
+    ]);
+    const outcome = await runOnecUpdateReadOnlyProbe(env, {
+      clientsBytes,
+      employeeRosterBytes: rosterBytes,
+    });
+    assert.equal(outcome.readOk, true);
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.probe?.applyPermitted, false);
+    assert.equal(outcome.probe?.releaseConsistencyConfirmed, false);
+    assert.equal(outcome.probe?.stage, "manifest_validation");
+  });
+
   it("reports invalid manifest on read-only dry-run probe", async () => {
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = buildEmployeeRosterBytes([
@@ -40,6 +56,8 @@ describe("onec update config diagnostics", () => {
     assert.ok(outcome.probe);
     assert.equal(outcome.probe?.status, "REJECTED_BY_CHECKS");
     assert.equal(outcome.probe?.errorCode, "MANIFEST_INVALID_JSON");
+    assert.equal(outcome.probe?.stage, "manifest_validation");
+    assert.equal(outcome.readOk, false);
     assert.doesNotMatch(JSON.stringify(outcome), /secret/);
   });
 });

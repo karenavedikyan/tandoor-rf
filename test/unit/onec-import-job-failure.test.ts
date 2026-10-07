@@ -27,7 +27,7 @@ describe("onec import job failure diagnostics", () => {
     assert.equal(failure.errorCode, "CONFIG_INVALID");
     assert.equal(failure.stage, "config");
     assert.equal(failure.result.stage, "config");
-    assert.match(failure.message, /конфигура/i);
+    assert.match(failure.message, /безопасности/i);
   });
 
   it("maps manifest errors to manifest_validation stage", () => {
@@ -54,5 +54,32 @@ describe("onec import job failure diagnostics", () => {
     const serialized = JSON.stringify(failure.result);
     assert.doesNotMatch(serialized, /super-secret-password/);
     assert.doesNotMatch(serialized, /db-secret/);
+    assert.doesNotMatch(failure.message, /super-secret-password/);
+  });
+
+  it("does not leak password from invalid config exception or internal log", () => {
+    const invalidEnv = {
+      ONEC_FTP_ENABLED: "true",
+      ONEC_FTP_PASSWORD: "fixture-secret-password",
+    };
+    const logs: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    try {
+      const failure = buildImportJobFailure(
+        new Error("fixture-secret-password must never appear"),
+        "apply",
+        invalidEnv,
+      );
+      const serialized = JSON.stringify(failure);
+      assert.doesNotMatch(serialized, /fixture-secret-password/);
+      assert.doesNotMatch(logs.join("\n"), /fixture-secret-password/);
+      assert.doesNotMatch(logs.join("\n"), /must never appear/);
+      assert.match(logs.join("\n"), /onec_import_job_internal_error/);
+    } finally {
+      console.info = originalInfo;
+    }
   });
 });

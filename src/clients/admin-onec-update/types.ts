@@ -56,6 +56,7 @@ export type AdminOnecConfigCheckResponse = {
 
 export type AdminOnecUpdateProbeResponse = {
   ok: boolean;
+  readOk: boolean;
   message: string;
   config: AdminOnecConfigCheckResponse;
   probe: {
@@ -63,5 +64,7 @@ export type AdminOnecUpdateProbeResponse = {
     errorCode?: string;
     stage?: string;
     message: string;
+    applyPermitted?: boolean;
+    releaseConsistencyConfirmed?: boolean;
   } | null;
 };

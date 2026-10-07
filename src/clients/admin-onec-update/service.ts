@@ -54,6 +54,7 @@ export async function runAdminOnecUpdateProbe(): Promise<AdminOnecUpdateProbeRes
   const outcome = await runOnecUpdateReadOnlyProbe();
   return {
     ok: outcome.ok,
+    readOk: outcome.readOk,
     message: outcome.message,
     config: {
       ok: outcome.config.ok,
@@ -67,6 +68,8 @@ export async function runAdminOnecUpdateProbe(): Promise<AdminOnecUpdateProbeRes
           errorCode: outcome.probe.errorCode,
           stage: outcome.probe.stage,
           message: outcome.probe.message,
+          applyPermitted: outcome.probe.applyPermitted,
+          releaseConsistencyConfirmed: outcome.probe.releaseConsistencyConfirmed,
         }
       : null,
   };
