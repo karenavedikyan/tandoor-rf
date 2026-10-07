@@ -103,6 +103,36 @@
 
 4. Результат — только из БД (`onec_import_jobs.result`, `import_run_id`). HTTP-доступа к таблице нет.
 
+### D. Regular update bundle (кнопка «Обновить из 1С», nightly, CLI)
+
+Единый путь: `onec-regular-update` → worker `regular_update_bundle` → admin UI / nightly scheduler.
+
+**FTP (без изменений):**
+
+| Файл | Путь |
+|------|------|
+| Клиенты | `/LC/clients/all_clients.json` |
+| Справочник ОПТ | `/LC/clients/all_employees.json` |
+
+`export_bundle_manifest.json` **не обязателен**. Кнопка забирает уже опубликованные файлы с FTP; выгрузку в 1С не запускает.
+
+| Сигнал | Значение |
+|--------|----------|
+| `applyPermitted: true` | Стабильное чтение обоих файлов + JSON/GUID/roster validation; apply разрешён |
+| `releaseConsistencyConfirmed: true` | Только при **валидном** manifest с SHA обоих файлов |
+| `sourceExportAt` | Из manifest `export_formed_at`; **null**, если 1С не передала дату (время скачивания не подставляется) |
+
+**Ограничение:** стабильное чтение не доказывает, что оба файла сформированы одним заданием 1С. Остальные guards сохранены: drift-guard, combined fingerprint под import lock, `NO_CHANGES`, shrink guards (`ROSTER_SHRINK_AMBIGUOUS`), одна транзакция clients + roster, concurrency / `COMMIT_UNCERTAIN`.
+
+**Запуск:**
+
+1. Admin UI: `POST /api/admin/clients/onec-update` (только admin, не preview).
+2. Read-only probe: `POST /api/admin/clients/onec-update/probe` — проверка без apply.
+3. CLI: `npm run onec-regular-update:local -- --dry-run` → `--apply --expected-fingerprint <from dry-run>`.
+4. Nightly: см. [nightly-exchange-runbook.md](./nightly-exchange-runbook.md).
+
+Подробности manifest (опционально): [export-bundle-manifest-contract.md](./export-bundle-manifest-contract.md).
+
 ---
 
 ## 4. Рекомендуемое расписание (до ответов 1С по E2)

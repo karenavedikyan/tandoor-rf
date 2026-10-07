@@ -48,7 +48,7 @@ const USER_MESSAGES: Partial<Record<string, string>> = {
   EMPLOYEE_ROSTER_UNREADABLE: "Не удалось прочитать справочник сотрудников из 1С.",
   EMPLOYEE_ROSTER_MISMATCH: "Справочник сотрудников не совпадает с ожидаемым снимком.",
   MANIFEST_NOT_FOUND:
-    "Файл export_bundle_manifest.json не найден на FTP. Обновление недоступно.",
+    "Файл export_bundle_manifest.json не найден на FTP. Согласованность выпуска не подтверждена.",
   MANIFEST_UNREADABLE: "Не удалось прочитать export_bundle_manifest.json с FTP.",
   MANIFEST_INVALID_JSON: "export_bundle_manifest.json содержит некорректный JSON.",
   MANIFEST_INVALID_SCHEMA: "export_bundle_manifest.json не соответствует схеме.",
@@ -112,9 +112,6 @@ export function inferImportJobStage(result: RegularUpdateResult): ImportJobFailu
   }
   if (result.errorCode) {
     return resolveImportJobStage(result.errorCode);
-  }
-  if (result.applyPermitted === false || result.releaseConsistencyConfirmed === false) {
-    return "manifest_validation";
   }
   return "unknown";
 }

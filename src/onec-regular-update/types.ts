@@ -20,7 +20,7 @@ export type RegularUpdateResult = {
   sourceExportAt?: string | null;
   /** True only when export_bundle_manifest.json verifies batch ID and both file hashes. */
   releaseConsistencyConfirmed?: boolean;
-  /** False until release consistency is confirmed by manifest; dry-run must not imply apply permission. */
+  /** True when both files were read stably and passed bundle validation; does not imply release consistency. */
   applyPermitted?: boolean;
   clientsReadCount?: number;
   rosterReadCount?: number;

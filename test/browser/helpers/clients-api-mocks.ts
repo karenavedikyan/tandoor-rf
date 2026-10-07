@@ -481,7 +481,7 @@ export function syntheticOnecUpdateStatusPayload(
       phase,
       message:
         phase === "rejected"
-          ? "Обновление недоступно: 1С ещё не передала подтверждение готовности комплекта."
+          ? "Отклонено проверками. Комплект не прошёл проверку перед обновлением. Прежние данные клиентов и назначений сохранены без изменений."
           : phaseLabels[phase] + ". Синтетический статус обновления.",
       startedAt: "2026-10-06T11:00:00.000Z",
       finishedAt: phase === "pending" || phase === "running" ? null : "2026-10-06T11:05:00.000Z",
@@ -490,7 +490,7 @@ export function syntheticOnecUpdateStatusPayload(
       lastSuccessfulUpdateAt: "2026-09-28T09:00:00.000Z",
       lastSuccessfulUpdateAtLabel: "28.09.2026, 12:00",
       dataPreserved: phase === "rejected" || phase === "error",
-      errorCode: phase === "rejected" ? "RELEASE_CONSISTENCY_NOT_CONFIRMED" : null,
+      errorCode: phase === "rejected" ? "ROSTER_SHRINK_AMBIGUOUS" : null,
       requestedByUserId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       jobSource: "admin_manual",
       jobSourceLabel: "Вручную администратором",

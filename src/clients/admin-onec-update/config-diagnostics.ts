@@ -2,7 +2,6 @@ import { getImportJobWorkerTestHooks } from "../../onec-import/worker-scheduler"
 import { runRegularUpdate, type RunRegularUpdateOptions } from "../../onec-regular-update/run-update";
 import type { RegularUpdateResult } from "../../onec-regular-update/types";
 import { finalizeRegularUpdateResult } from "../../onec-import/job-failure";
-import { MANIFEST_UNAVAILABLE_USER_MESSAGE } from "../../onec-import/regular-update-job";
 import {
   validateTrustedOnecFtpConfig,
   type TrustedConfigCheck,
@@ -17,7 +16,7 @@ export type OnecConfigCheckResponse = {
 };
 
 export type OnecUpdateProbeResponse = {
-  /** Bundle is ready for apply (manifest confirmed, apply permitted). */
+  /** Bundle is ready for apply (stable read and validation passed). */
   ok: boolean;
   /** Files were read and validated structurally (dry-run reached SUCCESS/NO_CHANGES). */
   readOk: boolean;
@@ -31,20 +30,10 @@ function isRegularUpdateReadOk(result: RegularUpdateResult): boolean {
 }
 
 function isRegularUpdateBundleReady(result: RegularUpdateResult): boolean {
-  return (
-    isRegularUpdateReadOk(result) &&
-    result.applyPermitted === true &&
-    result.releaseConsistencyConfirmed === true
-  );
+  return isRegularUpdateReadOk(result) && result.applyPermitted === true;
 }
 
 function probeUserMessage(result: RegularUpdateResult): string {
-  if (isRegularUpdateBundleReady(result)) {
-    return result.message;
-  }
-  if (isRegularUpdateReadOk(result) && result.applyPermitted === false) {
-    return MANIFEST_UNAVAILABLE_USER_MESSAGE;
-  }
   return result.message;
 }
 

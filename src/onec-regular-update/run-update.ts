@@ -12,10 +12,9 @@ import type { RegularUpdateResult } from "./types";
 import {
   loadVerifiedExportManifest,
   type ExportManifestReader,
-  type ExportManifestVerificationResult,
 } from "./export-manifest";
-const RELEASE_NOT_CONFIRMED_MESSAGE =
-  "Структура файлов проверена. Согласованность выпуска не подтверждена: требуется export_bundle_manifest.json с export_batch_id и SHA-256 обоих файлов. Применение запрещено.";
+const RELEASE_NOT_CONFIRMED_NOTE =
+  "Согласованность выпуска не подтверждена: export_bundle_manifest.json отсутствует или не прошёл проверку. Стабильное чтение обоих файлов не доказывает, что они сформированы одним заданием 1С.";
 
 function countOutlets(payload: import("../onec-clients/types").ValidatedClientsPayload): number {
   let total = 0;
@@ -46,10 +45,6 @@ function rejectedResult(input: Omit<RegularUpdateResult, "finishedAt" | "duratio
     finishedAt: new Date(finishedAtMs).toISOString(),
     durationMs: finishedAtMs - input.startedAtMs,
   };
-}
-
-function manifestErrorCode(result: ExportManifestVerificationResult & { ok: false }): string {
-  return result.code;
 }
 
 export type RunRegularUpdateOptions = {
@@ -161,7 +156,7 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
   const releaseConsistencyConfirmed = manifestVerification.ok;
   const exportBatchId = manifestVerification.ok ? manifestVerification.manifest.exportBatchId : null;
   const sourceExportAt = manifestVerification.ok ? manifestVerification.manifest.exportFormedAt : null;
-  const applyPermitted = releaseConsistencyConfirmed;
+  const applyPermitted = true;
 
   const baseResult = {
     verificationFingerprint,
@@ -180,20 +175,6 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
     }),
   };
 
-  if (!manifestVerification.ok && manifestVerification.code !== "MANIFEST_NOT_FOUND" && manifestVerification.code !== "MANIFEST_UNREADABLE") {
-    return rejectedResult({
-      status: "REJECTED_BY_CHECKS",
-      mode: cliOptions.mode,
-      startedAt,
-      startedAtMs,
-      ...baseResult,
-      releaseConsistencyConfirmed: false,
-      applyPermitted: false,
-      errorCode: manifestErrorCode(manifestVerification),
-      message: manifestVerification.message,
-    });
-  }
-
   if (cliOptions.mode === "dry_run") {
     return rejectedResult({
       status: "SUCCESS",
@@ -203,19 +184,7 @@ export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): P
       ...baseResult,
       message: releaseConsistencyConfirmed
         ? `Regular update bundle verified; export batch ${exportBatchId} confirmed (${PLAIN_FTP_TRANSPORT_WARNING.trim()}). Apply requires matching --expected-fingerprint from this dry-run.`
-        : RELEASE_NOT_CONFIRMED_MESSAGE,
-    });
-  }
-
-  if (!releaseConsistencyConfirmed) {
-    return rejectedResult({
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      startedAt,
-      startedAtMs,
-      ...baseResult,
-      errorCode: "RELEASE_CONSISTENCY_NOT_CONFIRMED",
-      message: RELEASE_NOT_CONFIRMED_MESSAGE,
+        : `Regular update bundle verified (${PLAIN_FTP_TRANSPORT_WARNING.trim()}). ${RELEASE_NOT_CONFIRMED_NOTE} Apply requires matching --expected-fingerprint from this dry-run.`,
     });
   }
 

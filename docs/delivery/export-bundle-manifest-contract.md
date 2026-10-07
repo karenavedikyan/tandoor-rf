@@ -1,15 +1,16 @@
 # Export bundle manifest contract (1C → FTP)
 
-**Status:** required for regular update apply in ЛК (`onec-regular-update`).  
-Stable reads and combined verification fingerprint alone do **not** prove that `all_clients.json` and `all_employees.json` belong to the same 1C export release.
+**Status:** optional for regular update apply in ЛК (`onec-regular-update`).  
+Ручная кнопка и ночной обмен читают `/LC/clients/all_clients.json` и `/LC/clients/all_employees.json` без обязательного manifest.  
+Стабильное повторное чтение обоих файлов и combined verification fingerprint **не доказывают**, что они сформированы одним заданием 1С.
 
 ## File
 
 | Property | Value |
 |----------|--------|
 | Path | `{ONEC_FTP_BASE_PATH}/clients/export_bundle_manifest.json` |
-| Publish order | **After** both data files are fully written |
-| Ready-marker alone | **Not sufficient** — marker must not replace this manifest |
+| Required for apply | **No** — ЛК применяет комплект по стабильному чтению и валидации |
+| When present and valid | Подтверждает `releaseConsistencyConfirmed`, заполняет `exportBatchId` и `sourceExportAt` |
 
 ## JSON schema (v1)
 
@@ -25,7 +26,7 @@ Stable reads and combined verification fingerprint alone do **not** prove that `
 }
 ```
 
-### Required fields
+### Required fields (when manifest is published)
 
 | Field | Type | Rule |
 |-------|------|------|
@@ -38,17 +39,29 @@ Stable reads and combined verification fingerprint alone do **not** prove that `
 
 | Field | Type | Rule |
 |-------|------|------|
-| `export_formed_at` | string | Business timestamp of export formation (not FTP mtime); surfaced as `sourceExportAt` when present |
+| `export_formed_at` | string | Business timestamp of export formation (not FTP mtime); surfaced as `sourceExportAt` when present and valid |
 
 ## ЛК behaviour
 
-| Mode | Manifest absent / unreadable | Manifest invalid | Manifest valid |
-|------|------------------------------|------------------|----------------|
-| `--dry-run` | SUCCESS, `applyPermitted: false`, message: release consistency not confirmed | REJECTED | SUCCESS, `applyPermitted: true` |
-| `--apply` | REJECTED (`RELEASE_CONSISTENCY_NOT_CONFIRMED`), no DB writes | REJECTED | Proceeds to existing import guards |
+| Signal | Meaning |
+|--------|---------|
+| `applyPermitted: true` | Оба файла прочитаны стабильно, прошли JSON/GUID/roster validation; apply разрешён |
+| `releaseConsistencyConfirmed: true` | Только при **валидном** manifest с совпадающими SHA обоих файлов |
+| `sourceExportAt` | Из `export_formed_at` manifest; **null**, если 1С не передала дату (время скачивания не подставляется) |
+
+| Mode | Manifest absent / unreadable / invalid | Manifest valid |
+|------|----------------------------------------|----------------|
+| `--dry-run` | SUCCESS, `applyPermitted: true`, `releaseConsistencyConfirmed: false` | SUCCESS, `applyPermitted: true`, `releaseConsistencyConfirmed: true` |
+| `--apply` / worker / nightly | Proceeds to existing import guards (fingerprint, shrink, lock, …) | Same; metadata from manifest preserved in result |
+
+Invalid or stale manifest on FTP **не блокирует** apply и **не** выставляет `releaseConsistencyConfirmed=true`.
+
+## Ограничение для операторов
+
+Стабильное чтение двух файлов защищает от drift во время скачивания, но **не доказывает** единый выпуск 1С. Для явного подтверждения одного задания 1С может публиковать manifest; без него apply опирается на остальные guards (fingerprint, shrink, combined validation).
 
 ## Open questions for 1C
 
 1. Confirm atomic publish sequence (temp files + rename vs sequential overwrite).
-2. Confirm timezone/format for `export_formed_at`.
+2. Confirm timezone/format for `export_formed_at` if manifest will be published later.
 3. Confirm whether partial roster or dismissal will use separate manifest flags in a future schema version.

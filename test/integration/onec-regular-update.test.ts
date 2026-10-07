@@ -238,7 +238,7 @@ describe("onec regular update integration", { concurrency: false }, () => {
     assert.equal(result.employeeRosterSourceSha256?.length, 64);
     assert.equal(result.sourceExportAt, null);
     assert.equal(result.releaseConsistencyConfirmed, false);
-    assert.equal(result.applyPermitted, false);
+    assert.equal(result.applyPermitted, true);
     assert.match(result.message, /Согласованность выпуска не подтверждена/);
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -561,29 +561,51 @@ describe("onec regular update integration", { concurrency: false }, () => {
   });
 
   describe("confirmed regression fixes", () => {
-    it("dry-run reports unconfirmed release; apply rejects without manifest and leaves DB unchanged", async () => {
+    it("dry-run reports unconfirmed release but apply succeeds without manifest", async () => {
       const clientsBytes = buildClientsFileBytes([sampleClient()]);
       const rosterBytes = rosterForManagers(MANAGER_A);
-      const dryRun = await dryRunBundle(databaseUrl, bundle(clientsBytes, rosterBytes, false));
+      const input = bundle(clientsBytes, rosterBytes, false);
+      const dryRun = await dryRunBundle(databaseUrl, input);
       assert.equal(dryRun.status, "SUCCESS");
-      assert.equal(dryRun.applyPermitted, false);
+      assert.equal(dryRun.applyPermitted, true);
       assert.equal(dryRun.releaseConsistencyConfirmed, false);
+      assert.equal(dryRun.sourceExportAt, null);
       assert.match(dryRun.message, /Согласованность выпуска не подтверждена/);
 
-      const applyAttempt = await applyBundle(
-        databaseUrl,
-        bundle(clientsBytes, rosterBytes, false),
-        dryRun.verificationFingerprint!,
-      );
-      assert.equal(applyAttempt.status, "REJECTED_BY_CHECKS");
-      assert.equal(applyAttempt.errorCode, "RELEASE_CONSISTENCY_NOT_CONFIRMED");
+      const applyAttempt = await applyBundle(databaseUrl, input, dryRun.verificationFingerprint!);
+      assert.equal(applyAttempt.status, "SUCCESS");
+      assert.equal(applyAttempt.releaseConsistencyConfirmed, false);
 
       const pool = new Pool({ connectionString: databaseUrl, max: 1 });
       const clientCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM onec_clients",
       );
       await pool.end();
-      assert.equal(Number(clientCount.rows[0]?.count), 0);
+      assert.equal(Number(clientCount.rows[0]?.count), 1);
+    });
+
+    it("ignores invalid manifest on FTP and still applies when bundle is valid", async () => {
+      const clientsBytes = buildClientsFileBytes([sampleClient()]);
+      const rosterBytes = rosterForManagers(MANAGER_A);
+      const invalidManifest = buildExportManifestBytes({
+        clientsSha256: sha256Hex(clientsBytes),
+        rosterSha256: sha256Hex(rosterBytes),
+        exportFormedAt: "31.02.2026",
+      });
+      const input = {
+        clientsBytes,
+        rosterBytes,
+        manifestBytes: invalidManifest,
+      };
+      const dryRun = await dryRunBundle(databaseUrl, input);
+      assert.equal(dryRun.status, "SUCCESS");
+      assert.equal(dryRun.applyPermitted, true);
+      assert.equal(dryRun.releaseConsistencyConfirmed, false);
+      assert.equal(dryRun.sourceExportAt, null);
+
+      const applied = await applyBundle(databaseUrl, input, dryRun.verificationFingerprint!);
+      assert.equal(applied.status, "SUCCESS");
+      assert.equal(applied.releaseConsistencyConfirmed, false);
     });
 
     it("rejects ambiguous roster shrink when removed manager still owns clients", async () => {
