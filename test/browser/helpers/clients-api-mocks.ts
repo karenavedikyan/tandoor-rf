@@ -586,6 +586,26 @@ export function syntheticOutletMock(
   };
 }
 
+export function syntheticExtendedEmptyOutletsPayload(): ReturnType<typeof syntheticExtendedDetailPayload> {
+  const detail = syntheticExtendedDetailPayload("granted");
+  detail.client.extended!.retailOutlets = [];
+  detail.client.extended!.retailOutletsTotalCount = 0;
+  detail.client.extended!.retailOutletsEmptyReason = "empty_snapshot";
+  detail.client.extended!.retailOutletHistoryCount = 0;
+  detail.client.extended!.dataQualityLabel = "В текущих данных 1С торговые точки не указаны";
+  return detail;
+}
+
+export function syntheticExtendedEmptyScopePayload(): ReturnType<typeof syntheticExtendedDetailPayload> {
+  const detail = syntheticExtendedDetailPayload("granted");
+  detail.client.extended!.retailOutlets = [];
+  detail.client.extended!.retailOutletsTotalCount = 0;
+  detail.client.extended!.retailOutletsEmptyReason = "empty_scope";
+  detail.client.extended!.retailOutletHistoryCount = 0;
+  detail.client.extended!.dataQualityLabel = "Нет доступных торговых точек в вашей области";
+  return detail;
+}
+
 export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied" = "granted") {
   const outlet = syntheticOutletMock();
   return syntheticDetailPayload({
@@ -609,6 +629,7 @@ export function syntheticExtendedDetailPayload(outletAccess: "granted" | "denied
       retailOutletsTotalCount: outletAccess === "granted" ? 2 : 0,
       retailOutletsTruncated: false,
       retailOutletsAccess: outletAccess,
+      retailOutletsEmptyReason: outletAccess === "granted" ? "none" : "none",
       retailOutletHistoryCount: 0,
       dataQualityLabel:
         outletAccess === "granted" ? "Частично подключено" : "Торговые точки недоступны для вашей роли",

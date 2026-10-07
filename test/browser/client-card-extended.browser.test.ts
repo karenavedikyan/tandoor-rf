@@ -8,7 +8,10 @@ import {
   resolveMockResponse,
   syntheticDetailPayload,
   syntheticExtendedDetailPayload,
+  syntheticExtendedEmptyOutletsPayload,
+  syntheticExtendedEmptyScopePayload,
   syntheticOutletMock,
+  type ClientsBusinessRole,
 } from "./helpers/clients-api-mocks";
 
 describe("client card extended browser (mocked API)", { concurrency: false }, () => {
@@ -35,14 +38,34 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     });
   });
 
+  async function assertOverviewEmptyOutlets(
+    page: Page,
+    message: RegExp,
+    forbidden?: RegExp,
+  ): Promise<void> {
+    const overview = await page.locator("#pc-panel-overview").innerText();
+    assert.match(overview, /Структура:/);
+    assert.match(overview, /Точки и контакты/);
+    assert.match(overview, message);
+    if (forbidden) {
+      assert.doesNotMatch(overview, forbidden);
+    }
+  }
+
   async function installMocks(
     page: Page,
     detailBody: ReturnType<typeof syntheticExtendedDetailPayload>,
-    role: "admin" | "manager" = "admin",
+    options: { role?: "admin" | "manager"; clientsBusinessRole?: ClientsBusinessRole } = {},
   ): Promise<void> {
+    const role = options.role ?? "admin";
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      const mock = resolveMockResponse(url, { role, detailBody }, { listCalls: 0 }, route.request().method());
+      const mock = resolveMockResponse(
+        url,
+        { role, clientsBusinessRole: options.clientsBusinessRole, detailBody },
+        { listCalls: 0 },
+        route.request().method(),
+      );
       if (mock) {
         await route.fulfill(mock);
         return;
@@ -62,7 +85,7 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
   ): Promise<{ page: Page; context: BrowserContext }> {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
-    await installMocks(page, syntheticExtendedDetailPayload(outletAccess), role);
+    await installMocks(page, syntheticExtendedDetailPayload(outletAccess), { role });
     await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
     await page.click("#pc-tab-data");
     return { page, context };
@@ -77,6 +100,76 @@ describe("client card extended browser (mocked API)", { concurrency: false }, ()
     assert.match(text, /Торговая точка 2/);
     assert.match(text, /2 точек в текущем снимке/);
     assert.doesNotMatch(text, /Дни приёмки не переданы/);
+    await context.close();
+  });
+
+  it("shows empty snapshot message for admin with granted access at desktop width", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyOutletsPayload());
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await assertOverviewEmptyOutlets(
+      page,
+      /В текущих данных 1С торговые точки не указаны/,
+      /Недоступны для вашей роли/i,
+    );
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /В текущих данных 1С торговые точки не указаны/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
+    assert.equal(await page.locator('[data-testid^="pc-outlet-"]').count(), 0);
+    await context.close();
+  });
+
+  it("shows empty snapshot message for admin with granted access on mobile", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyOutletsPayload());
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await assertOverviewEmptyOutlets(
+      page,
+      /В текущих данных 1С торговые точки не указаны/,
+      /Недоступны для вашей роли/i,
+    );
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /В текущих данных 1С торговые точки не указаны/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
+    assert.equal(await page.locator('[data-testid^="pc-outlet-"]').count(), 0);
+    await context.close();
+  });
+
+  it("shows empty scope message on overview and data for regional at desktop width", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyScopePayload(), { clientsBusinessRole: "regional_manager" });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await assertOverviewEmptyOutlets(
+      page,
+      /Нет доступных торговых точек в вашей области/,
+      /Недоступны для вашей роли/i,
+    );
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /Нет доступных торговых точек в вашей области/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
+    await context.close();
+  });
+
+  it("shows empty scope message on overview and data for regional on mobile", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    await installMocks(page, syntheticExtendedEmptyScopePayload(), { clientsBusinessRole: "regional_manager" });
+    await page.goto(`${baseUrl}/clients/${SYNTHETIC_CLIENT_GUID}`);
+    await assertOverviewEmptyOutlets(
+      page,
+      /Нет доступных торговых точек в вашей области/,
+      /Недоступны для вашей роли/i,
+    );
+    await page.click("#pc-tab-data");
+    const text = await page.locator("#pc-panel-data").innerText();
+    assert.match(text, /Нет доступных торговых точек в вашей области/);
+    assert.doesNotMatch(text, /Недоступны для вашей роли/i);
     await context.close();
   });
 

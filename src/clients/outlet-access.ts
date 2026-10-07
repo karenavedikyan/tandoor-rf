@@ -1,5 +1,8 @@
 import type { AccessContext } from "../access/types";
-import type { ParsedRetailOutlet } from "../onec-clients/extended-types";
+import type {
+  ParsedRetailOutlet,
+  RetailOutletHistoryEntry,
+} from "../onec-clients/extended-types";
 
 export const MAX_OUTLETS_IN_DETAIL_RESPONSE = 20;
 
@@ -148,4 +151,57 @@ export function countVisibleRetailOutletsForContext(
   options?: OutletFilterOptions,
 ): number {
   return filterRetailOutletsForContext(context, clientManagerGuid, outlets, options).length;
+}
+
+function hasUnscopedOutletHistoryAccess(context: AccessContext): boolean {
+  if (context.role === "admin") {
+    return true;
+  }
+  if (context.role === "director" && context.fullClientBase) {
+    return true;
+  }
+  if (context.role === "assistant") {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Counts history entries safe to expose for the current role.
+ * Returns 0 when scope filtering cannot safely bound the payload.
+ */
+export function countVisibleRetailOutletHistoryForContext(
+  context: AccessContext,
+  clientManagerGuid: string,
+  history: RetailOutletHistoryEntry[],
+  options?: OutletFilterOptions,
+): number {
+  if (!canReadNestedRetailOutlets(context) || history.length === 0) {
+    return 0;
+  }
+  if (hasUnscopedOutletHistoryAccess(context)) {
+    return history.length;
+  }
+  if (
+    context.role !== "manager" &&
+    context.role !== "regional_manager" &&
+    context.role !== "rop"
+  ) {
+    return 0;
+  }
+
+  let visibleEntryCount = 0;
+  for (const entry of history) {
+    const outlets = Array.isArray(entry.retailOutlets) ? entry.retailOutlets : [];
+    const visibleOutlets = filterRetailOutletsForContext(
+      context,
+      clientManagerGuid,
+      outlets,
+      options,
+    );
+    if (visibleOutlets.length > 0) {
+      visibleEntryCount += 1;
+    }
+  }
+  return visibleEntryCount;
 }

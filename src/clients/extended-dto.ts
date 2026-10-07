@@ -19,6 +19,7 @@ import {
 import { resolveManagerAccountLinks } from "../onec-clients/manager-status";
 import {
   canReadNestedRetailOutlets,
+  countVisibleRetailOutletHistoryForContext,
   filterRetailOutletsForContext,
   MAX_OUTLETS_IN_DETAIL_RESPONSE,
 } from "./outlet-access";
@@ -102,6 +103,16 @@ export type ClientExtendedBlockFreshnessDto = {
   retailOutlets: BlockFreshnessEntryDto;
 };
 
+export type RetailOutletsEmptyReason = "none" | "empty_snapshot" | "empty_scope";
+
+export const RETAIL_OUTLETS_EMPTY_LABELS: Record<
+  Exclude<RetailOutletsEmptyReason, "none">,
+  string
+> = {
+  empty_snapshot: "В текущих данных 1С торговые точки не указаны",
+  empty_scope: "Нет доступных торговых точек в вашей области",
+};
+
 export type ClientExtendedDto = {
   formatVersion: string;
   sourceSha256: string | null;
@@ -116,7 +127,10 @@ export type ClientExtendedDto = {
   retailOutlets: RetailOutletDto[];
   retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
+  /** Role permission to view nested outlets; independent of snapshot/scoped emptiness. */
   retailOutletsAccess: "granted" | "denied";
+  /** Why granted access shows zero outlets without implying role denial. */
+  retailOutletsEmptyReason: RetailOutletsEmptyReason;
   retailOutletHistoryCount: number;
   dataQualityLabel: string;
   sensitiveFieldsWithheld: true;
@@ -681,11 +695,47 @@ function readCurrentOutlets(snapshot: ExtendedSnapshot | null): ParsedRetailOutl
   return Array.isArray(legacy) ? legacy : [];
 }
 
-function readHistoryCount(snapshot: ExtendedSnapshot | null): number {
-  if (!snapshot || !Array.isArray(snapshot.retailOutletHistory)) {
+function resolveRetailOutletHistoryCount(
+  context: AccessContext | undefined,
+  outletAccessGranted: boolean,
+  retailOutletsEmptyReason: RetailOutletsEmptyReason,
+  snapshot: ExtendedSnapshot | null,
+  clientManagerGuid: string,
+  options?: ClientExtendedDtoOptions,
+  clientHeadOfSalesGuid?: string | null,
+): number {
+  if (!outletAccessGranted || retailOutletsEmptyReason === "empty_scope") {
     return 0;
   }
-  return snapshot.retailOutletHistory.length;
+  if (!snapshot || !Array.isArray(snapshot.retailOutletHistory) || snapshot.retailOutletHistory.length === 0) {
+    return 0;
+  }
+  if (!context) {
+    return 0;
+  }
+  return countVisibleRetailOutletHistoryForContext(
+    context,
+    clientManagerGuid,
+    snapshot.retailOutletHistory,
+    {
+      clientHeadOfSalesGuid,
+      ropTeamEmployeeGuids: options?.ropTeamEmployeeGuids,
+    },
+  );
+}
+
+function resolveRetailOutletsEmptyReason(
+  outletAccessGranted: boolean,
+  scopedOutlets: ParsedRetailOutlet[],
+  currentOutletsRaw: ParsedRetailOutlet[],
+): RetailOutletsEmptyReason {
+  if (!outletAccessGranted || scopedOutlets.length > 0) {
+    return "none";
+  }
+  if (currentOutletsRaw.length === 0) {
+    return "empty_snapshot";
+  }
+  return "empty_scope";
 }
 
 function resolveSnapshotManagerLinks(
@@ -767,6 +817,7 @@ export function toClientExtendedDto(
         retailOutletsTotalCount: 0,
         retailOutletsTruncated: false,
         retailOutletsAccess: outletAccessGranted ? "granted" : "denied",
+        retailOutletsEmptyReason: outletAccessGranted ? "empty_snapshot" : "none",
         retailOutletHistoryCount: 0,
         dataQualityLabel:
           row.extended_format_version && !row.extended_snapshot
@@ -796,19 +847,32 @@ export function toClientExtendedDto(
     : outletAccessGranted
       ? currentOutletsRaw
       : [];
-  const outletAccessEffective = outletAccessGranted && scopedOutlets.length > 0;
-  const currentOutlets = outletAccessEffective ? scopedOutlets : [];
-  const historyCount = outletAccessEffective ? readHistoryCount(snapshot) : 0;
+  const retailOutletsAccess = outletAccessGranted ? "granted" : "denied";
+  const retailOutletsEmptyReason = resolveRetailOutletsEmptyReason(
+    outletAccessGranted,
+    scopedOutlets,
+    currentOutletsRaw,
+  );
+  const currentOutlets = outletAccessGranted ? scopedOutlets : [];
+  const historyCount = resolveRetailOutletHistoryCount(
+    context,
+    outletAccessGranted,
+    retailOutletsEmptyReason,
+    snapshot,
+    clientManagerGuid,
+    options,
+    clientHeadOfSalesGuid,
+  );
 
   const regionalManager = snapshot?.regionalManager ?? { guid: null, name: "", state: "not_provided" as const };
   const hardwareManager = snapshot?.hardwareManager ?? { guid: null, name: "", state: "not_provided" as const };
   const headOfSales = snapshot?.headOfSales ?? { guid: null, name: "", state: "not_provided" as const };
 
   const totalOutletCount = currentOutlets.length;
-  const visibleOutlets = outletAccessEffective
+  const visibleOutlets = outletAccessGranted
     ? currentOutlets.slice(0, MAX_OUTLETS_IN_DETAIL_RESPONSE)
     : [];
-  const truncated = outletAccessEffective && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
+  const truncated = outletAccessGranted && totalOutletCount > MAX_OUTLETS_IN_DETAIL_RESPONSE;
 
   const clientExtendedReady = snapshot?.blocks?.clientExtendedReady === true;
   const outletNormalizedReady = snapshot?.blocks?.outletNormalizedReady === true;
@@ -830,8 +894,10 @@ export function toClientExtendedDto(
   let dataQualityLabel = "Структура торговых точек не передана";
   if (!outletAccessGranted) {
     dataQualityLabel = "Торговые точки недоступны для вашей роли";
-  } else if (outletAccessGranted && scopedOutlets.length === 0 && currentOutletsRaw.length > 0) {
-    dataQualityLabel = "Нет доступных торговых точек в вашей области";
+  } else if (retailOutletsEmptyReason === "empty_snapshot") {
+    dataQualityLabel = RETAIL_OUTLETS_EMPTY_LABELS.empty_snapshot;
+  } else if (retailOutletsEmptyReason === "empty_scope") {
+    dataQualityLabel = RETAIL_OUTLETS_EMPTY_LABELS.empty_scope;
   } else if (resolvedFreshnessState === "preserved_from_previous") {
     dataQualityLabel = "Расширенные данные сохранены из предыдущей выгрузки";
   } else if (currentOutlets.length > 0) {
@@ -865,10 +931,11 @@ export function toClientExtendedDto(
       headOfSales: toManagerRefDto(headOfSales),
     },
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
-    retailOutletsTotalCount: outletAccessEffective ? totalOutletCount : 0,
+    retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,
-    retailOutletsAccess: outletAccessEffective ? "granted" : "denied",
-    retailOutletHistoryCount: outletAccessEffective ? historyCount : 0,
+    retailOutletsAccess,
+    retailOutletsEmptyReason,
+    retailOutletHistoryCount: historyCount,
     dataQualityLabel,
     sensitiveFieldsWithheld: true,
     outletNormalizedReady,
