@@ -1,6 +1,7 @@
 export const SYNTHETIC_CLIENT_GUID = "11111111-1111-4111-8111-111111111111";
 export const SYNTHETIC_CLIENT_TWO = "33333333-3333-4333-8333-333333333333";
 export const SYNTHETIC_MANAGER_A = "22222222-2222-4222-8222-222222222222";
+export const SYNTHETIC_OUTLET_MANAGER_M2 = "66666666-6666-4666-8666-666666666666";
 export const SYNTHETIC_HOLDING_A = "44444444-4444-4444-8444-444444444444";
 
 export const NAV_ROP_A = "11a0c069-11bc-11ea-80ec-00155d0a0a4e";
@@ -255,13 +256,25 @@ export function portfolioAwareClientsListPayload(url: URL) {
   return { items: [], total: 0, page: 1, pageSize: 50, totalPages: 0, isEmptyDatabase: false };
 }
 
-export function syntheticOptionsPayload() {
+export function syntheticOptionsPayload(
+  overrides: {
+    managers?: Array<{ id: string; name: string; shortId: string }>;
+    outletManagers?: Array<{ id: string; name: string; shortId: string }>;
+  } = {},
+) {
   return {
-    managers: [
+    managers: overrides.managers ?? [
       {
         id: SYNTHETIC_MANAGER_A,
         name: "Менеджер Иванов",
         shortId: "22222222",
+      },
+    ],
+    outletManagers: overrides.outletManagers ?? [
+      {
+        id: SYNTHETIC_OUTLET_MANAGER_M2,
+        name: "Менеджер ТТ Петров",
+        shortId: "66666666",
       },
     ],
     holdings: [
@@ -276,6 +289,13 @@ export function syntheticOptionsPayload() {
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         name: "Regional One",
         shortId: "AAAAAAAA",
+      },
+    ],
+    hardwareManagers: [
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        name: "Hardware Lead",
+        shortId: "77777777",
       },
     ],
     rops: [
@@ -300,10 +320,21 @@ export function filterAwareAllListPayload(url: URL) {
   const entity = url.searchParams.get("entity") || "clients";
   const ropEmployee = url.searchParams.get("ropEmployee");
   const manager = url.searchParams.get("manager");
+  const hardwareManager = url.searchParams.get("hardwareManager");
   const missingManager = url.searchParams.get("missingManager") === "1";
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    if (hardwareManager === "77777777-7777-4777-8777-777777777777") {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     if (missingRop) {
       return {
         items: [navClientItem("99999999-9999-4999-8999-999999999999", "Missing ROP Client")],
@@ -691,6 +722,7 @@ export type MockOptions = {
   reviewGetBody?: Record<string, unknown> | null;
   previewActive?: boolean;
   onecUpdatePhase?: "idle" | "pending" | "running" | "completed" | "no_changes" | "rejected" | "error";
+  optionsPayload?: ReturnType<typeof syntheticOptionsPayload>;
 };
 
 export function syntheticCatalogMetaPayload() {
@@ -940,7 +972,7 @@ export function resolveMockResponse(
   }
 
   if (path === "/api/clients/options") {
-    return jsonResponse(200, syntheticOptionsPayload());
+    return jsonResponse(200, options.optionsPayload ?? syntheticOptionsPayload());
   }
 
   if (path === "/api/clients/sync-status") {

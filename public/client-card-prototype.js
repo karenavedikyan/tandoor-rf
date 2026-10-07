@@ -44,26 +44,38 @@
       loading.scheduleState === "partial";
   }
 
+  function detailsBlock(title, innerHtml, openByDefault) {
+    return '<details class="pc-details"' + (openByDefault ? " open" : "") + '><summary class="pc-details__summary">' +
+      esc(title) + '</summary><div class="pc-details__body">' + innerHtml + "</div></details>";
+  }
+
   function renderOutletBlock(outlet, index) {
-    return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
-      field("Идентификация", outlet.identityLabel, true) +
+    var basics = field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
       field("Источник данных", outlet.dataSourceLabel || outlet.freshnessLabel, true) +
       (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
-      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
-      field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
+      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName);
+    var addresses = field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
       field("Направление маршрута", outlet.addresses && outlet.addresses.routeDirection, !!(outlet.addresses && outlet.addresses.routeDirection)) +
       field("Приёмка", loadingDaysLabel(outlet.loading), loadingFieldKnown(outlet.loading)) +
       (outlet.loading && outlet.loading.loadingTimeNote ? '<p class="pc-label">' + esc(outlet.loading.loadingTimeNote) + "</p>" : "") +
-      field("Склад", outlet.warehouseLabel, outlet.warehouse !== null && outlet.warehouse !== undefined) +
-      field("Менеджер ТТ", managerLabel(outlet.managers && outlet.managers.manager), !!(outlet.managers && outlet.managers.manager)) +
+      field("Склад", outlet.warehouseLabel, outlet.warehouse !== null && outlet.warehouse !== undefined);
+    var managers = field("Менеджер ТТ", managerLabel(outlet.managers && outlet.managers.manager), !!(outlet.managers && outlet.managers.manager)) +
       field("Региональный менеджер ТТ", managerLabel(outlet.managers && outlet.managers.regionalManager), !!(outlet.managers && outlet.managers.regionalManager && outlet.managers.regionalManager.assignmentState !== "unassigned")) +
       field("Менеджер по фурнитуре ТТ", managerLabel(outlet.managers && outlet.managers.hardwareManager), !!(outlet.managers && outlet.managers.hardwareManager && outlet.managers.hardwareManager.assignmentState !== "unassigned")) +
-      field("РОП ТТ", managerLabel(outlet.managers && outlet.managers.headOfSales), !!(outlet.managers && outlet.managers.headOfSales && outlet.managers.headOfSales.assignmentState !== "unassigned")) +
-      field("Телефон магазина", outlet.contacts && outlet.contacts.storePhone, !!(outlet.contacts && outlet.contacts.storePhone)) +
+      field("РОП ТТ", managerLabel(outlet.managers && outlet.managers.headOfSales), !!(outlet.managers && outlet.managers.headOfSales && outlet.managers.headOfSales.assignmentState !== "unassigned"));
+    var contacts = field("Телефон магазина", outlet.contacts && outlet.contacts.storePhone, !!(outlet.contacts && outlet.contacts.storePhone)) +
       field("Телефон бухгалтерии", outlet.contacts && outlet.contacts.accountantPhone, !!(outlet.contacts && outlet.contacts.accountantPhone)) +
-      field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail)) +
+      field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail));
+    var club = field("Tandoor Club", outlet.tandoorClub && outlet.tandoorClub.label, !!(outlet.tandoorClub && outlet.tandoorClub.hasSource)) +
+      field("Бонусные условия клуба", "Персональные бонусы не публикуются без отдельного разрешения", false);
+    return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
+      detailsBlock("Основные сведения", basics, index === 0) +
+      detailsBlock("Ответственные", managers, false) +
+      detailsBlock("Адреса, маршрут и приёмка", addresses, false) +
+      detailsBlock("Контакты магазина и бухгалтерии", contacts, false) +
+      detailsBlock("Club и разрешённые условия", club, false) +
       '<p class="pc-label pc-unavailable">' + esc(outlet.distributionNote || "Запись дистрибуции недоступна без идентификатора торговой точки.") + "</p>" +
       "</div>";
   }
@@ -242,14 +254,22 @@
       '<section id="pc-panel-data" role="tabpanel" aria-labelledby="pc-tab-data" hidden>' +
       '<div class="pc-grid pc-three">' +
       card("Холдинг и ответственность", '<div class="pc-pad">' +
-        field("Клиент / категория", (client.name || "Не указан") + " · категория не передана", true) +
-        field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext) +
-        field("Менеджер клиента", clientManagerField, !!manager) +
-        field("Региональный менеджер клиента", clientRegionalField, !!(ext && ext.managers && ext.managers.regionalManager)) +
-        field("Менеджер по фурнитуре клиента", clientHardwareField, !!(ext && ext.managers && ext.managers.hardwareManager && ext.managers.hardwareManager.assignmentState !== "not_provided")) +
-        field("РОП клиента", clientRopField, !!(ext && ext.managers && ext.managers.headOfSales && ext.managers.headOfSales.assignmentState !== "not_provided")) +
-        field("ЛПР и рабочая почта", ext && ext.sensitiveFieldsWithheld ? "Не публикуются без отдельного разрешения" : "") +
-        field("Временно замещает", "") + '</div>', "1С / ЛК") +
+        detailsBlock("Основные сведения и холдинг",
+          field("Клиент / категория", (client.name || "Не указан") + " · категория не передана", true) +
+          field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext),
+          true) +
+        detailsBlock("Ответственные",
+          field("Менеджер клиента", clientManagerField, !!manager) +
+          field("Региональный менеджер клиента", clientRegionalField, !!(ext && ext.managers && ext.managers.regionalManager)) +
+          field("Менеджер по фурнитуре клиента", clientHardwareField, !!(ext && ext.managers && ext.managers.hardwareManager && ext.managers.hardwareManager.assignmentState !== "not_provided")) +
+          field("РОП клиента", clientRopField, !!(ext && ext.managers && ext.managers.headOfSales && ext.managers.headOfSales.assignmentState !== "not_provided")) +
+          field("Временно замещает", "Не передано"),
+          false) +
+        detailsBlock("Контакты и ограничения",
+          field("ЛПР и рабочая почта", ext && ext.sensitiveFieldsWithheld ? "Не публикуются без отдельного разрешения" : "Не передано") +
+          field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length),
+          false) +
+        '</div>', "1С / ЛК") +
       card("Магазин и доставка", '<div class="pc-pad">' + shopCard + '</div>', "1С") +
       card("Расчёты и договор", '<div class="pc-pad">' +
         field("Плательщик / договор", "") + field("Вид оплаты", "") +

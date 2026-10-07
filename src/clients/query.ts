@@ -8,6 +8,13 @@ import {
 } from "./org/teams-list-filters";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
+import { resolveAssignmentParams } from "./assignment-query-params";
+import {
+  parseAssignmentPresenceMode,
+  parseUuidListParam,
+  type AssignmentPresenceMode,
+} from "./assignment-filter-modes";
+import { validateFilledEmptyFields } from "./field-filter-registry";
 import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
 import { isValidUuidParam } from "./uuid-param";
 
@@ -18,34 +25,83 @@ export type OutletWarehouseFilter = "all" | "yes" | "no" | "unknown";
 export type ClientsViewMode = "all" | "teams" | "review" | "completeness";
 export type ClientsEntityMode = "clients" | "outlets";
 
+export type LoadingScheduleFilter = "all" | "yes" | "no";
+
 export type ClientsListQuery = {
   entity: ClientsEntityMode;
   view: ClientsViewMode;
   q: string;
+  /** Legacy alias for clientManagerId (teams/org compat). */
   managerId?: string;
+  managerIds?: string[];
+  clientManagerId?: string;
+  clientManagerIds?: string[];
+  outletManagerId?: string;
+  outletManagerIds?: string[];
   holdingId?: string;
   phone: PhoneFilter;
   ropUserId?: string;
-  /** 1C employee GUID for assignment-based ROP branch (distinct from ropUserId account id). */
+  /** Legacy / org-teams ROP employee GUID. */
   ropEmployeeGuid?: string;
-  /** ROP branch portfolio slice when view=teams: assigned clients or outlets only. */
+  clientRopEmployeeGuid?: string;
+  outletRopEmployeeGuid?: string;
   branchPortfolio?: "clients" | "outlets";
-  /** Responsible assignment kind for org-structure drill-down. */
   responsibleKind?: "manager" | "regional" | "hardware";
+  /** Legacy aliases — prefer client* / outlet* fields. */
   hardwareManagerId?: string;
+  hardwareManagerIds?: string[];
+  regionalManagerId?: string;
+  regionalManagerIds?: string[];
+  clientRegionalManagerId?: string;
+  clientRegionalManagerIds?: string[];
+  outletRegionalManagerId?: string;
+  outletRegionalManagerIds?: string[];
+  clientHardwareManagerId?: string;
+  clientHardwareManagerIds?: string[];
+  outletHardwareManagerId?: string;
+  outletHardwareManagerIds?: string[];
+  clientManagerMode?: AssignmentPresenceMode;
+  outletManagerMode?: AssignmentPresenceMode;
+  clientRegionalManagerMode?: AssignmentPresenceMode;
+  outletRegionalManagerMode?: AssignmentPresenceMode;
+  clientHardwareManagerMode?: AssignmentPresenceMode;
+  outletHardwareManagerMode?: AssignmentPresenceMode;
+  clientRopEmployeeMode?: AssignmentPresenceMode;
+  outletRopEmployeeMode?: AssignmentPresenceMode;
+  /** @deprecated use clientRopEmployeeMode / outletRopEmployeeMode */
+  regionalManagerMode?: AssignmentPresenceMode;
+  hardwareManagerMode?: AssignmentPresenceMode;
+  ropEmployeeMode?: AssignmentPresenceMode;
   completenessReasons?: CompletenessReason[];
   completenessReasonMode?: "any" | "all";
   missingRop?: boolean;
   missingManager?: boolean;
   missingRegional?: boolean;
+  missingHardware?: boolean;
+  missingClientManager?: boolean;
+  missingOutletManager?: boolean;
+  missingClientRegional?: boolean;
+  missingOutletRegional?: boolean;
+  missingClientHardware?: boolean;
+  missingOutletHardware?: boolean;
+  missingClientRop?: boolean;
+  missingOutletRop?: boolean;
   unassignedCategory?: UnassignedCategory;
   reviewState?: ReviewState | "any";
   reviewDecision?: ReviewDecision | "any";
   hasOutlets: OutletsFilter;
   outletStatus: OutletStatusFilter;
   warehouseFilter: OutletWarehouseFilter;
-  regionalManagerId?: string;
   tandoorClub?: string;
+  routeDirection?: string;
+  storeAddressContains?: string;
+  storePhoneContains?: string;
+  accountantPhoneContains?: string;
+  accountantEmailContains?: string;
+  loadingTime?: string;
+  loadingSchedule?: LoadingScheduleFilter;
+  filled?: string;
+  empty?: string;
   sortBy: ClientSortField | OutletSortField;
   sortDir: "asc" | "desc";
   page: number;
@@ -151,19 +207,20 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр телефона." };
   }
 
-  const managerId = parseOptionalUuid(input.manager, "менеджера");
-  if (managerId === null) {
-    return { ok: false, message: "Некорректный фильтр менеджера." };
+  const entityRaw = parseScalarString(input.entity, "clients") ?? "clients";
+  if (entityRaw !== "clients" && entityRaw !== "outlets") {
+    return { ok: false, message: "Некорректный режим списка." };
   }
+
+  const assignmentResolved = resolveAssignmentParams(input, entityRaw as ClientsEntityMode);
+  if (!assignmentResolved.ok) {
+    return { ok: false, message: assignmentResolved.message };
+  }
+  const assignment = assignmentResolved.params;
 
   const holdingId = parseOptionalUuid(input.holding, "холдинга");
   if (holdingId === null) {
     return { ok: false, message: "Некорректный фильтр холдинга." };
-  }
-
-  const entityRaw = parseScalarString(input.entity, "clients") ?? "clients";
-  if (entityRaw !== "clients" && entityRaw !== "outlets") {
-    return { ok: false, message: "Некорректный режим списка." };
   }
 
   const viewRaw = parseScalarString(input.view, "all") ?? "all";
@@ -174,20 +231,6 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   const ropUserId = parseOptionalUuid(input.rop, "РОП");
   if (ropUserId === null) {
     return { ok: false, message: "Некорректный фильтр РОП." };
-  }
-
-  const ropEmployeeGuid = parseOptionalUuid(input.ropEmployee, "РОП (GUID сотрудника)");
-  if (ropEmployeeGuid === null) {
-    return { ok: false, message: "Некорректный фильтр РОП (GUID сотрудника)." };
-  }
-
-  if (ropUserId && ropEmployeeGuid) {
-    return { ok: false, message: "Нельзя одновременно использовать rop и ropEmployee." };
-  }
-
-  const hardwareManagerId = parseOptionalUuid(input.hardwareManager, "менеджера по фурнитуре");
-  if (hardwareManagerId === null) {
-    return { ok: false, message: "Некорректный фильтр менеджера по фурнитуре." };
   }
 
   let completenessReasons: CompletenessReason[] | undefined;
@@ -234,19 +277,6 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       return false;
     }
     return null;
-  }
-
-  const missingRop = parseOptionalBooleanFlag(input.missingRop, "missingRop");
-  if (missingRop === null) {
-    return { ok: false, message: "Некорректный фильтр «не указан РОП»." };
-  }
-  const missingManager = parseOptionalBooleanFlag(input.missingManager, "missingManager");
-  if (missingManager === null) {
-    return { ok: false, message: "Некорректный фильтр «не указан менеджер»." };
-  }
-  const missingRegional = parseOptionalBooleanFlag(input.missingRegional, "missingRegional");
-  if (missingRegional === null) {
-    return { ok: false, message: "Некорректный фильтр «не указан региональный»." };
   }
 
   let unassignedCategory: UnassignedCategory | undefined;
@@ -305,22 +335,26 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр склада." };
   }
 
-  const regionalManagerId = parseOptionalUuid(input.regionalManager, "регионального менеджера");
-  if (regionalManagerId === null) {
-    return { ok: false, message: "Некорректный фильтр регионального менеджера." };
+  const ropEmployeeGuid =
+    assignment.ropEmployeeGuid ??
+    (entityRaw === "clients" ? assignment.clientRopEmployeeGuid : assignment.outletRopEmployeeGuid);
+
+  if (ropUserId && ropEmployeeGuid) {
+    return { ok: false, message: "Нельзя одновременно использовать rop и ropEmployee." };
   }
 
-  if (missingRop && ropEmployeeGuid) {
-    return { ok: false, message: "Нельзя одновременно выбрать РОП и фильтр «РОП не указан»." };
-  }
-  if (missingManager && managerId) {
-    return { ok: false, message: "Нельзя одновременно выбрать менеджера и фильтр «Менеджер не указан»." };
-  }
-  if (missingRegional && regionalManagerId) {
-    return {
-      ok: false,
-      message: "Нельзя одновременно выбрать регионального и фильтр «Региональный не указан».",
-    };
+  function parseOptionalSearchField(value: unknown, _label: string): string | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value).trim();
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return null;
+    }
+    return raw;
   }
 
   let tandoorClub: string | undefined;
@@ -333,6 +367,141 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       return { ok: false, message: "Слишком длинный фильтр Tandoor Club." };
     }
     tandoorClub = raw;
+  }
+
+  const routeDirection = parseOptionalSearchField(input.routeDirection, "routeDirection");
+  if (routeDirection === null) {
+    return { ok: false, message: "Некорректный фильтр направления маршрута." };
+  }
+  const storeAddressContains = parseOptionalSearchField(input.storeAddressContains, "storeAddressContains");
+  if (storeAddressContains === null) {
+    return { ok: false, message: "Некорректный фильтр адреса ТТ." };
+  }
+  const filled = parseOptionalSearchField(input.filled, "filled");
+  if (filled === null) {
+    return { ok: false, message: "Некорректный фильтр заполненности." };
+  }
+  const empty = parseOptionalSearchField(input.empty, "empty");
+  if (empty === null) {
+    return { ok: false, message: "Некорректный фильтр пустоты." };
+  }
+
+  const filledEmptyValidation = validateFilledEmptyFields(filled, empty, entityRaw as ClientsEntityMode);
+  if (!filledEmptyValidation.ok) {
+    return { ok: false, message: filledEmptyValidation.message };
+  }
+
+  const storePhoneContains = parseOptionalSearchField(input.storePhoneContains, "storePhoneContains");
+  if (storePhoneContains === null) {
+    return { ok: false, message: "Некорректный фильтр телефона магазина." };
+  }
+  const accountantPhoneContains = parseOptionalSearchField(input.accountantPhoneContains, "accountantPhoneContains");
+  if (accountantPhoneContains === null) {
+    return { ok: false, message: "Некорректный фильтр телефона бухгалтерии." };
+  }
+  const accountantEmailContains = parseOptionalSearchField(input.accountantEmailContains, "accountantEmailContains");
+  if (accountantEmailContains === null) {
+    return { ok: false, message: "Некорректный фильтр email бухгалтерии." };
+  }
+  const loadingTime = parseOptionalSearchField(input.loadingTime, "loadingTime");
+  if (loadingTime === null) {
+    return { ok: false, message: "Некорректный фильтр времени приёмки." };
+  }
+
+  if (rejectNonScalar(input.loadingSchedule)) {
+    return { ok: false, message: "Некорректный фильтр расписания приёмки." };
+  }
+  const loadingScheduleRaw = parseScalarString(input.loadingSchedule, "all") ?? "all";
+  if (loadingScheduleRaw !== "all" && loadingScheduleRaw !== "yes" && loadingScheduleRaw !== "no") {
+    return { ok: false, message: "Некорректный фильтр расписания приёмки." };
+  }
+
+  const legacyManagerIds = parseUuidListParam(input.manager) ?? [];
+  const legacyRegionalIds = parseUuidListParam(input.regionalManager) ?? [];
+  const legacyHardwareIds = parseUuidListParam(input.hardwareManager) ?? [];
+  const legacyRegionalMode = parseAssignmentPresenceMode(input.regionalManagerMode);
+  if (legacyRegionalMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра регионального менеджера." };
+  }
+  const legacyHardwareMode = parseAssignmentPresenceMode(input.hardwareManagerMode);
+  if (legacyHardwareMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра менеджера по фурнитуре." };
+  }
+  const legacyRopMode = parseAssignmentPresenceMode(input.ropEmployeeMode);
+  if (legacyRopMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра РОП." };
+  }
+
+  const missingRop = assignment.missingClientRop ?? assignment.missingOutletRop;
+  const missingManager = assignment.missingClientManager ?? assignment.missingOutletManager;
+  const missingRegional = assignment.missingClientRegional ?? assignment.missingOutletRegional;
+  const missingHardware = assignment.missingClientHardware ?? assignment.missingOutletHardware;
+
+  if (assignment.missingClientRop && (assignment.clientRopEmployeeGuid || assignment.clientRopEmployeeMode)) {
+    return { ok: false, message: "Нельзя одновременно выбрать РОП клиента и фильтр «РОП не указан»." };
+  }
+  if (assignment.missingOutletRop && (assignment.outletRopEmployeeGuid || assignment.outletRopEmployeeMode)) {
+    return { ok: false, message: "Нельзя одновременно выбрать РОП ТТ и фильтр «РОП не указан»." };
+  }
+  if (
+    assignment.missingClientRegional &&
+    (assignment.clientRegionalManagerId ||
+      (assignment.clientRegionalManagerIds && assignment.clientRegionalManagerIds.length > 0) ||
+      assignment.clientRegionalManagerMode)
+  ) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать регионального клиента и фильтр «не указан».",
+    };
+  }
+  if (
+    assignment.missingOutletRegional &&
+    (assignment.outletRegionalManagerId ||
+      (assignment.outletRegionalManagerIds && assignment.outletRegionalManagerIds.length > 0) ||
+      assignment.outletRegionalManagerMode)
+  ) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать регионального ТТ и фильтр «не указан».",
+    };
+  }
+  if (
+    assignment.missingClientHardware &&
+    (assignment.clientHardwareManagerId ||
+      (assignment.clientHardwareManagerIds && assignment.clientHardwareManagerIds.length > 0) ||
+      assignment.clientHardwareManagerMode)
+  ) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать менеджера по фурнитуре клиента и фильтр «не указан».",
+    };
+  }
+  if (
+    assignment.missingOutletHardware &&
+    (assignment.outletHardwareManagerId ||
+      (assignment.outletHardwareManagerIds && assignment.outletHardwareManagerIds.length > 0) ||
+      assignment.outletHardwareManagerMode)
+  ) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать менеджера по фурнитуре ТТ и фильтр «не указан».",
+    };
+  }
+  if (
+    assignment.missingClientManager &&
+    (assignment.clientManagerId ||
+      (assignment.clientManagerIds && assignment.clientManagerIds.length > 0) ||
+      assignment.clientManagerMode)
+  ) {
+    return { ok: false, message: "Нельзя одновременно выбрать менеджера клиента и фильтр «не указан»." };
+  }
+  if (
+    assignment.missingOutletManager &&
+    (assignment.outletManagerId ||
+      (assignment.outletManagerIds && assignment.outletManagerIds.length > 0) ||
+      assignment.outletManagerMode)
+  ) {
+    return { ok: false, message: "Нельзя одновременно выбрать менеджера ТТ и фильтр «не указан»." };
   }
 
   const sortDir = parseSortDirection(input.sortDir);
@@ -354,6 +523,15 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный тип назначения ответственного." };
   }
 
+  const managerId =
+    assignment.clientManagerId ??
+    assignment.outletManagerId ??
+    (legacyManagerIds.length === 1 ? legacyManagerIds[0] : undefined);
+  const managerIds =
+    assignment.clientManagerIds ??
+    assignment.outletManagerIds ??
+    (legacyManagerIds.length > 0 ? legacyManagerIds : undefined);
+
   return {
     ok: true,
     query: {
@@ -361,26 +539,78 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       view: viewRaw as ClientsViewMode,
       q: rawQ,
       managerId,
+      managerIds,
+      clientManagerId: assignment.clientManagerId,
+      clientManagerIds: assignment.clientManagerIds,
+      outletManagerId: assignment.outletManagerId,
+      outletManagerIds: assignment.outletManagerIds,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
       ropEmployeeGuid,
+      clientRopEmployeeGuid: assignment.clientRopEmployeeGuid,
+      outletRopEmployeeGuid: assignment.outletRopEmployeeGuid,
       branchPortfolio,
       responsibleKind,
-      hardwareManagerId,
+      hardwareManagerId: assignment.clientHardwareManagerId ?? assignment.outletHardwareManagerId,
+      hardwareManagerIds:
+        assignment.clientHardwareManagerIds ??
+        assignment.outletHardwareManagerIds ??
+        (legacyHardwareIds.length > 0 ? legacyHardwareIds : undefined),
+      regionalManagerId: assignment.clientRegionalManagerId ?? assignment.outletRegionalManagerId,
+      regionalManagerIds:
+        assignment.clientRegionalManagerIds ??
+        assignment.outletRegionalManagerIds ??
+        (legacyRegionalIds.length > 0 ? legacyRegionalIds : undefined),
+      clientRegionalManagerId: assignment.clientRegionalManagerId,
+      clientRegionalManagerIds: assignment.clientRegionalManagerIds,
+      outletRegionalManagerId: assignment.outletRegionalManagerId,
+      outletRegionalManagerIds: assignment.outletRegionalManagerIds,
+      clientHardwareManagerId: assignment.clientHardwareManagerId,
+      clientHardwareManagerIds: assignment.clientHardwareManagerIds,
+      outletHardwareManagerId: assignment.outletHardwareManagerId,
+      outletHardwareManagerIds: assignment.outletHardwareManagerIds,
+      clientManagerMode: assignment.clientManagerMode,
+      outletManagerMode: assignment.outletManagerMode,
+      clientRegionalManagerMode: assignment.clientRegionalManagerMode,
+      outletRegionalManagerMode: assignment.outletRegionalManagerMode,
+      clientHardwareManagerMode: assignment.clientHardwareManagerMode,
+      outletHardwareManagerMode: assignment.outletHardwareManagerMode,
+      clientRopEmployeeMode: assignment.clientRopEmployeeMode,
+      outletRopEmployeeMode: assignment.outletRopEmployeeMode,
+      regionalManagerMode: legacyRegionalMode,
+      hardwareManagerMode: legacyHardwareMode,
+      ropEmployeeMode: legacyRopMode,
       completenessReasons,
       completenessReasonMode: completenessReasonMode ?? "any",
       missingRop,
       missingManager,
       missingRegional,
+      missingHardware,
+      missingClientManager: assignment.missingClientManager,
+      missingOutletManager: assignment.missingOutletManager,
+      missingClientRegional: assignment.missingClientRegional,
+      missingOutletRegional: assignment.missingOutletRegional,
+      missingClientHardware: assignment.missingClientHardware,
+      missingOutletHardware: assignment.missingOutletHardware,
+      missingClientRop: assignment.missingClientRop,
+      missingOutletRop: assignment.missingOutletRop,
       unassignedCategory,
       reviewState,
       reviewDecision,
       hasOutlets: outletsRaw as OutletsFilter,
       outletStatus: outletStatusRaw as OutletStatusFilter,
       warehouseFilter: warehouseRaw as OutletWarehouseFilter,
-      regionalManagerId,
       tandoorClub,
+      routeDirection,
+      storeAddressContains,
+      storePhoneContains,
+      accountantPhoneContains,
+      accountantEmailContains,
+      loadingTime,
+      loadingSchedule: loadingScheduleRaw as LoadingScheduleFilter,
+      filled,
+      empty,
       sortBy,
       sortDir,
       page,
@@ -412,8 +642,18 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const orgTeamsManagerHandled = Boolean(query.ropEmployeeGuid) && Boolean(query.managerId);
   const outletEntityManagerHandled = query.entity === "outlets";
-  if (query.managerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
-    params.push(query.managerId);
+  const clientManagerIds = query.clientManagerIds ?? (query.entity === "clients" ? query.managerIds : undefined);
+  const clientManagerId = query.clientManagerId ?? (query.entity === "clients" ? query.managerId : undefined);
+  if (
+    clientManagerIds &&
+    clientManagerIds.length > 0 &&
+    !orgTeamsManagerHandled &&
+    !outletEntityManagerHandled
+  ) {
+    params.push(clientManagerIds);
+    clauses.push(`onec_clients.guid_manager = ANY($${params.length}::uuid[])`);
+  } else if (clientManagerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
+    params.push(clientManagerId);
     clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }
 
@@ -453,6 +693,81 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return { whereSql, params };
+}
+
+/** True when any list filter narrows or reshapes the default clients/outlets query. */
+export function queryHasActiveFilters(query: ClientsListQuery): boolean {
+  return Boolean(
+    query.q ||
+      query.managerId ||
+      (query.managerIds && query.managerIds.length > 0) ||
+      query.clientManagerId ||
+      (query.clientManagerIds && query.clientManagerIds.length > 0) ||
+      query.outletManagerId ||
+      (query.outletManagerIds && query.outletManagerIds.length > 0) ||
+      query.holdingId ||
+      query.phone !== "all" ||
+      query.view !== "all" ||
+      query.entity !== "clients" ||
+      query.ropUserId ||
+      query.ropEmployeeGuid ||
+      query.clientRopEmployeeGuid ||
+      query.outletRopEmployeeGuid ||
+      query.branchPortfolio ||
+      query.responsibleKind ||
+      query.unassignedCategory ||
+      (query.reviewState && query.reviewState !== "any") ||
+      (query.reviewDecision && query.reviewDecision !== "any") ||
+      query.hasOutlets !== "all" ||
+      query.outletStatus !== "all" ||
+      query.warehouseFilter !== "all" ||
+      query.regionalManagerId ||
+      (query.regionalManagerIds && query.regionalManagerIds.length > 0) ||
+      query.clientRegionalManagerId ||
+      (query.clientRegionalManagerIds && query.clientRegionalManagerIds.length > 0) ||
+      query.outletRegionalManagerId ||
+      (query.outletRegionalManagerIds && query.outletRegionalManagerIds.length > 0) ||
+      query.hardwareManagerId ||
+      (query.hardwareManagerIds && query.hardwareManagerIds.length > 0) ||
+      query.clientHardwareManagerId ||
+      (query.clientHardwareManagerIds && query.clientHardwareManagerIds.length > 0) ||
+      query.outletHardwareManagerId ||
+      (query.outletHardwareManagerIds && query.outletHardwareManagerIds.length > 0) ||
+      query.missingRop ||
+      query.missingManager ||
+      query.missingRegional ||
+      query.missingHardware ||
+      query.missingClientManager ||
+      query.missingOutletManager ||
+      query.missingClientRegional ||
+      query.missingOutletRegional ||
+      query.missingClientHardware ||
+      query.missingOutletHardware ||
+      query.missingClientRop ||
+      query.missingOutletRop ||
+      query.tandoorClub ||
+      query.routeDirection ||
+      query.storeAddressContains ||
+      query.storePhoneContains ||
+      query.accountantPhoneContains ||
+      query.accountantEmailContains ||
+      query.loadingTime ||
+      query.loadingSchedule !== "all" ||
+      query.filled ||
+      query.empty ||
+      (query.completenessReasons && query.completenessReasons.length > 0) ||
+      query.clientManagerMode ||
+      query.outletManagerMode ||
+      query.clientRegionalManagerMode ||
+      query.outletRegionalManagerMode ||
+      query.clientHardwareManagerMode ||
+      query.outletHardwareManagerMode ||
+      query.clientRopEmployeeMode ||
+      query.outletRopEmployeeMode ||
+      query.regionalManagerMode ||
+      query.hardwareManagerMode ||
+      query.ropEmployeeMode,
+  );
 }
 
 export function mergeFilterClauses(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {

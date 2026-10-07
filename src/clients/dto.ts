@@ -141,8 +141,11 @@ export type RetailOutletsListResponse = {
 
 export type ClientsOptionsResponse = {
   managers: ClientOptionDto[];
+  /** TT managers from accessible snapshot outlets (includes outlet-only card context). */
+  outletManagers: ClientOptionDto[];
   holdings: ClientOptionDto[];
   regionalManagers: ClientOptionDto[];
+  hardwareManagers: ClientOptionDto[];
   rops: ClientOptionDto[];
 };
 

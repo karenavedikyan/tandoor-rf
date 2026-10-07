@@ -9,7 +9,18 @@ import {
   applyOrgTeamsClientFilter,
 } from "./org/teams-list-filters";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
-import { applyClientListAssignmentFilters, buildScopedRopOptionsSql } from "./list-assignment-filters";
+import {
+  applyClientEntityScopedOutletFilter,
+  applyClientLevelFilledEmptyFilters,
+} from "./client-entity-outlet-filter";
+import { hasOutletDerivedClientFilters } from "./field-filter-registry";
+import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
+import { applyClientListAssignmentFilters } from "./list-assignment-filters";
+import {
+  clientHeadOfSalesGuidSql,
+  outletHeadOfSalesGuidSql,
+  outletManagerGuidSql,
+} from "./org/assignment-sql";
 import {
   assertManagerInTeamScope,
   buildTeamRopFilter,
@@ -187,6 +198,12 @@ async function resolveScopedFilter(
   }
 
   userFilter = applyClientListAssignmentFilters(userFilter, input);
+  if (input.entity === "clients") {
+    if (hasOutletDerivedClientFilters(input)) {
+      userFilter = applyClientEntityScopedOutletFilter(userFilter, input, context);
+    }
+    userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
+  }
 
   const reviewJoin = buildReviewStateFilter(
     input.reviewState ?? (input.view === "review" ? "any" : "any"),
@@ -373,12 +390,17 @@ export async function listClients(
 }
 
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
-  const scope = buildClientScopeSql(context, {
+  const directScope = buildClientScopeSql(context, {
     ropDirectClientList: context.role === "rop",
     managerDirectClientList: context.role === "manager",
   });
-  const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
-  const holdingFilter = combineScopeAndFilter(scope, {
+  const cardScope = buildClientScopeSql(context, {
+    ropDirectClientList: false,
+    managerDirectClientList: false,
+  });
+  const directFilter = combineScopeAndFilter(directScope, { whereSql: "", params: [] });
+  const cardFilter = combineScopeAndFilter(cardScope, { whereSql: "", params: [] });
+  const holdingFilter = combineScopeAndFilter(directScope, {
     whereSql: "WHERE guid_holding IS NOT NULL",
     params: [],
   });
@@ -389,10 +411,10 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
         guid_manager::text AS id,
         name_manager AS name
       FROM onec_clients
-      ${managerFilter.whereSql}
+      ${directFilter.whereSql}
       ORDER BY guid_manager ASC, name_manager ASC
     `,
-    managerFilter.params,
+    directFilter.params,
   );
   const holdings = await query<OptionRow>(
     `
@@ -406,32 +428,111 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     holdingFilter.params,
   );
 
+  const dualScopeCte = buildOptionsDualScopeCte(directFilter.whereSql, cardFilter.whereSql);
+  const outletJoin = scopedOutletLateralJoinSql(context, "scoped_card_clients", cardFilter.params);
+  const optionsParams = [...cardFilter.params, ...outletJoin.extraParams];
+
+  const outletManagers = await query<OptionRow>(
+    `
+      ${cardFilter.whereSql ? `WITH scoped_card_clients AS (SELECT * FROM onec_clients ${cardFilter.whereSql})` : "WITH scoped_card_clients AS (SELECT * FROM onec_clients)"}
+      SELECT DISTINCT ON (manager_guid)
+        manager_guid AS id,
+        COALESCE(manager_name, manager_guid) AS name
+      FROM (
+        SELECT
+          ${outletManagerGuidSql(outletJoin.outletAlias)} AS manager_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'manager'->>'name'), '') AS manager_name
+        FROM scoped_card_clients
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
+      ) scoped_outlet_managers
+      WHERE manager_guid IS NOT NULL
+      ORDER BY manager_guid ASC, manager_name ASC
+    `,
+    optionsParams,
+  );
+
   const regionalManagers = await query<OptionRow>(
     `
+      ${dualScopeCte}
       SELECT DISTINCT ON (regional_guid)
         regional_guid AS id,
         COALESCE(regional_name, regional_guid) AS name
       FROM (
         SELECT
-          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
-          NULLIF(BTRIM(outlet->'managers'->'regionalManager'->>'name'), '') AS regional_name
-        FROM onec_clients
-        CROSS JOIN LATERAL jsonb_array_elements(${outletsJsonArraySql("onec_clients")}) outlet
-        ${managerFilter.whereSql}
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'regionalManager'->>'guid'), '') AS regional_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'regionalManager'->>'name'), '') AS regional_name
+        FROM scoped_card_clients
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
+        UNION ALL
+        SELECT
+          NULLIF(BTRIM(extended_snapshot->'regionalManager'->>'guid'), '') AS regional_guid,
+          NULLIF(BTRIM(extended_snapshot->'regionalManager'->>'name'), '') AS regional_name
+        FROM scoped_clients
       ) scoped_regional
       WHERE regional_guid IS NOT NULL
       ORDER BY regional_guid ASC, regional_name ASC
     `,
-    managerFilter.params,
+    optionsParams,
   );
 
-  const ropOptionsQuery = buildScopedRopOptionsSql(managerFilter.whereSql, managerFilter.params);
-  const rops = await query<OptionRow>(ropOptionsQuery.sql, ropOptionsQuery.params);
+  const hardwareManagers = await query<OptionRow>(
+    `
+      ${dualScopeCte}
+      SELECT DISTINCT ON (hardware_guid)
+        hardware_guid AS id,
+        COALESCE(hardware_name, hardware_guid) AS name
+      FROM (
+        SELECT
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'hardwareManager'->>'guid'), '') AS hardware_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'hardwareManager'->>'name'), '') AS hardware_name
+        FROM scoped_card_clients
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
+        UNION ALL
+        SELECT
+          NULLIF(BTRIM(extended_snapshot->'hardwareManager'->>'guid'), '') AS hardware_guid,
+          NULLIF(BTRIM(extended_snapshot->'hardwareManager'->>'name'), '') AS hardware_name
+        FROM scoped_clients
+      ) scoped_hardware
+      WHERE hardware_guid IS NOT NULL
+      ORDER BY hardware_guid ASC, hardware_name ASC
+    `,
+    optionsParams,
+  );
+
+  const rops = await query<OptionRow>(
+    `
+      ${dualScopeCte}
+      SELECT DISTINCT ON (rop_guid)
+        rop_guid AS id,
+        COALESCE(rop_name, rop_guid) AS name
+      FROM (
+        SELECT
+          ${clientHeadOfSalesGuidSql("scoped_clients")} AS rop_guid,
+          NULLIF(BTRIM(scoped_clients.extended_snapshot->'headOfSales'->>'name'), '') AS rop_name
+        FROM scoped_clients
+        UNION ALL
+        SELECT
+          ${outletHeadOfSalesGuidSql(outletJoin.outletAlias)} AS rop_guid,
+          NULLIF(BTRIM(${outletJoin.outletAlias}->'managers'->'headOfSales'->>'name'), '') AS rop_name
+        FROM scoped_card_clients
+        ${outletJoin.lateralSql}
+        WHERE ${outletJoin.whereSql}
+      ) scoped_rop
+      WHERE rop_guid IS NOT NULL
+      ORDER BY rop_guid ASC, rop_name ASC
+    `,
+    optionsParams,
+  );
 
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
+    outletManagers: outletManagers.rows.map((row) => toClientOption(row.id, row.name)),
     holdings: holdings.rows.map((row) => toClientOption(row.id, row.name)),
     regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
+    hardwareManagers: hardwareManagers.rows.map((row) => toClientOption(row.id, row.name)),
     rops: rops.rows.map((row) => toClientOption(row.id, row.name)),
   };
 }

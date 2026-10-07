@@ -11,16 +11,21 @@
   var MISSING_ROP_ID = "__missing_rop__";
   var MISSING_MANAGER_ID = "__missing_manager__";
   var MISSING_REGIONAL_ID = "__missing_regional__";
+  var MISSING_HARDWARE_ID = "__missing_hardware__";
 
   var LIST_QUERY_KEYS = [
     "view",
     "entity",
     "q",
     "manager",
+    "clientManager",
+    "outletManager",
     "holding",
     "phone",
     "rop",
     "ropEmployee",
+    "clientRopEmployee",
+    "outletRopEmployee",
     "unassignedCategory",
     "reviewState",
     "reviewDecision",
@@ -31,18 +36,70 @@
     "outletStatus",
     "warehouse",
     "regionalManager",
+    "clientRegionalManager",
+    "outletRegionalManager",
     "hardwareManager",
+    "clientHardwareManager",
+    "outletHardwareManager",
+    "clientManagerMode",
+    "outletManagerMode",
+    "clientRegionalManagerMode",
+    "outletRegionalManagerMode",
+    "clientHardwareManagerMode",
+    "outletHardwareManagerMode",
+    "clientRopEmployeeMode",
+    "outletRopEmployeeMode",
+    "missingClientManager",
+    "missingOutletManager",
+    "missingClientRegional",
+    "missingOutletRegional",
+    "missingClientHardware",
+    "missingOutletHardware",
+    "missingClientRop",
+    "missingOutletRop",
     "tandoorClub",
+    "routeDirection",
+    "storeAddressContains",
+    "storePhoneContains",
+    "accountantPhoneContains",
+    "accountantEmailContains",
+    "loadingTime",
+    "loadingSchedule",
+    "filled",
+    "empty",
     "portfolio",
     "responsibleKind",
     "completenessReason",
     "missingRop",
     "missingManager",
     "missingRegional",
+    "missingHardware",
     "page",
     "teamExpand",
     "teamQ",
     "teamKind",
+  ];
+
+  var FIELD_FILTER_EMPTY_OPTIONS = [
+    { value: "", label: "—" },
+    { value: "deliveryAddress", label: "Адрес доставки пуст" },
+    { value: "routeDirection", label: "Маршрут пуст" },
+    { value: "storePhone", label: "Телефон магазина пуст" },
+    { value: "accountantPhone", label: "Телефон бухгалтерии пуст" },
+    { value: "accountantEmail", label: "Email бухгалтерии пуст" },
+    { value: "loadingTime", label: "Время приёмки пусто" },
+    { value: "loadingSchedule", label: "Дни приёмки не заданы" },
+  ];
+
+  var FIELD_FILTER_FILLED_OPTIONS = [
+    { value: "", label: "—" },
+    { value: "deliveryAddress", label: "Адрес доставки заполнен" },
+    { value: "routeDirection", label: "Маршрут заполнен" },
+    { value: "storePhone", label: "Телефон магазина заполнен" },
+    { value: "accountantPhone", label: "Телефон бухгалтерии заполнен" },
+    { value: "accountantEmail", label: "Email бухгалтерии заполнен" },
+    { value: "loadingTime", label: "Время приёмки задано" },
+    { value: "loadingSchedule", label: "Дни приёмки заданы" },
   ];
 
   var CLIENT_COLUMNS = [
@@ -283,12 +340,6 @@
       next.sortBy = defaultSortFieldForEntity(next.entity);
       next.sortDir = "asc";
     }
-    if (next.entity === "clients") {
-      next.outletStatus = "all";
-      next.warehouse = "all";
-      next.regionalManager = "";
-      next.tandoorClub = "";
-    }
     return next;
   }
 
@@ -302,23 +353,52 @@
     if (entity !== "clients" && entity !== "outlets") {
       entity = "clients";
     }
+    var legacyManager = params.get("manager") || "";
+    var clientManager = params.get("clientManager") || (entity === "clients" ? legacyManager : "");
+    var outletManager =
+      params.get("outletManager") || (entity === "outlets" ? legacyManager : params.get("outletManager") || "");
+    var legacyRegional = params.get("regionalManager") || "";
+    var clientRegional = params.get("clientRegionalManager") || (entity === "clients" ? legacyRegional : "");
+    var outletRegional =
+      params.get("outletRegionalManager") || (entity === "outlets" ? legacyRegional : "");
+    var legacyHardware = params.get("hardwareManager") || "";
+    var clientHardware = params.get("clientHardwareManager") || (entity === "clients" ? legacyHardware : "");
+    var outletHardware =
+      params.get("outletHardwareManager") || (entity === "outlets" ? legacyHardware : "");
+    var legacyRop = params.get("ropEmployee") || "";
     return {
       view: view,
       entity: entity,
       q: params.get("q") || "",
-      manager: params.get("manager") || "",
+      manager: legacyManager,
+      clientManager: clientManager,
+      outletManager: outletManager,
       holding: params.get("holding") || "",
       phone: params.get("phone") || "all",
       rop: params.get("rop") || "",
-      ropEmployee: params.get("ropEmployee") || "",
+      ropEmployee: legacyRop,
+      clientRopEmployee: params.get("clientRopEmployee") || (entity === "clients" ? legacyRop : ""),
+      outletRopEmployee: params.get("outletRopEmployee") || (entity === "outlets" ? legacyRop : ""),
       unassignedCategory: params.get("unassignedCategory") || "",
       reviewState: params.get("reviewState") || "",
       reviewDecision: params.get("reviewDecision") || "",
       hasOutlets: params.get("hasOutlets") || "all",
       outletStatus: params.get("outletStatus") || "all",
       warehouse: params.get("warehouse") || "all",
-      regionalManager: params.get("regionalManager") || "",
-      hardwareManager: params.get("hardwareManager") || "",
+      regionalManager: legacyRegional,
+      clientRegionalManager: clientRegional,
+      outletRegionalManager: outletRegional,
+      hardwareManager: legacyHardware,
+      clientHardwareManager: clientHardware,
+      outletHardwareManager: outletHardware,
+      clientManagerMode: params.get("clientManagerMode") || "",
+      outletManagerMode: params.get("outletManagerMode") || "",
+      clientRegionalManagerMode: params.get("clientRegionalManagerMode") || "",
+      outletRegionalManagerMode: params.get("outletRegionalManagerMode") || "",
+      clientHardwareManagerMode: params.get("clientHardwareManagerMode") || "",
+      outletHardwareManagerMode: params.get("outletHardwareManagerMode") || "",
+      clientRopEmployeeMode: params.get("clientRopEmployeeMode") || "",
+      outletRopEmployeeMode: params.get("outletRopEmployeeMode") || "",
       portfolio: params.get("portfolio") || "",
       responsibleKind: params.get("responsibleKind") || "",
       completenessReasons: params
@@ -330,9 +410,27 @@
           return value.length > 0;
         }),
       tandoorClub: params.get("tandoorClub") || "",
-      missingRop: params.get("missingRop") === "1",
-      missingManager: params.get("missingManager") === "1",
-      missingRegional: params.get("missingRegional") === "1",
+      routeDirection: params.get("routeDirection") || "",
+      storeAddressContains: params.get("storeAddressContains") || "",
+      storePhoneContains: params.get("storePhoneContains") || "",
+      accountantPhoneContains: params.get("accountantPhoneContains") || "",
+      accountantEmailContains: params.get("accountantEmailContains") || "",
+      loadingTime: params.get("loadingTime") || "",
+      loadingSchedule: params.get("loadingSchedule") || "all",
+      filled: params.get("filled") || "",
+      empty: params.get("empty") || "",
+      missingRop: params.get("missingRop") === "1" || params.get("missingClientRop") === "1",
+      missingManager: params.get("missingManager") === "1" || params.get("missingClientManager") === "1",
+      missingRegional: params.get("missingRegional") === "1" || params.get("missingClientRegional") === "1",
+      missingHardware: params.get("missingHardware") === "1" || params.get("missingClientHardware") === "1",
+      missingClientManager: params.get("missingClientManager") === "1",
+      missingOutletManager: params.get("missingOutletManager") === "1",
+      missingClientRegional: params.get("missingClientRegional") === "1",
+      missingOutletRegional: params.get("missingOutletRegional") === "1",
+      missingClientHardware: params.get("missingClientHardware") === "1",
+      missingOutletHardware: params.get("missingOutletHardware") === "1",
+      missingClientRop: params.get("missingClientRop") === "1",
+      missingOutletRop: params.get("missingOutletRop") === "1",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
@@ -397,24 +495,66 @@
     return Boolean(state.manager);
   }
 
+  function appendAssignmentParams(params, state) {
+    var entity = state.entity || "clients";
+    if (entity === "clients") {
+      if (state.clientManager) params.set("clientManager", state.clientManager);
+      if (state.outletManager) params.set("outletManager", state.outletManager);
+      if (state.clientRegionalManager) params.set("clientRegionalManager", state.clientRegionalManager);
+      if (state.outletRegionalManager) params.set("outletRegionalManager", state.outletRegionalManager);
+      if (state.clientHardwareManager) params.set("clientHardwareManager", state.clientHardwareManager);
+      if (state.outletHardwareManager) params.set("outletHardwareManager", state.outletHardwareManager);
+      if (state.clientRopEmployee) params.set("clientRopEmployee", state.clientRopEmployee);
+      if (state.outletRopEmployee) params.set("outletRopEmployee", state.outletRopEmployee);
+      if (state.missingClientManager) params.set("missingClientManager", "1");
+      if (state.missingOutletManager) params.set("missingOutletManager", "1");
+      if (state.missingClientRegional) params.set("missingClientRegional", "1");
+      if (state.missingOutletRegional) params.set("missingOutletRegional", "1");
+      if (state.missingClientHardware) params.set("missingClientHardware", "1");
+      if (state.missingOutletHardware) params.set("missingOutletHardware", "1");
+      if (state.missingClientRop) params.set("missingClientRop", "1");
+      if (state.missingOutletRop) params.set("missingOutletRop", "1");
+    } else {
+      if (state.outletManager || state.manager) params.set("outletManager", state.outletManager || state.manager);
+      if (state.outletRegionalManager || state.regionalManager) {
+        params.set("outletRegionalManager", state.outletRegionalManager || state.regionalManager);
+      }
+      if (state.outletHardwareManager || state.hardwareManager) {
+        params.set("outletHardwareManager", state.outletHardwareManager || state.hardwareManager);
+      }
+      if (state.outletRopEmployee || state.ropEmployee) {
+        params.set("outletRopEmployee", state.outletRopEmployee || state.ropEmployee);
+      }
+      if (state.missingOutletManager) params.set("missingOutletManager", "1");
+      if (state.missingOutletRegional) params.set("missingOutletRegional", "1");
+      if (state.missingOutletHardware) params.set("missingOutletHardware", "1");
+      if (state.missingOutletRop) params.set("missingOutletRop", "1");
+    }
+    if (state.clientManagerMode) params.set("clientManagerMode", state.clientManagerMode);
+    if (state.outletManagerMode) params.set("outletManagerMode", state.outletManagerMode);
+    if (state.clientRegionalManagerMode) params.set("clientRegionalManagerMode", state.clientRegionalManagerMode);
+    if (state.outletRegionalManagerMode) params.set("outletRegionalManagerMode", state.outletRegionalManagerMode);
+    if (state.clientHardwareManagerMode) params.set("clientHardwareManagerMode", state.clientHardwareManagerMode);
+    if (state.outletHardwareManagerMode) params.set("outletHardwareManagerMode", state.outletHardwareManagerMode);
+    if (state.clientRopEmployeeMode) params.set("clientRopEmployeeMode", state.clientRopEmployeeMode);
+    if (state.outletRopEmployeeMode) params.set("outletRopEmployeeMode", state.outletRopEmployeeMode);
+  }
+
   function buildListQueryString(state) {
     var params = new URLSearchParams();
     if (state.view) params.set("view", state.view);
     if (state.entity && state.entity !== "clients") params.set("entity", state.entity);
     if (state.q) params.set("q", state.q);
-    if (state.manager) params.set("manager", state.manager);
+    appendAssignmentParams(params, state);
     if (state.holding) params.set("holding", state.holding);
     if (state.phone && state.phone !== "all") params.set("phone", state.phone);
     if (state.rop) params.set("rop", state.rop);
-    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
     if (state.unassignedCategory) params.set("unassignedCategory", state.unassignedCategory);
     if (state.reviewState) params.set("reviewState", state.reviewState);
     if (state.reviewDecision) params.set("reviewDecision", state.reviewDecision);
     if (state.hasOutlets && state.hasOutlets !== "all") params.set("hasOutlets", state.hasOutlets);
     if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
-    if (state.regionalManager) params.set("regionalManager", state.regionalManager);
-    if (state.hardwareManager) params.set("hardwareManager", state.hardwareManager);
     if (state.portfolio) params.set("portfolio", state.portfolio);
     if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
     if (state.view === "completeness" && state.completenessReasons && state.completenessReasons.length > 0) {
@@ -422,10 +562,18 @@
         params.append("completenessReason", reason);
       });
     }
-    if (state.missingRop) params.set("missingRop", "1");
-    if (state.missingManager) params.set("missingManager", "1");
-    if (state.missingRegional) params.set("missingRegional", "1");
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
+    if (state.routeDirection) params.set("routeDirection", state.routeDirection);
+    if (state.storeAddressContains) params.set("storeAddressContains", state.storeAddressContains);
+    if (state.storePhoneContains) params.set("storePhoneContains", state.storePhoneContains);
+    if (state.accountantPhoneContains) params.set("accountantPhoneContains", state.accountantPhoneContains);
+    if (state.accountantEmailContains) params.set("accountantEmailContains", state.accountantEmailContains);
+    if (state.loadingTime) params.set("loadingTime", state.loadingTime);
+    if (state.loadingSchedule && state.loadingSchedule !== "all") {
+      params.set("loadingSchedule", state.loadingSchedule);
+    }
+    if (state.filled) params.set("filled", state.filled);
+    if (state.empty) params.set("empty", state.empty);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
     if (state.cols) params.set("cols", state.cols);
@@ -1045,6 +1193,7 @@
     MISSING_ROP_ID: MISSING_ROP_ID,
     MISSING_MANAGER_ID: MISSING_MANAGER_ID,
     MISSING_REGIONAL_ID: MISSING_REGIONAL_ID,
+    MISSING_HARDWARE_ID: MISSING_HARDWARE_ID,
     LIST_QUERY_KEYS: LIST_QUERY_KEYS,
     columnDefinitions: columnDefinitions,
     defaultVisibleColumnIds: defaultVisibleColumnIds,
@@ -1090,5 +1239,7 @@
     comboboxMoveActive: comboboxMoveActive,
     createDetailController: createDetailController,
     mountCombobox: mountCombobox,
+    FIELD_FILTER_EMPTY_OPTIONS: FIELD_FILTER_EMPTY_OPTIONS,
+    FIELD_FILTER_FILLED_OPTIONS: FIELD_FILTER_FILLED_OPTIONS,
   };
 });

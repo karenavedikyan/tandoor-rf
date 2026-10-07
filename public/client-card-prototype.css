@@ -35,6 +35,11 @@
 .pc-field {padding:14px 0;border-bottom:1px solid var(--rf-border);overflow-wrap:anywhere;}
 .pc-field:first-child {padding-top:0;}
 .pc-field:last-child {border-bottom:0;padding-bottom:0;}
+.pc-details {border:1px solid var(--rf-border);border-radius:8px;margin:0 0 12px;overflow:hidden;}
+.pc-details:last-child {margin-bottom:0;}
+.pc-details__summary {cursor:pointer;font-size:13px;font-weight:600;padding:10px 12px;background:var(--rf-surface-muted);list-style:none;}
+.pc-details__summary::-webkit-details-marker {display:none;}
+.pc-details__body {padding:0 12px 8px;}
 .pc-value {font-weight:600;margin-top:5px;}
 .pc-unavailable {font-weight:400;margin-top:5px;}
 .pc-meta {display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;font-size:12px;color:var(--rf-text-muted);margin-bottom:16px;}

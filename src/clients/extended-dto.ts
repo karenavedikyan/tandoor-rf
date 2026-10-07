@@ -74,6 +74,7 @@ export type RetailOutletDto = {
   loading: RetailOutletLoadingDto;
   managers: RetailOutletManagersDto;
   contacts: RetailOutletContactsDto;
+  tandoorClub: { value: string | null; hasSource: boolean; label: string };
   distributionAllowed: false;
   distributionNote: string;
   presentInCurrentExport: boolean;
@@ -638,6 +639,23 @@ function outletDistributionNote(outlet: ParsedRetailOutlet): string {
   return "Запись дистрибуции будет доступна на следующем этапе.";
 }
 
+function tandoorClubPresentation(outlet: ParsedRetailOutlet): {
+  value: string | null;
+  hasSource: boolean;
+  label: string;
+} {
+  const provided = outlet.additional?.fieldPresence?.statusTandoorClub === true;
+  const raw = outlet.additional?.statusTandoorClub ?? "";
+  const trimmed = raw.trim();
+  if (!provided) {
+    return { value: null, hasSource: false, label: "Не передано" };
+  }
+  if (trimmed.length === 0) {
+    return { value: null, hasSource: true, label: "Не заполнено" };
+  }
+  return { value: trimmed, hasSource: true, label: trimmed };
+}
+
 function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationContext): RetailOutletDto {
   const effective = resolveEffectiveOutletPresentation(outlet, context);
   const warehouseLabel =
@@ -647,6 +665,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
         ? "Не используется как склад"
         : "Признак склада не передан";
   const closure = outletClosurePresentation(outlet, effective.closureConfirmedInCurrentExport);
+  const tandoorClub = tandoorClubPresentation(outlet);
 
   return {
     ordinal: outlet.ordinal,
@@ -676,6 +695,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
       accountantPhone: outlet.contacts.accountantPhone,
       accountantEmail: outlet.contacts.accountantEmail,
     },
+    tandoorClub,
     distributionAllowed: false,
     distributionNote: outletDistributionNote(outlet),
     presentInCurrentExport: effective.provenance.freshness === "current",
