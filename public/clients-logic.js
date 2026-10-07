@@ -11,6 +11,7 @@
   var MISSING_ROP_ID = "__missing_rop__";
   var MISSING_MANAGER_ID = "__missing_manager__";
   var MISSING_REGIONAL_ID = "__missing_regional__";
+  var MISSING_HARDWARE_ID = "__missing_hardware__";
 
   var LIST_QUERY_KEYS = [
     "view",
@@ -39,6 +40,7 @@
     "missingRop",
     "missingManager",
     "missingRegional",
+    "missingHardware",
     "page",
     "teamExpand",
     "teamQ",
@@ -333,6 +335,7 @@
       missingRop: params.get("missingRop") === "1",
       missingManager: params.get("missingManager") === "1",
       missingRegional: params.get("missingRegional") === "1",
+      missingHardware: params.get("missingHardware") === "1",
       sortBy: params.get("sortBy") || "",
       sortDir: params.get("sortDir") || "",
       cols: params.get("cols") || "",
@@ -425,6 +428,7 @@
     if (state.missingRop) params.set("missingRop", "1");
     if (state.missingManager) params.set("missingManager", "1");
     if (state.missingRegional) params.set("missingRegional", "1");
+    if (state.missingHardware) params.set("missingHardware", "1");
     if (state.tandoorClub) params.set("tandoorClub", state.tandoorClub);
     if (state.sortBy) params.set("sortBy", state.sortBy);
     if (state.sortDir && state.sortDir !== "asc") params.set("sortDir", state.sortDir);
@@ -1045,6 +1049,7 @@
     MISSING_ROP_ID: MISSING_ROP_ID,
     MISSING_MANAGER_ID: MISSING_MANAGER_ID,
     MISSING_REGIONAL_ID: MISSING_REGIONAL_ID,
+    MISSING_HARDWARE_ID: MISSING_HARDWARE_ID,
     LIST_QUERY_KEYS: LIST_QUERY_KEYS,
     columnDefinitions: columnDefinitions,
     defaultVisibleColumnIds: defaultVisibleColumnIds,

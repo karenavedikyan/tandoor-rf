@@ -1,11 +1,18 @@
 import { mergeSqlFilters } from "../access/combine-filters";
+import {
+  extendedRefPresenceClause,
+  guidListMatchClause,
+  legacyClientManagerPresenceClause,
+} from "./assignment-filter-modes";
 import type { SqlFilter } from "./query";
 import type { ClientsListQuery } from "./query";
 import {
   clientAssignedToRopClause,
+  clientHardwareGuidSql,
   clientHeadOfSalesGuidSql,
   clientRegionalGuidSql,
   managerInRopBranchClause,
+  outletHardwareGuidSql,
   outletHeadOfSalesGuidSql,
   outletManagerGuidSql,
   outletRegionalGuidSql,
@@ -51,7 +58,68 @@ export function applyClientListAssignmentFilters(
   if (input.missingRegional) {
     filter = mergeSqlFilters(
       filter,
-      [`onec_clients.extended_snapshot->'regionalManager'->>'state' = 'unassigned'`],
+      [extendedRefPresenceClause("onec_clients.extended_snapshot->'regionalManager'", "unassigned")],
+      [],
+    );
+  }
+  if (input.missingHardware) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause("onec_clients.extended_snapshot->'hardwareManager'", "unassigned")],
+      [],
+    );
+  }
+
+  if (input.regionalManagerIds && input.regionalManagerIds.length > 0 && !input.regionalManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [guidListMatchClause(clientRegionalGuidSql("onec_clients"), "$1")],
+      [input.regionalManagerIds],
+    );
+  } else if (input.regionalManagerId && !input.regionalManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [`${clientRegionalGuidSql("onec_clients")} = lower($1::text)`],
+      [input.regionalManagerId],
+    );
+  }
+  if (input.regionalManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause("onec_clients.extended_snapshot->'regionalManager'", input.regionalManagerMode)],
+      [],
+    );
+  }
+
+  if (input.hardwareManagerIds && input.hardwareManagerIds.length > 0 && !input.hardwareManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [guidListMatchClause(clientHardwareGuidSql("onec_clients"), "$1")],
+      [input.hardwareManagerIds],
+    );
+  } else if (input.hardwareManagerId && !input.hardwareManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [`${clientHardwareGuidSql("onec_clients")} = lower($1::text)`],
+      [input.hardwareManagerId],
+    );
+  }
+  if (input.hardwareManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause("onec_clients.extended_snapshot->'hardwareManager'", input.hardwareManagerMode)],
+      [],
+    );
+  }
+
+  if (input.clientManagerMode) {
+    filter = mergeSqlFilters(filter, [legacyClientManagerPresenceClause(input.clientManagerMode)], []);
+  }
+
+  if (input.ropEmployeeMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause("onec_clients.extended_snapshot->'headOfSales'", input.ropEmployeeMode)],
       [],
     );
   }
@@ -88,11 +156,15 @@ export function applyOutletListAssignmentFilters(
     );
   } else if (rop) {
     filter = mergeSqlFilters(filter, [`${ropHeadSql} = lower($1::text)`], [rop]);
+  } else if (input.managerIds && input.managerIds.length > 0) {
+    filter = mergeSqlFilters(filter, [guidListMatchClause(outletManagerSql, "$1")], [input.managerIds]);
   } else if (manager) {
     filter = mergeSqlFilters(filter, [`${outletManagerSql} = lower($1::text)`], [manager]);
   }
 
-  if (input.regionalManagerId && !orgTeamsRegionalHandled) {
+  if (input.regionalManagerIds && input.regionalManagerIds.length > 0 && !orgTeamsRegionalHandled) {
+    filter = mergeSqlFilters(filter, [guidListMatchClause(outletRegionalSql, "$1")], [input.regionalManagerIds]);
+  } else if (input.regionalManagerId && !orgTeamsRegionalHandled) {
     filter = mergeSqlFilters(filter, [`${outletRegionalSql} = lower($1::text)`], [input.regionalManagerId]);
   }
 
@@ -123,7 +195,53 @@ export function applyOutletListAssignmentFilters(
   if (input.missingRegional) {
     filter = mergeSqlFilters(
       filter,
-      [`COALESCE(${snapshotExpr}->'managers'->'regionalManager'->>'state', '') = 'unassigned'`],
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'regionalManager'`, "unassigned")],
+      [],
+    );
+  }
+  if (input.missingHardware) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'hardwareManager'`, "unassigned")],
+      [],
+    );
+  }
+
+  const outletHardwareSql = outletHardwareGuidSql(snapshotExpr);
+
+  if (input.hardwareManagerIds && input.hardwareManagerIds.length > 0 && !input.hardwareManagerMode) {
+    filter = mergeSqlFilters(filter, [guidListMatchClause(outletHardwareSql, "$1")], [input.hardwareManagerIds]);
+  } else if (input.hardwareManagerId && !input.hardwareManagerMode) {
+    filter = mergeSqlFilters(filter, [`${outletHardwareSql} = lower($1::text)`], [input.hardwareManagerId]);
+  }
+  if (input.hardwareManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'hardwareManager'`, input.hardwareManagerMode)],
+      [],
+    );
+  }
+
+  if (input.regionalManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'regionalManager'`, input.regionalManagerMode)],
+      [],
+    );
+  }
+
+  if (input.outletManagerMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'manager'`, input.outletManagerMode)],
+      [],
+    );
+  }
+
+  if (input.ropEmployeeMode) {
+    filter = mergeSqlFilters(
+      filter,
+      [extendedRefPresenceClause(`${snapshotExpr}->'managers'->'headOfSales'`, input.ropEmployeeMode)],
       [],
     );
   }

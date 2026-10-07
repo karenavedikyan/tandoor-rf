@@ -8,6 +8,11 @@ import {
 } from "./org/teams-list-filters";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
+import {
+  parseAssignmentPresenceMode,
+  parseUuidListParam,
+  type AssignmentPresenceMode,
+} from "./assignment-filter-modes";
 import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
 import { isValidUuidParam } from "./uuid-param";
 
@@ -23,6 +28,7 @@ export type ClientsListQuery = {
   view: ClientsViewMode;
   q: string;
   managerId?: string;
+  managerIds?: string[];
   holdingId?: string;
   phone: PhoneFilter;
   ropUserId?: string;
@@ -33,11 +39,18 @@ export type ClientsListQuery = {
   /** Responsible assignment kind for org-structure drill-down. */
   responsibleKind?: "manager" | "regional" | "hardware";
   hardwareManagerId?: string;
+  hardwareManagerIds?: string[];
+  clientManagerMode?: AssignmentPresenceMode;
+  outletManagerMode?: AssignmentPresenceMode;
+  regionalManagerMode?: AssignmentPresenceMode;
+  hardwareManagerMode?: AssignmentPresenceMode;
+  ropEmployeeMode?: AssignmentPresenceMode;
   completenessReasons?: CompletenessReason[];
   completenessReasonMode?: "any" | "all";
   missingRop?: boolean;
   missingManager?: boolean;
   missingRegional?: boolean;
+  missingHardware?: boolean;
   unassignedCategory?: UnassignedCategory;
   reviewState?: ReviewState | "any";
   reviewDecision?: ReviewDecision | "any";
@@ -45,7 +58,12 @@ export type ClientsListQuery = {
   outletStatus: OutletStatusFilter;
   warehouseFilter: OutletWarehouseFilter;
   regionalManagerId?: string;
+  regionalManagerIds?: string[];
   tandoorClub?: string;
+  routeDirection?: string;
+  storeAddressContains?: string;
+  filled?: string;
+  empty?: string;
   sortBy: ClientSortField | OutletSortField;
   sortDir: "asc" | "desc";
   page: number;
@@ -151,10 +169,11 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр телефона." };
   }
 
-  const managerId = parseOptionalUuid(input.manager, "менеджера");
-  if (managerId === null) {
+  const managerIds = parseUuidListParam(input.manager);
+  if (managerIds === null) {
     return { ok: false, message: "Некорректный фильтр менеджера." };
   }
+  const managerId = managerIds.length === 1 ? managerIds[0] : managerIds.length === 0 ? undefined : undefined;
 
   const holdingId = parseOptionalUuid(input.holding, "холдинга");
   if (holdingId === null) {
@@ -185,9 +204,37 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Нельзя одновременно использовать rop и ropEmployee." };
   }
 
-  const hardwareManagerId = parseOptionalUuid(input.hardwareManager, "менеджера по фурнитуре");
-  if (hardwareManagerId === null) {
+  const hardwareManagerIds = parseUuidListParam(input.hardwareManager);
+  if (hardwareManagerIds === null) {
     return { ok: false, message: "Некорректный фильтр менеджера по фурнитуре." };
+  }
+  const hardwareManagerId =
+    hardwareManagerIds.length === 1 ? hardwareManagerIds[0] : undefined;
+
+  const regionalManagerIds = parseUuidListParam(input.regionalManager);
+  if (regionalManagerIds === null) {
+    return { ok: false, message: "Некорректный фильтр регионального менеджера." };
+  }
+
+  const clientManagerMode = parseAssignmentPresenceMode(input.clientManagerMode);
+  if (clientManagerMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра менеджера клиента." };
+  }
+  const outletManagerMode = parseAssignmentPresenceMode(input.outletManagerMode);
+  if (outletManagerMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра менеджера ТТ." };
+  }
+  const regionalManagerMode = parseAssignmentPresenceMode(input.regionalManagerMode);
+  if (regionalManagerMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра регионального менеджера." };
+  }
+  const hardwareManagerMode = parseAssignmentPresenceMode(input.hardwareManagerMode);
+  if (hardwareManagerMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра менеджера по фурнитуре." };
+  }
+  const ropEmployeeMode = parseAssignmentPresenceMode(input.ropEmployeeMode);
+  if (ropEmployeeMode === null) {
+    return { ok: false, message: "Некорректный режим фильтра РОП." };
   }
 
   let completenessReasons: CompletenessReason[] | undefined;
@@ -248,6 +295,10 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   if (missingRegional === null) {
     return { ok: false, message: "Некорректный фильтр «не указан региональный»." };
   }
+  const missingHardware = parseOptionalBooleanFlag(input.missingHardware, "missingHardware");
+  if (missingHardware === null) {
+    return { ok: false, message: "Некорректный фильтр «не указан менеджер по фурнитуре»." };
+  }
 
   let unassignedCategory: UnassignedCategory | undefined;
   if (input.unassignedCategory !== undefined && input.unassignedCategory !== null && input.unassignedCategory !== "") {
@@ -305,22 +356,40 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный фильтр склада." };
   }
 
-  const regionalManagerId = parseOptionalUuid(input.regionalManager, "регионального менеджера");
-  if (regionalManagerId === null) {
-    return { ok: false, message: "Некорректный фильтр регионального менеджера." };
-  }
+  const regionalManagerId =
+    regionalManagerIds.length === 1 ? regionalManagerIds[0] : undefined;
 
   if (missingRop && ropEmployeeGuid) {
     return { ok: false, message: "Нельзя одновременно выбрать РОП и фильтр «РОП не указан»." };
   }
-  if (missingManager && managerId) {
-    return { ok: false, message: "Нельзя одновременно выбрать менеджера и фильтр «Менеджер не указан»." };
-  }
-  if (missingRegional && regionalManagerId) {
+  if (missingRegional && (regionalManagerId || regionalManagerIds.length > 0 || regionalManagerMode)) {
     return {
       ok: false,
       message: "Нельзя одновременно выбрать регионального и фильтр «Региональный не указан».",
     };
+  }
+  if (missingHardware && (hardwareManagerId || hardwareManagerIds.length > 0 || hardwareManagerMode)) {
+    return {
+      ok: false,
+      message: "Нельзя одновременно выбрать менеджера по фурнитуре и фильтр «не указан».",
+    };
+  }
+  if (missingManager && (managerId || managerIds.length > 0 || clientManagerMode || outletManagerMode)) {
+    return { ok: false, message: "Нельзя одновременно выбрать менеджера и фильтр «Менеджер не указан»." };
+  }
+
+  function parseOptionalSearchField(value: unknown, label: string): string | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value).trim();
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return null;
+    }
+    return raw;
   }
 
   let tandoorClub: string | undefined;
@@ -333,6 +402,23 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       return { ok: false, message: "Слишком длинный фильтр Tandoor Club." };
     }
     tandoorClub = raw;
+  }
+
+  const routeDirection = parseOptionalSearchField(input.routeDirection, "routeDirection");
+  if (routeDirection === null) {
+    return { ok: false, message: "Некорректный фильтр направления маршрута." };
+  }
+  const storeAddressContains = parseOptionalSearchField(input.storeAddressContains, "storeAddressContains");
+  if (storeAddressContains === null) {
+    return { ok: false, message: "Некорректный фильтр адреса ТТ." };
+  }
+  const filled = parseOptionalSearchField(input.filled, "filled");
+  if (filled === null) {
+    return { ok: false, message: "Некорректный фильтр заполненности." };
+  }
+  const empty = parseOptionalSearchField(input.empty, "empty");
+  if (empty === null) {
+    return { ok: false, message: "Некорректный фильтр пустоты." };
   }
 
   const sortDir = parseSortDirection(input.sortDir);
@@ -361,6 +447,7 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       view: viewRaw as ClientsViewMode,
       q: rawQ,
       managerId,
+      managerIds: managerIds.length > 0 ? managerIds : undefined,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
@@ -368,11 +455,18 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       branchPortfolio,
       responsibleKind,
       hardwareManagerId,
+      hardwareManagerIds: hardwareManagerIds.length > 0 ? hardwareManagerIds : undefined,
+      clientManagerMode,
+      outletManagerMode,
+      regionalManagerMode,
+      hardwareManagerMode,
+      ropEmployeeMode,
       completenessReasons,
       completenessReasonMode: completenessReasonMode ?? "any",
       missingRop,
       missingManager,
       missingRegional,
+      missingHardware,
       unassignedCategory,
       reviewState,
       reviewDecision,
@@ -380,7 +474,12 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       outletStatus: outletStatusRaw as OutletStatusFilter,
       warehouseFilter: warehouseRaw as OutletWarehouseFilter,
       regionalManagerId,
+      regionalManagerIds: regionalManagerIds.length > 0 ? regionalManagerIds : undefined,
       tandoorClub,
+      routeDirection,
+      storeAddressContains,
+      filled,
+      empty,
       sortBy,
       sortDir,
       page,
@@ -412,7 +511,12 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const orgTeamsManagerHandled = Boolean(query.ropEmployeeGuid) && Boolean(query.managerId);
   const outletEntityManagerHandled = query.entity === "outlets";
-  if (query.managerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
+  if (query.managerIds && query.managerIds.length > 0 && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
+    params.push(query.managerIds);
+    clauses.push(
+      `onec_clients.guid_manager = ANY($${params.length}::uuid[])`,
+    );
+  } else if (query.managerId && !orgTeamsManagerHandled && !outletEntityManagerHandled) {
     params.push(query.managerId);
     clauses.push(`onec_clients.guid_manager = $${params.length}::uuid`);
   }
@@ -453,6 +557,48 @@ export function buildClientsFilter(query: ClientsListQuery): SqlFilter {
 
   const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return { whereSql, params };
+}
+
+/** True when any list filter narrows or reshapes the default clients/outlets query. */
+export function queryHasActiveFilters(query: ClientsListQuery): boolean {
+  return Boolean(
+    query.q ||
+      query.managerId ||
+      (query.managerIds && query.managerIds.length > 0) ||
+      query.holdingId ||
+      query.phone !== "all" ||
+      query.view !== "all" ||
+      query.entity !== "clients" ||
+      query.ropUserId ||
+      query.ropEmployeeGuid ||
+      query.branchPortfolio ||
+      query.responsibleKind ||
+      query.unassignedCategory ||
+      (query.reviewState && query.reviewState !== "any") ||
+      (query.reviewDecision && query.reviewDecision !== "any") ||
+      query.hasOutlets !== "all" ||
+      query.outletStatus !== "all" ||
+      query.warehouseFilter !== "all" ||
+      query.regionalManagerId ||
+      (query.regionalManagerIds && query.regionalManagerIds.length > 0) ||
+      query.hardwareManagerId ||
+      (query.hardwareManagerIds && query.hardwareManagerIds.length > 0) ||
+      query.missingRop ||
+      query.missingManager ||
+      query.missingRegional ||
+      query.missingHardware ||
+      query.tandoorClub ||
+      query.routeDirection ||
+      query.storeAddressContains ||
+      query.filled ||
+      query.empty ||
+      (query.completenessReasons && query.completenessReasons.length > 0) ||
+      query.clientManagerMode ||
+      query.outletManagerMode ||
+      query.regionalManagerMode ||
+      query.hardwareManagerMode ||
+      query.ropEmployeeMode,
+  );
 }
 
 export function mergeFilterClauses(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {

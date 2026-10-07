@@ -278,6 +278,13 @@ export function syntheticOptionsPayload() {
         shortId: "AAAAAAAA",
       },
     ],
+    hardwareManagers: [
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        name: "Hardware Lead",
+        shortId: "77777777",
+      },
+    ],
     rops: [
       {
         id: NAV_ROP_A,
@@ -300,10 +307,21 @@ export function filterAwareAllListPayload(url: URL) {
   const entity = url.searchParams.get("entity") || "clients";
   const ropEmployee = url.searchParams.get("ropEmployee");
   const manager = url.searchParams.get("manager");
+  const hardwareManager = url.searchParams.get("hardwareManager");
   const missingManager = url.searchParams.get("missingManager") === "1";
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    if (hardwareManager === "77777777-7777-4777-8777-777777777777") {
+      return {
+        items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     if (missingRop) {
       return {
         items: [navClientItem("99999999-9999-4999-8999-999999999999", "Missing ROP Client")],

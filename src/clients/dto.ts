@@ -143,6 +143,7 @@ export type ClientsOptionsResponse = {
   managers: ClientOptionDto[];
   holdings: ClientOptionDto[];
   regionalManagers: ClientOptionDto[];
+  hardwareManagers: ClientOptionDto[];
   rops: ClientOptionDto[];
 };
 

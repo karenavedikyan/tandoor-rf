@@ -5,7 +5,7 @@ import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { isValidUuidParam } from "./uuid-param";
 import { listRetailOutlets } from "./outlets/repository";
-import { parseClientsListQuery } from "./query";
+import { parseClientsListQuery, queryHasActiveFilters } from "./query";
 import {
   countAllClients,
   getClientByGuid,
@@ -54,19 +54,7 @@ export async function listClientsHandler(
     }
     throw error;
   }
-  const hasFilters = Boolean(
-    parsed.query.q ||
-      parsed.query.managerId ||
-      parsed.query.holdingId ||
-      parsed.query.phone !== "all" ||
-      parsed.query.view !== "all" ||
-      parsed.query.entity !== "clients" ||
-      parsed.query.ropUserId ||
-      parsed.query.unassignedCategory ||
-      parsed.query.reviewState ||
-      parsed.query.reviewDecision ||
-      parsed.query.hasOutlets !== "all",
-  );
+  const hasFilters = queryHasActiveFilters(parsed.query);
   if (!hasFilters && result.total === 0 && context.fullClientBase) {
     result.isEmptyDatabase = (await countAllClients()) === 0;
   }

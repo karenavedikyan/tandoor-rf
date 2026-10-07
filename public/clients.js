@@ -80,6 +80,14 @@
   var regionalFilter = document.getElementById("regional-filter");
   var regionalFilterInput = document.getElementById("regional-filter-input");
   var regionalFilterList = document.getElementById("regional-filter-list");
+  var hardwareFilterWrap = document.getElementById("hardware-filter-wrap");
+  var hardwareFilter = document.getElementById("hardware-filter");
+  var hardwareFilterInput = document.getElementById("hardware-filter-input");
+  var hardwareFilterList = document.getElementById("hardware-filter-list");
+  var ropFilterLabelEl = document.getElementById("rop-filter-label");
+  var managerFilterLabelEl = document.getElementById("manager-filter-label");
+  var regionalFilterLabelEl = document.getElementById("regional-filter-label");
+  var hardwareFilterLabelEl = document.getElementById("hardware-filter-label");
   var tandoorFilterWrap = document.getElementById("tandoor-filter-wrap");
   var tandoorFilter = document.getElementById("tandoor-filter");
   var reviewStateFilterWrap = document.getElementById("review-state-filter-wrap");
@@ -106,15 +114,18 @@
   var managerOptions = [];
   var holdingOptions = [];
   var regionalOptions = [];
+  var hardwareOptions = [];
   var ropOptions = [];
   var managerCombobox = null;
   var holdingCombobox = null;
   var regionalCombobox = null;
+  var hardwareCombobox = null;
   var ropCombobox = null;
 
   var ropMissingEntry = { id: logic.MISSING_ROP_ID, label: "РОП не указан" };
   var managerMissingEntry = { id: logic.MISSING_MANAGER_ID, label: "Менеджер не указан" };
   var regionalMissingEntry = { id: logic.MISSING_REGIONAL_ID, label: "Региональный не указан" };
+  var hardwareMissingEntry = { id: logic.MISSING_HARDWARE_ID, label: "Менеджер по фурнитуре не указан" };
   var currentUser = null;
   var rolePresentation = null;
   var teamContext = {
@@ -438,6 +449,14 @@
       state.regionalManager = regionalSelection.missing ? "" : regionalSelection.guid;
       state.missingRegional = regionalSelection.missing;
     }
+    if (hardwareCombobox) {
+      var hardwareSelection = logic.resolveComboboxSelection(
+        hardwareCombobox.model.selectedId,
+        hardwareMissingEntry,
+      );
+      state.hardwareManager = hardwareSelection.missing ? "" : hardwareSelection.guid;
+      state.missingHardware = hardwareSelection.missing;
+    }
     return state;
   }
 
@@ -458,13 +477,14 @@
       outletStatus: outletStatusFilter.value || "all",
       warehouse: warehouseFilter.value || "all",
       regionalManager: regionalFilter.value || "",
-      hardwareManager: appEl.dataset.hardwareManager || "",
+      hardwareManager: hardwareFilter ? hardwareFilter.value || appEl.dataset.hardwareManager || "" : appEl.dataset.hardwareManager || "",
       portfolio: appEl.dataset.portfolio || "",
       responsibleKind: appEl.dataset.responsibleKind || "",
       completenessReasons: readCompletenessReasonsFromFilter(),
       missingRop: false,
       missingManager: false,
       missingRegional: false,
+      missingHardware: false,
       tandoorClub: tandoorFilter.value.trim(),
       sortBy: appEl.dataset.sortBy || "",
       sortDir: appEl.dataset.sortDir || "",
@@ -553,6 +573,9 @@
     outletStatusFilter.value = state.outletStatus || "all";
     warehouseFilter.value = state.warehouse || "all";
     regionalFilter.value = state.missingRegional ? "" : state.regionalManager || "";
+    if (hardwareFilter) {
+      hardwareFilter.value = state.missingHardware ? "" : state.hardwareManager || "";
+    }
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
@@ -577,6 +600,15 @@
           state.regionalManager,
           state.missingRegional,
           logic.MISSING_REGIONAL_ID,
+        ),
+      );
+    }
+    if (hardwareCombobox) {
+      hardwareCombobox.syncFromUrl(
+        logic.comboboxSelectedIdFromState(
+          state.hardwareManager,
+          state.missingHardware,
+          logic.MISSING_HARDWARE_ID,
         ),
       );
     }
@@ -967,6 +999,9 @@
     if (state.regionalManager || state.missingRegional) {
       count += 1;
     }
+    if (state.hardwareManager || state.missingHardware) {
+      count += 1;
+    }
     if (state.tandoorClub && state.tandoorClub.trim()) {
       count += 1;
     }
@@ -974,6 +1009,27 @@
       count += 1;
     }
     return count;
+  }
+
+  function updateResponsibleFilterLabels(isOutlets) {
+    if (ropFilterLabelEl) {
+      ropFilterLabelEl.textContent = isOutlets ? "РОП ТТ" : "РОП клиента";
+    }
+    if (managerFilterLabelEl) {
+      managerFilterLabelEl.textContent = isOutlets ? "Менеджер ТТ" : "Менеджер клиента";
+    }
+    if (regionalFilterLabelEl) {
+      regionalFilterLabelEl.textContent = isOutlets ? "Региональный ТТ" : "Региональный клиента";
+    }
+    if (hardwareFilterLabelEl) {
+      hardwareFilterLabelEl.textContent = isOutlets ? "По фурнитуре ТТ" : "По фурнитуре клиента";
+    }
+    ropMissingEntry.label = isOutlets ? "РОП ТТ не указан" : "РОП клиента не указан";
+    managerMissingEntry.label = isOutlets ? "Менеджер ТТ не указан" : "Менеджер клиента не указан";
+    regionalMissingEntry.label = isOutlets ? "Региональный ТТ не указан" : "Региональный клиента не указан";
+    hardwareMissingEntry.label = isOutlets
+      ? "Менеджер по фурнитуре ТТ не указан"
+      : "Менеджер по фурнитуре клиента не указан";
   }
 
   function updateActiveFiltersBadge(state) {
@@ -1366,6 +1422,23 @@
       },
       onApplySelection: applyComboboxFilter,
     });
+
+    if (hardwareFilterInput && hardwareFilter && hardwareFilterList) {
+      hardwareCombobox = logic.mountCombobox({
+        model: logic.createComboboxModel(),
+        input: hardwareFilterInput,
+        hidden: hardwareFilter,
+        listEl: hardwareFilterList,
+        root: document.getElementById("hardware-combobox"),
+        listboxId: "hardware-filter-list",
+        allLabel: "Все менеджеры по фурнитуре",
+        missingEntry: hardwareMissingEntry,
+        options: function () {
+          return hardwareOptions;
+        },
+        onApplySelection: applyComboboxFilter,
+      });
+    }
   }
 
   function showAccessDenied() {
@@ -1750,14 +1823,20 @@
         ),
     );
     completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
+    var showOutletDerivedFilters = !isTeams && !isReview && state.view === "all";
     outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
-    outletStatusFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
-    warehouseFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    outletStatusFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+    warehouseFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
     regionalFilterWrap.classList.toggle(
       "clients-hidden",
-      !isOutlets || !(showAssignmentFilters || isCompleteness) || isRegionalRole,
+      !(showAssignmentFilters || isCompleteness) || isRegionalRole,
     );
-    tandoorFilterWrap.classList.toggle("clients-hidden", !isOutlets || isCompleteness);
+    hardwareFilterWrap?.classList.toggle(
+      "clients-hidden",
+      !(showAssignmentFilters || isCompleteness) || isRegionalRole,
+    );
+    tandoorFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+    updateResponsibleFilterLabels(isOutlets);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
@@ -2912,6 +2991,7 @@
       managerOptions = result.data.managers || [];
       holdingOptions = result.data.holdings || [];
       regionalOptions = result.data.regionalManagers || [];
+      hardwareOptions = result.data.hardwareManagers || [];
       ropOptions = result.data.rops || [];
       if (ropCombobox) {
         ropCombobox.syncFromUrl(ropFilter.value);
@@ -2924,6 +3004,9 @@
       }
       if (regionalCombobox) {
         regionalCombobox.syncFromUrl(regionalFilter.value);
+      }
+      if (hardwareCombobox) {
+        hardwareCombobox.syncFromUrl(hardwareFilter.value);
       }
       return { ok: true };
     });
@@ -3203,6 +3286,9 @@
     if (regionalCombobox) {
       regionalCombobox.reset();
     }
+    if (hardwareCombobox) {
+      hardwareCombobox.reset();
+    }
     if (ropCombobox) {
       ropCombobox.reset();
     }
@@ -3228,10 +3314,12 @@
       missingRop: false,
       missingManager: false,
       missingRegional: false,
+      missingHardware: false,
       hasOutlets: "all",
       outletStatus: "all",
       warehouse: "all",
       regionalManager: "",
+      hardwareManager: "",
       tandoorClub: "",
       sortBy: "",
       sortDir: "",

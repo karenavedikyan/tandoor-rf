@@ -176,6 +176,45 @@ describe("clients list filters browser", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("applies hardware filter with entity labels, card navigation and mobile reload", async () => {
+    const { page, state } = await setupPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${baseUrl}/clients?view=all`, { waitUntil: "networkidle" });
+    await page.waitForSelector("#hardware-filter-wrap:not(.clients-hidden)");
+    assert.match(await page.locator("#hardware-filter-label").textContent(), /клиента/);
+
+    const hardwareFiltered = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/clients") && response.url().includes("hardwareManager="),
+    );
+    await selectComboboxOption(page, "hardware-filter-input", "Hardware Lead");
+    await hardwareFiltered;
+    assert.match(page.url(), /hardwareManager=77777777-7777-4777-8777-777777777777/);
+
+    await page.click('[data-entity="outlets"]');
+    await page.waitForFunction(() => window.location.search.includes("entity=outlets"));
+    assert.match(await page.locator("#hardware-filter-label").textContent(), /ТТ/);
+
+    const firstClientLink = page.locator("#clients-table-body tr a").first();
+    await firstClientLink.click();
+    await page.waitForURL(/\/clients\//);
+    await page.goBack({ waitUntil: "networkidle" });
+    assert.match(page.url(), /hardwareManager=/);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.click("#clients-filters-toggle");
+    await page.waitForSelector("#clients-filters-panel.clients-filters-panel--expanded");
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "clients-sprint2-filters-mobile-390.png"),
+      fullPage: true,
+    });
+    await page.click("#reset-filters");
+    await page.waitForFunction(() => !window.location.search.includes("hardwareManager="));
+    assert.equal(await page.locator("#hardware-filter-input").inputValue(), "");
+    await page.close();
+  });
+
   it("hides unsupported outlet filters in completeness view", async () => {
     const { page } = await setupPage();
     await page.goto(`${baseUrl}/clients?view=completeness&entity=outlets`, { waitUntil: "networkidle" });

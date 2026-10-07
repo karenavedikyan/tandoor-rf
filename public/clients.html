@@ -157,7 +157,7 @@
               </p>
               <div id="clients-filters-panel" class="clients-toolbar__row clients-toolbar__row--filters">
                 <div class="clients-field clients-hidden" id="rop-filter-wrap">
-                  <span class="clients-field__label" id="rop-filter-label">РОП</span>
+                  <span class="clients-field__label" id="rop-filter-label">РОП клиента</span>
                   <div class="clients-combobox" id="rop-combobox">
                     <input
                       id="rop-filter-input"
@@ -175,7 +175,7 @@
                   </div>
                 </div>
                 <div class="clients-field" id="manager-filter-wrap">
-                  <span class="clients-field__label" id="manager-filter-label">Менеджер 1С</span>
+                  <span class="clients-field__label" id="manager-filter-label">Менеджер клиента</span>
                   <div class="clients-combobox" id="manager-combobox">
                     <input
                       id="manager-filter-input"
@@ -244,7 +244,7 @@
                   </select>
                 </label>
                 <div class="clients-field clients-hidden" id="regional-filter-wrap">
-                  <span class="clients-field__label" id="regional-filter-label">Региональный</span>
+                  <span class="clients-field__label" id="regional-filter-label">Региональный клиента</span>
                   <div class="clients-combobox" id="regional-combobox">
                     <input
                       id="regional-filter-input"
@@ -259,6 +259,24 @@
                     />
                     <input type="hidden" id="regional-filter" value="" />
                     <ul id="regional-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
+                  </div>
+                </div>
+                <div class="clients-field clients-hidden" id="hardware-filter-wrap">
+                  <span class="clients-field__label" id="hardware-filter-label">По фурнитуре клиента</span>
+                  <div class="clients-combobox" id="hardware-combobox">
+                    <input
+                      id="hardware-filter-input"
+                      class="clients-field__input clients-combobox__input"
+                      type="search"
+                      role="combobox"
+                      aria-labelledby="hardware-filter-label"
+                      aria-controls="hardware-filter-list"
+                      aria-expanded="false"
+                      autocomplete="off"
+                      placeholder="Все менеджеры по фурнитуре"
+                    />
+                    <input type="hidden" id="hardware-filter" value="" />
+                    <ul id="hardware-filter-list" class="clients-combobox__list clients-hidden" role="listbox"></ul>
                   </div>
                 </div>
                 <label class="clients-field clients-hidden" id="tandoor-filter-wrap">
