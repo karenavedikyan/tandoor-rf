@@ -1,3 +1,4 @@
+import { managerClientPortfolioClause, outletManagerGuidSql } from "./org/assignment-sql";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 
 export const RETAIL_OUTLETS_JSON = `
@@ -18,7 +19,7 @@ export const RETAIL_OUTLETS_JSON_OC = `
 
 export function employeePortfolioClause(employeeParamSql: string): string {
   return `(
-    (guid_manager = ${employeeParamSql} AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
+    ${managerClientPortfolioClause(employeeParamSql)}
     OR EXISTS (
       SELECT 1
       FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
@@ -30,6 +31,13 @@ export function employeePortfolioClause(employeeParamSql: string): string {
 export function employeesPortfolioClause(arrayParamSql: string): string {
   return `(
     (guid_manager = ANY(${arrayParamSql}::uuid[]) AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL})
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)
+      WHERE ${outletManagerGuidSql("outlet.elem")} = ANY(
+        SELECT lower(g::text) FROM unnest(${arrayParamSql}::uuid[]) AS g
+      )
+    )
     OR EXISTS (
       SELECT 1
       FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON}) outlet(elem)

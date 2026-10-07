@@ -197,29 +197,39 @@ async function resolveScopedFilter(
 
   let combined = combineScopeAndFilter(scope, userFilter);
 
-  let regionalEmployeeParam: string | undefined;
+  let scopedEmployeeParam: string | undefined;
   let selectExtraParams: unknown[] = [];
-  if (context.role === "regional_manager" && context.employeeId) {
-    regionalEmployeeParam = `$${combined.params.length + 1}::text`;
-    if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
-      combined = {
-        whereSql: combined.whereSql,
-        params: [...combined.params, context.employeeId],
-      };
+  if (
+    (context.role === "regional_manager" || context.role === "manager") &&
+    context.employeeId
+  ) {
+    const existingEmployeeIndex = combined.params.findIndex(
+      (param) => typeof param === "string" && param.toLowerCase() === context.employeeId!.toLowerCase(),
+    );
+    if (existingEmployeeIndex >= 0) {
+      scopedEmployeeParam = `$${existingEmployeeIndex + 1}${context.role === "regional_manager" ? "::text" : ""}`;
     } else {
-      selectExtraParams = [context.employeeId];
+      scopedEmployeeParam = `$${combined.params.length + 1}${context.role === "regional_manager" ? "::text" : ""}`;
+      if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+        combined = {
+          whereSql: combined.whereSql,
+          params: [...combined.params, context.employeeId],
+        };
+      } else {
+        selectExtraParams = [context.employeeId];
+      }
     }
   }
   const outletsCountExpr =
     combined.whereSql === "WHERE FALSE"
       ? "0"
-      : scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+      : scopedOutletsCountSql(context, "onec_clients", scopedEmployeeParam);
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
     if (combined.whereSql !== "WHERE FALSE") {
       combined = mergeSqlFilters(
         combined,
-        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", scopedEmployeeParam)],
         [],
       );
     }

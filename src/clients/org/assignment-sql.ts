@@ -1,3 +1,4 @@
+import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../../onec-clients/manager-status";
 import { RETAIL_OUTLETS_JSON, RETAIL_OUTLETS_JSON_OC } from "../team-portfolio-sql";
 
 export { RETAIL_OUTLETS_JSON, RETAIL_OUTLETS_JSON_OC };
@@ -16,6 +17,72 @@ export function outletHeadOfSalesGuidSql(outletAlias = "outlet"): string {
 
 export function outletManagerGuidSql(outletAlias = "outlet"): string {
   return `NULLIF(BTRIM(lower(${outletAlias}->'managers'->'manager'->>'guid')), '')`;
+}
+
+export function outletManagerStateSql(outletAlias = "outlet"): string {
+  return `COALESCE(${outletAlias}->'managers'->'manager'->>'state', '')`;
+}
+
+/** Client has at least one outlet explicitly assigned to the manager in extended snapshot. */
+export function managerAssignedOutletsExistClause(
+  managerParamSql: string,
+  clientAlias = "onec_clients",
+): string {
+  return `
+    EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(${RETAIL_OUTLETS_JSON.replaceAll("onec_clients", clientAlias)}) outlet(elem)
+      WHERE ${outletManagerGuidSql("outlet.elem")} = lower(${managerParamSql}::text)
+    )
+  `;
+}
+
+/** Manager personal base: client-level assignment or outlet-level TT manager. */
+export function managerClientPortfolioClause(
+  managerParamSql: string,
+  clientAlias = "onec_clients",
+): string {
+  const rosterSql = MANAGER_ROSTER_SCOPE_ALLOWED_SQL.replaceAll("onec_clients.", `${clientAlias}.`);
+  return `(
+    (lower(${clientAlias}.guid_manager::text) = lower(${managerParamSql}::text) AND ${rosterSql})
+    OR ${managerAssignedOutletsExistClause(managerParamSql, clientAlias)}
+  )`;
+}
+
+/**
+ * Outlet on a client-assigned manager parent without a conflicting outlet-level manager assignment.
+ * Outlets explicitly assigned to another manager stay excluded.
+ */
+export function outletInheritedFromClientManagerClause(
+  managerParamSql: string,
+  clientAlias = "onec_clients",
+  outletAlias = "outlet.elem",
+): string {
+  return `(
+    lower(${clientAlias}.guid_manager::text) = lower(${managerParamSql}::text)
+    AND (
+      ${outletManagerGuidSql(outletAlias)} IS NULL
+      OR ${outletManagerStateSql(outletAlias)} IN ('unassigned', 'invalid', 'not_provided')
+    )
+  )`;
+}
+
+/** Per-outlet visibility for manager sessions (list, card counts, catalog). */
+export function managerOutletRowAccessibleClause(
+  managerParamSql: string,
+  storeAlias: string,
+  clientAlias: string,
+): string {
+  const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", clientAlias);
+  return `EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(${outletsJson}) outlet(elem)
+    WHERE lower(coalesce(outlet.elem->>'guidStore', '')) = lower(${storeAlias}.guid_store::text)
+      AND (
+        ${outletManagerGuidSql("outlet.elem")} = lower(${managerParamSql}::text)
+        OR ${outletInheritedFromClientManagerClause(managerParamSql, clientAlias, "outlet.elem")}
+      )
+  )`;
 }
 
 export function outletRegionalGuidSql(outletAlias = "outlet"): string {

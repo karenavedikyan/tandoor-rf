@@ -3,6 +3,7 @@ import {
   ACTIVE_BASELINE_OC_SQL,
   appendActiveBaselineFilter,
 } from "../onec-clients/baseline-active-scope";
+import { managerClientPortfolioClause } from "../clients/org/assignment-sql";
 import { ropDirectClientListClause, ropFullClientReadClause } from "./rop-read-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
@@ -81,8 +82,7 @@ export function buildClientScopeSql(
         `
           SELECT guid_client
           FROM onec_clients
-          WHERE guid_manager = $1::uuid
-            AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
+          WHERE ${managerClientPortfolioClause("$1::uuid")}
             AND ${ACTIVE_BASELINE_CLIENT_SQL.trim()}
         `,
         [context.employeeId!],

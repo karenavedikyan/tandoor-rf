@@ -71,15 +71,18 @@ export async function listRetailOutlets(
     userFilter.params,
   );
 
-  let regionalEmployeeParam: string | undefined;
-  if (context.role === "regional_manager" && context.employeeId) {
+  let scopedEmployeeParam: string | undefined;
+  if (
+    (context.role === "regional_manager" || context.role === "manager") &&
+    context.employeeId
+  ) {
     const existingEmployeeIndex = combinedWhere.params.findIndex(
       (param) => typeof param === "string" && param.toLowerCase() === context.employeeId!.toLowerCase(),
     );
     if (existingEmployeeIndex >= 0) {
-      regionalEmployeeParam = `$${existingEmployeeIndex + 1}::text`;
+      scopedEmployeeParam = `$${existingEmployeeIndex + 1}${context.role === "regional_manager" ? "::text" : ""}`;
     } else {
-      regionalEmployeeParam = `$${combinedWhere.params.length + 1}::text`;
+      scopedEmployeeParam = `$${combinedWhere.params.length + 1}${context.role === "regional_manager" ? "::text" : ""}`;
       combinedWhere = {
         whereSql: combinedWhere.whereSql,
         params: [...combinedWhere.params, context.employeeId],
@@ -90,7 +93,7 @@ export async function listRetailOutlets(
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
     combinedWhere = mergeSqlFilters(
       combinedWhere,
-      [scopedHasOutletsClause(context, input.hasOutlets, "oc", regionalEmployeeParam)],
+      [scopedHasOutletsClause(context, input.hasOutlets, "oc", scopedEmployeeParam)],
       [],
     );
   }

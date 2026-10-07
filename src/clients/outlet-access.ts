@@ -61,6 +61,36 @@ function normalizeGuid(guid: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isOutletExplicitlyAssignedToOtherManager(
+  outlet: ParsedRetailOutlet,
+  employeeId: string,
+): boolean {
+  const outletManager = normalizeGuid(outlet.managers.manager.guid);
+  if (!outletManager || outletManager === employeeId) {
+    return false;
+  }
+  const state = outlet.managers.manager.state;
+  return state !== "unassigned" && state !== "invalid" && state !== "not_provided";
+}
+
+function filterManagerRetailOutlets(
+  employeeId: string,
+  clientManagerGuid: string,
+  outlets: ParsedRetailOutlet[],
+): ParsedRetailOutlet[] {
+  const clientManager = normalizeGuid(clientManagerGuid);
+  return outlets.filter((outlet) => {
+    const outletManager = normalizeGuid(outlet.managers.manager.guid);
+    if (outletManager === employeeId) {
+      return true;
+    }
+    if (clientManager === employeeId) {
+      return !isOutletExplicitlyAssignedToOtherManager(outlet, employeeId);
+    }
+    return false;
+  });
+}
+
 function filterRopRetailOutlets(
   context: AccessContext,
   clientManagerGuid: string,
@@ -119,10 +149,11 @@ export function filterRetailOutletsForContext(
   }
 
   if (context.role === "manager" && context.employeeId) {
-    if (context.employeeId.toLowerCase() !== clientManagerGuid.toLowerCase()) {
+    const employeeId = normalizeGuid(context.employeeId);
+    if (!employeeId) {
       return [];
     }
-    return outlets;
+    return filterManagerRetailOutlets(employeeId, clientManagerGuid, outlets);
   }
 
   if (context.role === "regional_manager" && context.employeeId) {
