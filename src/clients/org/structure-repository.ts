@@ -120,14 +120,14 @@ async function loadRosterLoaded(): Promise<boolean> {
   return Number(result.rows[0]?.employee_count ?? 0) > 0;
 }
 
-async function loadLinkedAccountGuids(): Promise<Set<string>> {
+export async function loadLinkedAccountGuids(): Promise<Set<string>> {
   const result = await query<{ employee_id: string }>(
     `SELECT employee_id::text FROM user_onec_employee_links WHERE revoked_at IS NULL`,
   );
   return new Set(result.rows.map((row) => row.employee_id.toLowerCase()));
 }
 
-async function loadDirectorSummary(linked: Set<string>): Promise<OrgDirectorSummary | null> {
+export async function loadDirectorSummary(linked: Set<string>): Promise<OrgDirectorSummary | null> {
   const result = await query<{ guid_manager: string; name_manager: string; post: string | null }>(
     `
       SELECT guid_manager::text, name_manager, post

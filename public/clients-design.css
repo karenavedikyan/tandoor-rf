@@ -939,6 +939,28 @@
   font-size: 13px;
 }
 
+.clients-design-page .clients-team-mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.clients-design-page .clients-team-mode-switch__btn {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  color: var(--rf-text);
+  cursor: pointer;
+}
+
+.clients-design-page .clients-team-mode-switch__btn--active {
+  border-color: var(--rf-accent);
+  background: color-mix(in srgb, var(--rf-accent) 12%, var(--rf-surface));
+}
+
 .clients-design-page .clients-compact-team-toolbar {
   display: grid;
   gap: 10px;
@@ -950,6 +972,17 @@
     grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) auto;
     align-items: end;
   }
+
+  .clients-design-page .clients-onec-team-list + .clients-compact-team-toolbar,
+  .clients-design-page .clients-team-mode-switch + .clients-compact-team-toolbar {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) auto;
+  }
+}
+
+.clients-design-page .clients-onec-team-list,
+.clients-design-page .clients-onec-team-director {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .clients-design-page .clients-compact-team-toolbar__collapse {
