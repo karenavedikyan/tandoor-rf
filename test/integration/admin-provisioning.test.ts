@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { Pool } from "pg";
@@ -17,12 +18,16 @@ import {
 } from "../../src/access/password-delivery";
 import {
   confirmAdminProvisionDelivery,
+  findPendingProvisionOperation,
   getProvisionStateForUser,
   grantAdminAccess,
   inspectUserByEmail,
   lookupUserByEmail,
   markAdminProvisionIncomplete,
   setTestFaultBeforeProvisionIncompleteAudit,
+  setTestFaultOnOperationVerify,
+  setTestSimulateCommitAckLost,
+  setTestSimulateCommitFailure,
 } from "../../src/access/user-provisioning";
 import { buildSessionCookie } from "../../src/auth/cookie";
 import { createSession } from "../../src/auth/session";
@@ -62,12 +67,56 @@ async function confirmProvision(
   userId: string,
   actorUserId: string,
   basis: string,
+  operationId?: string,
 ): Promise<void> {
   const client = await pool.connect();
   try {
+    const pending =
+      operationId ?? (await findPendingProvisionOperation(client, userId))?.operationId;
+    assert.ok(pending, "expected pending provision operationId");
     await client.query("BEGIN");
-    await confirmAdminProvisionDelivery(client, { userId, actorUserId, basis });
+    await confirmAdminProvisionDelivery(client, {
+      userId,
+      actorUserId,
+      basis,
+      operationId: pending,
+    });
     await client.query("COMMIT");
+  } finally {
+    client.release();
+  }
+}
+
+async function seedPendingDelivery(
+  pool: Pool,
+  input: {
+    email: string;
+    fullName: string;
+    actorUserId: string;
+    basis: string;
+    temporaryPassword: string;
+  },
+): Promise<{ userId: string; operationId: string }> {
+  const operationId = randomUUID();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const created = await grantAdminAccess(client, {
+      email: input.email,
+      fullName: input.fullName,
+      actorUserId: input.actorUserId,
+        operationId: randomUUID(),
+      basis: input.basis,
+      operationId,
+      auditReviewConfirmed: true,
+      temporaryPassword: input.temporaryPassword,
+    });
+    assert.equal(created.ok, true);
+    await client.query("COMMIT");
+    if (!created.ok || created.mode !== "created") {
+      throw new Error("expected created grant");
+    }
+    return { userId: created.userId, operationId: created.operationId };
   } finally {
     client.release();
   }
@@ -123,6 +172,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: TARGET_EMAIL,
         fullName: TARGET_NAME,
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Тестовое основание для выдачи admin",
         auditReviewConfirmed: false,
       });
@@ -143,6 +193,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: TARGET_EMAIL,
         fullName: TARGET_NAME,
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Согласование выдачи admin программисту 1С (staging test)",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!XY",
@@ -164,6 +215,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: TARGET_EMAIL,
         fullName: TARGET_NAME,
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Повторная попытка",
         auditReviewConfirmed: true,
       });
@@ -225,6 +277,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "existing-manager@example.com",
         fullName: "Existing Manager",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Повышение до admin без сброса пароля (staging test)",
         auditReviewConfirmed: true,
         assignAdminRoleOnly: true,
@@ -253,6 +306,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "temp-password-user@example.com",
         fullName: "Temp Password User",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Проверка обязательной смены временного пароля",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!AB",
@@ -323,6 +377,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "parallel-session-user@example.com",
         fullName: "Parallel Session User",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Проверка отзыва параллельных сессий",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!CD",
@@ -370,6 +425,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "audit-fault-user@example.com",
         fullName: "Audit Fault User",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Проверка отката при ошибке аудита",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!EF",
@@ -419,6 +475,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "delivery-fail-user@example.com",
         fullName: "Delivery Fail User",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Проверка незавершённой выдачи при ошибке доставки",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!GH",
@@ -457,71 +514,165 @@ describe("admin provisioning", { concurrency: false }, () => {
     }
   });
 
-  it("recovers incomplete grant via CLI after lost commit acknowledgment", async () => {
+  it("CLI: pending delivery resume fails closed when password update rolls back", async () => {
     const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
-    const passwordFile = `${tempDir}/recovery-password.txt`;
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const created = await grantAdminAccess(client, {
-        email: "commit-ambiguous-user@example.com",
-        fullName: "Commit Ambiguous User",
-        actorUserId: actorAdminId,
-        basis: "Симуляция потери подтверждения COMMIT",
-        auditReviewConfirmed: true,
-        temporaryPassword: "TempPass123!IJ",
-      });
-      assert.equal(created.ok, true);
-      await client.query("COMMIT");
-      if (!created.ok || created.mode !== "created") {
-        return;
-      }
-
-      const row = await lookupUserByEmail(client, "commit-ambiguous-user@example.com");
-      assert.equal(row?.status, "disabled");
-      const inspect = await inspectUserByEmail(client, "commit-ambiguous-user@example.com");
-      assert.equal(inspect.provisionState, "pending_delivery");
-    } finally {
-      client.release();
-    }
-
-    const recoveryFile = `${tempDir}/recovery-retry.txt`;
+    const recoveryFile = `${tempDir}/rolled-back-resume.txt`;
+    await seedPendingDelivery(pool, {
+      email: "rolled-back-resume@example.com",
+      fullName: "Rolled Back Resume",
+      actorUserId: actorAdminId,
+      basis: "Pending delivery before rolled-back resume",
+      temporaryPassword: "TempPass123!RB",
+    });
     await verifyPasswordDeliveryChannel({ kind: "file", filePath: recoveryFile });
+
+    setTestSimulateCommitFailure(true);
     const grantClient = await pool.connect();
     try {
       const result = await runAdminGrant(pool, grantClient, {
-        email: "commit-ambiguous-user@example.com",
-        fullName: "Commit Ambiguous User",
+        email: "rolled-back-resume@example.com",
+        fullName: "Rolled Back Resume",
         actorUserId: actorAdminId,
-        basis: "Восстановление после потери подтверждения COMMIT",
+        basis: "Повтор после отката обновления пароля",
         auditReviewConfirmed: true,
         passwordDelivery: { kind: "file", filePath: recoveryFile },
       });
-      assert.equal(result.ok, true);
-      if (result.ok) {
-        assert.equal(result.mode, "delivery_resumed");
-        assert.ok(["committed", "unknown"].includes(result.transactionOutcome));
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.code, "PROVISION_OUTCOME_ROLLED_BACK");
+        assert.equal(result.recoveryStatus, "pending_delivery");
       }
     } finally {
       grantClient.release();
+      setTestSimulateCommitFailure(false);
     }
 
-    const verifyClient = await pool.connect();
+    await assert.rejects(() => fs.access(recoveryFile));
+    const client = await pool.connect();
     try {
-      const row = await lookupUserByEmail(verifyClient, "commit-ambiguous-user@example.com");
-      assert.equal(row?.status, "active");
-      const inspect = await inspectUserByEmail(verifyClient, "commit-ambiguous-user@example.com");
-      assert.equal(inspect.provisionState, "delivered");
-      const fileContent = await fs.readFile(recoveryFile, "utf8");
-      assert.doesNotMatch(fileContent, /TempPass123!IJ/);
-      const passwordLine = fileContent
-        .split("\n")
-        .find((line) => line && !line.startsWith("#"));
-      assert.ok(passwordLine && passwordLine.length >= 12);
+      const row = await lookupUserByEmail(client, "rolled-back-resume@example.com");
+      assert.equal(row?.status, "disabled");
+      assert.equal((await inspectUserByEmail(client, "rolled-back-resume@example.com")).provisionState, "pending_delivery");
     } finally {
-      verifyClient.release();
+      client.release();
     }
+  });
+
+  it("CLI: manager to admin does not report success when operation rolls back", async () => {
+    await createTestUser({
+      databaseUrl,
+      email: "rollback-manager@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Rollback Manager",
+      role: "manager",
+    });
+
+    setTestSimulateCommitFailure(true);
+    const grantClient = await pool.connect();
+    try {
+      const result = await runAdminGrant(pool, grantClient, {
+        email: "rollback-manager@example.com",
+        fullName: "Rollback Manager",
+        actorUserId: actorAdminId,
+        basis: "Попытка назначения admin с откатом операции",
+        auditReviewConfirmed: true,
+        assignAdminRoleOnly: true,
+        passwordDelivery: null,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.code, "PROVISION_OUTCOME_ROLLED_BACK");
+      }
+    } finally {
+      grantClient.release();
+      setTestSimulateCommitFailure(false);
+    }
+
+    const client = await pool.connect();
+    try {
+      const row = await lookupUserByEmail(client, "rollback-manager@example.com");
+      assert.equal(row?.role, "manager");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("CLI: lost commit ack still confirms operation and completes delivery", async () => {
+    const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
+    const deliveryFile = `${tempDir}/ack-lost-delivery.txt`;
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: deliveryFile });
+
+    setTestSimulateCommitAckLost(true);
+    const grantClient = await pool.connect();
+    try {
+      const result = await runAdminGrant(pool, grantClient, {
+        email: "ack-lost-user@example.com",
+        fullName: "Ack Lost User",
+        actorUserId: actorAdminId,
+        basis: "COMMIT выполнен, подтверждение ответа потеряно",
+        auditReviewConfirmed: true,
+        passwordDelivery: { kind: "file", filePath: deliveryFile },
+      });
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.equal(result.mode, "created");
+        assert.equal(result.operationOutcome, "committed");
+      }
+    } finally {
+      grantClient.release();
+      setTestSimulateCommitAckLost(false);
+    }
+
+    const client = await pool.connect();
+    try {
+      const row = await lookupUserByEmail(client, "ack-lost-user@example.com");
+      assert.equal(row?.status, "active");
+      assert.equal((await inspectUserByEmail(client, "ack-lost-user@example.com")).provisionState, "delivered");
+      await fs.access(deliveryFile);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("CLI: fail-closed when operation outcome verification is unavailable", async () => {
+    await seedPendingDelivery(pool, {
+      email: "verify-unavailable@example.com",
+      fullName: "Verify Unavailable",
+      actorUserId: actorAdminId,
+      basis: "Pending delivery before verify fault",
+      temporaryPassword: "TempPass123!VU",
+    });
+
+    const tempDir = await fs.mkdtemp("/tmp/tandoor-provision-");
+    const recoveryFile = `${tempDir}/verify-unavailable.txt`;
+    await verifyPasswordDeliveryChannel({ kind: "file", filePath: recoveryFile });
+
+    setTestSimulateCommitFailure(true);
+    setTestFaultOnOperationVerify(true);
+    const grantClient = await pool.connect();
+    try {
+      const result = await runAdminGrant(pool, grantClient, {
+        email: "verify-unavailable@example.com",
+        fullName: "Verify Unavailable",
+        actorUserId: actorAdminId,
+        basis: "Проверка исхода операции недоступна",
+        auditReviewConfirmed: true,
+        passwordDelivery: { kind: "file", filePath: recoveryFile },
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.code, "PROVISION_OUTCOME_UNKNOWN");
+        assert.equal(result.operationOutcome, "unknown");
+        assert.equal(result.recoveryStatus, "pending_delivery");
+        assert.match(result.message, /fail-closed|неизвестен/i);
+      }
+    } finally {
+      grantClient.release();
+      setTestSimulateCommitFailure(false);
+      setTestFaultOnOperationVerify(false);
+    }
+
+    await assert.rejects(() => fs.access(recoveryFile));
   });
 
   it("keeps account disabled when incomplete audit write fails after delivery error", async () => {
@@ -537,6 +688,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "audit-compensation-user@example.com",
         fullName: "Audit Compensation User",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Компенсация при недоступном аудите",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!KL",
@@ -584,6 +736,7 @@ describe("admin provisioning", { concurrency: false }, () => {
         email: "audit-target@example.com",
         fullName: "Audit Target",
         actorUserId: actorAdminId,
+        operationId: randomUUID(),
         basis: "Первичная выдача admin для аудита",
         auditReviewConfirmed: true,
         temporaryPassword: "TempPass123!AB",

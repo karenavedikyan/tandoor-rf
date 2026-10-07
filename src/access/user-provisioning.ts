@@ -4,7 +4,7 @@ import { hashPassword, validatePasswordInput } from "../auth/password";
 import { normalizeEmail } from "../validation/email";
 import { normalizeFullName } from "../validation/profile";
 import type { UserRole } from "../shared/user";
-import { ACCESS_AUDIT_ACTIONS } from "./constants";
+import { ACCESS_AUDIT_ACTIONS, PROVISION_OPERATION_ID_KEY } from "./constants";
 
 export const USER_AUDIT_ENTITY_TYPE = "user";
 
@@ -37,6 +37,11 @@ export type PersonalAuditEntry = {
 
 export type ProvisionState = "none" | "pending_delivery" | "delivered";
 
+export type PendingProvisionOperation = {
+  operationId: string;
+  mode: "created" | "delivery_resumed";
+};
+
 export type UserInspectResult = {
   email: string;
   exists: boolean;
@@ -44,6 +49,7 @@ export type UserInspectResult = {
   employeeLinks: EmployeeLinkSummary[];
   personalAudit: PersonalAuditEntry[];
   provisionState: ProvisionState;
+  pendingOperation: PendingProvisionOperation | null;
 };
 
 type AuditWriteInput = {
@@ -55,6 +61,34 @@ type AuditWriteInput = {
   after: unknown;
   basis: string;
 };
+
+export type ProvisionOperationMode = "created" | "delivery_resumed" | "role_assigned";
+
+async function writeProvisionOperationCommitted(
+  client: PoolClient,
+  input: {
+    operationId: string;
+    actorUserId: string;
+    entityId: string;
+    mode: ProvisionOperationMode;
+    basis: string;
+    resumedOperationId?: string | null;
+  },
+): Promise<void> {
+  await writeUserAudit({
+    client,
+    actorUserId: input.actorUserId,
+    action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_COMMITTED,
+    entityId: input.entityId,
+    before: null,
+    after: {
+      [PROVISION_OPERATION_ID_KEY]: input.operationId,
+      mode: input.mode,
+      resumed_operation_id: input.resumedOperationId ?? null,
+    },
+    basis: input.basis,
+  });
+}
 
 async function writeUserAudit(input: AuditWriteInput): Promise<void> {
   await input.client.query(
@@ -155,32 +189,67 @@ export async function loadPersonalAuditForUser(
   return result.rows;
 }
 
-async function loadProvisionAuditFlags(
+/** Latest committed grant operation awaiting password delivery confirmation. */
+export async function findPendingProvisionOperation(
   client: PoolClient,
   userId: string,
-): Promise<{ hasCreate: boolean; hasDeliveryConfirmed: boolean }> {
-  const result = await client.query<{ action: string }>(
+): Promise<PendingProvisionOperation | null> {
+  const result = await client.query<{ operation_id: string; mode: string }>(
     `
-      SELECT action
-      FROM access_audit_log
-      WHERE entity_type = $2
-        AND entity_id = $1::uuid
-        AND action = ANY($3::text[])
+      SELECT
+        committed.after_json->>$3 AS operation_id,
+        committed.after_json->>'mode' AS mode
+      FROM access_audit_log committed
+      WHERE committed.entity_type = $2
+        AND committed.entity_id = $1::uuid
+        AND committed.action = $4
+        AND committed.after_json->>'mode' IN ('created', 'delivery_resumed')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM access_audit_log delivered
+          WHERE delivered.entity_id = committed.entity_id
+            AND delivered.action = $5
+            AND delivered.after_json->>$3 = committed.after_json->>$3
+        )
+      ORDER BY committed.created_at DESC
+      LIMIT 1
     `,
     [
       userId,
       USER_AUDIT_ENTITY_TYPE,
-      [
-        ACCESS_AUDIT_ACTIONS.USER_CREATE,
-        ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
-      ],
+      PROVISION_OPERATION_ID_KEY,
+      ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_COMMITTED,
+      ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
     ],
   );
-  const actions = new Set(result.rows.map((row) => row.action));
+  const row = result.rows[0];
+  if (!row?.operation_id) {
+    return null;
+  }
   return {
-    hasCreate: actions.has(ACCESS_AUDIT_ACTIONS.USER_CREATE),
-    hasDeliveryConfirmed: actions.has(ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED),
+    operationId: row.operation_id,
+    mode: row.mode as PendingProvisionOperation["mode"],
   };
+}
+
+export async function isProvisionOperationCommitted(
+  client: PoolClient,
+  operationId: string,
+): Promise<boolean> {
+  const result = await client.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM access_audit_log
+      WHERE action = $1
+        AND after_json->>$2 = $3
+    `,
+    [
+      ACCESS_AUDIT_ACTIONS.USER_PROVISION_OPERATION_COMMITTED,
+      PROVISION_OPERATION_ID_KEY,
+      operationId,
+    ],
+  );
+  return Number(result.rows[0]?.count ?? "0") > 0;
 }
 
 /** Whether admin account was created but password delivery was never confirmed. */
@@ -191,14 +260,11 @@ export async function getProvisionStateForUser(
   if (user.role !== "admin") {
     return "none";
   }
-  const flags = await loadProvisionAuditFlags(client, user.id);
-  if (!flags.hasCreate) {
-    return "delivered";
+  const pending = await findPendingProvisionOperation(client, user.id);
+  if (pending) {
+    return "pending_delivery";
   }
-  if (flags.hasDeliveryConfirmed) {
-    return "delivered";
-  }
-  return "pending_delivery";
+  return "delivered";
 }
 
 export async function inspectUserByEmail(
@@ -218,14 +284,24 @@ export async function inspectUserByEmail(
       employeeLinks: [],
       personalAudit: [],
       provisionState: "none",
+      pendingOperation: null,
     };
   }
-  const [employeeLinks, personalAudit, provisionState] = await Promise.all([
+  const [employeeLinks, personalAudit, provisionState, pendingOperation] = await Promise.all([
     loadEmployeeLinksForUser(client, user.id),
     loadPersonalAuditForUser(client, user.id),
     getProvisionStateForUser(client, user),
+    findPendingProvisionOperation(client, user.id),
   ]);
-  return { email, exists: true, user, employeeLinks, personalAudit, provisionState };
+  return {
+    email,
+    exists: true,
+    user,
+    employeeLinks,
+    personalAudit,
+    provisionState,
+    pendingOperation,
+  };
 }
 
 export function generateTemporaryPassword(): string {
@@ -247,6 +323,10 @@ export type GrantAdminAccessInput = {
   fullName: string;
   actorUserId: string;
   basis: string;
+  /** Unique id for this grant attempt; verified atomically via audit after commit. */
+  operationId: string;
+  /** Pending operation being resumed (password redelivery). */
+  resumeOperationId?: string | null;
   /** Explicit confirmation that personal audit was reviewed before grant. */
   auditReviewConfirmed: boolean;
   /** When user already exists with a non-admin role, promote without touching password. */
@@ -261,6 +341,7 @@ export type GrantAdminAccessResult =
       mode: "created" | "delivery_resumed";
       userId: string;
       email: string;
+      operationId: string;
       temporaryPassword: string;
     }
   | {
@@ -268,6 +349,7 @@ export type GrantAdminAccessResult =
       mode: "role_assigned";
       userId: string;
       email: string;
+      operationId: string;
     }
   | {
       ok: false;
@@ -281,7 +363,10 @@ export type GrantAdminAccessResult =
       message: string;
     };
 
-export type TransactionFinalizeOutcome = "committed" | "rolled_back" | "unknown";
+export type GrantOperationOutcome = {
+  status: "committed" | "rolled_back" | "unknown";
+  reason?: string;
+};
 
 async function assertActorIsAdmin(client: PoolClient, actorUserId: string): Promise<boolean> {
   const result = await client.query<{ role: string; status: string }>(
@@ -334,8 +419,8 @@ export async function grantAdminAccess(
 
   if (existing) {
     if (existing.role === "admin") {
-      const provisionState = await getProvisionStateForUser(client, existing);
-      if (provisionState === "pending_delivery") {
+      const pendingOperation = await findPendingProvisionOperation(client, existing.id);
+      if (pendingOperation) {
         const temporaryPassword = input.temporaryPassword ?? generateTemporaryPassword();
         const passwordCheck = validatePasswordInput(temporaryPassword);
         if (!passwordCheck.ok) {
@@ -360,11 +445,17 @@ export async function grantAdminAccess(
           actorUserId: input.actorUserId,
           action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_RECOVERY,
           entityId: existing.id,
-          before: { status: existing.status, provision_state: "pending_delivery" },
+          before: {
+            status: existing.status,
+            provision_state: "pending_delivery",
+            [PROVISION_OPERATION_ID_KEY]: pendingOperation.operationId,
+          },
           after: {
             status: "disabled",
             provision_state: "pending_delivery",
             password_must_change: true,
+            [PROVISION_OPERATION_ID_KEY]: input.operationId,
+            resumed_operation_id: input.resumeOperationId ?? pendingOperation.operationId,
           },
           basis: `${basis} (восстановление незавершённой выдачи)`,
         });
@@ -373,15 +464,33 @@ export async function grantAdminAccess(
           actorUserId: input.actorUserId,
           action: ACCESS_AUDIT_ACTIONS.USER_PASSWORD_SET,
           entityId: existing.id,
-          before: { password_set: true, delivery_confirmed: false },
-          after: { password_set: true, delivery: "temporary", password_must_change: true },
+          before: {
+            password_set: true,
+            delivery_confirmed: false,
+            [PROVISION_OPERATION_ID_KEY]: pendingOperation.operationId,
+          },
+          after: {
+            password_set: true,
+            delivery: "temporary",
+            password_must_change: true,
+            [PROVISION_OPERATION_ID_KEY]: input.operationId,
+          },
           basis: `${basis} (новый временный пароль при восстановлении)`,
+        });
+        await writeProvisionOperationCommitted(client, {
+          operationId: input.operationId,
+          actorUserId: input.actorUserId,
+          entityId: existing.id,
+          mode: "delivery_resumed",
+          basis,
+          resumedOperationId: input.resumeOperationId ?? pendingOperation.operationId,
         });
         return {
           ok: true,
           mode: "delivery_resumed",
           userId: existing.id,
           email: existing.email,
+          operationId: input.operationId,
           temporaryPassword,
         };
       }
@@ -429,12 +538,20 @@ export async function grantAdminAccess(
       after: { role: "admin", full_name: fullName, status: existing.status },
       basis,
     });
+    await writeProvisionOperationCommitted(client, {
+      operationId: input.operationId,
+      actorUserId: input.actorUserId,
+      entityId: existing.id,
+      mode: "role_assigned",
+      basis,
+    });
 
     return {
       ok: true,
       mode: "role_assigned",
       userId: existing.id,
       email: existing.email,
+      operationId: input.operationId,
     };
   }
 
@@ -485,8 +602,20 @@ export async function grantAdminAccess(
     action: ACCESS_AUDIT_ACTIONS.USER_PASSWORD_SET,
     entityId: userId,
     before: { password_set: false },
-    after: { password_set: true, delivery: "temporary", password_must_change: true },
+    after: {
+      password_set: true,
+      delivery: "temporary",
+      password_must_change: true,
+      [PROVISION_OPERATION_ID_KEY]: input.operationId,
+    },
     basis: `${basis} (временный пароль, смена обязательна)`,
+  });
+  await writeProvisionOperationCommitted(client, {
+    operationId: input.operationId,
+    actorUserId: input.actorUserId,
+    entityId: userId,
+    mode: "created",
+    basis,
   });
 
   return {
@@ -494,6 +623,7 @@ export async function grantAdminAccess(
     mode: "created",
     userId,
     email,
+    operationId: input.operationId,
     temporaryPassword,
   };
 }
@@ -535,7 +665,7 @@ export async function markAdminProvisionIncomplete(
 /** Activate account only after password was delivered out-of-band. */
 export async function confirmAdminProvisionDelivery(
   client: PoolClient,
-  input: { userId: string; actorUserId: string; basis: string },
+  input: { userId: string; actorUserId: string; basis: string; operationId: string },
 ): Promise<void> {
   await client.query(
     `
@@ -551,34 +681,78 @@ export async function confirmAdminProvisionDelivery(
     action: ACCESS_AUDIT_ACTIONS.USER_PROVISION_DELIVERY_CONFIRMED,
     entityId: input.userId,
     before: { status: "disabled", pending_delivery: true },
-    after: { status: "active", pending_delivery: false },
+    after: {
+      status: "active",
+      pending_delivery: false,
+      [PROVISION_OPERATION_ID_KEY]: input.operationId,
+    },
     basis: `${input.basis} (доставка временного пароля подтверждена)`,
   });
 }
 
+let testSimulateCommitAckLost = false;
+let testSimulateCommitFailure = false;
+let testFaultOnOperationVerify = false;
+
+export function setTestSimulateCommitAckLost(enabled: boolean): void {
+  testSimulateCommitAckLost = enabled;
+}
+
+export function setTestSimulateCommitFailure(enabled: boolean): void {
+  testSimulateCommitFailure = enabled;
+}
+
+export function setTestFaultOnOperationVerify(enabled: boolean): void {
+  testFaultOnOperationVerify = enabled;
+}
+
+async function verifyProvisionOperationOutcome(
+  verifyClient: PoolClient,
+  operationId: string,
+): Promise<GrantOperationOutcome> {
+  if (testFaultOnOperationVerify) {
+    return {
+      status: "unknown",
+      reason: "operation verification unavailable (test fault)",
+    };
+  }
+  try {
+    const committed = await isProvisionOperationCommitted(verifyClient, operationId);
+    if (committed) {
+      return { status: "committed" };
+    }
+    return { status: "rolled_back" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "unknown", reason: message };
+  }
+}
+
 /**
- * Commit grant transaction; if acknowledgment is lost, verify persistence separately.
- * ROLLBACK after an actual COMMIT does not prove the account was not created.
+ * Commit grant transaction; if acknowledgment is lost, verify the specific operation id.
+ * User existence by email does not prove this operation was committed.
  */
 export async function finalizeGrantTransaction(
   client: PoolClient,
   verifyClient: PoolClient,
-  emailRaw: string,
-): Promise<{ outcome: TransactionFinalizeOutcome; userExists: boolean }> {
+  operationId: string,
+): Promise<GrantOperationOutcome> {
   try {
+    if (testSimulateCommitFailure) {
+      throw new Error("TEST_FAULT: commit failed");
+    }
     await client.query("COMMIT");
-    return { outcome: "committed", userExists: true };
+    if (testSimulateCommitAckLost) {
+      return verifyProvisionOperationOutcome(verifyClient, operationId);
+    }
+    return { status: "committed" };
   } catch {
     try {
       await client.query("ROLLBACK");
     } catch {
       // connection may be unusable after ambiguous COMMIT
     }
-    const user = await lookupUserByEmail(verifyClient, emailRaw);
-    if (user) {
-      return { outcome: "unknown", userExists: true };
-    }
-    return { outcome: "rolled_back", userExists: false };
+    return verifyProvisionOperationOutcome(verifyClient, operationId);
   }
 }
 

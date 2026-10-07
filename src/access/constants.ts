@@ -36,4 +36,8 @@ export const ACCESS_AUDIT_ACTIONS = {
   USER_PROVISION_DELIVERY_CONFIRMED: "user.provision_delivery_confirmed",
   USER_PROVISION_INCOMPLETE: "user.provision_incomplete",
   USER_PROVISION_RECOVERY: "user.provision_recovery",
+  USER_PROVISION_OPERATION_COMMITTED: "user.provision_operation_committed",
 } as const;
+
+/** JSON key in provision audit rows linking delivery to a grant attempt. */
+export const PROVISION_OPERATION_ID_KEY = "provision_operation_id";

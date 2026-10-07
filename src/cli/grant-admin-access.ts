@@ -64,6 +64,11 @@ function printInspect(result: UserInspectResult): void {
     console.error(
       "WARN: незавершённая выдача — пароль не доставлен или не подтверждён; повтор grant безопасно продолжит выдачу.",
     );
+    if (result.pendingOperation?.operationId) {
+      console.error(
+        `WARN: pending operationId=${result.pendingOperation.operationId} mode=${result.pendingOperation.mode}`,
+      );
+    }
   }
   if (result.employeeLinks.length > 0) {
     console.error(
@@ -87,7 +92,8 @@ function printGrantResult(result: GrantOrchestrationResult): void {
         userId: result.userId,
         email: result.email,
         passwordChanged: false,
-        transactionOutcome: result.transactionOutcome,
+        operationId: result.operationId,
+        operationOutcome: result.operationOutcome,
       }),
     );
     return;
@@ -101,7 +107,8 @@ function printGrantResult(result: GrantOrchestrationResult): void {
       email: result.email,
       passwordChanged: true,
       passwordDelivery: "see separate channel",
-      transactionOutcome: result.transactionOutcome,
+      operationId: result.operationId,
+      operationOutcome: result.operationOutcome,
     }),
   );
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -57,10 +58,12 @@ describe("admin temp password browser flow", { concurrency: false }, () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const operationId = randomUUID();
       const created = await grantAdminAccess(client, {
         email: "browser-temp-admin@example.com",
         fullName: "Browser Temp Admin",
         actorUserId: actorAdminId,
+        operationId,
         basis: "Browser E2E temp password provisioning",
         auditReviewConfirmed: true,
         temporaryPassword: TEMP_PASSWORD,
@@ -74,6 +77,7 @@ describe("admin temp password browser flow", { concurrency: false }, () => {
           userId: created.userId,
           actorUserId: actorAdminId,
           basis: "Browser E2E temp password provisioning",
+          operationId: created.operationId,
         });
         await client.query("COMMIT");
       }
