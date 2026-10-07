@@ -25,15 +25,19 @@ const M2 = "55555555-5555-4555-8555-555555555555";
 const REGIONAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const C1 = "11111111-1111-4111-8111-111111111111";
 const C_GRANT = "33333333-3333-4333-8333-333333333333";
+const C_HW = "88888888-8888-4888-8888-888888888888";
 const T1 = "44444444-4444-4444-8444-444444444444";
 const T2 = "55555555-5555-5555-8555-555555555555";
 const T_GRANT = "66666666-6666-4666-8666-666666666666";
+const T_HW = "77777777-7777-4777-8777-777777777777";
+const T_HW_ONLY = "99999999-9999-4999-8999-999999999999";
 
 function buildOutlet(input: {
   ordinal: number;
   guidStore: string;
   storeAddress: string;
   managerGuid: string;
+  hardwareGuid?: string | null;
   regionalGuid?: string;
 }) {
   return {
@@ -68,7 +72,9 @@ function buildOutlet(input: {
         name: input.regionalGuid ? "Regional" : "",
         state: input.regionalGuid ? "directory_unverified" : "not_provided",
       },
-      hardwareManager: { guid: null, name: "", state: "not_provided" },
+      hardwareManager: input.hardwareGuid
+        ? { guid: input.hardwareGuid, name: "Hardware", state: "directory_unverified" }
+        : { guid: null, name: "", state: "not_provided" },
       headOfSales: { guid: null, name: "", state: "not_provided" },
     },
     contacts: { storePhone: "", accountantPhone: "", accountantEmail: "" },
@@ -180,11 +186,21 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
         address: "Kazan",
         telephone: [],
       },
+      {
+        guid_client: C_HW,
+        name_client: "Hardware Context Client",
+        guid_manager: M2,
+        name_manager: "Manager M2",
+        address: "Samara",
+        telephone: [],
+      },
     ]);
     await insertSyntheticRetailOutlets(databaseUrl, [
       { guid_store: T1, guid_client: C1, is_closed: false },
       { guid_store: T2, guid_client: C1, is_closed: false },
+      { guid_store: T_HW, guid_client: C1, is_closed: false },
       { guid_store: T_GRANT, guid_client: C_GRANT, is_closed: false },
+      { guid_store: T_HW_ONLY, guid_client: C_HW, is_closed: false },
     ]);
 
     const emptyRef = { guid: null, name: "", state: "not_provided" as const };
@@ -205,6 +221,27 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
           storeAddress: "TT2 address",
           managerGuid: M2,
         }),
+        buildOutlet({
+          ordinal: 3,
+          guidStore: T_HW,
+          storeAddress: "TT hardware address",
+          managerGuid: M1,
+          hardwareGuid: M1,
+        }),
+      ],
+    });
+    await updateClientExtendedSnapshot(databaseUrl, C_HW, {
+      regionalManager: emptyRef,
+      hardwareManager: emptyRef,
+      headOfSales: emptyRef,
+      currentRetailOutlets: [
+        buildOutlet({
+          ordinal: 1,
+          guidStore: T_HW_ONLY,
+          storeAddress: "Hardware-only TT",
+          managerGuid: M2,
+          hardwareGuid: M1,
+        }),
       ],
     });
     await updateClientExtendedSnapshot(databaseUrl, C_GRANT, {
@@ -221,7 +258,7 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
         }),
       ],
     });
-    await insertSuccessfulImportRun(databaseUrl, { recordCount: 2 });
+    await insertSuccessfulImportRun(databaseUrl, { recordCount: 4 });
 
     await linkUserToEmployee({
       databaseUrl,
@@ -254,7 +291,7 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
     await closePool();
   });
 
-  it("M1 sees C1 with only TT1 in list, card and outlets total", async () => {
+  it("M1 sees C1 with TT1 and combined-role TT in list, card and outlets total", async () => {
     const app = await loadApp();
     const cookie = await login("manager-m1@example.com");
 
@@ -262,30 +299,38 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
     assert.equal(clients.status, 200);
     assert.equal(clients.body.total, 1);
     assert.equal(clients.body.items[0].guid, C1);
-    assert.equal(clients.body.items[0].outletsCount, 1);
+    assert.equal(clients.body.items[0].outletsCount, 2);
 
     const outlets = await request(app)
       .get("/api/clients?entity=outlets")
       .set(authHeaders(cookie));
     assert.equal(outlets.status, 200);
-    assert.equal(outlets.body.total, 1);
-    assert.equal(outlets.body.items[0].guidStore, T1);
+    assert.equal(outlets.body.total, 3);
+    const outletGuids = outlets.body.items.map((item: { guidStore: string }) => item.guidStore);
+    assert.ok(outletGuids.includes(T1));
+    assert.ok(outletGuids.includes(T_HW));
+    assert.ok(outletGuids.includes(T_HW_ONLY));
+    assert.ok(!outletGuids.includes(T2));
 
     const card = await request(app).get(`/api/clients/${C1}`).set(authHeaders(cookie));
     assert.equal(card.status, 200);
-    assert.equal(card.body.client.extended.retailOutlets.length, 1);
-    assert.equal(card.body.client.extended.retailOutlets[0].guidStore, T1);
+    assert.equal(card.body.client.extended.retailOutlets.length, 2);
+    const cardGuids = card.body.client.extended.retailOutlets.map(
+      (item: { guidStore: string }) => item.guidStore,
+    );
+    assert.ok(cardGuids.includes(T1));
+    assert.ok(cardGuids.includes(T_HW));
+    assert.ok(!cardGuids.includes(T2));
   });
 
-  it("M2 sees TT2 and parent C1 without TT1 and without extra grants", async () => {
+  it("M2 outlet-only: TT2 in outlets, C1 absent from client list but card context works", async () => {
     const app = await loadApp();
     const cookie = await login("manager-m2@example.com");
 
     const clients = await request(app).get("/api/clients").set(authHeaders(cookie));
     assert.equal(clients.status, 200);
-    assert.ok(clients.body.items.some((item: { guid: string }) => item.guid === C1));
-    const c1Row = clients.body.items.find((item: { guid: string }) => item.guid === C1);
-    assert.equal(c1Row.outletsCount, 1);
+    assert.ok(!clients.body.items.some((item: { guid: string }) => item.guid === C1));
+    assert.ok(clients.body.items.some((item: { guid: string }) => item.guid === C_GRANT));
 
     const outlets = await request(app)
       .get("/api/clients?entity=outlets")
@@ -299,6 +344,28 @@ describe("manager outlet assignment scope integration", { concurrency: false }, 
     assert.equal(card.status, 200);
     assert.equal(card.body.client.extended.retailOutlets.length, 1);
     assert.equal(card.body.client.extended.retailOutlets[0].guidStore, T2);
+  });
+
+  it("M1 hardware-only on foreign client: outlet visible, parent absent from client list", async () => {
+    const app = await loadApp();
+    const cookie = await login("manager-m1@example.com");
+
+    const clients = await request(app).get("/api/clients").set(authHeaders(cookie));
+    assert.equal(clients.status, 200);
+    assert.ok(!clients.body.items.some((item: { guid: string }) => item.guid === C_HW));
+
+    const outlets = await request(app)
+      .get("/api/clients?entity=outlets")
+      .set(authHeaders(cookie));
+    assert.equal(outlets.status, 200);
+    const hwRows = outlets.body.items.filter((item: { guidStore: string }) => item.guidStore === T_HW_ONLY);
+    assert.equal(hwRows.length, 1);
+    assert.equal(hwRows[0].guidClient, C_HW);
+
+    const card = await request(app).get(`/api/clients/${C_HW}`).set(authHeaders(cookie));
+    assert.equal(card.status, 200);
+    assert.equal(card.body.client.extended.retailOutlets.length, 1);
+    assert.equal(card.body.client.extended.retailOutlets[0].guidStore, T_HW_ONLY);
   });
 
   it("regional grant access stays independent of manager outlet scope", async () => {

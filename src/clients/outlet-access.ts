@@ -8,6 +8,7 @@ export const MAX_OUTLETS_IN_DETAIL_RESPONSE = 20;
 
 export type OutletFilterOptions = {
   clientHeadOfSalesGuid?: string | null;
+  clientHardwareManagerGuid?: string | null;
   ropTeamEmployeeGuids?: ReadonlySet<string> | null;
 };
 
@@ -61,31 +62,45 @@ function normalizeGuid(guid: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function isOutletExplicitlyAssignedToOtherManager(
+type ManagerOutletRole = "manager" | "hardwareManager";
+
+function readManagerOutletRoleRef(outlet: ParsedRetailOutlet, role: ManagerOutletRole) {
+  return role === "manager" ? outlet.managers.manager : outlet.managers.hardwareManager;
+}
+
+function isOutletRoleExplicitlyAssignedToOther(
   outlet: ParsedRetailOutlet,
   employeeId: string,
+  role: ManagerOutletRole,
 ): boolean {
-  const outletManager = normalizeGuid(outlet.managers.manager.guid);
-  if (!outletManager || outletManager === employeeId) {
+  const ref = readManagerOutletRoleRef(outlet, role);
+  const assignedGuid = normalizeGuid(ref.guid);
+  if (!assignedGuid || assignedGuid === employeeId) {
     return false;
   }
-  const state = outlet.managers.manager.state;
-  return state !== "unassigned" && state !== "invalid" && state !== "not_provided";
+  return ref.state !== "unassigned" && ref.state !== "invalid" && ref.state !== "not_provided";
 }
 
 function filterManagerRetailOutlets(
   employeeId: string,
   clientManagerGuid: string,
+  clientHardwareManagerGuid: string | null | undefined,
   outlets: ParsedRetailOutlet[],
 ): ParsedRetailOutlet[] {
   const clientManager = normalizeGuid(clientManagerGuid);
+  const clientHardware = normalizeGuid(clientHardwareManagerGuid);
   return outlets.filter((outlet) => {
-    const outletManager = normalizeGuid(outlet.managers.manager.guid);
-    if (outletManager === employeeId) {
+    if (normalizeGuid(outlet.managers.manager.guid) === employeeId) {
+      return true;
+    }
+    if (normalizeGuid(outlet.managers.hardwareManager.guid) === employeeId) {
       return true;
     }
     if (clientManager === employeeId) {
-      return !isOutletExplicitlyAssignedToOtherManager(outlet, employeeId);
+      return !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "manager");
+    }
+    if (clientHardware === employeeId) {
+      return !isOutletRoleExplicitlyAssignedToOther(outlet, employeeId, "hardwareManager");
     }
     return false;
   });
@@ -153,7 +168,12 @@ export function filterRetailOutletsForContext(
     if (!employeeId) {
       return [];
     }
-    return filterManagerRetailOutlets(employeeId, clientManagerGuid, outlets);
+    return filterManagerRetailOutlets(
+      employeeId,
+      clientManagerGuid,
+      options?.clientHardwareManagerGuid,
+      outlets,
+    );
   }
 
   if (context.role === "regional_manager" && context.employeeId) {

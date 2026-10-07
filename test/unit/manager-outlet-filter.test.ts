@@ -24,20 +24,36 @@ function managerContext(employeeId: string): AccessContext {
   };
 }
 
-function outlet(guidStore: string, managerGuid: string | null, state = "directory_unverified"): ParsedRetailOutlet {
+function outlet(input: {
+  guidStore: string;
+  managerGuid?: string | null;
+  hardwareGuid?: string | null;
+  managerState?: string;
+  hardwareState?: string;
+}): ParsedRetailOutlet {
   return {
     ordinal: 0,
-    guidStore,
+    guidStore: input.guidStore,
     holdingName: "TT",
     warehouse: false,
     address: { storeAddress: "A", deliveryAddress: "", routeDirection: "" },
     loading: {},
     managers: {
-      manager: managerGuid
-        ? { guid: managerGuid, name: "Manager", state: state as "directory_unverified" }
+      manager: input.managerGuid
+        ? {
+            guid: input.managerGuid,
+            name: "Manager",
+            state: (input.managerState ?? "directory_unverified") as "directory_unverified",
+          }
         : { guid: null, name: "", state: "unassigned" },
       regionalManager: { guid: null, name: "", state: "not_provided" },
-      hardwareManager: { guid: null, name: "", state: "not_provided" },
+      hardwareManager: input.hardwareGuid
+        ? {
+            guid: input.hardwareGuid,
+            name: "Hardware",
+            state: (input.hardwareState ?? "directory_unverified") as "directory_unverified",
+          }
+        : { guid: null, name: "", state: "not_provided" },
       headOfSales: { guid: null, name: "", state: "not_provided" },
     },
     contacts: {},
@@ -53,7 +69,7 @@ describe("manager outlet personal base filter", () => {
     const filtered = filterRetailOutletsForContext(
       managerContext(M1),
       M1,
-      [outlet(T1, M1), outlet(T2, M2)],
+      [outlet({ guidStore: T1, managerGuid: M1 }), outlet({ guidStore: T2, managerGuid: M2 })],
     );
     assert.deepEqual(
       filtered.map((item) => item.guidStore),
@@ -65,7 +81,7 @@ describe("manager outlet personal base filter", () => {
     const filtered = filterRetailOutletsForContext(
       managerContext(M2),
       M1,
-      [outlet(T1, M1), outlet(T2, M2)],
+      [outlet({ guidStore: T1, managerGuid: M1 }), outlet({ guidStore: T2, managerGuid: M2 })],
     );
     assert.deepEqual(
       filtered.map((item) => item.guidStore),
@@ -77,7 +93,11 @@ describe("manager outlet personal base filter", () => {
     const filtered = filterRetailOutletsForContext(
       managerContext(M1),
       M1,
-      [outlet(T1, M1), outlet(T2, M2), outlet("66666666-6666-4666-8666-666666666666", null, "unassigned")],
+      [
+        outlet({ guidStore: T1, managerGuid: M1 }),
+        outlet({ guidStore: T2, managerGuid: M2 }),
+        outlet({ guidStore: "66666666-6666-4666-8666-666666666666", managerGuid: null }),
+      ],
     );
     assert.deepEqual(
       filtered.map((item) => item.guidStore?.toLowerCase()),
@@ -85,10 +105,43 @@ describe("manager outlet personal base filter", () => {
     );
   });
 
-  it("buildClientScopeSql includes outlet-assigned clients for M2", () => {
+  it("hardware-only assignment on TT grants outlet without sibling access", () => {
+    const filtered = filterRetailOutletsForContext(
+      managerContext(M1),
+      M2,
+      [
+        outlet({ guidStore: T1, managerGuid: M2, hardwareGuid: M1 }),
+        outlet({ guidStore: T2, managerGuid: M2 }),
+      ],
+      { clientHardwareManagerGuid: null },
+    );
+    assert.deepEqual(
+      filtered.map((item) => item.guidStore),
+      [T1],
+    );
+  });
+
+  it("combined sales and hardware roles on same TT count once", () => {
+    const filtered = filterRetailOutletsForContext(
+      managerContext(M1),
+      M1,
+      [outlet({ guidStore: T1, managerGuid: M1, hardwareGuid: M1 })],
+      { clientHardwareManagerGuid: M1 },
+    );
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0]!.guidStore, T1);
+  });
+
+  it("buildClientScopeSql full read includes outlet-assigned clients for card access", () => {
     const scope = buildClientScopeSql(managerContext(M2));
     assert.match(scope.whereSql, /currentRetailOutlets/);
-    assert.match(scope.whereSql, /guid_manager/);
+    assert.match(scope.whereSql, /hardwareManager/);
     assert.equal(scope.params[0], M2);
+  });
+
+  it("buildClientScopeSql direct client list excludes outlet-only parents", () => {
+    const scope = buildClientScopeSql(managerContext(M2), { managerDirectClientList: true });
+    assert.doesNotMatch(scope.whereSql, /currentRetailOutlets/);
+    assert.match(scope.whereSql, /guid_manager/);
   });
 });

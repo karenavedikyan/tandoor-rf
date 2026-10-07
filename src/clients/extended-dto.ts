@@ -719,6 +719,7 @@ function resolveRetailOutletHistoryCount(
     snapshot.retailOutletHistory,
     {
       clientHeadOfSalesGuid,
+      clientHardwareManagerGuid: snapshot.hardwareManager?.guid ?? null,
       ropTeamEmployeeGuids: options?.ropTeamEmployeeGuids,
     },
   );
@@ -839,9 +840,11 @@ export function toClientExtendedDto(
   const currentOutletsRaw = readCurrentOutlets(snapshot);
   const clientManagerGuid = row.guid_manager ?? "";
   const clientHeadOfSalesGuid = snapshot?.headOfSales?.guid ?? null;
+  const clientHardwareManagerGuid = snapshot?.hardwareManager?.guid ?? null;
   const scopedOutlets = context
     ? filterRetailOutletsForContext(context, clientManagerGuid, currentOutletsRaw, {
         clientHeadOfSalesGuid,
+        clientHardwareManagerGuid,
         ropTeamEmployeeGuids: options?.ropTeamEmployeeGuids,
       })
     : outletAccessGranted

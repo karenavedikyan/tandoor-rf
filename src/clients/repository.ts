@@ -151,6 +151,7 @@ async function resolveScopedFilter(
   );
   const scope = buildClientScopeSql(context, {
     ropDirectClientList: context.role === "rop" && input.entity === "clients",
+    managerDirectClientList: context.role === "manager" && input.entity === "clients",
   });
 
   if (portfolioManagerId) {
@@ -374,6 +375,7 @@ export async function listClients(
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
   const scope = buildClientScopeSql(context, {
     ropDirectClientList: context.role === "rop",
+    managerDirectClientList: context.role === "manager",
   });
   const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
   const holdingFilter = combineScopeAndFilter(scope, {
