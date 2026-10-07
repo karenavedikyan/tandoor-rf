@@ -151,6 +151,7 @@ async function resolveScopedFilter(
   );
   const scope = buildClientScopeSql(context, {
     ropDirectClientList: context.role === "rop" && input.entity === "clients",
+    managerDirectClientList: context.role === "manager" && input.entity === "clients",
   });
 
   if (portfolioManagerId) {
@@ -197,29 +198,39 @@ async function resolveScopedFilter(
 
   let combined = combineScopeAndFilter(scope, userFilter);
 
-  let regionalEmployeeParam: string | undefined;
+  let scopedEmployeeParam: string | undefined;
   let selectExtraParams: unknown[] = [];
-  if (context.role === "regional_manager" && context.employeeId) {
-    regionalEmployeeParam = `$${combined.params.length + 1}::text`;
-    if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
-      combined = {
-        whereSql: combined.whereSql,
-        params: [...combined.params, context.employeeId],
-      };
+  if (
+    (context.role === "regional_manager" || context.role === "manager") &&
+    context.employeeId
+  ) {
+    const existingEmployeeIndex = combined.params.findIndex(
+      (param) => typeof param === "string" && param.toLowerCase() === context.employeeId!.toLowerCase(),
+    );
+    if (existingEmployeeIndex >= 0) {
+      scopedEmployeeParam = `$${existingEmployeeIndex + 1}${context.role === "regional_manager" ? "::text" : ""}`;
     } else {
-      selectExtraParams = [context.employeeId];
+      scopedEmployeeParam = `$${combined.params.length + 1}${context.role === "regional_manager" ? "::text" : ""}`;
+      if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
+        combined = {
+          whereSql: combined.whereSql,
+          params: [...combined.params, context.employeeId],
+        };
+      } else {
+        selectExtraParams = [context.employeeId];
+      }
     }
   }
   const outletsCountExpr =
     combined.whereSql === "WHERE FALSE"
       ? "0"
-      : scopedOutletsCountSql(context, "onec_clients", regionalEmployeeParam);
+      : scopedOutletsCountSql(context, "onec_clients", scopedEmployeeParam);
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
     if (combined.whereSql !== "WHERE FALSE") {
       combined = mergeSqlFilters(
         combined,
-        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", regionalEmployeeParam)],
+        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", scopedEmployeeParam)],
         [],
       );
     }
@@ -337,7 +348,10 @@ export async function listClients(
         onec_clients.name_manager,
         onec_clients.address,
         onec_clients.telephone,
-        onec_clients.last_imported_at
+        onec_clients.last_imported_at,
+        onec_clients.extended_snapshot->'regionalManager' AS ext_regional_manager,
+        onec_clients.extended_snapshot->'hardwareManager' AS ext_hardware_manager,
+        onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}
@@ -361,6 +375,7 @@ export async function listClients(
 export async function getClientOptions(context: AccessContext): Promise<ClientsOptionsResponse> {
   const scope = buildClientScopeSql(context, {
     ropDirectClientList: context.role === "rop",
+    managerDirectClientList: context.role === "manager",
   });
   const managerFilter = combineScopeAndFilter(scope, { whereSql: "", params: [] });
   const holdingFilter = combineScopeAndFilter(scope, {

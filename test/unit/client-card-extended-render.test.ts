@@ -87,6 +87,11 @@ describe("client card extended render", () => {
     assert.match(html, /Не назначен/);
     assert.match(html, /Outlet Regional/);
     assert.match(html, /Regional One/);
+    assert.match(html, /Менеджер клиента/);
+    assert.match(html, /Региональный менеджер клиента/);
+    assert.match(html, /Менеджер по фурнитуре клиента/);
+    assert.match(html, /РОП клиента/);
+    assert.doesNotMatch(html, /Ответственные \(клиент\)/);
     assert.doesNotMatch(html, /loadingEndTime|окончание приёмки/i);
 
     const page = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);

@@ -1,6 +1,7 @@
 import { ropOutletRowAccessibleClause } from "../../access/rop-read-scope";
 import { appendUserDenials, buildClientScopeSql } from "../../access/scope-sql";
 import type { AccessContext } from "../../access/types";
+import { managerOutletRowAccessibleClause } from "../org/assignment-sql";
 import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
 
 export function outletsJsonArraySql(clientAlias: string): string {
@@ -127,7 +128,19 @@ export function buildOutletScope(context: AccessContext): { whereSql: string; pa
 
   let outletRowClause = "TRUE";
   const outletRowParams: unknown[] = [...clientScope.params];
-  if (context.role === "rop" && context.employeeId) {
+  if (context.role === "manager" && context.employeeId) {
+    const existingEmployeeIndex = outletRowParams.findIndex(
+      (param) => typeof param === "string" && param.toLowerCase() === context.employeeId!.toLowerCase(),
+    );
+    const managerEmployeeParam =
+      existingEmployeeIndex >= 0
+        ? `$${existingEmployeeIndex + 1}`
+        : `$${outletRowParams.length + 1}`;
+    if (existingEmployeeIndex < 0) {
+      outletRowParams.push(context.employeeId);
+    }
+    outletRowClause = managerOutletRowAccessibleClause(managerEmployeeParam, "ro", "oc");
+  } else if (context.role === "rop" && context.employeeId) {
     const ropUserParam = `$${outletRowParams.length + 1}`;
     const ropEmployeeParam = `$${outletRowParams.length + 2}`;
     outletRowParams.push(context.userId, context.employeeId);
@@ -155,15 +168,19 @@ function scopedOutletRowAccessibleSql(
   context: AccessContext,
   storeAlias: string,
   clientAlias: string,
-  regionalEmployeeParam?: string,
+  scopedEmployeeParam?: string,
 ): string {
-  if (context.role === "regional_manager" && context.employeeId && regionalEmployeeParam) {
+  if (context.role === "manager" && context.employeeId && scopedEmployeeParam) {
+    return managerOutletRowAccessibleClause(scopedEmployeeParam, storeAlias, clientAlias);
+  }
+
+  if (context.role === "regional_manager" && context.employeeId && scopedEmployeeParam) {
     return `
       EXISTS (
         SELECT 1
         FROM jsonb_array_elements(${outletsJsonArraySql(clientAlias)}) outlet
         WHERE lower(coalesce(outlet->>'guidStore', '')) = lower(${storeAlias}.guid_store::text)
-          AND lower(coalesce(outlet->'managers'->'regionalManager'->>'guid', '')) = lower(${regionalEmployeeParam})
+          AND lower(coalesce(outlet->'managers'->'regionalManager'->>'guid', '')) = lower(${scopedEmployeeParam})
       )
     `;
   }
@@ -178,10 +195,10 @@ function scopedOutletRowAccessibleSql(
 export function scopedOutletsCountSql(
   context: AccessContext,
   clientAlias = "onec_clients",
-  regionalEmployeeParam?: string,
+  scopedEmployeeParam?: string,
 ): string {
   const storeAlias = "oro_scope";
-  const accessible = scopedOutletRowAccessibleSql(context, storeAlias, clientAlias, regionalEmployeeParam);
+  const accessible = scopedOutletRowAccessibleSql(context, storeAlias, clientAlias, scopedEmployeeParam);
   return `
     (
       SELECT COUNT(*)::int
@@ -196,9 +213,9 @@ export function scopedHasOutletsClause(
   context: AccessContext,
   mode: "yes" | "no",
   clientAlias = "onec_clients",
-  regionalEmployeeParam?: string,
+  scopedEmployeeParam?: string,
 ): string {
-  const countSql = scopedOutletsCountSql(context, clientAlias, regionalEmployeeParam);
+  const countSql = scopedOutletsCountSql(context, clientAlias, scopedEmployeeParam);
   if (mode === "yes") {
     return `${countSql} > 0`;
   }

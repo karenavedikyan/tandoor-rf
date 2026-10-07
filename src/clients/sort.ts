@@ -31,14 +31,13 @@ const CLIENT_SORT_SQL: Record<Exclude<ClientSortField, "outletsCount">, string> 
 };
 
 const OUTLET_SORT_SQL: Record<
-  Exclude<OutletSortField, "address" | "regional" | "warehouse" | "tandoorClub">,
+  Exclude<OutletSortField, "address" | "regional" | "warehouse" | "tandoorClub" | "manager">,
   string
 > = {
   clientName: "oc.name_client",
   outlet: "ro.guid_store",
   guidStore: "ro.guid_store",
   status: "ro.is_closed",
-  manager: "oc.name_manager",
   holding: "oc.name_holding",
 };
 
@@ -60,6 +59,7 @@ export type ClientsOrderByOptions = {
   includeTeamSort: boolean;
   outletsCountExpr?: string;
   outletStoreAddressExpr?: string;
+  outletManagerNameExpr?: string;
   outletRegionalNameExpr?: string;
   outletWarehouseExpr?: string;
   outletTandoorClubExpr?: string;
@@ -102,6 +102,9 @@ export function buildClientsOrderBy(input: ClientsListQuery, options: ClientsOrd
     const field = (input.sortBy as OutletSortField) ?? "clientName";
     if (field === "address" && options.outletStoreAddressExpr) {
       return `ORDER BY COALESCE(${options.outletStoreAddressExpr}, '') ${direction}, oc.name_client ASC, ro.guid_store ASC`;
+    }
+    if (field === "manager" && options.outletManagerNameExpr) {
+      return `ORDER BY COALESCE(${options.outletManagerNameExpr}, '') ${direction}, oc.name_client ASC, ro.guid_store ASC`;
     }
     if (field === "regional" && options.outletRegionalNameExpr) {
       return `ORDER BY COALESCE(${options.outletRegionalNameExpr}, '') ${direction}, oc.name_client ASC, ro.guid_store ASC`;

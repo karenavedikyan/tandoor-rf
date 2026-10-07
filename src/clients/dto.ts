@@ -24,6 +24,9 @@ export type ClientListItemDto = {
     name: string;
     shortId: string;
   };
+  regionalManager?: ListAssignmentRefDto;
+  hardwareManager?: ListAssignmentRefDto;
+  headOfSales?: ListAssignmentRefDto;
   address: string;
   phonePreview: {
     primary: string | null;
@@ -87,6 +90,15 @@ export type ClientsListResponse = {
   isEmptyDatabase: boolean;
 };
 
+export type ListAssignmentRefDto = {
+  id: string | null;
+  name: string;
+  shortId: string | null;
+  hasSource: boolean;
+  assignmentState?: string;
+  assignmentLabel: string;
+};
+
 export type RetailOutletListItemDto = {
   guidStore: string;
   guidClient: string;
@@ -96,17 +108,17 @@ export type RetailOutletListItemDto = {
   isClosed: boolean;
   closureStatusLabel: string;
   holdingName: string;
-  manager: {
+  /** Outlet-level sales manager (ТТ); never falls back to client manager. */
+  manager: ListAssignmentRefDto;
+  /** Client-level manager from onec_clients; separate from outlet assignment. */
+  clientManager: {
     id: string;
     name: string;
     shortId: string;
   };
-  regionalManager: {
-    id: string | null;
-    name: string;
-    shortId: string | null;
-    hasSource: boolean;
-  };
+  regionalManager: ListAssignmentRefDto;
+  hardwareManager: ListAssignmentRefDto;
+  headOfSales: ListAssignmentRefDto;
   warehouse: {
     value: boolean | null;
     label: string;
@@ -198,6 +210,9 @@ type ClientRow = {
   review_proposed_manager_guid?: string | null;
   team_label?: string | null;
   unassigned_reason?: string | null;
+  ext_regional_manager?: unknown;
+  ext_hardware_manager?: unknown;
+  ext_head_of_sales?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -318,6 +333,19 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
     item.outletsCount = Number(row.outlets_count);
   }
 
+  const regionalManager = readClientLevelManagerRef(row.ext_regional_manager);
+  const hardwareManager = readClientLevelManagerRef(row.ext_hardware_manager);
+  const headOfSales = readClientLevelManagerRef(row.ext_head_of_sales);
+  if (regionalManager) {
+    item.regionalManager = regionalManager;
+  }
+  if (hardwareManager) {
+    item.hardwareManager = hardwareManager;
+  }
+  if (headOfSales) {
+    item.headOfSales = headOfSales;
+  }
+
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);
     const effectiveState = isStale ? "needs_recheck" : reviewState;
@@ -353,23 +381,92 @@ function readOutletSnapshotField(snapshot: unknown): Record<string, unknown> | n
   return snapshot as Record<string, unknown>;
 }
 
-function readNestedManager(snapshot: Record<string, unknown> | null, key: string): { guid: string | null; name: string } {
+function listAssignmentNotProvided(): ListAssignmentRefDto {
+  return {
+    id: null,
+    name: "",
+    shortId: null,
+    hasSource: false,
+    assignmentState: "not_provided",
+    assignmentLabel: "Не передано",
+  };
+}
+
+function listAssignmentLabel(state: string, name: string, guid: string | null): string {
+  if (state === "not_provided") {
+    return "Не передано";
+  }
+  if (state === "unassigned") {
+    return "Не назначен";
+  }
+  if (state === "invalid") {
+    return name.trim().length > 0 ? name.trim() : "Некорректный идентификатор";
+  }
+  const trimmed = name.trim();
+  if (trimmed.length > 0) {
+    return guid ? `${trimmed} · ${shortUuidLabel(guid)}` : trimmed;
+  }
+  if (guid) {
+    return shortUuidLabel(guid);
+  }
+  return "—";
+}
+
+function readSnapshotManagerRef(
+  snapshot: Record<string, unknown> | null,
+  key: string,
+): ListAssignmentRefDto {
   if (!snapshot) {
-    return { guid: null, name: "" };
+    return listAssignmentNotProvided();
   }
   const managers = snapshot.managers;
   if (!managers || typeof managers !== "object" || Array.isArray(managers)) {
-    return { guid: null, name: "" };
+    return listAssignmentNotProvided();
   }
   const ref = (managers as Record<string, unknown>)[key];
   if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
-    return { guid: null, name: "" };
+    return listAssignmentNotProvided();
   }
-  const guidRaw = (ref as { guid?: unknown }).guid;
-  const nameRaw = (ref as { name?: unknown }).name;
-  const guid = typeof guidRaw === "string" && guidRaw.trim().length > 0 ? guidRaw.trim() : null;
-  const name = typeof nameRaw === "string" ? nameRaw.trim() : "";
-  return { guid, name };
+  const raw = ref as Record<string, unknown>;
+  const state = typeof raw.state === "string" ? raw.state : "not_provided";
+  const guidRaw = raw.guid;
+  const guid =
+    typeof guidRaw === "string" && guidRaw.trim().length > 0 ? guidRaw.trim().toLowerCase() : null;
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  if (state === "not_provided") {
+    return listAssignmentNotProvided();
+  }
+  return {
+    id: guid,
+    name,
+    shortId: guid ? shortUuidLabel(guid) : null,
+    hasSource: true,
+    assignmentState: state,
+    assignmentLabel: listAssignmentLabel(state, name, guid),
+  };
+}
+
+function readClientLevelManagerRef(raw: unknown): ListAssignmentRefDto | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const ref = raw as Record<string, unknown>;
+  const state = typeof ref.state === "string" ? ref.state : "not_provided";
+  const guidRaw = ref.guid;
+  const guid =
+    typeof guidRaw === "string" && guidRaw.trim().length > 0 ? guidRaw.trim().toLowerCase() : null;
+  const name = typeof ref.name === "string" ? ref.name.trim() : "";
+  if (state === "not_provided") {
+    return listAssignmentNotProvided();
+  }
+  return {
+    id: guid,
+    name,
+    shortId: guid ? shortUuidLabel(guid) : null,
+    hasSource: true,
+    assignmentState: state,
+    assignmentLabel: listAssignmentLabel(state, name, guid),
+  };
 }
 
 function readWarehouseFromSnapshot(snapshot: Record<string, unknown> | null): {
@@ -418,7 +515,6 @@ function outletAddressLabel(storeAddress: string | null, fallback: string): stri
 
 export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItemDto {
   const snapshot = readOutletSnapshotField(row.outlet_snapshot);
-  const regional = readNestedManager(snapshot, "regionalManager");
   const warehouse = readWarehouseFromSnapshot(snapshot);
   const tandoorClub = readTandoorClubFromSnapshot(snapshot);
   const address = outletAddressLabel(row.store_address, "");
@@ -432,17 +528,15 @@ export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItem
     isClosed: row.is_closed,
     closureStatusLabel: row.is_closed ? "Закрыта" : "Открыта",
     holdingName: row.name_holding,
-    manager: {
+    manager: readSnapshotManagerRef(snapshot, "manager"),
+    clientManager: {
       id: row.guid_manager,
       name: row.name_manager,
       shortId: shortUuidLabel(row.guid_manager),
     },
-    regionalManager: {
-      id: regional.guid,
-      name: regional.name,
-      shortId: regional.guid ? shortUuidLabel(regional.guid) : null,
-      hasSource: Boolean(regional.guid || regional.name),
-    },
+    regionalManager: readSnapshotManagerRef(snapshot, "regionalManager"),
+    hardwareManager: readSnapshotManagerRef(snapshot, "hardwareManager"),
+    headOfSales: readSnapshotManagerRef(snapshot, "headOfSales"),
     warehouse: {
       value: warehouse.value,
       hasSource: warehouse.hasSource,

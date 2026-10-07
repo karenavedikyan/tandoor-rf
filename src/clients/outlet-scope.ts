@@ -14,17 +14,23 @@ type ClientOutletRow = {
   extended_snapshot: unknown;
 };
 
-async function resolveRopOutletFilterOptions(
+async function resolveOutletFilterOptions(
   context: AccessContext,
   extendedSnapshot: unknown,
-): Promise<{ clientHeadOfSalesGuid: string | null; ropTeamEmployeeGuids: Set<string> | null }> {
-  if (context.role !== "rop" || !context.employeeId) {
-    return { clientHeadOfSalesGuid: null, ropTeamEmployeeGuids: null };
-  }
+): Promise<{
+  clientHeadOfSalesGuid: string | null;
+  clientHardwareManagerGuid: string | null;
+  ropTeamEmployeeGuids: Set<string> | null;
+}> {
   const snapshot = readExtendedSnapshot(extendedSnapshot);
+  const clientHardwareManagerGuid = snapshot?.hardwareManager?.guid ?? null;
+  if (context.role !== "rop" || !context.employeeId) {
+    return { clientHeadOfSalesGuid: null, clientHardwareManagerGuid, ropTeamEmployeeGuids: null };
+  }
   const ropTeamEmployeeGuids = await loadRopTeamEmployeeGuids(context.userId, context.employeeId);
   return {
     clientHeadOfSalesGuid: snapshot?.headOfSales?.guid ?? null,
+    clientHardwareManagerGuid,
     ropTeamEmployeeGuids,
   };
 }
@@ -72,8 +78,8 @@ export async function listAccessibleOutletGuidsForClient(
     return new Set();
   }
   const outlets = readCurrentOutlets(row.extended_snapshot);
-  const ropOptions = await resolveRopOutletFilterOptions(context, row.extended_snapshot);
-  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, ropOptions);
+  const filterOptions = await resolveOutletFilterOptions(context, row.extended_snapshot);
+  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, filterOptions);
   return confirmedOutletGuids(filtered);
 }
 
@@ -96,8 +102,8 @@ async function accessibleStoreGuidsFromRow(
   row: { guid_manager: string; extended_snapshot: unknown },
 ): Promise<Set<string>> {
   const outlets = readCurrentOutlets(row.extended_snapshot);
-  const ropOptions = await resolveRopOutletFilterOptions(context, row.extended_snapshot);
-  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, ropOptions);
+  const filterOptions = await resolveOutletFilterOptions(context, row.extended_snapshot);
+  const filtered = filterRetailOutletsForContext(context, row.guid_manager ?? "", outlets, filterOptions);
   return confirmedOutletGuids(filtered);
 }
 

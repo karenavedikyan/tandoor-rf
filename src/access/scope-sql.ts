@@ -3,6 +3,10 @@ import {
   ACTIVE_BASELINE_OC_SQL,
   appendActiveBaselineFilter,
 } from "../onec-clients/baseline-active-scope";
+import {
+  managerDirectClientListClause,
+  managerFullClientReadClause,
+} from "../clients/org/assignment-sql";
 import { ropDirectClientListClause, ropFullClientReadClause } from "./rop-read-scope";
 import { MANAGER_ROSTER_SCOPE_ALLOWED_SQL } from "../onec-clients/manager-status";
 import type { AccessContext } from "./types";
@@ -54,6 +58,8 @@ export function appendUserDenials(scope: ClientScopeSql, userId: string): Client
 export type BuildClientScopeOptions = {
   /** ROP client list: exclude parents reachable only via outlet-level 1C assignment. */
   ropDirectClientList?: boolean;
+  /** Manager client list: exclude parents reachable only via outlet-level assignment. */
+  managerDirectClientList?: boolean;
 };
 
 export function buildClientScopeSql(
@@ -77,12 +83,14 @@ export function buildClientScopeSql(
   let scope: ClientScopeSql;
   switch (context.role) {
     case "manager": {
+      const managerClause = options.managerDirectClientList
+        ? managerDirectClientListClause("$1::uuid")
+        : managerFullClientReadClause("$1::uuid");
       scope = scopedWhere(
         `
           SELECT guid_client
           FROM onec_clients
-          WHERE guid_manager = $1::uuid
-            AND ${MANAGER_ROSTER_SCOPE_ALLOWED_SQL}
+          WHERE ${managerClause}
             AND ${ACTIVE_BASELINE_CLIENT_SQL.trim()}
         `,
         [context.employeeId!],
