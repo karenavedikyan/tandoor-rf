@@ -404,9 +404,12 @@ describe("onec F4 client contract upgrade backfill via regular-update", { concur
     await simulatePreF4ClientContractGap(databaseUrl, CLIENT_ONE);
     assert.equal(await readClientContractBlock(databaseUrl, CLIENT_ONE), null);
 
+    let afterRosterUpsertCalled = false;
     let inTxnBlock: unknown = null;
+    const applyCountBeforeFailed = await countSuccessfulApplyRuns(databaseUrl);
     const failed = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!, {
       afterRosterUpsert: async (client) => {
+        afterRosterUpsertCalled = true;
         const row = await client.query<{ client_contract: unknown }>(
           `
             SELECT extended_snapshot->'clientContract' AS client_contract
@@ -416,12 +419,17 @@ describe("onec F4 client contract upgrade backfill via regular-update", { concur
           [CLIENT_ONE],
         );
         inTxnBlock = row.rows[0]?.client_contract ?? null;
-        assert.ok(inTxnBlock);
       },
       failExchangeStateUpdate: true,
     });
     assert.equal(failed.status, "ERROR");
+    assert.equal(afterRosterUpsertCalled, true, "afterRosterUpsert hook must run before forced failure");
+    assert.ok(inTxnBlock, "inTxnBlock must be captured inside afterRosterUpsert");
+    const inTxn = inTxnBlock as { primaryContract: string; mainAgreement: string };
+    assert.equal(inTxn.primaryContract, "Договор Backfill F4");
+    assert.equal(inTxn.mainAgreement, "Соглашение Backfill F4");
     assert.equal(await readClientContractBlock(databaseUrl, CLIENT_ONE), null);
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), applyCountBeforeFailed);
 
     const recovered = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
     assert.equal(recovered.status, "SUCCESS");
@@ -430,5 +438,6 @@ describe("onec F4 client contract upgrade backfill via regular-update", { concur
 
     const repeat = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
     assert.equal(repeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), applyCountBeforeFailed + 1);
   });
 });
