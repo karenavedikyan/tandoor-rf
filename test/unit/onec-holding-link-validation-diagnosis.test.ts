@@ -24,6 +24,10 @@ function issueCodes(bytes: Buffer): string[] {
   return result.issueCodes ?? [...new Set(result.issues.map((i) => i.code))];
 }
 
+/**
+ * Maps to diagnosis §2.7 issue taxonomy (synthetic GUIDs only).
+ * Production cluster: 422× HOLDING_SELF_REFERENCE + derived CYCLE/TARGET on SHA a957ab33…
+ */
 describe("holding link validation (synthetic diagnosis fixtures)", () => {
   it("self-referential root without holding=true → HOLDING_SELF_REFERENCE", () => {
     const bytes = buildExtendedClientsFileBytes([
@@ -91,6 +95,27 @@ describe("holding link validation (synthetic diagnosis fixtures)", () => {
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.ok(result.issues.some((i) => i.code === "HOLDING_CYCLE"));
+  });
+
+  it("link to non-holding parent (not self-ref) → HOLDING_TARGET_NOT_HOLDING_CARD", () => {
+    const bytes = buildExtendedClientsFileBytes([
+      sampleExtendedChild({
+        guid_client: HOLDING_ROOT,
+        holding: false,
+        guid_holding: "",
+      }),
+      sampleExtendedChild({
+        guid_client: HOLDING_CHILD,
+        guid_holding: HOLDING_ROOT,
+        holding: false,
+      }),
+    ]);
+    const result = validateClientsFileBytes(bytes, { holdingLinkValidationPolicy: "tolerant" });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(
+      result.issues.some((i) => i.code === "HOLDING_TARGET_NOT_HOLDING_CARD" && i.index === 1),
+    );
   });
 
   it("explicit holding root + child link → first-read validation passes", () => {
