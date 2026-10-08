@@ -6,7 +6,11 @@ import {
   verifyApplyVerification,
 } from "../onec-clients/import-verification-fingerprint";
 import { rosterIncomingDiffersFromStored } from "../onec-clients/roster-field-values";
-import { loadExistingRoster } from "../onec-clients/roster-upsert";
+import {
+  loadExistingMembershipsByManager,
+  loadExistingRoster,
+  loadExistingTeamGroups,
+} from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
 import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
 
@@ -73,7 +77,16 @@ export async function runRegularUpdateApplyGate(
   const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
   if (lastFingerprint && lastFingerprint === actualFingerprint) {
     const existingRoster = await loadExistingRoster(client);
-    if (!rosterIncomingDiffersFromStored(existingRoster, input.roster)) {
+    const existingMemberships = await loadExistingMembershipsByManager(client);
+    const existingGroups = await loadExistingTeamGroups(client);
+    if (
+      !rosterIncomingDiffersFromStored(
+        existingRoster,
+        existingMemberships,
+        existingGroups,
+        input.roster,
+      )
+    ) {
       return { ok: true, unchangedBundle: true };
     }
   }

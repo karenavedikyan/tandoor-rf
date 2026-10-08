@@ -298,7 +298,20 @@ describe("clients onec teams integration", { concurrency: false }, () => {
     assert.equal(res.body.groups[0].members[0].employeeGuid, MANAGER_LINKED);
   });
 
-  it("rejects onec teams for manager and rop roles", async () => {
+  it("rejects onec teams for manager and scopes rop to leader groups", async () => {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader)
+        VALUES ($1::uuid, 'Team Alpha', $2::uuid, 'ROP In Team')
+        ON CONFLICT (guid_team) DO UPDATE SET
+          guid_team_leader = EXCLUDED.guid_team_leader,
+          name_team_leader = EXCLUDED.name_team_leader
+      `,
+      [TEAM_A, ROP_EMPLOYEE],
+    );
+    await pool.end();
+
     const app = await loadApp();
     const managerCookie = await login("manager@example.com");
     const ropCookie = await login("rop@example.com");
@@ -307,7 +320,13 @@ describe("clients onec teams integration", { concurrency: false }, () => {
       .set(authHeaders(managerCookie));
     const ropRes = await request(app).get("/api/clients/org-structure/onec-teams").set(authHeaders(ropCookie));
     assert.equal(managerRes.status, 403);
-    assert.equal(ropRes.status, 403);
+    assert.equal(ropRes.status, 200);
+    assert.ok(
+      (ropRes.body.groups as Array<{ teamGuid: string | null }>).every(
+        (group) => group.teamGuid === TEAM_A || group.teamGuid === null,
+      ),
+    );
+    assert.equal(ropRes.body.director, null);
   });
 
   it("returns 503 when roster source is not loaded", async () => {

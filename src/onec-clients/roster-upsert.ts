@@ -1,6 +1,12 @@
 import type { PoolClient } from "pg";
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
 import {
+  collectRosterTeamGroupDrafts,
+  resolveEmployeeTeamMemberships,
+  type ExistingEmployeeTeamMembershipRow,
+  type ExistingTeamGroupRow,
+} from "./roster-team-memberships";
+import {
   resolveRosterFieldValues,
   rosterRecordValuesEqual,
 } from "./roster-field-values";
@@ -52,6 +58,110 @@ export async function loadExistingRoster(client: PoolClient): Promise<Map<string
   return new Map(result.rows.map((row) => [row.guid_manager.toLowerCase(), row]));
 }
 
+export async function loadExistingMembershipsByManager(
+  client: PoolClient,
+): Promise<Map<string, ExistingEmployeeTeamMembershipRow[]>> {
+  const result = await client.query<ExistingEmployeeTeamMembershipRow & { guid_manager: string }>(
+    `
+      SELECT
+        lower(guid_manager::text) AS guid_manager,
+        lower(guid_team::text) AS guid_team,
+        name_team
+      FROM onec_wholesale_employee_team_memberships
+      ORDER BY guid_team ASC
+    `,
+  );
+  const map = new Map<string, ExistingEmployeeTeamMembershipRow[]>();
+  for (const row of result.rows) {
+    const key = row.guid_manager.toLowerCase();
+    const list = map.get(key) ?? [];
+    list.push({ guid_team: row.guid_team, name_team: row.name_team });
+    map.set(key, list);
+  }
+  return map;
+}
+
+export async function loadExistingTeamGroups(client: PoolClient): Promise<ExistingTeamGroupRow[]> {
+  const result = await client.query<ExistingTeamGroupRow>(
+    `
+      SELECT
+        lower(guid_team::text) AS guid_team,
+        name_team,
+        lower(guid_team_leader::text) AS guid_team_leader,
+        name_team_leader
+      FROM onec_wholesale_team_groups
+      ORDER BY guid_team ASC
+    `,
+  );
+  return result.rows;
+}
+
+async function replaceEmployeeMemberships(
+  client: PoolClient,
+  managerGuid: string,
+  memberships: ReturnType<typeof resolveEmployeeTeamMemberships>,
+): Promise<void> {
+  await client.query(`DELETE FROM onec_wholesale_employee_team_memberships WHERE guid_manager = $1::uuid`, [
+    managerGuid,
+  ]);
+  for (const membership of memberships) {
+    await client.query(
+      `
+        INSERT INTO onec_wholesale_employee_team_memberships (
+          guid_manager,
+          guid_team,
+          name_team,
+          imported_at
+        )
+        VALUES ($1::uuid, $2::uuid, $3, NOW())
+      `,
+      [managerGuid, membership.guidTeam, membership.nameTeam],
+    );
+  }
+}
+
+export async function syncRosterTeamGroups(
+  client: PoolClient,
+  roster: WholesaleEmployeeRoster,
+): Promise<void> {
+  const drafts = collectRosterTeamGroupDrafts(roster.records);
+  for (const draft of drafts.values()) {
+    await client.query(
+      `
+        INSERT INTO onec_wholesale_team_groups (
+          guid_team,
+          name_team,
+          guid_team_leader,
+          name_team_leader,
+          imported_at
+        )
+        VALUES ($1::uuid, $2, $3::uuid, $4, NOW())
+        ON CONFLICT (guid_team) DO UPDATE SET
+          name_team = EXCLUDED.name_team,
+          guid_team_leader = EXCLUDED.guid_team_leader,
+          name_team_leader = EXCLUDED.name_team_leader,
+          imported_at = NOW()
+      `,
+      [
+        draft.guidTeam,
+        draft.nameTeam,
+        draft.leader.guidTeamLeader,
+        draft.leader.nameTeamLeader,
+      ],
+    );
+  }
+  await client.query(
+    `
+      DELETE FROM onec_wholesale_team_groups g
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM onec_wholesale_employee_team_memberships m
+        WHERE m.guid_team = g.guid_team
+      )
+    `,
+  );
+}
+
 /**
  * Upsert wholesale employees from a regular update roster.
  * Employees absent from the file are retained; partial updates preserve omitted fields.
@@ -61,21 +171,24 @@ export async function upsertWholesaleEmployeeRoster(
   roster: WholesaleEmployeeRoster,
 ): Promise<RosterUpsertCounts> {
   const existing = await loadExistingRoster(client);
+  const existingMemberships = await loadExistingMembershipsByManager(client);
   let newCount = 0;
   let changedCount = 0;
   let unchangedCount = 0;
 
   for (const record of roster.records) {
-    const current = existing.get(record.guidManager.toLowerCase());
+    const key = record.guidManager.toLowerCase();
+    const current = existing.get(key);
+    const memberships = existingMemberships.get(key);
     if (!current) {
       newCount += 1;
-    } else if (rosterRecordValuesEqual(current, record)) {
+    } else if (rosterRecordValuesEqual(current, record, memberships)) {
       unchangedCount += 1;
     } else {
       changedCount += 1;
     }
 
-    const values = resolveRosterFieldValues(record, current);
+    const values = resolveRosterFieldValues(record, current, memberships);
 
     await client.query(
       `
@@ -146,7 +259,16 @@ export async function upsertWholesaleEmployeeRoster(
         JSON.stringify(record.raw),
       ],
     );
+
+    const resolvedMemberships = resolveEmployeeTeamMemberships(record, memberships);
+    await replaceEmployeeMemberships(client, record.guidManager, resolvedMemberships);
+    existingMemberships.set(key, resolvedMemberships.map((item) => ({
+      guid_team: item.guidTeam,
+      name_team: item.nameTeam,
+    })));
   }
+
+  await syncRosterTeamGroups(client, roster);
 
   await client.query(
     `
@@ -161,4 +283,25 @@ export async function upsertWholesaleEmployeeRoster(
   );
 
   return { newCount, changedCount, unchangedCount };
+}
+
+export async function replaceWholesaleEmployeeRosterRecords(
+  client: PoolClient,
+  input: {
+    sourceSha256: string;
+    records: readonly WholesaleEmployeeRecord[];
+    wholesaleCount: number;
+  },
+): Promise<number> {
+  await client.query(`DELETE FROM onec_wholesale_employee_roster`);
+  const roster: WholesaleEmployeeRoster = {
+    wholesaleGuids: new Set(input.records.map((record) => record.guidManager.toLowerCase())),
+    records: input.records,
+    totalRecords: input.records.length,
+    wholesaleCount: input.wholesaleCount,
+    sourceSha256: input.sourceSha256,
+    isEmpty: input.records.length === 0,
+  };
+  await upsertWholesaleEmployeeRoster(client, roster);
+  return input.records.length;
 }

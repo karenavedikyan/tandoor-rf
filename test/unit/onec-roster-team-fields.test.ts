@@ -125,7 +125,10 @@ describe("roster storage drift", () => {
         },
       ],
     ]);
-    assert.equal(rosterIncomingDiffersFromStored(existing, parsed.roster as WholesaleEmployeeRoster), true);
+    assert.equal(
+      rosterIncomingDiffersFromStored(existing, new Map(), [], parsed.roster as WholesaleEmployeeRoster),
+      true,
+    );
   });
 
   it("does not drift when stored values already match effective team semantics", () => {
@@ -157,7 +160,24 @@ describe("roster storage drift", () => {
         },
       ],
     ]);
-    assert.equal(rosterIncomingDiffersFromStored(existing, parsed.roster as WholesaleEmployeeRoster), false);
+    const memberships = new Map([
+      [
+        MANAGER,
+        [{ guid_team: TEAM_A, name_team: "Team Alpha" }],
+      ],
+    ]);
+    const groups = [
+      {
+        guid_team: TEAM_A,
+        name_team: "Team Alpha",
+        guid_team_leader: null,
+        name_team_leader: null,
+      },
+    ];
+    assert.equal(
+      rosterIncomingDiffersFromStored(existing, memberships, groups, parsed.roster as WholesaleEmployeeRoster),
+      false,
+    );
   });
 });
 

@@ -1,4 +1,14 @@
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
+import {
+  collectRosterTeamGroupDrafts,
+  existingMembershipsToResolved,
+  membershipsEqual,
+  resolveEmployeeTeamMemberships,
+  resolveLegacyTeamColumnsForRecord,
+  teamGroupsEqual,
+  type ExistingEmployeeTeamMembershipRow,
+  type ExistingTeamGroupRow,
+} from "./roster-team-memberships";
 
 export type ResolvedRosterFieldValues = {
   nameManager: string;
@@ -99,13 +109,17 @@ export function resolveTeamFieldValues(
 export function resolveRosterFieldValues(
   record: WholesaleEmployeeRecord,
   existing: ExistingRosterFieldValues | undefined,
+  existingMemberships?: ExistingEmployeeTeamMembershipRow[],
 ): ResolvedRosterFieldValues {
   const current = existing;
-  const team = resolveTeamFieldValues(
-    record.raw,
-    { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
-    current,
-  );
+  const team =
+    record.teams !== undefined
+      ? resolveLegacyTeamColumnsForRecord(record, existingMemberships)
+      : resolveTeamFieldValues(
+          record.raw,
+          { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
+          current,
+        );
   return {
     nameManager: hasRosterRawKey(record.raw, "name_manager")
       ? record.nameManager
@@ -182,19 +196,35 @@ export function existingRosterFieldValuesToResolved(
 export function rosterRecordValuesEqual(
   existing: ExistingRosterFieldValues,
   record: WholesaleEmployeeRecord,
+  existingMemberships?: ExistingEmployeeTeamMembershipRow[],
 ): boolean {
-  const resolved = resolveRosterFieldValues(record, existing);
-  return resolvedRosterValuesEqual(resolved, existingRosterFieldValuesToResolved(existing));
+  const resolved = resolveRosterFieldValues(record, existing, existingMemberships);
+  if (!resolvedRosterValuesEqual(resolved, existingRosterFieldValuesToResolved(existing))) {
+    return false;
+  }
+  const incomingMemberships = resolveEmployeeTeamMemberships(record, existingMemberships);
+  return membershipsEqual(
+    incomingMemberships,
+    existingMembershipsToResolved(existingMemberships ?? []),
+  );
 }
 
 /** True when incoming roster would change persisted field values (including post-migration backfill). */
 export function rosterIncomingDiffersFromStored(
   existingByManager: Map<string, ExistingRosterFieldValues>,
+  existingMembershipsByManager: Map<string, ExistingEmployeeTeamMembershipRow[]>,
+  existingGroups: ExistingTeamGroupRow[],
   roster: WholesaleEmployeeRoster,
 ): boolean {
+  const drafts = collectRosterTeamGroupDrafts(roster.records);
+  if (!teamGroupsEqual(existingGroups, drafts)) {
+    return true;
+  }
   for (const record of roster.records) {
-    const current = existingByManager.get(record.guidManager.toLowerCase());
-    if (!current || !rosterRecordValuesEqual(current, record)) {
+    const key = record.guidManager.toLowerCase();
+    const current = existingByManager.get(key);
+    const memberships = existingMembershipsByManager.get(key);
+    if (!current || !rosterRecordValuesEqual(current, record, memberships)) {
       return true;
     }
   }
