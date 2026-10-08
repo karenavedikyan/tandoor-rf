@@ -29,6 +29,11 @@ import {
   mergeCommercialFields,
   readSnapshotCommercial,
 } from "./commercial-fields";
+import {
+  hasAnyWholesaleClientExchangeField,
+  mergeWholesaleClientExchangeFields,
+  readSnapshotWholesaleClientExchange,
+} from "./wholesale-client-exchange-fields";
 
 type ExistingExtendedRow = {
   guid_client: string;
@@ -367,6 +372,10 @@ export function buildExtendedSnapshotJson(
     isNewClient,
   );
   const commercial = mergeCommercialFields(record.commercial, readSnapshotCommercial(previous) ?? undefined);
+  const wholesaleExchange = mergeWholesaleClientExchangeFields(
+    record.wholesaleExchange,
+    readSnapshotWholesaleClientExchange(previous) ?? undefined,
+  );
   const outletMerge = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
@@ -390,6 +399,7 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     commercial,
+    wholesaleExchange,
     currentRetailOutlets,
     retailOutletHistory,
     blocks: previous?.blocks ?? {
@@ -421,6 +431,7 @@ export function buildExtendedSnapshotJson(
     hardwareManager,
     headOfSales,
     commercial,
+    wholesaleExchange: hasAnyWholesaleClientExchangeField(wholesaleExchange) ? wholesaleExchange : undefined,
     currentRetailOutlets,
     retailOutletHistory: appendHistoryWhenBusinessChanged(
       previous,

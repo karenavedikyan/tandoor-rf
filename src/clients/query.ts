@@ -103,6 +103,8 @@ export type ClientsListQuery = {
   filled?: string;
   empty?: string;
   discountProgram?: string;
+  onecTop150?: string;
+  onecCategory?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;
@@ -372,6 +374,21 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return raw;
   }
 
+  /** Preserves leading/trailing spaces for exact wholesale exchange filters. */
+  function parseExactFilterField(value: unknown): string | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value);
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return null;
+    }
+    return raw;
+  }
+
   function parseOptionalIsoDateField(value: unknown, _label: string): string | undefined | null {
     if (value === undefined || value === null || value === "") {
       return undefined;
@@ -444,6 +461,22 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   }
   if (entityRaw === "outlets" && discountProgram) {
     return { ok: false, message: "Поле «discountProgram» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecTop150 = parseExactFilterField(input.onecTop150);
+  if (onecTop150 === null) {
+    return { ok: false, message: "Некорректный фильтр ТОП-150 (1С)." };
+  }
+  if (entityRaw === "outlets" && onecTop150) {
+    return { ok: false, message: "Поле «onecTop150» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecCategory = parseExactFilterField(input.onecCategory);
+  if (onecCategory === null) {
+    return { ok: false, message: "Некорректный фильтр категории 1С." };
+  }
+  if (entityRaw === "outlets" && onecCategory) {
+    return { ok: false, message: "Поле «onecCategory» недоступно для фильтрации в режиме торговых точек." };
   }
 
   const discountAmountMin = parseOptionalStrictNumber(input.discountAmountMin);
@@ -757,6 +790,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       filled,
       empty,
       discountProgram,
+      onecTop150,
+      onecCategory,
       discountAmountMin,
       discountAmountMax,
       markupName,
@@ -916,6 +951,8 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.filled ||
       query.empty ||
       query.discountProgram ||
+      query.onecTop150 ||
+      query.onecCategory ||
       query.discountAmountMin !== undefined ||
       query.discountAmountMax !== undefined ||
       query.markupName ||

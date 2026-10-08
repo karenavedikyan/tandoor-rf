@@ -31,6 +31,10 @@ import {
   readSnapshotCommercial,
   type ParsedClientCommercial,
 } from "../onec-clients/commercial-fields";
+import {
+  hasAnyWholesaleClientExchangeField,
+  readSnapshotWholesaleClientExchange,
+} from "../onec-clients/wholesale-client-exchange-fields";
 
 export type ManagerRefDto = {
   displayName: string;
@@ -113,6 +117,11 @@ export type ClientCommercialDto = {
   };
 };
 
+export type ClientWholesaleExchangeDto = {
+  top150: ClientCommercialFieldDto;
+  outletCategory: ClientCommercialFieldDto;
+};
+
 export type BlockFreshnessEntryDto = {
   state: ExtendedFreshnessState;
   label: string;
@@ -151,6 +160,7 @@ export type ClientExtendedDto = {
   holdingCardLabel: string | null;
   managers: ClientExtendedManagersDto;
   commercial?: ClientCommercialDto | null;
+  wholesaleExchange?: ClientWholesaleExchangeDto | null;
   retailOutlets: RetailOutletDto[];
   retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
@@ -280,6 +290,20 @@ function toClientCommercialDto(snapshot: ExtendedSnapshot | null): ClientCommerc
       commercial.discountAmount,
     ),
     markups: markupsPresentation(commercial),
+  };
+}
+
+function toClientWholesaleExchangeDto(snapshot: ExtendedSnapshot | null): ClientWholesaleExchangeDto | null {
+  const wholesale = readSnapshotWholesaleClientExchange(snapshot);
+  if (!wholesale || !hasAnyWholesaleClientExchangeField(wholesale)) {
+    return null;
+  }
+  return {
+    top150: commercialStringPresentation(wholesale.fieldPresence.top150, wholesale.top150),
+    outletCategory: commercialStringPresentation(
+      wholesale.fieldPresence.outletCategory,
+      wholesale.outletCategory,
+    ),
   };
 }
 
@@ -1053,6 +1077,7 @@ export function toClientExtendedDto(
       headOfSales: toManagerRefDto(headOfSales),
     },
     commercial: toClientCommercialDto(snapshot),
+    wholesaleExchange: toClientWholesaleExchangeDto(snapshot),
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
     retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,

@@ -12,6 +12,10 @@ import {
   type ParsedClientCommercial,
 } from "../onec-clients/commercial-fields";
 import {
+  hasAnyWholesaleClientExchangeField,
+  type ParsedWholesaleClientExchange,
+} from "../onec-clients/wholesale-client-exchange-fields";
+import {
   REVIEW_DECISION_LABELS,
   REVIEW_STATE_LABELS,
   type ReviewDecision,
@@ -61,6 +65,16 @@ export type ClientListItemDto = {
     label: string;
   };
   discountAmount?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecTop150?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecCategory?: {
     value: string | null;
     hasSource: boolean;
     label: string;
@@ -172,6 +186,10 @@ export type ClientsOptionsResponse = {
   regionalManagers: ClientOptionDto[];
   hardwareManagers: ClientOptionDto[];
   rops: ClientOptionDto[];
+  /** Distinct ТОП-150 (1С) values in accessible clients (non-empty). */
+  onecTop150Values: ClientOptionDto[];
+  /** Distinct категория 1С values in accessible clients (non-empty). */
+  onecCategoryValues: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =
@@ -242,6 +260,7 @@ type ClientRow = {
   ext_hardware_manager?: unknown;
   ext_head_of_sales?: unknown;
   ext_commercial?: unknown;
+  ext_wholesale_exchange?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -366,6 +385,38 @@ function readCommercialListFields(raw: unknown): Pick<ClientListItemDto, "discou
   return result;
 }
 
+function readWholesaleListFields(
+  raw: unknown,
+): Pick<ClientListItemDto, "onecTop150" | "onecCategory"> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const wholesale = raw as ParsedWholesaleClientExchange;
+  if (!hasAnyWholesaleClientExchangeField(wholesale)) {
+    return {};
+  }
+  const result: Pick<ClientListItemDto, "onecTop150" | "onecCategory"> = {};
+  if (wholesale.fieldPresence.top150) {
+    const value = wholesale.top150;
+    const trimmed = value?.trim() ?? "";
+    result.onecTop150 = {
+      value: trimmed.length > 0 ? value : null,
+      hasSource: true,
+      label: trimmed.length > 0 ? value! : "Не заполнено",
+    };
+  }
+  if (wholesale.fieldPresence.outletCategory) {
+    const value = wholesale.outletCategory;
+    const trimmed = value?.trim() ?? "";
+    result.onecCategory = {
+      value: trimmed.length > 0 ? value : null,
+      hasSource: true,
+      label: trimmed.length > 0 ? value! : "Не заполнено",
+    };
+  }
+  return result;
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
   const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
@@ -407,6 +458,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   }
 
   Object.assign(item, readCommercialListFields(row.ext_commercial));
+  Object.assign(item, readWholesaleListFields(row.ext_wholesale_exchange));
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);

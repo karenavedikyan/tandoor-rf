@@ -14,6 +14,7 @@ import {
   applyClientLevelFilledEmptyFilters,
 } from "./client-entity-outlet-filter";
 import { applyClientCommercialFilters } from "./commercial-list-filters";
+import { applyClientWholesaleExchangeFilters } from "./wholesale-list-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
 import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
 import { applyClientListAssignmentFilters } from "./list-assignment-filters";
@@ -205,7 +206,9 @@ async function resolveScopedFilter(
     }
     userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
     userFilter = applyClientCommercialFilters(userFilter, input);
+    userFilter = applyClientWholesaleExchangeFilters(userFilter, input);
   }
+
 
   const reviewJoin = buildReviewStateFilter(
     input.reviewState ?? (input.view === "review" ? "any" : "any"),
@@ -369,7 +372,8 @@ export async function listClients(
         onec_clients.extended_snapshot->'regionalManager' AS ext_regional_manager,
         onec_clients.extended_snapshot->'hardwareManager' AS ext_hardware_manager,
         onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales,
-        onec_clients.extended_snapshot->'commercial' AS ext_commercial
+        onec_clients.extended_snapshot->'commercial' AS ext_commercial,
+        onec_clients.extended_snapshot->'wholesaleExchange' AS ext_wholesale_exchange
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}
@@ -528,6 +532,33 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     optionsParams,
   );
 
+  const wholesaleBase = "extended_snapshot->'wholesaleExchange'";
+  const wholesaleScopeSql = directFilter.whereSql
+    ? `${directFilter.whereSql} AND`
+    : "WHERE";
+  const onecTop150Values = await query<{ value: string }>(
+    `
+      SELECT DISTINCT ${wholesaleBase}->>'top150' AS value
+      FROM onec_clients
+      ${wholesaleScopeSql}
+        (${wholesaleBase}->'fieldPresence'->>'top150') = 'true'
+        AND NULLIF(BTRIM(${wholesaleBase}->>'top150'), '') IS NOT NULL
+      ORDER BY value ASC
+    `,
+    directFilter.params,
+  );
+  const onecCategoryValues = await query<{ value: string }>(
+    `
+      SELECT DISTINCT ${wholesaleBase}->>'outletCategory' AS value
+      FROM onec_clients
+      ${wholesaleScopeSql}
+        (${wholesaleBase}->'fieldPresence'->>'outletCategory') = 'true'
+        AND NULLIF(BTRIM(${wholesaleBase}->>'outletCategory'), '') IS NOT NULL
+      ORDER BY value ASC
+    `,
+    directFilter.params,
+  );
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     outletManagers: outletManagers.rows.map((row) => toClientOption(row.id, row.name)),
@@ -535,6 +566,8 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     regionalManagers: regionalManagers.rows.map((row) => toClientOption(row.id, row.name)),
     hardwareManagers: hardwareManagers.rows.map((row) => toClientOption(row.id, row.name)),
     rops: rops.rows.map((row) => toClientOption(row.id, row.name)),
+    onecTop150Values: onecTop150Values.rows.map((row) => toClientOption(row.value, row.value)),
+    onecCategoryValues: onecCategoryValues.rows.map((row) => toClientOption(row.value, row.value)),
   };
 }
 

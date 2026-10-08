@@ -310,6 +310,12 @@ export function syntheticOptionsPayload(
         shortId: "2B4CD6C6",
       },
     ],
+    onecTop150Values: [{ id: "Нет", name: "Нет", shortId: "Нет" }],
+    onecCategoryValues: [
+      { id: "D", name: "D", shortId: "D" },
+      { id: " D ", name: " D ", shortId: " D " },
+      { id: "SYNTH-UNKNOWN", name: "SYNTH-UNKNOWN", shortId: "SYNTH" },
+    ],
   };
 }
 
@@ -325,6 +331,39 @@ export function filterAwareAllListPayload(url: URL) {
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    const onecCategory = url.searchParams.get("onecCategory");
+    if (onecCategory === "SYNTH-UNKNOWN") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Synthetic Client"),
+            onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
+            onecCategory: { value: "SYNTH-UNKNOWN", hasSource: true, label: "SYNTH-UNKNOWN" },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (onecCategory === " D ") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Spaced Category Client"),
+            onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
+            onecCategory: { value: " D ", hasSource: true, label: " D " },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     if (hardwareManager === "77777777-7777-4777-8777-777777777777") {
       return {
         items: [navClientItem(NAV_CLIENT_C1, "Client C1")],

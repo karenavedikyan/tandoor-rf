@@ -8,6 +8,7 @@ import {
 import { rosterIncomingDiffersFromStored } from "../onec-clients/roster-field-values";
 import { loadExistingRoster } from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
+import { wholesaleExchangeIncomingDiffersFromStored } from "../onec-clients/wholesale-exchange-persisted-diff";
 import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
 
 export type RegularUpdateApplyGateResult =
@@ -73,7 +74,9 @@ export async function runRegularUpdateApplyGate(
   const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
   if (lastFingerprint && lastFingerprint === actualFingerprint) {
     const existingRoster = await loadExistingRoster(client);
-    if (!rosterIncomingDiffersFromStored(existingRoster, input.roster)) {
+    const rosterUnchanged = !rosterIncomingDiffersFromStored(existingRoster, input.roster);
+    const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
+    if (rosterUnchanged && wholesaleUnchanged) {
       return { ok: true, unchangedBundle: true };
     }
   }

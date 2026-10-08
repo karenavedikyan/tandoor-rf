@@ -66,6 +66,8 @@
     "loadingTime",
     "loadingSchedule",
     "discountProgram",
+    "onecTop150",
+    "onecCategory",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -116,6 +118,8 @@
     { value: "lprBonus", label: "Бонус ЛПР пуст" },
     { value: "lprConditionsBonus", label: "Условия бонуса ЛПР пусты" },
     { value: "discountProgram", label: "Discount пуст" },
+    { value: "onecTop150", label: "ТОП-150 (1С) пуст" },
+    { value: "onecCategory", label: "Категория 1С пуста" },
     { value: "discountAmount", label: "DiscountAmount пуст" },
     { value: "markups", label: "Markups пуст" },
   ];
@@ -125,12 +129,16 @@
     telephone: true,
     holding: true,
     discountProgram: true,
+    onecTop150: true,
+    onecCategory: true,
     discountAmount: true,
     markups: true,
   };
 
   var CLIENT_ONLY_VALUE_FILTER_KEYS = [
     "discountProgram",
+    "onecTop150",
+    "onecCategory",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -154,6 +162,8 @@
 
   function clearClientCommercialFilters(state) {
     state.discountProgram = "";
+    state.onecTop150 = "";
+    state.onecCategory = "";
     state.discountAmountMin = "";
     state.discountAmountMax = "";
     state.markupName = "";
@@ -189,6 +199,8 @@
     { value: "lprBonus", label: "Бонус ЛПР заполнен" },
     { value: "lprConditionsBonus", label: "Условия бонуса ЛПР заполнены" },
     { value: "discountProgram", label: "Discount заполнен" },
+    { value: "onecTop150", label: "ТОП-150 (1С) заполнен" },
+    { value: "onecCategory", label: "Категория 1С заполнена" },
     { value: "discountAmount", label: "DiscountAmount заполнен" },
     { value: "markups", label: "Markups заполнен" },
   ];
@@ -198,6 +210,8 @@
     { id: "code1c", label: "Код 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "inn", label: "ИНН", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "category", label: "Категория", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "onecTop150", label: "ТОП-150 (1С)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "onecCategory", label: "Категория 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "holding", label: "Холдинг", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "address", label: "Адрес", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "city", label: "Город", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
@@ -522,6 +536,8 @@
       loadingTime: params.get("loadingTime") || "",
       loadingSchedule: params.get("loadingSchedule") || "all",
       discountProgram: params.get("discountProgram") || "",
+      onecTop150: params.get("onecTop150") || "",
+      onecCategory: params.get("onecCategory") || "",
       discountAmountMin: params.get("discountAmountMin") || "",
       discountAmountMax: params.get("discountAmountMax") || "",
       markupName: params.get("markupName") || "",
@@ -825,6 +841,8 @@
       params.set("loadingSchedule", state.loadingSchedule);
     }
     if (state.discountProgram) params.set("discountProgram", state.discountProgram);
+    if (state.onecTop150) params.set("onecTop150", state.onecTop150);
+    if (state.onecCategory) params.set("onecCategory", state.onecCategory);
     if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
     if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
     if (state.markupName) params.set("markupName", state.markupName);

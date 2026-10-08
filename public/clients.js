@@ -127,6 +127,8 @@
   var filledFieldFilter = document.getElementById("filled-field-filter");
   var emptyFieldFilter = document.getElementById("empty-field-filter");
   var discountProgramFilter = document.getElementById("discount-program-filter");
+  var onecTop150Filter = document.getElementById("onec-top150-filter");
+  var onecCategoryFilter = document.getElementById("onec-category-filter");
   var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
   var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
   var markupNameFilter = document.getElementById("markup-name-filter");
@@ -872,6 +874,8 @@
       loadingTime: loadingTimeFilter ? loadingTimeFilter.value.trim() : "",
       loadingSchedule: loadingScheduleFilter ? loadingScheduleFilter.value || "all" : "all",
       discountProgram: discountProgramFilter ? discountProgramFilter.value.trim() : "",
+      onecTop150: onecTop150Filter ? onecTop150Filter.value : "",
+      onecCategory: onecCategoryFilter ? onecCategoryFilter.value : "",
       discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
       discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
@@ -1024,6 +1028,8 @@
     if (filledFieldFilter) filledFieldFilter.value = state.filled || "";
     if (emptyFieldFilter) emptyFieldFilter.value = state.empty || "";
     if (discountProgramFilter) discountProgramFilter.value = state.discountProgram || "";
+    if (onecTop150Filter) onecTop150Filter.value = state.onecTop150 || "";
+    if (onecCategoryFilter) onecCategoryFilter.value = state.onecCategory || "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
@@ -1742,6 +1748,18 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.discountAmount.label || "—");
+    }
+    if (columnId === "onecTop150") {
+      if (!item.onecTop150 || !item.onecTop150.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecTop150.label || "—");
+    }
+    if (columnId === "onecCategory") {
+      if (!item.onecCategory || !item.onecCategory.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecCategory.label || "—");
     }
     return renderNoDataCell();
   }
@@ -3671,6 +3689,28 @@
       regionalOptions = result.data.regionalManagers || [];
       hardwareOptions = result.data.hardwareManagers || [];
       ropOptions = result.data.rops || [];
+      if (onecTop150Filter) {
+        var top150Current = onecTop150Filter.value;
+        onecTop150Filter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecTop150Values || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecTop150Filter.appendChild(option);
+        });
+        onecTop150Filter.value = top150Current;
+      }
+      if (onecCategoryFilter) {
+        var categoryCurrent = onecCategoryFilter.value;
+        onecCategoryFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecCategoryValues || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecCategoryFilter.appendChild(option);
+        });
+        onecCategoryFilter.value = categoryCurrent;
+      }
       if (ropCombobox) {
         ropCombobox.syncFromUrl(ropFilter.value);
       }
@@ -3992,6 +4032,8 @@
     if (loadingTimeFilter) loadingTimeFilter.value = "";
     if (loadingScheduleFilter) loadingScheduleFilter.value = "all";
     if (discountProgramFilter) discountProgramFilter.value = "";
+    if (onecTop150Filter) onecTop150Filter.value = "";
+    if (onecCategoryFilter) onecCategoryFilter.value = "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
     if (markupNameFilter) markupNameFilter.value = "";
@@ -4049,6 +4091,8 @@
       regionalManager: "",
       tandoorClub: "",
       discountProgram: "",
+      onecTop150: "",
+      onecCategory: "",
       discountAmountMin: "",
       discountAmountMax: "",
       markupName: "",
@@ -4218,6 +4262,15 @@
       el.addEventListener("input", function () {
         invalidateInFlightRequests();
         scheduleLoad(true, true);
+      });
+    });
+  [onecTop150Filter, onecCategoryFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("change", function () {
+        cancelScheduledLoad();
+        invalidateInFlightRequests();
+        scheduleLoad(true, false);
       });
     });
   [lprDobFilter, lprDobFromFilter, lprDobToFilter]
