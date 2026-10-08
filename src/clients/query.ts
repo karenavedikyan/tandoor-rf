@@ -117,6 +117,8 @@ export type ClientsListQuery = {
   onecOgrn?: string;
   onecPrimaryContractContains?: string;
   onecMainAgreementContains?: string;
+  onecCode1c?: string;
+  onecCode1cContains?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;
@@ -551,6 +553,25 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     };
   }
 
+  const onecCode1c = parseExactFilterField(input.onecCode1c);
+  if (onecCode1c === null) {
+    return { ok: false, message: "Некорректный фильтр кода 1С." };
+  }
+  if (entityRaw === "outlets" && onecCode1c) {
+    return { ok: false, message: "Поле «onecCode1c» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecCode1cContains = parseOptionalSearchField(input.onecCode1cContains, "onecCode1cContains");
+  if (onecCode1cContains === null) {
+    return { ok: false, message: "Некорректный фильтр кода 1С (contains)." };
+  }
+  if (entityRaw === "outlets" && onecCode1cContains) {
+    return {
+      ok: false,
+      message: "Поле «onecCode1cContains» недоступно для фильтрации в режиме торговых точек.",
+    };
+  }
+
   const discountAmountMin = parseOptionalStrictNumber(input.discountAmountMin);
   if (discountAmountMin === null) {
     return { ok: false, message: "Некорректный минимум DiscountAmount." };
@@ -926,6 +947,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       onecOgrn,
       onecPrimaryContractContains,
       onecMainAgreementContains,
+      onecCode1c,
+      onecCode1cContains,
       discountAmountMin,
       discountAmountMax,
       markupName,
@@ -1095,6 +1118,8 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.onecOgrn ||
       query.onecPrimaryContractContains ||
       query.onecMainAgreementContains ||
+      query.onecCode1c ||
+      query.onecCode1cContains ||
       query.discountAmountMin !== undefined ||
       query.discountAmountMax !== undefined ||
       query.markupName ||

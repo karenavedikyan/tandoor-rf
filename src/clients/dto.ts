@@ -16,6 +16,10 @@ import {
   type ParsedCounterpartyExchange,
 } from "../onec-clients/counterparty-exchange-fields";
 import {
+  hasAnyClientCodeExchangeField,
+  type ParsedClientCodeExchange,
+} from "../onec-clients/client-code-exchange-fields";
+import {
   hasAnyClientContractExchangeField,
   type ParsedClientContractExchange,
 } from "../onec-clients/client-contract-exchange-fields";
@@ -113,6 +117,11 @@ export type ClientListItemDto = {
     label: string;
   };
   onecMainAgreement?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  code1c?: {
     value: string | null;
     hasSource: boolean;
     label: string;
@@ -302,6 +311,7 @@ type ClientRow = {
   ext_wholesale_exchange?: unknown;
   ext_counterparty?: unknown;
   ext_client_contract?: unknown;
+  ext_client_code?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -529,6 +539,28 @@ function readClientContractListFields(
   return result;
 }
 
+function readClientCodeListFields(raw: unknown): Pick<ClientListItemDto, "code1c"> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const cc = raw as ParsedClientCodeExchange;
+  if (!hasAnyClientCodeExchangeField(cc)) {
+    return {};
+  }
+  if (!cc.fieldPresence.code1c) {
+    return {};
+  }
+  const trimmed = cc.code1c?.trim() ?? "";
+  const empty = trimmed.length === 0;
+  return {
+    code1c: {
+      value: empty ? null : cc.code1c,
+      hasSource: true,
+      label: empty ? "Не заполнено" : cc.code1c!,
+    },
+  };
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
   const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
@@ -573,6 +605,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   Object.assign(item, readWholesaleListFields(row.ext_wholesale_exchange));
   Object.assign(item, readCounterpartyListFields(row.ext_counterparty));
   Object.assign(item, readClientContractListFields(row.ext_client_contract));
+  Object.assign(item, readClientCodeListFields(row.ext_client_code));
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);

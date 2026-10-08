@@ -32,6 +32,10 @@ import {
   type ParsedClientCommercial,
 } from "../onec-clients/commercial-fields";
 import {
+  hasAnyClientCodeExchangeField,
+  readSnapshotClientCodeExchange,
+} from "../onec-clients/client-code-exchange-fields";
+import {
   hasAnyClientContractExchangeField,
   readSnapshotClientContractExchange,
 } from "../onec-clients/client-contract-exchange-fields";
@@ -142,6 +146,10 @@ export type ClientContractDto = {
   mainAgreement: ClientCommercialFieldDto;
 };
 
+export type ClientCodeDto = {
+  code1c: ClientCommercialFieldDto;
+};
+
 export type BlockFreshnessEntryDto = {
   state: ExtendedFreshnessState;
   label: string;
@@ -183,6 +191,7 @@ export type ClientExtendedDto = {
   wholesaleExchange?: ClientWholesaleExchangeDto | null;
   counterparty?: ClientCounterpartyDto | null;
   clientContract?: ClientContractDto | null;
+  clientCode?: ClientCodeDto | null;
   retailOutlets: RetailOutletDto[];
   retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
@@ -339,6 +348,16 @@ function toClientCounterpartyDto(snapshot: ExtendedSnapshot | null): ClientCount
     fullName: commercialStringPresentation(cp.fieldPresence.fullName, cp.fullName),
     legalEntityType: commercialStringPresentation(cp.fieldPresence.legalEntityType, cp.legalEntityType),
     ogrn: commercialStringPresentation(cp.fieldPresence.ogrn, cp.ogrn),
+  };
+}
+
+function toClientCodeDto(snapshot: ExtendedSnapshot | null): ClientCodeDto | null {
+  const cc = readSnapshotClientCodeExchange(snapshot);
+  if (!cc || !hasAnyClientCodeExchangeField(cc)) {
+    return null;
+  }
+  return {
+    code1c: commercialStringPresentation(cc.fieldPresence.code1c, cc.code1c),
   };
 }
 
@@ -1126,6 +1145,7 @@ export function toClientExtendedDto(
     wholesaleExchange: toClientWholesaleExchangeDto(snapshot),
     counterparty: toClientCounterpartyDto(snapshot),
     clientContract: toClientContractDto(snapshot),
+    clientCode: toClientCodeDto(snapshot),
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
     retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,

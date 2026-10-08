@@ -12,6 +12,7 @@ import {
   loadExistingTeamGroups,
 } from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
+import { clientCodeExchangeIncomingDiffersFromStored } from "../onec-clients/client-code-persisted-diff";
 import { clientContractExchangeIncomingDiffersFromStored } from "../onec-clients/client-contract-persisted-diff";
 import { counterpartyExchangeIncomingDiffersFromStored } from "../onec-clients/counterparty-persisted-diff";
 import { wholesaleExchangeIncomingDiffersFromStored } from "../onec-clients/wholesale-exchange-persisted-diff";
@@ -91,7 +92,14 @@ export async function runRegularUpdateApplyGate(
     const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
     const counterpartyUnchanged = !(await counterpartyExchangeIncomingDiffersFromStored(client, input.payload));
     const clientContractUnchanged = !(await clientContractExchangeIncomingDiffersFromStored(client, input.payload));
-    if (rosterUnchanged && wholesaleUnchanged && counterpartyUnchanged && clientContractUnchanged) {
+    const clientCodeUnchanged = !(await clientCodeExchangeIncomingDiffersFromStored(client, input.payload));
+    if (
+      rosterUnchanged &&
+      wholesaleUnchanged &&
+      counterpartyUnchanged &&
+      clientContractUnchanged &&
+      clientCodeUnchanged
+    ) {
       return { ok: true, unchangedBundle: true };
     }
   }

@@ -25,6 +25,7 @@ export type ExtendedBusinessProjection = {
   wholesaleExchange: import("./wholesale-client-exchange-fields").SnapshotWholesaleClientExchange | null;
   counterparty: import("./counterparty-exchange-fields").SnapshotCounterpartyExchange | null;
   clientContract: import("./client-contract-exchange-fields").SnapshotClientContractExchange | null;
+  clientCode: import("./client-code-exchange-fields").SnapshotClientCodeExchange | null;
   currentRetailOutlets: OutletBusinessProjection[];
 };
 
@@ -45,6 +46,7 @@ export function extendedBusinessProjection(snapshot: ExtendedSnapshot | null): E
     wholesaleExchange: snapshot.wholesaleExchange ?? null,
     counterparty: snapshot.counterparty ?? null,
     clientContract: snapshot.clientContract ?? null,
+    clientCode: snapshot.clientCode ?? null,
     currentRetailOutlets: snapshot.currentRetailOutlets.map(outletBusinessProjection),
   };
 }

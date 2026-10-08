@@ -335,6 +335,26 @@ export function filterAwareAllListPayload(url: URL) {
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    const onecCode1cContains = url.searchParams.get("onecCode1cContains");
+    if (onecCode1cContains === "Browser-F5") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F5 Synthetic Client"),
+            code1c: {
+              value: "0012345-Browser-F5",
+              hasSource: true,
+              label: "0012345-Browser-F5",
+            },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     const onecPrimaryContractContains = url.searchParams.get("onecPrimaryContractContains");
     if (onecPrimaryContractContains === "Browser-F4") {
       return {

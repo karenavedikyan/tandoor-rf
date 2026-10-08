@@ -135,6 +135,8 @@
   var onecOgrnFilter = document.getElementById("onec-ogrn-filter");
   var onecPrimaryContractFilter = document.getElementById("onec-primary-contract-filter");
   var onecMainAgreementFilter = document.getElementById("onec-main-agreement-filter");
+  var onecCode1cFilter = document.getElementById("onec-code1c-filter");
+  var onecCode1cContainsFilter = document.getElementById("onec-code1c-contains-filter");
   var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
   var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
   var markupNameFilter = document.getElementById("markup-name-filter");
@@ -1033,6 +1035,8 @@
       onecOgrn: onecOgrnFilter ? onecOgrnFilter.value : "",
       onecPrimaryContractContains: onecPrimaryContractFilter ? onecPrimaryContractFilter.value.trim() : "",
       onecMainAgreementContains: onecMainAgreementFilter ? onecMainAgreementFilter.value.trim() : "",
+      onecCode1c: onecCode1cFilter ? onecCode1cFilter.value : "",
+      onecCode1cContains: onecCode1cContainsFilter ? onecCode1cContainsFilter.value.trim() : "",
       discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
       discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
@@ -1195,6 +1199,8 @@
       onecPrimaryContractFilter.value = state.onecPrimaryContractContains || "";
     }
     if (onecMainAgreementFilter) onecMainAgreementFilter.value = state.onecMainAgreementContains || "";
+    if (onecCode1cFilter) onecCode1cFilter.value = state.onecCode1c || "";
+    if (onecCode1cContainsFilter) onecCode1cContainsFilter.value = state.onecCode1cContains || "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
@@ -1961,6 +1967,12 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.onecMainAgreement.label || "—");
+    }
+    if (columnId === "code1c") {
+      if (!item.code1c || !item.code1c.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.code1c.label || "—");
     }
     return renderNoDataCell();
   }
@@ -4263,6 +4275,8 @@
     if (onecOgrnFilter) onecOgrnFilter.value = "";
     if (onecPrimaryContractFilter) onecPrimaryContractFilter.value = "";
     if (onecMainAgreementFilter) onecMainAgreementFilter.value = "";
+    if (onecCode1cFilter) onecCode1cFilter.value = "";
+    if (onecCode1cContainsFilter) onecCode1cContainsFilter.value = "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
     if (markupNameFilter) markupNameFilter.value = "";
@@ -4328,6 +4342,8 @@
       onecOgrn: "",
       onecPrimaryContractContains: "",
       onecMainAgreementContains: "",
+      onecCode1c: "",
+      onecCode1cContains: "",
       discountAmountMin: "",
       discountAmountMax: "",
       markupName: "",
@@ -4508,6 +4524,8 @@
     onecOgrnFilter,
     onecPrimaryContractFilter,
     onecMainAgreementFilter,
+    onecCode1cFilter,
+    onecCode1cContainsFilter,
   ]
     .filter(Boolean)
     .forEach(function (el) {
