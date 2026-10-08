@@ -1,5 +1,9 @@
 import type { WholesaleEmployeeRecord } from "./employee-roster";
-import { hasRosterRawKey } from "./roster-field-values";
+import {
+  hasRosterRawKey,
+  resolveTeamFieldValues,
+  type LegacyTeamExistingFields,
+} from "./roster-field-values";
 import { isNullUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
 export type WholesaleEmployeeTeamEntry = {
@@ -239,6 +243,18 @@ export function existingMembershipsForStoredRecord(
   return [];
 }
 
+function legacyTeamExistingFields(
+  existing: ExistingEmployeeTeamMembershipRow[],
+): LegacyTeamExistingFields | undefined {
+  if (existing.length !== 1) {
+    return undefined;
+  }
+  return {
+    guid_team: existing[0]!.guid_team,
+    name_team: existing[0]!.name_team,
+  };
+}
+
 export function resolveEmployeeTeamMemberships(
   record: WholesaleEmployeeRecord,
   existingMemberships: ExistingEmployeeTeamMembershipRow[] | undefined,
@@ -255,40 +271,36 @@ export function resolveEmployeeTeamMemberships(
   if (hasGuidKey && record.guidTeam === null) {
     return [];
   }
-  if (incoming.entries.length > 0) {
-    return incoming.entries.map((entry) => ({
-      guidTeam: entry.guidTeam,
-      nameTeam: entry.nameTeam,
-    }));
-  }
+
   const existing = existingMemberships ?? [];
-  if (hasNameKey && !hasGuidKey) {
-    if (existing.length === 0) {
-      return [];
-    }
+  if (!hasGuidKey && !hasNameKey) {
     return existing.map((row) => ({
       guidTeam: normalizeUuid(row.guid_team)!,
-      nameTeam: record.nameTeam ?? row.name_team,
+      nameTeam: row.name_team,
     }));
   }
-  if (hasGuidKey && !hasNameKey) {
-    const newGuid = record.guidTeam;
-    if (!newGuid) {
-      return [];
-    }
-    const prior = existing.find((row) => normalizeUuid(row.guid_team) === newGuid);
-    return [{ guidTeam: newGuid, nameTeam: prior?.name_team ?? null }];
+
+  if (existing.length > 1) {
+    return existing.map((row) => ({
+      guidTeam: normalizeUuid(row.guid_team)!,
+      nameTeam: row.name_team,
+    }));
   }
-  if (hasGuidKey && hasNameKey) {
-    if (!record.guidTeam) {
-      return [];
-    }
-    return [{ guidTeam: record.guidTeam, nameTeam: record.nameTeam }];
+
+  const team = resolveTeamFieldValues(
+    record.raw,
+    { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
+    legacyTeamExistingFields(existing),
+  );
+  if (!team.guidTeam) {
+    return [];
   }
-  return existing.map((row) => ({
-    guidTeam: normalizeUuid(row.guid_team)!,
-    nameTeam: row.name_team,
-  }));
+  return [
+    {
+      guidTeam: normalizeUuid(team.guidTeam)!,
+      nameTeam: team.nameTeam,
+    },
+  ];
 }
 
 function syncLegacyTeamColumns(

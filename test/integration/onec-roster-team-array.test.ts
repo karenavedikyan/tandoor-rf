@@ -179,6 +179,35 @@ describe("onec roster team[] integration", { concurrency: false }, () => {
     assert.equal(memberships.rows[0]?.guid_team, TEAM_A);
   });
 
+  it("preserves legacy membership name on guid_team-only update in 039-shaped storage", async () => {
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const legacyRoster = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A, name_team: "Old" }),
+    ]);
+    await applyBundle(databaseUrl, clientsBytes, legacyRoster);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DELETE FROM onec_wholesale_employee_team_memberships`);
+    await pool.end();
+
+    const guidOnly = buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A })]);
+    const applied = await applyBundle(databaseUrl, clientsBytes, guidOnly);
+    assert.equal(applied.status, "SUCCESS");
+
+    const verify = new Pool({ connectionString: databaseUrl, max: 1 });
+    const membership = await verify.query<{ name_team: string | null }>(
+      `SELECT name_team FROM onec_wholesale_employee_team_memberships WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    const roster = await verify.query<{ name_team: string | null }>(
+      `SELECT name_team FROM onec_wholesale_employee_roster WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    await verify.end();
+    assert.equal(membership.rows[0]?.name_team, "Old");
+    assert.equal(roster.rows[0]?.name_team, "Old");
+  });
+
   it("updates legacy name_team without clearing 039-shaped membership and stabilizes re-apply", async () => {
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const legacyRoster = buildEmployeeRosterBytes([

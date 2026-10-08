@@ -136,6 +136,60 @@ describe("onec roster team[] parser", () => {
     assert.equal(resolved.length, 0);
   });
 
+  it("applies G1 legacy pair semantics for partial team field updates", () => {
+    const cases = [
+      {
+        label: "guid only preserves stored name",
+        entry: { guid_team: TEAM_A },
+        existing: [{ guid_team: TEAM_A, name_team: "Old" }],
+        expected: [{ guidTeam: TEAM_A, nameTeam: "Old" }],
+      },
+      {
+        label: "name null clears display name",
+        entry: { name_team: null },
+        existing: [{ guid_team: TEAM_A, name_team: "Old" }],
+        expected: [{ guidTeam: TEAM_A, nameTeam: null }],
+      },
+      {
+        label: "name rename",
+        entry: { name_team: "New" },
+        existing: [{ guid_team: TEAM_A, name_team: "Old" }],
+        expected: [{ guidTeam: TEAM_A, nameTeam: "New" }],
+      },
+      {
+        label: "guid change without name resets display name",
+        entry: { guid_team: TEAM_B },
+        existing: [{ guid_team: TEAM_A, name_team: "Old" }],
+        expected: [{ guidTeam: TEAM_B, nameTeam: null }],
+      },
+    ] as const;
+    for (const item of cases) {
+      const parsed = parseWholesaleEmployeeRosterBytes(
+        buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, item.entry)]),
+      );
+      assert.equal(parsed.ok, true, item.label);
+      if (!parsed.ok) continue;
+      const resolved = resolveEmployeeTeamMemberships(parsed.roster.records[0]!, [...item.existing]);
+      assert.deepEqual(resolved, item.expected, item.label);
+    }
+  });
+
+  it("does not broadcast legacy name_team to multiple memberships", () => {
+    const parsed = parseWholesaleEmployeeRosterBytes(
+      buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, { name_team: "New" })]),
+    );
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    const resolved = resolveEmployeeTeamMemberships(parsed.roster.records[0]!, [
+      { guid_team: TEAM_A, name_team: "Alpha" },
+      { guid_team: TEAM_B, name_team: "Beta" },
+    ]);
+    assert.deepEqual(
+      resolved.map((row) => row.nameTeam),
+      ["Alpha", "Beta"],
+    );
+  });
+
   it("preserves memberships on legacy name_team rename without guid_team", () => {
     const parsed = parseWholesaleEmployeeRosterBytes(
       buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, { name_team: "Renamed Team" })]),

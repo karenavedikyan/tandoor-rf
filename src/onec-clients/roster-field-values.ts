@@ -26,12 +26,15 @@ export type ResolvedRosterFieldValues = {
   telephone: string | null;
 };
 
-type ExistingRosterFieldValues = {
+export type LegacyTeamExistingFields = {
+  guid_team: string | null;
+  name_team: string | null;
+};
+
+type ExistingRosterFieldValues = LegacyTeamExistingFields & {
   name_manager: string;
   guid_post: string | null;
   post: string | null;
-  guid_team: string | null;
-  name_team: string | null;
   condition: string | null;
   date_of_assumption: string | null;
   guid_work_schedule: string | null;
@@ -76,7 +79,7 @@ function resolveApplyValue<T>(
 export function resolveTeamFieldValues(
   raw: Record<string, unknown>,
   parsed: { guidTeam: string | null; nameTeam: string | null },
-  existing: ExistingRosterFieldValues | undefined,
+  existing: LegacyTeamExistingFields | undefined,
 ): { guidTeam: string | null; nameTeam: string | null } {
   const hasGuidKey = hasRosterRawKey(raw, "guid_team");
   const hasNameKey = hasRosterRawKey(raw, "name_team");

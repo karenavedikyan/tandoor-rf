@@ -498,7 +498,10 @@
         compactTeamsRenderToken += 1;
       }
       writeStateToUrl(merged, false);
-      if (usesOnecTeamSource(merged) && usesDirectorLayout() && !merged.ropEmployee) {
+      if (
+        usesOnecTeamSource(merged) &&
+        ((usesDirectorLayout() && !merged.ropEmployee) || isRopDesignSession())
+      ) {
         var fetchGen = onecTeamsFetchGeneration;
         var requestState = Object.assign({}, merged);
         loadTeamsContext(requestState, fetchGen).then(function () {
@@ -3433,7 +3436,7 @@
       return Promise.resolve({ ok: true });
     }
     var requests = [];
-    if (!state.ropEmployee && usesOnecTeamSource(state)) {
+    if (usesOnecTeamSource(state) && (!state.ropEmployee || isRopDesignSession())) {
       var fetchGen = fetchGeneration != null ? fetchGeneration : bumpOnecTeamsFetchGeneration();
       var requestState = Object.assign({}, state);
       var requestUrl = buildOnecTeamsApiUrl(requestState);

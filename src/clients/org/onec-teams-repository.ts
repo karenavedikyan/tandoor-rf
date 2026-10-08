@@ -200,7 +200,10 @@ async function loadRosterNameMap(): Promise<Map<string, string>> {
 }
 
 function scopedClientFilter(context: AccessContext, clientAlias = "onec_clients") {
-  const scope = buildClientScopeSql(context);
+  const scope = buildClientScopeSql(context, {
+    ropDirectClientList: context.role === "rop",
+    managerDirectClientList: context.role === "manager",
+  });
   const scopedForAlias = {
     whereSql: scope.whereSql.replaceAll("onec_clients.", `${clientAlias}.`),
     params: scope.params,
