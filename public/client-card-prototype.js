@@ -269,7 +269,22 @@
       '<div class="pc-grid pc-three">' +
       card("Холдинг и ответственность", '<div class="pc-pad">' +
         detailsBlock("Основные сведения и холдинг",
-          field("Клиент / категория", (client.name || "Не указан") + " · категория не передана", true) +
+          field("Клиент", client.name || "Не указан", true) +
+          field(
+            "ТОП-150 (1С)",
+            ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.label,
+            !!(ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.hasSource),
+          ) +
+          field(
+            "Категория 1С",
+            ext && ext.wholesaleExchange && ext.wholesaleExchange.outletCategory && ext.wholesaleExchange.outletCategory.label,
+            !!(
+              ext &&
+              ext.wholesaleExchange &&
+              ext.wholesaleExchange.outletCategory &&
+              ext.wholesaleExchange.outletCategory.hasSource
+            ),
+          ) +
           field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext),
           true) +
         detailsBlock("Ответственные",
@@ -284,6 +299,14 @@
             field("Discount", ext.commercial.discountProgram && ext.commercial.discountProgram.label, !!(ext.commercial.discountProgram && ext.commercial.discountProgram.hasSource)) +
             field("DiscountAmount", ext.commercial.discountAmount && ext.commercial.discountAmount.label, !!(ext.commercial.discountAmount && ext.commercial.discountAmount.hasSource)) +
             field("Markups", ext.commercial.markups && ext.commercial.markups.label, !!(ext.commercial.markups && ext.commercial.markups.hasSource)),
+            false)
+          : "") +
+        (ext && ext.counterparty
+          ? detailsBlock("Контрагент и реквизиты",
+            field("Контрагент", ext.counterparty.counterparty && ext.counterparty.counterparty.label, !!(ext.counterparty.counterparty && ext.counterparty.counterparty.hasSource)) +
+            field("Полное наименование", ext.counterparty.fullName && ext.counterparty.fullName.label, !!(ext.counterparty.fullName && ext.counterparty.fullName.hasSource)) +
+            field("Тип контрагента", ext.counterparty.legalEntityType && ext.counterparty.legalEntityType.label, !!(ext.counterparty.legalEntityType && ext.counterparty.legalEntityType.hasSource)) +
+            field("ОГРН", ext.counterparty.ogrn && ext.counterparty.ogrn.label, !!(ext.counterparty.ogrn && ext.counterparty.ogrn.hasSource)),
             false)
           : "") +
         detailsBlock("Контакты клиента",

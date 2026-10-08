@@ -127,6 +127,12 @@
   var filledFieldFilter = document.getElementById("filled-field-filter");
   var emptyFieldFilter = document.getElementById("empty-field-filter");
   var discountProgramFilter = document.getElementById("discount-program-filter");
+  var onecTop150Filter = document.getElementById("onec-top150-filter");
+  var onecCategoryFilter = document.getElementById("onec-category-filter");
+  var onecCounterpartyFilter = document.getElementById("onec-counterparty-filter");
+  var onecFullNameFilter = document.getElementById("onec-full-name-filter");
+  var onecLegalTypeFilter = document.getElementById("onec-legal-type-filter");
+  var onecOgrnFilter = document.getElementById("onec-ogrn-filter");
   var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
   var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
   var markupNameFilter = document.getElementById("markup-name-filter");
@@ -331,6 +337,37 @@
   var compactTeamsRenderToken = 0;
   var onecTeamsFetchGeneration = 0;
   var onecTeamsFetchAbortController = null;
+  var onecTeamsOverviewRenderSignature = "";
+
+  function onecTeamsOverviewRenderSignatureFromContext(renderState) {
+    return JSON.stringify({
+      ui: {
+        teamExpand: (renderState && renderState.teamExpand) || [],
+        teamQ: (renderState && renderState.teamQ) || "",
+        onecTeam: (renderState && renderState.onecTeam) || "",
+      },
+      loadError: teamContext.onecLoadError,
+      errorMessage: teamContext.onecErrorMessage || "",
+      groups: (teamContext.onecGroups || []).map(function (group) {
+        return {
+          teamGuid: group.teamGuid,
+          displayName: group.displayName,
+          nameStatus: group.nameStatus,
+          memberCount: group.memberCount,
+          uniqueClientCount: group.uniqueClientCount,
+          uniqueOutletCount: group.uniqueOutletCount,
+          members: (group.members || []).map(function (member) {
+            return {
+              employeeGuid: member.employeeGuid,
+              clientCount: member.clientCount,
+              outletCount: member.outletCount,
+              name: member.name,
+            };
+          }),
+        };
+      }),
+    });
+  }
 
   function getCompactTeams() {
     if (!compactTeams && window.ClientsTeamsCompact) {
@@ -360,7 +397,52 @@
     return compactTeams;
   }
 
+  var onecMemberPortfolioDelegationMounted = false;
+
+  function mountOnecMemberPortfolioDelegation() {
+    if (onecMemberPortfolioDelegationMounted || !teamsPanelEl) {
+      return;
+    }
+    onecMemberPortfolioDelegationMounted = true;
+    teamsPanelEl.addEventListener("click", function (event) {
+      var btn = event.target.closest("[data-onec-member-portfolio]");
+      if (!btn) {
+        return;
+      }
+      var state = getCurrentTeamsOverviewState();
+      if (!usesOnecTeamSource(state)) {
+        return;
+      }
+      event.stopPropagation();
+      var onecModule = getOnecTeams();
+      if (!onecModule) {
+        return;
+      }
+      var employeeGuid = btn.getAttribute("data-employee-guid") || "";
+      var portfolio = btn.getAttribute("data-onec-member-portfolio") || "clients";
+      var section = btn.closest(".clients-onec-team");
+      var teamKey = section ? section.getAttribute("data-onec-team") : "";
+      var group = (teamContext.onecGroups || []).find(function (item) {
+        return onecModule.teamExpandKey(item) === teamKey;
+      });
+      if (!group) {
+        return;
+      }
+      var member = (group.members || []).find(function (item) {
+        return item.employeeGuid === employeeGuid;
+      });
+      if (member) {
+        navigateOnecTeamMember(state, member, group, portfolio);
+        return;
+      }
+      if (group.leader && group.leader.employeeGuid === employeeGuid) {
+        navigateOnecTeamMember(state, group.leader, group, portfolio);
+      }
+    });
+  }
+
   function getOnecTeams() {
+    mountOnecMemberPortfolioDelegation();
     if (!compactOnecTeams && window.ClientsOnecTeams) {
       compactOnecTeams = window.ClientsOnecTeams.create({
         api: api,
@@ -565,7 +647,20 @@
       return Promise.resolve();
     }
     var searchCaret = readSearchInputFocus();
-    if (!teamsPanelEl.querySelector(".clients-compact-team-toolbar")) {
+    var renderSignature = onecTeamsOverviewRenderSignatureFromContext(renderState);
+    if (
+      renderSignature === onecTeamsOverviewRenderSignature &&
+      teamsPanelEl.querySelector(".clients-onec-team-list .clients-onec-team")
+    ) {
+      restoreSearchInputFocus(searchCaret);
+      return Promise.resolve();
+    }
+    onecTeamsOverviewRenderSignature = renderSignature;
+    if (
+      !teamsPanelEl.querySelector(".clients-compact-team-toolbar") &&
+      !(teamContext.onecGroups && teamContext.onecGroups.length)
+    ) {
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
       teamsPanelEl.innerHTML =
         '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка групп из 1С…</div>';
     }
@@ -928,6 +1023,12 @@
       loadingTime: loadingTimeFilter ? loadingTimeFilter.value.trim() : "",
       loadingSchedule: loadingScheduleFilter ? loadingScheduleFilter.value || "all" : "all",
       discountProgram: discountProgramFilter ? discountProgramFilter.value.trim() : "",
+      onecTop150: onecTop150Filter ? onecTop150Filter.value : "",
+      onecCategory: onecCategoryFilter ? onecCategoryFilter.value : "",
+      onecCounterpartyContains: onecCounterpartyFilter ? onecCounterpartyFilter.value.trim() : "",
+      onecFullNameContains: onecFullNameFilter ? onecFullNameFilter.value.trim() : "",
+      onecLegalEntityType: onecLegalTypeFilter ? onecLegalTypeFilter.value : "",
+      onecOgrn: onecOgrnFilter ? onecOgrnFilter.value : "",
       discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
       discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
@@ -1080,6 +1181,12 @@
     if (filledFieldFilter) filledFieldFilter.value = state.filled || "";
     if (emptyFieldFilter) emptyFieldFilter.value = state.empty || "";
     if (discountProgramFilter) discountProgramFilter.value = state.discountProgram || "";
+    if (onecTop150Filter) onecTop150Filter.value = state.onecTop150 || "";
+    if (onecCategoryFilter) onecCategoryFilter.value = state.onecCategory || "";
+    if (onecCounterpartyFilter) onecCounterpartyFilter.value = state.onecCounterpartyContains || "";
+    if (onecFullNameFilter) onecFullNameFilter.value = state.onecFullNameContains || "";
+    if (onecLegalTypeFilter) onecLegalTypeFilter.value = state.onecLegalEntityType || "";
+    if (onecOgrnFilter) onecOgrnFilter.value = state.onecOgrn || "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
@@ -1798,6 +1905,42 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.discountAmount.label || "—");
+    }
+    if (columnId === "onecTop150") {
+      if (!item.onecTop150 || !item.onecTop150.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecTop150.label || "—");
+    }
+    if (columnId === "onecCategory") {
+      if (!item.onecCategory || !item.onecCategory.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecCategory.label || "—");
+    }
+    if (columnId === "onecCounterparty") {
+      if (!item.onecCounterparty || !item.onecCounterparty.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecCounterparty.label || "—");
+    }
+    if (columnId === "onecFullName") {
+      if (!item.onecFullName || !item.onecFullName.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecFullName.label || "—");
+    }
+    if (columnId === "onecLegalEntityType") {
+      if (!item.onecLegalEntityType || !item.onecLegalEntityType.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecLegalEntityType.label || "—");
+    }
+    if (columnId === "onecOgrn") {
+      if (!item.onecOgrn || !item.onecOgrn.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecOgrn.label || "—");
     }
     return renderNoDataCell();
   }
@@ -2615,7 +2758,8 @@
     if (state.view === "teams") {
       if (usesDirectorLayout()) {
         var directorRootLabel = "Все команды";
-        var directorRootHref = "/clients?view=teams";
+        var directorRootHref =
+          state.teamSource === "onec" ? "/clients?view=teams&teamSource=onec" : "/clients?view=teams";
         if (logic.hasResponsibleSelection(state)) {
           parts.push({ label: directorRootLabel, href: directorRootHref });
           if (state.ropEmployee) {
@@ -2715,6 +2859,10 @@
     document.getElementById("clients-breadcrumbs-back")?.addEventListener("click", function () {
       navigateState({
         view: "teams",
+        teamSource: state.teamSource || "rop",
+        onecTeam: state.onecTeam || "",
+        teamExpand: state.teamExpand || [],
+        onecPortfolioEmployee: "",
         ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
         rop: "",
         manager: "",
@@ -3727,6 +3875,39 @@
       regionalOptions = result.data.regionalManagers || [];
       hardwareOptions = result.data.hardwareManagers || [];
       ropOptions = result.data.rops || [];
+      if (onecTop150Filter) {
+        var top150Current = onecTop150Filter.value;
+        onecTop150Filter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecTop150Values || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecTop150Filter.appendChild(option);
+        });
+        onecTop150Filter.value = top150Current;
+      }
+      if (onecCategoryFilter) {
+        var categoryCurrent = onecCategoryFilter.value;
+        onecCategoryFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecCategoryValues || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecCategoryFilter.appendChild(option);
+        });
+        onecCategoryFilter.value = categoryCurrent;
+      }
+      if (onecLegalTypeFilter) {
+        var legalCurrent = onecLegalTypeFilter.value;
+        onecLegalTypeFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecLegalEntityTypeValues || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecLegalTypeFilter.appendChild(option);
+        });
+        onecLegalTypeFilter.value = legalCurrent;
+      }
       if (ropCombobox) {
         ropCombobox.syncFromUrl(ropFilter.value);
       }
@@ -4048,6 +4229,12 @@
     if (loadingTimeFilter) loadingTimeFilter.value = "";
     if (loadingScheduleFilter) loadingScheduleFilter.value = "all";
     if (discountProgramFilter) discountProgramFilter.value = "";
+    if (onecTop150Filter) onecTop150Filter.value = "";
+    if (onecCategoryFilter) onecCategoryFilter.value = "";
+    if (onecCounterpartyFilter) onecCounterpartyFilter.value = "";
+    if (onecFullNameFilter) onecFullNameFilter.value = "";
+    if (onecLegalTypeFilter) onecLegalTypeFilter.value = "";
+    if (onecOgrnFilter) onecOgrnFilter.value = "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
     if (markupNameFilter) markupNameFilter.value = "";
@@ -4105,6 +4292,12 @@
       regionalManager: "",
       tandoorClub: "",
       discountProgram: "",
+      onecTop150: "",
+      onecCategory: "",
+      onecCounterpartyContains: "",
+      onecFullNameContains: "",
+      onecLegalEntityType: "",
+      onecOgrn: "",
       discountAmountMin: "",
       discountAmountMax: "",
       markupName: "",
@@ -4274,6 +4467,15 @@
       el.addEventListener("input", function () {
         invalidateInFlightRequests();
         scheduleLoad(true, true);
+      });
+    });
+  [onecTop150Filter, onecCategoryFilter, onecCounterpartyFilter, onecFullNameFilter, onecLegalTypeFilter, onecOgrnFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("change", function () {
+        cancelScheduledLoad();
+        invalidateInFlightRequests();
+        scheduleLoad(true, false);
       });
     });
   [lprDobFilter, lprDobFromFilter, lprDobToFilter]

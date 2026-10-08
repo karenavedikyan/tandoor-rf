@@ -12,6 +12,8 @@ import {
   loadExistingTeamGroups,
 } from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
+import { counterpartyExchangeIncomingDiffersFromStored } from "../onec-clients/counterparty-persisted-diff";
+import { wholesaleExchangeIncomingDiffersFromStored } from "../onec-clients/wholesale-exchange-persisted-diff";
 import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
 
 export type RegularUpdateApplyGateResult =
@@ -79,14 +81,15 @@ export async function runRegularUpdateApplyGate(
     const existingRoster = await loadExistingRoster(client);
     const existingMemberships = await loadExistingMembershipsByManager(client);
     const existingGroups = await loadExistingTeamGroups(client);
-    if (
-      !rosterIncomingDiffersFromStored(
-        existingRoster,
-        existingMemberships,
-        existingGroups,
-        input.roster,
-      )
-    ) {
+    const rosterUnchanged = !rosterIncomingDiffersFromStored(
+      existingRoster,
+      existingMemberships,
+      existingGroups,
+      input.roster,
+    );
+    const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
+    const counterpartyUnchanged = !(await counterpartyExchangeIncomingDiffersFromStored(client, input.payload));
+    if (rosterUnchanged && wholesaleUnchanged && counterpartyUnchanged) {
       return { ok: true, unchangedBundle: true };
     }
   }

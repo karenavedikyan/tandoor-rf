@@ -147,10 +147,7 @@ export function mergeOutletScopeWithOnecPortfolioFilter(
   if (employeeGuids.length === 0) {
     return { whereSql: "WHERE FALSE", params: [] };
   }
-  const outletScope = buildOutletScope(context, {
-    ropDirectClientList: context.role === "rop",
-    managerDirectClientList: context.role === "manager",
-  });
+  const outletScope = buildOutletScope(context);
   const portfolio = buildOnecTeamOutletsFilter(employeeGuids);
   const portfolioClause = portfolio.whereSql.replace(/^WHERE\s+/i, "").trim();
   return mergeSqlFilters(outletScope, [portfolioClause], portfolio.params);

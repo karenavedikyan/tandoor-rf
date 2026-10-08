@@ -310,6 +310,16 @@ export function syntheticOptionsPayload(
         shortId: "2B4CD6C6",
       },
     ],
+    onecTop150Values: [{ id: "Нет", name: "Нет", shortId: "Нет" }],
+    onecCategoryValues: [
+      { id: "D", name: "D", shortId: "D" },
+      { id: " D ", name: " D ", shortId: " D " },
+      { id: "SYNTH-UNKNOWN", name: "SYNTH-UNKNOWN", shortId: "SYNTH" },
+    ],
+    onecLegalEntityTypeValues: [
+      { id: "Компания", name: "Компания", shortId: "Компания" },
+      { id: "Частное лицо", name: "Частное лицо", shortId: "Частное" },
+    ],
   };
 }
 
@@ -325,6 +335,57 @@ export function filterAwareAllListPayload(url: URL) {
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    const onecOgrn = url.searchParams.get("onecOgrn");
+    if (onecOgrn === "0123456789012") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F3 Synthetic Client"),
+            onecCounterparty: { value: "ООО «Browser F3»", hasSource: true, label: "ООО «Browser F3»" },
+            onecLegalEntityType: { value: "Компания", hasSource: true, label: "Компания" },
+            onecOgrn: { value: "0123456789012", hasSource: true, label: "0123456789012" },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    const onecCategory = url.searchParams.get("onecCategory");
+    if (onecCategory === "SYNTH-UNKNOWN") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Synthetic Client"),
+            onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
+            onecCategory: { value: "SYNTH-UNKNOWN", hasSource: true, label: "SYNTH-UNKNOWN" },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (onecCategory === " D ") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Spaced Category Client"),
+            onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
+            onecCategory: { value: " D ", hasSource: true, label: " D " },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     if (hardwareManager === "77777777-7777-4777-8777-777777777777") {
       return {
         items: [navClientItem(NAV_CLIENT_C1, "Client C1")],
@@ -559,6 +620,21 @@ export function syntheticOnecUpdateStatusPayload(
 }
 
 export function syntheticDetailPayload(overrides: Record<string, unknown> = {}) {
+  const { extended: extendedOverride, ...clientOverrides } = overrides;
+  const defaultExtended = {
+    formatVersion: "extended_v1",
+    counterparty: {
+      counterparty: { hasSource: true, label: "ООО «Browser F3»", value: "ООО «Browser F3»" },
+      fullName: { hasSource: true, label: "Browser Full Legal Name", value: "Browser Full Legal Name" },
+      legalEntityType: { hasSource: true, label: "Компания", value: "Компания" },
+      ogrn: { hasSource: true, label: "0123456789012", value: "0123456789012" },
+    },
+    retailOutlets: [],
+    retailOutletsTotalCount: 0,
+    retailOutletsAccess: "granted" as const,
+    retailOutletsEmptyReason: "empty_snapshot" as const,
+    dataQualityLabel: "Частично подключено",
+  };
   return {
     client: {
       guid: SYNTHETIC_CLIENT_GUID,
@@ -580,7 +656,11 @@ export function syntheticDetailPayload(overrides: Record<string, unknown> = {}) 
       sourceLabel: "Данные из 1С",
       lastImportedAt: "2026-09-28T09:30:00.000Z",
       lastImportedAtLabel: "28.09.2026, 12:30",
-      ...overrides,
+      extended:
+        extendedOverride && typeof extendedOverride === "object"
+          ? { ...defaultExtended, ...(extendedOverride as Record<string, unknown>) }
+          : defaultExtended,
+      ...clientOverrides,
     },
   };
 }

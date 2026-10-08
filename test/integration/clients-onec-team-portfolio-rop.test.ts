@@ -268,7 +268,9 @@ describe("clients onec team portfolio ROP scope integration", { concurrency: fal
     assert.equal(clients.status, 200);
     const clientGuids = (clients.body.items as Array<{ guid: string }>).map((item) => item.guid).sort();
     assert.deepEqual(clientGuids, [C_DIRECT, C_HW].sort());
-    assert.equal(clients.body.total, memberM1!.clientCount);
+    assert.equal(clients.body.total, 2);
+    assert.equal(memberM1!.clientCount, 2);
+    assert.ok(!clientGuids.includes(C_OUTLET_ONLY));
 
     const outlets = await request(app)
       .get(
@@ -276,11 +278,19 @@ describe("clients onec team portfolio ROP scope integration", { concurrency: fal
       )
       .set(authHeaders(cookie));
     assert.equal(outlets.status, 200);
-    assert.equal(outlets.body.total, memberM1!.outletCount);
+    assert.equal(outlets.body.total, 3);
+    assert.equal(memberM1!.outletCount, 3);
     const outletGuids = (outlets.body.items as Array<{ guidStore: string }>).map((item) => item.guidStore);
-    assert.deepEqual([...new Set(outletGuids)].sort(), [T_DIRECT, T_HW].sort());
-    assert.ok(!outletGuids.includes(T_OUTLET_ROP));
+    assert.deepEqual([...new Set(outletGuids)].sort(), [T_DIRECT, T_HW, T_OUTLET_ROP].sort());
     assert.ok(!outletGuids.includes(T_NEIGHBOR));
+
+    const outletOnlyCard = await request(app).get(`/api/clients/${C_OUTLET_ONLY}`).set(authHeaders(cookie));
+    assert.equal(outletOnlyCard.status, 200);
+    const cardOutletGuids = (
+      outletOnlyCard.body.client.extended.retailOutlets as Array<{ guidStore: string }>
+    ).map((row) => row.guidStore);
+    assert.ok(cardOutletGuids.includes(T_OUTLET_ROP));
+    assert.ok(!cardOutletGuids.includes(T_NEIGHBOR));
 
     const foreignTeam = await request(app)
       .get(

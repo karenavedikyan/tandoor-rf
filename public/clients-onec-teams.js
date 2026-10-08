@@ -383,36 +383,6 @@
         });
       });
 
-      container.querySelectorAll("[data-onec-member-portfolio]").forEach(function (btn) {
-        btn.addEventListener("click", function (event) {
-          event.stopPropagation();
-          var employeeGuid = btn.getAttribute("data-employee-guid") || "";
-          var portfolio = btn.getAttribute("data-onec-member-portfolio") || "clients";
-          var section = btn.closest(".clients-onec-team");
-          var teamKey = section ? section.getAttribute("data-onec-team") : "";
-          var group = findGroup(teamKey || "");
-          if (!group || !deps.navigateOnecGroupPortfolio) {
-            return;
-          }
-          var member = (group.members || []).find(function (item) {
-            return item.employeeGuid === employeeGuid;
-          });
-          if (!member) {
-            if (group.leader && group.leader.employeeGuid === employeeGuid && deps.navigateOnecTeamMember) {
-              deps.navigateOnecTeamMember(deps.readAppState(), group.leader, group);
-            }
-            return;
-          }
-          if (deps.navigateOnecTeamMember) {
-            deps.navigateOnecTeamMember(deps.readAppState(), member, group, portfolio);
-            return;
-          }
-          if (deps.navigateOnecGroupPortfolio) {
-            deps.navigateOnecGroupPortfolio(deps.readAppState(), group, portfolio);
-          }
-        });
-      });
-
       container.querySelectorAll(".clients-compact-team__member[data-employee-guid]").forEach(function (row) {
         row.addEventListener("click", function (event) {
           if (event.target.closest("[data-onec-member-portfolio]")) {
@@ -442,7 +412,16 @@
       if (callbacks.isStale && callbacks.isStale()) {
         return;
       }
-      container.innerHTML = renderOverview(state, context);
+      var nextHtml = renderOverview(state, context);
+      if (container.__onecOverviewHtml === nextHtml) {
+        if (callbacks.restoreSearchFocus) {
+          callbacks.restoreSearchFocus();
+        }
+        return;
+      }
+      container.__onecOverviewHtml = nextHtml;
+      container.innerHTML = nextHtml;
+      container.setAttribute("data-onec-teams-ready", "1");
       bindEvents(container, state, context, callbacks);
     }
 

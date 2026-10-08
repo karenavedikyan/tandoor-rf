@@ -371,6 +371,60 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         ],
         [],
       );
+    } else if (field === "onecTop150") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'top150') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'top150'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCategory") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'outletCategory') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'outletCategory'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCounterparty") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'counterparty') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'counterparty'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecFullName") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'fullName') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'fullName'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecLegalEntityType") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'legalEntityType') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'legalEntityType'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecOgrn") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'ogrn') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'ogrn'), '') IS NOT NULL`,
+        ],
+        [],
+      );
     }
   }
   for (const field of parseFilledEmptyFieldList(query.empty)) {
@@ -416,6 +470,60 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
              jsonb_typeof(onec_clients.extended_snapshot->'commercial'->'markups') <> 'array'
              OR jsonb_array_length(onec_clients.extended_snapshot->'commercial'->'markups') = 0
            )`,
+        ],
+        [],
+      );
+    } else if (field === "onecTop150") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'top150') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'top150'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCategory") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'outletCategory') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'outletCategory'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCounterparty") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'counterparty') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'counterparty'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecFullName") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'fullName') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'fullName'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecLegalEntityType") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'legalEntityType') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'legalEntityType'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecOgrn") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'ogrn') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'ogrn'), '') IS NULL`,
         ],
         [],
       );

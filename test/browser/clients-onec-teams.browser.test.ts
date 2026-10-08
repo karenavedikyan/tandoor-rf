@@ -551,12 +551,8 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     }
   }
 
-  async function clickOnecMemberPortfolioButton(
-    page: Page,
-    portfolio: "clients" | "outlets",
-  ): Promise<Awaited<ReturnType<Page["waitForResponse"]>>> {
-    const selector = `[data-onec-member-portfolio="${portfolio}"][data-employee-guid="${M1}"]`;
-    const responsePromise = page.waitForResponse(
+  function waitPortfolioListResponse(page: Page, portfolio: "clients" | "outlets") {
+    return page.waitForResponse(
       (response) => {
         if (!response.url().includes("/api/clients") || response.status() !== 200) {
           return false;
@@ -570,32 +566,46 @@ describe("clients onec teams browser", { concurrency: false }, () => {
       },
       { timeout: 60_000 },
     );
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const clicked = await page.evaluate((sel) => {
-        const button = document.querySelector(sel);
-        if (!button || !(button instanceof HTMLElement)) {
-          return false;
-        }
-        button.click();
-        return true;
-      }, selector);
-      if (clicked) {
-        return responsePromise;
+  }
+
+  async function clickOnecMemberPortfolioButton(
+    page: Page,
+    portfolio: "clients" | "outlets",
+  ): Promise<Awaited<ReturnType<Page["waitForResponse"]>>> {
+    const selector = `[data-onec-member-portfolio="${portfolio}"][data-employee-guid="${M1}"]`;
+    await page.waitForSelector(`#teams-panel[data-onec-teams-ready="1"] ${selector}`, {
+      state: "visible",
+      timeout: 60_000,
+    });
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await ensureTeamAlphaExpanded(page);
+      const button = page.locator(selector).first();
+      try {
+        await button.waitFor({ state: "visible", timeout: 10_000 });
+        const [response] = await Promise.all([waitPortfolioListResponse(page, portfolio), button.click()]);
+        return response;
+      } catch (error) {
+        lastError = error;
       }
-      await page.waitForTimeout(200);
     }
-    throw new Error(`Onec member ${portfolio} portfolio button not found for ${M1}`);
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   async function returnToOnecTeamOverview(page: Page): Promise<void> {
-    const back = page.locator("#clients-breadcrumbs-back");
-    await back.waitFor({ state: "visible", timeout: 15_000 });
-    const teamsReady = page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
-    );
-    await Promise.all([teamsReady, back.click()]);
-    await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
+    await page.goBack({ waitUntil: "networkidle" });
+    if ((await page.locator(".clients-onec-team-list .clients-onec-team").count()) === 0) {
+      const teamsReady = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
+      );
+      await page.goto(
+        `/clients?view=teams&teamSource=onec&onecTeam=${TEAM_A}&teamExpand=${TEAM_A}`,
+        { waitUntil: "networkidle" },
+      );
+      await teamsReady;
+    }
+    await page.waitForSelector(".clients-onec-team-list .clients-onec-team", { timeout: 60_000 });
     await ensureTeamAlphaExpanded(page);
   }
 

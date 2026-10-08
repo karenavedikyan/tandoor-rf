@@ -74,14 +74,7 @@ export async function listRetailOutlets(
     };
   }
 
-  const onecTeamPortfolioScope =
-    input.view === "teams" && input.teamSource === "onec"
-      ? {
-          ropDirectClientList: context.role === "rop",
-          managerDirectClientList: context.role === "manager",
-        }
-      : {};
-  const outletScope = buildOutletScope(context, onecTeamPortfolioScope);
+  const outletScope = buildOutletScope(context);
   const userFilter = buildClientsFilter({ ...input, q: "" });
   const filterClause = userFilter.whereSql
     ? userFilter.whereSql.replace(/^WHERE\s+/, "").replaceAll("onec_clients.", "oc.")
