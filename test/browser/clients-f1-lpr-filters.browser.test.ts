@@ -268,22 +268,37 @@ describe("F1 LPR filters and card browser", { concurrency: false }, () => {
     );
   }
 
+  async function openOutletFieldFilters(page: Page): Promise<void> {
+    const filtersToggle = page.locator("#clients-filters-toggle");
+    if (await filtersToggle.isVisible()) {
+      await filtersToggle.click();
+      await page.waitForSelector("#clients-filters-panel.clients-filters-panel--expanded", {
+        timeout: 10000,
+      });
+    }
+    const fieldFilters = page.locator("#field-filters-wrap");
+    await fieldFilters.waitFor({ state: "visible", timeout: 15000 });
+    await fieldFilters.locator("summary").click();
+    const lprInput = page.locator("#lpr-name-filter");
+    await lprInput.waitFor({ state: "visible", timeout: 10000 });
+    assert.equal(await lprInput.isEnabled(), true);
+  }
+
   async function runFlow(page: Page, label: string): Promise<void> {
     const guards = attachHttpGuards(page);
 
     await page.goto("/clients?view=all&entity=outlets&cols=outlet,lprName,lprBonus");
     await page.waitForURL(/entity=outlets/);
     await waitForResults(page);
-    const filtersToggle = page.locator("#clients-filters-toggle");
-    if (await filtersToggle.isVisible()) {
-      await filtersToggle.click();
-    }
-    await page.locator("#field-filters-wrap").evaluate((el) => {
-      el.classList.remove("clients-hidden");
-      if (el instanceof HTMLDetailsElement) {
-        el.open = true;
-      }
+    await openOutletFieldFilters(page);
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, `f1-lpr-filters-${label}.png`),
+      fullPage: true,
     });
+    fs.copyFileSync(
+      path.join(SCREENSHOT_DIR, `f1-lpr-filters-${label}.png`),
+      path.join(ARTIFACT_SCREENSHOT_DIR, `f1-lpr-filters-${label}.png`),
+    );
 
     function isMainListResponse(res: Response): boolean {
       return (
@@ -298,7 +313,7 @@ describe("F1 LPR filters and card browser", { concurrency: false }, () => {
       (res) => isMainListResponse(res) && res.url().includes("lprNameContains=Browser"),
       { timeout: 20000 },
     );
-    await page.locator("#lpr-name-filter").fill("Browser", { force: true });
+    await page.locator("#lpr-name-filter").fill("Browser");
     await page.waitForFunction(() => window.location.search.includes("lprNameContains=Browser"), undefined, {
       timeout: 20000,
     });
@@ -353,9 +368,7 @@ describe("F1 LPR filters and card browser", { concurrency: false }, () => {
     await reloadList;
     await waitForResults(page);
 
-    if (await filtersToggle.isVisible()) {
-      await filtersToggle.click();
-    }
+    await openOutletFieldFilters(page);
     await page.locator("#reset-filters").click();
     await page.waitForFunction(() => !window.location.search.includes("lprNameContains"), undefined, {
       timeout: 20000,
