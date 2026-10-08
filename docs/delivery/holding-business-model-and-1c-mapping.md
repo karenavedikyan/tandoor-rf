@@ -147,9 +147,12 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 | Аспект | Описание |
 |--------|----------|
 | **Идентичность** | `guid_holding = guid_client` = корень; **может** объединять много юрлиц/ТТ |
-| **Validator ЛК сегодня** | Self-ref **блокируется** без нового контракта и отдельного PR |
+| **Validator ЛК сегодня** | Self-ref **блокируется** без нового контракта |
+| **Реализация в ЛК** | **Отдельный PR** на parser/normalization (`detectHoldingCycles`, `holdingLinkState`, docs) — **не** Draft PR #71 (диагностика + модель). До merge такого PR **не** смешивать правки validator с документацией блокера. |
 | **Стоимость** | Parser + docs + риски UI/доступа; **может** быть ближе к текущей форме 422 |
 | **Не auto** | `holding=true`, очистка `guid_holding` |
+
+Синтетика: `proposed-contract/holding-variant-b-self-ref-cluster.json` — **PROPOSED**, **не** проходит текущий first-read validator (см. README).
 
 ### 4.5 Выбор A/B
 
@@ -159,9 +162,16 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 
 ## 5. Предложенные JSON-примеры (не выгрузка 1С)
 
-`test/fixtures/onec-clients/proposed-contract/` — **PROPOSED CONTRACT**, variant A (удобно для **текущего** validator).
+`test/fixtures/onec-clients/proposed-contract/` — **PROPOSED CONTRACT**.
 
-**Допущение в примерах:** одна member-строка = одно юрлицо (§3.1) — **только для иллюстрации типов**, не утверждение live-контракта.
+| Файлы | Variant | Validator сегодня |
+|-------|---------|-------------------|
+| `holding-mono*.json`, `holding-group*.json` | **A** (explicit `holding=true` root) | first-read **pass** |
+| `holding-variant-b-self-ref-cluster.json` | **B** (self-ref root + members, несколько строк/ТТ) | first-read **fail** (`HOLDING_SELF_REFERENCE`, …) |
+
+**Допущение в примерах A:** одна member-строка = одно юрлицо (§3.1) — **только для иллюстрации типов**, не утверждение live-контракта.
+
+**Variant B в PR #71:** только JSON + README + unit-тест «ожидаемый fail»; **parser/guards не меняются** (отдельный PR после контракта).
 
 **`holding-group.json`:** две member-строки показывают **целевой** состав «групп» (2 юрлица, 1 ТТ в группе); ТТ в JSON только у первой строки. Это **пример состава**, **не** доказательство поддержки «общей ТТ для нескольких юрлиц» и **не** способ передачи такой связи — он **открыт** (§6).
 
@@ -170,10 +180,11 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 ## 6. Вопросы к 1С / бизнесу
 
 1. Ключ юрлица: отдельный GUID или подтверждение «1 `guid_client` = 1 юрлицо»?
-2. **A или B** для идентичности корня (§4.5) — с учётом GUID и стоимости, не только validator.
-3. Self-ref: семантика корня **без** автоматического «моно».
-4. Передача связи **несколько юрлиц ↔ одна ТТ** (не продемонстрировано в `holding-group.json`).
-5. O1–O4 (§3.6).
+2. Если **`guid_client` ≠ юрлицо**: как 1С будет передавать **`legalEntityCount`** или эквивалент (отдельное поле, массив GUID юрлиц, агрегат на корне холдинга, иное)?
+3. **A или B** для идентичности корня (§4.5) — с учётом GUID и стоимости, не только validator; при **B** — отдельный PR на parser (§4.4), не смешивать с диагностикой #71.
+4. Self-ref: семантика корня **без** автоматического «моно».
+5. Передача связи **несколько юрлиц ↔ одна ТТ** (не продемонстрировано в `holding-group.json`).
+6. O1–O4 (§3.6).
 
 **Не запрашивать повторно:** F2–F5 на `a957ab33…`.
 
@@ -181,7 +192,13 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 
 ## 7. План реализации (не в PR #71)
 
-Контракт (ключ юрлица + A/B) → parser/storage → DTO/UI (**тип vs withheld**) → тесты → сверка/migration. GUID, scope, assignments без расширения.
+| Track | Содержание | Где |
+|-------|------------|-----|
+| **Диагностика / модель** | Факты блокера, бизнес-типы, вопросы 1С, синтетика A/B | **PR #71** (docs/tests only) |
+| **Variant B parser** | `detectHoldingCycles`, normalization, `holdingLinkState`, regression | **Отдельный PR** после письменного контракта B |
+| **Общее после контракта** | storage, DTO/UI (**тип vs withheld**), сверка/migration | Последующие PR |
+
+GUID, scope, assignments без расширения.
 
 ---
 

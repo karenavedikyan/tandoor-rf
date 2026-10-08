@@ -32,11 +32,13 @@
 
 ## Вариант B — адаптация parser (только при доказанном контракте)
 
+**Scope PR #71:** только docs + синтетика (`holding-variant-b-self-ref-cluster.json` — **не** проходит текущий validator). **Parser / guards / normalization для B — отдельный PR**, не смешивать с диагностикой #71. См. [holding-business-model-and-1c-mapping.md](./holding-business-model-and-1c-mapping.md) §4.4, §7.
+
 **Когда выбирать:** только если **письменное** согласование с 1С/бизнесом: «`guid_holding` равен `guid_client` при `holding` omitted/false = корень группы».
 
 **Текущее свидетельство в репозитории:** такого контракта **нет** (см. `clients-field-contract.md` §3.2, `import-runbook.md` — самоссылки **всегда** блокирующие ошибки; live audit 03.10.2026 — 471 unknown + 1 `HOLDING_TARGET_NOT_HOLDING_CARD`, не 422 self-roots).
 
-**Если контракт будет подтверждён**, минимальная адаптация (отдельный PR, не этот):
+**Если контракт будет подтверждён**, минимальная адаптация (**отдельный PR**, не #71):
 
 1. Явное правило в `detectHoldingCycles`: самоссылка при `holding !== true` трактуется как **корень** (не issue), с `holdingLinkState` «root_self» или аналог — **без** автоматического `holding=true` в snapshot.
 2. Обход цепочки: при walk не считать возврат к такому корню `HOLDING_CYCLE` для потомков (осторожно — только для доказанного паттерна).

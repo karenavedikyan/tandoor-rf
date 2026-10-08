@@ -92,6 +92,20 @@ describe("proposed holding contract fixtures (variant A, synthetic)", () => {
     });
   }
 
+  it("variant B self-ref cluster (PROPOSED) fails current first-read validation", () => {
+    const bytes = fs.readFileSync(
+      path.join(PROPOSED_DIR, "holding-variant-b-self-ref-cluster.json"),
+    );
+    const result = validateClientsFileBytes(bytes, {
+      holdingLinkValidationPolicy: "tolerant",
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(
+      result.issues.some((i) => i.code === "HOLDING_SELF_REFERENCE" && i.index === 0),
+    );
+  });
+
   it("without confirmed legal-entity key, composition type stays unknown even for fixture counts", () => {
     const { legalEntityCount, outletCount } =
       countCompositionUnderProposalAssumption("holding-mono.json");
