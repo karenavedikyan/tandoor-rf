@@ -1,4 +1,4 @@
-import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
+import { appendSqlClauses, combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
 import { loadRopTeamEmployeeGuids } from "../access/rop-read-scope";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
@@ -284,11 +284,9 @@ async function resolveScopedFilter(
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
     if (combined.whereSql !== "WHERE FALSE") {
-      combined = mergeSqlFilters(
-        combined,
-        [scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", scopedEmployeeParam)],
-        [],
-      );
+      combined = appendSqlClauses(combined, [
+        scopedHasOutletsClause(context, input.hasOutlets, "onec_clients", scopedEmployeeParam),
+      ]);
     }
   }
 

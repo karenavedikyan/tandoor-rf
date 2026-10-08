@@ -378,6 +378,6 @@ describe("clients sprint3 fields integration", { concurrency: false }, () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.client.guid, C1);
     assert.equal(res.body.client.extended?.commercial?.discountProgram?.value, "PROMO");
-    assert.equal(res.body.client.extended?.sensitiveFieldsWithheld, true);
+    assert.equal(res.body.client.extended?.sensitiveFieldsWithheld, false);
   });
 });

@@ -18,6 +18,7 @@ import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
+import { logServerError } from "./http/safe-server-error-log";
 import { apiError, ERROR_CODES } from "./shared/errors";
 
 const HEALTH_BODY = { status: "ok", app: "tandoor-rf" } as const;
@@ -269,7 +270,7 @@ export function createApp(): express.Application {
       const status = getErrorStatus(err);
 
       if (status >= 500) {
-        console.error(`Server error (${status}) ${req.method} ${req.path}`);
+        logServerError(req, status, err);
       }
 
       if (isStructuredApi(req)) {

@@ -70,11 +70,25 @@
       field("Email бухгалтерии", outlet.contacts && outlet.contacts.accountantEmail, !!(outlet.contacts && outlet.contacts.accountantEmail));
     var club = field("Tandoor Club", outlet.tandoorClub && outlet.tandoorClub.label, !!(outlet.tandoorClub && outlet.tandoorClub.hasSource)) +
       field("Bonus Tandoor Club", outlet.bonusTandoorClub && outlet.bonusTandoorClub.label, !!(outlet.bonusTandoorClub && outlet.bonusTandoorClub.hasSource));
+    var lpr = outlet.lpr || null;
+    var lprContact = lpr
+      ? field("ФИО", lpr.name && lpr.name.label, !!(lpr.name && lpr.name.hasSource)) +
+        field("Должность", lpr.post && lpr.post.label, !!(lpr.post && lpr.post.hasSource)) +
+        field("Телефон", lpr.phone && lpr.phone.label, !!(lpr.phone && lpr.phone.hasSource)) +
+        field("Email", lpr.email && lpr.email.label, !!(lpr.email && lpr.email.hasSource)) +
+        field("Дата рождения", lpr.dateOfBirth && lpr.dateOfBirth.label, !!(lpr.dateOfBirth && lpr.dateOfBirth.hasSource))
+      : field("Контакт ЛПР", "Не передано", false);
+    var lprBonus = lpr
+      ? field("Личный бонус", lpr.bonus && lpr.bonus.label, !!(lpr.bonus && lpr.bonus.hasSource)) +
+        field("Условия бонуса", lpr.conditionsBonus && lpr.conditionsBonus.label, !!(lpr.conditionsBonus && lpr.conditionsBonus.hasSource))
+      : field("Бонусные условия", "Не передано", false);
     return '<div class="pc-outlet" data-testid="pc-outlet-' + index + '">' +
       detailsBlock("Основные сведения", basics, index === 0) +
       detailsBlock("Ответственные", managers, false) +
       detailsBlock("Адреса, маршрут и приёмка", addresses, false) +
       detailsBlock("Контакты магазина и бухгалтерии", contacts, false) +
+      detailsBlock("Контакт ЛПР", lprContact, false) +
+      detailsBlock("Бонусные условия", lprBonus, false) +
       detailsBlock("Club и разрешённые условия", club, false) +
       '<p class="pc-label pc-unavailable">' + esc(outlet.distributionNote || "Запись дистрибуции недоступна без идентификатора торговой точки.") + "</p>" +
       "</div>";
@@ -230,7 +244,7 @@
     var dataQuality = ext
       ? '<div class="pc-pad"><span class="pc-tag">' + esc(ext.dataQualityLabel || "Частично подключено") + '</span>' +
         freshnessNote +
-        '<p>Торговые точки доступны только для просмотра. ЛПР и персональные бонусы не публикуются без отдельного разрешения.</p></div>'
+        '<p>Торговые точки доступны только для просмотра. ЛПР и персональные бонусы показаны в данных соответствующей торговой точки.</p></div>'
       : '<div class="pc-pad"><span class="pc-tag">Частично подключено</span>' +
         '<p>Связи холдинга, юрлиц и торговых точек ожидаются из 1С. Неподтверждённые сведения не подставляются.</p></div>';
 
@@ -272,16 +286,16 @@
             field("Markups", ext.commercial.markups && ext.commercial.markups.label, !!(ext.commercial.markups && ext.commercial.markups.hasSource)),
             false)
           : "") +
-        detailsBlock("Контакты и ограничения",
-          field("ЛПР и рабочая почта", ext && ext.sensitiveFieldsWithheld ? "Не публикуются без отдельного разрешения" : "Не передано") +
-          field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length),
+        detailsBlock("Контакты клиента",
+          field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length) +
+          '<p class="pc-label">Контакт ЛПР и персональные бонусы — в карточках торговых точек ниже.</p>',
           false) +
         '</div>', "1С / ЛК") +
       card("Магазин и доставка", '<div class="pc-pad">' + shopCard + '</div>', "1С") +
       card("Расчёты и договор", '<div class="pc-pad">' +
         field("Плательщик / договор", "") + field("Вид оплаты", "") +
         field("Бухгалтерия", "") + field("Наценки / скидки", "Правила применения уточняются у 1С") +
-        field("Бонусные условия", ext && ext.sensitiveFieldsWithheld ? "Персональные бонусы не публикуются" : "") +
+        field("Бонусные условия", "См. блок «Бонусные условия» у торговой точки") +
         '</div>', "1С") +
       '</div>' +
       (outletCards ? '<div class="pc-grid pc-equal pc-space">' + outletCards + "</div>" : "") +

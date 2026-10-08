@@ -112,6 +112,15 @@ export type ClientsListQuery = {
   markupName?: string;
   markupPercentage?: number;
   bonusTandoorClub?: string;
+  lprNameContains?: string;
+  lprPostContains?: string;
+  lprPhoneContains?: string;
+  lprEmailContains?: string;
+  lprBonusContains?: string;
+  lprConditionsBonusContains?: string;
+  lprDateOfBirth?: string;
+  lprDateOfBirthFrom?: string;
+  lprDateOfBirthTo?: string;
   sortBy: ClientSortField | OutletSortField;
   sortDir: "asc" | "desc";
   page: number;
@@ -367,6 +376,20 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return raw;
   }
 
+  function parseOptionalIsoDateField(value: unknown, _label: string): string | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return null;
+    }
+    return raw;
+  }
+
   function parseOptionalStrictNumber(value: unknown): number | undefined | null {
     if (value === undefined || value === null || value === "") {
       return undefined;
@@ -456,6 +479,53 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   }
   if (entityRaw === "outlets" && (markupName || markupPercentage !== undefined)) {
     return { ok: false, message: "Фильтр Markups недоступен в режиме торговых точек." };
+  }
+
+  const lprNameContains = parseOptionalSearchField(input.lprNameContains, "lprNameContains");
+  if (lprNameContains === null) {
+    return { ok: false, message: "Некорректный фильтр ФИО ЛПР." };
+  }
+  const lprPostContains = parseOptionalSearchField(input.lprPostContains, "lprPostContains");
+  if (lprPostContains === null) {
+    return { ok: false, message: "Некорректный фильтр должности ЛПР." };
+  }
+  const lprPhoneContains = parseOptionalSearchField(input.lprPhoneContains, "lprPhoneContains");
+  if (lprPhoneContains === null) {
+    return { ok: false, message: "Некорректный фильтр телефона ЛПР." };
+  }
+  const lprEmailContains = parseOptionalSearchField(input.lprEmailContains, "lprEmailContains");
+  if (lprEmailContains === null) {
+    return { ok: false, message: "Некорректный фильтр email ЛПР." };
+  }
+  const lprBonusContains = parseOptionalSearchField(input.lprBonusContains, "lprBonusContains");
+  if (lprBonusContains === null) {
+    return { ok: false, message: "Некорректный фильтр бонуса ЛПР." };
+  }
+  const lprConditionsBonusContains = parseOptionalSearchField(
+    input.lprConditionsBonusContains,
+    "lprConditionsBonusContains",
+  );
+  if (lprConditionsBonusContains === null) {
+    return { ok: false, message: "Некорректный фильтр условий бонуса ЛПР." };
+  }
+  const lprDateOfBirth = parseOptionalIsoDateField(input.lprDateOfBirth, "lprDateOfBirth");
+  if (lprDateOfBirth === null) {
+    return { ok: false, message: "Некорректная дата рождения ЛПР (ожидается YYYY-MM-DD)." };
+  }
+  const lprDateOfBirthFrom = parseOptionalIsoDateField(input.lprDateOfBirthFrom, "lprDateOfBirthFrom");
+  if (lprDateOfBirthFrom === null) {
+    return { ok: false, message: "Некорректная начальная дата рождения ЛПР." };
+  }
+  const lprDateOfBirthTo = parseOptionalIsoDateField(input.lprDateOfBirthTo, "lprDateOfBirthTo");
+  if (lprDateOfBirthTo === null) {
+    return { ok: false, message: "Некорректная конечная дата рождения ЛПР." };
+  }
+  if (
+    lprDateOfBirthFrom &&
+    lprDateOfBirthTo &&
+    lprDateOfBirthFrom > lprDateOfBirthTo
+  ) {
+    return { ok: false, message: "Начальная дата рождения ЛПР не может быть позже конечной." };
   }
 
   let bonusTandoorClub: string | undefined;
@@ -725,6 +795,15 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       markupName,
       markupPercentage,
       bonusTandoorClub,
+      lprNameContains,
+      lprPostContains,
+      lprPhoneContains,
+      lprEmailContains,
+      lprBonusContains,
+      lprConditionsBonusContains,
+      lprDateOfBirth,
+      lprDateOfBirthFrom,
+      lprDateOfBirthTo,
       sortBy,
       sortDir,
       page,
@@ -877,6 +956,15 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.markupName ||
       query.markupPercentage !== undefined ||
       query.bonusTandoorClub ||
+      query.lprNameContains ||
+      query.lprPostContains ||
+      query.lprPhoneContains ||
+      query.lprEmailContains ||
+      query.lprBonusContains ||
+      query.lprConditionsBonusContains ||
+      query.lprDateOfBirth ||
+      query.lprDateOfBirthFrom ||
+      query.lprDateOfBirthTo ||
       (query.completenessReasons && query.completenessReasons.length > 0) ||
       query.clientManagerMode ||
       query.outletManagerMode ||

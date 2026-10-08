@@ -42,7 +42,7 @@ const regionalContext: AccessContext = {
 };
 
 describe("clients extended dto", () => {
-  it("withholds LPR fields from API dto", () => {
+  it("publishes LPR fields on scoped outlet dto", () => {
     const outlet: ParsedRetailOutlet = {
       ordinal: 0,
       holdingName: "H1",
@@ -73,6 +73,15 @@ describe("clients extended dto", () => {
         email: "secret@x.test",
         bonus: "100",
         conditionsBonus: "cond",
+        fieldPresence: {
+          name: true,
+          post: true,
+          phone: true,
+          email: true,
+          bonus: true,
+          conditionsBonus: true,
+          dateOfBirth: true,
+        },
       },
       additional: { statusTandoorClub: "x", bonusTandoorClub: "y" },
       outletGuidStatus: "not_provided",
@@ -107,11 +116,14 @@ describe("clients extended dto", () => {
     );
 
     assert.ok(dto);
-    assert.equal(dto!.sensitiveFieldsWithheld, true);
+    assert.equal(dto!.sensitiveFieldsWithheld, false);
     assert.equal(dto!.retailOutletsAccess, "granted");
     assert.equal(dto!.retailOutlets.length, 1);
-    const serialized = JSON.stringify(dto);
-    assert.doesNotMatch(serialized, /Secret|secret@x|conditions_bonus/i);
+    const outletDto = dto!.retailOutlets[0];
+    assert.equal(outletDto?.lpr.name.value, "Secret");
+    assert.equal(outletDto?.lpr.email.value, "secret@x.test");
+    assert.equal(outletDto?.lpr.bonus.value, "100");
+    assert.equal(outletDto?.lpr.dateOfBirth.isoDate, "1980-01-01");
     assert.equal(dto!.retailOutlets[0]?.bonusTandoorClub.hasSource, false);
   });
 
