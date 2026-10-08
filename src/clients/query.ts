@@ -109,6 +109,8 @@ export type ClientsListQuery = {
   onecFullNameContains?: string;
   onecLegalEntityType?: string;
   onecOgrn?: string;
+  onecPrimaryContractContains?: string;
+  onecMainAgreementContains?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;
@@ -515,6 +517,34 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Поле «onecOgrn» недоступно для фильтрации в режиме торговых точек." };
   }
 
+  const onecPrimaryContractContains = parseOptionalSearchField(
+    input.onecPrimaryContractContains,
+    "onecPrimaryContractContains",
+  );
+  if (onecPrimaryContractContains === null) {
+    return { ok: false, message: "Некорректный фильтр основного договора." };
+  }
+  if (entityRaw === "outlets" && onecPrimaryContractContains) {
+    return {
+      ok: false,
+      message: "Поле «onecPrimaryContractContains» недоступно для фильтрации в режиме торговых точек.",
+    };
+  }
+
+  const onecMainAgreementContains = parseOptionalSearchField(
+    input.onecMainAgreementContains,
+    "onecMainAgreementContains",
+  );
+  if (onecMainAgreementContains === null) {
+    return { ok: false, message: "Некорректный фильтр основного соглашения." };
+  }
+  if (entityRaw === "outlets" && onecMainAgreementContains) {
+    return {
+      ok: false,
+      message: "Поле «onecMainAgreementContains» недоступно для фильтрации в режиме торговых точек.",
+    };
+  }
+
   const discountAmountMin = parseOptionalStrictNumber(input.discountAmountMin);
   if (discountAmountMin === null) {
     return { ok: false, message: "Некорректный минимум DiscountAmount." };
@@ -832,6 +862,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       onecFullNameContains,
       onecLegalEntityType,
       onecOgrn,
+      onecPrimaryContractContains,
+      onecMainAgreementContains,
       discountAmountMin,
       discountAmountMax,
       markupName,
@@ -997,6 +1029,8 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.onecFullNameContains ||
       query.onecLegalEntityType ||
       query.onecOgrn ||
+      query.onecPrimaryContractContains ||
+      query.onecMainAgreementContains ||
       query.discountAmountMin !== undefined ||
       query.discountAmountMax !== undefined ||
       query.markupName ||

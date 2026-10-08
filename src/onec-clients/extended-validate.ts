@@ -56,6 +56,7 @@ import {
   parseClientCommercialFields,
   type ParsedClientCommercial,
 } from "./commercial-fields";
+import { parseClientContractExchangeFields } from "./client-contract-exchange-fields";
 import { parseCounterpartyExchangeFields } from "./counterparty-exchange-fields";
 import { parseWholesaleClientExchangeFields } from "./wholesale-client-exchange-fields";
 
@@ -1329,6 +1330,12 @@ function validateExtendedRecord(
     return null;
   }
 
+  const clientContractParsed = parseClientContractExchangeFields(raw);
+  if (clientContractParsed.invalid) {
+    pushIssue(issues, { code: "INVALID_CLIENT_CONTRACT_EXCHANGE_FIELD", index }, issueCount);
+    return null;
+  }
+
   const fieldPresence: ExtendedRecordFieldPresence = {
     holding: holdingPresence,
     retailOutlets: retailOutletsPresence,
@@ -1346,6 +1353,7 @@ function validateExtendedRecord(
     commercial: commercialParsed.commercial,
     wholesaleExchange: wholesaleParsed.wholesale,
     counterparty: counterpartyParsed.counterparty,
+    clientContract: clientContractParsed.clientContract,
     retailOutlets,
     recordFormat: recordExtended ? "extended_v1" : "legacy",
     hasExtendedManagerFields: recordHasExtendedManagerFields,

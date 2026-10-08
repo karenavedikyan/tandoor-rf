@@ -14,6 +14,7 @@ import {
   applyClientLevelFilledEmptyFilters,
 } from "./client-entity-outlet-filter";
 import { applyClientCommercialFilters } from "./commercial-list-filters";
+import { applyClientContractFilters } from "./client-contract-list-filters";
 import { applyClientCounterpartyFilters } from "./counterparty-list-filters";
 import { applyClientWholesaleExchangeFilters } from "./wholesale-list-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
@@ -209,6 +210,7 @@ async function resolveScopedFilter(
     userFilter = applyClientCommercialFilters(userFilter, input);
     userFilter = applyClientWholesaleExchangeFilters(userFilter, input);
     userFilter = applyClientCounterpartyFilters(userFilter, input);
+    userFilter = applyClientContractFilters(userFilter, input);
   }
 
 
@@ -376,7 +378,8 @@ export async function listClients(
         onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales,
         onec_clients.extended_snapshot->'commercial' AS ext_commercial,
         onec_clients.extended_snapshot->'wholesaleExchange' AS ext_wholesale_exchange,
-        onec_clients.extended_snapshot->'counterparty' AS ext_counterparty
+        onec_clients.extended_snapshot->'counterparty' AS ext_counterparty,
+        onec_clients.extended_snapshot->'clientContract' AS ext_client_contract
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}

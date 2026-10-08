@@ -30,6 +30,11 @@ import {
   readSnapshotCommercial,
 } from "./commercial-fields";
 import {
+  hasAnyClientContractExchangeField,
+  mergeClientContractExchangeFields,
+  readSnapshotClientContractExchange,
+} from "./client-contract-exchange-fields";
+import {
   hasAnyCounterpartyExchangeField,
   mergeCounterpartyExchangeFields,
   readSnapshotCounterpartyExchange,
@@ -385,6 +390,10 @@ export function buildExtendedSnapshotJson(
     record.counterparty,
     readSnapshotCounterpartyExchange(previous) ?? undefined,
   );
+  const clientContract = mergeClientContractExchangeFields(
+    record.clientContract,
+    readSnapshotClientContractExchange(previous) ?? undefined,
+  );
   const outletMerge = mergeRetailOutletsWithIdentity(
     record.retailOutlets,
     record.fieldPresence.retailOutlets,
@@ -410,6 +419,7 @@ export function buildExtendedSnapshotJson(
     commercial,
     wholesaleExchange,
     counterparty,
+    clientContract,
     currentRetailOutlets,
     retailOutletHistory,
     blocks: previous?.blocks ?? {
@@ -443,6 +453,7 @@ export function buildExtendedSnapshotJson(
     commercial,
     wholesaleExchange: hasAnyWholesaleClientExchangeField(wholesaleExchange) ? wholesaleExchange : undefined,
     counterparty: hasAnyCounterpartyExchangeField(counterparty) ? counterparty : undefined,
+    clientContract: hasAnyClientContractExchangeField(clientContract) ? clientContract : undefined,
     currentRetailOutlets,
     retailOutletHistory: appendHistoryWhenBusinessChanged(
       previous,
