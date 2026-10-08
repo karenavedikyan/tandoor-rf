@@ -74,6 +74,8 @@
     "onecOgrn",
     "onecPrimaryContractContains",
     "onecMainAgreementContains",
+    "onecCode1c",
+    "onecCode1cContains",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -132,6 +134,7 @@
     { value: "onecOgrn", label: "ОГРН пуст" },
     { value: "onecPrimaryContract", label: "Основной договор пуст" },
     { value: "onecMainAgreement", label: "Основное соглашение пусто" },
+    { value: "code1c", label: "Код 1С пуст" },
     { value: "discountAmount", label: "DiscountAmount пуст" },
     { value: "markups", label: "Markups пуст" },
   ];
@@ -149,6 +152,7 @@
     onecOgrn: true,
     onecPrimaryContract: true,
     onecMainAgreement: true,
+    code1c: true,
     discountAmount: true,
     markups: true,
   };
@@ -163,6 +167,8 @@
     "onecOgrn",
     "onecPrimaryContractContains",
     "onecMainAgreementContains",
+    "onecCode1c",
+    "onecCode1cContains",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -194,6 +200,8 @@
     state.onecOgrn = "";
     state.onecPrimaryContractContains = "";
     state.onecMainAgreementContains = "";
+    state.onecCode1c = "";
+    state.onecCode1cContains = "";
     state.discountAmountMin = "";
     state.discountAmountMax = "";
     state.markupName = "";
@@ -237,13 +245,14 @@
     { value: "onecOgrn", label: "ОГРН заполнен" },
     { value: "onecPrimaryContract", label: "Основной договор заполнен" },
     { value: "onecMainAgreement", label: "Основное соглашение заполнено" },
+    { value: "code1c", label: "Код 1С заполнен" },
     { value: "discountAmount", label: "DiscountAmount заполнен" },
     { value: "markups", label: "Markups заполнен" },
   ];
 
   var CLIENT_COLUMNS = [
     { id: "name", label: "Клиент", entity: "clients", defaultVisible: true, locked: true, sortable: true, hasSource: true },
-    { id: "code1c", label: "Код 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
+    { id: "code1c", label: "Код 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "inn", label: "ИНН", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "category", label: "Категория", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "onecTop150", label: "ТОП-150 (1С)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
@@ -600,6 +609,8 @@
       onecOgrn: params.get("onecOgrn") || "",
       onecPrimaryContractContains: params.get("onecPrimaryContractContains") || "",
       onecMainAgreementContains: params.get("onecMainAgreementContains") || "",
+      onecCode1c: params.get("onecCode1c") || "",
+      onecCode1cContains: params.get("onecCode1cContains") || "",
       discountAmountMin: params.get("discountAmountMin") || "",
       discountAmountMax: params.get("discountAmountMax") || "",
       markupName: params.get("markupName") || "",
@@ -915,6 +926,8 @@
     if (state.onecMainAgreementContains) {
       params.set("onecMainAgreementContains", state.onecMainAgreementContains);
     }
+    if (state.onecCode1c) params.set("onecCode1c", state.onecCode1c);
+    if (state.onecCode1cContains) params.set("onecCode1cContains", state.onecCode1cContains);
     if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
     if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
     if (state.markupName) params.set("markupName", state.markupName);

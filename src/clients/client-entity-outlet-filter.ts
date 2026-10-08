@@ -443,6 +443,15 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         ],
         [],
       );
+    } else if (field === "code1c") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientCode'->'fieldPresence'->>'code1c') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientCode'->>'code1c'), '') IS NOT NULL`,
+        ],
+        [],
+      );
     }
   }
   for (const field of parseFilledEmptyFieldList(query.empty)) {
@@ -560,6 +569,15 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         [
           `(onec_clients.extended_snapshot->'clientContract'->'fieldPresence'->>'mainAgreement') = 'true'
            AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientContract'->>'mainAgreement'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "code1c") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientCode'->'fieldPresence'->>'code1c') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientCode'->>'code1c'), '') IS NULL`,
         ],
         [],
       );

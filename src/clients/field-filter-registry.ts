@@ -16,6 +16,7 @@ export const CLIENT_FILLED_EMPTY_FIELDS = new Set([
   "onecOgrn",
   "onecPrimaryContract",
   "onecMainAgreement",
+  "code1c",
 ]);
 
 /** Outlet snapshot fields (same-outlet on entity=clients). */
@@ -99,6 +100,8 @@ export function hasOutletDerivedClientFilters(query: {
   onecOgrn?: string;
   onecPrimaryContractContains?: string;
   onecMainAgreementContains?: string;
+  onecCode1c?: string;
+  onecCode1cContains?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;
