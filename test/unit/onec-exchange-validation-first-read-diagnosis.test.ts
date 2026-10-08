@@ -29,6 +29,7 @@ function invalidCodeBytes() {
 }
 
 describe("1C exchange validation failure on first read (diagnosis)", () => {
+  /** Synthetic example only — not the established production root cause (2026-10-08). */
   it("numeric Код fails extended validation with INVALID_CLIENT_CODE_EXCHANGE_FIELD", () => {
     const bytes = invalidCodeBytes();
     const validated = validateClientsFileBytes(bytes);
