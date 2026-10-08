@@ -4,7 +4,10 @@ import { buildClientScopeSql } from "../../access/scope-sql";
 import { query } from "../../db/pool";
 import { shortUuidLabel } from "../uuid-param";
 import { isValidNonZeroUuid } from "../../onec-clients/uuid";
-import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
+import {
+  ACTIVE_BASELINE_CLIENT_SQL,
+  ACTIVE_BASELINE_OC_SQL,
+} from "../../onec-clients/baseline-active-scope";
 import {
   employeesAccessibleOutletExistsClause,
   employeesDirectClientListClause,
@@ -204,8 +207,12 @@ function scopedClientFilter(context: AccessContext, clientAlias = "onec_clients"
     whereSql: scope.whereSql.replaceAll("onec_clients.", `${clientAlias}.`),
     params: scope.params,
   };
+  const baselineSql =
+    clientAlias === "oc"
+      ? ACTIVE_BASELINE_OC_SQL
+      : ACTIVE_BASELINE_CLIENT_SQL.replaceAll("onec_clients.", `${clientAlias}.`);
   const filter = combineScopeAndFilter(scopedForAlias, {
-    whereSql: `WHERE ${ACTIVE_BASELINE_OC_SQL.replaceAll("onec_clients.", `${clientAlias}.`)}`,
+    whereSql: `WHERE ${baselineSql}`,
     params: [],
   });
   if (filter.whereSql === "WHERE FALSE") {
@@ -226,15 +233,14 @@ async function countUniqueClientsForEmployees(
     return 0;
   }
   const arrayParamIndex = scoped.params.length + 1;
-  const result = await query<{ count: string }>(
-    `
+  const portfolioClause = employeesDirectClientListClause(`$${arrayParamIndex}`, "onec_clients");
+  const sql = `
       SELECT COUNT(DISTINCT onec_clients.guid_client)::text AS count
       FROM onec_clients
       ${scoped.whereSql}
-        AND ${employeesDirectClientListClause(`$${arrayParamIndex}`)}
-    `,
-    [...scoped.params, employeeGuids],
-  );
+        AND ${portfolioClause}
+    `;
+  const result = await query<{ count: string }>(sql, [...scoped.params, employeeGuids]);
   return Number(result.rows[0]?.count ?? "0");
 }
 
@@ -255,7 +261,7 @@ async function countUniqueOutletsForEmployees(
       SELECT COUNT(DISTINCT ro.guid_store)::text AS count
       FROM onec_retail_outlets ro
       JOIN onec_clients oc ON oc.guid_client = ro.guid_client
-      ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
+      ${scoped.whereSql}
         AND ${employeesAccessibleOutletExistsClause(`$${arrayParamIndex}`, "ro", "oc")}
     `,
     [...scoped.params, employeeGuids],

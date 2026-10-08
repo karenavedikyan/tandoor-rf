@@ -12,10 +12,11 @@ import {
   outletSnapshotSubquery,
   outletStoreAddressSql,
 } from "./list-filter";
-import { applyOrgTeamsOutletFilter, resolveResponsibleSelection } from "../org/teams-list-filters";
+import { applyOrgTeamsOutletFilter } from "../org/teams-list-filters";
 import {
   assertOnecTeamPortfolioAccess,
   buildOnecTeamOutletsFilter,
+  onecTeamManagerAccessFilter,
   OnecTeamPortfolioAccessError,
 } from "../org/onec-team-portfolio";
 import { applyOutletListAssignmentFilters } from "../list-assignment-filters";
@@ -121,12 +122,14 @@ export async function listRetailOutlets(
     input.view === "teams" &&
     input.teamSource === "onec" &&
     input.onecTeamGuid &&
-    input.branchPortfolio === "outlets" &&
-    !resolveResponsibleSelection(input)
+    input.branchPortfolio === "outlets"
   ) {
     try {
       const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
-      const orgFilter = buildOnecTeamOutletsFilter(memberGuids);
+      const managerId =
+        input.view === "teams" && input.managerId && !ropEmployeeGuid ? input.managerId : undefined;
+      const managerDenied = onecTeamManagerAccessFilter(memberGuids, managerId);
+      const orgFilter = managerDenied ?? buildOnecTeamOutletsFilter(memberGuids);
       const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");
       combinedWhere = mergeSqlFilters(combinedWhere, [orgClause], orgFilter.params);
     } catch (error) {

@@ -3,6 +3,7 @@ import {
   buildExpectedTeamGroupsAfterApply,
   existingMembershipsToResolved,
   membershipsEqual,
+  existingMembershipsForStoredRecord,
   resolveEmployeeTeamMemberships,
   resolveLegacyTeamColumnsForRecord,
   teamGroupsEqual,
@@ -227,7 +228,14 @@ export function rosterIncomingDiffersFromStored(
   for (const record of roster.records) {
     const key = record.guidManager.toLowerCase();
     const current = existingByManager.get(key);
-    const memberships = existingMembershipsByManager.get(key);
+    const memberships = existingMembershipsForStoredRecord(
+      record,
+      {
+        guid_team: current?.guid_team ?? null,
+        name_team: current?.name_team ?? null,
+      },
+      existingMembershipsByManager.get(key),
+    );
     if (!current || !rosterRecordValuesEqual(current, record, memberships)) {
       return true;
     }

@@ -7,11 +7,11 @@ import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
 import {
   applyOrgTeamsClientFilter,
-  resolveResponsibleSelection,
 } from "./org/teams-list-filters";
 import {
   assertOnecTeamPortfolioAccess,
   buildOnecTeamClientsFilter,
+  onecTeamManagerAccessFilter,
   OnecTeamPortfolioAccessError,
 } from "./org/onec-team-portfolio";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
@@ -184,12 +184,16 @@ async function resolveScopedFilter(
     input.teamSource === "onec" &&
     input.onecTeamGuid &&
     input.branchPortfolio === "clients" &&
-    input.entity === "clients" &&
-    !resolveResponsibleSelection(input)
+    input.entity === "clients"
   ) {
     try {
       const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
-      userFilter = combineScopeAndFilter(userFilter, buildOnecTeamClientsFilter(memberGuids));
+      const managerDenied = onecTeamManagerAccessFilter(memberGuids, portfolioManagerId);
+      if (managerDenied) {
+        userFilter = combineScopeAndFilter(userFilter, managerDenied);
+      } else {
+        userFilter = combineScopeAndFilter(userFilter, buildOnecTeamClientsFilter(memberGuids));
+      }
     } catch (error) {
       if (error instanceof OnecTeamPortfolioAccessError) {
         throw new ListClientsError(error.message, error.code);

@@ -114,6 +114,20 @@ export function buildOnecTeamClientsFilter(employeeGuids: string[]): SqlFilter {
   };
 }
 
+export function onecTeamManagerAccessFilter(
+  memberGuids: string[],
+  managerId: string | undefined,
+): SqlFilter | null {
+  if (!managerId) {
+    return null;
+  }
+  const allowed = memberGuids.some((guid) => guid.toLowerCase() === managerId.toLowerCase());
+  if (allowed) {
+    return null;
+  }
+  return { whereSql: "WHERE FALSE", params: [] };
+}
+
 export function buildOnecTeamOutletsFilter(employeeGuids: string[]): SqlFilter {
   if (employeeGuids.length === 0) {
     return { whereSql: "WHERE FALSE", params: [] };

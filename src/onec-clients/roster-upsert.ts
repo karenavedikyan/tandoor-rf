@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
 import {
   collectRosterTeamGroupDrafts,
+  existingMembershipsForStoredRecord,
   resolveEmployeeTeamMemberships,
   type ExistingEmployeeTeamMembershipRow,
   type ExistingTeamGroupRow,
@@ -78,6 +79,7 @@ export async function loadExistingMembershipsByManager(
     list.push({ guid_team: row.guid_team, name_team: row.name_team });
     map.set(key, list);
   }
+
   return map;
 }
 
@@ -179,7 +181,9 @@ export async function upsertWholesaleEmployeeRoster(
   for (const record of roster.records) {
     const key = record.guidManager.toLowerCase();
     const current = existing.get(key);
-    const memberships = existingMemberships.get(key);
+    const memberships = current
+      ? existingMembershipsForStoredRecord(record, current, existingMemberships.get(key))
+      : existingMemberships.get(key);
     if (!current) {
       newCount += 1;
     } else if (rosterRecordValuesEqual(current, record, memberships)) {
@@ -260,7 +264,10 @@ export async function upsertWholesaleEmployeeRoster(
       ],
     );
 
-    const resolvedMemberships = resolveEmployeeTeamMemberships(record, memberships);
+    const resolvedMemberships = resolveEmployeeTeamMemberships(
+      record,
+      current ? existingMembershipsForStoredRecord(record, current, existingMemberships.get(key)) : memberships,
+    );
     await replaceEmployeeMemberships(client, record.guidManager, resolvedMemberships);
     existingMemberships.set(key, resolvedMemberships.map((item) => ({
       guid_team: item.guidTeam,

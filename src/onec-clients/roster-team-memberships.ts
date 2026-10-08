@@ -222,6 +222,23 @@ export function incomingTeamEntriesForRecord(record: WholesaleEmployeeRecord): {
   return { explicitTeamKey: false, entries: legacyTeamEntries(record) };
 }
 
+export function existingMembershipsForStoredRecord(
+  record: WholesaleEmployeeRecord,
+  stored: { guid_team: string | null; name_team: string | null },
+  tableMemberships: ExistingEmployeeTeamMembershipRow[] | undefined,
+): ExistingEmployeeTeamMembershipRow[] {
+  if ((tableMemberships?.length ?? 0) > 0) {
+    return tableMemberships!;
+  }
+  if (record.teams !== undefined) {
+    return [];
+  }
+  if (stored.guid_team) {
+    return [{ guid_team: stored.guid_team, name_team: stored.name_team }];
+  }
+  return [];
+}
+
 export function resolveEmployeeTeamMemberships(
   record: WholesaleEmployeeRecord,
   existingMemberships: ExistingEmployeeTeamMembershipRow[] | undefined,
