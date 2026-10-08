@@ -16,12 +16,17 @@ type HoldingCompositionType =
   | "group_network"
   | "unknown";
 
-/** Draft rules from docs/delivery/holding-business-model-and-1c-mapping.md §3 — not production code. */
-function classifyHoldingComposition(
+/**
+ * Illustrates target composition **only if** 1C confirms one member row = one legal entity
+ * (docs/delivery/holding-business-model-and-1c-mapping.md §3.1). Not production logic.
+ */
+function classifyHoldingCompositionIfLegalEntityKeyConfirmed(
   legalEntityCount: number,
   outletCount: number,
   membershipComplete: boolean,
+  legalEntityKeyConfirmed: boolean,
 ): HoldingCompositionType {
+  if (!legalEntityKeyConfirmed) return "unknown";
   if (!membershipComplete || legalEntityCount <= 0 || outletCount <= 0) {
     return "unknown";
   }
@@ -32,7 +37,8 @@ function classifyHoldingComposition(
   return "unknown";
 }
 
-function countCompositionFromFile(relativeName: string): {
+/** Proposal assumption for fixtures: one non-holding row = one legal entity (demo only). */
+function countCompositionUnderProposalAssumption(relativeName: string): {
   legalEntityCount: number;
   outletCount: number;
 } {
@@ -71,12 +77,32 @@ describe("proposed holding contract fixtures (variant A, synthetic)", () => {
       assert.equal(result.ok, true, file);
     });
 
-    it(`${file} matches draft composition type ${expected}`, () => {
-      const { legalEntityCount, outletCount } = countCompositionFromFile(file);
+    it(`${file} illustrates composition type ${expected} under proposal legal-entity assumption`, () => {
+      const { legalEntityCount, outletCount } =
+        countCompositionUnderProposalAssumption(file);
       assert.equal(
-        classifyHoldingComposition(legalEntityCount, outletCount, true),
+        classifyHoldingCompositionIfLegalEntityKeyConfirmed(
+          legalEntityCount,
+          outletCount,
+          true,
+          true,
+        ),
         expected,
       );
     });
   }
+
+  it("without confirmed legal-entity key, composition type stays unknown even for fixture counts", () => {
+    const { legalEntityCount, outletCount } =
+      countCompositionUnderProposalAssumption("holding-mono.json");
+    assert.equal(
+      classifyHoldingCompositionIfLegalEntityKeyConfirmed(
+        legalEntityCount,
+        outletCount,
+        true,
+        false,
+      ),
+      "unknown",
+    );
+  });
 });
