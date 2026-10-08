@@ -513,7 +513,7 @@
     state.teamKind = urlTeam.teamKind || "";
     state.teamSource = urlTeam.teamSource || "rop";
     state.onecTeam = urlTeam.onecTeam || "";
-    state.onecPortfolioEmployee = urlTeam.onecPortfolioEmployee || state.onecPortfolioEmployee || "";
+    state.onecPortfolioEmployee = urlTeam.onecPortfolioEmployee || "";
     return state;
   }
 
@@ -2876,24 +2876,27 @@
     } else {
       breadcrumbsEl.innerHTML = trailHtml + backHtml;
     }
-    document.getElementById("clients-breadcrumbs-back")?.addEventListener("click", function () {
-      navigateState({
-        view: "teams",
-        teamSource: state.teamSource || "rop",
-        onecTeam: state.onecTeam || "",
-        teamExpand: state.teamExpand || [],
-        onecPortfolioEmployee: "",
-        ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
-        rop: "",
-        manager: "",
-        regionalManager: "",
-        hardwareManager: "",
-        portfolio: "",
-        responsibleKind: "",
-        entity: "clients",
-        page: 1,
-      });
-    });
+    var backButton = document.getElementById("clients-breadcrumbs-back");
+    if (backButton) {
+      backButton.onclick = function () {
+        navigateState({
+          view: "teams",
+          teamSource: state.teamSource || "rop",
+          onecTeam: state.onecTeam || "",
+          teamExpand: state.teamExpand || [],
+          onecPortfolioEmployee: "",
+          ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
+          rop: "",
+          manager: "",
+          regionalManager: "",
+          hardwareManager: "",
+          portfolio: "",
+          responsibleKind: "",
+          entity: "clients",
+          page: 1,
+        });
+      };
+    }
     breadcrumbsEl.classList.toggle("clients-hidden", parts.length === 0);
   }
 
@@ -3166,6 +3169,9 @@
       logic.hasResponsibleSelection(state)
     ) {
       teamsPanelEl.innerHTML = "";
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
+      teamsPanelEl.__onecOverviewHtml = "";
+      onecTeamsOverviewRenderSignature = "";
       return;
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {

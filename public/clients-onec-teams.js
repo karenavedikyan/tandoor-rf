@@ -413,7 +413,11 @@
         return;
       }
       var nextHtml = renderOverview(state, context);
-      if (container.__onecOverviewHtml === nextHtml) {
+      if (
+        container.__onecOverviewHtml === nextHtml &&
+        container.querySelector(".clients-onec-team-list .clients-onec-team")
+      ) {
+        container.setAttribute("data-onec-teams-ready", "1");
         if (callbacks.restoreSearchFocus) {
           callbacks.restoreSearchFocus();
         }

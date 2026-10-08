@@ -572,39 +572,30 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     page: Page,
     portfolio: "clients" | "outlets",
   ): Promise<Awaited<ReturnType<Page["waitForResponse"]>>> {
+    await ensureTeamAlphaExpanded(page);
     const selector = `[data-onec-member-portfolio="${portfolio}"][data-employee-guid="${M1}"]`;
     await page.waitForSelector(`#teams-panel[data-onec-teams-ready="1"] ${selector}`, {
       state: "visible",
       timeout: 60_000,
     });
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      await ensureTeamAlphaExpanded(page);
-      const button = page.locator(selector).first();
-      try {
-        await button.waitFor({ state: "visible", timeout: 10_000 });
-        const [response] = await Promise.all([waitPortfolioListResponse(page, portfolio), button.click()]);
-        return response;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    const button = page.locator(selector).first();
+    const responsePromise = waitPortfolioListResponse(page, portfolio);
+    await Promise.all([responsePromise, button.click()]);
+    return responsePromise;
   }
 
   async function returnToOnecTeamOverview(page: Page): Promise<void> {
-    await page.goBack({ waitUntil: "networkidle" });
-    if ((await page.locator(".clients-onec-team-list .clients-onec-team").count()) === 0) {
-      const teamsReady = page.waitForResponse(
-        (response) =>
-          response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
-      );
-      await page.goto(
-        `/clients?view=teams&teamSource=onec&onecTeam=${TEAM_A}&teamExpand=${TEAM_A}`,
-        { waitUntil: "networkidle" },
-      );
-      await teamsReady;
-    }
+    const back = page.locator("#clients-breadcrumbs-back");
+    await back.waitFor({ state: "visible", timeout: 15_000 });
+    await back.click();
+    await page.waitForFunction(
+      () => {
+        const url = new URL(window.location.href);
+        return url.searchParams.get("teamSource") === "onec" && !url.searchParams.get("onecPortfolioEmployee");
+      },
+      undefined,
+      { timeout: 15_000 },
+    );
     await page.waitForSelector(".clients-onec-team-list .clients-onec-team", { timeout: 60_000 });
     await ensureTeamAlphaExpanded(page);
   }

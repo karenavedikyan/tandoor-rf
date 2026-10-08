@@ -679,7 +679,10 @@
       return false;
     }
     if (state.teamSource === "onec") {
-      return Boolean(state.onecTeam);
+      if (state.onecPortfolioEmployee) {
+        return true;
+      }
+      return Boolean(state.onecTeam) && (state.portfolio === "clients" || state.portfolio === "outlets");
     }
     return Boolean(state.ropEmployee);
   }
