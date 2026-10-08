@@ -310,6 +310,11 @@ export function syntheticOptionsPayload(
         shortId: "2B4CD6C6",
       },
     ],
+    onecTop150Values: [{ id: "Нет", name: "Нет", shortId: "Нет" }],
+    onecCategoryValues: [
+      { id: "D", name: "D", shortId: "D" },
+      { id: "SYNTH-UNKNOWN", name: "SYNTH-UNKNOWN", shortId: "SYNTH" },
+    ],
   };
 }
 

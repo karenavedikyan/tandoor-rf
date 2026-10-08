@@ -269,7 +269,22 @@
       '<div class="pc-grid pc-three">' +
       card("Холдинг и ответственность", '<div class="pc-pad">' +
         detailsBlock("Основные сведения и холдинг",
-          field("Клиент / категория", (client.name || "Не указан") + " · категория не передана", true) +
+          field("Клиент", client.name || "Не указан", true) +
+          field(
+            "ТОП-150 (1С)",
+            ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.label,
+            !!(ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.hasSource),
+          ) +
+          field(
+            "Категория 1С",
+            ext && ext.wholesaleExchange && ext.wholesaleExchange.outletCategory && ext.wholesaleExchange.outletCategory.label,
+            !!(
+              ext &&
+              ext.wholesaleExchange &&
+              ext.wholesaleExchange.outletCategory &&
+              ext.wholesaleExchange.outletCategory.hasSource
+            ),
+          ) +
           field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext),
           true) +
         detailsBlock("Ответственные",

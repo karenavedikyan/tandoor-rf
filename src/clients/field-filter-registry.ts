@@ -8,6 +8,8 @@ export const CLIENT_FILLED_EMPTY_FIELDS = new Set([
   "discountProgram",
   "discountAmount",
   "markups",
+  "onecTop150",
+  "onecCategory",
 ]);
 
 /** Outlet snapshot fields (same-outlet on entity=clients). */
@@ -83,6 +85,8 @@ export function hasOutletDerivedClientFilters(query: {
   tandoorClub?: string;
   bonusTandoorClub?: string;
   discountProgram?: string;
+  onecTop150?: string;
+  onecCategory?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;

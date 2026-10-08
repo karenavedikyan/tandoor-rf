@@ -371,6 +371,24 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         ],
         [],
       );
+    } else if (field === "onecTop150") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'top150') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'top150'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCategory") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'outletCategory') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'outletCategory'), '') IS NOT NULL`,
+        ],
+        [],
+      );
     }
   }
   for (const field of parseFilledEmptyFieldList(query.empty)) {
@@ -416,6 +434,24 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
              jsonb_typeof(onec_clients.extended_snapshot->'commercial'->'markups') <> 'array'
              OR jsonb_array_length(onec_clients.extended_snapshot->'commercial'->'markups') = 0
            )`,
+        ],
+        [],
+      );
+    } else if (field === "onecTop150") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'top150') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'top150'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecCategory") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'wholesaleExchange'->'fieldPresence'->>'outletCategory') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'wholesaleExchange'->>'outletCategory'), '') IS NULL`,
         ],
         [],
       );
