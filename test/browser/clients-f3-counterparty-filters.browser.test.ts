@@ -15,6 +15,9 @@ import {
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 const F3_OGRN = "0123456789012";
+const F3_COUNTERPARTY = "ООО «Browser F3»";
+const F3_FULL_NAME = "Browser Full Legal Name";
+const F3_LEGAL_TYPE = "Компания";
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
   path.join("/opt/cursor/artifacts", "screenshots");
@@ -23,7 +26,7 @@ function isPrimaryClientsListGet(url: URL, method: string): boolean {
   return method === "GET" && url.pathname === "/api/clients";
 }
 
-describe("clients F3 counterparty filters browser", { concurrency: false }, () => {
+describe("clients F3 counterparty filters browser (mock-browser)", { concurrency: false }, () => {
   let browser: Browser;
   let server: http.Server;
   let baseUrl = "";
@@ -68,9 +71,9 @@ describe("clients F3 counterparty filters browser", { concurrency: false }, () =
         extended: {
           formatVersion: "extended_v1",
           counterparty: {
-            counterparty: { hasSource: true, label: "ООО «Browser F3»", value: "ООО «Browser F3»" },
-            fullName: { hasSource: true, label: "Browser Full Legal Name", value: "Browser Full Legal Name" },
-            legalEntityType: { hasSource: true, label: "Компания", value: "Компания" },
+            counterparty: { hasSource: true, label: F3_COUNTERPARTY, value: F3_COUNTERPARTY },
+            fullName: { hasSource: true, label: F3_FULL_NAME, value: F3_FULL_NAME },
+            legalEntityType: { hasSource: true, label: F3_LEGAL_TYPE, value: F3_LEGAL_TYPE },
             ogrn: { hasSource: true, label: F3_OGRN, value: F3_OGRN },
           },
           retailOutlets: [],
@@ -126,12 +129,38 @@ describe("clients F3 counterparty filters browser", { concurrency: false }, () =
     await page.waitForSelector("#onec-ogrn-filter:not(.clients-hidden)");
   }
 
-  it("desktop: filter input, list 200, card counterparty block, back, reload, reset", async () => {
-    const { page, state, errors } = await setupPage();
-    await page.setViewportSize(DESKTOP);
-    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
-    await openFieldFiltersSection(page);
+  async function collapseFiltersPanelIfExpanded(page: Page): Promise<void> {
+    const toggle = page.locator("#clients-filters-toggle");
+    if (!(await toggle.isVisible())) {
+      return;
+    }
+    const expanded = await toggle.getAttribute("aria-expanded");
+    if (expanded === "true") {
+      await toggle.click();
+      await page.waitForFunction(
+        () => document.querySelector("#clients-filters-toggle")?.getAttribute("aria-expanded") !== "true",
+      );
+    }
+  }
 
+  async function openCounterpartyDetailsOnCard(page: Page): Promise<void> {
+    await page.click("#pc-tab-data");
+    await page.waitForSelector("#pc-panel-data:not([hidden])");
+    await page.locator("#pc-panel-data summary", { hasText: "Контрагент и реквизиты" }).click();
+  }
+
+  async function assertCounterpartyBlockValues(page: Page): Promise<void> {
+    const cardText = await page.locator("#pc-panel-data").innerText();
+    assert.match(cardText, /Контрагент и реквизиты/);
+    assert.match(cardText, new RegExp(F3_COUNTERPARTY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(cardText, new RegExp(F3_FULL_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(cardText, new RegExp(F3_LEGAL_TYPE));
+    assert.match(cardText, /ОГРН/);
+    assert.match(cardText, new RegExp(F3_OGRN));
+  }
+
+  async function runFilterToCardFlow(page: Page): Promise<void> {
+    await openFieldFiltersSection(page);
     const listResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
       if (!isPrimaryClientsListGet(new URL(response.url()), request.method())) {
@@ -145,15 +174,25 @@ describe("clients F3 counterparty filters browser", { concurrency: false }, () =
     assert.equal(listResponse.status(), 200);
     assert.equal(await page.locator("#onec-ogrn-filter").inputValue(), F3_OGRN);
 
-    await page.locator(`a.clients-link[href*='/clients/${SYNTHETIC_CLIENT_GUID}']`).first().click();
+    await collapseFiltersPanelIfExpanded(page);
+    const clientLink = page.getByRole("link", { name: "F3 Synthetic Client" });
+    await clientLink.scrollIntoViewIfNeeded();
+    await clientLink.click();
     await page.waitForURL(new RegExp("/clients/" + SYNTHETIC_CLIENT_GUID.replace(/-/g, "\\-")));
-    await page.click("#pc-tab-data");
-    await page.waitForSelector("#pc-panel-data:not([hidden])");
-    await page.locator("#pc-panel-data summary", { hasText: "Контрагент и реквизиты" }).click();
-    const cardText = await page.locator("#pc-panel-data").innerText();
-    assert.match(cardText, /Контрагент и реквизиты/);
-    assert.match(cardText, /ОГРН/);
-    assert.match(cardText, new RegExp(F3_OGRN));
+    await openCounterpartyDetailsOnCard(page);
+    await assertCounterpartyBlockValues(page);
+  }
+
+  it("desktop mock-browser: filters, card counterparty block, back, reload, reset", async () => {
+    const { page, state, errors } = await setupPage();
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
+    await runFilterToCardFlow(page);
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "f3-counterparty-expanded-desktop-1440.png"),
+      fullPage: true,
+    });
 
     await page.goBack({ waitUntil: "networkidle" });
     await openFieldFiltersSection(page);
@@ -176,15 +215,46 @@ describe("clients F3 counterparty filters browser", { concurrency: false }, () =
     assert.equal(await page.locator("#onec-ogrn-filter").inputValue(), "");
     assert.doesNotMatch(state.lastListUrl, /onecOgrn=/);
 
-    await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "f3-counterparty-filters-desktop-1440.png"),
-      fullPage: true,
-    });
     assert.equal(errors.length, 0, errors.join("; "));
     await page.close();
   });
 
-  it("mobile: clears F3 counterparty filters when switching to outlets", async () => {
+  it("mobile mock-browser: filters, card counterparty block, back, reload, reset", async () => {
+    const { page, state, errors } = await setupPage();
+    await page.setViewportSize(MOBILE);
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
+    await runFilterToCardFlow(page);
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "f3-counterparty-expanded-mobile-390.png"),
+      fullPage: true,
+    });
+
+    await page.goBack({ waitUntil: "networkidle" });
+    await openFieldFiltersSection(page);
+
+    const reloadListPromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return (
+        isPrimaryClientsListGet(new URL(response.url()), request.method()) &&
+        new URL(response.url()).searchParams.get("onecOgrn") === F3_OGRN
+      );
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await reloadListPromise;
+    await openFieldFiltersSection(page);
+    assert.equal(await page.locator("#onec-ogrn-filter").inputValue(), F3_OGRN);
+
+    await page.click("#reset-filters");
+    await page.waitForFunction(() => !window.location.search.includes("onecOgrn="));
+    assert.equal(await page.locator("#onec-ogrn-filter").inputValue(), "");
+    assert.doesNotMatch(state.lastListUrl, /onecOgrn=/);
+
+    assert.equal(errors.length, 0, errors.join("; "));
+    await page.close();
+  });
+
+  it("mobile mock-browser: clears F3 counterparty filters when switching to outlets", async () => {
     const { page, state, errors } = await setupPage();
     await page.setViewportSize(MOBILE);
     await page.goto(
@@ -215,10 +285,6 @@ describe("clients F3 counterparty filters browser", { concurrency: false }, () =
     assert.match(page.url(), /bonusTandoorClub=0/);
     assert.doesNotMatch(state.lastListUrl, /onecOgrn=/);
 
-    await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "f3-counterparty-filters-mobile-390.png"),
-      fullPage: true,
-    });
     assert.equal(errors.length, 0, errors.join("; "));
     await page.close();
   });

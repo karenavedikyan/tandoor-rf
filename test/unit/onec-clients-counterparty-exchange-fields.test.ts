@@ -48,11 +48,30 @@ describe("onec-clients counterparty exchange fields (F3)", () => {
     assert.equal(parsed.counterparty.fieldPresence.fullName, false);
   });
 
-  it("rejects invalid counterparty shapes", () => {
-    assert.equal(
-      parseCounterpartyExchangeFields({ [COUNTERPARTY_JSON_KEY_OGRN]: { bad: true } }).invalid,
-      true,
-    );
+  it("rejects non-string types for all four F3 fields", () => {
+    const invalidValues: unknown[] = [123, 123.5, 0, true, false, [], { x: 1 }];
+    for (const fieldKey of [
+      COUNTERPARTY_JSON_KEY_NAME,
+      COUNTERPARTY_JSON_KEY_LEGAL_TYPE,
+      COUNTERPARTY_JSON_KEY_OGRN,
+      COUNTERPARTY_JSON_KEY_FULL_NAME,
+    ]) {
+      for (const bad of invalidValues) {
+        assert.equal(parseCounterpartyExchangeFields({ [fieldKey]: bad }).invalid, true, `${fieldKey} ${String(bad)}`);
+      }
+    }
+  });
+
+  it("preserves string zero and unknown OGRN shapes as-is", () => {
+    const parsed = parseCounterpartyExchangeFields({
+      [COUNTERPARTY_JSON_KEY_LEGAL_TYPE]: "0",
+      [COUNTERPARTY_JSON_KEY_OGRN]: "123.5",
+      [COUNTERPARTY_JSON_KEY_NAME]: "invalid",
+    });
+    assert.equal(parsed.invalid, false);
+    assert.equal(parsed.counterparty.legalEntityType, "0");
+    assert.equal(parsed.counterparty.ogrn, "123.5");
+    assert.equal(parsed.counterparty.counterparty, "invalid");
   });
 
   it("preserves literal string «invalid» for counterparty scalars", () => {

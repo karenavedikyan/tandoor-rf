@@ -302,6 +302,73 @@ describe("onec F3 counterparty upgrade backfill via regular-update", { concurren
     assert.equal(backfillDry.verificationFingerprint, dryRun.verificationFingerprint);
   });
 
+  it("C: omitted F3 keys preserve values; explicit empty clears full name", async () => {
+    const withCounterparty = extendedClientWithCounterparty();
+    const clientsBytes = clientsBytesFromRecord(withCounterparty);
+    const roster = rosterBytes();
+    await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
+
+    const {
+      [COUNTERPARTY_JSON_KEY_NAME]: _n,
+      [COUNTERPARTY_JSON_KEY_LEGAL_TYPE]: _l,
+      [COUNTERPARTY_JSON_KEY_OGRN]: _o,
+      [COUNTERPARTY_JSON_KEY_FULL_NAME]: _f,
+      ...withoutCounterparty
+    } = withCounterparty;
+    const omittedBytes = clientsBytesFromRecord(withoutCounterparty);
+    const omittedDry = await dryRunBundle(databaseUrl, omittedBytes, roster);
+    const omittedApply = await applyBundle(
+      databaseUrl,
+      omittedBytes,
+      roster,
+      omittedDry.verificationFingerprint!,
+    );
+    assert.equal(omittedApply.status, "SUCCESS");
+    let block = (await readCounterpartyBlock(databaseUrl, CLIENT_ONE)) as {
+      counterparty: string;
+      ogrn: string;
+      fullName: string;
+    };
+    assert.equal(block.counterparty, "ООО «Backfill F3»");
+    assert.equal(block.ogrn, "0123456789012");
+    assert.equal(block.fullName, "Backfill Full Legal Name");
+
+    const omittedRepeat = await applyBundle(
+      databaseUrl,
+      omittedBytes,
+      roster,
+      omittedDry.verificationFingerprint!,
+    );
+    assert.equal(omittedRepeat.status, "NO_CHANGES");
+
+    const clearedBytes = clientsBytesFromRecord(
+      extendedClientWithCounterparty({ [COUNTERPARTY_JSON_KEY_FULL_NAME]: "" }),
+    );
+    const clearedDry = await dryRunBundle(databaseUrl, clearedBytes, roster);
+    await storeOperatorExtendedConfirmation(databaseUrl, clearedBytes, roster, "f3-backfill-test");
+    const clearedApply = await applyBundle(
+      databaseUrl,
+      clearedBytes,
+      roster,
+      clearedDry.verificationFingerprint!,
+    );
+    assert.equal(clearedApply.status, "SUCCESS");
+    block = (await readCounterpartyBlock(databaseUrl, CLIENT_ONE)) as {
+      counterparty: string;
+      fullName: string;
+    };
+    assert.equal(block.counterparty, "ООО «Backfill F3»");
+    assert.equal(block.fullName, "");
+
+    const clearedRepeat = await applyBundle(
+      databaseUrl,
+      clearedBytes,
+      roster,
+      clearedDry.verificationFingerprint!,
+    );
+    assert.equal(clearedRepeat.status, "NO_CHANGES");
+  });
+
   it("B: returns NO_CHANGES after counterparty backfill without another write", async () => {
     const clientsBytes = clientsBytesFromRecord(extendedClientWithCounterparty());
     const roster = rosterBytes();
@@ -319,6 +386,26 @@ describe("onec F3 counterparty upgrade backfill via regular-update", { concurren
     );
     assert.equal(repeat.status, "NO_CHANGES");
     assert.equal(await countSuccessfulApplyRuns(databaseUrl), 2);
+  });
+
+  it("rejects invalid counterparty field type before apply and preserves stored snapshot", async () => {
+    const clientsBytes = clientsBytesFromRecord(extendedClientWithCounterparty());
+    const roster = rosterBytes();
+    await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
+    const before = await readCounterpartyBlock(databaseUrl, CLIENT_ONE);
+    assert.ok(before);
+    const applyCountBefore = await countSuccessfulApplyRuns(databaseUrl);
+
+    const invalidBytes = clientsBytesFromRecord(
+      extendedClientWithCounterparty({ [COUNTERPARTY_JSON_KEY_OGRN]: 123.5 }),
+    );
+    const invalidDry = await dryRunBundle(databaseUrl, invalidBytes, roster);
+    assert.equal(invalidDry.status, "REJECTED_BY_CHECKS");
+    assert.equal(invalidDry.errorCode, "VALIDATION_FAILED");
+
+    const after = await readCounterpartyBlock(databaseUrl, CLIENT_ONE);
+    assert.deepEqual(after, before);
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), applyCountBefore);
   });
 
   it("D: rolls back counterparty backfill after in-transaction write, then recovers", async () => {

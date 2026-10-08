@@ -50,9 +50,6 @@ function readPreservedStringField(value: unknown): ReadPreservedStringResult {
   if (typeof value === "string") {
     return { ok: true, value };
   }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return { ok: true, value: String(value) };
-  }
   return { ok: false, reason: "invalid_type" };
 }
 
