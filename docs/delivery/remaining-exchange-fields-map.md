@@ -163,7 +163,7 @@ Legacy import: warning `EXTRA_FIELDS`, **не** в parsed 8 полей.
 
 Код: `src/clients/lpr-fields.ts`, `extended-dto.ts` → `toOutletDto`; UI: `client-card-prototype.js` (блоки «Контакт ЛПР», «Бонусные условия»); список — `public/clients-logic.js`.
 
-**Snapshot достаточен для отображения**, если `extended_snapshot.currentRetailOutlets[].lpr` уже заполнен импортом; отдельный backfill не требуется, кроме записей без extended apply (F6).
+**Snapshot достаточен для отображения**, если `extended_snapshot.currentRetailOutlets[].lpr` уже заполнен импортом. Для снимков **до F1** без `fieldPresence` DTO и SQL-LPR-фильтры используют сохранённые непустые скаляры и маркеры DOB (sentinel/ambiguous/preserved); пустые строки по умолчанию **не** считаются «передано». **Re-import / backfill `fieldPresence` не обязателен** для чтения старых данных; backfill имеет смысл только для записей без extended apply (F6) или если нужна явная семантика «поле передано, но пусто» vs «не передано» на legacy-пустых полях.
 
 ---
 

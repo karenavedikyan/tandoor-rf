@@ -38,12 +38,44 @@ const LPR_FIELD_PRESENCE_KEYS: Record<LprScalarFieldKey, LprScalarFieldKey> = {
   conditionsBonus: "conditionsBonus",
 };
 
+/** Shared DTO + SQL rule: explicit fieldPresence when set; legacy snapshots infer from stored values/markers only. */
 function readLprFieldPresence(lpr: ParsedOutletLpr | undefined, key: LprScalarFieldKey): boolean {
-  return lpr?.fieldPresence?.[key] === true;
+  if (!lpr) {
+    return false;
+  }
+  const explicit = lpr.fieldPresence?.[key];
+  if (explicit === true) {
+    return true;
+  }
+  if (explicit === false) {
+    return false;
+  }
+  const raw = lpr[key] ?? "";
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  return trimmed.length > 0;
 }
 
 function readDateOfBirthPresence(lpr: ParsedOutletLpr | undefined): boolean {
-  return lpr?.fieldPresence?.dateOfBirth === true;
+  if (!lpr) {
+    return false;
+  }
+  const explicit = lpr.fieldPresence?.dateOfBirth;
+  if (explicit === true) {
+    return true;
+  }
+  if (explicit === false) {
+    return false;
+  }
+  if (lpr.dateOfBirthExplicitEmpty) {
+    return true;
+  }
+  if (lpr.dateOfBirthAmbiguous) {
+    return true;
+  }
+  if (lpr.dateOfBirth != null && lpr.dateOfBirth.trim().length > 0) {
+    return true;
+  }
+  return false;
 }
 
 function formatIsoDateRu(iso: string): string {
@@ -150,27 +182,54 @@ function lprExprField(lprExpr: string, key: LprScalarFieldKey): string {
   return `${lprExpr}->>'${key}'`;
 }
 
-function lprPresenceExpr(lprExpr: string, key: LprScalarFieldKey | "dateOfBirth"): string {
-  return `(${lprExpr}->'fieldPresence'->>'${key}') = 'true'`;
+function lprFieldPresenceFlagExpr(lprExpr: string, key: LprScalarFieldKey | "dateOfBirth"): string {
+  return `(${lprExpr}->'fieldPresence'->>'${key}')`;
+}
+
+function lprScalarPresenceExpr(lprExpr: string, key: LprScalarFieldKey): string {
+  const flag = lprFieldPresenceFlagExpr(lprExpr, key);
+  const field = lprExprField(lprExpr, key);
+  return `(
+    ${flag} = 'true'
+    OR (
+      ${flag} IS NULL
+      AND NULLIF(BTRIM(${field}), '') IS NOT NULL
+    )
+  )`;
+}
+
+function lprDateOfBirthPresenceExpr(lprExpr: string): string {
+  const flag = lprFieldPresenceFlagExpr(lprExpr, "dateOfBirth");
+  return `(
+    ${flag} = 'true'
+    OR (
+      ${flag} IS NULL
+      AND (
+        COALESCE((${lprExpr}->>'dateOfBirthExplicitEmpty')::boolean, false) = true
+        OR COALESCE((${lprExpr}->>'dateOfBirthAmbiguous')::boolean, false) = true
+        OR NULLIF(BTRIM(${lprExpr}->>'dateOfBirth'), '') IS NOT NULL
+      )
+    )
+  )`;
 }
 
 export function lprScalarSearchSql(lprExpr: string, key: LprScalarFieldKey, paramRef: string): string {
-  return `${lprPresenceExpr(lprExpr, key)}
+  return `${lprScalarPresenceExpr(lprExpr, key)}
     AND NULLIF(BTRIM(${lprExprField(lprExpr, key)}), '') ILIKE ${paramRef} ESCAPE '\\'`;
 }
 
 export function lprScalarFilledSql(lprExpr: string, key: LprScalarFieldKey): string {
-  return `${lprPresenceExpr(lprExpr, key)}
+  return `${lprScalarPresenceExpr(lprExpr, key)}
     AND NULLIF(BTRIM(${lprExprField(lprExpr, key)}), '') IS NOT NULL`;
 }
 
 export function lprScalarEmptySql(lprExpr: string, key: LprScalarFieldKey): string {
-  return `${lprPresenceExpr(lprExpr, key)}
+  return `${lprScalarPresenceExpr(lprExpr, key)}
     AND NULLIF(BTRIM(${lprExprField(lprExpr, key)}), '') IS NULL`;
 }
 
 export function lprDateOfBirthFilledSql(lprExpr: string): string {
-  return `${lprPresenceExpr(lprExpr, "dateOfBirth")}
+  return `${lprDateOfBirthPresenceExpr(lprExpr)}
     AND NULLIF(BTRIM(${lprExpr}->>'dateOfBirth'), '') IS NOT NULL
     AND COALESCE((${lprExpr}->>'dateOfBirthExplicitEmpty')::boolean, false) = false
     AND NOT (
@@ -180,7 +239,7 @@ export function lprDateOfBirthFilledSql(lprExpr: string): string {
 }
 
 export function lprDateOfBirthEmptySql(lprExpr: string): string {
-  return `${lprPresenceExpr(lprExpr, "dateOfBirth")}
+  return `${lprDateOfBirthPresenceExpr(lprExpr)}
     AND (
       COALESCE((${lprExpr}->>'dateOfBirthExplicitEmpty')::boolean, false) = true
       OR (

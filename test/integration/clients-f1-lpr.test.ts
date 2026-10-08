@@ -49,6 +49,21 @@ function buildLpr(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Pre-F1 snapshot shape: stored values without fieldPresence flags. */
+function buildLegacyLpr(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "Legacy LPR",
+    post: "Legacy Post",
+    dateOfBirth: "1985-03-15",
+    phone: "+79001112233",
+    email: "legacy@example.test",
+    bonus: "0",
+    conditionsBonus: "Legacy Cond",
+    dateOfBirthConfirmedInCurrentExport: true,
+    ...overrides,
+  };
+}
+
 function buildOutlet(input: {
   ordinal: number;
   guidStore: string;
@@ -270,5 +285,131 @@ describe("F1 LPR fields integration", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(filledBonus.status, 200);
     assert.equal(filledBonus.body.total, 1);
+  });
+
+  it("legacy snapshot without fieldPresence: card, list, and filters align", async () => {
+    await updateClientExtendedSnapshot(databaseUrl, C1, {
+      regionalManager: { guid: null, name: "", state: "not_provided" },
+      hardwareManager: { guid: null, name: "", state: "not_provided" },
+      headOfSales: { guid: null, name: "", state: "not_provided" },
+      currentRetailOutlets: [
+        buildOutlet({
+          ordinal: 1,
+          guidStore: T1,
+          storeAddress: "TT1",
+          managerGuid: M1,
+          lpr: buildLegacyLpr(),
+        }),
+        buildOutlet({
+          ordinal: 2,
+          guidStore: T2,
+          storeAddress: "TT2",
+          managerGuid: M2,
+          lpr: buildLegacyLpr({ name: "Other TT2" }),
+        }),
+      ],
+    });
+
+    const app = await loadApp();
+    const cookie = await login("m1-f1@example.com");
+
+    const card = await request(app).get(`/api/clients/${C1}`).set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(card.status, 200);
+    const lpr = card.body.client.extended.retailOutlets[0].lpr;
+    assert.equal(lpr.name.value, "Legacy LPR");
+    assert.equal(lpr.bonus.value, "0");
+    assert.equal(lpr.dateOfBirth.isoDate, "1985-03-15");
+
+    const list = await request(app)
+      .get("/api/clients?entity=outlets&lprNameContains=Legacy&lprBonusContains=0")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(list.status, 200);
+    assert.equal(list.body.total, 1);
+    assert.equal(list.body.items[0].lpr.name.value, "Legacy LPR");
+
+    await updateClientExtendedSnapshot(databaseUrl, C1, {
+      regionalManager: { guid: null, name: "", state: "not_provided" },
+      hardwareManager: { guid: null, name: "", state: "not_provided" },
+      headOfSales: { guid: null, name: "", state: "not_provided" },
+      currentRetailOutlets: [
+        buildOutlet({
+          ordinal: 1,
+          guidStore: T1,
+          storeAddress: "TT1",
+          managerGuid: M1,
+          lpr: buildLegacyLpr({
+            name: "Should Hide",
+            fieldPresence: {
+              name: false,
+              post: true,
+              phone: true,
+              email: true,
+              bonus: true,
+              conditionsBonus: true,
+              dateOfBirth: true,
+            },
+          }),
+        }),
+      ],
+    });
+
+    await resetPoolForTests();
+    const cardHidden = await request(app).get(`/api/clients/${C1}`).set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(cardHidden.body.client.extended.retailOutlets[0].lpr.name.label, "Не передано");
+  });
+
+  it("parallel portfolio counter GET hasOutlets=no does not 500 for manager", async () => {
+    const app = await loadApp();
+    const cookie = await login("m1-f1@example.com");
+    const paths = [
+      "/api/clients?view=all&page=1&pageSize=1&entity=clients",
+      "/api/clients?view=all&page=1&pageSize=1&entity=outlets",
+      "/api/clients?view=all&page=1&pageSize=1&entity=clients&hasOutlets=no",
+    ];
+    const results = await Promise.all(
+      paths.map((path) => request(app).get(path).set({ Origin: ORIGIN, Cookie: cookie })),
+    );
+    for (const res of results) {
+      assert.equal(res.status, 200, `expected 200 for portfolio stats shape`);
+    }
+  });
+
+  it("preview-as-manager: TT1 LPR visible, TT2 excluded, writes blocked", async () => {
+    const app = await loadApp();
+    const adminCookie = await login("admin-f1@example.com");
+    const managerUser = (
+      await request(app)
+        .get("/api/admin/access/preview/candidates?q=m1-f1")
+        .set({ Origin: ORIGIN, Cookie: adminCookie })
+    ).body.items.find((item: { email: string }) => item.email === "m1-f1@example.com");
+    assert.ok(managerUser);
+
+    const start = await request(app)
+      .post("/api/admin/access/preview/start")
+      .set({ Origin: ORIGIN, Cookie: adminCookie })
+      .send({ userId: managerUser.id });
+    assert.equal(start.status, 200);
+
+    const card = await request(app).get(`/api/clients/${C1}`).set({ Origin: ORIGIN, Cookie: adminCookie });
+    assert.equal(card.status, 200);
+    assert.equal(card.body.client.extended.retailOutlets.length, 1);
+    assert.equal(card.body.client.extended.retailOutlets[0].lpr.name.value, "LPR Alpha");
+
+    const betaHidden = await request(app)
+      .get("/api/clients?entity=outlets&lprNameContains=Beta")
+      .set({ Origin: ORIGIN, Cookie: adminCookie });
+    assert.equal(betaHidden.status, 200);
+    assert.equal(betaHidden.body.total, 0);
+
+    const write = await request(app)
+      .put(`/api/clients/${C1}/review`)
+      .set({ Origin: ORIGIN, Cookie: adminCookie })
+      .send({ reviewState: "in_progress", comment: "blocked in preview" });
+    assert.equal(write.status, 403);
+
+    await request(app)
+      .post("/api/admin/access/preview/stop")
+      .set({ Origin: ORIGIN, Cookie: adminCookie })
+      .send({});
   });
 });

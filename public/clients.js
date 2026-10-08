@@ -4206,12 +4206,27 @@
     markupNameFilter,
     markupPercentageFilter,
     bonusTandoorFilter,
+    lprNameFilter,
+    lprPostFilter,
+    lprPhoneFilter,
+    lprEmailFilter,
+    lprBonusFilter,
+    lprConditionsFilter,
   ]
     .filter(Boolean)
     .forEach(function (el) {
       el.addEventListener("input", function () {
         invalidateInFlightRequests();
         scheduleLoad(true, true);
+      });
+    });
+  [lprDobFilter, lprDobFromFilter, lprDobToFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("change", function () {
+        cancelScheduledLoad();
+        invalidateInFlightRequests();
+        scheduleLoad(true, false);
       });
     });
   [loadingScheduleFilter, filledFieldFilter, emptyFieldFilter]

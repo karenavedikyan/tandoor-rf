@@ -8,6 +8,22 @@ export function rebaseSqlPlaceholders(clause: string, offset: number): string {
   return clause.replace(/\$(\d+)/g, (_match, index) => `$${Number(index) + offset}`);
 }
 
+/** AND extra clauses that already use absolute $N placeholders matching `base.params`. */
+export function appendSqlClauses(base: SqlFilter, extraClauses: string[]): SqlFilter {
+  if (extraClauses.length === 0) {
+    return base;
+  }
+  const normalizedBase = base.whereSql.trim();
+  const combinedClauses = [
+    normalizedBase ? normalizedBase.replace(/^WHERE\s+/i, "") : "",
+    ...extraClauses,
+  ].filter(Boolean);
+  return {
+    whereSql: combinedClauses.length > 0 ? `WHERE ${combinedClauses.join(" AND ")}` : "",
+    params: base.params,
+  };
+}
+
 export function mergeSqlFilters(base: SqlFilter, extraClauses: string[], extraParams: unknown[]): SqlFilter {
   if (extraClauses.length === 0) {
     return base;

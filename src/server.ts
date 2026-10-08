@@ -269,7 +269,10 @@ export function createApp(): express.Application {
       const status = getErrorStatus(err);
 
       if (status >= 500) {
-        console.error(`Server error (${status}) ${req.method} ${req.path}`);
+        console.error(`Server error (${status}) ${req.method} ${req.originalUrl || req.path}`);
+        if (process.env.TANDOOR_DEBUG_HTTP_ERRORS === "1") {
+          console.error(err);
+        }
       }
 
       if (isStructuredApi(req)) {
