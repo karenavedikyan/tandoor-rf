@@ -675,31 +675,41 @@
       var isStale = callbacks.isStale || function () {
         return false;
       };
-      var autoExpand = [];
-      if (teamUi.query || teamUi.kind) {
-        (context.rops || []).forEach(function (rop) {
-          if (shouldAutoExpandRop(rop, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
-            autoExpand.push(rop.employeeGuid);
+
+      function computeRenderState() {
+        var autoExpand = [];
+        if (teamUi.query || teamUi.kind) {
+          (context.rops || []).forEach(function (rop) {
+            if (shouldAutoExpandRop(rop, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
+              autoExpand.push(rop.employeeGuid);
+            }
+          });
+        }
+        var mergedExpand = teamUi.expanded.slice();
+        autoExpand.forEach(function (guid) {
+          if (mergedExpand.indexOf(guid) === -1) {
+            mergedExpand.push(guid);
           }
         });
+        return {
+          renderState: Object.assign({}, state, { teamExpand: mergedExpand }),
+          autoExpand: autoExpand,
+          mergedExpand: mergedExpand,
+        };
       }
-      var mergedExpand = teamUi.expanded.slice();
-      autoExpand.forEach(function (guid) {
-        if (mergedExpand.indexOf(guid) === -1) {
-          mergedExpand.push(guid);
-        }
-      });
-      var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
 
-      function renderIfCurrent() {
+      function renderIfCurrent(renderState) {
         if (isStale()) {
           return;
         }
         renderOverviewIntoContainer(container, renderState, context, callbacks);
       }
 
-      if (!teamUi.query && !teamUi.kind && mergedExpand.length === 0) {
-        renderIfCurrent();
+      var needsAsyncWork =
+        Boolean(teamUi.query || teamUi.kind) || (teamUi.expanded && teamUi.expanded.length > 0);
+
+      if (!needsAsyncWork) {
+        renderIfCurrent(computeRenderState().renderState);
         if (callbacks.restoreSearchFocus) {
           callbacks.restoreSearchFocus();
         }
@@ -707,21 +717,29 @@
       }
 
       return ensureResponsiblesForSearch(context.rops || [], teamUi).then(function () {
-        renderIfCurrent();
-        if (mergedExpand.length === 0) {
+        if (isStale()) {
+          return;
+        }
+        var computed = computeRenderState();
+        renderIfCurrent(computed.renderState);
+        if (computed.mergedExpand.length === 0) {
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
           }
           return;
         }
         return Promise.all(
-          mergedExpand.map(function (ropGuid) {
+          computed.mergedExpand.map(function (ropGuid) {
             return ensureResponsibles(ropGuid);
           }),
         ).then(function () {
-          renderIfCurrent();
-          if (autoExpand.length > 0 && callbacks.syncExpand) {
-            callbacks.syncExpand(mergedExpand);
+          if (isStale()) {
+            return;
+          }
+          var refreshed = computeRenderState();
+          renderIfCurrent(refreshed.renderState);
+          if (refreshed.autoExpand.length > 0 && callbacks.syncExpand) {
+            callbacks.syncExpand(refreshed.mergedExpand);
           }
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
