@@ -14,6 +14,7 @@ import {
   applyClientLevelFilledEmptyFilters,
 } from "./client-entity-outlet-filter";
 import { applyClientCommercialFilters } from "./commercial-list-filters";
+import { applyClientCounterpartyFilters } from "./counterparty-list-filters";
 import { applyClientWholesaleExchangeFilters } from "./wholesale-list-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
 import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
@@ -207,6 +208,7 @@ async function resolveScopedFilter(
     userFilter = applyClientLevelFilledEmptyFilters(userFilter, input);
     userFilter = applyClientCommercialFilters(userFilter, input);
     userFilter = applyClientWholesaleExchangeFilters(userFilter, input);
+    userFilter = applyClientCounterpartyFilters(userFilter, input);
   }
 
 
@@ -373,7 +375,8 @@ export async function listClients(
         onec_clients.extended_snapshot->'hardwareManager' AS ext_hardware_manager,
         onec_clients.extended_snapshot->'headOfSales' AS ext_head_of_sales,
         onec_clients.extended_snapshot->'commercial' AS ext_commercial,
-        onec_clients.extended_snapshot->'wholesaleExchange' AS ext_wholesale_exchange
+        onec_clients.extended_snapshot->'wholesaleExchange' AS ext_wholesale_exchange,
+        onec_clients.extended_snapshot->'counterparty' AS ext_counterparty
         ${filter.extraSelect}
       ${fromSql}
       ${filter.whereSql}
@@ -559,6 +562,19 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     directFilter.params,
   );
 
+  const cpBase = "extended_snapshot->'counterparty'";
+  const onecLegalEntityTypeValues = await query<{ value: string }>(
+    `
+      SELECT DISTINCT ${cpBase}->>'legalEntityType' AS value
+      FROM onec_clients
+      ${wholesaleScopeSql}
+        (${cpBase}->'fieldPresence'->>'legalEntityType') = 'true'
+        AND NULLIF(BTRIM(${cpBase}->>'legalEntityType'), '') IS NOT NULL
+      ORDER BY value ASC
+    `,
+    directFilter.params,
+  );
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     outletManagers: outletManagers.rows.map((row) => toClientOption(row.id, row.name)),
@@ -568,6 +584,9 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     rops: rops.rows.map((row) => toClientOption(row.id, row.name)),
     onecTop150Values: onecTop150Values.rows.map((row) => toClientOption(row.value, row.value)),
     onecCategoryValues: onecCategoryValues.rows.map((row) => toClientOption(row.value, row.value)),
+    onecLegalEntityTypeValues: onecLegalEntityTypeValues.rows.map((row) =>
+      toClientOption(row.value, row.value),
+    ),
   };
 }
 

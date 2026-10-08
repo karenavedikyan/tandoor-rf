@@ -68,6 +68,10 @@
     "discountProgram",
     "onecTop150",
     "onecCategory",
+    "onecCounterpartyContains",
+    "onecFullNameContains",
+    "onecLegalEntityType",
+    "onecOgrn",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -120,6 +124,10 @@
     { value: "discountProgram", label: "Discount пуст" },
     { value: "onecTop150", label: "ТОП-150 (1С) пуст" },
     { value: "onecCategory", label: "Категория 1С пуста" },
+    { value: "onecCounterparty", label: "Контрагент пуст" },
+    { value: "onecFullName", label: "Полное наименование пусто" },
+    { value: "onecLegalEntityType", label: "Тип контрагента пуст" },
+    { value: "onecOgrn", label: "ОГРН пуст" },
     { value: "discountAmount", label: "DiscountAmount пуст" },
     { value: "markups", label: "Markups пуст" },
   ];
@@ -131,6 +139,10 @@
     discountProgram: true,
     onecTop150: true,
     onecCategory: true,
+    onecCounterparty: true,
+    onecFullName: true,
+    onecLegalEntityType: true,
+    onecOgrn: true,
     discountAmount: true,
     markups: true,
   };
@@ -139,6 +151,10 @@
     "discountProgram",
     "onecTop150",
     "onecCategory",
+    "onecCounterpartyContains",
+    "onecFullNameContains",
+    "onecLegalEntityType",
+    "onecOgrn",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -164,6 +180,10 @@
     state.discountProgram = "";
     state.onecTop150 = "";
     state.onecCategory = "";
+    state.onecCounterpartyContains = "";
+    state.onecFullNameContains = "";
+    state.onecLegalEntityType = "";
+    state.onecOgrn = "";
     state.discountAmountMin = "";
     state.discountAmountMax = "";
     state.markupName = "";
@@ -201,6 +221,10 @@
     { value: "discountProgram", label: "Discount заполнен" },
     { value: "onecTop150", label: "ТОП-150 (1С) заполнен" },
     { value: "onecCategory", label: "Категория 1С заполнена" },
+    { value: "onecCounterparty", label: "Контрагент заполнен" },
+    { value: "onecFullName", label: "Полное наименование заполнено" },
+    { value: "onecLegalEntityType", label: "Тип контрагента заполнен" },
+    { value: "onecOgrn", label: "ОГРН заполнен" },
     { value: "discountAmount", label: "DiscountAmount заполнен" },
     { value: "markups", label: "Markups заполнен" },
   ];
@@ -212,6 +236,10 @@
     { id: "category", label: "Категория", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "onecTop150", label: "ТОП-150 (1С)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecCategory", label: "Категория 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "onecCounterparty", label: "Контрагент", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "onecFullName", label: "Полное наименование", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "onecLegalEntityType", label: "Тип контрагента", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "onecOgrn", label: "ОГРН", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "holding", label: "Холдинг", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "address", label: "Адрес", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "city", label: "Город", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
@@ -538,6 +566,10 @@
       discountProgram: params.get("discountProgram") || "",
       onecTop150: params.get("onecTop150") || "",
       onecCategory: params.get("onecCategory") || "",
+      onecCounterpartyContains: params.get("onecCounterpartyContains") || "",
+      onecFullNameContains: params.get("onecFullNameContains") || "",
+      onecLegalEntityType: params.get("onecLegalEntityType") || "",
+      onecOgrn: params.get("onecOgrn") || "",
       discountAmountMin: params.get("discountAmountMin") || "",
       discountAmountMax: params.get("discountAmountMax") || "",
       markupName: params.get("markupName") || "",
@@ -843,6 +875,10 @@
     if (state.discountProgram) params.set("discountProgram", state.discountProgram);
     if (state.onecTop150) params.set("onecTop150", state.onecTop150);
     if (state.onecCategory) params.set("onecCategory", state.onecCategory);
+    if (state.onecCounterpartyContains) params.set("onecCounterpartyContains", state.onecCounterpartyContains);
+    if (state.onecFullNameContains) params.set("onecFullNameContains", state.onecFullNameContains);
+    if (state.onecLegalEntityType) params.set("onecLegalEntityType", state.onecLegalEntityType);
+    if (state.onecOgrn) params.set("onecOgrn", state.onecOgrn);
     if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
     if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
     if (state.markupName) params.set("markupName", state.markupName);

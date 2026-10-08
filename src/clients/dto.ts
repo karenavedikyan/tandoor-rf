@@ -12,6 +12,10 @@ import {
   type ParsedClientCommercial,
 } from "../onec-clients/commercial-fields";
 import {
+  hasAnyCounterpartyExchangeField,
+  type ParsedCounterpartyExchange,
+} from "../onec-clients/counterparty-exchange-fields";
+import {
   hasAnyWholesaleClientExchangeField,
   type ParsedWholesaleClientExchange,
 } from "../onec-clients/wholesale-client-exchange-fields";
@@ -75,6 +79,26 @@ export type ClientListItemDto = {
     label: string;
   };
   onecCategory?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecCounterparty?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecFullName?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecLegalEntityType?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecOgrn?: {
     value: string | null;
     hasSource: boolean;
     label: string;
@@ -190,6 +214,7 @@ export type ClientsOptionsResponse = {
   onecTop150Values: ClientOptionDto[];
   /** Distinct категория 1С values in accessible clients (non-empty). */
   onecCategoryValues: ClientOptionDto[];
+  onecLegalEntityTypeValues: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =
@@ -261,6 +286,7 @@ type ClientRow = {
   ext_head_of_sales?: unknown;
   ext_commercial?: unknown;
   ext_wholesale_exchange?: unknown;
+  ext_counterparty?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -417,6 +443,44 @@ function readWholesaleListFields(
   return result;
 }
 
+function readCounterpartyListFields(
+  raw: unknown,
+): Pick<ClientListItemDto, "onecCounterparty" | "onecFullName" | "onecLegalEntityType" | "onecOgrn"> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const cp = raw as ParsedCounterpartyExchange;
+  if (!hasAnyCounterpartyExchangeField(cp)) {
+    return {};
+  }
+  const result: Pick<
+    ClientListItemDto,
+    "onecCounterparty" | "onecFullName" | "onecLegalEntityType" | "onecOgrn"
+  > = {};
+  const stringField = (
+    key: "onecCounterparty" | "onecFullName" | "onecLegalEntityType" | "onecOgrn",
+    presence: boolean,
+    value: string | null,
+    preserveExact: boolean,
+  ) => {
+    if (!presence) {
+      return;
+    }
+    const trimmed = value?.trim() ?? "";
+    const empty = trimmed.length === 0;
+    result[key] = {
+      value: empty ? null : value,
+      hasSource: true,
+      label: empty ? "Не заполнено" : preserveExact ? value! : trimmed,
+    };
+  };
+  stringField("onecCounterparty", cp.fieldPresence.counterparty, cp.counterparty, false);
+  stringField("onecFullName", cp.fieldPresence.fullName, cp.fullName, false);
+  stringField("onecLegalEntityType", cp.fieldPresence.legalEntityType, cp.legalEntityType, true);
+  stringField("onecOgrn", cp.fieldPresence.ogrn, cp.ogrn, true);
+  return result;
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
   const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
@@ -459,6 +523,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
 
   Object.assign(item, readCommercialListFields(row.ext_commercial));
   Object.assign(item, readWholesaleListFields(row.ext_wholesale_exchange));
+  Object.assign(item, readCounterpartyListFields(row.ext_counterparty));
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);

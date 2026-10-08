@@ -301,6 +301,14 @@
             field("Markups", ext.commercial.markups && ext.commercial.markups.label, !!(ext.commercial.markups && ext.commercial.markups.hasSource)),
             false)
           : "") +
+        (ext && ext.counterparty
+          ? detailsBlock("Контрагент и реквизиты",
+            field("Контрагент", ext.counterparty.counterparty && ext.counterparty.counterparty.label, !!(ext.counterparty.counterparty && ext.counterparty.counterparty.hasSource)) +
+            field("Полное наименование", ext.counterparty.fullName && ext.counterparty.fullName.label, !!(ext.counterparty.fullName && ext.counterparty.fullName.hasSource)) +
+            field("Тип контрагента", ext.counterparty.legalEntityType && ext.counterparty.legalEntityType.label, !!(ext.counterparty.legalEntityType && ext.counterparty.legalEntityType.hasSource)) +
+            field("ОГРН", ext.counterparty.ogrn && ext.counterparty.ogrn.label, !!(ext.counterparty.ogrn && ext.counterparty.ogrn.hasSource)),
+            false)
+          : "") +
         detailsBlock("Контакты клиента",
           field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length) +
           '<p class="pc-label">Контакт ЛПР и персональные бонусы — в карточках торговых точек ниже.</p>',

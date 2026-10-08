@@ -129,6 +129,10 @@
   var discountProgramFilter = document.getElementById("discount-program-filter");
   var onecTop150Filter = document.getElementById("onec-top150-filter");
   var onecCategoryFilter = document.getElementById("onec-category-filter");
+  var onecCounterpartyFilter = document.getElementById("onec-counterparty-filter");
+  var onecFullNameFilter = document.getElementById("onec-full-name-filter");
+  var onecLegalTypeFilter = document.getElementById("onec-legal-type-filter");
+  var onecOgrnFilter = document.getElementById("onec-ogrn-filter");
   var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
   var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
   var markupNameFilter = document.getElementById("markup-name-filter");
@@ -876,6 +880,10 @@
       discountProgram: discountProgramFilter ? discountProgramFilter.value.trim() : "",
       onecTop150: onecTop150Filter ? onecTop150Filter.value : "",
       onecCategory: onecCategoryFilter ? onecCategoryFilter.value : "",
+      onecCounterpartyContains: onecCounterpartyFilter ? onecCounterpartyFilter.value.trim() : "",
+      onecFullNameContains: onecFullNameFilter ? onecFullNameFilter.value.trim() : "",
+      onecLegalEntityType: onecLegalTypeFilter ? onecLegalTypeFilter.value : "",
+      onecOgrn: onecOgrnFilter ? onecOgrnFilter.value : "",
       discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
       discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
@@ -1030,6 +1038,10 @@
     if (discountProgramFilter) discountProgramFilter.value = state.discountProgram || "";
     if (onecTop150Filter) onecTop150Filter.value = state.onecTop150 || "";
     if (onecCategoryFilter) onecCategoryFilter.value = state.onecCategory || "";
+    if (onecCounterpartyFilter) onecCounterpartyFilter.value = state.onecCounterpartyContains || "";
+    if (onecFullNameFilter) onecFullNameFilter.value = state.onecFullNameContains || "";
+    if (onecLegalTypeFilter) onecLegalTypeFilter.value = state.onecLegalEntityType || "";
+    if (onecOgrnFilter) onecOgrnFilter.value = state.onecOgrn || "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
@@ -1760,6 +1772,30 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.onecCategory.label || "—");
+    }
+    if (columnId === "onecCounterparty") {
+      if (!item.onecCounterparty || !item.onecCounterparty.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecCounterparty.label || "—");
+    }
+    if (columnId === "onecFullName") {
+      if (!item.onecFullName || !item.onecFullName.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecFullName.label || "—");
+    }
+    if (columnId === "onecLegalEntityType") {
+      if (!item.onecLegalEntityType || !item.onecLegalEntityType.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecLegalEntityType.label || "—");
+    }
+    if (columnId === "onecOgrn") {
+      if (!item.onecOgrn || !item.onecOgrn.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecOgrn.label || "—");
     }
     return renderNoDataCell();
   }
@@ -3711,6 +3747,17 @@
         });
         onecCategoryFilter.value = categoryCurrent;
       }
+      if (onecLegalTypeFilter) {
+        var legalCurrent = onecLegalTypeFilter.value;
+        onecLegalTypeFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.onecLegalEntityTypeValues || []).forEach(function (opt) {
+          var option = document.createElement("option");
+          option.value = opt.id;
+          option.textContent = opt.name;
+          onecLegalTypeFilter.appendChild(option);
+        });
+        onecLegalTypeFilter.value = legalCurrent;
+      }
       if (ropCombobox) {
         ropCombobox.syncFromUrl(ropFilter.value);
       }
@@ -4034,6 +4081,10 @@
     if (discountProgramFilter) discountProgramFilter.value = "";
     if (onecTop150Filter) onecTop150Filter.value = "";
     if (onecCategoryFilter) onecCategoryFilter.value = "";
+    if (onecCounterpartyFilter) onecCounterpartyFilter.value = "";
+    if (onecFullNameFilter) onecFullNameFilter.value = "";
+    if (onecLegalTypeFilter) onecLegalTypeFilter.value = "";
+    if (onecOgrnFilter) onecOgrnFilter.value = "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
     if (markupNameFilter) markupNameFilter.value = "";
@@ -4093,6 +4144,10 @@
       discountProgram: "",
       onecTop150: "",
       onecCategory: "",
+      onecCounterpartyContains: "",
+      onecFullNameContains: "",
+      onecLegalEntityType: "",
+      onecOgrn: "",
       discountAmountMin: "",
       discountAmountMax: "",
       markupName: "",
@@ -4264,7 +4319,7 @@
         scheduleLoad(true, true);
       });
     });
-  [onecTop150Filter, onecCategoryFilter]
+  [onecTop150Filter, onecCategoryFilter, onecCounterpartyFilter, onecFullNameFilter, onecLegalTypeFilter, onecOgrnFilter]
     .filter(Boolean)
     .forEach(function (el) {
       el.addEventListener("change", function () {
