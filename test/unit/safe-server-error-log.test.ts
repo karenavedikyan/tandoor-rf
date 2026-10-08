@@ -83,9 +83,26 @@ describe("safe server error logging", () => {
     assert.equal(logLines.length, 2);
     assert.match(logLines[0], /Server error \(500\) GET \/api\/clients requestId=/);
     assert.match(logLines[1], /Server error traits requestId=/);
-    assert.match(logLines[1], /name=Error/);
+    assert.doesNotMatch(logLines[1], /name=/);
     assert.match(logLines[1], /code=08P01/);
     assertNoSecretsInLogs();
+  });
+
+  it("debug mode never logs err.name even when it embeds secrets", () => {
+    captureLogs();
+    process.env.TANDOOR_DEBUG_HTTP_ERRORS = "1";
+    const secretInName = `leak:${SECRET_EMAIL}:${SECRET_TOKEN}`;
+    assert.ok(secretInName.length < 64);
+    const err = Object.assign(new Error("ignored message"), {
+      name: secretInName,
+      code: "23505",
+    });
+    logServerError(fakeClientsListRequest(), 500, err);
+    assert.equal(logLines.length, 2);
+    assert.match(logLines[1], /code=23505/);
+    assert.doesNotMatch(logLines.join("\n"), /name=/);
+    assert.doesNotMatch(logLines.join("\n"), new RegExp(SECRET_EMAIL.replace(/\./g, "\\.")));
+    assert.doesNotMatch(logLines.join("\n"), /Bearer-test-token/);
   });
 
   it("safeRouteTemplate never includes query string", () => {

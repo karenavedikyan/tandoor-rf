@@ -28,9 +28,6 @@ function logAllowlistedErrorTraits(diagnosticId: string, err: unknown): void {
   }
   const record = err as Record<string, unknown>;
   const traits: string[] = [];
-  if (typeof record.name === "string" && record.name.length > 0 && record.name.length <= 64) {
-    traits.push(`name=${record.name}`);
-  }
   if (typeof record.code === "string" && ALLOWLISTED_PG_CODE.test(record.code)) {
     traits.push(`code=${record.code}`);
   }
