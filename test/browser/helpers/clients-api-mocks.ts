@@ -335,6 +335,31 @@ export function filterAwareAllListPayload(url: URL) {
   const missingRop = url.searchParams.get("missingRop") === "1";
 
   if (entity === "clients") {
+    const onecPrimaryContractContains = url.searchParams.get("onecPrimaryContractContains");
+    if (onecPrimaryContractContains === "Browser-F4") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F4 Synthetic Client"),
+            onecPrimaryContract: {
+              value: "Договор Browser-F4",
+              hasSource: true,
+              label: "Договор Browser-F4",
+            },
+            onecMainAgreement: {
+              value: "Соглашение Browser F4",
+              hasSource: true,
+              label: "Соглашение Browser F4",
+            },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
     const onecOgrn = url.searchParams.get("onecOgrn");
     if (onecOgrn === "0123456789012") {
       return {

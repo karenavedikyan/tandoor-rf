@@ -133,6 +133,8 @@
   var onecFullNameFilter = document.getElementById("onec-full-name-filter");
   var onecLegalTypeFilter = document.getElementById("onec-legal-type-filter");
   var onecOgrnFilter = document.getElementById("onec-ogrn-filter");
+  var onecPrimaryContractFilter = document.getElementById("onec-primary-contract-filter");
+  var onecMainAgreementFilter = document.getElementById("onec-main-agreement-filter");
   var discountAmountMinFilter = document.getElementById("discount-amount-min-filter");
   var discountAmountMaxFilter = document.getElementById("discount-amount-max-filter");
   var markupNameFilter = document.getElementById("markup-name-filter");
@@ -1029,6 +1031,8 @@
       onecFullNameContains: onecFullNameFilter ? onecFullNameFilter.value.trim() : "",
       onecLegalEntityType: onecLegalTypeFilter ? onecLegalTypeFilter.value : "",
       onecOgrn: onecOgrnFilter ? onecOgrnFilter.value : "",
+      onecPrimaryContractContains: onecPrimaryContractFilter ? onecPrimaryContractFilter.value.trim() : "",
+      onecMainAgreementContains: onecMainAgreementFilter ? onecMainAgreementFilter.value.trim() : "",
       discountAmountMin: discountAmountMinFilter ? discountAmountMinFilter.value.trim() : "",
       discountAmountMax: discountAmountMaxFilter ? discountAmountMaxFilter.value.trim() : "",
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
@@ -1187,6 +1191,10 @@
     if (onecFullNameFilter) onecFullNameFilter.value = state.onecFullNameContains || "";
     if (onecLegalTypeFilter) onecLegalTypeFilter.value = state.onecLegalEntityType || "";
     if (onecOgrnFilter) onecOgrnFilter.value = state.onecOgrn || "";
+    if (onecPrimaryContractFilter) {
+      onecPrimaryContractFilter.value = state.onecPrimaryContractContains || "";
+    }
+    if (onecMainAgreementFilter) onecMainAgreementFilter.value = state.onecMainAgreementContains || "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = state.discountAmountMin || "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = state.discountAmountMax || "";
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
@@ -1941,6 +1949,18 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.onecOgrn.label || "—");
+    }
+    if (columnId === "onecPrimaryContract") {
+      if (!item.onecPrimaryContract || !item.onecPrimaryContract.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecPrimaryContract.label || "—");
+    }
+    if (columnId === "onecMainAgreement") {
+      if (!item.onecMainAgreement || !item.onecMainAgreement.hasSource) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.onecMainAgreement.label || "—");
     }
     return renderNoDataCell();
   }
@@ -4235,6 +4255,8 @@
     if (onecFullNameFilter) onecFullNameFilter.value = "";
     if (onecLegalTypeFilter) onecLegalTypeFilter.value = "";
     if (onecOgrnFilter) onecOgrnFilter.value = "";
+    if (onecPrimaryContractFilter) onecPrimaryContractFilter.value = "";
+    if (onecMainAgreementFilter) onecMainAgreementFilter.value = "";
     if (discountAmountMinFilter) discountAmountMinFilter.value = "";
     if (discountAmountMaxFilter) discountAmountMaxFilter.value = "";
     if (markupNameFilter) markupNameFilter.value = "";
@@ -4298,6 +4320,8 @@
       onecFullNameContains: "",
       onecLegalEntityType: "",
       onecOgrn: "",
+      onecPrimaryContractContains: "",
+      onecMainAgreementContains: "",
       discountAmountMin: "",
       discountAmountMax: "",
       markupName: "",
@@ -4469,7 +4493,16 @@
         scheduleLoad(true, true);
       });
     });
-  [onecTop150Filter, onecCategoryFilter, onecCounterpartyFilter, onecFullNameFilter, onecLegalTypeFilter, onecOgrnFilter]
+  [
+    onecTop150Filter,
+    onecCategoryFilter,
+    onecCounterpartyFilter,
+    onecFullNameFilter,
+    onecLegalTypeFilter,
+    onecOgrnFilter,
+    onecPrimaryContractFilter,
+    onecMainAgreementFilter,
+  ]
     .filter(Boolean)
     .forEach(function (el) {
       el.addEventListener("change", function () {

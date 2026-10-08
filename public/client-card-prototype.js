@@ -309,6 +309,12 @@
             field("ОГРН", ext.counterparty.ogrn && ext.counterparty.ogrn.label, !!(ext.counterparty.ogrn && ext.counterparty.ogrn.hasSource)),
             false)
           : "") +
+        (ext && ext.clientContract
+          ? detailsBlock("Договор и соглашение",
+            field("Основной договор (1С)", ext.clientContract.primaryContract && ext.clientContract.primaryContract.label, !!(ext.clientContract.primaryContract && ext.clientContract.primaryContract.hasSource)) +
+            field("Основное соглашение (1С)", ext.clientContract.mainAgreement && ext.clientContract.mainAgreement.label, !!(ext.clientContract.mainAgreement && ext.clientContract.mainAgreement.hasSource)),
+            false)
+          : "") +
         detailsBlock("Контакты клиента",
           field("Телефоны клиента", (client.phones || []).map(function (p) { return p.value; }).join("; ") || "Не передано", !!(client.phones || []).length) +
           '<p class="pc-label">Контакт ЛПР и персональные бонусы — в карточках торговых точек ниже.</p>',

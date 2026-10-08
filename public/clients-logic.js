@@ -72,6 +72,8 @@
     "onecFullNameContains",
     "onecLegalEntityType",
     "onecOgrn",
+    "onecPrimaryContractContains",
+    "onecMainAgreementContains",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -129,6 +131,8 @@
     { value: "onecFullName", label: "Полное наименование пусто" },
     { value: "onecLegalEntityType", label: "Тип контрагента пуст" },
     { value: "onecOgrn", label: "ОГРН пуст" },
+    { value: "onecPrimaryContract", label: "Основной договор пуст" },
+    { value: "onecMainAgreement", label: "Основное соглашение пусто" },
     { value: "discountAmount", label: "DiscountAmount пуст" },
     { value: "markups", label: "Markups пуст" },
   ];
@@ -144,6 +148,8 @@
     onecFullName: true,
     onecLegalEntityType: true,
     onecOgrn: true,
+    onecPrimaryContract: true,
+    onecMainAgreement: true,
     discountAmount: true,
     markups: true,
   };
@@ -156,6 +162,8 @@
     "onecFullNameContains",
     "onecLegalEntityType",
     "onecOgrn",
+    "onecPrimaryContractContains",
+    "onecMainAgreementContains",
     "discountAmountMin",
     "discountAmountMax",
     "markupName",
@@ -185,6 +193,8 @@
     state.onecFullNameContains = "";
     state.onecLegalEntityType = "";
     state.onecOgrn = "";
+    state.onecPrimaryContractContains = "";
+    state.onecMainAgreementContains = "";
     state.discountAmountMin = "";
     state.discountAmountMax = "";
     state.markupName = "";
@@ -226,6 +236,8 @@
     { value: "onecFullName", label: "Полное наименование заполнено" },
     { value: "onecLegalEntityType", label: "Тип контрагента заполнен" },
     { value: "onecOgrn", label: "ОГРН заполнен" },
+    { value: "onecPrimaryContract", label: "Основной договор заполнен" },
+    { value: "onecMainAgreement", label: "Основное соглашение заполнено" },
     { value: "discountAmount", label: "DiscountAmount заполнен" },
     { value: "markups", label: "Markups заполнен" },
   ];
@@ -241,6 +253,22 @@
     { id: "onecFullName", label: "Полное наименование", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecLegalEntityType", label: "Тип контрагента", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecOgrn", label: "ОГРН", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    {
+      id: "onecPrimaryContract",
+      label: "Основной договор (1С)",
+      entity: "clients",
+      defaultVisible: false,
+      sortable: false,
+      hasSource: true,
+    },
+    {
+      id: "onecMainAgreement",
+      label: "Основное соглашение (1С)",
+      entity: "clients",
+      defaultVisible: false,
+      sortable: false,
+      hasSource: true,
+    },
     { id: "holding", label: "Холдинг", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "address", label: "Адрес", entity: "clients", defaultVisible: true, sortable: true, hasSource: true },
     { id: "city", label: "Город", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
@@ -571,6 +599,8 @@
       onecFullNameContains: params.get("onecFullNameContains") || "",
       onecLegalEntityType: params.get("onecLegalEntityType") || "",
       onecOgrn: params.get("onecOgrn") || "",
+      onecPrimaryContractContains: params.get("onecPrimaryContractContains") || "",
+      onecMainAgreementContains: params.get("onecMainAgreementContains") || "",
       discountAmountMin: params.get("discountAmountMin") || "",
       discountAmountMax: params.get("discountAmountMax") || "",
       markupName: params.get("markupName") || "",
@@ -888,6 +918,12 @@
     if (state.onecFullNameContains) params.set("onecFullNameContains", state.onecFullNameContains);
     if (state.onecLegalEntityType) params.set("onecLegalEntityType", state.onecLegalEntityType);
     if (state.onecOgrn) params.set("onecOgrn", state.onecOgrn);
+    if (state.onecPrimaryContractContains) {
+      params.set("onecPrimaryContractContains", state.onecPrimaryContractContains);
+    }
+    if (state.onecMainAgreementContains) {
+      params.set("onecMainAgreementContains", state.onecMainAgreementContains);
+    }
     if (state.discountAmountMin) params.set("discountAmountMin", state.discountAmountMin);
     if (state.discountAmountMax) params.set("discountAmountMax", state.discountAmountMax);
     if (state.markupName) params.set("markupName", state.markupName);
