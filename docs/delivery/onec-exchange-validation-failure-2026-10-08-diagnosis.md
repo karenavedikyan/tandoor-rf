@@ -1,8 +1,8 @@
 # Диагностика отказа regular-update 08.10.2026 (production ЛК)
 
-**Статус:** read-only анализ кода + **read-only результаты Computer (production БД)**.  
-**Production import / dry-run / apply на агенте не выполнялись.**  
-**Конкретное ошибочное поле и SHA отклонённого файла — не установлены.**
+**Статус:** read-only код + **Computer (prod БД + Timeweb console validation)**.  
+**Production import / dry-run / apply / jobs на агенте не выполнялись.**  
+**SHA файла отказа 13:41 не сохранён** — тождество с текущим FTP-снимком **не доказано**.
 
 ---
 
@@ -58,7 +58,7 @@ SHA256 файла, отклонённого в 13:41, **не сохранён** 
 
 **Подтверждено:** отсутствие F2–F5 в production snapshot **не** вызвано отказом 13:41 (apply не было). Карточки без контрагента/договора **согласуются** с пустым snapshot; альтернатива «snapshot заполнен, UI скрывает» **опровергнута** этими агрегатами.
 
-**Не установлено:** передаёт ли **текущий** FTP-файл ключи F2–F5 (файл не получен, см. п.2.4).
+**Файл на FTP (другой SHA, см. §2.6):** ключи F2–F5 **есть** во всех записях файла; в БД блоки **не применены** (нет успешного apply после появления данных в источнике + отказы validation).
 
 ### 2.4 Прочее
 
@@ -67,12 +67,41 @@ SHA256 файла, отклонённого в 13:41, **не сохранён** 
 | `onec_import_jobs` (regular_update) | всего **6**, active **0** |
 | `onec_client_import_runs` | **4** |
 
-### 2.5 Блокер: свежий FTP-файл
+### 2.5 Доступ к FTP (атрибуция Computer)
 
-Computer **не смог** скачать актуальный `all_clients.json`: соединение завершилось **server FIN**.  
-→ Конкретный JSON-путь, тип значения и SHA **отклонённого** файла остаются **неизвестными**.
+| Канал | Результат |
+|-------|-----------|
+| Прямой FTP с **Computer** (ранее) | **server FIN** — локальная копия не получена |
+| **Timeweb** console, приложение `tandoor-rf` (258307, commit `53712c1`) | **Успешное** чтение `/LC/clients/all_clients.json` (см. §2.6) |
 
-**Исторический** audit `b439063…` (`test/fixtures/onec-clients/recovered-exchange-structure.json`) — **не** актуальная выгрузка и **не** файл попытки 13:41.
+### 2.6 Read-only validation из Timeweb (08.10.2026 **22:35:29.974 МСK**)
+
+Отдельный Node.js-процесс в среде приложения: FTP read → `validateClientsFileBytes` из `dist/onec-clients/validate.js`. **Без** jobs, dry-run, apply, записей в БД, файлов на диск, миграций и deploy. Два чтения байтов **идентичны**; третье структурное чтение — **тот же SHA**.
+
+| Метрика | Значение |
+|---------|----------|
+| SHA256 | `a957ab335277347a9d370e08a8d802b2850af1b0f549b19a943de723017bce46` |
+| Размер | 21 791 152 байт |
+| Записей клиентов | **2742** |
+| Строк вложенных ТТ | **2145** (не число уникальных `guid_store`) |
+| `validation.ok` | **false** |
+| `issueCount` | **1056** |
+| `issueCodes` (полный набор) | `HOLDING_CYCLE`, `HOLDING_SELF_REFERENCE`, `HOLDING_TARGET_NOT_HOLDING_CARD` |
+
+**Holding (обезличенно):** **422** записи с `guid_holding == guid_client` (сравнение GUID **без учёта регистра**); у всех **422** поле `holding` **отсутствует**. Примеры индексов (0-based): самоссылка на `0,1,2,3`; `HOLDING_CYCLE` на `14,25,72,73,96,120,123,126` (в т.ч. ссылки на индексы вроде `14→2355`, `25→2660` — родители без `holding`). `HOLDING_CYCLE` на потомке самоссылочного корня **не обязательно** означает отдельное кольцо из нескольких holding-карт; **1056 issues ≠ 1056 клиентов**.
+
+**F2–F5 в этом файле (2742 записи):** все **9** ключей **присутствуют** в каждой записи; нестандартных типов (не string/null) **нет**. Непустые строки: `Оптовик_Топ150`=2742; `Оптовик_КатегорияТорговойТочкиТандор`=2625; `Контрагент`=2742; `НаименованиеПолное`=2742; `ЮрФизЛицо`=2742; `Оптовик_ОГРН`=2140; `Оптовик_ОсновнойДоговор`=2453; `Оптовик_ОсновноеСоглашение`=2501; `Код`=2742. Гипотеза **числового `Код`** для текущего снимка **не подтверждена**. Блокировка first-read — **связи холдингов**, не F2–F5 scalar types.
+
+**Ограничения интерпретации:**
+
+| SHA | Смысл |
+|-----|--------|
+| `a957ab33…` | Проверенный **текущий** FTP-снимок (22:35 MSK) |
+| `69b7d70d…` | Утренний **успешный** apply 10:58 — **другой** файл |
+| *(13:41)* | **Не сохранён** — **неизвестно**, совпадал ли с `a957ab33…` |
+| `b439063…` (historical fixture) | Проходит **текущую** first-read validation, **3087** записей; **не** использовать для отката данных и **не** считать актуальной выгрузкой |
+
+**2742 (файл) vs 3088 (БД):** требует будущей GUID-сверки и учёта shrink guards; **не доказывает** массовое удаление клиентов из БД.
 
 ---
 
@@ -113,9 +142,28 @@ flowchart LR
 
 ---
 
-## 4. Read-only SQL (Computer)
+## 4. Согласованный контракт: `guid_holding = guid_client` без `holding=true`
 
-### 4.1 Последняя неуспешная задача regular-update
+**Вопрос:** является ли самоссылка при отсутствии `holding` штатным обозначением «корня 1С»?
+
+**Свидетельства в репозитории (точные формулировки):**
+
+| Источник | Цитата / факт |
+|----------|----------------|
+| `docs/delivery/clients-field-contract.md` §3.2 (live 03.10.2026) | «`HOLDING_GUID_REJECTED`, **циклы, самоссылки**, `HOLDING_TARGET_NOT_HOLDING_CARD` — **всегда** ошибки» при `tolerant` |
+| `docs/delivery/import-runbook.md` | «циклы, **самоссылки** … — apply блокируется» |
+| Live audit 03.10.2026 (тот же §3.2) | **471** unknown parent; **1** `HOLDING_TARGET_NOT_HOLDING_CARD` — **не** описание 422 self-roots |
+| Код `detectHoldingCycles` | `guid_holding === guid_client` → **`HOLDING_SELF_REFERENCE`** (блокирующая ошибка) |
+
+**Вывод для диагностики 08.10.2026:** в принятом контракте ЛК самоссылка **не** документирована как согласованное обозначение корня; наоборот, она **всегда** отклоняется. Паттерн **422** записей в SHA `a957ab33…` **несовместим** с текущим validator **без** отдельного письменного изменения контракта (см. [fix-plan](./onec-exchange-validation-fix-plan-holding-links.md)).
+
+**Синтетическая проверка валидатора:** `test/unit/onec-holding-link-validation-diagnosis.test.ts` (самоссылка, потомок, кольцо, корректный `holding=true` root).
+
+---
+
+## 5. Read-only SQL (Computer)
+
+### 5.1 Последняя неуспешная задача regular-update
 
 ```sql
 SELECT
@@ -156,7 +204,7 @@ LIMIT 3;
 
 *(Колонка `record_count` отсутствует — PostgreSQL 42703.)*
 
-### 4.3 Агрегаты F2–F5 в snapshot (read-only, без PII)
+### 5.3 Агрегаты F2–F5 в snapshot (read-only, без PII)
 
 ```sql
 SELECT
@@ -168,7 +216,7 @@ SELECT
 FROM onec_clients;
 ```
 
-### 4.4 Локальная валидация **локальной копии** файла (без БД / без сети)
+### 5.4 Локальная валидация **локальной копии** файла (без БД / без сети)
 
 ```bash
 export AUDIT_CLIENTS_PATH=/path/to/all_clients.json
@@ -187,7 +235,7 @@ node --import tsx scripts/diagnose-clients-file-validation.ts > /tmp/clients-val
 
 ---
 
-## 5. Синтетический пример отказа first-read (**не** prod-причина)
+## 6. Синтетический пример отказа first-read (**не** prod-причина)
 
 Локальный extended_v1 fixture в unit-тесте: **`Код`** как **number** → `INVALID_CLIENT_CODE_EXCHANGE_FIELD`.  
 Это демонстрация класса «неверный тип scalar F-field» и generic message в `readStableClientsFile`. **Не** вывод о том, что production-отказ 13:41 вызван полем `Код`.
@@ -196,7 +244,7 @@ node --import tsx scripts/diagnose-clients-file-validation.ts > /tmp/clients-val
 
 ---
 
-## 6. Связь отказ 13:41 ↔ F2–F5 в UI
+## 7. Связь отказы validation ↔ F2–F5 в UI
 
 | Утверждение | Статус |
 |-------------|--------|
@@ -205,38 +253,43 @@ node --import tsx scripts/diagnose-clients-file-validation.ts > /tmp/clients-val
 | F2–F5 **отсутствуют** во всех 3088 snapshot | **Подтверждено** (Computer) |
 | Пустые блоки в UI **из-за** пустого snapshot | **Согласуется** с п.2.3; не единственная возможная причина до проверки DTO, но SQL опровергает «snapshot полон» |
 | Отказ 13:41 **вызван** отсутствием F2–F5 в БД | **Нет** — validation падает на **входящем** JSON, не на snapshot |
-| Наличие F2–F5 **в текущем FTP-файле** | **Не установлено** (FTP FIN) |
-| Причина validation failure | **Не установлена** (нет файла / нет issue details в job) |
+| F2–F5 **в текущем FTP-файле** (`a957ab33…`) | **Подтверждено** (Timeweb 22:35) — ключи и типы OK |
+| Причина validation failure **текущего** файла | **Подтверждено:** holding links (§2.6), не F2–F5 types |
+| Тождество файла 13:41 и `a957ab33…` | **Неизвестно** (SHA 13:41 не сохранён) |
+| Numeric `Код` как причина | **Опровергнуто** для `a957ab33…` |
 
 ---
 
-## 7. План действий (pipeline **не менялся** в PR #71)
+## 8. План действий (pipeline **не менялся** в PR #71)
 
-1. **Разблокировать FTP:** повтор read-only скачивания `all_clients.json` (+ при необходимости `all_employees.json`) с Computer; устранить FIN на стороне сети/FTP.
-2. **Локальная копия →** `diagnose-clients-file-validation.ts` (п.4.4).
-3. По `sampleIssues` — минимальное исправление **только с доказательствами** (данные 1С vs контракт vs bug parser).
-4. **Не** ослаблять validation/shrink guards и **не** менять выгрузку 1С «наугад» (в т.ч. по синтетическому примеру с numeric `Код`).
-5. **Данные ЛК:** после успешного apply по runbook F6 — backfill F2–F5; отказ 13:41 backfill **не заменяет**.
-6. **Будущий PR (observability):** сохранять в job result без PII: `issueCodes`, sample `{ code, field, index, outletIndex }`, SHA256 bytes до validate при first-read fail.
+Детальный черновик: [onec-exchange-validation-fix-plan-holding-links.md](./onec-exchange-validation-fix-plan-holding-links.md).
+
+1. Согласовать с владельцем данных: самоссылка без `holding=true` — ошибка 1С или новый контракт (§4).
+2. По умолчанию — **исправление источника** (нормализация 422 корней / колец), затем повтор read-only validation.
+3. **Parser** — только при **доказанном** контракте; без авто-`holding=true` и без отключения cycle/self-ref checks.
+4. После green validation + bundle roster — apply/backfill F6 по runbook (отдельное окно).
+5. GUID-сверка 2742 vs 3088 и shrink guards — отдельный шаг.
+6. Observability issue codes в job result — параллельно, низкий риск.
 
 ---
 
-## 8. Ограничения Cloud Agent
+## 9. Ограничения Cloud Agent
 
 | Ресурс | Доступ |
 |--------|--------|
 | Production `DATABASE_URL` | нет |
-| Свежий FTP / `/LC/...` | нет (блокер) |
+| FTP | только через факты Computer / Timeweb console |
 | Production dry-run / import | не выполнялись |
 
 ---
 
-## 9. Тесты
+## 10. Тесты
 
 ```bash
 npm run typecheck
 node --import tsx --test test/unit/onec-exchange-validation-first-read-diagnosis.test.ts
 node --import tsx --test test/unit/diagnose-clients-file-validation.test.ts
+node --import tsx --test test/unit/onec-holding-link-validation-diagnosis.test.ts
 ```
 
 F6 и серия F **не** закрыты этим документом.
