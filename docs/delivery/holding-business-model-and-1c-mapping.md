@@ -129,6 +129,10 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 | **admin** | Как у всех | **`visible`** (тех. доступ к полному snapshot; без утечки PII вне политики аудита) |
 | **Любая роль** | **Не вычислен** (`unknown`) | **`unknown`** — неполные данные 1С / membership, не scope |
 
+**Как сейчас в ЛК** (сверка с кодом clients D1–D4, admin preview через `clients-shell.js` / `GET /api/admin/access/preview`): **тип состава холдинга не реализован** — нет полей API `holdingCompositionType` / `compositionTypeVisibility`, нет badge «моно / моно сеть / групп / групп сеть» и нет состояния **`withheld`** для типа. Есть: список — колонка и фильтр «Холдинг» (`public/clients-logic.js`, `item.holdingName` / `holding.id`); карточка — имя холдинга (`client-detail-sections.js`, `client-card-prototype.js`), DTO `holdingCardLabel` = «Карточка холдинга» / «Не холдинг» по флагу **`is_holding`** строки (`src/clients/extended-dto.ts`), не по составу; строка «Холдинг / юрлица … юрлица не переданы»; при `retailOutletsAccess === "denied"` — текст **недоступности торговых точек**, не типа состава. Admin preview рендерит тот же UI от имени выбранной роли, без отдельной метки типа.
+
+**Целевое после контракта 1С:** таблица выше — единый фактический тип + отображение `visible` / `withheld` / `unknown` на карточке и (при необходимости) в списке, без утечки счётчиков и sibling-данных.
+
 ### 3.6 Открытые решения (бизнес)
 
 | # | Вопрос |
@@ -201,7 +205,8 @@ else if legalEntityCount>1 && outletCount>1  → group_network
 3. **A или B** для идентичности корня (§4.5) — с учётом GUID и стоимости, не только validator; при **B** — отдельный PR на parser (§4.4), не смешивать с диагностикой #71.
 4. Self-ref: семантика корня **без** автоматического «моно».
 5. Передача связи **несколько юрлиц ↔ одна ТТ** (не продемонстрировано в `holding-group.json`).
-6. O1–O4 (§3.6).
+6. **Карточка клиента:** нужно ли показывать **тип состава** менеджеру при partial scope (`withheld` vs скрыть блок целиком); для **director** / **admin** — те же правила `visible`/`withheld` или расширенное отображение при более широком scope; допустимы ли подписи «тип скрыт» без намёка на число юрлиц/ТТ.
+7. O1–O4 (§3.6).
 
 **Не запрашивать повторно:** F2–F5 на `a957ab33…`.
 
