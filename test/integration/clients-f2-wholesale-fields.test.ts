@@ -7,6 +7,7 @@ import {
   insertSyntheticClients,
   updateClientExtendedSnapshot,
 } from "../helpers/clients-db-fixtures";
+import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 const ORIGIN = "http://127.0.0.1:3000";
 const TEST_PASSWORD = "StrongPass123!";
@@ -17,6 +18,7 @@ const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const C3 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const M1 = "11111111-1111-4111-8111-111111111111";
 const M2 = "22222222-2222-4222-8222-222222222222";
+const MGR_ONLY_CATEGORY = "MGR-ONLY-CAT";
 
 function authHeaders(cookie?: string): Record<string, string> {
   const headers: Record<string, string> = { Origin: ORIGIN, "Content-Type": "application/json" };
@@ -83,12 +85,25 @@ describe("clients F2 wholesale exchange fields integration", { concurrency: fals
     setIntegrationEnv(databaseUrl, ORIGIN);
     await resetPoolForTests();
     await prepareDatabase(databaseUrl);
-    await createTestUser({
+    const admin = await createTestUser({
       databaseUrl,
       email: "admin-f2@example.com",
       password: TEST_PASSWORD,
       fullName: "Admin F2",
       role: "admin",
+    });
+    const managerUser = await createTestUser({
+      databaseUrl,
+      email: "manager-f2@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Manager F2",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerUser.id,
+      employeeId: M1,
+      confirmedByUserId: admin.id,
     });
     await insertSuccessfulImportRun(databaseUrl);
     await insertSyntheticClients(databaseUrl, [
@@ -109,7 +124,12 @@ describe("clients F2 wholesale exchange fields integration", { concurrency: fals
     await updateClientExtendedSnapshot(
       databaseUrl,
       C3,
-      baseSnapshot({ top150: "Нет", top150Provided: true, outletCategory: "D", outletCategoryProvided: true }),
+      baseSnapshot({
+        top150: "Нет",
+        top150Provided: true,
+        outletCategory: MGR_ONLY_CATEGORY,
+        outletCategoryProvided: true,
+      }),
     );
   });
 
@@ -168,5 +188,53 @@ describe("clients F2 wholesale exchange fields integration", { concurrency: fals
     assert.equal(res.status, 200);
     assert.ok(res.body.total >= 2);
     assert.ok(res.body.items.every((item: { onecTop150?: { label: string } }) => item.onecTop150?.label === "Нет"));
+  });
+
+  it("manager scope hides hidden-client category from options, list, and detail", async () => {
+    const cookie = await login("manager-f2@example.com");
+    const app = await loadApp();
+
+    const options = await request(app).get("/api/clients/options").set(authHeaders(cookie));
+    assert.equal(options.status, 200);
+    const categoryIds = (options.body.onecCategoryValues || []).map((row: { id: string }) => row.id);
+    assert.ok(categoryIds.includes("D"));
+    assert.ok(categoryIds.includes("SYNTH-UNKNOWN"));
+    assert.ok(!categoryIds.includes(MGR_ONLY_CATEGORY));
+
+    const list = await request(app)
+      .get(`/api/clients?view=all&entity=clients&onecCategory=${encodeURIComponent(MGR_ONLY_CATEGORY)}`)
+      .set(authHeaders(cookie));
+    assert.equal(list.status, 200);
+    assert.equal(list.body.total, 0);
+
+    const detail = await request(app).get(`/api/clients/${C3}`).set(authHeaders(cookie));
+    assert.equal(detail.status, 404);
+  });
+
+  it("manager can combine exact category filter with filled=onecTop150", async () => {
+    const cookie = await login("manager-f2@example.com");
+    const app = await loadApp();
+    const res = await request(app)
+      .get("/api/clients?view=all&entity=clients&onecCategory=D&filled=onecTop150")
+      .set(authHeaders(cookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total, 1);
+    assert.equal(res.body.items[0]?.guid, C2);
+  });
+
+  it("exact category filter preserves stored spacing without trim mismatch", async () => {
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      C2,
+      baseSnapshot({ top150: "Нет", top150Provided: true, outletCategory: " D", outletCategoryProvided: true }),
+    );
+    const cookie = await login("admin-f2@example.com");
+    const app = await loadApp();
+    const res = await request(app)
+      .get(`/api/clients?view=all&entity=clients&onecCategory=${encodeURIComponent(" D")}`)
+      .set(authHeaders(cookie));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.total, 1);
+    assert.equal(res.body.items[0]?.onecCategory?.label, " D");
   });
 });

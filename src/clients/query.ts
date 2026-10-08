@@ -374,6 +374,21 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return raw;
   }
 
+  /** Preserves leading/trailing spaces for exact wholesale exchange filters. */
+  function parseExactFilterField(value: unknown): string | undefined | null {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    if (rejectNonScalar(value)) {
+      return null;
+    }
+    const raw = String(value);
+    if (raw.length > MAX_SEARCH_LENGTH) {
+      return null;
+    }
+    return raw;
+  }
+
   function parseOptionalIsoDateField(value: unknown, _label: string): string | undefined | null {
     if (value === undefined || value === null || value === "") {
       return undefined;
@@ -448,7 +463,7 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Поле «discountProgram» недоступно для фильтрации в режиме торговых точек." };
   }
 
-  const onecTop150 = parseOptionalSearchField(input.onecTop150, "onecTop150");
+  const onecTop150 = parseExactFilterField(input.onecTop150);
   if (onecTop150 === null) {
     return { ok: false, message: "Некорректный фильтр ТОП-150 (1С)." };
   }
@@ -456,7 +471,7 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Поле «onecTop150» недоступно для фильтрации в режиме торговых точек." };
   }
 
-  const onecCategory = parseOptionalSearchField(input.onecCategory, "onecCategory");
+  const onecCategory = parseExactFilterField(input.onecCategory);
   if (onecCategory === null) {
     return { ok: false, message: "Некорректный фильтр категории 1С." };
   }

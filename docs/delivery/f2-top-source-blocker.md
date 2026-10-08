@@ -52,9 +52,15 @@
 
 ## 4. Backfill после публикации
 
-- Новые поля попадают в snapshot при **следующем extended apply** с ключами в JSON.
-- `wholesaleExchange` входит в **business fingerprint** (`extendedBusinessProjection`); при неизменившемся SHA и том же бизнес-блоке без wholesale старые снимки **не** обогатятся автоматически — нужен импорт, где в payload снова приходят ключи (обычное обновление), **без** force/hash-обхода.
-- Legacy-only import без extended gate по-прежнему не пишет wholesale.
+| Ситуация | Поведение |
+|----------|-----------|
+| **Файл без ключей** wholesale | Значения **не** появятся; omitted в следующих выгрузках **сохраняет** уже записанный snapshot (merge). |
+| **Тот же файл / тот же verification fingerprint**, ключи **есть**, но **старый parser** их не писал | **Обычное regular-update** **дозаполняет** `wholesaleExchange`, если extended snapshot уже разрешён (operator confirmation на этот `clients` SHA + fingerprint); gate сравнивает merged incoming vs persisted **до** `NO_CHANGES` (не только roster). |
+| **Новый SHA** (ключи wholesale **убраны** из JSON), legacy без изменений | `NO_CHANGES`: wholesale merge сохраняет snapshot; gate учитывает roster + wholesale + legacy. |
+| Повтор после дозаполнения | `NO_CHANGES`, без лишней записи. |
+| Явная пустая строка в JSON | Очищает поле по семантике merge; повтор — `NO_CHANGES`. |
+
+`wholesaleExchange` также входит в **business fingerprint** при apply. Force/hash-обход **не** используется. Legacy-only import без extended gate по-прежнему не пишет wholesale.
 
 ---
 

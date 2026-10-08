@@ -45,6 +45,16 @@ describe("onec-clients wholesale exchange fields (F2)", () => {
     );
   });
 
+  it("preserves literal string «invalid» for both wholesale fields", () => {
+    const parsed = parseWholesaleClientExchangeFields({
+      [WHOLESALE_JSON_KEY_TOP150]: "invalid",
+      [WHOLESALE_JSON_KEY_OUTLET_CATEGORY]: "invalid",
+    });
+    assert.equal(parsed.invalid, false);
+    assert.equal(parsed.wholesale.top150, "invalid");
+    assert.equal(parsed.wholesale.outletCategory, "invalid");
+  });
+
   it("preserves previous wholesale when incoming export omits keys", () => {
     const previous = {
       ...createEmptyWholesaleClientExchange(),

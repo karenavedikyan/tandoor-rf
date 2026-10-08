@@ -1062,6 +1062,14 @@ export async function applyClientsImport(options: {
             });
           } else {
             contractVerified = isExtendedContractVerified(options.payload);
+            if (!contractVerified && extendedApply) {
+              const { resolveBaselineExtendedContractVerified } = await import("./baseline-extended-contract");
+              contractVerified = await resolveBaselineExtendedContractVerified({
+                client: managed.client,
+                payload: options.payload,
+                clientsSourceSha256: options.payload.sha256,
+              });
+            }
           }
           const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);

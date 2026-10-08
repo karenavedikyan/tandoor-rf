@@ -27,17 +27,21 @@ export function createEmptyWholesaleClientExchange(): ParsedWholesaleClientExcha
 
 export type SnapshotWholesaleClientExchange = ParsedWholesaleClientExchange;
 
-function readPreservedStringField(value: unknown): string | null | "invalid" {
+type ReadPreservedStringResult =
+  | { ok: true; value: string | null }
+  | { ok: false; reason: "invalid_type" };
+
+function readPreservedStringField(value: unknown): ReadPreservedStringResult {
   if (value === null || value === undefined) {
-    return null;
+    return { ok: true, value: null };
   }
   if (typeof value === "string") {
-    return value;
+    return { ok: true, value };
   }
   if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
+    return { ok: true, value: String(value) };
   }
-  return "invalid";
+  return { ok: false, reason: "invalid_type" };
 }
 
 export function parseWholesaleClientExchangeFields(raw: Record<string, unknown>): {
@@ -49,19 +53,19 @@ export function parseWholesaleClientExchangeFields(raw: Record<string, unknown>)
   if (WHOLESALE_JSON_KEY_TOP150 in raw) {
     wholesale.fieldPresence.top150 = true;
     const parsed = readPreservedStringField(raw[WHOLESALE_JSON_KEY_TOP150]);
-    if (parsed === "invalid") {
+    if (!parsed.ok) {
       return { wholesale: createEmptyWholesaleClientExchange(), invalid: true };
     }
-    wholesale.top150 = parsed;
+    wholesale.top150 = parsed.value;
   }
 
   if (WHOLESALE_JSON_KEY_OUTLET_CATEGORY in raw) {
     wholesale.fieldPresence.outletCategory = true;
     const parsed = readPreservedStringField(raw[WHOLESALE_JSON_KEY_OUTLET_CATEGORY]);
-    if (parsed === "invalid") {
+    if (!parsed.ok) {
       return { wholesale: createEmptyWholesaleClientExchange(), invalid: true };
     }
-    wholesale.outletCategory = parsed;
+    wholesale.outletCategory = parsed.value;
   }
 
   return { wholesale, invalid: false };
