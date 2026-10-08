@@ -6,6 +6,7 @@ import {
   parseBranchPortfolio,
   parseResponsibleAssignmentKind,
 } from "./org/teams-list-filters";
+import { ONEC_TEAM_UNDEFINED_KEY } from "./org/onec-teams-repository";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
 import { resolveAssignmentParams } from "./assignment-query-params";
@@ -46,6 +47,11 @@ export type ClientsListQuery = {
   clientRopEmployeeGuid?: string;
   outletRopEmployeeGuid?: string;
   branchPortfolio?: "clients" | "outlets";
+  /** 1C team portfolio filter (UUID or ONEC_TEAM_UNDEFINED_KEY). */
+  onecTeamGuid?: string;
+  teamSource?: "onec";
+  /** 1C team member whose portfolio is opened (not a sales-slot list filter). */
+  onecPortfolioEmployeeGuid?: string;
   responsibleKind?: "manager" | "regional" | "hardware";
   /** Legacy aliases — prefer client* / outlet* fields. */
   hardwareManagerId?: string;
@@ -783,19 +789,70 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный параметр portfolio." };
   }
 
+  let onecTeamGuid: string | undefined;
+  if (input.onecTeam !== undefined && input.onecTeam !== null && input.onecTeam !== "") {
+    if (rejectNonScalar(input.onecTeam)) {
+      return { ok: false, message: "Некорректный фильтр группы 1С." };
+    }
+    const rawTeam = String(input.onecTeam).trim().toLowerCase();
+    if (rawTeam === ONEC_TEAM_UNDEFINED_KEY) {
+      onecTeamGuid = ONEC_TEAM_UNDEFINED_KEY;
+    } else if (!isValidUuidParam(rawTeam)) {
+      return { ok: false, message: "Некорректный фильтр группы 1С." };
+    } else {
+      onecTeamGuid = rawTeam;
+    }
+  }
+
+  let teamSource: "onec" | undefined;
+  if (input.teamSource !== undefined && input.teamSource !== null && input.teamSource !== "") {
+    if (rejectNonScalar(input.teamSource)) {
+      return { ok: false, message: "Некорректный источник команд." };
+    }
+    const rawSource = String(input.teamSource).trim().toLowerCase();
+    if (rawSource !== "onec") {
+      return { ok: false, message: "Некорректный источник команд." };
+    }
+    teamSource = "onec";
+  }
+
   const responsibleKind = parseResponsibleAssignmentKind(input.responsibleKind);
   if (responsibleKind === null) {
     return { ok: false, message: "Некорректный тип назначения ответственного." };
   }
 
-  const managerId =
+  let onecPortfolioEmployeeGuid: string | undefined;
+  if (
+    input.onecPortfolioEmployee !== undefined &&
+    input.onecPortfolioEmployee !== null &&
+    input.onecPortfolioEmployee !== ""
+  ) {
+    if (rejectNonScalar(input.onecPortfolioEmployee)) {
+      return { ok: false, message: "Некорректный сотрудник портфеля 1С." };
+    }
+    const rawEmployee = String(input.onecPortfolioEmployee).trim().toLowerCase();
+    if (!isValidUuidParam(rawEmployee)) {
+      return { ok: false, message: "Некорректный сотрудник портфеля 1С." };
+    }
+    onecPortfolioEmployeeGuid = rawEmployee;
+  }
+  if (onecPortfolioEmployeeGuid && teamSource !== "onec") {
+    return { ok: false, message: "Портфель сотрудника 1С доступен только для групп из 1С." };
+  }
+
+  let managerId =
     assignment.clientManagerId ??
     assignment.outletManagerId ??
     (legacyManagerIds.length === 1 ? legacyManagerIds[0] : undefined);
-  const managerIds =
+  let managerIds =
     assignment.clientManagerIds ??
     assignment.outletManagerIds ??
     (legacyManagerIds.length > 0 ? legacyManagerIds : undefined);
+
+  if (onecPortfolioEmployeeGuid && teamSource === "onec") {
+    managerId = undefined;
+    managerIds = undefined;
+  }
 
   return {
     ok: true,
@@ -805,10 +862,6 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       q: rawQ,
       managerId,
       managerIds,
-      clientManagerId: assignment.clientManagerId,
-      clientManagerIds: assignment.clientManagerIds,
-      outletManagerId: assignment.outletManagerId,
-      outletManagerIds: assignment.outletManagerIds,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
@@ -816,7 +869,16 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       clientRopEmployeeGuid: assignment.clientRopEmployeeGuid,
       outletRopEmployeeGuid: assignment.outletRopEmployeeGuid,
       branchPortfolio,
+      onecTeamGuid,
+      teamSource,
+      onecPortfolioEmployeeGuid,
       responsibleKind,
+      clientManagerId: onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.clientManagerId,
+      clientManagerIds:
+        onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.clientManagerIds,
+      outletManagerId: onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.outletManagerId,
+      outletManagerIds:
+        onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.outletManagerIds,
       hardwareManagerId: assignment.clientHardwareManagerId ?? assignment.outletHardwareManagerId,
       hardwareManagerIds:
         assignment.clientHardwareManagerIds ??
@@ -1004,6 +1066,8 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.clientRopEmployeeGuid ||
       query.outletRopEmployeeGuid ||
       query.branchPortfolio ||
+      query.onecTeamGuid ||
+      query.teamSource ||
       query.responsibleKind ||
       query.unassignedCategory ||
       (query.reviewState && query.reviewState !== "any") ||

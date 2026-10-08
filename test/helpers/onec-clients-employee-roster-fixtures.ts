@@ -1,5 +1,12 @@
 import { EXTENDED_FIXTURE_GUIDS } from "./onec-clients-extended-fixtures";
 
+export type SyntheticTeamEntry = {
+  guid_team: string;
+  name_team?: string | null;
+  guid_team_leader?: string | null;
+  name_team_leader?: string | null;
+};
+
 export type SyntheticEmployeeRosterEntry = {
   guid_manager: string;
   name_manager?: string;
@@ -7,6 +14,7 @@ export type SyntheticEmployeeRosterEntry = {
   post?: string;
   guid_team?: string | null;
   name_team?: string | null;
+  team?: SyntheticTeamEntry[];
   condition?: string;
   date_of_assumption?: string;
   guid_work_schedule?: string;

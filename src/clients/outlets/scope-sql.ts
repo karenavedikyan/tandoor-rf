@@ -1,5 +1,5 @@
 import { ropOutletRowAccessibleClause } from "../../access/rop-read-scope";
-import { appendUserDenials, buildClientScopeSql } from "../../access/scope-sql";
+import { appendUserDenials, buildClientScopeSql, type BuildClientScopeOptions } from "../../access/scope-sql";
 import type { AccessContext } from "../../access/types";
 import { managerOutletRowAccessibleClause } from "../org/assignment-sql";
 import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
@@ -97,7 +97,10 @@ function buildRegionalOutletScope(context: AccessContext): { whereSql: string; p
   return appendOcUserDenials(base, context.userId);
 }
 
-export function buildOutletScope(context: AccessContext): { whereSql: string; params: unknown[] } {
+export function buildOutletScope(
+  context: AccessContext,
+  clientScopeOptions: BuildClientScopeOptions = {},
+): { whereSql: string; params: unknown[] } {
   if (context.fullClientBase) {
     const scope = appendUserDenials({ whereSql: "", params: [] }, context.userId);
     if (!scope.whereSql) {
@@ -117,7 +120,7 @@ export function buildOutletScope(context: AccessContext): { whereSql: string; pa
     return buildRegionalOutletScope(context);
   }
 
-  const clientScope = buildClientScopeSql(context);
+  const clientScope = buildClientScopeSql(context, clientScopeOptions);
   if (clientScope.whereSql === "WHERE FALSE") {
     return clientScope;
   }

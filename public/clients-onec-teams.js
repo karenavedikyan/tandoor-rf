@@ -41,6 +41,33 @@
       return teamUi.expanded.indexOf(teamExpandKey(group)) !== -1;
     }
 
+    function renderLeader(group) {
+      var leader = group.leader;
+      if (!leader) {
+        return "";
+      }
+      var badge =
+        leader.status === "unknown_roster"
+          ? '<span class="clients-compact-team__badge">Нет в справочнике ОПТ</span>'
+          : leader.hasLinkedAccount
+            ? ""
+            : '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>';
+      return (
+        '<div class="clients-onec-team__leader">' +
+        '<span class="clients-onec-team__leader-label">Руководитель</span>' +
+        '<div class="clients-compact-team__member" data-employee-guid="' +
+        deps.shell.escapeHtml(leader.employeeGuid) +
+        '">' +
+        '<div class="clients-compact-team__member-main">' +
+        '<span class="clients-compact-team__member-name">' +
+        deps.shell.escapeHtml(leader.name || leader.shortId || leader.employeeGuid) +
+        "</span>" +
+        '<span class="clients-compact-team__member-kinds">' +
+        badge +
+        "</span></div></div></div>"
+      );
+    }
+
     function renderMemberRow(member) {
       var badges =
         (member.hasLinkedAccount
@@ -61,7 +88,17 @@
         badges +
         "</span>" +
         "</div>" +
-        "</div>"
+        '<div class="clients-compact-team__member-counts">' +
+        '<button type="button" class="clients-inline-link" data-onec-member-portfolio="clients" data-employee-guid="' +
+        deps.shell.escapeHtml(member.employeeGuid) +
+        '">' +
+        deps.shell.escapeHtml(String(member.clientCount ?? 0)) +
+        " клиентов</button>" +
+        '<button type="button" class="clients-inline-link" data-onec-member-portfolio="outlets" data-employee-guid="' +
+        deps.shell.escapeHtml(member.employeeGuid) +
+        '">' +
+        deps.shell.escapeHtml(String(member.outletCount ?? 0)) +
+        " ТТ</button></div></div>"
       );
     }
 
@@ -120,8 +157,19 @@
         '<span class="clients-compact-team__metric"><span class="clients-compact-team__metric-value">' +
         deps.shell.escapeHtml(String(group.memberCount ?? group.members.length)) +
         '</span><span class="clients-compact-team__metric-label">сотрудников</span></span>' +
+        '<button type="button" class="clients-compact-team__metric clients-compact-team__metric--link" data-onec-group-portfolio="clients" data-onec-team="' +
+        deps.shell.escapeHtml(key) +
+        '"><span class="clients-compact-team__metric-value">' +
+        deps.shell.escapeHtml(String(group.uniqueClientCount ?? 0)) +
+        '</span><span class="clients-compact-team__metric-label">клиентов</span></button>' +
+        '<button type="button" class="clients-compact-team__metric clients-compact-team__metric--link" data-onec-group-portfolio="outlets" data-onec-team="' +
+        deps.shell.escapeHtml(key) +
+        '"><span class="clients-compact-team__metric-value">' +
+        deps.shell.escapeHtml(String(group.uniqueOutletCount ?? 0)) +
+        '</span><span class="clients-compact-team__metric-label">ТТ</span></button>' +
         "</div>" +
         "</div>" +
+        renderLeader(group) +
         renderMembersPanel(group, teamUi, expanded) +
         "</section>"
       );
@@ -259,7 +307,7 @@
       });
     }
 
-    function bindEvents(container, state, callbacks) {
+    function bindEvents(container, state, context, callbacks) {
       bindTeamSourceSwitch(container, function () {
         return deps.logic.readStateFromSearch(window.location.search);
       }, callbacks);
@@ -314,14 +362,71 @@
           callbacks.refresh();
         });
       }
+
+      function findGroup(teamKey) {
+        var groups = (context && context.groups) || [];
+        return groups.find(function (group) {
+          return teamExpandKey(group) === teamKey;
+        });
+      }
+
+      container.querySelectorAll("[data-onec-group-portfolio]").forEach(function (btn) {
+        btn.addEventListener("click", function (event) {
+          event.stopPropagation();
+          var teamKey = btn.getAttribute("data-onec-team") || "";
+          var portfolio = btn.getAttribute("data-onec-group-portfolio") || "clients";
+          var group = findGroup(teamKey);
+          if (!group || !deps.navigateOnecGroupPortfolio) {
+            return;
+          }
+          deps.navigateOnecGroupPortfolio(deps.readAppState(), group, portfolio);
+        });
+      });
+
+      container.querySelectorAll(".clients-compact-team__member[data-employee-guid]").forEach(function (row) {
+        row.addEventListener("click", function (event) {
+          if (event.target.closest("[data-onec-member-portfolio]")) {
+            return;
+          }
+          var employeeGuid = row.getAttribute("data-employee-guid") || "";
+          var section = row.closest(".clients-onec-team");
+          var teamKey = section ? section.getAttribute("data-onec-team") : "";
+          var group = findGroup(teamKey || "");
+          if (!group || !deps.navigateOnecTeamMember) {
+            return;
+          }
+          var member = (group.members || []).find(function (item) {
+            return item.employeeGuid === employeeGuid;
+          });
+          var target =
+            member ||
+            (group.leader && group.leader.employeeGuid === employeeGuid ? group.leader : null);
+          if (target) {
+            deps.navigateOnecTeamMember(deps.readAppState(), target, group);
+          }
+        });
+      });
     }
 
     function renderIntoContainer(container, state, context, callbacks) {
       if (callbacks.isStale && callbacks.isStale()) {
         return;
       }
-      container.innerHTML = renderOverview(state, context);
-      bindEvents(container, state, callbacks);
+      var nextHtml = renderOverview(state, context);
+      if (
+        container.__onecOverviewHtml === nextHtml &&
+        container.querySelector(".clients-onec-team-list .clients-onec-team")
+      ) {
+        container.setAttribute("data-onec-teams-ready", "1");
+        if (callbacks.restoreSearchFocus) {
+          callbacks.restoreSearchFocus();
+        }
+        return;
+      }
+      container.__onecOverviewHtml = nextHtml;
+      container.innerHTML = nextHtml;
+      container.setAttribute("data-onec-teams-ready", "1");
+      bindEvents(container, state, context, callbacks);
     }
 
     function prepareAndRenderOverview(state, context, container, callbacks) {

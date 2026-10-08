@@ -5,6 +5,12 @@ import {
 } from "../shared/calendar-date";
 import { MAX_SOURCE_BYTES } from "./constants";
 import { isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import {
+  detectTeamLeaderConflicts,
+  parseEmployeeTeamArray,
+  type RosterTeamFieldIssue,
+  type WholesaleEmployeeTeamEntry,
+} from "./roster-team-memberships";
 
 export const EMPLOYEES_RELATIVE_PATH = "clients/all_employees.json";
 export const MAX_EMPLOYEE_ROSTER_BYTES = MAX_SOURCE_BYTES;
@@ -16,6 +22,8 @@ export type WholesaleEmployeeRecord = {
   post: string | null;
   guidTeam: string | null;
   nameTeam: string | null;
+  /** Parsed `team` array when key present; undefined when legacy-only. */
+  teams: WholesaleEmployeeTeamEntry[] | null | undefined;
   condition: string | null;
   dateOfAssumption: string | null;
   guidWorkSchedule: string | null;
@@ -125,6 +133,7 @@ function toEmployeeRecord(
   raw: Record<string, unknown>,
   guid: string,
   issues: RosterFieldIssue[],
+  teams: WholesaleEmployeeTeamEntry[] | null | undefined,
 ): WholesaleEmployeeRecord {
   return {
     guidManager: guid,
@@ -133,6 +142,7 @@ function toEmployeeRecord(
     post: readOptionalString(raw, "post"),
     guidTeam: validateOptionalUuidField(raw, "guid_team", issues),
     nameTeam: readOptionalStringField(raw, "name_team", issues),
+    teams,
     condition: readOptionalString(raw, "condition"),
     dateOfAssumption: readDateOfAssumption(raw, issues),
     guidWorkSchedule: validateOptionalUuidField(raw, "guid_work_schedule", issues),
@@ -151,7 +161,8 @@ export type EmployeeRosterParseFailureCode =
   | "FILE_TOO_LARGE"
   | "INVALID_RECORD"
   | "INVALID_FIELD_FORMAT"
-  | "DUPLICATE_GUID";
+  | "DUPLICATE_GUID"
+  | "TEAM_LEADER_CONFLICT";
 
 export type EmployeeRosterFieldIssue = {
   index: number;
@@ -243,8 +254,28 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
     }
     wholesaleGuids.add(guid);
     const recordIssues: RosterFieldIssue[] = [];
-    records.push(toEmployeeRecord(item, guid, recordIssues));
+    const teamIssues: RosterTeamFieldIssue[] = [];
+    const teamsParsed = parseEmployeeTeamArray(item, teamIssues);
+    if (teamsParsed === "LEADER_CONFLICT") {
+      return {
+        ok: false,
+        code: "TEAM_LEADER_CONFLICT",
+        message: `Conflicting guid_team_leader values within team[] at roster index ${index}.`,
+        invalidRecordIndexes: [index],
+      };
+    }
+    records.push(
+      toEmployeeRecord(
+        item,
+        guid,
+        recordIssues,
+        teamsParsed === null ? null : teamsParsed,
+      ),
+    );
     for (const issue of recordIssues) {
+      fieldIssues.push({ index, field: issue.field, code: issue.code });
+    }
+    for (const issue of teamIssues) {
       fieldIssues.push({ index, field: issue.field, code: issue.code });
     }
   }
@@ -264,6 +295,16 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
       code: "INVALID_RECORD",
       message: `Employee roster contains ${invalidRecordIndexes.length} invalid record(s).`,
       invalidRecordIndexes,
+    };
+  }
+
+  const leaderConflicts = detectTeamLeaderConflicts(records);
+  if (leaderConflicts.length > 0) {
+    const first = leaderConflicts[0]!;
+    return {
+      ok: false,
+      code: "TEAM_LEADER_CONFLICT",
+      message: `Conflicting guid_team_leader values for team ${first.guidTeam}.`,
     };
   }
 

@@ -105,6 +105,7 @@
     "teamKind",
     "teamSource",
     "onecTeam",
+    "onecPortfolioEmployee",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [
@@ -655,6 +656,7 @@
       teamKind: params.get("teamKind") || "",
       teamSource: params.get("teamSource") === "onec" ? "onec" : "rop",
       onecTeam: params.get("onecTeam") || "",
+      onecPortfolioEmployee: params.get("onecPortfolioEmployee") || "",
     });
   }
 
@@ -681,12 +683,19 @@
   }
 
   function isBranchPortfolioList(state) {
-    return (
-      state &&
-      state.view === "teams" &&
-      state.ropEmployee &&
-      (state.portfolio === "clients" || state.portfolio === "outlets")
-    );
+    if (!state || state.view !== "teams") {
+      return false;
+    }
+    if (state.portfolio !== "clients" && state.portfolio !== "outlets") {
+      return false;
+    }
+    if (state.teamSource === "onec") {
+      if (state.onecPortfolioEmployee) {
+        return true;
+      }
+      return Boolean(state.onecTeam) && (state.portfolio === "clients" || state.portfolio === "outlets");
+    }
+    return Boolean(state.ropEmployee);
   }
 
   function hasResponsibleSelection(state) {
@@ -898,6 +907,9 @@
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
     if (state.portfolio) params.set("portfolio", state.portfolio);
     if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
+    if (state.teamSource === "onec") params.set("teamSource", "onec");
+    if (state.onecTeam) params.set("onecTeam", state.onecTeam);
+    if (state.onecPortfolioEmployee) params.set("onecPortfolioEmployee", state.onecPortfolioEmployee);
     if (state.view === "completeness" && state.completenessReasons && state.completenessReasons.length > 0) {
       state.completenessReasons.forEach(function (reason) {
         params.append("completenessReason", reason);
@@ -961,6 +973,7 @@
     if (state.teamKind) params.set("teamKind", state.teamKind);
     if (state.teamSource === "onec") params.set("teamSource", "onec");
     if (state.onecTeam) params.set("onecTeam", state.onecTeam);
+    if (state.onecPortfolioEmployee) params.set("onecPortfolioEmployee", state.onecPortfolioEmployee);
     return params.toString();
   }
 

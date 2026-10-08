@@ -341,6 +341,37 @@
   var compactTeamsRenderToken = 0;
   var onecTeamsFetchGeneration = 0;
   var onecTeamsFetchAbortController = null;
+  var onecTeamsOverviewRenderSignature = "";
+
+  function onecTeamsOverviewRenderSignatureFromContext(renderState) {
+    return JSON.stringify({
+      ui: {
+        teamExpand: (renderState && renderState.teamExpand) || [],
+        teamQ: (renderState && renderState.teamQ) || "",
+        onecTeam: (renderState && renderState.onecTeam) || "",
+      },
+      loadError: teamContext.onecLoadError,
+      errorMessage: teamContext.onecErrorMessage || "",
+      groups: (teamContext.onecGroups || []).map(function (group) {
+        return {
+          teamGuid: group.teamGuid,
+          displayName: group.displayName,
+          nameStatus: group.nameStatus,
+          memberCount: group.memberCount,
+          uniqueClientCount: group.uniqueClientCount,
+          uniqueOutletCount: group.uniqueOutletCount,
+          members: (group.members || []).map(function (member) {
+            return {
+              employeeGuid: member.employeeGuid,
+              clientCount: member.clientCount,
+              outletCount: member.outletCount,
+              name: member.name,
+            };
+          }),
+        };
+      }),
+    });
+  }
 
   function getCompactTeams() {
     if (!compactTeams && window.ClientsTeamsCompact) {
@@ -370,19 +401,111 @@
     return compactTeams;
   }
 
+  var onecMemberPortfolioDelegationMounted = false;
+
+  function mountOnecMemberPortfolioDelegation() {
+    if (onecMemberPortfolioDelegationMounted || !teamsPanelEl) {
+      return;
+    }
+    onecMemberPortfolioDelegationMounted = true;
+    teamsPanelEl.addEventListener("click", function (event) {
+      var btn = event.target.closest("[data-onec-member-portfolio]");
+      if (!btn) {
+        return;
+      }
+      var state = getCurrentTeamsOverviewState();
+      if (!usesOnecTeamSource(state)) {
+        return;
+      }
+      event.stopPropagation();
+      var onecModule = getOnecTeams();
+      if (!onecModule) {
+        return;
+      }
+      var employeeGuid = btn.getAttribute("data-employee-guid") || "";
+      var portfolio = btn.getAttribute("data-onec-member-portfolio") || "clients";
+      var section = btn.closest(".clients-onec-team");
+      var teamKey = section ? section.getAttribute("data-onec-team") : "";
+      var group = (teamContext.onecGroups || []).find(function (item) {
+        return onecModule.teamExpandKey(item) === teamKey;
+      });
+      if (!group) {
+        return;
+      }
+      var member = (group.members || []).find(function (item) {
+        return item.employeeGuid === employeeGuid;
+      });
+      if (member) {
+        navigateOnecTeamMember(state, member, group, portfolio);
+        return;
+      }
+      if (group.leader && group.leader.employeeGuid === employeeGuid) {
+        navigateOnecTeamMember(state, group.leader, group, portfolio);
+      }
+    });
+  }
+
   function getOnecTeams() {
+    mountOnecMemberPortfolioDelegation();
     if (!compactOnecTeams && window.ClientsOnecTeams) {
       compactOnecTeams = window.ClientsOnecTeams.create({
         api: api,
         shell: shell,
         logic: logic,
+        navigateOnecTeamMember: navigateOnecTeamMember,
+        navigateOnecGroupPortfolio: navigateOnecGroupPortfolio,
+        readAppState: currentStateFromForm,
       });
     }
     return compactOnecTeams;
   }
 
   function usesOnecTeamSource(state) {
-    return usesDirectorLayout() && state && state.teamSource === "onec";
+    return (usesDirectorLayout() || isRopDesignSession()) && state && state.teamSource === "onec";
+  }
+
+  function navigateOnecTeamMember(state, member, group, portfolio) {
+    var resolvedPortfolio = portfolio || "clients";
+    teamContext.managerName = member.name || member.shortId || member.employeeGuid;
+    teamContext.onecTeamName = group.displayName || "";
+    navigateState({
+      view: "teams",
+      teamSource: "onec",
+      onecTeam: group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY,
+      teamExpand: [group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY],
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      onecPortfolioEmployee: member.employeeGuid,
+      regionalManager: "",
+      hardwareManager: "",
+      responsibleKind: "",
+      portfolio: resolvedPortfolio,
+      entity: resolvedPortfolio === "outlets" ? "outlets" : "clients",
+      page: 1,
+      ropEmployee: state.ropEmployee || "",
+    });
+  }
+
+  function navigateOnecGroupPortfolio(state, group, portfolio) {
+    teamContext.onecTeamName = group.displayName || "";
+    navigateState({
+      view: "teams",
+      teamSource: "onec",
+      onecTeam: group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY,
+      teamExpand: [group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY],
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      onecPortfolioEmployee: "",
+      regionalManager: "",
+      hardwareManager: "",
+      responsibleKind: "",
+      portfolio: portfolio,
+      entity: portfolio === "outlets" ? "outlets" : "clients",
+      page: 1,
+      ropEmployee: state.ropEmployee || "",
+    });
   }
 
   function mergeTeamUiFromUrl(state) {
@@ -392,6 +515,7 @@
     state.teamKind = urlTeam.teamKind || "";
     state.teamSource = urlTeam.teamSource || "rop";
     state.onecTeam = urlTeam.onecTeam || "";
+    state.onecPortfolioEmployee = urlTeam.onecPortfolioEmployee || "";
     return state;
   }
 
@@ -423,7 +547,13 @@
       return false;
     }
     var current = getCurrentTeamsOverviewState();
-    if (current.view !== "teams" || current.ropEmployee || !usesOnecTeamSource(current)) {
+    if (current.view !== "teams" || !usesOnecTeamSource(current)) {
+      return false;
+    }
+    if (current.ropEmployee && !isRopDesignSession()) {
+      return false;
+    }
+    if (isRopDesignSession() && current.ropEmployee && !usesOnecTeamSource(current)) {
       return false;
     }
     return buildOnecTeamsApiUrl(current) === buildOnecTeamsApiUrl(requestState);
@@ -435,7 +565,7 @@
       !logic.isBranchPortfolioList(state) &&
       !logic.hasResponsibleSelection(state) &&
       ((usesDirectorLayout() && !state.ropEmployee) ||
-        (isRopDesignSession() && state.ropEmployee))
+        (isRopDesignSession() && (state.ropEmployee || usesOnecTeamSource(state))))
     );
   }
 
@@ -445,8 +575,7 @@
       var previous = getCurrentTeamsOverviewState();
       var onecFetchNeeded =
         usesOnecTeamSource(merged) &&
-        usesDirectorLayout() &&
-        !merged.ropEmployee &&
+        ((usesDirectorLayout() && !merged.ropEmployee) || isRopDesignSession()) &&
         (merged.teamSource !== previous.teamSource ||
           merged.teamQ !== previous.teamQ ||
           merged.onecTeam !== previous.onecTeam);
@@ -455,7 +584,10 @@
         compactTeamsRenderToken += 1;
       }
       writeStateToUrl(merged, false);
-      if (usesOnecTeamSource(merged) && usesDirectorLayout() && !merged.ropEmployee) {
+      if (
+        usesOnecTeamSource(merged) &&
+        ((usesDirectorLayout() && !merged.ropEmployee) || isRopDesignSession())
+      ) {
         var fetchGen = onecTeamsFetchGeneration;
         var requestState = Object.assign({}, merged);
         loadTeamsContext(requestState, fetchGen).then(function () {
@@ -519,7 +651,20 @@
       return Promise.resolve();
     }
     var searchCaret = readSearchInputFocus();
-    if (!teamsPanelEl.querySelector(".clients-compact-team-toolbar")) {
+    var renderSignature = onecTeamsOverviewRenderSignatureFromContext(renderState);
+    if (
+      renderSignature === onecTeamsOverviewRenderSignature &&
+      teamsPanelEl.querySelector(".clients-onec-team-list .clients-onec-team")
+    ) {
+      restoreSearchInputFocus(searchCaret);
+      return Promise.resolve();
+    }
+    onecTeamsOverviewRenderSignature = renderSignature;
+    if (
+      !teamsPanelEl.querySelector(".clients-compact-team-toolbar") &&
+      !(teamContext.onecGroups && teamContext.onecGroups.length)
+    ) {
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
       teamsPanelEl.innerHTML =
         '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка групп из 1С…</div>';
     }
@@ -2645,7 +2790,8 @@
     if (state.view === "teams") {
       if (usesDirectorLayout()) {
         var directorRootLabel = "Все команды";
-        var directorRootHref = "/clients?view=teams";
+        var directorRootHref =
+          state.teamSource === "onec" ? "/clients?view=teams&teamSource=onec" : "/clients?view=teams";
         if (logic.hasResponsibleSelection(state)) {
           parts.push({ label: directorRootLabel, href: directorRootHref });
           if (state.ropEmployee) {
@@ -2742,20 +2888,27 @@
     } else {
       breadcrumbsEl.innerHTML = trailHtml + backHtml;
     }
-    document.getElementById("clients-breadcrumbs-back")?.addEventListener("click", function () {
-      navigateState({
-        view: "teams",
-        ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
-        rop: "",
-        manager: "",
-        regionalManager: "",
-        hardwareManager: "",
-        portfolio: "",
-        responsibleKind: "",
-        entity: "clients",
-        page: 1,
-      });
-    });
+    var backButton = document.getElementById("clients-breadcrumbs-back");
+    if (backButton) {
+      backButton.onclick = function () {
+        navigateState({
+          view: "teams",
+          teamSource: state.teamSource || "rop",
+          onecTeam: state.onecTeam || "",
+          teamExpand: state.teamExpand || [],
+          onecPortfolioEmployee: "",
+          ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
+          rop: "",
+          manager: "",
+          regionalManager: "",
+          hardwareManager: "",
+          portfolio: "",
+          responsibleKind: "",
+          entity: "clients",
+          page: 1,
+        });
+      };
+    }
     breadcrumbsEl.classList.toggle("clients-hidden", parts.length === 0);
   }
 
@@ -3028,16 +3181,19 @@
       logic.hasResponsibleSelection(state)
     ) {
       teamsPanelEl.innerHTML = "";
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
+      teamsPanelEl.__onecOverviewHtml = "";
+      onecTeamsOverviewRenderSignature = "";
       return;
     }
-    if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee) {
+    if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
       renderCompactRopTeamPanel(state);
       return;
     }
-    if (usesDirectorLayout() && !state.ropEmployee) {
+    if ((usesDirectorLayout() && !state.ropEmployee) || (isRopDesignSession() && usesOnecTeamSource(state))) {
       if (usesOnecTeamSource(state)) {
         renderOnecTeamsOverview(state);
-      } else {
+      } else if (usesDirectorLayout() && !state.ropEmployee) {
         renderCompactTeamsOverview(state);
       }
       return;
@@ -3466,7 +3622,7 @@
       return Promise.resolve({ ok: true });
     }
     var requests = [];
-    if (!state.ropEmployee && usesOnecTeamSource(state)) {
+    if (usesOnecTeamSource(state) && (!state.ropEmployee || isRopDesignSession())) {
       var fetchGen = fetchGeneration != null ? fetchGeneration : bumpOnecTeamsFetchGeneration();
       var requestState = Object.assign({}, state);
       var requestUrl = buildOnecTeamsApiUrl(requestState);

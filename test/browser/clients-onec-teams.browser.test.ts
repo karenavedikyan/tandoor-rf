@@ -8,7 +8,12 @@ import { Pool } from "pg";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { ORG_DIRECTOR_EMPLOYEE_GUID } from "../../src/clients/org/constants";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
-import { insertSuccessfulImportRun } from "../helpers/clients-db-fixtures";
+import {
+  insertSuccessfulImportRun,
+  insertSyntheticClients,
+  insertSyntheticRetailOutlets,
+  updateClientExtendedSnapshot,
+} from "../helpers/clients-db-fixtures";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -425,6 +430,281 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     assert.equal(await page.locator('[data-team-source="rop"].clients-team-mode-switch__btn--active').count(), 1);
     await expectModeSwitchVisible(page);
 
+    await page.close();
+    await stopServer();
+  });
+
+  const PORTFOLIO_CLIENT = "cccccccc-cccc-4ccc-8ccc-cccccccccc01";
+  const PORTFOLIO_STORE = "dddddddd-dddd-4ddd-8ddd-dddddddddd01";
+  const ROP_LEADER = "44444444-4444-4444-8444-444444444444";
+
+  async function seedEmployeePortfolioRoute(options?: { ropLeader?: boolean }): Promise<void> {
+    await seed();
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const leaderGuid = options?.ropLeader ? ROP_LEADER : ORG_DIRECTOR_EMPLOYEE_GUID;
+    const leaderName = options?.ropLeader ? "ROP Leader" : "Director OneC";
+    if (options?.ropLeader) {
+      const admin = await createTestUser({
+        databaseUrl,
+        email: "rop-leader@example.com",
+        password: TEST_PASSWORD,
+        fullName: "ROP Leader",
+        role: "rop",
+      });
+      const adminUser = await createTestUser({
+        databaseUrl,
+        email: "admin-portfolio@example.com",
+        password: TEST_PASSWORD,
+        fullName: "Admin Portfolio",
+        role: "admin",
+      });
+      await linkUserToEmployee({
+        databaseUrl,
+        userId: admin.id,
+        employeeId: ROP_LEADER,
+        confirmedByUserId: adminUser.id,
+      });
+      await pool.query(
+        `
+          INSERT INTO onec_wholesale_employee_roster (guid_manager, name_manager, post, raw_json)
+          VALUES ($1::uuid, $2, 'Руководитель', '{}'::jsonb)
+          ON CONFLICT (guid_manager) DO UPDATE SET name_manager = EXCLUDED.name_manager
+        `,
+        [ROP_LEADER, leaderName],
+      );
+    }
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader)
+        VALUES ($1::uuid, 'Team Alpha', $2::uuid, $3)
+        ON CONFLICT (guid_team) DO UPDATE SET
+          guid_team_leader = EXCLUDED.guid_team_leader,
+          name_team_leader = EXCLUDED.name_team_leader
+      `,
+      [TEAM_A, leaderGuid, leaderName],
+    );
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_employee_team_memberships (guid_manager, guid_team, name_team)
+        VALUES ($1::uuid, $2::uuid, 'Team Alpha')
+        ON CONFLICT (guid_manager, guid_team) DO UPDATE SET name_team = EXCLUDED.name_team
+      `,
+      [M1, TEAM_A],
+    );
+    await pool.end();
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: PORTFOLIO_CLIENT,
+        name_client: "Portfolio Client",
+        guid_manager: M1,
+        name_manager: "Alpha Manager",
+      },
+    ]);
+    await insertSyntheticRetailOutlets(databaseUrl, [
+      { guid_store: PORTFOLIO_STORE, guid_client: PORTFOLIO_CLIENT },
+    ]);
+    await updateClientExtendedSnapshot(
+      databaseUrl,
+      PORTFOLIO_CLIENT,
+      {
+        formatVersion: "extended_v1",
+        sourceSha256: "a".repeat(64),
+        importedAt: new Date().toISOString(),
+        isHolding: false,
+        holdingLink: { state: "none", pendingGuid: null },
+        clientManagerRosterState: "in_wholesale_roster",
+        regionalManager: { guid: null, name: "", state: "not_provided" },
+        hardwareManager: { guid: null, name: "", state: "not_provided" },
+        headOfSales: options?.ropLeader
+          ? { guid: ROP_LEADER, name: "ROP Leader", state: "directory_unverified" }
+          : { guid: null, name: "", state: "unassigned" },
+        currentRetailOutlets: [
+          {
+            ordinal: 0,
+            guidStore: PORTFOLIO_STORE,
+            holdingName: "TT",
+            warehouse: false,
+            address: { storeAddress: "Addr", deliveryAddress: "", routeDirection: "" },
+            loading: {},
+            managers: {
+              manager: { guid: M1, name: "Alpha Manager", state: "directory_unverified" },
+              regionalManager: { guid: null, name: "", state: "not_provided" },
+              hardwareManager: { guid: null, name: "", state: "not_provided" },
+              headOfSales: options?.ropLeader
+                ? { guid: ROP_LEADER, name: "ROP Leader", state: "directory_unverified" }
+                : { guid: null, name: "", state: "unassigned" },
+            },
+            contacts: {},
+            lpr: {},
+          },
+        ],
+      },
+    );
+    await insertSuccessfulImportRun(databaseUrl);
+  }
+
+  async function ensureTeamAlphaExpanded(page: Page): Promise<void> {
+    const group = onecGroup(page, "Team Alpha");
+    if ((await group.locator(".clients-compact-team--expanded").count()) === 0) {
+      await group.locator(".clients-compact-team__toggle").click();
+      await group.locator(".clients-compact-team__member-name").first().waitFor({ state: "visible" });
+    }
+  }
+
+  function waitPortfolioListResponse(page: Page, portfolio: "clients" | "outlets") {
+    return page.waitForResponse(
+      (response) => {
+        if (!response.url().includes("/api/clients") || response.status() !== 200) {
+          return false;
+        }
+        const url = new URL(response.url());
+        if (url.searchParams.get("view") !== "teams" || url.searchParams.get("teamSource") !== "onec") {
+          return false;
+        }
+        const entity = url.searchParams.get("entity") ?? "clients";
+        return portfolio === "outlets" ? entity === "outlets" : entity === "clients";
+      },
+      { timeout: 60_000 },
+    );
+  }
+
+  async function clickOnecMemberPortfolioButton(
+    page: Page,
+    portfolio: "clients" | "outlets",
+  ): Promise<Awaited<ReturnType<Page["waitForResponse"]>>> {
+    await ensureTeamAlphaExpanded(page);
+    const selector = `[data-onec-member-portfolio="${portfolio}"][data-employee-guid="${M1}"]`;
+    await page.waitForSelector(`#teams-panel[data-onec-teams-ready="1"] ${selector}`, {
+      state: "visible",
+      timeout: 60_000,
+    });
+    const button = page.locator(selector).first();
+    const responsePromise = waitPortfolioListResponse(page, portfolio);
+    await Promise.all([responsePromise, button.click()]);
+    return responsePromise;
+  }
+
+  async function returnToOnecTeamOverview(page: Page): Promise<void> {
+    const back = page.locator("#clients-breadcrumbs-back");
+    await back.waitFor({ state: "visible", timeout: 15_000 });
+    await back.click();
+    await page.waitForFunction(
+      () => {
+        const url = new URL(window.location.href);
+        return url.searchParams.get("teamSource") === "onec" && !url.searchParams.get("onecPortfolioEmployee");
+      },
+      undefined,
+      { timeout: 15_000 },
+    );
+    await page.waitForSelector(".clients-onec-team-list .clients-onec-team", { timeout: 60_000 });
+    await ensureTeamAlphaExpanded(page);
+  }
+
+  async function openMemberClientsPortfolio(page: Page, loginEmail?: string): Promise<void> {
+    if (loginEmail) {
+      await login(page, loginEmail);
+      const teamsReady = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/clients/org-structure/onec-teams") && response.status() === 200,
+      );
+      await page.goto(
+        `/clients?view=teams&teamSource=onec&onecTeam=${TEAM_A}&teamExpand=${TEAM_A}`,
+        { waitUntil: "networkidle" },
+      );
+      await teamsReady;
+      await page.waitForSelector(".clients-onec-team-list .clients-onec-team");
+    }
+    await ensureTeamAlphaExpanded(page);
+    await page.waitForFunction(
+      (guid) =>
+        Boolean(
+          document.querySelector(`[data-onec-member-portfolio="clients"][data-employee-guid="${guid}"]`),
+        ),
+      M1,
+      { timeout: 60_000 },
+    );
+
+    await page.waitForSelector(`[data-onec-member-portfolio="clients"][data-employee-guid="${M1}"]`, {
+      state: "visible",
+      timeout: 30_000,
+    });
+    const clientsResponse = await clickOnecMemberPortfolioButton(page, "clients");
+    const clientsUrl = new URL(clientsResponse.url());
+    assert.equal(clientsUrl.searchParams.get("onecPortfolioEmployee"), M1);
+    assert.equal(clientsUrl.searchParams.get("entity") ?? "clients", "clients");
+    const clientsBody = (await clientsResponse.json()) as { total: number; items: Array<{ guid: string }> };
+    assert.equal(clientsBody.total, 1);
+    assert.equal(clientsBody.items[0]?.guid, PORTFOLIO_CLIENT);
+
+    await returnToOnecTeamOverview(page);
+
+    await page.waitForSelector(`[data-onec-member-portfolio="outlets"][data-employee-guid="${M1}"]`, {
+      state: "visible",
+      timeout: 30_000,
+    });
+    const outletsResponse = await clickOnecMemberPortfolioButton(page, "outlets");
+    const outletsUrl = new URL(outletsResponse.url());
+    assert.equal(outletsUrl.searchParams.get("onecPortfolioEmployee"), M1);
+    const outletsBody = (await outletsResponse.json()) as {
+      total: number;
+      items: Array<{ guidStore: string }>;
+    };
+    assert.equal(outletsBody.total, 1);
+    assert.equal(outletsBody.items[0]?.guidStore, PORTFOLIO_STORE);
+    await page.getByRole("link", { name: "Addr", exact: true }).click({ timeout: 30_000 });
+    await page.waitForURL(
+      (url) =>
+        url.pathname === `/clients/${PORTFOLIO_CLIENT}` &&
+        url.searchParams.get("store") === PORTFOLIO_STORE,
+      { timeout: 30_000 },
+    );
+    await page.goBack({ waitUntil: "networkidle" });
+
+    const clientLink = page.getByRole("link", { name: "Portfolio Client" }).first();
+    await clientLink.waitFor({ state: "visible", timeout: 60_000 });
+    await clientLink.click();
+    await page.waitForURL(new RegExp(`/clients/${PORTFOLIO_CLIENT}`), { timeout: 15000 });
+    await page.waitForSelector("h1, .client-card__title, .clients-card__title");
+    await page.goBack({ waitUntil: "networkidle" });
+    assert.equal(new URL(page.url()).searchParams.get("onecPortfolioEmployee"), M1);
+    assert.equal(new URL(page.url()).searchParams.get("onecTeam"), TEAM_A);
+
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(new URL(page.url()).searchParams.get("onecPortfolioEmployee"), M1);
+    assert.equal(new URL(page.url()).searchParams.get("onecTeam"), TEAM_A);
+    await page.waitForSelector("a.clients-link", { state: "visible" });
+  }
+
+  it("navigates group member portfolio with real clients API (desktop and mobile)", async () => {
+    await seedEmployeePortfolioRoute();
+    await startServer();
+
+    for (const [label, viewport] of [
+      ["desktop", DESKTOP],
+      ["mobile", MOBILE],
+    ] as const) {
+      const page = await browser.newPage({ viewport, baseURL: baseUrl });
+      await openMemberClientsPortfolio(page, "admin@example.com");
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `clients-onec-portfolio-${label}-after-flow.png`),
+        fullPage: false,
+      });
+      await page.close();
+    }
+
+    await stopServer();
+  });
+
+  it("ROP sees own 1C group and member portfolio on test DB", async () => {
+    await seedEmployeePortfolioRoute({ ropLeader: true });
+    await startServer();
+    const page = await browser.newPage({ viewport: DESKTOP, baseURL: baseUrl });
+    await openMemberClientsPortfolio(page, "rop-leader@example.com");
+    assert.equal(await page.locator(".clients-onec-team").count(), 0);
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "clients-onec-portfolio-rop-desktop-list.png"),
+      fullPage: false,
+    });
     await page.close();
     await stopServer();
   });

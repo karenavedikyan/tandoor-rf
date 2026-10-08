@@ -13,6 +13,13 @@ import {
   outletStoreAddressSql,
 } from "./list-filter";
 import { applyOrgTeamsOutletFilter } from "../org/teams-list-filters";
+import { resolveOnecPortfolioTargetGuids } from "../org/onec-portfolio-query";
+import {
+  assertOnecTeamPortfolioAccess,
+  buildOnecTeamOutletsFilter,
+  onecTeamManagerAccessFilter,
+  OnecTeamPortfolioAccessError,
+} from "../org/onec-team-portfolio";
 import { applyOutletListAssignmentFilters } from "../list-assignment-filters";
 import { ListClientsError } from "../repository";
 import { buildOutletScope, scopedHasOutletsClause } from "./scope-sql";
@@ -48,7 +55,15 @@ export async function listRetailOutlets(
     if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
       throw new ListClientsError("Нет доступа к ветке РОП.", "FORBIDDEN");
     }
-  } else if (input.view !== "all") {
+  } else if (
+    input.view !== "all" &&
+    !(
+      input.view === "teams" &&
+      input.teamSource === "onec" &&
+      input.onecTeamGuid &&
+      input.branchPortfolio
+    )
+  ) {
     return {
       items: [],
       total: 0,
@@ -102,7 +117,47 @@ export async function listRetailOutlets(
     combinedWhere = mergeSqlFilters(combinedWhere, [outletClause], outletListFilter.params);
   }
 
-  if (input.view === "teams" && ropEmployeeGuid) {
+  if (
+    input.view === "teams" &&
+    input.teamSource === "onec" &&
+    input.onecTeamGuid &&
+    input.branchPortfolio === "outlets"
+  ) {
+    try {
+      const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
+      const targetGuids = resolveOnecPortfolioTargetGuids(input, memberGuids);
+      const portfolioGuids = targetGuids.length > 0 ? targetGuids : memberGuids;
+      const onecEmployeePortfolio = Boolean(input.onecPortfolioEmployeeGuid);
+      const managerId =
+        !onecEmployeePortfolio &&
+        input.view === "teams" &&
+        input.managerId &&
+        !ropEmployeeGuid
+          ? input.managerId
+          : undefined;
+      const orgFilter =
+        onecEmployeePortfolio && targetGuids.length === 0
+          ? { whereSql: "WHERE FALSE", params: [] }
+          : onecEmployeePortfolio
+            ? buildOnecTeamOutletsFilter(portfolioGuids)
+            : (onecTeamManagerAccessFilter(memberGuids, managerId) ??
+              buildOnecTeamOutletsFilter(portfolioGuids));
+      const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");
+      combinedWhere = mergeSqlFilters(combinedWhere, [orgClause], orgFilter.params);
+    } catch (error) {
+      if (error instanceof OnecTeamPortfolioAccessError) {
+        throw new ListClientsError(error.message, error.code);
+      }
+      throw error;
+    }
+  } else if (
+    input.view === "teams" &&
+    input.teamSource === "onec" &&
+    input.onecTeamGuid &&
+    input.branchPortfolio === "clients"
+  ) {
+    combinedWhere = mergeSqlFilters(combinedWhere, ["FALSE"], []);
+  } else if (input.view === "teams" && ropEmployeeGuid && input.teamSource !== "onec") {
     const orgFilter = applyOrgTeamsOutletFilter({ whereSql: "", params: [] }, input, ropEmployeeGuid);
     if (orgFilter.whereSql) {
       const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");

@@ -1,4 +1,15 @@
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
+import {
+  buildExpectedTeamGroupsAfterApply,
+  existingMembershipsToResolved,
+  membershipsEqual,
+  existingMembershipsForStoredRecord,
+  resolveEmployeeTeamMemberships,
+  resolveLegacyTeamColumnsForRecord,
+  teamGroupsEqual,
+  type ExistingEmployeeTeamMembershipRow,
+  type ExistingTeamGroupRow,
+} from "./roster-team-memberships";
 
 export type ResolvedRosterFieldValues = {
   nameManager: string;
@@ -15,12 +26,15 @@ export type ResolvedRosterFieldValues = {
   telephone: string | null;
 };
 
-type ExistingRosterFieldValues = {
+export type LegacyTeamExistingFields = {
+  guid_team: string | null;
+  name_team: string | null;
+};
+
+type ExistingRosterFieldValues = LegacyTeamExistingFields & {
   name_manager: string;
   guid_post: string | null;
   post: string | null;
-  guid_team: string | null;
-  name_team: string | null;
   condition: string | null;
   date_of_assumption: string | null;
   guid_work_schedule: string | null;
@@ -65,7 +79,7 @@ function resolveApplyValue<T>(
 export function resolveTeamFieldValues(
   raw: Record<string, unknown>,
   parsed: { guidTeam: string | null; nameTeam: string | null },
-  existing: ExistingRosterFieldValues | undefined,
+  existing: LegacyTeamExistingFields | undefined,
 ): { guidTeam: string | null; nameTeam: string | null } {
   const hasGuidKey = hasRosterRawKey(raw, "guid_team");
   const hasNameKey = hasRosterRawKey(raw, "name_team");
@@ -99,13 +113,17 @@ export function resolveTeamFieldValues(
 export function resolveRosterFieldValues(
   record: WholesaleEmployeeRecord,
   existing: ExistingRosterFieldValues | undefined,
+  existingMemberships?: ExistingEmployeeTeamMembershipRow[],
 ): ResolvedRosterFieldValues {
   const current = existing;
-  const team = resolveTeamFieldValues(
-    record.raw,
-    { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
-    current,
-  );
+  const team =
+    record.teams !== undefined
+      ? resolveLegacyTeamColumnsForRecord(record, existingMemberships)
+      : resolveTeamFieldValues(
+          record.raw,
+          { guidTeam: record.guidTeam, nameTeam: record.nameTeam },
+          current,
+        );
   return {
     nameManager: hasRosterRawKey(record.raw, "name_manager")
       ? record.nameManager
@@ -182,19 +200,46 @@ export function existingRosterFieldValuesToResolved(
 export function rosterRecordValuesEqual(
   existing: ExistingRosterFieldValues,
   record: WholesaleEmployeeRecord,
+  existingMemberships?: ExistingEmployeeTeamMembershipRow[],
 ): boolean {
-  const resolved = resolveRosterFieldValues(record, existing);
-  return resolvedRosterValuesEqual(resolved, existingRosterFieldValuesToResolved(existing));
+  const resolved = resolveRosterFieldValues(record, existing, existingMemberships);
+  if (!resolvedRosterValuesEqual(resolved, existingRosterFieldValuesToResolved(existing))) {
+    return false;
+  }
+  const incomingMemberships = resolveEmployeeTeamMemberships(record, existingMemberships);
+  return membershipsEqual(
+    incomingMemberships,
+    existingMembershipsToResolved(existingMemberships ?? []),
+  );
 }
 
 /** True when incoming roster would change persisted field values (including post-migration backfill). */
 export function rosterIncomingDiffersFromStored(
   existingByManager: Map<string, ExistingRosterFieldValues>,
+  existingMembershipsByManager: Map<string, ExistingEmployeeTeamMembershipRow[]>,
+  existingGroups: ExistingTeamGroupRow[],
   roster: WholesaleEmployeeRoster,
 ): boolean {
+  const expectedGroups = buildExpectedTeamGroupsAfterApply(
+    roster,
+    existingMembershipsByManager,
+    existingGroups,
+  );
+  if (!teamGroupsEqual(existingGroups, expectedGroups)) {
+    return true;
+  }
   for (const record of roster.records) {
-    const current = existingByManager.get(record.guidManager.toLowerCase());
-    if (!current || !rosterRecordValuesEqual(current, record)) {
+    const key = record.guidManager.toLowerCase();
+    const current = existingByManager.get(key);
+    const memberships = existingMembershipsForStoredRecord(
+      record,
+      {
+        guid_team: current?.guid_team ?? null,
+        name_team: current?.name_team ?? null,
+      },
+      existingMembershipsByManager.get(key),
+    );
+    if (!current || !rosterRecordValuesEqual(current, record, memberships)) {
       return true;
     }
   }

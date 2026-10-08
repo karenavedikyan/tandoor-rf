@@ -6,7 +6,11 @@ import {
   verifyApplyVerification,
 } from "../onec-clients/import-verification-fingerprint";
 import { rosterIncomingDiffersFromStored } from "../onec-clients/roster-field-values";
-import { loadExistingRoster } from "../onec-clients/roster-upsert";
+import {
+  loadExistingMembershipsByManager,
+  loadExistingRoster,
+  loadExistingTeamGroups,
+} from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
 import { clientCodeExchangeIncomingDiffersFromStored } from "../onec-clients/client-code-persisted-diff";
 import { clientContractExchangeIncomingDiffersFromStored } from "../onec-clients/client-contract-persisted-diff";
@@ -77,7 +81,14 @@ export async function runRegularUpdateApplyGate(
   const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
   if (lastFingerprint && lastFingerprint === actualFingerprint) {
     const existingRoster = await loadExistingRoster(client);
-    const rosterUnchanged = !rosterIncomingDiffersFromStored(existingRoster, input.roster);
+    const existingMemberships = await loadExistingMembershipsByManager(client);
+    const existingGroups = await loadExistingTeamGroups(client);
+    const rosterUnchanged = !rosterIncomingDiffersFromStored(
+      existingRoster,
+      existingMemberships,
+      existingGroups,
+      input.roster,
+    );
     const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
     const counterpartyUnchanged = !(await counterpartyExchangeIncomingDiffersFromStored(client, input.payload));
     const clientContractUnchanged = !(await clientContractExchangeIncomingDiffersFromStored(client, input.payload));
