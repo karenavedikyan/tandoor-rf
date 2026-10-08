@@ -214,6 +214,7 @@ export type ExtendedSnapshot = {
   commercial?: import("./commercial-fields").SnapshotCommercial;
   wholesaleExchange?: import("./wholesale-client-exchange-fields").SnapshotWholesaleClientExchange;
   counterparty?: import("./counterparty-exchange-fields").SnapshotCounterpartyExchange;
+  clientContract?: import("./client-contract-exchange-fields").SnapshotClientContractExchange;
   currentRetailOutlets: ParsedRetailOutlet[];
   retailOutletHistory: RetailOutletHistoryEntry[];
   blocks: ExtendedSnapshotBlocks;
@@ -240,6 +241,7 @@ export type ParsedExtendedClientRecord = {
   commercial: import("./commercial-fields").ParsedClientCommercial;
   wholesaleExchange: import("./wholesale-client-exchange-fields").ParsedWholesaleClientExchange;
   counterparty: import("./counterparty-exchange-fields").ParsedCounterpartyExchange;
+  clientContract: import("./client-contract-exchange-fields").ParsedClientContractExchange;
   retailOutlets: ParsedRetailOutlet[];
   recordFormat: "legacy" | "extended_v1";
   hasExtendedManagerFields: boolean;
@@ -252,6 +254,7 @@ export type ExtendedValidationIssueCode =
   | "INVALID_COMMERCIAL_FIELD"
   | "INVALID_WHOLESALE_EXCHANGE_FIELD"
   | "INVALID_COUNTERPARTY_EXCHANGE_FIELD"
+  | "INVALID_CLIENT_CONTRACT_EXCHANGE_FIELD"
   | "INVALID_HOLDING_BOOLEAN"
   | "INVALID_RETAIL_OUTLETS"
   | "INVALID_OUTLET_SHAPE"

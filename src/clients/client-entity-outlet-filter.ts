@@ -425,6 +425,24 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         ],
         [],
       );
+    } else if (field === "onecPrimaryContract") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientContract'->'fieldPresence'->>'primaryContract') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientContract'->>'primaryContract'), '') IS NOT NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecMainAgreement") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientContract'->'fieldPresence'->>'mainAgreement') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientContract'->>'mainAgreement'), '') IS NOT NULL`,
+        ],
+        [],
+      );
     }
   }
   for (const field of parseFilledEmptyFieldList(query.empty)) {
@@ -524,6 +542,24 @@ export function applyClientLevelFilledEmptyFilters(userFilter: SqlFilter, query:
         [
           `(onec_clients.extended_snapshot->'counterparty'->'fieldPresence'->>'ogrn') = 'true'
            AND NULLIF(BTRIM(onec_clients.extended_snapshot->'counterparty'->>'ogrn'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecPrimaryContract") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientContract'->'fieldPresence'->>'primaryContract') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientContract'->>'primaryContract'), '') IS NULL`,
+        ],
+        [],
+      );
+    } else if (field === "onecMainAgreement") {
+      filter = mergeSqlFilters(
+        filter,
+        [
+          `(onec_clients.extended_snapshot->'clientContract'->'fieldPresence'->>'mainAgreement') = 'true'
+           AND NULLIF(BTRIM(onec_clients.extended_snapshot->'clientContract'->>'mainAgreement'), '') IS NULL`,
         ],
         [],
       );

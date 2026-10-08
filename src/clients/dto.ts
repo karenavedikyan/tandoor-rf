@@ -16,6 +16,10 @@ import {
   type ParsedCounterpartyExchange,
 } from "../onec-clients/counterparty-exchange-fields";
 import {
+  hasAnyClientContractExchangeField,
+  type ParsedClientContractExchange,
+} from "../onec-clients/client-contract-exchange-fields";
+import {
   hasAnyWholesaleClientExchangeField,
   type ParsedWholesaleClientExchange,
 } from "../onec-clients/wholesale-client-exchange-fields";
@@ -99,6 +103,16 @@ export type ClientListItemDto = {
     label: string;
   };
   onecOgrn?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecPrimaryContract?: {
+    value: string | null;
+    hasSource: boolean;
+    label: string;
+  };
+  onecMainAgreement?: {
     value: string | null;
     hasSource: boolean;
     label: string;
@@ -287,6 +301,7 @@ type ClientRow = {
   ext_commercial?: unknown;
   ext_wholesale_exchange?: unknown;
   ext_counterparty?: unknown;
+  ext_client_contract?: unknown;
 };
 
 function holdingDtoFromRow(row: ClientRow): ClientListItemDto["holding"] {
@@ -481,6 +496,39 @@ function readCounterpartyListFields(
   return result;
 }
 
+function readClientContractListFields(
+  raw: unknown,
+): Pick<ClientListItemDto, "onecPrimaryContract" | "onecMainAgreement"> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const cc = raw as ParsedClientContractExchange;
+  if (!hasAnyClientContractExchangeField(cc)) {
+    return {};
+  }
+  const result: Pick<ClientListItemDto, "onecPrimaryContract" | "onecMainAgreement"> = {};
+  const stringField = (
+    key: "onecPrimaryContract" | "onecMainAgreement",
+    presence: boolean,
+    value: string | null,
+    preserveExact: boolean,
+  ) => {
+    if (!presence) {
+      return;
+    }
+    const trimmed = value?.trim() ?? "";
+    const empty = trimmed.length === 0;
+    result[key] = {
+      value: empty ? null : value,
+      hasSource: true,
+      label: empty ? "Не заполнено" : preserveExact ? value! : trimmed,
+    };
+  };
+  stringField("onecPrimaryContract", cc.fieldPresence.primaryContract, cc.primaryContract, true);
+  stringField("onecMainAgreement", cc.fieldPresence.mainAgreement, cc.mainAgreement, true);
+  return result;
+}
+
 export function toClientListItem(row: ClientRow): ClientListItemDto {
   const telephones = parseTelephones(row.telephone);
   const reviewState = (row.review_state ?? "unreviewed") as ReviewState;
@@ -524,6 +572,7 @@ export function toClientListItem(row: ClientRow): ClientListItemDto {
   Object.assign(item, readCommercialListFields(row.ext_commercial));
   Object.assign(item, readWholesaleListFields(row.ext_wholesale_exchange));
   Object.assign(item, readCounterpartyListFields(row.ext_counterparty));
+  Object.assign(item, readClientContractListFields(row.ext_client_contract));
 
   if (row.review_state != null || row.review_decision != null || row.review_stale_reason != null) {
     const isStale = isReviewStaleFromRow(row);
