@@ -255,9 +255,19 @@ describe("onec F5 client code upgrade backfill via regular-update", { concurrenc
       roster,
       backfillDry.verificationFingerprint!,
     );
+    const applyCountAfterBackfill = await countSuccessfulApplyRuns(databaseUrl);
     assert.equal(backfill.status, "SUCCESS", backfill.message ?? backfill.errorCode);
     const block = (await readClientCodeBlock(databaseUrl, CLIENT_ONE)) as { code1c: string };
     assert.equal(block.code1c, BACKFILL_CODE);
+
+    const repeat = await applyBundle(
+      databaseUrl,
+      clientsBytes,
+      roster,
+      backfillDry.verificationFingerprint!,
+    );
+    assert.equal(repeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), applyCountAfterBackfill);
   });
 
   it("C: omitted Код preserves value; explicit empty clears code1c", async () => {
@@ -269,22 +279,58 @@ describe("onec F5 client code upgrade backfill via regular-update", { concurrenc
     const { [CLIENT_CODE_JSON_KEY]: _c, ...withoutCode } = full;
     const omittedBytes = clientsBytesFromRecord(withoutCode);
     const omittedDry = await dryRunBundle(databaseUrl, omittedBytes, roster);
-    assert.equal(
-      (await applyBundle(databaseUrl, omittedBytes, roster, omittedDry.verificationFingerprint!)).status,
-      "SUCCESS",
+    const omittedApply = await applyBundle(
+      databaseUrl,
+      omittedBytes,
+      roster,
+      omittedDry.verificationFingerprint!,
     );
+    assert.equal(omittedApply.status, "SUCCESS");
     let block = (await readClientCodeBlock(databaseUrl, CLIENT_ONE)) as { code1c: string };
     assert.equal(block.code1c, BACKFILL_CODE);
+    const countAfterOmitted = await countSuccessfulApplyRuns(databaseUrl);
+    const omittedRepeat = await applyBundle(
+      databaseUrl,
+      omittedBytes,
+      roster,
+      omittedDry.verificationFingerprint!,
+    );
+    assert.equal(omittedRepeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), countAfterOmitted);
 
     const clearedBytes = clientsBytesFromRecord(extendedClientWithF5Bundle({ [CLIENT_CODE_JSON_KEY]: "" }));
     const clearedDry = await dryRunBundle(databaseUrl, clearedBytes, roster);
     await storeOperatorExtendedConfirmation(databaseUrl, clearedBytes, roster, "f5-backfill-test");
-    assert.equal(
-      (await applyBundle(databaseUrl, clearedBytes, roster, clearedDry.verificationFingerprint!)).status,
-      "SUCCESS",
+    const clearedApply = await applyBundle(
+      databaseUrl,
+      clearedBytes,
+      roster,
+      clearedDry.verificationFingerprint!,
     );
+    assert.equal(clearedApply.status, "SUCCESS");
     block = (await readClientCodeBlock(databaseUrl, CLIENT_ONE)) as { code1c: string };
     assert.equal(block.code1c, "");
+    const countAfterEmptyString = await countSuccessfulApplyRuns(databaseUrl);
+    const clearedRepeat = await applyBundle(
+      databaseUrl,
+      clearedBytes,
+      roster,
+      clearedDry.verificationFingerprint!,
+    );
+    assert.equal(clearedRepeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), countAfterEmptyString);
+
+    const nullBytes = clientsBytesFromRecord(extendedClientWithF5Bundle({ [CLIENT_CODE_JSON_KEY]: null }));
+    const nullDry = await dryRunBundle(databaseUrl, nullBytes, roster);
+    await storeOperatorExtendedConfirmation(databaseUrl, nullBytes, roster, "f5-backfill-test");
+    const nullApply = await applyBundle(databaseUrl, nullBytes, roster, nullDry.verificationFingerprint!);
+    assert.equal(nullApply.status, "SUCCESS");
+    block = (await readClientCodeBlock(databaseUrl, CLIENT_ONE)) as { code1c: string | null };
+    assert.equal(block.code1c, null);
+    const countAfterNull = await countSuccessfulApplyRuns(databaseUrl);
+    const nullRepeat = await applyBundle(databaseUrl, nullBytes, roster, nullDry.verificationFingerprint!);
+    assert.equal(nullRepeat.status, "NO_CHANGES");
+    assert.equal(await countSuccessfulApplyRuns(databaseUrl), countAfterNull);
   });
 
   it("rejects invalid code type before apply and preserves stored snapshot", async () => {

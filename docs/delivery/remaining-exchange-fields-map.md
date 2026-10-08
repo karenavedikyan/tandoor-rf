@@ -297,7 +297,7 @@ flowchart LR
 | **F3** | Скаляры контрагента (`Контрагент`, `ЮрФизЛицо`, `Оптовик_ОГРН`, `НаименованиеПолное`) | **Опубликовано** (`main`, PR #67) | Historical audit 04.10 |
 | **F4** | Скаляры договор/соглашение (`Оптовик_ОсновнойДоговор`, `Оптовик_ОсновноеСоглашение`) | **Опубликовано** (`main`, PR #68) | [f4-contract-source-blocker.md](./f4-contract-source-blocker.md) |
 | **F5** | `Код` → `code1c`; сверка F1–F4 на пропуски | **Код готов** (Draft PR); **серия F не закрыта** | [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) |
-| **F6** | Заполнение новых данных, backfill, сверка | **Осталось** | После merge F5; prod extended gate; inn/city/cashback/TOP-350 |
+| **F6** | Согласованное дозаполнение и сверка **реальных** данных (prod gate, backfill) | **Осталось** | После merge F5; **не** авто-справочники юрлиц/договоров 0..N; inn/city/cashback/TOP-350 — только после подтверждения JSON |
 
 
 ---

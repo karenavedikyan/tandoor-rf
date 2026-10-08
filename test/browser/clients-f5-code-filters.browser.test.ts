@@ -158,7 +158,32 @@ describe("clients F5 code filters browser (mock-browser)", { concurrency: false 
     assert.match(cardText, new RegExp(F5_CODE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  async function runFilterToCardFlow(page: Page): Promise<void> {
+  async function assertListCodeColumnCell(page: Page, expectedCode: string): Promise<void> {
+    const header = page.locator('th[data-column="code1c"]');
+    await header.waitFor({ state: "attached" });
+    const columnIndex = await header.evaluate((el) => {
+      const row = el.parentElement;
+      if (!row) {
+        return -1;
+      }
+      return Array.from(row.children).indexOf(el);
+    });
+    assert.ok(columnIndex >= 0);
+    const dataRow = page.locator("tbody tr").filter({
+      has: page.getByRole("link", { name: "F5 Synthetic Client" }),
+    });
+    const cellText = await dataRow.locator("td").nth(columnIndex).evaluate((el) => el.textContent?.trim() ?? "");
+    assert.equal(cellText, expectedCode);
+  }
+
+  async function assertMobileCardCodeLine(page: Page, expectedCode: string): Promise<void> {
+    const line = page.locator(".clients-card__line", { hasText: "Код 1С:" });
+    await line.first().waitFor({ state: "attached" });
+    const text = await line.first().innerText();
+    assert.match(text, new RegExp(expectedCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  async function runFilterToCardFlow(page: Page): Promise<import("playwright").Response> {
     await enableCode1cColumn(page);
     await openFieldFiltersSection(page);
     const listResponsePromise = page.waitForResponse((response) => {
@@ -172,13 +197,25 @@ describe("clients F5 code filters browser (mock-browser)", { concurrency: false 
     await page.locator("#onec-code1c-contains-filter").press("Tab");
     const listResponse = await listResponsePromise;
     assert.equal(listResponse.status(), 200);
+    const listBody = (await listResponse.json()) as {
+      items: Array<{ code1c?: { label: string; value: string } }>;
+    };
+    assert.equal(listBody.items[0]?.code1c?.label, F5_CODE);
+    assert.equal(listBody.items[0]?.code1c?.value, F5_CODE);
+    const viewport = page.viewportSize();
+    if (viewport && viewport.width <= 500) {
+      await assertMobileCardCodeLine(page, F5_CODE);
+    } else {
+      await assertListCodeColumnCell(page, F5_CODE);
+    }
 
-    const clientLink = page.getByRole("link", { name: "F5 Synthetic Client" });
+    const clientLink = page.getByRole("link", { name: "F5 Synthetic Client" }).first();
     await clientLink.scrollIntoViewIfNeeded();
     await clientLink.click();
     await page.waitForURL(new RegExp("/clients/" + SYNTHETIC_CLIENT_GUID.replace(/-/g, "\\-")));
     await openCodeOnCard(page);
     await assertCodeOnCard(page);
+    return listResponse;
   }
 
   it("desktop mock-browser: column, filter, card code, back, reload, reset", async () => {
@@ -188,7 +225,7 @@ describe("clients F5 code filters browser (mock-browser)", { concurrency: false 
     await runFilterToCardFlow(page);
 
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "f5-code-expanded-desktop-1440.png"),
+      path: path.join(SCREENSHOT_DIR, "f5-code-card-desktop-1440.png"),
       fullPage: true,
     });
 
@@ -196,15 +233,23 @@ describe("clients F5 code filters browser (mock-browser)", { concurrency: false 
     await openFieldFiltersSection(page);
     const reloadListPromise = page.waitForResponse((response) => {
       const request = response.request();
+      const url = new URL(response.url());
       return (
-        isPrimaryClientsListGet(new URL(response.url()), request.method()) &&
-        new URL(response.url()).searchParams.get("onecCode1cContains") === F5_FILTER_NEEDLE
+        isPrimaryClientsListGet(url, request.method()) &&
+        url.searchParams.get("onecCode1cContains") === F5_FILTER_NEEDLE &&
+        response.status() === 200
       );
     });
     await page.reload({ waitUntil: "networkidle" });
-    await reloadListPromise;
+    const reloadListResponse = await reloadListPromise;
+    assert.equal(reloadListResponse.status(), 200);
     await openFieldFiltersSection(page);
     assert.equal(await page.locator("#onec-code1c-contains-filter").inputValue(), F5_FILTER_NEEDLE);
+    await assertListCodeColumnCell(page, F5_CODE);
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "f5-code-list-column-desktop-1440.png"),
+      fullPage: true,
+    });
 
     await page.click("#reset-filters");
     await page.waitForFunction(() => !window.location.search.includes("onecCode1cContains="));
@@ -220,13 +265,28 @@ describe("clients F5 code filters browser (mock-browser)", { concurrency: false 
     await runFilterToCardFlow(page);
 
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "f5-code-expanded-mobile-390.png"),
+      path: path.join(SCREENSHOT_DIR, "f5-code-card-mobile-390.png"),
       fullPage: true,
     });
 
     await page.goBack({ waitUntil: "networkidle" });
     await openFieldFiltersSection(page);
+    const reloadListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("onecCode1cContains") === F5_FILTER_NEEDLE &&
+        response.status() === 200
+      );
+    });
     await page.reload({ waitUntil: "networkidle" });
+    await reloadListPromise;
+    await enableCode1cColumn(page);
+    await assertMobileCardCodeLine(page, F5_CODE);
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "f5-code-list-column-mobile-390.png"),
+      fullPage: true,
+    });
     await openFieldFiltersSection(page);
     await page.click("#reset-filters");
     await page.waitForFunction(() => !window.location.search.includes("onecCode1cContains="));
