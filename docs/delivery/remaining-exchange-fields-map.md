@@ -1,8 +1,8 @@
 # F0 — карта оставшихся полей обмена 1С → ЛК
 
 **Серия:** F (после G1/G2 на `main`; **не** зависит от G3 / PR #62)  
-**F0:** исследование (PR #63). **F1:** публикация ЛПР — ветка `cursor/f1-lpr-display-9e11`.  
-**Актуальная выгрузка FTP:** в этом документе **не** перепроверялась; таблицы §1.2 — **исторические** read-only свидетельства, **не** текущий SHA/дата.
+**F0:** исследование (PR #63). **F1:** опубликован на `main` (merge PR #64, `45c2e58`). **F2:** см. [f2-top-source-blocker.md](./f2-top-source-blocker.md).  
+**Актуальная выгрузка FTP:** в F0 **не** перепроверялась; повторная попытка F2 (**2026-10-08**) — файл на агенте **недоступен** (§1.1); таблицы §1.2 — **исторические** свидетельства.
 
 **Эталон UI (не доказательство JSON):** [прототип «Вся информация о клиенте»](https://www.perplexity.ai/computer/a/tandoor-rf-vizualnyi-prototip-TyhOzG0mT06dPTayt88xTA) — секции «Холдинг / юрлица», «ЛПР», «Расчёты и договор», «Магазин и доставка» задают целевое отображение.
 
@@ -17,8 +17,9 @@
 | Проверка | Результат |
 |----------|-----------|
 | `all_clients.json` в репозитории / VM | **нет** |
-| `AUDIT_CLIENTS_PATH` | **не задан** |
-| `npm run audit:exchange-fields` | fixtures + синтетика `extended_v1` (см. §1.3) |
+| `AUDIT_CLIENTS_PATH` | **не задан** (в т.ч. прогон F2 **2026-10-08**) |
+| `/LC/clients/all_clients.json` на VM F2 | **нет** |
+| `npm run audit:exchange-fields` | fixtures + синтетика `extended_v1` (см. §1.3); TOP/юрлица/договоры **не** в union |
 
 **Вывод:** отсутствие поля в fixtures/parser **не** доказывает отсутствие в production JSON. Ниже — сверка **код + зафиксированные live-свидетельства + синтетика**.
 
@@ -171,10 +172,12 @@ Legacy import: warning `EXTRA_FIELDS`, **не** в parsed 8 полей.
 
 | Тема | JSON-путь (ожидаемый) | Наблюдение в источниках | Parser | ЛК | Статус |
 |------|----------------------|-------------------------|--------|-----|--------|
-| TOP-150 / TOP-350 / TOP-500 | **не зафиксирован** | **нет** в legacy 11 ключах; **нет** в extended audit fixtures; sprint2/3: «не проверено live» | — | колонка `category` **`hasSource: false`** | **не подтверждено в актуальной выгрузке** (до §1.4) |
-| Прочие категории / сегменты холдинга | неизвестно | прототип: «категория не передана» | — | placeholder | **не подтверждено в актуальной выгрузке** |
+| TOP-150 / TOP-350 / TOP-500 | **не зафиксирован** | **нет** в fixtures/synthetic audit; live **не** прочитан (2026-10-08); sprint2/3: «не проверено live» | — | колонка `category` **`hasSource: false`** (заглушка) | **блокер F2** — см. [f2-top-source-blocker.md](./f2-top-source-blocker.md) |
+| Прочие категории / сегменты холдинга | неизвестно | прототип Perplexity — UI только | — | placeholder | **не подтверждено** |
 
-**Блокер F2:** имена ключей, уровень (client vs holding vs outlet), тип (enum/string/number). **Не** блокирует F1/F3–F6 по другим полям.
+**Блокер F2 (2026-10-08):** без актуального `all_clients.json` не подтверждены JSON-путь, уровень (holding / client / outlet), тип, семантика 150/350/500 (взаимоисключение vs вложенность), GUID-связь. **Код F2 не реализован.** Запрос 1С — §2 [f2-top-source-blocker.md](./f2-top-source-blocker.md).
+
+**F3/F4 (структура, тот же просмотр):** массивы юрлиц и договоров **не** обнаружены в fixture-audit; live-структура **не** снята — уточнение в том же запросе 1С (§2 blocker doc), без реализации в F2.
 
 ---
 
@@ -229,17 +232,15 @@ Legacy import: warning `EXTRA_FIELDS`, **не** в parsed 8 полей.
 flowchart LR
   subgraph done [Подключено в ЛК]
     L8[Legacy 8]
-    EX[Extended client + outlets minus LPR]
+    EX[Extended client + outlets]
     COM[Commercial in snapshot]
     FIL[Sprint 2/3 filters]
+    LPR[LPR F1 card list filters]
   end
-  subgraph hidden [В snapshot скрыто]
-    LPR[LPR_information]
-  end
-  subgraph missing [Нет в зафиксированном JSON]
-    TOP[TOP categories]
-    LEG[Legal entities]
-    CON[Contracts]
+  subgraph missing [Нет подтверждённого JSON-пути]
+    TOP[TOP categories F2 blocked]
+    LEG[Legal entities F3]
+    CON[Contracts F4]
     PLH[code1c inn city cashback]
   end
   JSON[all_clients.json] --> L8
@@ -257,8 +258,9 @@ flowchart LR
 | Ответственные client + outlet | да | multi-select polish — не F0 |
 | Доставка, приёмка, контакты ТТ, Club | да | расширение дней погрузки — только если появится в JSON |
 | Commercial Discount/Markups | да при snapshot | семантика 1С; prod extended gate |
-| LPR + DOB + bonus LPR | **F1:** DTO + карточка + фильтры | — |
-| TOP, юрлица, договоры | — | **F2–F4** + источник |
+| LPR + DOB + bonus LPR | **F1:** DTO + карточка + фильтры (main) | — |
+| TOP | — | **F2:** блокер источника; код **не** подключён |
+| Юрлица, договоры | — | **F3–F4** + тот же live slice |
 | Колонки-заглушки | — | **F5–F6** после появления полей |
 
 ---
@@ -267,12 +269,13 @@ flowchart LR
 
 | Этап | Scope | Готовность к старту | Зависимости / блокеры |
 |------|-------|---------------------|------------------------|
-| **F1** | ЛПР, DOB, `bonus` / `conditions_bonus` | **Реализовано** (PR F1) | R13 по-прежнему ограничивает **какие ТТ** видны; внутри доступной ТТ — все поля ЛПР |
-| **F2** | TOP-150/350/500 и категории | **Низкая** | **Блокер:** JSON-пути (§1.4, Q8); не блокирует F1 |
-| **F3** | Юрлица, ИНН, банк, счета | **Низкая** | **Блокер:** структура + GUID graph; Bitrix `legal_entity` не заменяет 1С |
-| **F4** | Договоры | **Низкая** | **Блокер:** как F3 |
-| **F5** | Оставшиеся фильтры / колонки | **Средняя** для уже известных полей; **низкая** для inn/category/city | Зависит от F2–F4 для новых ключей; LPR-фильтры после F1 |
-| **F6** | Заполнение полей, re-import, итоговая сверка | **После F1–F5** | Extended apply на prod; свежий SHA; регрессия карт полей |
+| **F0** | Карта полей F | **Карта есть**; свежая полнота live-источника **ещё проверяется** | §1.4 / Computer |
+| **F1** | ЛПР, DOB, `bonus` / `conditions_bonus` | **Опубликовано** (`main`, PR #64) | R13: scope ТТ; внутри доступной ТТ — все поля ЛПР |
+| **F2** | TOP-150/350/500 и категории | **Заблокировано** (2026-10-08): live JSON недоступен; **код не реализован** | [f2-top-source-blocker.md](./f2-top-source-blocker.md); Q8, Q10d |
+| **F3** | Юрлица, ИНН, bank, счета | **Осталось** | Структура + GUID; запрос §2 blocker doc |
+| **F4** | Договоры и условия | **Осталось** | Как F3 |
+| **F5** | Оставшиеся фильтры / колонки / UI parity | **Осталось** | Зависит от F2–F4 для category/inn/city |
+| **F6** | Заполнение новых данных, backfill, сверка | **Осталось** | После F2–F5; prod extended gate; без force/hash подмены |
 
 
 ---
@@ -296,5 +299,6 @@ flowchart LR
 - [sprint2-field-map.md](./sprint2-field-map.md)
 - [sprint3-field-map.md](./sprint3-field-map.md)
 - [r02-existing-evidence.md](./r02-existing-evidence.md)
+- [f2-top-source-blocker.md](./f2-top-source-blocker.md) (F2)
 
 **Audit locally:** `AUDIT_CLIENTS_PATH=/path/to/all_clients.json npm run audit:exchange-fields`
