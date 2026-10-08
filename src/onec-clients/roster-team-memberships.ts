@@ -261,10 +261,31 @@ export function resolveEmployeeTeamMemberships(
       nameTeam: entry.nameTeam,
     }));
   }
-  if (hasGuidKey || hasNameKey) {
-    return [];
+  const existing = existingMemberships ?? [];
+  if (hasNameKey && !hasGuidKey) {
+    if (existing.length === 0) {
+      return [];
+    }
+    return existing.map((row) => ({
+      guidTeam: normalizeUuid(row.guid_team)!,
+      nameTeam: record.nameTeam ?? row.name_team,
+    }));
   }
-  return (existingMemberships ?? []).map((row) => ({
+  if (hasGuidKey && !hasNameKey) {
+    const newGuid = record.guidTeam;
+    if (!newGuid) {
+      return [];
+    }
+    const prior = existing.find((row) => normalizeUuid(row.guid_team) === newGuid);
+    return [{ guidTeam: newGuid, nameTeam: prior?.name_team ?? null }];
+  }
+  if (hasGuidKey && hasNameKey) {
+    if (!record.guidTeam) {
+      return [];
+    }
+    return [{ guidTeam: record.guidTeam, nameTeam: record.nameTeam }];
+  }
+  return existing.map((row) => ({
     guidTeam: normalizeUuid(row.guid_team)!,
     nameTeam: row.name_team,
   }));
@@ -459,14 +480,28 @@ export function buildExpectedTeamGroupsAfterApply(
       expected.set(teamGuid, incoming);
       continue;
     }
+    const membershipNames = new Set<string>();
+    for (const rows of membershipByManager.values()) {
+      for (const row of rows) {
+        if (row.guid_team.toLowerCase() === teamGuid && row.name_team?.trim()) {
+          membershipNames.add(row.name_team.trim());
+        }
+      }
+    }
+    const nameTeam =
+      membershipNames.size === 1
+        ? [...membershipNames][0]!
+        : membershipNames.size > 1
+          ? null
+          : (existing?.name_team ?? null);
     expected.set(teamGuid, {
       guidTeam: existing?.guid_team ?? teamGuid,
-      nameTeam: existing?.name_team ?? null,
+      nameTeam,
       leader: {
         guidTeamLeader: existing?.guid_team_leader ?? null,
         nameTeamLeader: existing?.name_team_leader ?? null,
       },
-      namesSeen: existing?.name_team ? [existing.name_team] : [],
+      namesSeen: nameTeam ? [nameTeam] : existing?.name_team ? [existing.name_team] : [],
     });
   }
   return expected;

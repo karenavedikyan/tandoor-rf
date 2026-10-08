@@ -179,6 +179,48 @@ describe("onec roster team[] integration", { concurrency: false }, () => {
     assert.equal(memberships.rows[0]?.guid_team, TEAM_A);
   });
 
+  it("updates legacy name_team without clearing 039-shaped membership and stabilizes re-apply", async () => {
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const legacyRoster = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A, name_team: "Alpha" }),
+    ]);
+    await applyBundle(databaseUrl, clientsBytes, legacyRoster);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DELETE FROM onec_wholesale_employee_team_memberships`);
+    await pool.query(`DELETE FROM onec_wholesale_team_groups`);
+    await pool.end();
+
+    const renamed = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { name_team: "Alpha Renamed" }),
+    ]);
+    const first = await applyBundle(databaseUrl, clientsBytes, renamed);
+    assert.equal(first.status, "SUCCESS");
+
+    const verify = new Pool({ connectionString: databaseUrl, max: 1 });
+    const rosterRow = await verify.query<{ guid_team: string | null; name_team: string | null }>(
+      `SELECT lower(guid_team::text) AS guid_team, name_team FROM onec_wholesale_employee_roster WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    const memberships = await verify.query<{ guid_team: string; name_team: string | null }>(
+      `SELECT lower(guid_team::text) AS guid_team, name_team FROM onec_wholesale_employee_team_memberships WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    const groupRow = await verify.query<{ name_team: string | null }>(
+      `SELECT name_team FROM onec_wholesale_team_groups WHERE guid_team = $1::uuid`,
+      [TEAM_A],
+    );
+    await verify.end();
+    assert.equal(rosterRow.rows[0]?.guid_team, TEAM_A);
+    assert.equal(rosterRow.rows[0]?.name_team, "Alpha Renamed");
+    assert.equal(memberships.rows[0]?.guid_team, TEAM_A);
+    assert.equal(memberships.rows[0]?.name_team, "Alpha Renamed");
+    assert.equal(groupRow.rows[0]?.name_team, "Alpha Renamed");
+
+    const second = await applyBundle(databaseUrl, clientsBytes, renamed);
+    assert.equal(second.status, "NO_CHANGES");
+  });
+
   it("clears memberships on explicit legacy guid_team null without team[]", async () => {
     const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = buildEmployeeRosterBytes([

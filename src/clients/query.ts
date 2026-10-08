@@ -50,6 +50,8 @@ export type ClientsListQuery = {
   /** 1C team portfolio filter (UUID or ONEC_TEAM_UNDEFINED_KEY). */
   onecTeamGuid?: string;
   teamSource?: "onec";
+  /** 1C team member whose portfolio is opened (not a sales-slot list filter). */
+  onecPortfolioEmployeeGuid?: string;
   responsibleKind?: "manager" | "regional" | "hardware";
   /** Legacy aliases — prefer client* / outlet* fields. */
   hardwareManagerId?: string;
@@ -699,14 +701,38 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный тип назначения ответственного." };
   }
 
-  const managerId =
+  let onecPortfolioEmployeeGuid: string | undefined;
+  if (
+    input.onecPortfolioEmployee !== undefined &&
+    input.onecPortfolioEmployee !== null &&
+    input.onecPortfolioEmployee !== ""
+  ) {
+    if (rejectNonScalar(input.onecPortfolioEmployee)) {
+      return { ok: false, message: "Некорректный сотрудник портфеля 1С." };
+    }
+    const rawEmployee = String(input.onecPortfolioEmployee).trim().toLowerCase();
+    if (!isValidUuidParam(rawEmployee)) {
+      return { ok: false, message: "Некорректный сотрудник портфеля 1С." };
+    }
+    onecPortfolioEmployeeGuid = rawEmployee;
+  }
+  if (onecPortfolioEmployeeGuid && teamSource !== "onec") {
+    return { ok: false, message: "Портфель сотрудника 1С доступен только для групп из 1С." };
+  }
+
+  let managerId =
     assignment.clientManagerId ??
     assignment.outletManagerId ??
     (legacyManagerIds.length === 1 ? legacyManagerIds[0] : undefined);
-  const managerIds =
+  let managerIds =
     assignment.clientManagerIds ??
     assignment.outletManagerIds ??
     (legacyManagerIds.length > 0 ? legacyManagerIds : undefined);
+
+  if (onecPortfolioEmployeeGuid && teamSource === "onec") {
+    managerId = undefined;
+    managerIds = undefined;
+  }
 
   return {
     ok: true,
@@ -716,10 +742,6 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       q: rawQ,
       managerId,
       managerIds,
-      clientManagerId: assignment.clientManagerId,
-      clientManagerIds: assignment.clientManagerIds,
-      outletManagerId: assignment.outletManagerId,
-      outletManagerIds: assignment.outletManagerIds,
       holdingId,
       phone: phoneNormalized as PhoneFilter,
       ropUserId,
@@ -729,7 +751,14 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       branchPortfolio,
       onecTeamGuid,
       teamSource,
+      onecPortfolioEmployeeGuid,
       responsibleKind,
+      clientManagerId: onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.clientManagerId,
+      clientManagerIds:
+        onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.clientManagerIds,
+      outletManagerId: onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.outletManagerId,
+      outletManagerIds:
+        onecPortfolioEmployeeGuid && teamSource === "onec" ? undefined : assignment.outletManagerIds,
       hardwareManagerId: assignment.clientHardwareManagerId ?? assignment.outletHardwareManagerId,
       hardwareManagerIds:
         assignment.clientHardwareManagerIds ??

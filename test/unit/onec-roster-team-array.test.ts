@@ -136,6 +136,18 @@ describe("onec roster team[] parser", () => {
     assert.equal(resolved.length, 0);
   });
 
+  it("preserves memberships on legacy name_team rename without guid_team", () => {
+    const parsed = parseWholesaleEmployeeRosterBytes(
+      buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, { name_team: "Renamed Team" })]),
+    );
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    const resolved = resolveEmployeeTeamMemberships(parsed.roster.records[0]!, [
+      { guid_team: TEAM_A, name_team: "Alpha" },
+    ]);
+    assert.deepEqual(resolved, [{ guidTeam: TEAM_A, nameTeam: "Renamed Team" }]);
+  });
+
   it("preserves memberships when legacy team fields are omitted", () => {
     const parsed = parseWholesaleEmployeeRosterBytes(
       buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER, {})]),

@@ -1,7 +1,9 @@
 import type { AccessContext } from "../../access/types";
+import { mergeSqlFilters } from "../../access/combine-filters";
 import { query } from "../../db/pool";
 import { isValidNonZeroUuid } from "../../onec-clients/uuid";
 import type { SqlFilter } from "../query";
+import { buildOutletScope } from "../outlets/scope-sql";
 import {
   employeesAccessibleOutletExistsClause,
   employeesDirectClientListClause,
@@ -136,4 +138,37 @@ export function buildOnecTeamOutletsFilter(employeeGuids: string[]): SqlFilter {
     whereSql: `WHERE ${employeesAccessibleOutletExistsClause("$1", "ro", "oc")}`,
     params: [employeeGuids],
   };
+}
+
+export function mergeOutletScopeWithOnecPortfolioFilter(
+  context: AccessContext,
+  employeeGuids: string[],
+): SqlFilter {
+  if (employeeGuids.length === 0) {
+    return { whereSql: "WHERE FALSE", params: [] };
+  }
+  const outletScope = buildOutletScope(context);
+  const portfolio = buildOnecTeamOutletsFilter(employeeGuids);
+  const portfolioClause = portfolio.whereSql.replace(/^WHERE\s+/i, "").trim();
+  return mergeSqlFilters(outletScope, [portfolioClause], portfolio.params);
+}
+
+export async function countUniqueOutletsForEmployeeGuids(
+  context: AccessContext,
+  employeeGuids: string[],
+): Promise<number> {
+  if (employeeGuids.length === 0) {
+    return 0;
+  }
+  const combined = mergeOutletScopeWithOnecPortfolioFilter(context, employeeGuids);
+  const result = await query<{ count: string }>(
+    `
+      SELECT COUNT(DISTINCT ro.guid_store)::text AS count
+      FROM onec_retail_outlets ro
+      JOIN onec_clients oc ON oc.guid_client = ro.guid_client
+      ${combined.whereSql}
+    `,
+    combined.params,
+  );
+  return Number(result.rows[0]?.count ?? "0");
 }

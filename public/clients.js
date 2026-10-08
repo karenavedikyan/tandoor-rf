@@ -387,10 +387,13 @@
       teamSource: "onec",
       onecTeam: group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY,
       teamExpand: [group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY],
-      manager: member.employeeGuid,
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      onecPortfolioEmployee: member.employeeGuid,
       regionalManager: "",
       hardwareManager: "",
-      responsibleKind: "manager",
+      responsibleKind: "",
       portfolio: resolvedPortfolio,
       entity: resolvedPortfolio === "outlets" ? "outlets" : "clients",
       page: 1,
@@ -406,8 +409,12 @@
       onecTeam: group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY,
       teamExpand: [group.teamGuid || window.ClientsOnecTeams.UNDEFINED_KEY],
       manager: "",
+      clientManager: "",
+      outletManager: "",
+      onecPortfolioEmployee: "",
       regionalManager: "",
       hardwareManager: "",
+      responsibleKind: "",
       portfolio: portfolio,
       entity: portfolio === "outlets" ? "outlets" : "clients",
       page: 1,
@@ -422,6 +429,7 @@
     state.teamKind = urlTeam.teamKind || "";
     state.teamSource = urlTeam.teamSource || "rop";
     state.onecTeam = urlTeam.onecTeam || "";
+    state.onecPortfolioEmployee = urlTeam.onecPortfolioEmployee || state.onecPortfolioEmployee || "";
     return state;
   }
 

@@ -8,7 +8,7 @@ import { Pool } from "pg";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { ORG_DIRECTOR_EMPLOYEE_GUID } from "../../src/clients/org/constants";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
-import { insertSuccessfulImportRun } from "../helpers/clients-db-fixtures";
+import { insertSuccessfulImportRun, insertSyntheticClients } from "../helpers/clients-db-fixtures";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -426,6 +426,99 @@ describe("clients onec teams browser", { concurrency: false }, () => {
     await expectModeSwitchVisible(page);
 
     await page.close();
+    await stopServer();
+  });
+
+  async function seedEmployeePortfolioRoute(): Promise<void> {
+    await seed();
+    const clientGuid = "cccccccc-cccc-4ccc-8ccc-cccccccccc01";
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader)
+        VALUES ($1::uuid, 'Team Alpha', $2::uuid, 'Director OneC')
+        ON CONFLICT (guid_team) DO NOTHING
+      `,
+      [TEAM_A, ORG_DIRECTOR_EMPLOYEE_GUID],
+    );
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_employee_team_memberships (guid_manager, guid_team, name_team)
+        VALUES ($1::uuid, $2::uuid, 'Team Alpha')
+        ON CONFLICT (guid_manager, guid_team) DO NOTHING
+      `,
+      [M1, TEAM_A],
+    );
+    await pool.end();
+    await insertSyntheticClients(databaseUrl, [
+      {
+        guid_client: clientGuid,
+        name_client: "Portfolio Client",
+        guid_manager: M1,
+        name_manager: "Alpha Manager",
+      },
+    ]);
+  }
+
+  it("navigates group member portfolio with real clients API (desktop and mobile)", async () => {
+    await seedEmployeePortfolioRoute();
+    await startServer();
+
+    for (const [label, viewport] of [
+      ["desktop", DESKTOP],
+      ["mobile", MOBILE],
+    ] as const) {
+      const page = await browser.newPage({ viewport, baseURL: baseUrl });
+      await login(page, "admin@example.com");
+      await openOnecTeams(page);
+      await onecGroup(page, "Team Alpha").locator(".clients-compact-team__toggle").click();
+      await page.waitForSelector(".clients-compact-team--expanded");
+
+      const listReady = page.waitForResponse((response) => {
+        if (!response.url().includes("/api/clients") || response.status() !== 200) {
+          return false;
+        }
+        const url = new URL(response.url());
+        return (
+          url.searchParams.get("teamSource") === "onec" &&
+          url.searchParams.get("onecPortfolioEmployee") === M1
+        );
+      });
+      await onecGroup(page, "Team Alpha")
+        .locator(`[data-onec-member-portfolio][data-employee-guid="${M1}"]`)
+        .first()
+        .click();
+      await listReady;
+      await page.waitForFunction(
+        (employeeGuid) =>
+          new URL(window.location.href).searchParams.get("onecPortfolioEmployee") === employeeGuid,
+        M1,
+      );
+
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `clients-onec-portfolio-${label}-list.png`),
+        fullPage: false,
+      });
+
+      const clientLink = page.locator("a.clients-link", { hasText: "Portfolio Client" });
+      if ((await clientLink.count()) > 0) {
+        const href = await clientLink.first().getAttribute("href");
+        assert.ok(href);
+        await page.goto(href!, { waitUntil: "networkidle" });
+        await page.waitForURL(/\/clients\/[^/?]+/, { timeout: 15000 });
+        await page.screenshot({
+          path: path.join(SCREENSHOT_DIR, `clients-onec-portfolio-${label}-card.png`),
+          fullPage: false,
+        });
+        await page.goBack({ waitUntil: "networkidle" });
+      }
+
+      await page.reload({ waitUntil: "networkidle" });
+      assert.equal(new URL(page.url()).searchParams.get("onecPortfolioEmployee"), M1);
+
+      await page.close();
+    }
+
     await stopServer();
   });
 

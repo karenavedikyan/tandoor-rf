@@ -255,10 +255,48 @@ describe("clients onec team portfolio integration", { concurrency: false }, () =
     const app = await loadApp();
     const res = await request(app)
       .get(
-        `/api/clients?view=teams&entity=clients&portfolio=clients&teamSource=onec&onecTeam=${TEAM_B}&manager=${M1}`,
+        `/api/clients?view=teams&entity=clients&portfolio=clients&teamSource=onec&onecTeam=${TEAM_B}&onecPortfolioEmployee=${M1}`,
       )
       .set(authHeaders(cookie));
     assert.equal(res.status, 200);
     assert.equal(res.body.total, 0);
+  });
+
+  it("employee portfolio uses full predicates and matches org-structure counters", async () => {
+    await upsertMembership(M2, TEAM_A, "Team Alpha");
+    const cookie = await login("admin@example.com");
+    const app = await loadApp();
+    const overview = await request(app).get("/api/clients/org-structure/onec-teams").set(authHeaders(cookie));
+    assert.equal(overview.status, 200);
+    const groupA = (overview.body.groups as Array<{ teamGuid: string; members: Array<{ employeeGuid: string; clientCount: number; outletCount: number }> }>).find(
+      (group) => group.teamGuid === TEAM_A,
+    );
+    assert.ok(groupA);
+    const memberM1 = groupA!.members.find((member) => member.employeeGuid === M1);
+    assert.ok(memberM1);
+
+    const employeeClients = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=clients&portfolio=clients&teamSource=onec&onecTeam=${TEAM_A}&onecPortfolioEmployee=${M1}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(employeeClients.status, 200);
+    assert.equal(employeeClients.body.total, memberM1!.clientCount);
+
+    const groupClients = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=clients&portfolio=clients&teamSource=onec&onecTeam=${TEAM_A}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(groupClients.status, 200);
+    assert.ok(employeeClients.body.total < groupClients.body.total);
+
+    const employeeOutlets = await request(app)
+      .get(
+        `/api/clients?view=teams&entity=outlets&portfolio=outlets&teamSource=onec&onecTeam=${TEAM_A}&onecPortfolioEmployee=${M1}`,
+      )
+      .set(authHeaders(cookie));
+    assert.equal(employeeOutlets.status, 200);
+    assert.equal(employeeOutlets.body.total, memberM1!.outletCount);
   });
 });

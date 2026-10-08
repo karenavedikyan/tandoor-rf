@@ -8,6 +8,7 @@ import { buildReviewStateFilter } from "./review/repository";
 import {
   applyOrgTeamsClientFilter,
 } from "./org/teams-list-filters";
+import { resolveOnecPortfolioTargetGuids } from "./org/onec-portfolio-query";
 import {
   assertOnecTeamPortfolioAccess,
   buildOnecTeamClientsFilter,
@@ -162,8 +163,17 @@ async function resolveScopedFilter(
     }
   }
 
+  const onecEmployeePortfolio =
+    input.view === "teams" &&
+    input.teamSource === "onec" &&
+    Boolean(input.onecPortfolioEmployeeGuid);
   const portfolioManagerId =
-    input.view === "teams" && input.managerId && !ropEmployeeGuid ? input.managerId : undefined;
+    !onecEmployeePortfolio &&
+    input.view === "teams" &&
+    input.managerId &&
+    !ropEmployeeGuid
+      ? input.managerId
+      : undefined;
   let userFilter = buildClientsFilter(
     portfolioManagerId ? { ...input, managerId: undefined } : input,
   );
@@ -188,11 +198,19 @@ async function resolveScopedFilter(
   ) {
     try {
       const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
-      const managerDenied = onecTeamManagerAccessFilter(memberGuids, portfolioManagerId);
-      if (managerDenied) {
-        userFilter = combineScopeAndFilter(userFilter, managerDenied);
+      const targetGuids = resolveOnecPortfolioTargetGuids(input, memberGuids);
+      if (input.onecPortfolioEmployeeGuid && targetGuids.length === 0) {
+        userFilter = combineScopeAndFilter(userFilter, { whereSql: "WHERE FALSE", params: [] });
       } else {
-        userFilter = combineScopeAndFilter(userFilter, buildOnecTeamClientsFilter(memberGuids));
+        const portfolioGuids = targetGuids.length > 0 ? targetGuids : memberGuids;
+        const managerDenied =
+          !input.onecPortfolioEmployeeGuid &&
+          onecTeamManagerAccessFilter(memberGuids, portfolioManagerId);
+        if (managerDenied) {
+          userFilter = combineScopeAndFilter(userFilter, managerDenied);
+        } else {
+          userFilter = combineScopeAndFilter(userFilter, buildOnecTeamClientsFilter(portfolioGuids));
+        }
       }
     } catch (error) {
       if (error instanceof OnecTeamPortfolioAccessError) {
@@ -219,7 +237,7 @@ async function resolveScopedFilter(
     );
   }
 
-  if (input.view === "teams" && ropEmployeeGuid) {
+  if (input.view === "teams" && ropEmployeeGuid && input.teamSource !== "onec") {
     userFilter = applyOrgTeamsClientFilter(userFilter, input, ropEmployeeGuid);
   } else if (input.view === "teams" && input.ropUserId && !input.managerId) {
     userFilter = combineScopeAndFilter(userFilter, await buildTeamRopFilter(input.ropUserId));

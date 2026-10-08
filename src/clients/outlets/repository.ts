@@ -13,6 +13,7 @@ import {
   outletStoreAddressSql,
 } from "./list-filter";
 import { applyOrgTeamsOutletFilter } from "../org/teams-list-filters";
+import { resolveOnecPortfolioTargetGuids } from "../org/onec-portfolio-query";
 import {
   assertOnecTeamPortfolioAccess,
   buildOnecTeamOutletsFilter,
@@ -124,10 +125,23 @@ export async function listRetailOutlets(
   ) {
     try {
       const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
+      const targetGuids = resolveOnecPortfolioTargetGuids(input, memberGuids);
+      const portfolioGuids = targetGuids.length > 0 ? targetGuids : memberGuids;
+      const onecEmployeePortfolio = Boolean(input.onecPortfolioEmployeeGuid);
       const managerId =
-        input.view === "teams" && input.managerId && !ropEmployeeGuid ? input.managerId : undefined;
-      const managerDenied = onecTeamManagerAccessFilter(memberGuids, managerId);
-      const orgFilter = managerDenied ?? buildOnecTeamOutletsFilter(memberGuids);
+        !onecEmployeePortfolio &&
+        input.view === "teams" &&
+        input.managerId &&
+        !ropEmployeeGuid
+          ? input.managerId
+          : undefined;
+      const orgFilter =
+        onecEmployeePortfolio && targetGuids.length === 0
+          ? { whereSql: "WHERE FALSE", params: [] }
+          : onecEmployeePortfolio
+            ? buildOnecTeamOutletsFilter(portfolioGuids)
+            : (onecTeamManagerAccessFilter(memberGuids, managerId) ??
+              buildOnecTeamOutletsFilter(portfolioGuids));
       const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");
       combinedWhere = mergeSqlFilters(combinedWhere, [orgClause], orgFilter.params);
     } catch (error) {
@@ -143,7 +157,7 @@ export async function listRetailOutlets(
     input.branchPortfolio === "clients"
   ) {
     combinedWhere = mergeSqlFilters(combinedWhere, ["FALSE"], []);
-  } else if (input.view === "teams" && ropEmployeeGuid) {
+  } else if (input.view === "teams" && ropEmployeeGuid && input.teamSource !== "onec") {
     const orgFilter = applyOrgTeamsOutletFilter({ whereSql: "", params: [] }, input, ropEmployeeGuid);
     if (orgFilter.whereSql) {
       const orgClause = orgFilter.whereSql.replace(/^WHERE\s+/, "");

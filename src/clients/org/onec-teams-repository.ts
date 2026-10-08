@@ -8,10 +8,8 @@ import {
   ACTIVE_BASELINE_CLIENT_SQL,
   ACTIVE_BASELINE_OC_SQL,
 } from "../../onec-clients/baseline-active-scope";
-import {
-  employeesAccessibleOutletExistsClause,
-  employeesDirectClientListClause,
-} from "../team-portfolio-sql";
+import { employeesDirectClientListClause } from "../team-portfolio-sql";
+import { countUniqueOutletsForEmployeeGuids } from "./onec-team-portfolio";
 import { loadDirectorSummary, loadLinkedAccountGuids, OrgStructureAccessError } from "./structure-repository";
 import type { OrgDirectorSummary } from "./structure-repository";
 
@@ -248,25 +246,7 @@ async function countUniqueOutletsForEmployees(
   context: AccessContext,
   employeeGuids: string[],
 ): Promise<number> {
-  if (employeeGuids.length === 0) {
-    return 0;
-  }
-  const scoped = scopedClientFilter(context, "oc");
-  if (scoped.denied) {
-    return 0;
-  }
-  const arrayParamIndex = scoped.params.length + 1;
-  const result = await query<{ count: string }>(
-    `
-      SELECT COUNT(DISTINCT ro.guid_store)::text AS count
-      FROM onec_retail_outlets ro
-      JOIN onec_clients oc ON oc.guid_client = ro.guid_client
-      ${scoped.whereSql}
-        AND ${employeesAccessibleOutletExistsClause(`$${arrayParamIndex}`, "ro", "oc")}
-    `,
-    [...scoped.params, employeeGuids],
-  );
-  return Number(result.rows[0]?.count ?? "0");
+  return countUniqueOutletsForEmployeeGuids(context, employeeGuids);
 }
 
 async function countEmployeePortfolio(
@@ -325,17 +305,6 @@ function resolveLeader(
     hasLinkedAccount: linked.has(leaderGuid),
     status,
   };
-}
-
-function resolveGroupMemberCount(
-  membershipGuids: Iterable<string>,
-  leaderGuid: string | null,
-): number {
-  const guids = new Set(membershipGuids);
-  if (leaderGuid && !guids.has(leaderGuid)) {
-    return guids.size + 1;
-  }
-  return guids.size;
 }
 
 function buildMember(
@@ -400,7 +369,7 @@ export async function buildOnecTeamGroups(
       teamGuid,
       displayName: naming.displayName,
       nameStatus: naming.nameStatus,
-      memberCount: resolveGroupMemberCount(memberGuids, leaderGuid),
+      memberCount: memberGuids.length,
       uniqueClientCount,
       uniqueOutletCount,
       leader,

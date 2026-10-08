@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
 import {
-  collectRosterTeamGroupDrafts,
+  buildExpectedTeamGroupsAfterApply,
   existingMembershipsForStoredRecord,
   resolveEmployeeTeamMemberships,
   type ExistingEmployeeTeamMembershipRow,
@@ -125,8 +125,10 @@ async function replaceEmployeeMemberships(
 export async function syncRosterTeamGroups(
   client: PoolClient,
   roster: WholesaleEmployeeRoster,
+  membershipByManager: Map<string, ExistingEmployeeTeamMembershipRow[]>,
+  existingGroups: ExistingTeamGroupRow[],
 ): Promise<void> {
-  const drafts = collectRosterTeamGroupDrafts(roster.records);
+  const drafts = buildExpectedTeamGroupsAfterApply(roster, membershipByManager, existingGroups);
   for (const draft of drafts.values()) {
     await client.query(
       `
@@ -174,6 +176,7 @@ export async function upsertWholesaleEmployeeRoster(
 ): Promise<RosterUpsertCounts> {
   const existing = await loadExistingRoster(client);
   const existingMemberships = await loadExistingMembershipsByManager(client);
+  const existingGroups = await loadExistingTeamGroups(client);
   let newCount = 0;
   let changedCount = 0;
   let unchangedCount = 0;
@@ -275,7 +278,7 @@ export async function upsertWholesaleEmployeeRoster(
     })));
   }
 
-  await syncRosterTeamGroups(client, roster);
+  await syncRosterTeamGroups(client, roster, existingMemberships, existingGroups);
 
   await client.query(
     `
