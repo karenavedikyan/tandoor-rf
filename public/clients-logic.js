@@ -84,6 +84,8 @@
     "teamExpand",
     "teamQ",
     "teamKind",
+    "teamSource",
+    "onecTeam",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [
@@ -523,6 +525,8 @@
         }),
       teamQ: params.get("teamQ") || "",
       teamKind: params.get("teamKind") || "",
+      teamSource: params.get("teamSource") === "onec" ? "onec" : "rop",
+      onecTeam: params.get("onecTeam") || "",
     });
   }
 
@@ -802,6 +806,8 @@
     }
     if (state.teamQ) params.set("teamQ", state.teamQ);
     if (state.teamKind) params.set("teamKind", state.teamKind);
+    if (state.teamSource === "onec") params.set("teamSource", "onec");
+    if (state.onecTeam) params.set("onecTeam", state.onecTeam);
     return params.toString();
   }
 

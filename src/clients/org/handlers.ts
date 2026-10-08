@@ -14,6 +14,11 @@ import {
   type CompletenessQueueQuery,
 } from "./completeness-repository";
 import {
+  getOnecTeamGroupsOverview,
+  ONEC_TEAM_UNDEFINED_KEY,
+  OrgOnecTeamsSourceError,
+} from "./onec-teams-repository";
+import {
   getOrgStructureOverview,
   listOrgRopResponsibles,
   OrgStructureAccessError,
@@ -36,6 +41,52 @@ export async function orgStructureOverviewHandler(req: AccessRequest, res: Respo
   } catch (error) {
     if (error instanceof OrgStructureAccessError) {
       sendOrgError(res, error);
+      return;
+    }
+    throw error;
+  }
+}
+
+function parseOnecTeamsQuery(input: Record<string, unknown>): { q: string; onecTeam?: string } | { error: string } {
+  const q = typeof input.q === "string" ? input.q.trim() : typeof input.teamQ === "string" ? input.teamQ.trim() : "";
+  const rawTeam =
+    typeof input.onecTeam === "string"
+      ? input.onecTeam.trim().toLowerCase()
+      : typeof input.team === "string"
+        ? input.team.trim().toLowerCase()
+        : "";
+  if (!rawTeam) {
+    return { q, onecTeam: undefined };
+  }
+  if (rawTeam === ONEC_TEAM_UNDEFINED_KEY) {
+    return { q, onecTeam: ONEC_TEAM_UNDEFINED_KEY };
+  }
+  if (!isValidUuidParam(rawTeam)) {
+    return { error: "Некорректный фильтр группы 1С." };
+  }
+  return { q, onecTeam: rawTeam };
+}
+
+export async function orgOnecTeamsHandler(req: AccessRequest, res: Response): Promise<void> {
+  const parsed = parseOnecTeamsQuery(req.query as Record<string, unknown>);
+  if ("error" in parsed) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, parsed.error));
+    return;
+  }
+
+  try {
+    const overview = await getOnecTeamGroupsOverview(req.accessContext!, parsed);
+    setNoStore(res);
+    res.status(200).json(overview);
+  } catch (error) {
+    if (error instanceof OrgStructureAccessError) {
+      sendOrgError(res, error);
+      return;
+    }
+    if (error instanceof OrgOnecTeamsSourceError) {
+      setNoStore(res);
+      res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, error.message));
       return;
     }
     throw error;

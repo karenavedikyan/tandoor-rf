@@ -48,6 +48,7 @@ import {
 } from "./review/handlers";
 import {
   completenessQueueHandler,
+  orgOnecTeamsHandler,
   orgRopResponsiblesHandler,
   orgStructureOverviewHandler,
 } from "./org/handlers";
@@ -86,6 +87,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/org-structure", ...readChain, (req, res, next) => {
     void orgStructureOverviewHandler(req, res).catch(next);
+  });
+
+  router.get("/org-structure/onec-teams", ...readChain, (req, res, next) => {
+    void orgOnecTeamsHandler(req, res).catch(next);
   });
 
   router.get("/org-structure/:ropEmployeeGuid/responsibles", ...readChain, (req, res, next) => {
