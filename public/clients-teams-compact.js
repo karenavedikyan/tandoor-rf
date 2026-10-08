@@ -675,26 +675,39 @@
       var isStale = callbacks.isStale || function () {
         return false;
       };
-      return ensureResponsiblesForSearch(context.rops || [], teamUi).then(function () {
+      var autoExpand = [];
+      if (teamUi.query || teamUi.kind) {
+        (context.rops || []).forEach(function (rop) {
+          if (shouldAutoExpandRop(rop, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
+            autoExpand.push(rop.employeeGuid);
+          }
+        });
+      }
+      var mergedExpand = teamUi.expanded.slice();
+      autoExpand.forEach(function (guid) {
+        if (mergedExpand.indexOf(guid) === -1) {
+          mergedExpand.push(guid);
+        }
+      });
+      var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
+
+      function renderIfCurrent() {
         if (isStale()) {
           return;
         }
-        var autoExpand = [];
-        if (teamUi.query || teamUi.kind) {
-          (context.rops || []).forEach(function (rop) {
-            if (shouldAutoExpandRop(rop, teamUi) && autoExpand.indexOf(rop.employeeGuid) === -1) {
-              autoExpand.push(rop.employeeGuid);
-            }
-          });
-        }
-        var mergedExpand = teamUi.expanded.slice();
-        autoExpand.forEach(function (guid) {
-          if (mergedExpand.indexOf(guid) === -1) {
-            mergedExpand.push(guid);
-          }
-        });
-        var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
         renderOverviewIntoContainer(container, renderState, context, callbacks);
+      }
+
+      if (!teamUi.query && !teamUi.kind && mergedExpand.length === 0) {
+        renderIfCurrent();
+        if (callbacks.restoreSearchFocus) {
+          callbacks.restoreSearchFocus();
+        }
+        return Promise.resolve();
+      }
+
+      return ensureResponsiblesForSearch(context.rops || [], teamUi).then(function () {
+        renderIfCurrent();
         if (mergedExpand.length === 0) {
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
@@ -706,10 +719,7 @@
             return ensureResponsibles(ropGuid);
           }),
         ).then(function () {
-          if (isStale()) {
-            return;
-          }
-          renderOverviewIntoContainer(container, renderState, context, callbacks);
+          renderIfCurrent();
           if (autoExpand.length > 0 && callbacks.syncExpand) {
             callbacks.syncExpand(mergedExpand);
           }

@@ -3174,11 +3174,34 @@
     });
   }
 
-  function renderTeamsPanel(state) {
+  function teamsOverviewState(state) {
+    return mergeTeamUiFromUrl(Object.assign({}, state || getCurrentTeamsOverviewState()));
+  }
+
+  function renderDirectorTeamsOverviewIfCurrent(state) {
+    var overviewState = teamsOverviewState(state);
     if (
-      state.view !== "teams" ||
-      logic.isBranchPortfolioList(state) ||
-      logic.hasResponsibleSelection(state)
+      overviewState.view !== "teams" ||
+      logic.isBranchPortfolioList(overviewState) ||
+      logic.hasResponsibleSelection(overviewState)
+    ) {
+      return;
+    }
+    if (usesOnecTeamSource(overviewState)) {
+      renderOnecTeamsOverview(overviewState);
+      return;
+    }
+    if (usesDirectorLayout() && !overviewState.ropEmployee) {
+      renderCompactTeamsOverview(overviewState);
+    }
+  }
+
+  function renderTeamsPanel(state) {
+    var panelState = teamsOverviewState(state);
+    if (
+      panelState.view !== "teams" ||
+      logic.isBranchPortfolioList(panelState) ||
+      logic.hasResponsibleSelection(panelState)
     ) {
       teamsPanelEl.innerHTML = "";
       teamsPanelEl.removeAttribute("data-onec-teams-ready");
@@ -3186,19 +3209,19 @@
       onecTeamsOverviewRenderSignature = "";
       return;
     }
-    if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
-      renderCompactRopTeamPanel(state);
+    if ((isRopDesignSession() || usesDirectorLayout()) && panelState.ropEmployee && !usesOnecTeamSource(panelState)) {
+      renderCompactRopTeamPanel(panelState);
       return;
     }
-    if ((usesDirectorLayout() && !state.ropEmployee) || (isRopDesignSession() && usesOnecTeamSource(state))) {
-      if (usesOnecTeamSource(state)) {
-        renderOnecTeamsOverview(state);
-      } else if (usesDirectorLayout() && !state.ropEmployee) {
-        renderCompactTeamsOverview(state);
+    if ((usesDirectorLayout() && !panelState.ropEmployee) || (isRopDesignSession() && usesOnecTeamSource(panelState))) {
+      if (usesOnecTeamSource(panelState)) {
+        renderOnecTeamsOverview(panelState);
+      } else if (usesDirectorLayout() && !panelState.ropEmployee) {
+        renderCompactTeamsOverview(panelState);
       }
       return;
     }
-    if (!state.ropEmployee) {
+    if (!panelState.ropEmployee) {
       var directorHtml = "";
       if (teamContext.director && !usesDirectorLayout()) {
         directorHtml =
@@ -3577,7 +3600,28 @@
   function navigateState(nextState) {
     cancelScheduledLoad();
     invalidateInFlightRequests();
-    loadList(Object.assign({}, currentStateFromForm(), nextState), false);
+    var merged = Object.assign({}, currentStateFromForm(), nextState);
+    if (Object.prototype.hasOwnProperty.call(nextState, "teamSource")) {
+      merged.teamSource = nextState.teamSource || "rop";
+    } else {
+      merged = mergeTeamUiFromUrl(merged);
+    }
+    if (Object.prototype.hasOwnProperty.call(nextState, "teamExpand")) {
+      merged.teamExpand = nextState.teamExpand || [];
+    }
+    if (Object.prototype.hasOwnProperty.call(nextState, "teamQ")) {
+      merged.teamQ = nextState.teamQ || "";
+    }
+    if (Object.prototype.hasOwnProperty.call(nextState, "teamKind")) {
+      merged.teamKind = nextState.teamKind || "";
+    }
+    if (Object.prototype.hasOwnProperty.call(nextState, "onecTeam")) {
+      merged.onecTeam = nextState.onecTeam || "";
+    }
+    if (Object.prototype.hasOwnProperty.call(nextState, "onecPortfolioEmployee")) {
+      merged.onecPortfolioEmployee = nextState.onecPortfolioEmployee || "";
+    }
+    loadList(merged, false);
   }
 
   function syncTeamContextFromOrgStructure(data, ropEmployeeGuid) {
@@ -4014,6 +4058,18 @@
           return;
         }
         if (usesOnecTeamSource(state) && !isOnecTeamsFetchCurrent(teamsFetchGen, state)) {
+          var currentOverview = getCurrentTeamsOverviewState();
+          if (
+            !usesOnecTeamSource(currentOverview) &&
+            usesDirectorLayout() &&
+            !logic.isBranchPortfolioList(currentOverview) &&
+            !logic.hasResponsibleSelection(currentOverview)
+          ) {
+            updateViewChrome(currentOverview);
+            renderDirectorTeamsOverviewIfCurrent(currentOverview);
+            resultsStateEl.classList.add("clients-hidden");
+            resultCountEl.textContent = "";
+          }
           return;
         }
         if (!ctx.ok) {
@@ -4040,11 +4096,14 @@
           );
           return;
         }
-        updateViewChrome(state);
-        renderTeamsPanel(state);
+        var overviewState = getCurrentTeamsOverviewState();
+        updateViewChrome(overviewState);
+        renderTeamsPanel(overviewState);
         if (
-          (isRopDesignSession() && state.ropEmployee) ||
-          (usesDirectorLayout() && !logic.isBranchPortfolioList(state) && !logic.hasResponsibleSelection(state))
+          (isRopDesignSession() && overviewState.ropEmployee) ||
+          (usesDirectorLayout() &&
+            !logic.isBranchPortfolioList(overviewState) &&
+            !logic.hasResponsibleSelection(overviewState))
         ) {
           resultsStateEl.classList.add("clients-hidden");
           resultCountEl.textContent = "";
