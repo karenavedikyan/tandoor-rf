@@ -1,7 +1,7 @@
 # F0 — карта оставшихся полей обмена 1С → ЛК
 
 **Серия:** F (после G1/G2 на `main`; **не** зависит от G3 / PR #62)  
-**F0:** исследование (PR #63). **F1:** опубликован на `main` (merge PR #64, `45c2e58`). **F2:** реализован в подтверждённом объёме (PR #66) — [f2-top-source-blocker.md](./f2-top-source-blocker.md). **F3:** опубликован на `main` (merge PR #67, `80f5044`) — [f3-counterparty-source-blocker.md](./f3-counterparty-source-blocker.md).  
+**F0:** исследование (PR #63). **F1:** опубликован на `main` (merge PR #64, `45c2e58`). **F2:** реализован в подтверждённом объёме (PR #66) — [f2-top-source-blocker.md](./f2-top-source-blocker.md). **F3:** опубликован на `main` (merge PR #67, `80f5044`) — [f3-counterparty-source-blocker.md](./f3-counterparty-source-blocker.md). **F4:** опубликован на `main` (merge PR #68, `bd19338`) — [f4-contract-source-blocker.md](./f4-contract-source-blocker.md). **F5:** Draft — [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md).  
 **Актуальная выгрузка FTP 08.10.2026:** на агенте **не** читалась; для F2 использован **исторический** read-only audit снимка **04.10.2026** (SHA `b439063…`, fixture `test/fixtures/onec-clients/recovered-exchange-structure.json`).
 
 **Эталон UI (не доказательство JSON):** [прототип «Вся информация о клиенте»](https://www.perplexity.ai/computer/a/tandoor-rf-vizualnyi-prototip-TyhOzG0mT06dPTayt88xTA) — секции «Холдинг / юрлица», «ЛПР», «Расчёты и договор», «Магазин и доставка» задают целевое отображение.
@@ -193,7 +193,7 @@ Legacy import: warning `EXTRA_FIELDS`, **не** в parsed 8 полей.
 | Юр/физ лицо | `ЮрФизЛицо` | `Компания` / `Частное лицо` |同上 | колонка `onecLegalEntityType`, карточка, exact filter, options | **отображается** (F3 scalar) |
 | ОГРН (строка) | `Оптовик_ОГРН` | часто заполнено; ведущие нули as-is |同上 | колонка `onecOgrn`, карточка, exact filter | **отображается** (F3 scalar) |
 | Полное наименование | `НаименованиеПолное` | все клиенты |同上 | колонка `onecFullName`, карточка, `onecFullNameContains`, filled/empty | **отображается** (F3 scalar) |
-| Код 1С (строка) | `Код` | все клиенты | — | колонка `code1c` **`hasSource: false`** | **в источнике**, **F5** (не F3) |
+| Код 1С (строка) | `Код` | все 3 087 клиентов, string | `client-code-exchange-fields.ts` → `clientCode.code1c` | колонка `code1c`, карточка, `onecCode1c` / contains, filled/empty | **отображается** (F5 scalar, Draft) |
 | Название, ИНН, КПП, адрес юрлица | — | **нет** отдельных ключей в снимке 04.10 | — | колонка `inn` **`hasSource: false`** | **не подтверждено** |
 | Банк, БИК, расчётные счета | — | — | — | не в UI | **не подтверждено в актуальной выгрузке** |
 
@@ -229,7 +229,7 @@ Legacy import: warning `EXTRA_FIELDS`, **не** в parsed 8 полей.
 
 | UI / колонка | JSON | Статус |
 |--------------|------|--------|
-| `code1c` | JSON `Код` подтверждён в снимке 04.10; **не** подключён в UI | `hasSource: false` до F5 |
+| `inn`, `kpp` | нет отдельных ключей в снимке 04.10 | колонка `inn` **`hasSource: false`** |
 | `city` | нет отдельного ключа (адрес — одна строка на legacy) | **не подтверждено в актуальной выгрузке** |
 | `cashback` (client/outlet) | не в extended audit | **не подтверждено в актуальной выгрузке** |
 | `nextStep` | Bitrix24 / LK, не 1С | вне F |
@@ -251,12 +251,13 @@ flowchart LR
     F2W[F2 TOP150 + category 1C]
     F3C[F3 counterparty scalars]
     F4K[F4 contract scalars]
+    F5C[F5 client code Kod]
   end
   subgraph missing [Нет подтверждённого JSON-пути / не подключено]
     TOP350[TOP-350/500]
     LEGDIR[Legal entity directory 0..N]
     CONDIR[Contract directory 0..N]
-    PLH[code1c inn city cashback]
+    PLH[inn city cashback category stub]
   end
   JSON[all_clients.json] --> L8
   JSON --> EX
@@ -265,6 +266,7 @@ flowchart LR
   JSON --> F2W
   JSON --> F3C
   JSON --> F4K
+  JSON --> F5C
   JSON -.-> TOP350
   JSON -.-> LEGDIR
   JSON -.-> CONDIR
@@ -279,8 +281,9 @@ flowchart LR
 | LPR + DOB + bonus LPR | **F1:** DTO + карточка + фильтры (main) | — |
 | TOP-150 + категория 1С (клиент) | **F2:** parser + UI (PR #66) | TOP-350/500; prod F6 |
 | Контрагент / ОГРН / тип / полное имя (клиент) | **F3:** parser + UI + filters (main) | справочник юрлиц 0..N; prod F6 backfill |
-| Основной договор / соглашение (клиент) | **F4:** parser + UI + filters | справочник договоров 0..N; prod F6 backfill |
-| Колонки-заглушки (`code1c`, `inn`, …) | — | **F5–F6** после появления полей |
+| Основной договор / соглашение (клиент) | **F4:** parser + UI + filters (main) | справочник договоров 0..N; prod F6 backfill |
+| Код 1С (`Код`) | **F5:** parser + UI + filters (Draft) | prod F6 backfill |
+| Колонки-заглушки (`inn`, `city`, `cashback`, …) | — | **не подтверждены** в audit 04.10 |
 
 ---
 
@@ -292,9 +295,9 @@ flowchart LR
 | **F1** | ЛПР, DOB, `bonus` / `conditions_bonus` | **Опубликовано** (`main`, PR #64) | R13: scope ТТ; внутри доступной ТТ — все поля ЛПР |
 | **F2** | `Оптовик_Топ150`, `Оптовик_КатегорияТорговойТочкиТандор` | **Код готов** (PR #66); TOP-350/500 **не** подтверждены | Historical audit 04.10; [f2-top-source-blocker.md](./f2-top-source-blocker.md) |
 | **F3** | Скаляры контрагента (`Контрагент`, `ЮрФизЛицо`, `Оптовик_ОГРН`, `НаименованиеПолное`) | **Опубликовано** (`main`, PR #67) | Historical audit 04.10 |
-| **F4** | Скаляры договор/соглашение (`Оптовик_ОсновнойДоговор`, `Оптовик_ОсновноеСоглашение`) | **Реализовано** (Draft); справочник договоров **не** входит | [f4-contract-source-blocker.md](./f4-contract-source-blocker.md) |
-| **F5** | Оставшиеся фильтры / колонки / UI parity | **Осталось** | Зависит от F2–F4 для category/inn/city |
-| **F6** | Заполнение новых данных, backfill, сверка | **Осталось** | После F2–F5; prod extended gate; без force/hash подмены |
+| **F4** | Скаляры договор/соглашение (`Оптовик_ОсновнойДоговор`, `Оптовик_ОсновноеСоглашение`) | **Опубликовано** (`main`, PR #68) | [f4-contract-source-blocker.md](./f4-contract-source-blocker.md) |
+| **F5** | `Код` → `code1c`; сверка F1–F4 на пропуски | **Код готов** (Draft PR); **серия F не закрыта** | [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) |
+| **F6** | Заполнение новых данных, backfill, сверка | **Осталось** | После merge F5; prod extended gate; inn/city/cashback/TOP-350 |
 
 
 ---
@@ -319,5 +322,6 @@ flowchart LR
 - [sprint3-field-map.md](./sprint3-field-map.md)
 - [r02-existing-evidence.md](./r02-existing-evidence.md)
 - [f2-top-source-blocker.md](./f2-top-source-blocker.md) (F2)
+- [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) (F5)
 
 **Audit locally:** `AUDIT_CLIENTS_PATH=/path/to/all_clients.json npm run audit:exchange-fields`

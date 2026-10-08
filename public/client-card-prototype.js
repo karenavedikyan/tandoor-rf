@@ -271,6 +271,11 @@
         detailsBlock("Основные сведения и холдинг",
           field("Клиент", client.name || "Не указан", true) +
           field(
+            "Код 1С",
+            ext && ext.clientCode && ext.clientCode.code1c && ext.clientCode.code1c.label,
+            !!(ext && ext.clientCode && ext.clientCode.code1c && ext.clientCode.code1c.hasSource),
+          ) +
+          field(
             "ТОП-150 (1С)",
             ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.label,
             !!(ext && ext.wholesaleExchange && ext.wholesaleExchange.top150 && ext.wholesaleExchange.top150.hasSource),
