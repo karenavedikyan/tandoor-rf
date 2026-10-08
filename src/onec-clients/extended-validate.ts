@@ -698,6 +698,15 @@ function parseOutletLpr(
       email: "",
       bonus: "",
       conditionsBonus: "",
+      fieldPresence: {
+        name: false,
+        post: false,
+        phone: false,
+        email: false,
+        bonus: false,
+        conditionsBonus: false,
+        dateOfBirth: false,
+      },
     };
   }
   if (!isPlainObject(raw)) {
@@ -727,11 +736,21 @@ function parseOutletLpr(
     email: "",
     bonus: "",
     conditionsBonus: "",
+    fieldPresence: {
+      name: false,
+      post: false,
+      phone: false,
+      email: false,
+      bonus: false,
+      conditionsBonus: false,
+      dateOfBirth: false,
+    },
   };
   for (const [target, source] of stringFields) {
     if (!(source in raw)) {
       continue;
     }
+    result.fieldPresence![target] = true;
     const parsed = readOptionalStringField(raw[source]);
     if (parsed.kind === "invalid_type") {
       pushIssue(issues, {
@@ -745,6 +764,7 @@ function parseOutletLpr(
     result[target] = parsed.kind === "value" ? parsed.value : "";
   }
   if ("bonus" in raw) {
+    result.fieldPresence!.bonus = true;
     const bonus = readBonusField(raw.bonus);
     if (bonus.kind === "invalid_type") {
       pushIssue(issues, {
@@ -758,6 +778,7 @@ function parseOutletLpr(
     result.bonus = bonus.kind === "value" ? bonus.value : "";
   }
   if ("date_of_birth" in raw) {
+    result.fieldPresence!.dateOfBirth = true;
     const dob = readDateOfBirthField(raw.date_of_birth);
     if (dob.kind === "invalid_type") {
       pushIssue(issues, {

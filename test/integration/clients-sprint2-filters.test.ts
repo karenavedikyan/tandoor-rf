@@ -413,12 +413,12 @@ describe("clients sprint2 filters integration", { concurrency: false }, () => {
     assert.equal(filtered.body.total, 1);
     assert.equal(filtered.body.items[0].guid, C2);
 
-    const bad = await listClients(app, cookie, {
+    const lprEmpty = await listClients(app, cookie, {
       view: "all",
       entity: "clients",
       empty: "lprName",
     });
-    assert.equal(bad.status, 400);
+    assert.equal(lprEmpty.status, 200);
   });
 
   it("manager q+warehouse and clientManager+warehouse return 200 (no placeholder drift)", async () => {

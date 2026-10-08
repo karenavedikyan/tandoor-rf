@@ -25,6 +25,7 @@ import {
 } from "./outlet-access";
 import { shortUuidLabel } from "./uuid-param";
 import { bonusTandoorClubPresentationFromAdditional } from "./bonus-tandoor-club";
+import { lprPresentationFromParsed, type LprBlockPresentation } from "./lpr-fields";
 import {
   hasAnyCommercialField,
   readSnapshotCommercial,
@@ -82,6 +83,7 @@ export type RetailOutletDto = {
   contacts: RetailOutletContactsDto;
   tandoorClub: { value: string | null; hasSource: boolean; label: string };
   bonusTandoorClub: { value: string | null; hasSource: boolean; label: string };
+  lpr: LprBlockPresentation;
   distributionAllowed: false;
   distributionNote: string;
   presentInCurrentExport: boolean;
@@ -158,7 +160,8 @@ export type ClientExtendedDto = {
   retailOutletsEmptyReason: RetailOutletsEmptyReason;
   retailOutletHistoryCount: number;
   dataQualityLabel: string;
-  sensitiveFieldsWithheld: true;
+  /** @deprecated LPR is published on scoped outlets; kept for backward-compatible clients. */
+  sensitiveFieldsWithheld: false;
   outletNormalizedReady: boolean;
   clientExtendedReady: boolean;
   holdingLink?: {
@@ -759,6 +762,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
   const closure = outletClosurePresentation(outlet, effective.closureConfirmedInCurrentExport);
   const tandoorClub = tandoorClubPresentation(outlet);
   const bonusTandoorClub = bonusTandoorClubPresentation(outlet);
+  const lpr = lprPresentationFromParsed(outlet.lpr);
 
   return {
     ordinal: outlet.ordinal,
@@ -790,6 +794,7 @@ function toOutletDto(outlet: ParsedRetailOutlet, context: OutletPresentationCont
     },
     tandoorClub,
     bonusTandoorClub,
+    lpr,
     distributionAllowed: false,
     distributionNote: outletDistributionNote(outlet),
     presentInCurrentExport: effective.provenance.freshness === "current",
@@ -938,7 +943,7 @@ export function toClientExtendedDto(
           row.extended_format_version && !row.extended_snapshot
             ? "Расширенный блок ожидает проверки контракта"
             : "Расширенные данные недоступны",
-        sensitiveFieldsWithheld: true,
+        sensitiveFieldsWithheld: false,
         outletNormalizedReady: false,
         clientExtendedReady: false,
         ...importLinkMetadata,
@@ -1055,7 +1060,7 @@ export function toClientExtendedDto(
     retailOutletsEmptyReason,
     retailOutletHistoryCount: historyCount,
     dataQualityLabel,
-    sensitiveFieldsWithheld: true,
+    sensitiveFieldsWithheld: false,
     outletNormalizedReady,
     clientExtendedReady,
   };

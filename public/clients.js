@@ -132,6 +132,15 @@
   var markupNameFilter = document.getElementById("markup-name-filter");
   var markupPercentageFilter = document.getElementById("markup-percentage-filter");
   var bonusTandoorFilter = document.getElementById("bonus-tandoor-filter");
+  var lprNameFilter = document.getElementById("lpr-name-filter");
+  var lprPostFilter = document.getElementById("lpr-post-filter");
+  var lprPhoneFilter = document.getElementById("lpr-phone-filter");
+  var lprEmailFilter = document.getElementById("lpr-email-filter");
+  var lprBonusFilter = document.getElementById("lpr-bonus-filter");
+  var lprConditionsFilter = document.getElementById("lpr-conditions-filter");
+  var lprDobFilter = document.getElementById("lpr-dob-filter");
+  var lprDobFromFilter = document.getElementById("lpr-dob-from-filter");
+  var lprDobToFilter = document.getElementById("lpr-dob-to-filter");
   var ropFilterLabelEl = document.getElementById("rop-filter-label");
   var managerFilterLabelEl = document.getElementById("manager-filter-label");
   var regionalFilterLabelEl = document.getElementById("regional-filter-label");
@@ -868,6 +877,15 @@
       markupName: markupNameFilter ? markupNameFilter.value.trim() : "",
       markupPercentage: markupPercentageFilter ? markupPercentageFilter.value.trim() : "",
       bonusTandoorClub: bonusTandoorFilter ? bonusTandoorFilter.value.trim() : "",
+      lprNameContains: lprNameFilter ? lprNameFilter.value.trim() : "",
+      lprPostContains: lprPostFilter ? lprPostFilter.value.trim() : "",
+      lprPhoneContains: lprPhoneFilter ? lprPhoneFilter.value.trim() : "",
+      lprEmailContains: lprEmailFilter ? lprEmailFilter.value.trim() : "",
+      lprBonusContains: lprBonusFilter ? lprBonusFilter.value.trim() : "",
+      lprConditionsBonusContains: lprConditionsFilter ? lprConditionsFilter.value.trim() : "",
+      lprDateOfBirth: lprDobFilter ? lprDobFilter.value.trim() : "",
+      lprDateOfBirthFrom: lprDobFromFilter ? lprDobFromFilter.value.trim() : "",
+      lprDateOfBirthTo: lprDobToFilter ? lprDobToFilter.value.trim() : "",
       filled: filledFieldFilter ? filledFieldFilter.value || "" : "",
       empty: emptyFieldFilter ? emptyFieldFilter.value || "" : "",
       tandoorClub: tandoorFilter.value.trim(),
@@ -1011,6 +1029,15 @@
     if (markupNameFilter) markupNameFilter.value = state.markupName || "";
     if (markupPercentageFilter) markupPercentageFilter.value = state.markupPercentage || "";
     if (bonusTandoorFilter) bonusTandoorFilter.value = state.bonusTandoorClub || "";
+    if (lprNameFilter) lprNameFilter.value = state.lprNameContains || "";
+    if (lprPostFilter) lprPostFilter.value = state.lprPostContains || "";
+    if (lprPhoneFilter) lprPhoneFilter.value = state.lprPhoneContains || "";
+    if (lprEmailFilter) lprEmailFilter.value = state.lprEmailContains || "";
+    if (lprBonusFilter) lprBonusFilter.value = state.lprBonusContains || "";
+    if (lprConditionsFilter) lprConditionsFilter.value = state.lprConditionsBonusContains || "";
+    if (lprDobFilter) lprDobFilter.value = state.lprDateOfBirth || "";
+    if (lprDobFromFilter) lprDobFromFilter.value = state.lprDateOfBirthFrom || "";
+    if (lprDobToFilter) lprDobToFilter.value = state.lprDateOfBirthTo || "";
     tandoorFilter.value = state.tandoorClub || "";
     reviewStateFilter.value = state.reviewState || "";
     reviewDecisionFilter.value = state.reviewDecision || "";
@@ -1719,6 +1746,16 @@
     return renderNoDataCell();
   }
 
+  function renderLprFieldCell(field) {
+    if (!field || !field.hasSource) {
+      return renderNoDataCell();
+    }
+    if (field.value === null || field.value === undefined) {
+      return '<span class="clients-phone-muted">—</span>';
+    }
+    return shell.escapeHtml(field.label || field.value);
+  }
+
   function renderOutletColumnCell(columnId, item) {
     var def = columnDefById("outlets", columnId);
     if (def && !def.hasSource) {
@@ -1792,6 +1829,15 @@
         return '<span class="clients-phone-muted">—</span>';
       }
       return shell.escapeHtml(item.bonusTandoorClub.value);
+    }
+    if (item.lpr) {
+      if (columnId === "lprName") return renderLprFieldCell(item.lpr.name);
+      if (columnId === "lprPost") return renderLprFieldCell(item.lpr.post);
+      if (columnId === "lprPhone") return renderLprFieldCell(item.lpr.phone);
+      if (columnId === "lprEmail") return renderLprFieldCell(item.lpr.email);
+      if (columnId === "lprDateOfBirth") return renderLprFieldCell(item.lpr.dateOfBirth);
+      if (columnId === "lprBonus") return renderLprFieldCell(item.lpr.bonus);
+      if (columnId === "lprConditionsBonus") return renderLprFieldCell(item.lpr.conditionsBonus);
     }
     return renderNoDataCell();
   }
@@ -4008,6 +4054,15 @@
       markupName: "",
       markupPercentage: "",
       bonusTandoorClub: "",
+      lprNameContains: "",
+      lprPostContains: "",
+      lprPhoneContains: "",
+      lprEmailContains: "",
+      lprBonusContains: "",
+      lprConditionsBonusContains: "",
+      lprDateOfBirth: "",
+      lprDateOfBirthFrom: "",
+      lprDateOfBirthTo: "",
       sortBy: "",
       sortDir: "",
       cols: "",
@@ -4151,12 +4206,27 @@
     markupNameFilter,
     markupPercentageFilter,
     bonusTandoorFilter,
+    lprNameFilter,
+    lprPostFilter,
+    lprPhoneFilter,
+    lprEmailFilter,
+    lprBonusFilter,
+    lprConditionsFilter,
   ]
     .filter(Boolean)
     .forEach(function (el) {
       el.addEventListener("input", function () {
         invalidateInFlightRequests();
         scheduleLoad(true, true);
+      });
+    });
+  [lprDobFilter, lprDobFromFilter, lprDobToFilter]
+    .filter(Boolean)
+    .forEach(function (el) {
+      el.addEventListener("change", function () {
+        cancelScheduledLoad();
+        invalidateInFlightRequests();
+        scheduleLoad(true, false);
       });
     });
   [loadingScheduleFilter, filledFieldFilter, emptyFieldFilter]

@@ -25,6 +25,7 @@ import {
   bonusTandoorClubFilledSql,
   bonusTandoorClubSearchSql,
 } from "./bonus-tandoor-club";
+import { appendLprFilterConditions, lprFilledEmptySql } from "./lpr-fields";
 import { escapeIlikePattern } from "./phone";
 import type { ClientsListQuery, SqlFilter } from "./query";
 import { outletsJsonArraySql } from "./outlets/scope-sql";
@@ -177,6 +178,7 @@ function appendOutletFieldConditions(query: ClientsListQuery, conditions: string
       bonusTandoorClubSearchSql(`${OUTLET_ALIAS}->'additional'`, `$${params.length}`),
     );
   }
+  appendLprFilterConditions(`${OUTLET_ALIAS}->'lpr'`, query, conditions, params, escapeIlikePattern);
   if (query.outletStatus === "open") {
     conditions.push(`
       (
@@ -230,6 +232,20 @@ function outletFilledExpr(field: string): string {
           AND loading_item.value = 'true'::jsonb
       )
     `,
+    ...Object.fromEntries(
+      [
+        "lprName",
+        "lprPost",
+        "lprPhone",
+        "lprEmail",
+        "lprDateOfBirth",
+        "lprBonus",
+        "lprConditionsBonus",
+      ].map((lprField) => [
+        lprField,
+        lprFilledEmptySql(`${OUTLET_ALIAS}->'lpr'`, lprField, "filled") ?? "TRUE",
+      ]),
+    ),
   };
   return map[field] ?? "TRUE";
 }
@@ -254,6 +270,20 @@ function outletEmptyExpr(field: string): string {
           AND loading_item.value = 'true'::jsonb
       )
     `,
+    ...Object.fromEntries(
+      [
+        "lprName",
+        "lprPost",
+        "lprPhone",
+        "lprEmail",
+        "lprDateOfBirth",
+        "lprBonus",
+        "lprConditionsBonus",
+      ].map((lprField) => [
+        lprField,
+        lprFilledEmptySql(`${OUTLET_ALIAS}->'lpr'`, lprField, "empty") ?? "TRUE",
+      ]),
+    ),
   };
   return map[field] ?? "TRUE";
 }

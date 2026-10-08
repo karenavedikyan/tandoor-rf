@@ -23,6 +23,13 @@ export const OUTLET_FILLED_EMPTY_FIELDS = new Set([
   "accountantEmail",
   "loadingTime",
   "loadingSchedule",
+  "lprName",
+  "lprPost",
+  "lprPhone",
+  "lprEmail",
+  "lprDateOfBirth",
+  "lprBonus",
+  "lprConditionsBonus",
 ]);
 
 export const ALL_FILLED_EMPTY_FIELDS = new Set([
@@ -124,7 +131,20 @@ export function hasOutletDerivedClientFilters(query: {
     query.accountantPhoneContains ||
     query.accountantEmailContains ||
     query.loadingTime ||
-    query.loadingSchedule
+    (query.loadingSchedule && query.loadingSchedule !== "all")
+  ) {
+    return true;
+  }
+  if (
+    (query as { lprNameContains?: string }).lprNameContains ||
+    (query as { lprPostContains?: string }).lprPostContains ||
+    (query as { lprPhoneContains?: string }).lprPhoneContains ||
+    (query as { lprEmailContains?: string }).lprEmailContains ||
+    (query as { lprBonusContains?: string }).lprBonusContains ||
+    (query as { lprConditionsBonusContains?: string }).lprConditionsBonusContains ||
+    (query as { lprDateOfBirth?: string }).lprDateOfBirth ||
+    (query as { lprDateOfBirthFrom?: string }).lprDateOfBirthFrom ||
+    (query as { lprDateOfBirthTo?: string }).lprDateOfBirthTo
   ) {
     return true;
   }

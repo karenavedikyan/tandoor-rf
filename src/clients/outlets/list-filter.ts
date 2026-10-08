@@ -3,6 +3,7 @@ import {
   bonusTandoorClubFilledSql,
   bonusTandoorClubSearchSql,
 } from "../bonus-tandoor-club";
+import { appendLprFilterConditions, lprFilledEmptySql } from "../lpr-fields";
 import { escapeIlikePattern } from "../phone";
 import { OUTLET_FILLED_EMPTY_FIELDS, parseFilledEmptyFieldList } from "../field-filter-registry";
 import type { ClientsListQuery, SqlFilter } from "../query";
@@ -79,6 +80,8 @@ export function buildOutletsListFilter(query: ClientsListQuery): SqlFilter {
       bonusTandoorClubSearchSql(`${snapshotExpr}->'additional'`, `$${params.length}`),
     );
   }
+
+  appendLprFilterConditions(`${snapshotExpr}->'lpr'`, query, clauses, params, escapeIlikePattern);
 
   if (query.storeAddressContains) {
     params.push(`%${escapeIlikePattern(query.storeAddressContains)}%`);
@@ -188,6 +191,20 @@ function outletFilledExpr(snapshotExpr: string, field: string): string {
           AND loading_item.value = 'true'::jsonb
       )
     `,
+    ...Object.fromEntries(
+      [
+        "lprName",
+        "lprPost",
+        "lprPhone",
+        "lprEmail",
+        "lprDateOfBirth",
+        "lprBonus",
+        "lprConditionsBonus",
+      ].map((lprField) => [
+        lprField,
+        lprFilledEmptySql(`${snapshotExpr}->'lpr'`, lprField, "filled") ?? "TRUE",
+      ]),
+    ),
   };
   return map[field] ?? "TRUE";
 }
@@ -212,6 +229,20 @@ function outletEmptyExpr(snapshotExpr: string, field: string): string {
           AND loading_item.value = 'true'::jsonb
       )
     `,
+    ...Object.fromEntries(
+      [
+        "lprName",
+        "lprPost",
+        "lprPhone",
+        "lprEmail",
+        "lprDateOfBirth",
+        "lprBonus",
+        "lprConditionsBonus",
+      ].map((lprField) => [
+        lprField,
+        lprFilledEmptySql(`${snapshotExpr}->'lpr'`, lprField, "empty") ?? "TRUE",
+      ]),
+    ),
   };
   return map[field] ?? "TRUE";
 }

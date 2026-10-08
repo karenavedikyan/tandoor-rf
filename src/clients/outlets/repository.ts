@@ -1,4 +1,4 @@
-import { mergeSqlFilters } from "../../access/combine-filters";
+import { appendSqlClauses, mergeSqlFilters } from "../../access/combine-filters";
 import type { AccessContext } from "../../access/types";
 import { query } from "../../db/pool";
 import type { RetailOutletsListResponse } from "../dto";
@@ -91,11 +91,9 @@ export async function listRetailOutlets(
   }
 
   if (input.hasOutlets === "yes" || input.hasOutlets === "no") {
-    combinedWhere = mergeSqlFilters(
-      combinedWhere,
-      [scopedHasOutletsClause(context, input.hasOutlets, "oc", scopedEmployeeParam)],
-      [],
-    );
+    combinedWhere = appendSqlClauses(combinedWhere, [
+      scopedHasOutletsClause(context, input.hasOutlets, "oc", scopedEmployeeParam),
+    ]);
   }
 
   const outletListFilter = buildOutletsListFilter(input);
