@@ -179,6 +179,41 @@ describe("clients F2 wholesale filters browser", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("desktop: exact category keeps leading and trailing spaces in URL and reload", async () => {
+    const { page, errors } = await setupPage();
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`${baseUrl}/clients?view=all&entity=clients`, { waitUntil: "networkidle" });
+    await openFieldFiltersSection(page);
+
+    const listResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("onecCategory") === " D "
+      );
+    });
+    await page.selectOption("#onec-category-filter", " D ");
+    const listResponse = await listResponsePromise;
+    assert.equal(listResponse.status(), 200);
+    assert.equal(await page.locator("#onec-category-filter").inputValue(), " D ");
+    assert.equal(new URL(page.url()).searchParams.get("onecCategory"), " D ");
+
+    const reloadListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("onecCategory") === " D "
+      );
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await reloadListPromise;
+    await openFieldFiltersSection(page);
+    assert.equal(await page.locator("#onec-category-filter").inputValue(), " D ");
+
+    assert.equal(errors.length, 0, errors.join("; "));
+    await page.close();
+  });
+
   it("mobile: clears wholesale exact and filled/empty when switching to outlets", async () => {
     const { page, state, errors } = await setupPage();
     await page.setViewportSize(MOBILE);

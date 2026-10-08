@@ -5,7 +5,6 @@ import {
   verificationFingerprintFromPayload,
   verifyApplyVerification,
 } from "../onec-clients/import-verification-fingerprint";
-import { clientsLegacyBusinessIncomingDiffersFromStored } from "../onec-clients/clients-legacy-persisted-diff";
 import { rosterIncomingDiffersFromStored } from "../onec-clients/roster-field-values";
 import { loadExistingRoster } from "../onec-clients/roster-upsert";
 import type { ValidatedClientsPayload } from "../onec-clients/types";
@@ -73,15 +72,11 @@ export async function runRegularUpdateApplyGate(
 
   const actualFingerprint = verificationFingerprintFromPayload({ payload: input.payload }).toLowerCase();
   const lastFingerprint = await loadLastCommittedVerificationFingerprint(client);
-  const existingRoster = await loadExistingRoster(client);
-  const rosterUnchanged = !rosterIncomingDiffersFromStored(existingRoster, input.roster);
-  const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
-  if (lastFingerprint && rosterUnchanged && wholesaleUnchanged) {
-    if (lastFingerprint === actualFingerprint) {
-      return { ok: true, unchangedBundle: true };
-    }
-    const legacyUnchanged = !(await clientsLegacyBusinessIncomingDiffersFromStored(client, input.payload));
-    if (legacyUnchanged) {
+  if (lastFingerprint && lastFingerprint === actualFingerprint) {
+    const existingRoster = await loadExistingRoster(client);
+    const rosterUnchanged = !rosterIncomingDiffersFromStored(existingRoster, input.roster);
+    const wholesaleUnchanged = !(await wholesaleExchangeIncomingDiffersFromStored(client, input.payload));
+    if (rosterUnchanged && wholesaleUnchanged) {
       return { ok: true, unchangedBundle: true };
     }
   }

@@ -20,6 +20,7 @@ import { validateClientsFileBytes } from "../../src/onec-clients/validate";
 import { storeExtendedContractConfirmation } from "../../src/onec-clients/baseline-replacement-db";
 
 const MANAGER_A = "22222222-2222-4222-8222-222222222222";
+const MANAGER_B = "55555555-5555-4555-8555-555555555555";
 const CLIENT_ONE = "11111111-1111-4111-8111-111111111111";
 const OUTLET_ONE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
@@ -103,11 +104,7 @@ async function applyBundle(
   rosterBytes: Buffer,
   expectedFingerprint: string,
   applyTestHooks?: Parameters<typeof runRegularUpdate>[0]["applyTestHooks"],
-  options?: { skipConfirmation?: boolean },
 ) {
-  if (!options?.skipConfirmation) {
-    await storeOperatorExtendedConfirmation(databaseUrl, clientsBytes, rosterBytes, "f2-backfill-test");
-  }
   const input = bundle(clientsBytes, rosterBytes);
   return runRegularUpdate({
     env: ftpEnv(databaseUrl),
@@ -120,7 +117,73 @@ async function applyBundle(
   });
 }
 
+function clientsBytesFromRecord(record: Record<string, unknown>) {
+  return buildExtendedClientsFileBytes([record]);
+}
+
+function rosterBytes(extraManagers: string[] = []) {
+  const entries = [buildEmployeeRosterEntry(MANAGER_A)];
+  for (const guid of extraManagers) {
+    entries.push(buildEmployeeRosterEntry(guid));
+  }
+  return buildEmployeeRosterBytes(entries);
+}
+
+async function dryRunAndApplyWithConfirmation(
+  databaseUrl: string,
+  clientsBytes: Buffer,
+  rosterBytes: Buffer,
+  applyTestHooks?: Parameters<typeof runRegularUpdate>[0]["applyTestHooks"],
+  options?: { seedConfirmation?: boolean },
+) {
+  const dryRun = await dryRunBundle(databaseUrl, clientsBytes, rosterBytes);
+  if (options?.seedConfirmation !== false) {
+    await storeOperatorExtendedConfirmation(databaseUrl, clientsBytes, rosterBytes, "f2-backfill-test");
+  }
+  const applied = await applyBundle(
+    databaseUrl,
+    clientsBytes,
+    rosterBytes,
+    dryRun.verificationFingerprint!,
+    applyTestHooks,
+  );
+  return { dryRun, applied };
+}
+
+function baseOutlet(overrides: Record<string, unknown> = {}) {
+  return {
+    guid_store: OUTLET_ONE,
+    closed: false,
+    holding: "",
+    warehouse: false,
+    address: { store_address: "Store", delivery_address: "", direction_of_the_route: "" },
+    managers: {
+      guid_manager: MANAGER_A,
+      name_manager: "Manager One",
+      guid_regional_manager: "",
+      name_regional_manager: "",
+      guid_hardware_manager: "",
+      name_hardware_manager: "",
+      guid_head_of_the_sales_department: "",
+      name_head_of_the_sales_department: "",
+    },
+    contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
+    LPR_information: {
+      name: "",
+      post: "",
+      date_of_birth: "",
+      phone: "",
+      email: "",
+      bonus: "",
+      conditions_bonus: "",
+    },
+    additional_information: { status_tandoor_club: "", bonus_tandoor_club: "0" },
+    ...overrides,
+  };
+}
+
 function extendedClientWithWholesale(overrides: Record<string, unknown> = {}) {
+  const { retail_outlets: outletOverrides, ...rest } = overrides;
   return {
     ...sampleClient({ guid_manager: MANAGER_A, name_manager: "Manager One" }),
     holding: false,
@@ -132,38 +195,9 @@ function extendedClientWithWholesale(overrides: Record<string, unknown> = {}) {
     name_head_of_the_sales_department: "",
     [WHOLESALE_JSON_KEY_TOP150]: "Нет",
     [WHOLESALE_JSON_KEY_OUTLET_CATEGORY]: "D",
-    retail_outlets: [
-      {
-        guid_store: OUTLET_ONE,
-        closed: false,
-        holding: "",
-        warehouse: false,
-        address: { store_address: "Store", delivery_address: "", direction_of_the_route: "" },
-        managers: {
-          guid_manager: MANAGER_A,
-          name_manager: "Manager One",
-          guid_regional_manager: "",
-          name_regional_manager: "",
-          guid_hardware_manager: "",
-          name_hardware_manager: "",
-          guid_head_of_the_sales_department: "",
-          name_head_of_the_sales_department: "",
-        },
-        contact_information: { store_phone: "", accountant_phone: "", accountant_email: "" },
-        LPR_information: {},
-        additional_information: { status_tandoor_club: "", bonus_tandoor_club: "0" },
-      },
-    ],
-    ...overrides,
+    retail_outlets: Array.isArray(outletOverrides) ? outletOverrides : [baseOutlet()],
+    ...rest,
   };
-}
-
-function clientsBytesFromRecord(record: Record<string, unknown>) {
-  return buildExtendedClientsFileBytes([record]);
-}
-
-function rosterBytes() {
-  return buildEmployeeRosterBytes([buildEmployeeRosterEntry(MANAGER_A)]);
 }
 
 async function simulatePreF2WholesaleGap(databaseUrl: string, clientGuid: string): Promise<void> {
@@ -224,11 +258,8 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
   it("A: fills wholesale fields from unchanged file after pre-F2 snapshot gap", async () => {
     const clientsBytes = clientsBytesFromRecord(extendedClientWithWholesale());
     const roster = rosterBytes();
-    await storeOperatorExtendedConfirmation(databaseUrl, clientsBytes, roster, "f2-backfill-test");
-    const dryRun = await dryRunBundle(databaseUrl, clientsBytes, roster);
+    const { dryRun, applied: initial } = await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
     assert.equal(dryRun.status, "SUCCESS");
-
-    const initial = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
     assert.equal(initial.status, "SUCCESS");
     assert.ok(await readWholesaleExchange(databaseUrl, CLIENT_ONE));
 
@@ -259,8 +290,7 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
   it("B: returns NO_CHANGES after wholesale backfill without another write", async () => {
     const clientsBytes = clientsBytesFromRecord(extendedClientWithWholesale());
     const roster = rosterBytes();
-    const dryRun = await dryRunBundle(databaseUrl, clientsBytes, roster);
-    await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
+    await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
     await simulatePreF2WholesaleGap(databaseUrl, CLIENT_ONE);
 
     const backfillDry = await dryRunBundle(databaseUrl, clientsBytes, roster);
@@ -280,8 +310,7 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
     const withWholesale = extendedClientWithWholesale();
     const clientsBytes = clientsBytesFromRecord(withWholesale);
     const roster = rosterBytes();
-    const dryRun = await dryRunBundle(databaseUrl, clientsBytes, roster);
-    await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
+    await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
 
     const { [WHOLESALE_JSON_KEY_TOP150]: _t, [WHOLESALE_JSON_KEY_OUTLET_CATEGORY]: _c, ...withoutWholesale } =
       withWholesale;
@@ -293,7 +322,7 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
       roster,
       omittedDry.verificationFingerprint!,
     );
-    assert.equal(omittedApply.status, "NO_CHANGES");
+    assert.equal(omittedApply.status, "SUCCESS");
     let wholesale = (await readWholesaleExchange(databaseUrl, CLIENT_ONE)) as {
       top150: string;
       outletCategory: string;
@@ -301,10 +330,19 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
     assert.equal(wholesale.top150, "Нет");
     assert.equal(wholesale.outletCategory, "D");
 
+    const omittedRepeat = await applyBundle(
+      databaseUrl,
+      omittedBytes,
+      roster,
+      omittedDry.verificationFingerprint!,
+    );
+    assert.equal(omittedRepeat.status, "NO_CHANGES");
+
     const clearedBytes = clientsBytesFromRecord(
       extendedClientWithWholesale({ [WHOLESALE_JSON_KEY_OUTLET_CATEGORY]: "" }),
     );
     const clearedDry = await dryRunBundle(databaseUrl, clearedBytes, roster);
+    await storeOperatorExtendedConfirmation(databaseUrl, clearedBytes, roster, "f2-backfill-test");
     const clearedApply = await applyBundle(
       databaseUrl,
       clearedBytes,
@@ -331,8 +369,7 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
   it("D: rolls back wholesale backfill after in-transaction write, then recovers", async () => {
     const clientsBytes = clientsBytesFromRecord(extendedClientWithWholesale());
     const roster = rosterBytes();
-    const dryRun = await dryRunBundle(databaseUrl, clientsBytes, roster);
-    await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
+    const { dryRun } = await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
     await simulatePreF2WholesaleGap(databaseUrl, CLIENT_ONE);
     assert.equal(await readWholesaleExchange(databaseUrl, CLIENT_ONE), null);
 
@@ -365,5 +402,148 @@ describe("onec F2 wholesale upgrade backfill via regular-update", { concurrency:
     const repeat = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!);
     assert.equal(repeat.status, "NO_CHANGES");
     assert.equal(await countSuccessfulApplyRuns(databaseUrl), 2);
+  });
+});
+
+async function readSnapshotScalar(
+  databaseUrl: string,
+  clientGuid: string,
+  sqlExpr: string,
+): Promise<string | null> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const row = await pool.query<{ value: string | null }>(
+    `
+      SELECT ${sqlExpr} AS value
+      FROM onec_clients
+      WHERE guid_client = $1::uuid
+    `,
+    [clientGuid],
+  );
+  await pool.end();
+  return row.rows[0]?.value ?? null;
+}
+
+describe("onec F2 regular-update gate regressions (changed fingerprint)", { concurrency: false }, () => {
+  let databaseUrl = "";
+
+  before(async () => {
+    databaseUrl = getIntegrationDatabaseUrl();
+    setIntegrationEnv(databaseUrl);
+    await prepareDatabase(databaseUrl);
+  });
+
+  beforeEach(async () => {
+    setIntegrationEnv(databaseUrl);
+    await resetPoolForTests();
+    await prepareDatabase(databaseUrl);
+  });
+
+  after(async () => {
+    await closePool();
+  });
+
+  it("persists LPR phone change when legacy/roster/F2 wholesale unchanged", async () => {
+    const lpr = (phone: string) => ({
+      name: "",
+      post: "",
+      date_of_birth: "",
+      phone,
+      email: "",
+      bonus: "",
+      conditions_bonus: "",
+    });
+    const roster = rosterBytes();
+    const v1Bytes = clientsBytesFromRecord(
+      extendedClientWithWholesale({ retail_outlets: [baseOutlet({ LPR_information: lpr("+71111111111") })] }),
+    );
+    await dryRunAndApplyWithConfirmation(databaseUrl, v1Bytes, roster);
+
+    const v2Bytes = clientsBytesFromRecord(
+      extendedClientWithWholesale({ retail_outlets: [baseOutlet({ LPR_information: lpr("+72222222222") })] }),
+    );
+    await storeOperatorExtendedConfirmation(databaseUrl, v2Bytes, roster, "f2-backfill-test");
+    const v2Dry = await dryRunBundle(databaseUrl, v2Bytes, roster);
+    const updated = await applyBundle(databaseUrl, v2Bytes, roster, v2Dry.verificationFingerprint!);
+    assert.equal(updated.status, "SUCCESS");
+    assert.equal(
+      await readSnapshotScalar(
+        databaseUrl,
+        CLIENT_ONE,
+        "extended_snapshot->'currentRetailOutlets'->0->'lpr'->>'phone'",
+      ),
+      "+72222222222",
+    );
+
+    const repeat = await applyBundle(databaseUrl, v2Bytes, roster, v2Dry.verificationFingerprint!);
+    assert.equal(repeat.status, "NO_CHANGES");
+  });
+
+  it("persists outlet closure change without losing wholesale", async () => {
+    const roster = rosterBytes();
+    const openBytes = clientsBytesFromRecord(
+      extendedClientWithWholesale({ retail_outlets: [baseOutlet({ closed: false })] }),
+    );
+    await dryRunAndApplyWithConfirmation(databaseUrl, openBytes, roster);
+
+    const closedBytes = clientsBytesFromRecord(
+      extendedClientWithWholesale({ retail_outlets: [baseOutlet({ closed: true })] }),
+    );
+    await storeOperatorExtendedConfirmation(databaseUrl, closedBytes, roster, "f2-backfill-test");
+    const closedDry = await dryRunBundle(databaseUrl, closedBytes, roster);
+    const closedApply = await applyBundle(databaseUrl, closedBytes, roster, closedDry.verificationFingerprint!);
+    assert.equal(closedApply.status, "SUCCESS");
+    assert.equal(
+      await readSnapshotScalar(
+        databaseUrl,
+        CLIENT_ONE,
+        "extended_snapshot->'currentRetailOutlets'->0->>'closureStatus'",
+      ),
+      "closed",
+    );
+    const wholesale = (await readWholesaleExchange(databaseUrl, CLIENT_ONE)) as { top150: string };
+    assert.equal(wholesale.top150, "Нет");
+
+    const repeat = await applyBundle(databaseUrl, closedBytes, roster, closedDry.verificationFingerprint!);
+    assert.equal(repeat.status, "NO_CHANGES");
+  });
+
+  it("persists commercial field change on changed clients SHA", async () => {
+    const roster = rosterBytes();
+    const promoA = clientsBytesFromRecord(extendedClientWithWholesale({ Discount: "PROMO-A", DiscountAmount: 0 }));
+    await dryRunAndApplyWithConfirmation(databaseUrl, promoA, roster);
+
+    const promoB = clientsBytesFromRecord(extendedClientWithWholesale({ Discount: "PROMO-B", DiscountAmount: 0 }));
+    await storeOperatorExtendedConfirmation(databaseUrl, promoB, roster, "f2-backfill-test");
+    const promoBDry = await dryRunBundle(databaseUrl, promoB, roster);
+    const updated = await applyBundle(databaseUrl, promoB, roster, promoBDry.verificationFingerprint!);
+    assert.equal(updated.status, "SUCCESS");
+    assert.equal(
+      await readSnapshotScalar(
+        databaseUrl,
+        CLIENT_ONE,
+        "extended_snapshot->'commercial'->>'discountProgram'",
+      ),
+      "PROMO-B",
+    );
+
+    const repeat = await applyBundle(databaseUrl, promoB, roster, promoBDry.verificationFingerprint!);
+    assert.equal(repeat.status, "NO_CHANGES");
+  });
+
+  it("still rejects ambiguous roster shrink under changed fingerprint", async () => {
+    const clientsBytes = clientsBytesFromRecord(extendedClientWithWholesale());
+    const fullRoster = rosterBytes([MANAGER_B]);
+    await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, fullRoster);
+
+    const reducedRoster = rosterBytes();
+    const shrinkDry = await dryRunBundle(databaseUrl, clientsBytes, reducedRoster);
+    const rejected = await applyBundle(
+      databaseUrl,
+      clientsBytes,
+      reducedRoster,
+      shrinkDry.verificationFingerprint!,
+    );
+    assert.equal(rejected.status, "REJECTED_BY_CHECKS");
+    assert.equal(rejected.errorCode, "ROSTER_SHRINK_AMBIGUOUS");
   });
 });

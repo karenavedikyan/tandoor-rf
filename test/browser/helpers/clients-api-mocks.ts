@@ -313,6 +313,7 @@ export function syntheticOptionsPayload(
     onecTop150Values: [{ id: "Нет", name: "Нет", shortId: "Нет" }],
     onecCategoryValues: [
       { id: "D", name: "D", shortId: "D" },
+      { id: " D ", name: " D ", shortId: " D " },
       { id: "SYNTH-UNKNOWN", name: "SYNTH-UNKNOWN", shortId: "SYNTH" },
     ],
   };
@@ -338,6 +339,22 @@ export function filterAwareAllListPayload(url: URL) {
             ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Synthetic Client"),
             onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
             onecCategory: { value: "SYNTH-UNKNOWN", hasSource: true, label: "SYNTH-UNKNOWN" },
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        isEmptyDatabase: false,
+      };
+    }
+    if (onecCategory === " D ") {
+      return {
+        items: [
+          {
+            ...navClientItem(SYNTHETIC_CLIENT_GUID, "F2 Spaced Category Client"),
+            onecTop150: { value: "Нет", hasSource: true, label: "Нет" },
+            onecCategory: { value: " D ", hasSource: true, label: " D " },
           },
         ],
         total: 1,

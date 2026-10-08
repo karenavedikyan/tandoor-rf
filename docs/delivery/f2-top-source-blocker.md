@@ -56,7 +56,7 @@
 |----------|-----------|
 | **Файл без ключей** wholesale | Значения **не** появятся; omitted в следующих выгрузках **сохраняет** уже записанный snapshot (merge). |
 | **Тот же файл / тот же verification fingerprint**, ключи **есть**, но **старый parser** их не писал | **Обычное regular-update** **дозаполняет** `wholesaleExchange`, если extended snapshot уже разрешён (operator confirmation на этот `clients` SHA + fingerprint); gate сравнивает merged incoming vs persisted **до** `NO_CHANGES` (не только roster). |
-| **Новый SHA** (ключи wholesale **убраны** из JSON), legacy без изменений | `NO_CHANGES`: wholesale merge сохраняет snapshot; gate учитывает roster + wholesale + legacy. |
+| **Новый SHA** (ключи wholesale **убраны** из JSON), legacy без изменений | Один **SUCCESS** сохраняет прежние wholesale через merge; **повтор того же bundle** → `NO_CHANGES`. Gate **не** сравнивает только legacy/F2 при другом fingerprint — полный apply и guards. |
 | Повтор после дозаполнения | `NO_CHANGES`, без лишней записи. |
 | Явная пустая строка в JSON | Очищает поле по семантике merge; повтор — `NO_CHANGES`. |
 
