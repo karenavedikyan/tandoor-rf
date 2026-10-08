@@ -151,4 +151,53 @@ describe("onec roster team[] integration", { concurrency: false }, () => {
     });
     assert.equal(third.status, "NO_CHANGES");
   });
+
+  it("preserves legacy memberships after 039-shaped storage when team key is omitted", async () => {
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const legacyRoster = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A, name_team: "Alpha" }),
+    ]);
+    await applyBundle(databaseUrl, clientsBytes, legacyRoster);
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DELETE FROM onec_wholesale_employee_team_memberships`);
+    await pool.query(`DELETE FROM onec_wholesale_team_groups`);
+    await pool.end();
+
+    const partialRoster = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { name_manager: "Manager A Updated" }),
+    ]);
+    const second = await applyBundle(databaseUrl, clientsBytes, partialRoster);
+    assert.equal(second.status, "SUCCESS");
+
+    const verify = new Pool({ connectionString: databaseUrl, max: 1 });
+    const memberships = await verify.query<{ guid_team: string }>(
+      `SELECT lower(guid_team::text) AS guid_team FROM onec_wholesale_employee_team_memberships WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    await verify.end();
+    assert.equal(memberships.rows[0]?.guid_team, TEAM_A);
+  });
+
+  it("clears memberships on explicit legacy guid_team null without team[]", async () => {
+    const clientsBytes = buildClientsFileBytes([sampleClient()]);
+    const rosterBytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { guid_team: TEAM_A, name_team: "Alpha" }),
+    ]);
+    await applyBundle(databaseUrl, clientsBytes, rosterBytes);
+
+    const cleared = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER_A, { guid_team: null, name_team: null }),
+    ]);
+    const applied = await applyBundle(databaseUrl, clientsBytes, cleared);
+    assert.equal(applied.status, "SUCCESS");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const count = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM onec_wholesale_employee_team_memberships WHERE guid_manager = $1::uuid`,
+      [MANAGER_A],
+    );
+    await pool.end();
+    assert.equal(count.rows[0]?.count, "0");
+  });
 });

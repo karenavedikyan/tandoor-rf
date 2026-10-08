@@ -72,6 +72,35 @@ describe("onec team groups filters", () => {
     assert.equal(filtered[0]?.members.length, 1);
   });
 
+  it("does not add external leader to memberCount on member-only search", () => {
+    const groups = [
+      sampleGroup({
+        leader: {
+          employeeGuid: LEADER,
+          name: "External Leader",
+          shortId: "4444",
+          hasLinkedAccount: true,
+          status: "ok",
+        },
+        members: [
+          {
+            employeeGuid: "11111111-1111-4111-8111-111111111111",
+            name: "Member One",
+            shortId: "1111",
+            rosterPost: "Менеджер",
+            hasLinkedAccount: true,
+            clientCount: 0,
+            outletCount: 0,
+          },
+        ],
+        memberCount: 2,
+      }),
+    ];
+    const filtered = filterOnecTeamGroups(groups, { q: "member" });
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0]?.memberCount, 1);
+  });
+
   it("matches leader in search without duplicating in members", () => {
     const groups = [
       sampleGroup({
@@ -103,7 +132,7 @@ describe("onec team groups filters", () => {
 
   it("supports undefined bucket filter token", () => {
     const groups = [
-      sampleGroup({ teamGuid: null, displayName: "Группа не определена", nameStatus: "undefined" }),
+      sampleGroup({ teamGuid: null, displayName: "Без группы", nameStatus: "undefined" }),
       sampleGroup({ teamGuid: TEAM_B, displayName: "Team Beta" }),
     ];
     const filtered = filterOnecTeamGroups(groups, { onecTeam: ONEC_TEAM_UNDEFINED_KEY });

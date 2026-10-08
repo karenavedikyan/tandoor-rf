@@ -5,15 +5,10 @@ import { query } from "../../db/pool";
 import { shortUuidLabel } from "../uuid-param";
 import { isValidNonZeroUuid } from "../../onec-clients/uuid";
 import { ACTIVE_BASELINE_OC_SQL } from "../../onec-clients/baseline-active-scope";
-import { employeesPortfolioClause, RETAIL_OUTLETS_JSON } from "../team-portfolio-sql";
 import {
-  clientHardwareGuidSql,
-  clientRegionalGuidSql,
-  outletHardwareGuidSql,
-  outletManagerGuidSql,
-  outletRegionalGuidSql,
-  outletStoreGuidSql,
-} from "./assignment-sql";
+  employeesAccessibleOutletExistsClause,
+  employeesDirectClientListClause,
+} from "../team-portfolio-sql";
 import { loadDirectorSummary, loadLinkedAccountGuids, OrgStructureAccessError } from "./structure-repository";
 import type { OrgDirectorSummary } from "./structure-repository";
 
@@ -160,6 +155,28 @@ async function loadLegacyMembershipRows(): Promise<MembershipRow[]> {
   return result.rows;
 }
 
+async function loadUngroupedMembershipRows(): Promise<MembershipRow[]> {
+  const result = await query<MembershipRow>(
+    `
+      SELECT
+        lower(r.guid_manager::text) AS employee_guid,
+        r.name_manager AS name,
+        r.post,
+        NULL::text AS team_guid,
+        NULL::text AS name_team
+      FROM onec_wholesale_employee_roster r
+      WHERE NOT EXISTS (
+          SELECT 1
+          FROM onec_wholesale_employee_team_memberships m
+          WHERE m.guid_manager = r.guid_manager
+        )
+        AND r.guid_team IS NULL
+      ORDER BY r.name_manager ASC, r.guid_manager ASC
+    `,
+  );
+  return result.rows;
+}
+
 async function loadTeamGroupRows(): Promise<TeamGroupRow[]> {
   const result = await query<TeamGroupRow>(
     `
@@ -214,7 +231,7 @@ async function countUniqueClientsForEmployees(
       SELECT COUNT(DISTINCT onec_clients.guid_client)::text AS count
       FROM onec_clients
       ${scoped.whereSql}
-        AND ${employeesPortfolioClause(`$${arrayParamIndex}`)}
+        AND ${employeesDirectClientListClause(`$${arrayParamIndex}`)}
     `,
     [...scoped.params, employeeGuids],
   );
@@ -233,35 +250,13 @@ async function countUniqueOutletsForEmployees(
     return 0;
   }
   const arrayParamIndex = scoped.params.length + 1;
-  const outletsJson = RETAIL_OUTLETS_JSON.replaceAll("onec_clients", "oc");
   const result = await query<{ count: string }>(
     `
       SELECT COUNT(DISTINCT ro.guid_store)::text AS count
       FROM onec_retail_outlets ro
       JOIN onec_clients oc ON oc.guid_client = ro.guid_client
-      CROSS JOIN LATERAL jsonb_array_elements(${outletsJson}) outlet(elem)
       ${scoped.whereSql.replaceAll("onec_clients.", "oc.")}
-        AND ${outletStoreGuidSql("outlet.elem")} = lower(ro.guid_store::text)
-        AND (
-          lower(oc.guid_manager::text) = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-          OR ${clientRegionalGuidSql("oc")} = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-          OR ${clientHardwareGuidSql("oc")} = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-          OR ${outletManagerGuidSql("outlet.elem")} = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-          OR ${outletRegionalGuidSql("outlet.elem")} = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-          OR ${outletHardwareGuidSql("outlet.elem")} = ANY(
-            SELECT lower(g::text) FROM unnest($${arrayParamIndex}::uuid[]) AS g
-          )
-        )
+        AND ${employeesAccessibleOutletExistsClause(`$${arrayParamIndex}`, "ro", "oc")}
     `,
     [...scoped.params, employeeGuids],
   );
@@ -288,7 +283,7 @@ function resolveGroupDisplayName(
   names: string[],
 ): { displayName: string; nameStatus: OrgOnecTeamNameStatus } {
   if (teamGuid === null) {
-    return { displayName: "Группа не определена", nameStatus: "undefined" };
+    return { displayName: "Без группы", nameStatus: "undefined" };
   }
   const distinct = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
   if (distinct.length === 0) {
@@ -324,6 +319,17 @@ function resolveLeader(
     hasLinkedAccount: linked.has(leaderGuid),
     status,
   };
+}
+
+function resolveGroupMemberCount(
+  membershipGuids: Iterable<string>,
+  leaderGuid: string | null,
+): number {
+  const guids = new Set(membershipGuids);
+  if (leaderGuid && !guids.has(leaderGuid)) {
+    return guids.size + 1;
+  }
+  return guids.size;
 }
 
 function buildMember(
@@ -388,7 +394,7 @@ export async function buildOnecTeamGroups(
       teamGuid,
       displayName: naming.displayName,
       nameStatus: naming.nameStatus,
-      memberCount: bucket.members.size,
+      memberCount: resolveGroupMemberCount(memberGuids, leaderGuid),
       uniqueClientCount,
       uniqueOutletCount,
       leader,
@@ -458,7 +464,7 @@ export function filterOnecTeamGroups(
       return {
         ...group,
         members,
-        memberCount: members.length + (group.leader ? 1 : 0),
+        memberCount: members.length,
       };
     })
     .filter((group): group is OrgOnecTeamGroup => group !== null);
@@ -488,7 +494,11 @@ export async function getOnecTeamGroupsOverview(
   const linked = await loadLinkedAccountGuids();
   const director =
     context.role === "admin" || context.fullClientBase ? await loadDirectorSummary(linked) : null;
-  const membershipRows = [...(await loadMembershipRows()), ...(await loadLegacyMembershipRows())];
+  const membershipRows = [
+    ...(await loadMembershipRows()),
+    ...(await loadLegacyMembershipRows()),
+    ...(await loadUngroupedMembershipRows()),
+  ];
   const groupRows = await loadTeamGroupRows();
   const allBuilt = await buildOnecTeamGroups(membershipRows, linked, groupRows, context);
   const visibleBuilt =

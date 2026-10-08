@@ -7,7 +7,13 @@ import { getCommittedSnapshotSha } from "../onec-exchange/state";
 import { buildReviewStateFilter } from "./review/repository";
 import {
   applyOrgTeamsClientFilter,
+  resolveResponsibleSelection,
 } from "./org/teams-list-filters";
+import {
+  assertOnecTeamPortfolioAccess,
+  buildOnecTeamClientsFilter,
+  OnecTeamPortfolioAccessError,
+} from "./org/onec-team-portfolio";
 import { buildCompletenessReasonsFilter } from "./org/completeness-repository";
 import {
   applyClientEntityScopedOutletFilter,
@@ -171,6 +177,33 @@ async function resolveScopedFilter(
       whereSql: `WHERE ${employeePortfolioClause("$1::uuid")}`,
       params: [portfolioManagerId],
     });
+  }
+
+  if (
+    input.view === "teams" &&
+    input.teamSource === "onec" &&
+    input.onecTeamGuid &&
+    input.branchPortfolio === "clients" &&
+    input.entity === "clients" &&
+    !resolveResponsibleSelection(input)
+  ) {
+    try {
+      const memberGuids = await assertOnecTeamPortfolioAccess(context, input.onecTeamGuid);
+      userFilter = combineScopeAndFilter(userFilter, buildOnecTeamClientsFilter(memberGuids));
+    } catch (error) {
+      if (error instanceof OnecTeamPortfolioAccessError) {
+        throw new ListClientsError(error.message, error.code);
+      }
+      throw error;
+    }
+  } else if (
+    input.view === "teams" &&
+    input.teamSource === "onec" &&
+    input.onecTeamGuid &&
+    input.branchPortfolio === "outlets" &&
+    input.entity === "clients"
+  ) {
+    userFilter = { whereSql: "WHERE FALSE", params: [] };
   }
 
   if (input.unassignedCategory) {

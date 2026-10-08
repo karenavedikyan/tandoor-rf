@@ -6,6 +6,7 @@ import {
   parseBranchPortfolio,
   parseResponsibleAssignmentKind,
 } from "./org/teams-list-filters";
+import { ONEC_TEAM_UNDEFINED_KEY } from "./org/onec-teams-repository";
 import type { ReviewDecision, ReviewState, UnassignedCategory } from "./review/constants";
 import { REVIEW_DECISIONS, REVIEW_STATES, UNASSIGNED_CATEGORIES } from "./review/constants";
 import { resolveAssignmentParams } from "./assignment-query-params";
@@ -46,6 +47,9 @@ export type ClientsListQuery = {
   clientRopEmployeeGuid?: string;
   outletRopEmployeeGuid?: string;
   branchPortfolio?: "clients" | "outlets";
+  /** 1C team portfolio filter (UUID or ONEC_TEAM_UNDEFINED_KEY). */
+  onecTeamGuid?: string;
+  teamSource?: "onec";
   responsibleKind?: "manager" | "regional" | "hardware";
   /** Legacy aliases — prefer client* / outlet* fields. */
   hardwareManagerId?: string;
@@ -593,6 +597,33 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Некорректный параметр portfolio." };
   }
 
+  let onecTeamGuid: string | undefined;
+  if (input.onecTeam !== undefined && input.onecTeam !== null && input.onecTeam !== "") {
+    if (rejectNonScalar(input.onecTeam)) {
+      return { ok: false, message: "Некорректный фильтр группы 1С." };
+    }
+    const rawTeam = String(input.onecTeam).trim().toLowerCase();
+    if (rawTeam === ONEC_TEAM_UNDEFINED_KEY) {
+      onecTeamGuid = ONEC_TEAM_UNDEFINED_KEY;
+    } else if (!isValidUuidParam(rawTeam)) {
+      return { ok: false, message: "Некорректный фильтр группы 1С." };
+    } else {
+      onecTeamGuid = rawTeam;
+    }
+  }
+
+  let teamSource: "onec" | undefined;
+  if (input.teamSource !== undefined && input.teamSource !== null && input.teamSource !== "") {
+    if (rejectNonScalar(input.teamSource)) {
+      return { ok: false, message: "Некорректный источник команд." };
+    }
+    const rawSource = String(input.teamSource).trim().toLowerCase();
+    if (rawSource !== "onec") {
+      return { ok: false, message: "Некорректный источник команд." };
+    }
+    teamSource = "onec";
+  }
+
   const responsibleKind = parseResponsibleAssignmentKind(input.responsibleKind);
   if (responsibleKind === null) {
     return { ok: false, message: "Некорректный тип назначения ответственного." };
@@ -626,6 +657,8 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       clientRopEmployeeGuid: assignment.clientRopEmployeeGuid,
       outletRopEmployeeGuid: assignment.outletRopEmployeeGuid,
       branchPortfolio,
+      onecTeamGuid,
+      teamSource,
       responsibleKind,
       hardwareManagerId: assignment.clientHardwareManagerId ?? assignment.outletHardwareManagerId,
       hardwareManagerIds:
@@ -795,6 +828,8 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.clientRopEmployeeGuid ||
       query.outletRopEmployeeGuid ||
       query.branchPortfolio ||
+      query.onecTeamGuid ||
+      query.teamSource ||
       query.responsibleKind ||
       query.unassignedCategory ||
       (query.reviewState && query.reviewState !== "any") ||

@@ -133,9 +133,8 @@ function toEmployeeRecord(
   raw: Record<string, unknown>,
   guid: string,
   issues: RosterFieldIssue[],
-  teamIssues: RosterTeamFieldIssue[],
+  teams: WholesaleEmployeeTeamEntry[] | null | undefined,
 ): WholesaleEmployeeRecord {
-  const teams = parseEmployeeTeamArray(raw, teamIssues);
   return {
     guidManager: guid,
     nameManager: readOptionalString(raw, "name_manager") ?? "",
@@ -256,7 +255,23 @@ export function parseWholesaleEmployeeRosterBytes(bytes: Buffer): EmployeeRoster
     wholesaleGuids.add(guid);
     const recordIssues: RosterFieldIssue[] = [];
     const teamIssues: RosterTeamFieldIssue[] = [];
-    records.push(toEmployeeRecord(item, guid, recordIssues, teamIssues));
+    const teamsParsed = parseEmployeeTeamArray(item, teamIssues);
+    if (teamsParsed === "LEADER_CONFLICT") {
+      return {
+        ok: false,
+        code: "TEAM_LEADER_CONFLICT",
+        message: `Conflicting guid_team_leader values within team[] at roster index ${index}.`,
+        invalidRecordIndexes: [index],
+      };
+    }
+    records.push(
+      toEmployeeRecord(
+        item,
+        guid,
+        recordIssues,
+        teamsParsed === null ? null : teamsParsed,
+      ),
+    );
     for (const issue of recordIssues) {
       fieldIssues.push({ index, field: issue.field, code: issue.code });
     }

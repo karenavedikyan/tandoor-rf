@@ -369,7 +369,8 @@
     return (usesDirectorLayout() || isRopDesignSession()) && state && state.teamSource === "onec";
   }
 
-  function navigateOnecTeamMember(state, member, group) {
+  function navigateOnecTeamMember(state, member, group, portfolio) {
+    var resolvedPortfolio = portfolio || "clients";
     teamContext.managerName = member.name || member.shortId || member.employeeGuid;
     teamContext.onecTeamName = group.displayName || "";
     navigateState({
@@ -381,8 +382,8 @@
       regionalManager: "",
       hardwareManager: "",
       responsibleKind: "manager",
-      portfolio: "clients",
-      entity: "clients",
+      portfolio: resolvedPortfolio,
+      entity: resolvedPortfolio === "outlets" ? "outlets" : "clients",
       page: 1,
       ropEmployee: state.ropEmployee || "",
     });

@@ -403,11 +403,13 @@
             }
             return;
           }
-          if (portfolio === "clients" && deps.navigateOnecTeamMember) {
-            deps.navigateOnecTeamMember(deps.readAppState(), member, group);
+          if (deps.navigateOnecTeamMember) {
+            deps.navigateOnecTeamMember(deps.readAppState(), member, group, portfolio);
             return;
           }
-          deps.navigateOnecGroupPortfolio(deps.readAppState(), group, portfolio);
+          if (deps.navigateOnecGroupPortfolio) {
+            deps.navigateOnecGroupPortfolio(deps.readAppState(), group, portfolio);
+          }
         });
       });
 

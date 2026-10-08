@@ -1,6 +1,6 @@
 import type { WholesaleEmployeeRecord, WholesaleEmployeeRoster } from "./employee-roster";
 import {
-  collectRosterTeamGroupDrafts,
+  buildExpectedTeamGroupsAfterApply,
   existingMembershipsToResolved,
   membershipsEqual,
   resolveEmployeeTeamMemberships,
@@ -216,8 +216,12 @@ export function rosterIncomingDiffersFromStored(
   existingGroups: ExistingTeamGroupRow[],
   roster: WholesaleEmployeeRoster,
 ): boolean {
-  const drafts = collectRosterTeamGroupDrafts(roster.records);
-  if (!teamGroupsEqual(existingGroups, drafts)) {
+  const expectedGroups = buildExpectedTeamGroupsAfterApply(
+    roster,
+    existingMembershipsByManager,
+    existingGroups,
+  );
+  if (!teamGroupsEqual(existingGroups, expectedGroups)) {
     return true;
   }
   for (const record of roster.records) {

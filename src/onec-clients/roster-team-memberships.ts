@@ -1,6 +1,6 @@
 import type { WholesaleEmployeeRecord } from "./employee-roster";
 import { hasRosterRawKey } from "./roster-field-values";
-import { isValidNonZeroUuid, normalizeUuid } from "./uuid";
+import { isNullUuid, isValidNonZeroUuid, normalizeUuid } from "./uuid";
 
 export type WholesaleEmployeeTeamEntry = {
   guidTeam: string;
@@ -63,6 +63,33 @@ function readOptionalStringField(
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function validateTeamLeaderUuidField(
+  raw: Record<string, unknown>,
+  key: string,
+  issues: TeamFieldIssue[],
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) {
+    return null;
+  }
+  const value = raw[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    issues.push({ field: key, code: "INVALID_TYPE" });
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || isNullUuid(trimmed)) {
+    return null;
+  }
+  if (!isValidNonZeroUuid(trimmed)) {
+    issues.push({ field: key, code: "INVALID_UUID" });
+    return null;
+  }
+  return normalizeUuid(trimmed);
+}
+
 function validateOptionalUuidField(
   raw: Record<string, unknown>,
   key: string,
@@ -90,13 +117,10 @@ function validateOptionalUuidField(
   return normalizeUuid(trimmed);
 }
 
-export function parseEmployeeTeamArray(
+function parseEmployeeTeamArrayEntries(
   raw: Record<string, unknown>,
   issues: TeamFieldIssue[],
-): WholesaleEmployeeTeamEntry[] | null | undefined {
-  if (!hasRosterRawKey(raw, "team")) {
-    return undefined;
-  }
+): WholesaleEmployeeTeamEntry[] | null {
   const value = raw.team;
   if (value === null || typeof value !== "object" || !Array.isArray(value)) {
     issues.push({ field: "team", code: "INVALID_TYPE" });
@@ -118,9 +142,48 @@ export function parseEmployeeTeamArray(
     entries.push({
       guidTeam,
       nameTeam: readOptionalStringField(entryRaw, "name_team", issues),
-      guidTeamLeader: validateOptionalUuidField(entryRaw, "guid_team_leader", issues),
+      guidTeamLeader: validateTeamLeaderUuidField(entryRaw, "guid_team_leader", issues),
       nameTeamLeader: readOptionalStringField(entryRaw, "name_team_leader", issues),
     });
+  }
+  return entries;
+}
+
+export function detectIntraEmployeeTeamLeaderConflicts(
+  entries: readonly WholesaleEmployeeTeamEntry[],
+): TeamLeaderConflict[] {
+  const leadersByTeam = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (!entry.guidTeamLeader) {
+      continue;
+    }
+    const teamKey = entry.guidTeam.toLowerCase();
+    const leaders = leadersByTeam.get(teamKey) ?? new Set<string>();
+    leaders.add(entry.guidTeamLeader.toLowerCase());
+    leadersByTeam.set(teamKey, leaders);
+  }
+  const conflicts: TeamLeaderConflict[] = [];
+  for (const [guidTeam, leaders] of leadersByTeam) {
+    if (leaders.size > 1) {
+      conflicts.push({ guidTeam, leaderGuids: [...leaders].sort() });
+    }
+  }
+  return conflicts;
+}
+
+export function parseEmployeeTeamArray(
+  raw: Record<string, unknown>,
+  issues: TeamFieldIssue[],
+): WholesaleEmployeeTeamEntry[] | null | undefined | "LEADER_CONFLICT" {
+  if (!hasRosterRawKey(raw, "team")) {
+    return undefined;
+  }
+  const entries = parseEmployeeTeamArrayEntries(raw, issues);
+  if (entries === null) {
+    return null;
+  }
+  if (detectIntraEmployeeTeamLeaderConflicts(entries).length > 0) {
+    return "LEADER_CONFLICT";
   }
   return dedupeTeamEntries(entries);
 }
@@ -170,11 +233,19 @@ export function resolveEmployeeTeamMemberships(
       nameTeam: entry.nameTeam,
     }));
   }
+  const hasGuidKey = hasRosterRawKey(record.raw, "guid_team");
+  const hasNameKey = hasRosterRawKey(record.raw, "name_team");
+  if (hasGuidKey && record.guidTeam === null) {
+    return [];
+  }
   if (incoming.entries.length > 0) {
     return incoming.entries.map((entry) => ({
       guidTeam: entry.guidTeam,
       nameTeam: entry.nameTeam,
     }));
+  }
+  if (hasGuidKey || hasNameKey) {
+    return [];
   }
   return (existingMemberships ?? []).map((row) => ({
     guidTeam: normalizeUuid(row.guid_team)!,
@@ -313,12 +384,13 @@ export function teamGroupsEqual(
   left: TeamGroupsEqualInput[],
   right: Map<string, RosterTeamGroupDraft>,
 ): boolean {
-  if (left.length !== right.size) {
+  const leftByTeam = new Map(left.map((row) => [row.guid_team.toLowerCase(), row]));
+  if (leftByTeam.size !== right.size) {
     return false;
   }
-  for (const row of left) {
-    const draft = right.get(row.guid_team.toLowerCase());
-    if (!draft) {
+  for (const [teamGuid, draft] of right) {
+    const row = leftByTeam.get(teamGuid.toLowerCase());
+    if (!row) {
       return false;
     }
     if ((row.name_team ?? null) !== (draft.nameTeam ?? null)) {
@@ -332,6 +404,55 @@ export function teamGroupsEqual(
     }
   }
   return true;
+}
+
+export function buildExpectedTeamGroupsAfterApply(
+  roster: import("./employee-roster").WholesaleEmployeeRoster,
+  existingMembershipsByManager: Map<string, ExistingEmployeeTeamMembershipRow[]>,
+  existingGroups: ExistingTeamGroupRow[],
+): Map<string, RosterTeamGroupDraft> {
+  const membershipByManager = new Map<string, ExistingEmployeeTeamMembershipRow[]>();
+  for (const [managerGuid, rows] of existingMembershipsByManager) {
+    membershipByManager.set(managerGuid, rows.map((row) => ({ ...row })));
+  }
+  for (const record of roster.records) {
+    const key = record.guidManager.toLowerCase();
+    const resolved = resolveEmployeeTeamMemberships(record, membershipByManager.get(key));
+    membershipByManager.set(
+      key,
+      resolved.map((item) => ({ guid_team: item.guidTeam, name_team: item.nameTeam })),
+    );
+  }
+
+  const activeTeamGuids = new Set<string>();
+  for (const rows of membershipByManager.values()) {
+    for (const row of rows) {
+      activeTeamGuids.add(row.guid_team.toLowerCase());
+    }
+  }
+
+  const incomingDrafts = collectRosterTeamGroupDrafts(roster.records);
+  const existingByTeam = new Map(existingGroups.map((row) => [row.guid_team.toLowerCase(), row]));
+  const expected = new Map<string, RosterTeamGroupDraft>();
+
+  for (const teamGuid of activeTeamGuids) {
+    const incoming = incomingDrafts.get(teamGuid);
+    const existing = existingByTeam.get(teamGuid);
+    if (incoming) {
+      expected.set(teamGuid, incoming);
+      continue;
+    }
+    expected.set(teamGuid, {
+      guidTeam: existing?.guid_team ?? teamGuid,
+      nameTeam: existing?.name_team ?? null,
+      leader: {
+        guidTeamLeader: existing?.guid_team_leader ?? null,
+        nameTeamLeader: existing?.name_team_leader ?? null,
+      },
+      namesSeen: existing?.name_team ? [existing.name_team] : [],
+    });
+  }
+  return expected;
 }
 
 export { TeamFieldIssue as RosterTeamFieldIssue };
