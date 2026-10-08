@@ -71,6 +71,15 @@
     "markupName",
     "markupPercentage",
     "bonusTandoorClub",
+    "lprNameContains",
+    "lprPostContains",
+    "lprPhoneContains",
+    "lprEmailContains",
+    "lprBonusContains",
+    "lprConditionsBonusContains",
+    "lprDateOfBirth",
+    "lprDateOfBirthFrom",
+    "lprDateOfBirthTo",
     "filled",
     "empty",
     "portfolio",
@@ -99,6 +108,13 @@
     { value: "loadingSchedule", label: "Дни приёмки не заданы" },
     { value: "tandoorClub", label: "Tandoor Club пуст" },
     { value: "bonusTandoorClub", label: "Bonus Tandoor Club пуст" },
+    { value: "lprName", label: "ФИО ЛПР пусто" },
+    { value: "lprPost", label: "Должность ЛПР пуста" },
+    { value: "lprPhone", label: "Телефон ЛПР пуст" },
+    { value: "lprEmail", label: "Email ЛПР пуст" },
+    { value: "lprDateOfBirth", label: "Дата рождения ЛПР пуста" },
+    { value: "lprBonus", label: "Бонус ЛПР пуст" },
+    { value: "lprConditionsBonus", label: "Условия бонуса ЛПР пусты" },
     { value: "discountProgram", label: "Discount пуст" },
     { value: "discountAmount", label: "DiscountAmount пуст" },
     { value: "markups", label: "Markups пуст" },
@@ -165,6 +181,13 @@
     { value: "loadingSchedule", label: "Дни приёмки заданы" },
     { value: "tandoorClub", label: "Tandoor Club заполнен" },
     { value: "bonusTandoorClub", label: "Bonus Tandoor Club заполнен" },
+    { value: "lprName", label: "ФИО ЛПР заполнено" },
+    { value: "lprPost", label: "Должность ЛПР заполнена" },
+    { value: "lprPhone", label: "Телефон ЛПР заполнен" },
+    { value: "lprEmail", label: "Email ЛПР заполнен" },
+    { value: "lprDateOfBirth", label: "Дата рождения ЛПР заполнена" },
+    { value: "lprBonus", label: "Бонус ЛПР заполнен" },
+    { value: "lprConditionsBonus", label: "Условия бонуса ЛПР заполнены" },
     { value: "discountProgram", label: "Discount заполнен" },
     { value: "discountAmount", label: "DiscountAmount заполнен" },
     { value: "markups", label: "Markups заполнен" },
@@ -210,6 +233,13 @@
     { id: "warehouse", label: "Склад", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
     { id: "tandoorClub", label: "Tandoor Club", entity: "outlets", defaultVisible: false, sortable: true, hasSource: true },
     { id: "bonusTandoorClub", label: "Bonus Tandoor Club", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprName", label: "ЛПР · ФИО", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprPost", label: "ЛПР · должность", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprPhone", label: "ЛПР · телефон", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprEmail", label: "ЛПР · email", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprDateOfBirth", label: "ЛПР · дата рождения", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprBonus", label: "ЛПР · бонус", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "lprConditionsBonus", label: "ЛПР · условия бонуса", entity: "outlets", defaultVisible: false, sortable: false, hasSource: true },
     { id: "cashback", label: "Cashback", entity: "outlets", defaultVisible: false, sortable: false, hasSource: false },
   ];
 
@@ -497,6 +527,15 @@
       markupName: params.get("markupName") || "",
       markupPercentage: params.get("markupPercentage") || "",
       bonusTandoorClub: params.get("bonusTandoorClub") || "",
+      lprNameContains: params.get("lprNameContains") || "",
+      lprPostContains: params.get("lprPostContains") || "",
+      lprPhoneContains: params.get("lprPhoneContains") || "",
+      lprEmailContains: params.get("lprEmailContains") || "",
+      lprBonusContains: params.get("lprBonusContains") || "",
+      lprConditionsBonusContains: params.get("lprConditionsBonusContains") || "",
+      lprDateOfBirth: params.get("lprDateOfBirth") || "",
+      lprDateOfBirthFrom: params.get("lprDateOfBirthFrom") || "",
+      lprDateOfBirthTo: params.get("lprDateOfBirthTo") || "",
       filled: params.get("filled") || "",
       empty: params.get("empty") || "",
       missingRop: params.get("missingRop") === "1" || params.get("missingClientRop") === "1",
@@ -791,6 +830,17 @@
     if (state.markupName) params.set("markupName", state.markupName);
     if (state.markupPercentage) params.set("markupPercentage", state.markupPercentage);
     if (state.bonusTandoorClub) params.set("bonusTandoorClub", state.bonusTandoorClub);
+    if (state.lprNameContains) params.set("lprNameContains", state.lprNameContains);
+    if (state.lprPostContains) params.set("lprPostContains", state.lprPostContains);
+    if (state.lprPhoneContains) params.set("lprPhoneContains", state.lprPhoneContains);
+    if (state.lprEmailContains) params.set("lprEmailContains", state.lprEmailContains);
+    if (state.lprBonusContains) params.set("lprBonusContains", state.lprBonusContains);
+    if (state.lprConditionsBonusContains) {
+      params.set("lprConditionsBonusContains", state.lprConditionsBonusContains);
+    }
+    if (state.lprDateOfBirth) params.set("lprDateOfBirth", state.lprDateOfBirth);
+    if (state.lprDateOfBirthFrom) params.set("lprDateOfBirthFrom", state.lprDateOfBirthFrom);
+    if (state.lprDateOfBirthTo) params.set("lprDateOfBirthTo", state.lprDateOfBirthTo);
     if (state.filled) params.set("filled", state.filled);
     if (state.empty) params.set("empty", state.empty);
     if (state.sortBy) params.set("sortBy", state.sortBy);

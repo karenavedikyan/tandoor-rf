@@ -6,6 +6,7 @@ import {
   type ClientExtendedDtoOptions,
 } from "./extended-dto";
 import { bonusTandoorClubFromAdditional } from "./bonus-tandoor-club";
+import { lprPresentationFromSnapshot, type LprBlockPresentation } from "./lpr-fields";
 import {
   hasAnyCommercialField,
   type ParsedClientCommercial,
@@ -151,6 +152,7 @@ export type RetailOutletListItemDto = {
     value: string | null;
     hasSource: boolean;
   };
+  lpr: LprBlockPresentation;
 };
 
 export type RetailOutletsListResponse = {
@@ -588,6 +590,7 @@ export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItem
   const warehouse = readWarehouseFromSnapshot(snapshot);
   const tandoorClub = readTandoorClubFromSnapshot(snapshot);
   const bonusTandoorClub = readBonusTandoorClubFromSnapshot(snapshot);
+  const lpr = lprPresentationFromSnapshot(snapshot?.lpr);
   const address = outletAddressLabel(row.store_address, "");
 
   return {
@@ -628,6 +631,7 @@ export function toRetailOutletListItem(row: OutletListRow): RetailOutletListItem
       value: bonusTandoorClub.value,
       hasSource: bonusTandoorClub.hasSource,
     },
+    lpr,
   };
 }
 

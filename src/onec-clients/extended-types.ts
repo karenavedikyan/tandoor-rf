@@ -89,6 +89,15 @@ export type ParsedOutletLpr = {
   email: string;
   bonus: string;
   conditionsBonus: string;
+  fieldPresence?: {
+    name: boolean;
+    post: boolean;
+    phone: boolean;
+    email: boolean;
+    bonus: boolean;
+    conditionsBonus: boolean;
+    dateOfBirth: boolean;
+  };
 };
 
 export type ParsedOutletAdditional = {
