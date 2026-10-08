@@ -105,6 +105,10 @@ export type ClientsListQuery = {
   discountProgram?: string;
   onecTop150?: string;
   onecCategory?: string;
+  onecCounterpartyContains?: string;
+  onecFullNameContains?: string;
+  onecLegalEntityType?: string;
+  onecOgrn?: string;
   discountAmountMin?: number;
   discountAmountMax?: number;
   markupName?: string;
@@ -479,6 +483,38 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
     return { ok: false, message: "Поле «onecCategory» недоступно для фильтрации в режиме торговых точек." };
   }
 
+  const onecCounterpartyContains = parseOptionalSearchField(input.onecCounterpartyContains, "onecCounterpartyContains");
+  if (onecCounterpartyContains === null) {
+    return { ok: false, message: "Некорректный фильтр контрагента." };
+  }
+  if (entityRaw === "outlets" && onecCounterpartyContains) {
+    return { ok: false, message: "Поле «onecCounterpartyContains» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecFullNameContains = parseOptionalSearchField(input.onecFullNameContains, "onecFullNameContains");
+  if (onecFullNameContains === null) {
+    return { ok: false, message: "Некорректный фильтр полного наименования." };
+  }
+  if (entityRaw === "outlets" && onecFullNameContains) {
+    return { ok: false, message: "Поле «onecFullNameContains» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecLegalEntityType = parseExactFilterField(input.onecLegalEntityType);
+  if (onecLegalEntityType === null) {
+    return { ok: false, message: "Некорректный фильтр типа контрагента." };
+  }
+  if (entityRaw === "outlets" && onecLegalEntityType) {
+    return { ok: false, message: "Поле «onecLegalEntityType» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const onecOgrn = parseExactFilterField(input.onecOgrn);
+  if (onecOgrn === null) {
+    return { ok: false, message: "Некорректный фильтр ОГРН." };
+  }
+  if (entityRaw === "outlets" && onecOgrn) {
+    return { ok: false, message: "Поле «onecOgrn» недоступно для фильтрации в режиме торговых точек." };
+  }
+
   const discountAmountMin = parseOptionalStrictNumber(input.discountAmountMin);
   if (discountAmountMin === null) {
     return { ok: false, message: "Некорректный минимум DiscountAmount." };
@@ -792,6 +828,10 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       discountProgram,
       onecTop150,
       onecCategory,
+      onecCounterpartyContains,
+      onecFullNameContains,
+      onecLegalEntityType,
+      onecOgrn,
       discountAmountMin,
       discountAmountMax,
       markupName,
@@ -953,6 +993,10 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.discountProgram ||
       query.onecTop150 ||
       query.onecCategory ||
+      query.onecCounterpartyContains ||
+      query.onecFullNameContains ||
+      query.onecLegalEntityType ||
+      query.onecOgrn ||
       query.discountAmountMin !== undefined ||
       query.discountAmountMax !== undefined ||
       query.markupName ||

@@ -32,6 +32,10 @@ import {
   type ParsedClientCommercial,
 } from "../onec-clients/commercial-fields";
 import {
+  hasAnyCounterpartyExchangeField,
+  readSnapshotCounterpartyExchange,
+} from "../onec-clients/counterparty-exchange-fields";
+import {
   hasAnyWholesaleClientExchangeField,
   readSnapshotWholesaleClientExchange,
 } from "../onec-clients/wholesale-client-exchange-fields";
@@ -122,6 +126,13 @@ export type ClientWholesaleExchangeDto = {
   outletCategory: ClientCommercialFieldDto;
 };
 
+export type ClientCounterpartyDto = {
+  counterparty: ClientCommercialFieldDto;
+  fullName: ClientCommercialFieldDto;
+  legalEntityType: ClientCommercialFieldDto;
+  ogrn: ClientCommercialFieldDto;
+};
+
 export type BlockFreshnessEntryDto = {
   state: ExtendedFreshnessState;
   label: string;
@@ -161,6 +172,7 @@ export type ClientExtendedDto = {
   managers: ClientExtendedManagersDto;
   commercial?: ClientCommercialDto | null;
   wholesaleExchange?: ClientWholesaleExchangeDto | null;
+  counterparty?: ClientCounterpartyDto | null;
   retailOutlets: RetailOutletDto[];
   retailOutletsTotalCount: number;
   retailOutletsTruncated: boolean;
@@ -304,6 +316,19 @@ function toClientWholesaleExchangeDto(snapshot: ExtendedSnapshot | null): Client
       wholesale.fieldPresence.outletCategory,
       wholesale.outletCategory,
     ),
+  };
+}
+
+function toClientCounterpartyDto(snapshot: ExtendedSnapshot | null): ClientCounterpartyDto | null {
+  const cp = readSnapshotCounterpartyExchange(snapshot);
+  if (!cp || !hasAnyCounterpartyExchangeField(cp)) {
+    return null;
+  }
+  return {
+    counterparty: commercialStringPresentation(cp.fieldPresence.counterparty, cp.counterparty),
+    fullName: commercialStringPresentation(cp.fieldPresence.fullName, cp.fullName),
+    legalEntityType: commercialStringPresentation(cp.fieldPresence.legalEntityType, cp.legalEntityType),
+    ogrn: commercialStringPresentation(cp.fieldPresence.ogrn, cp.ogrn),
   };
 }
 
@@ -1078,6 +1103,7 @@ export function toClientExtendedDto(
     },
     commercial: toClientCommercialDto(snapshot),
     wholesaleExchange: toClientWholesaleExchangeDto(snapshot),
+    counterparty: toClientCounterpartyDto(snapshot),
     retailOutlets: visibleOutlets.map((outlet) => toOutletDto(outlet, outletPresentationContext)),
     retailOutletsTotalCount: outletAccessGranted ? totalOutletCount : 0,
     retailOutletsTruncated: truncated,
