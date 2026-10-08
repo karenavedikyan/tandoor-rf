@@ -1,9 +1,8 @@
 # F5 — код клиента 1С (`Код`)
 
 **Дата (UTC):** 2026-10-08  
-**Base:** `main` @ `bd19338` (F4 merged, PR #68)  
-**Draft PR:** #69  
-**Статус F5:** **реализован в подтверждённом объёме** — одно строковое поле клиента из снимка 04.10.2026; **не** завершает всю серию F и **не** F6.
+**Base:** `main` @ `feb4baa` (merge PR #69)  
+**Статус F5:** **опубликован на `main`** — одно строковое поле клиента из снимка 04.10.2026; **не** завершает всю серию F и **не** F6.
 
 ## Источник F5
 
@@ -97,8 +96,8 @@ Gate при том же verification fingerprint: roster + wholesale + counterpa
 
 | Слой | Статус |
 |------|--------|
-| Draft PR #69 | parser, snapshot, API, UI, gate, backfill A–D + C, per-field matrix |
-| Merge/deploy | **нет** |
+| Опубликовано (`main`, PR #69) | parser, snapshot, API, UI, gate, backfill A–D + C, per-field matrix |
+| F6 prod backfill | **не** выполнен — см. [f6-verification-report.md](./f6-verification-report.md) |
 | Реальный обмен 1С | **нет** — синтетика / mock-browser |
 
 Серия F **не** закрыта.

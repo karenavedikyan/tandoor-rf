@@ -1,7 +1,7 @@
 # F0 — карта оставшихся полей обмена 1С → ЛК
 
 **Серия:** F (после G1/G2 на `main`; **не** зависит от G3 / PR #62)  
-**F0:** исследование (PR #63). **F1:** опубликован на `main` (merge PR #64, `45c2e58`). **F2:** реализован в подтверждённом объёме (PR #66) — [f2-top-source-blocker.md](./f2-top-source-blocker.md). **F3:** опубликован на `main` (merge PR #67, `80f5044`) — [f3-counterparty-source-blocker.md](./f3-counterparty-source-blocker.md). **F4:** опубликован на `main` (merge PR #68, `bd19338`) — [f4-contract-source-blocker.md](./f4-contract-source-blocker.md). **F5:** Draft — [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md).  
+**F0:** исследование (PR #63). **F1:** опубликован на `main` (merge PR #64, `45c2e58`). **F2:** реализован в подтверждённом объёме (PR #66) — [f2-top-source-blocker.md](./f2-top-source-blocker.md). **F3:** опубликован на `main` (merge PR #67, `80f5044`) — [f3-counterparty-source-blocker.md](./f3-counterparty-source-blocker.md). **F4:** опубликован на `main` (merge PR #68, `bd19338`) — [f4-contract-source-blocker.md](./f4-contract-source-blocker.md). **F5:** опубликован на `main` (merge PR #69, `feb4baa`) — [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md). **F6:** Draft — [f6-verification-report.md](./f6-verification-report.md).  
 **Актуальная выгрузка FTP 08.10.2026:** на агенте **не** читалась; для F2 использован **исторический** read-only audit снимка **04.10.2026** (SHA `b439063…`, fixture `test/fixtures/onec-clients/recovered-exchange-structure.json`).
 
 **Эталон UI (не доказательство JSON):** [прототип «Вся информация о клиенте»](https://www.perplexity.ai/computer/a/tandoor-rf-vizualnyi-prototip-TyhOzG0mT06dPTayt88xTA) — секции «Холдинг / юрлица», «ЛПР», «Расчёты и договор», «Магазин и доставка» задают целевое отображение.
@@ -296,8 +296,8 @@ flowchart LR
 | **F2** | `Оптовик_Топ150`, `Оптовик_КатегорияТорговойТочкиТандор` | **Код готов** (PR #66); TOP-350/500 **не** подтверждены | Historical audit 04.10; [f2-top-source-blocker.md](./f2-top-source-blocker.md) |
 | **F3** | Скаляры контрагента (`Контрагент`, `ЮрФизЛицо`, `Оптовик_ОГРН`, `НаименованиеПолное`) | **Опубликовано** (`main`, PR #67) | Historical audit 04.10 |
 | **F4** | Скаляры договор/соглашение (`Оптовик_ОсновнойДоговор`, `Оптовик_ОсновноеСоглашение`) | **Опубликовано** (`main`, PR #68) | [f4-contract-source-blocker.md](./f4-contract-source-blocker.md) |
-| **F5** | `Код` → `code1c`; сверка F1–F4 на пропуски | **Код готов** (Draft PR); **серия F не закрыта** | [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) |
-| **F6** | Согласованное дозаполнение и сверка **реальных** данных (prod gate, backfill) | **Осталось** | После merge F5; **не** авто-справочники юрлиц/договоров 0..N; inn/city/cashback/TOP-350 — только после подтверждения JSON |
+| **F5** | `Код` → `code1c` | **Опубликовано** (`main`, PR #69) | [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) |
+| **F6** | Дозаполнение snapshot + сверка (test DB готово; prod — runbook) | **Draft PR** — локальная часть; prod **не** apply | [f6-verification-report.md](./f6-verification-report.md), [f6-acceptance-matrix-f1-f5.md](./f6-acceptance-matrix-f1-f5.md), [f6-production-regular-update-runbook.md](./f6-production-regular-update-runbook.md) |
 
 
 ---
@@ -323,5 +323,7 @@ flowchart LR
 - [r02-existing-evidence.md](./r02-existing-evidence.md)
 - [f2-top-source-blocker.md](./f2-top-source-blocker.md) (F2)
 - [f5-client-code-source-blocker.md](./f5-client-code-source-blocker.md) (F5)
+- [f6-verification-report.md](./f6-verification-report.md) (F6)
+- [f6-acceptance-matrix-f1-f5.md](./f6-acceptance-matrix-f1-f5.md)
 
 **Audit locally:** `AUDIT_CLIENTS_PATH=/path/to/all_clients.json npm run audit:exchange-fields`
