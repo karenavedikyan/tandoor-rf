@@ -52,13 +52,22 @@
 
 ## 3. Локальная test-БД: regular-update / backfill
 
-| Сценарий | Результат |
-|----------|-----------|
-| F6 combined: gap F2–F5, LPR сохранён → backfill SUCCESS | `onec-f6-combined-f2-f5-backfill.test.ts` |
-| Повтор bundle → NO_CHANGES | да |
-| omitted `Код` / explicit `""` + repeat | да |
-| Rollback при failExchangeStateUpdate → recovery | да |
-| Регрессии F2–F4 backfill | последовательный прогон в CI/local |
+**Прогон 2026-10-08 (после усиления приёмки):**
+
+| Suite | Команда | tests | pass | fail |
+|-------|---------|-------|------|------|
+| F6 unit | `node --import tsx --test test/unit/f6-source-availability.test.ts` | 1 | 1 | 0 |
+| F6 combined backfill | `test/integration/onec-f6-combined-f2-f5-backfill.test.ts` | 3 | 3 | 0 |
+| F6 API scope | `test/integration/clients-f6-api-access-scope.test.ts` | 4 | 4 | 0 |
+| F6 browser 1440/390 | `test/browser/clients-f6-prototype-local.browser.test.ts` | 1 | 1 | 0 |
+| F2 backfill + gates | `test/integration/onec-f2-wholesale-upgrade-backfill.test.ts` | 8 | 8 | 0 |
+| F3 backfill | `test/integration/onec-f3-counterparty-upgrade-backfill.test.ts` | 5 | 5 | 0 |
+| F4 backfill | `test/integration/onec-f4-client-contract-upgrade-backfill.test.ts` | 5 | 5 | 0 |
+| F5 backfill | `test/integration/onec-f5-client-code-upgrade-backfill.test.ts` | 4 | 4 | 0 |
+| typecheck | `npm run typecheck` | — | ok | — |
+| build | `npm run build` | — | ok | — |
+
+**F6 combined (детали):** после gap проверяются **все четыре** блока (`wholesaleExchange`, `counterparty`, `clientContract`, `clientCode`) и **полный** LPR (включая `bonus: "0"`). Rollback D: в транзакции записаны все 4 блока; после ERROR snapshot совпадает с pre-apply gap; recovery + repeat → `NO_CHANGES`.
 
 Extended confirmation **не** обходился; force/hash substitution **не** использовались.
 
@@ -68,9 +77,10 @@ Extended confirmation **не** обходился; force/hash substitution **н�
 
 | Роль | Проверка | Тест |
 |------|----------|------|
-| admin | F2–F5 list + card | `clients-f6-api-access-scope.test.ts` |
-| manager | foreign 404, list scope | да |
-| preview | read card, write review 403 | да |
+| admin | F2–F5 list + card | `clients-f6-api-access-scope.test.ts` (4/4 pass) |
+| director | full base, F2–F5 card | да |
+| manager | доступная ТТ + LPR; соседняя ТТ скрыта в list/detail/filter; foreign 404 | да |
+| preview | scope как manager; write review 403 | да |
 
 ---
 
@@ -79,7 +89,7 @@ Extended confirmation **не** обходился; force/hash substitution **н�
 **Эталон:** https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c  
 **Проверка:** локальный сервер + test-DB, **без** mock API — `clients-f6-prototype-local.browser.test.ts`.
 
-**Подтверждено локально (F2–F5 на карточке «Данные»):** Код 1С, ТОП-150, Категория 1С, блоки контрагента и договора; list filter `onecCode1cContains` + колонка `code1c`.
+**Подтверждено локально (real API, 1/1 pass):** видимая форма фильтра → list 200 → карточка с **раскрытыми** значениями F2–F5 и F1 LPR на синтетической ТТ; back → reload → reset; `waitForResponse` на GET `/api/clients` **до** goto/reload/click/change; guards `pageerror` + 5xx.
 
 **Расхождения / не проверено (не заявлять parity):**
 
@@ -90,11 +100,11 @@ Extended confirmation **не** обходился; force/hash substitution **н�
 | Справочник юрлиц 0..N, ИНН, city, cashback | **не** подключены (`hasSource: false`) |
 | Production данные и scope на реальных 3k клиентов | **не** проверено в F6 Draft |
 
-Скриншоты (local real API):
+Скриншоты (local real API, раскрытые значения):
 
 - `/opt/cursor/artifacts/screenshots/f6-local-list-desktop-1440.png`
-- `/opt/cursor/artifacts/screenshots/f6-local-card-desktop-1440.png`
-- `/opt/cursor/artifacts/screenshots/f6-local-card-mobile-390.png`
+- `/opt/cursor/artifacts/screenshots/f6-local-card-desktop-1440-expanded.png`
+- `/opt/cursor/artifacts/screenshots/f6-local-card-mobile-390-expanded.png`
 
 ---
 

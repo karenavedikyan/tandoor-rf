@@ -43,6 +43,28 @@ const testConfig: RegularUpdateConfig = {
   holdingLinkValidationPolicy: "tolerant",
 };
 
+const EXPECTED_WHOLESALE = { top150: "Нет", outletCategory: "D" };
+const EXPECTED_COUNTERPARTY = {
+  counterparty: "ООО «F6 Backfill»",
+  legalEntityType: "Компания",
+  ogrn: "0123456789012",
+  fullName: "F6 Full Legal Name",
+};
+const EXPECTED_CONTRACT = {
+  primaryContract: "Договор F6",
+  mainAgreement: "Соглашение F6",
+};
+
+const EXPECTED_LPR = {
+  name: LPR_NAME,
+  post: "Owner",
+  dateOfBirth: "1990-01-15",
+  phone: "+79000000001",
+  email: "f6-lpr@example.test",
+  bonus: "0",
+  conditionsBonus: "F6 terms",
+};
+
 function ftpEnv(databaseUrl: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -224,6 +246,61 @@ async function readSnapshotSlice(databaseUrl: string, clientGuid: string) {
   return row.rows[0]?.extended_snapshot as Record<string, unknown> | undefined;
 }
 
+function lprFromSnapshot(snap: Record<string, unknown> | undefined) {
+  const outlets = snap?.currentRetailOutlets as Array<{ lpr?: Record<string, unknown> }> | undefined;
+  return outlets?.[0]?.lpr;
+}
+
+function normalizeLpr(lpr: Record<string, unknown> | undefined) {
+  if (!lpr) {
+    return lpr;
+  }
+  return {
+    name: lpr.name,
+    post: lpr.post,
+    dateOfBirth: lpr.dateOfBirth,
+    phone: lpr.phone,
+    email: lpr.email,
+    bonus: lpr.bonus,
+    conditionsBonus: lpr.conditionsBonus,
+  };
+}
+
+function assertLprBlockEqual(actual: Record<string, unknown> | undefined, expected: typeof EXPECTED_LPR) {
+  assert.deepEqual(normalizeLpr(actual), expected);
+}
+
+function assertCommercialBlocks(snap: Record<string, unknown> | undefined) {
+  const wholesale = snap?.wholesaleExchange as { top150: string; outletCategory: string };
+  assert.equal(wholesale.top150, EXPECTED_WHOLESALE.top150);
+  assert.equal(wholesale.outletCategory, EXPECTED_WHOLESALE.outletCategory);
+
+  const counterparty = snap?.counterparty as typeof EXPECTED_COUNTERPARTY & {
+    fieldPresence?: Record<string, boolean>;
+  };
+  assert.equal(counterparty.counterparty, EXPECTED_COUNTERPARTY.counterparty);
+  assert.equal(counterparty.legalEntityType, EXPECTED_COUNTERPARTY.legalEntityType);
+  assert.equal(counterparty.ogrn, EXPECTED_COUNTERPARTY.ogrn);
+  assert.equal(counterparty.fullName, EXPECTED_COUNTERPARTY.fullName);
+
+  const contract = snap?.clientContract as typeof EXPECTED_CONTRACT;
+  assert.equal(contract.primaryContract, EXPECTED_CONTRACT.primaryContract);
+  assert.equal(contract.mainAgreement, EXPECTED_CONTRACT.mainAgreement);
+
+  const code = snap?.clientCode as { code1c: string };
+  assert.equal(code.code1c, BACKFILL_CODE);
+}
+
+function commercialGapFingerprint(snap: Record<string, unknown> | undefined) {
+  return {
+    wholesaleExchange: snap?.wholesaleExchange,
+    counterparty: snap?.counterparty,
+    clientContract: snap?.clientContract,
+    clientCode: snap?.clientCode,
+    lpr: normalizeLpr(lprFromSnapshot(snap)),
+  };
+}
+
 async function countSuccessfulApplyRuns(databaseUrl: string): Promise<number> {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const row = await pool.query<{ count: string }>(
@@ -258,17 +335,19 @@ describe("onec F6 combined F2–F5 backfill preserves F1 LPR", { concurrency: fa
     await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
 
     let snap = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
-    assert.ok(snap?.wholesaleExchange);
-    assert.ok(snap?.clientCode);
-    const outlets = snap?.currentRetailOutlets as Array<{ lpr?: { name?: string; bonus?: string } }>;
-    assert.equal(outlets?.[0]?.lpr?.name, LPR_NAME);
-    assert.equal(outlets?.[0]?.lpr?.bonus, "0");
+    assertCommercialBlocks(snap);
+    assertLprBlockEqual(lprFromSnapshot(snap), EXPECTED_LPR);
+    const lprBeforeGap = normalizeLpr(lprFromSnapshot(snap));
 
     await simulatePreF6CommercialGap(databaseUrl, CLIENT_ONE);
     snap = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
-    assert.equal(snap?.wholesaleExchange, undefined);
-    assert.equal(snap?.clientCode, undefined);
-    assert.equal((snap?.currentRetailOutlets as Array<{ lpr?: { name?: string } }>)?.[0]?.lpr?.name, LPR_NAME);
+    assert.deepEqual(commercialGapFingerprint(snap), {
+      wholesaleExchange: undefined,
+      counterparty: undefined,
+      clientContract: undefined,
+      clientCode: undefined,
+      lpr: lprBeforeGap,
+    });
 
     const backfillDry = await dryRunBundle(databaseUrl, clientsBytes, roster);
     const backfill = await applyBundle(
@@ -281,12 +360,9 @@ describe("onec F6 combined F2–F5 backfill preserves F1 LPR", { concurrency: fa
     const countAfter = await countSuccessfulApplyRuns(databaseUrl);
 
     snap = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
-    const wholesale = snap?.wholesaleExchange as { top150: string; outletCategory: string };
-    const code = snap?.clientCode as { code1c: string };
-    assert.equal(wholesale.top150, "Нет");
-    assert.equal(wholesale.outletCategory, "D");
-    assert.equal(code.code1c, BACKFILL_CODE);
-    assert.equal((snap?.currentRetailOutlets as Array<{ lpr?: { name?: string } }>)?.[0]?.lpr?.name, LPR_NAME);
+    assertCommercialBlocks(snap);
+    assertLprBlockEqual(lprFromSnapshot(snap), EXPECTED_LPR);
+    assert.deepEqual(normalizeLpr(lprFromSnapshot(snap)), lprBeforeGap);
 
     const repeat = await applyBundle(
       databaseUrl,
@@ -338,29 +414,75 @@ describe("onec F6 combined F2–F5 backfill preserves F1 LPR", { concurrency: fa
     const roster = rosterBytes();
     const { dryRun } = await dryRunAndApplyWithConfirmation(databaseUrl, clientsBytes, roster);
     await simulatePreF6CommercialGap(databaseUrl, CLIENT_ONE);
+    const gapSnap = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
+    assert.deepEqual(commercialGapFingerprint(gapSnap), {
+      wholesaleExchange: undefined,
+      counterparty: undefined,
+      clientContract: undefined,
+      clientCode: undefined,
+      lpr: EXPECTED_LPR,
+    });
 
     const applyCountBefore = await countSuccessfulApplyRuns(databaseUrl);
-    let inTxnCode: unknown = null;
+    let inTxnBlocks: {
+      wholesale: unknown;
+      counterparty: unknown;
+      clientContract: unknown;
+      clientCode: unknown;
+    } | null = null;
     const failed = await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!, {
       afterRosterUpsert: async (client) => {
-        const row = await client.query<{ client_code: unknown }>(
-          `SELECT extended_snapshot->'clientCode' AS client_code FROM onec_clients WHERE guid_client = $1::uuid`,
+        const row = await client.query<{
+          wholesale: unknown;
+          counterparty: unknown;
+          client_contract: unknown;
+          client_code: unknown;
+        }>(
+          `
+            SELECT
+              extended_snapshot->'wholesaleExchange' AS wholesale,
+              extended_snapshot->'counterparty' AS counterparty,
+              extended_snapshot->'clientContract' AS client_contract,
+              extended_snapshot->'clientCode' AS client_code
+            FROM onec_clients
+            WHERE guid_client = $1::uuid
+          `,
           [CLIENT_ONE],
         );
-        inTxnCode = row.rows[0]?.client_code ?? null;
+        inTxnBlocks = {
+          wholesale: row.rows[0]?.wholesale ?? null,
+          counterparty: row.rows[0]?.counterparty ?? null,
+          clientContract: row.rows[0]?.client_contract ?? null,
+          clientCode: row.rows[0]?.client_code ?? null,
+        };
       },
       failExchangeStateUpdate: true,
     });
     assert.equal(failed.status, "ERROR");
-    assert.ok(inTxnCode);
-    assert.equal((inTxnCode as { code1c: string }).code1c, BACKFILL_CODE);
-    assert.equal((await readSnapshotSlice(databaseUrl, CLIENT_ONE))?.clientCode, undefined);
+    assert.ok(inTxnBlocks);
+    assert.equal((inTxnBlocks.wholesale as { top150: string }).top150, EXPECTED_WHOLESALE.top150);
+    assert.equal(
+      (inTxnBlocks.counterparty as { counterparty: string }).counterparty,
+      EXPECTED_COUNTERPARTY.counterparty,
+    );
+    assert.equal(
+      (inTxnBlocks.clientContract as { primaryContract: string }).primaryContract,
+      EXPECTED_CONTRACT.primaryContract,
+    );
+    assert.equal((inTxnBlocks.clientCode as { code1c: string }).code1c, BACKFILL_CODE);
+
+    const afterError = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
+    assert.deepEqual(commercialGapFingerprint(afterError), commercialGapFingerprint(gapSnap));
     assert.equal(await countSuccessfulApplyRuns(databaseUrl), applyCountBefore);
 
     assert.equal(
       (await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!)).status,
       "SUCCESS",
     );
+    const afterRecovery = await readSnapshotSlice(databaseUrl, CLIENT_ONE);
+    assertCommercialBlocks(afterRecovery);
+    assertLprBlockEqual(lprFromSnapshot(afterRecovery), EXPECTED_LPR);
+
     assert.equal(
       (await applyBundle(databaseUrl, clientsBytes, roster, dryRun.verificationFingerprint!)).status,
       "NO_CHANGES",
