@@ -2,6 +2,8 @@
 
 **Контекст:** read-only validation файла SHA `a957ab33…` (08.10.2026, Timeweb console) — `ok=false`, 1056 issues, коды только `HOLDING_SELF_REFERENCE`, `HOLDING_CYCLE`, `HOLDING_TARGET_NOT_HOLDING_CARD`. F2–F5 в файле **присутствуют** и типы корректны.
 
+**Бизнес-модель холдингов (утверждено):** четыре типа состава — см. [holding-business-model-and-1c-mapping.md](./holding-business-model-and-1c-mapping.md). Утверждение «у каждого клиента есть холдинг» **не** подтверждает семантику 422× self-ref; для разблокировки обмена по-прежнему нужен выбор **варианта A или B** (§ ниже). **Рекомендация:** вариант A (явная holding-карточка), согласован с текущим validator.
+
 **Не путать** с отказом 13:41 MSK (SHA не сохранён). **Не реализовывать** в production pipeline до отдельного решения.
 
 ---
