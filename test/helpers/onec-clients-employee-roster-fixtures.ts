@@ -5,6 +5,8 @@ export type SyntheticEmployeeRosterEntry = {
   name_manager?: string;
   guid_post?: string;
   post?: string;
+  guid_team?: string | null;
+  name_team?: string | null;
   condition?: string;
   date_of_assumption?: string;
   guid_work_schedule?: string;
