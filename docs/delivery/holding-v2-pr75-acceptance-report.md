@@ -4,7 +4,7 @@
 **Stack:** #73 → #74 → **#75**  
 **Base (stack):** `cursor/holding-v2-storage-phase2-9e11` / merge-base with `main`: `53712c1`  
 **Acceptance start commit (owner):** `ead3a45`  
-**Acceptance HEAD:** `021bd36`  
+**Acceptance HEAD:** `c2726e8`  
 **Environment:** `TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test`  
 **Pipeline flag (tests):** `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` via test helpers  
 
