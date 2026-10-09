@@ -71,12 +71,15 @@ node --import tsx scripts/holding-v2-diagnose-clients-file.ts
 
 Пока нет зафиксированного **полного SHA-256** снимка, версии кода диагностики и первичного JSON-отчёta в CI, **production-цифры не считаются подтверждёнными**. Кандидат для сверки: SHA-256 prefix `a957ab33…` (полный hash — при следующем read-only прогоне с `AUDIT_CLIENTS_PATH`).
 
-## Следующий этап (не этот PR)
+## Этап 2 (отдельный PR, stacked на #73)
 
-1. Migration / snapshot fields для `type_category` и composition type.  
-2. Reconciliation membership (omitted links ≠ keep old).  
-3. Backfill gate + regular-update на v2.  
-4. API/DTO, scope-safe `visible` / `withheld`, UI badge.
+См. [`holding-v2-storage-and-reconciliation.md`](./holding-v2-storage-and-reconciliation.md) — migration `041`, internal `applyHoldingV2Reconciliation`, test-DB integration. Public apply по-прежнему заблокирован.
+
+## Следующий этап (pipeline / UI)
+
+1. Backfill gate + regular-update на v2.  
+2. API/DTO, scope-safe `visible` / `withheld`, UI badge.  
+3. Production audit с полным SHA и prod JSON.
 
 ## Неподтверждённо (не реализуем destructively)
 

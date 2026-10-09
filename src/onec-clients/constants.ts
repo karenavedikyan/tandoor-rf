@@ -7,6 +7,8 @@ export const MAX_DETAILED_ERRORS = 50;
 export const MAX_DETAILED_WARNINGS = 20;
 
 export const IMPORT_ADVISORY_LOCK_KEY = 902_451_002;
+/** Separate lock for internal holding v2 reconciliation (not legacy import). */
+export const HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY = 902_451_003;
 
 export const KNOWN_CLIENT_KEYS = [
   "guid_client",
