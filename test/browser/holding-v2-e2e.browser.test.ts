@@ -30,12 +30,15 @@ const ADMIN_EMAIL = "admin-holding-v2@example.com";
 
 const H1 = "a1000000-0000-4000-8000-000000000001";
 const S1 = "b1000000-0000-4000-8000-000000000001";
+const S2 = "b1000000-0000-4000-8000-000000000002";
 const MANAGER = "22222222-2222-4222-8222-222222222222";
 
 const CLIENT_NAME = "V2 Browser Client";
 const F5_CODE = "HV2-E2E-F5";
 const COMPOSITION_LABEL = "Холдинг моно";
 const TYPE_NAME = "E2E Holding Type";
+const STORE_ONE_LABEL = "E2E Store Alpha";
+const STORE_TWO_LABEL = "E2E Store Beta";
 
 const DESKTOP = { width: 1440, height: 1100 };
 const MOBILE = { width: 390, height: 844 };
@@ -79,7 +82,22 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
         type_category: typeCategory({ guid_type: "e2e-hv2-type", name_type: TYPE_NAME }),
         retail_outlets: [
           minimalOutlet(S1, {
-            type_category: typeCategory({ guid_type: "e2e-out-type", name_type: "E2E Outlet Type" }),
+            address: { store_address: STORE_ONE_LABEL },
+            type_category: typeCategory({
+              guid_type: "e2e-out-type-a",
+              name_type: "E2E Outlet Type A",
+              guid_category: "e2e-out-cat-a",
+              name_category: "E2E Outlet Category A",
+            }),
+          }),
+          minimalOutlet(S2, {
+            address: { store_address: STORE_TWO_LABEL },
+            type_category: typeCategory({
+              guid_type: "e2e-out-type-b",
+              name_type: "E2E Outlet Type B",
+              guid_category: "e2e-out-cat-b",
+              name_category: "E2E Outlet Category B",
+            }),
           }),
         ],
       }),
@@ -207,23 +225,29 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
     assert.match(await cardLine.innerText(), new RegExp(COMPOSITION_LABEL));
   }
 
-  async function openClientCardDataPanel(page: Page): Promise<void> {
+  async function openClientCardDataPanel(page: Page, viewport?: { width: number }): Promise<void> {
     const cardApi = page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
         response.url().includes(`/api/clients/${H1}`) &&
         !response.url().includes("/catalog/") &&
         response.status() === 200,
+      { timeout: 60000 },
     );
-    await page.locator(`.clients-link[href*="/clients/${H1}"]`).first().click();
+    if (viewport && viewport.width < 768) {
+      await page.getByRole("link", { name: CLIENT_NAME }).first().click({ timeout: 30000 });
+    } else {
+      await page.locator(`.clients-link[href*="/clients/${H1}"]`).first().click({ timeout: 30000 });
+    }
     const cardResponse = await cardApi;
     const cardBody = (await cardResponse.json()) as {
-      client?: { holdingV2?: { compositionDetail?: { legalEntities?: unknown[] } } };
+      client?: { holdingV2?: { compositionDetail?: { legalEntities?: unknown[]; outlets?: unknown[] } } };
     };
     assert.ok(
       cardBody.client?.holdingV2?.compositionDetail?.legalEntities?.length,
       "API must expose scoped holding v2 composition before UI checks",
     );
+    assert.equal(cardBody.client?.holdingV2?.compositionDetail?.outlets?.length, 2);
     await page.waitForURL(new RegExp("/clients/" + H1.replace(/-/g, "\\-")), { timeout: 20000 });
     await page.waitForSelector("#client-detail:not(.clients-hidden)", { timeout: 20000 });
     await page.click("#pc-tab-data");
@@ -242,23 +266,60 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
     assert.match(panelText, new RegExp(TYPE_NAME));
     assert.match(panelText, new RegExp(COMPOSITION_LABEL));
     assert.match(panelText, /Состав холдинга \(v2\)/);
+    assert.match(panelText, /Юрлица/);
+    assert.match(panelText, /Торговые точки/);
     assert.match(panelText, new RegExp(CLIENT_NAME));
+    assert.match(panelText, new RegExp(STORE_ONE_LABEL));
+    assert.match(panelText, new RegExp(STORE_TWO_LABEL));
   }
 
-  async function assertCompositionNavigation(page: Page, options?: { verifyReload?: boolean }): Promise<void> {
+  async function assertCompositionNavigation(page: Page): Promise<void> {
     await page.waitForSelector(".pc-hv2-legal", { timeout: 15000 });
     await page.waitForSelector(".pc-hv2-legal a.clients-link", { timeout: 15000 });
     const legalHref = await page.locator(".pc-hv2-legal a.clients-link").first().getAttribute("href");
     assert.ok(legalHref && legalHref.includes(H1));
-    await page.locator(".pc-hv2-outlet a.clients-link").first().click();
-    await page.waitForURL(new RegExp("/clients/" + H1.replace(/-/g, "\\-")));
-    if (options?.verifyReload !== false) {
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForSelector("#client-detail:not(.clients-hidden)");
-      await page.click("#pc-tab-data");
-      await page.waitForSelector("#pc-panel-data:not([hidden])");
-      await page.waitForSelector(".pc-hv2-legal a.clients-link", { timeout: 15000 });
+    assert.equal(await page.locator(".pc-hv2-outlet a.clients-link").count(), 2);
+
+    const secondOutletLink = page.locator(".pc-hv2-outlet a.clients-link", { hasText: STORE_TWO_LABEL });
+    await secondOutletLink.click();
+    await page.waitForURL(
+      (url) =>
+        url.pathname === `/clients/${H1}` && url.searchParams.get("store") === S2,
+      { timeout: 20000 },
+    );
+    await page.waitForSelector('.pc-outlet-card[data-outlet-guid="' + S2 + '"].pc-outlet-card--selected', {
+      timeout: 15000,
+    });
+    assert.match(await page.locator("#pc-panel-data").innerText(), new RegExp(STORE_TWO_LABEL));
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForURL(
+      (url) => url.searchParams.get("store") === S2,
+      { timeout: 20000 },
+    );
+    await page.waitForSelector("#client-detail:not(.clients-hidden)", { timeout: 20000 });
+    await page.click("#pc-tab-data");
+    await page.waitForSelector("#pc-panel-data:not([hidden])");
+    await page.waitForSelector('.pc-outlet-card[data-outlet-guid="' + S2 + '"].pc-outlet-card--selected', {
+      timeout: 15000,
+    });
+
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await page.waitForURL(
+      (url) => url.pathname === `/clients/${H1}` && !url.searchParams.get("store"),
+      { timeout: 20000 },
+    );
+    await page.waitForSelector("#client-detail:not(.clients-hidden)", { timeout: 20000 });
+    await page.click("#pc-tab-data");
+    await page.waitForSelector("#pc-panel-data:not([hidden])");
+    const details = page
+      .locator("#pc-panel-data details.pc-details")
+      .filter({ has: page.locator("summary", { hasText: "Основные сведения и холдинг" }) });
+    if ((await details.getAttribute("open")) === null) {
+      await details.locator("summary").click();
     }
+    await page.locator(".pc-hv2-outlet a.clients-link").first().waitFor({ state: "visible", timeout: 15000 });
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Торговые точки/);
   }
 
   it("admin sees holding v2 on list and client card (desktop + mobile)", async () => {
@@ -287,7 +348,7 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
         fullPage: true,
       });
 
-      await openClientCardDataPanel(page);
+      await openClientCardDataPanel(page, DESKTOP);
       await assertClientCardHoldingV2(page);
       await assertCompositionNavigation(page);
       await page.screenshot({
@@ -322,23 +383,9 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
         fullPage: true,
       });
 
-      const mobileCardApi = page.waitForResponse(
-        (response) =>
-          response.request().method() === "GET" &&
-          response.url().includes(`/api/clients/${H1}`) &&
-          !response.url().includes("/catalog/") &&
-          response.status() === 200,
-      );
-      await page.goto(`/clients/${H1}`, { waitUntil: "domcontentloaded" });
-      const mobileCardBody = (await (await mobileCardApi).json()) as {
-        client?: { holdingV2?: { compositionDetail?: { legalEntities?: unknown[] } } };
-      };
-      assert.ok(mobileCardBody.client?.holdingV2?.compositionDetail?.legalEntities?.length);
-      await page.waitForSelector("#client-detail:not(.clients-hidden)");
-      await page.click("#pc-tab-data");
-      await page.waitForSelector("#pc-panel-data:not([hidden])");
+      await openClientCardDataPanel(page, MOBILE);
       await assertClientCardHoldingV2(page);
-      await assertCompositionNavigation(page, { verifyReload: false });
+      await assertCompositionNavigation(page);
       await page.screenshot({
         path: path.join(SCREENSHOT_DIR, "holding-v2-card-mobile.png"),
         fullPage: true,

@@ -24,8 +24,35 @@ const TEST_PASSWORD = "StrongPass123!";
 const H1 = "a1000000-0000-4000-8000-000000000001";
 const H2 = "a2000000-0000-4000-8000-000000000002";
 const S1 = "b1000000-0000-4000-8000-000000000001";
+const S2 = "b1000000-0000-4000-8000-000000000002";
 const M1 = "22222222-2222-4222-8222-222222222222";
 const M2 = "55555555-5555-4555-8555-555555555555";
+
+async function seedWholesaleRoster(databaseUrl: string, managers: Array<{ guid: string; name: string }>): Promise<void> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    await pool.query(
+      `
+        INSERT INTO onec_wholesale_roster_state (id, source_sha256, employee_count)
+        VALUES (1, $1, $2)
+        ON CONFLICT (id) DO UPDATE SET employee_count = EXCLUDED.employee_count
+      `,
+      ["c".repeat(64), managers.length],
+    );
+    for (const manager of managers) {
+      await pool.query(
+        `
+          INSERT INTO onec_wholesale_employee_roster (guid_manager, name_manager, post, raw_json)
+          VALUES ($1::uuid, $2, 'Менеджер', '{}'::jsonb)
+          ON CONFLICT (guid_manager) DO UPDATE SET name_manager = EXCLUDED.name_manager
+        `,
+        [manager.guid, manager.name],
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+}
 async function loadApp() {
   await resetPoolForTests();
   const { createApp } = await import("../../src/server");
@@ -192,5 +219,115 @@ describe("clients API holding v2 exchange fields", { concurrency: false }, () =>
     assert.equal(adminCard.status, 200);
     assert.notEqual(adminCard.body.client?.holdingV2?.holdingRootGuid, null);
     assert.doesNotMatch(adminCard.body.client?.holdingV2?.compositionLabel ?? "", /Скрыто по области доступа/);
+  });
+
+  it("withholds mono composition label when manager sees only one of two holding outlets", async () => {
+    const bytes = buildHoldingV2FileBytes([
+      headRow(H1, {
+        name_client: "V2 Mono Partial Outlets",
+        guid_manager: M1,
+        retail_outlets: [
+          minimalOutlet(S1, {
+            address: { store_address: "Scope Store One" },
+            managers: { guid_manager: M1, name_manager: "Manager One" },
+          }),
+          minimalOutlet(S2, {
+            address: { store_address: "Scope Store Two" },
+            managers: { guid_manager: M2, name_manager: "Manager Two" },
+          }),
+        ],
+      }),
+    ]);
+    const validated = validateHoldingV2ClientsFileBytes(bytes);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    const fp = verificationFingerprintFromPayload({ payload: validated.payload });
+    const applied = await applyClientsImport({
+      databaseUrl,
+      payload: validated.payload,
+      expectedVerificationFingerprint: fp,
+    });
+    assert.equal(applied.ok, true);
+    if (!applied.ok) return;
+
+    await seedWholesaleRoster(databaseUrl, [
+      { guid: M1, name: "Manager One" },
+      { guid: M2, name: "Manager Two" },
+    ]);
+    await insertSuccessfulImportRun(databaseUrl);
+    const adminEmail = "admin-hv2-outlet-scope@test.local";
+    const managerEmail = "manager-hv2-outlet-scope@test.local";
+    const adminUser = await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin HV2 Outlet Scope",
+      role: "admin",
+    });
+    const managerUser = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager HV2 Outlet Scope",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: managerUser.id,
+      employeeId: M1,
+      confirmedByUserId: adminUser.id,
+    });
+
+    const verifyPool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const managerContext = {
+      userId: managerUser.id,
+      role: "manager" as const,
+      fullClientBase: false,
+      hasScopedClientAccess: true,
+      hasEmployeeLink: true,
+      employeeLinkConflict: false,
+      explicitlyDeniedAll: false,
+      employeeId: M1,
+    };
+    const managerExchange = await loadHoldingV2ClientExchange(verifyPool, H1, {
+      context: managerContext,
+      typeCategoryVisibility: "visible",
+    });
+    await verifyPool.end();
+    assert.ok(managerExchange);
+    assert.equal(managerExchange!.compositionAccess?.kind, "withheld");
+    assert.equal(managerExchange!.compositionSiteType, "unknown");
+    assert.match(managerExchange!.compositionLabel ?? "", /Скрыто по области доступа/);
+    assert.equal(managerExchange!.compositionDetail, null);
+    assert.doesNotMatch(managerExchange!.compositionLabel ?? "", /моно/i);
+
+    const managerCookie = await login(managerEmail);
+    const app = await loadApp();
+    const card = await request(app)
+      .get(`/api/clients/${H1}`)
+      .set({ Origin: ORIGIN, Cookie: managerCookie });
+    assert.equal(card.status, 200);
+    assert.equal(card.body.client?.holdingV2?.compositionAccess?.kind, "withheld");
+    assert.equal(card.body.client?.holdingV2?.compositionDetail, null);
+    const outlets = card.body.client?.extended?.retailOutlets as Array<{ guidStore?: string }> | undefined;
+    assert.equal(outlets?.length, 1);
+    assert.equal(String(outlets?.[0]?.guidStore ?? "").toLowerCase(), S1.toLowerCase());
+
+    const list = await request(app)
+      .get("/api/clients?page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: managerCookie });
+    assert.equal(list.status, 200);
+    const item = (list.body.items as Array<{ guid: string; holdingV2CompositionLabel?: string }>).find(
+      (row) => row.guid.toLowerCase() === H1.toLowerCase(),
+    );
+    assert.match(item?.holdingV2CompositionLabel ?? "", /Скрыто по области доступа/);
+
+    const adminCookie = await login(adminEmail);
+    const adminCard = await request(app)
+      .get(`/api/clients/${H1}`)
+      .set({ Origin: ORIGIN, Cookie: adminCookie });
+    assert.equal(adminCard.status, 200);
+    assert.equal(adminCard.body.client?.holdingV2?.compositionAccess?.kind, "visible");
+    assert.ok(adminCard.body.client?.holdingV2?.compositionDetail?.outlets?.length === 2);
   });
 });

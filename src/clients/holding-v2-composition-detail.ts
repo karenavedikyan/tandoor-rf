@@ -32,12 +32,12 @@ export type HoldingV2CompositionLegalEntityDto = {
     guidType?: HoldingV2FieldPresentation;
     guidCategory?: HoldingV2FieldPresentation;
   };
-  outlets: HoldingV2CompositionOutletDto[];
 };
 
 export type HoldingV2CompositionDetailDto = {
   holdingRootGuid: string;
   legalEntities: HoldingV2CompositionLegalEntityDto[];
+  outlets: HoldingV2CompositionOutletDto[];
 };
 
 function outletLabel(storeAddress: string | null, guidStore: string): string {
@@ -158,15 +158,25 @@ export async function loadHoldingV2CompositionDetail(
       ${outletScope.whereSql}
         AND ol.guid_holding_root = $${outletScope.params.length + 1}::uuid
         AND ol.link_active = TRUE
-      ORDER BY oc.name_client ASC, store_address ASC NULLS LAST, ro.guid_store ASC
+      ORDER BY store_address ASC NULLS LAST, ro.guid_store ASC
     `,
     [...outletScope.params, holdingRootGuid],
   );
 
-  const outletsByClient = new Map<string, HoldingV2CompositionOutletDto[]>();
-  for (const row of outletRows.rows) {
-    const parentKey = row.guid_client.toLowerCase();
-    const outletTc = await client.query<{
+  const outletStoreGuids = outletRows.rows.map((row) => row.guid_store);
+  const outletTypeByStore = new Map<
+    string,
+    {
+      guid_type: string | null;
+      name_type: string | null;
+      guid_category: string | null;
+      name_category: string | null;
+      field_presence: Record<string, boolean>;
+    }
+  >();
+  if (outletStoreGuids.length > 0) {
+    const outletTcRows = await client.query<{
+      guid_store: string;
       guid_type: string | null;
       name_type: string | null;
       guid_category: string | null;
@@ -174,32 +184,35 @@ export async function loadHoldingV2CompositionDetail(
       field_presence: Record<string, boolean>;
     }>(
       `
-        SELECT guid_type, name_type, guid_category, name_category, field_presence
+        SELECT guid_store::text, guid_type, name_type, guid_category, name_category, field_presence
         FROM onec_holding_v2_outlet_type_category
-        WHERE guid_store = $1::uuid
+        WHERE guid_store = ANY($1::uuid[])
       `,
-      [row.guid_store],
+      [outletStoreGuids],
     );
-    const outletV2: HoldingV2OutletExchangeDto | null =
-      outletTc.rows.length > 0
-        ? { typeCategory: readTypeCategoryRow(outletTc.rows[0], "visible") }
-        : null;
-    const list = outletsByClient.get(parentKey) ?? [];
-    list.push({
+    for (const row of outletTcRows.rows) {
+      outletTypeByStore.set(row.guid_store.toLowerCase(), row);
+    }
+  }
+
+  const outlets: HoldingV2CompositionOutletDto[] = outletRows.rows.map((row) => {
+    const tcRow = outletTypeByStore.get(row.guid_store.toLowerCase());
+    const outletV2: HoldingV2OutletExchangeDto | null = tcRow
+      ? { typeCategory: readTypeCategoryRow(tcRow, "visible") }
+      : null;
+    return {
       guidStore: row.guid_store,
       label: outletLabel(row.store_address, row.guid_store),
       guidClient: row.guid_client,
       isClosed: row.is_closed,
       closureKnown: row.closure_known,
       holdingV2: outletV2,
-    });
-    outletsByClient.set(parentKey, list);
-  }
+    };
+  });
 
   const legalEntities: HoldingV2CompositionLegalEntityDto[] = [];
   const seenHead = new Set<string>();
   for (const row of legalRows.rows) {
-    const key = row.guid_client.toLowerCase();
     if (row.is_holding_head) {
       if (seenHead.has(holdingRootGuid.toLowerCase())) {
         continue;
@@ -220,12 +233,12 @@ export async function loadHoldingV2CompositionDetail(
         },
         "visible",
       ),
-      outlets: outletsByClient.get(key) ?? [],
     });
   }
 
   return {
     holdingRootGuid,
     legalEntities,
+    outlets,
   };
 }

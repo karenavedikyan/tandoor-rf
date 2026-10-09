@@ -60,8 +60,8 @@ describe("holding v2 composition detail loader", { concurrency: false }, () => {
       assert.ok(detail);
       assert.equal(detail!.legalEntities.length, 1);
       assert.equal(detail!.legalEntities[0]?.isHoldingHead, true);
-      assert.equal(detail!.legalEntities[0]?.outlets.length, 1);
-      assert.equal(detail!.legalEntities[0]?.outlets[0]?.guidStore.toLowerCase(), S1.toLowerCase());
+      assert.equal(detail!.outlets.length, 1);
+      assert.equal(detail!.outlets[0]?.guidStore.toLowerCase(), S1.toLowerCase());
     } finally {
       client.release();
       await pool.end();

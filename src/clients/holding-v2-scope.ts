@@ -1,9 +1,30 @@
 import type { Pool, PoolClient } from "pg";
-import { combineScopeAndFilter } from "../access/combine-filters";
+import { combineScopeAndFilter, mergeSqlFilters } from "../access/combine-filters";
 import { buildClientScopeSql } from "../access/scope-sql";
 import type { AccessContext } from "../access/types";
+import { buildOutletScope } from "./outlets/scope-sql";
 
 export type HoldingV2CompositionVisibility = "visible" | "withheld";
+
+async function countScopedRows(
+  client: Pool | PoolClient,
+  whereSql: string,
+  params: unknown[],
+  fromSql: string,
+): Promise<number> {
+  if (whereSql === "WHERE FALSE") {
+    return 0;
+  }
+  const visible = await client.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM ${fromSql}
+      ${whereSql}
+    `,
+    params,
+  );
+  return Number(visible.rows[0]?.count ?? 0);
+}
 
 export async function resolveHoldingV2CompositionVisibility(
   context: AccessContext,
@@ -23,30 +44,43 @@ export async function resolveHoldingV2CompositionVisibility(
     [holdingRootGuid],
   );
   const legalGuids = legalRows.rows.map((row) => row.guid_client);
-  if (legalGuids.length === 0) {
-    return "visible";
+  if (legalGuids.length > 0) {
+    const scope = buildClientScopeSql(context);
+    const scoped = combineScopeAndFilter(scope, {
+      whereSql: "WHERE guid_client = ANY($1::uuid[])",
+      params: [legalGuids],
+    });
+    const visibleLegalCount = await countScopedRows(client, scoped.whereSql, scoped.params, "onec_clients");
+    if (visibleLegalCount < legalGuids.length) {
+      return "withheld";
+    }
   }
 
-  const scope = buildClientScopeSql(context);
-  const scoped = combineScopeAndFilter(scope, {
-    whereSql: "WHERE guid_client = ANY($1::uuid[])",
-    params: [legalGuids],
-  });
-  if (scoped.whereSql === "WHERE FALSE") {
-    return "withheld";
-  }
-
-  const visible = await client.query<{ count: string }>(
+  const outletLinkRows = await client.query<{ guid_store: string }>(
     `
-      SELECT COUNT(*)::text AS count
-      FROM onec_clients
-      ${scoped.whereSql}
+      SELECT guid_store::text
+      FROM onec_holding_v2_outlet_links
+      WHERE guid_holding_root = $1::uuid AND link_active = TRUE
     `,
-    scoped.params,
+    [holdingRootGuid],
   );
-  const visibleCount = Number(visible.rows[0]?.count ?? 0);
-  if (visibleCount < legalGuids.length) {
-    return "withheld";
+  const outletGuids = outletLinkRows.rows.map((row) => row.guid_store);
+  if (outletGuids.length > 0) {
+    const outletScope = buildOutletScope(context);
+    if (outletScope.whereSql === "WHERE FALSE") {
+      return "withheld";
+    }
+    const scopedOutlets = mergeSqlFilters(outletScope, ["ro.guid_store = ANY($1::uuid[])"], [outletGuids]);
+    const visibleOutletCount = await countScopedRows(
+      client,
+      scopedOutlets.whereSql,
+      scopedOutlets.params,
+      "onec_retail_outlets ro INNER JOIN onec_clients oc ON oc.guid_client = ro.guid_client",
+    );
+    if (visibleOutletCount < outletGuids.length) {
+      return "withheld";
+    }
   }
+
   return "visible";
 }
