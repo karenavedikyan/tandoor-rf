@@ -467,10 +467,11 @@ export async function listClients(
       continue;
     }
     item.holdingV2CompositionLabel = summary.compositionLabel;
-    const typeLabel =
-      summary.typeCategory.guidType?.label ?? summary.typeCategory.nameType?.label ?? undefined;
-    if (typeLabel) {
-      item.holdingV2TypeCategoryLabel = typeLabel;
+    if (summary.nameTypeLabel) {
+      item.holdingV2TypeCategoryLabel = summary.nameTypeLabel;
+    }
+    if (summary.nameCategoryLabel) {
+      item.holdingV2NameCategoryLabel = summary.nameCategoryLabel;
     }
   }
   }

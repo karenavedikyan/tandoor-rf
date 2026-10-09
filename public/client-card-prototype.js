@@ -49,6 +49,65 @@
       esc(title) + '</summary><div class="pc-details__body">' + innerHtml + "</div></details>";
   }
 
+  function renderHoldingV2Composition(client) {
+    var hv2 = client.holdingV2;
+    if (!hv2 || !hv2.hasStoredState) {
+      return "";
+    }
+    var access = hv2.compositionAccess || { kind: "incomplete_source" };
+    if (access.kind === "withheld") {
+      return field("Состав холдинга (v2)", "Скрыто по области доступа", true);
+    }
+    var detail = hv2.compositionDetail;
+    if (!detail || !detail.legalEntities || detail.legalEntities.length === 0) {
+      return field("Состав холдинга (v2)", hv2.compositionLabel || "Не передан", !!(hv2.compositionLabel));
+    }
+    var html = "";
+    detail.legalEntities.forEach(function (le) {
+      var typeLabel =
+        le.typeCategory && le.typeCategory.nameType && le.typeCategory.nameType.label
+          ? le.typeCategory.nameType.label
+          : "";
+      html +=
+        '<div class="pc-hv2-legal"><a class="clients-link" href="/clients/' +
+        esc(le.guidClient) +
+        '">' +
+        esc(le.nameClient) +
+        "</a>" +
+        (le.isHoldingHead ? " · голова холдинга" : "") +
+        (typeLabel ? " · " + esc(typeLabel) : "") +
+        "</div>";
+      (le.outlets || []).forEach(function (outlet) {
+        var closedMark =
+          outlet.closureKnown && outlet.isClosed ? " · закрыта" : "";
+        html +=
+          '<div class="pc-hv2-outlet pc-hv2-outlet--nested"><a class="clients-link" href="/clients/' +
+          esc(outlet.guidClient) +
+          '">' +
+          esc(outlet.label) +
+          "</a>" +
+          esc(closedMark) +
+          "</div>";
+      });
+    });
+    var accessSuffix =
+      access.kind === "incomplete_source" ? " (источник неполный)" : "";
+    return (
+      '<div class="pc-field"><div class="pc-label">Состав холдинга (v2)' +
+      esc(accessSuffix) +
+      '</div><div class="pc-value pc-hv2-composition">' +
+      html +
+      "</div></div>" +
+      field(
+        "Доступ к составу (v2)",
+        access.kind === "visible"
+          ? "Полный состав в области доступа"
+          : "Данные источника неполные",
+        true,
+      )
+    );
+  }
+
   function renderOutletBlock(outlet, index) {
     var basics = field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
@@ -357,7 +416,8 @@
               client.holdingV2.typeCategory.nameCategory &&
               client.holdingV2.typeCategory.nameCategory.hasSource
             ),
-          ),
+          ) +
+          renderHoldingV2Composition(client),
           true) +
         detailsBlock("Ответственные",
           field("Менеджер клиента", clientManagerField, !!manager) +

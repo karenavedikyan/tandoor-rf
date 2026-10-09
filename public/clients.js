@@ -1944,6 +1944,12 @@
       }
       return shell.escapeHtml(item.holdingV2TypeCategoryLabel);
     }
+    if (columnId === "holdingV2NameCategoryLabel") {
+      if (!item.holdingV2NameCategoryLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2NameCategoryLabel);
+    }
     if (columnId === "onecCounterparty") {
       if (!item.onecCounterparty || !item.onecCounterparty.hasSource) {
         return renderNoDataCell();

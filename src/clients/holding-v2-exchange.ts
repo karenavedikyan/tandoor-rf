@@ -7,6 +7,10 @@ import {
 import type { AccessContext } from "../access/types";
 import { holdingV2PipelineEnabledEffective } from "../onec-clients/holding-v2-pipeline-config";
 import { resolveHoldingV2CompositionVisibility } from "./holding-v2-scope";
+import type {
+  HoldingV2CompositionAccessDto,
+  HoldingV2CompositionDetailDto,
+} from "./holding-v2-composition-detail";
 
 const WITHHELD_COMPOSITION_LABEL = "Скрыто по области доступа";
 
@@ -24,6 +28,8 @@ export type HoldingV2ClientExchangeDto = {
   isHoldingHead: boolean | null;
   compositionSiteType: HoldingCompositionSiteType;
   compositionLabel: string;
+  compositionAccess: HoldingV2CompositionAccessDto;
+  compositionDetail: HoldingV2CompositionDetailDto | null;
   typeCategory: {
     guidType?: HoldingV2FieldPresentation;
     nameType?: HoldingV2FieldPresentation;
@@ -40,6 +46,26 @@ export type HoldingV2OutletExchangeDto = {
     nameCategory?: HoldingV2FieldPresentation;
   };
 };
+
+type HoldingV2TypeCategoryBlock = HoldingV2ClientExchangeDto["typeCategory"];
+
+export function pickHoldingV2ReadableNameTypeLabel(typeCategory: HoldingV2TypeCategoryBlock): string | undefined {
+  const name = typeCategory.nameType?.label?.trim();
+  if (name && name !== "Не заполнено") {
+    return name;
+  }
+  return undefined;
+}
+
+export function pickHoldingV2ReadableNameCategoryLabel(
+  typeCategory: HoldingV2TypeCategoryBlock,
+): string | undefined {
+  const name = typeCategory.nameCategory?.label?.trim();
+  if (name && name !== "Не заполнено") {
+    return name;
+  }
+  return undefined;
+}
 
 function presentStringField(
   hasPresence: boolean,
@@ -62,7 +88,7 @@ function presentStringField(
   };
 }
 
-function readTypeCategoryRow(row: {
+export function readTypeCategoryRow(row: {
   field_presence: Record<string, boolean> | null;
   guid_type: string | null;
   name_type: string | null;
@@ -174,16 +200,39 @@ export async function loadHoldingV2ClientExchange(
   let compositionLabel = HOLDING_COMPOSITION_SITE_LABELS.unknown;
   let exposedRootGuid: string | null = holdingRootGuid;
   let exposedIsHead: boolean | null = legalRow?.is_holding_head ?? null;
+  let compositionDataComplete = false;
+  let compositionAccess: HoldingV2CompositionAccessDto = { kind: "incomplete_source" };
+  let compositionDetail: HoldingV2CompositionDetailDto | null = null;
 
   if (compositionVisibility === "withheld") {
     compositionSiteType = "unknown";
     compositionLabel = WITHHELD_COMPOSITION_LABEL;
     exposedRootGuid = null;
     exposedIsHead = null;
+    compositionAccess = { kind: "withheld" };
   } else if (holdingRootGuid) {
     const counts = await loadCompositionCounts(client, holdingRootGuid);
+    compositionDataComplete = counts.compositionDataComplete;
     compositionSiteType = classifyHoldingCompositionSiteType(counts);
     compositionLabel = HOLDING_COMPOSITION_SITE_LABELS[compositionSiteType];
+    if (options.context) {
+      const compositionModule = await import("./holding-v2-composition-detail");
+      compositionAccess = await compositionModule.loadHoldingV2CompositionAccess(
+        options.context,
+        client,
+        holdingRootGuid,
+        compositionDataComplete,
+      );
+      if (compositionAccess.kind !== "withheld") {
+        compositionDetail = await compositionModule.loadHoldingV2CompositionDetail(
+          options.context,
+          client,
+          holdingRootGuid,
+        );
+      }
+    } else {
+      compositionAccess = { kind: "incomplete_source" };
+    }
   }
 
   const tc = await client.query<{
@@ -208,6 +257,8 @@ export async function loadHoldingV2ClientExchange(
     isHoldingHead: exposedIsHead,
     compositionSiteType,
     compositionLabel,
+    compositionAccess,
+    compositionDetail,
     typeCategory: readTypeCategoryRow(tc.rows[0], typeCategoryVisibility),
   };
 }
@@ -246,8 +297,22 @@ export async function loadHoldingV2ListSummaries(
   client: Pool | PoolClient,
   context: AccessContext,
   guidClients: string[],
-): Promise<Map<string, Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory">>> {
-  const map = new Map<string, Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory">>();
+): Promise<
+  Map<
+    string,
+    Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory"> & {
+      nameTypeLabel?: string;
+      nameCategoryLabel?: string;
+    }
+  >
+> {
+  const map = new Map<
+    string,
+    Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory"> & {
+      nameTypeLabel?: string;
+      nameCategoryLabel?: string;
+    }
+  >();
   if (guidClients.length === 0) {
     return map;
   }
@@ -296,9 +361,12 @@ export async function loadHoldingV2ListSummaries(
         compositionLabel = HOLDING_COMPOSITION_SITE_LABELS[classifyHoldingCompositionSiteType(counts)];
       }
     }
+    const typeCategory = readTypeCategoryRow(tcByClient.get(key), "visible");
     map.set(key, {
       compositionLabel,
-      typeCategory: readTypeCategoryRow(tcByClient.get(key), "visible"),
+      typeCategory,
+      nameTypeLabel: pickHoldingV2ReadableNameTypeLabel(typeCategory),
+      nameCategoryLabel: pickHoldingV2ReadableNameCategoryLabel(typeCategory),
     });
   }
   return map;

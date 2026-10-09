@@ -27,16 +27,7 @@ export async function holdingV2ReconcileIncomingDiffersFromStored(
   const projected = projectHoldingV2BusinessState(persisted, built.desired);
   const beforeHash = computeBusinessStateSha256(persisted);
   const afterHash = computeBusinessStateSha256(projected);
-  if (beforeHash === afterHash) {
-    return false;
-  }
-
-  const state = await client.query<{ last_normalized_state_sha256: string | null }>(
-    `SELECT last_normalized_state_sha256 FROM onec_holding_v2_apply_state WHERE id = 1`,
-  );
-  const last = state.rows[0]?.last_normalized_state_sha256 ?? null;
-  if (!last) {
-    return true;
-  }
-  return last.toLowerCase() !== afterHash.toLowerCase();
+  // Compare actual persisted link/metadata tables to desired projection only.
+  // apply_state.last_normalized_state_sha256 can lag after manual drift or partial failure.
+  return beforeHash !== afterHash;
 }

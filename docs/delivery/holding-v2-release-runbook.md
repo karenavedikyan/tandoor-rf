@@ -1,8 +1,9 @@
 # Holding v2 — release runbook (pipeline + UI)
 
 **Stack:** PR #73 → #74 → #75.  
+**Site (manual operator UI):** https://lk.tandoor.ru  
 **Production default:** `ONEC_HOLDING_V2_PIPELINE_ENABLED` unset/false → v2 **`APPLY_BLOCKED`**.  
-**Scheduled 1C exchange:** remains **OFF** on rf.tandoor.ru; updates use **manual regular-update / admin path only**.
+**Scheduled 1C exchange:** always **OFF** (including lk.tandoor.ru); updates use **manual regular-update / admin path only**.
 
 ## Status matrix
 
@@ -13,31 +14,38 @@
 | Stable read + regular-update v2 path (#75) | yes | yes | draft #75 | no |
 | Atomic apply + reconcile | yes | yes | draft #75 | no |
 | Scoped API/UI composition + type_category | yes | yes | draft #75 | no |
-| Browser E2E (1440/390) with login | yes | partial | draft #75 | no |
+| Browser E2E (1440/390) with login | yes | yes | draft #75 | no |
 
-## Pre-release
+## Pre-release (production — owner-approved only)
 
-1. **Backup:** full PostgreSQL snapshot; include `onec_holding_v2_*` and `onec_clients`.
-2. **Drain:** wait for `onec_client_import_runs` / operator jobs — no `running` apply; cancel or complete pending admin update jobs.
-3. **Migrations:** apply through `041_onec_holding_v2_reconciliation.sql` on staging; verify singleton `onec_holding_v2_apply_state` row `id=1`.
-4. **Deploy** build with **`ONEC_HOLDING_V2_PIPELINE_ENABLED` unset (OFF)**.
+1. **Backup / restore plan:** full PostgreSQL snapshot (`onec_holding_v2_*`, `onec_clients`, import runs). Verify restore procedure on a non-prod clone before any prod step.
+2. **Drain:** no `running` apply in `onec_client_import_runs`; complete or cancel pending admin/operator jobs.
+3. **Migrations:** apply through `041_onec_holding_v2_reconciliation.sql` on production **only after explicit owner approval** for prod migration. Staging/test-DB migration does **not** count as production migration.
+4. **Deploy application** with **`ONEC_HOLDING_V2_PIPELINE_ENABLED` unset (OFF)** on lk.tandoor.ru app + worker.
 
-## Manual update path (production)
+## Production enablement sequence (verified order)
 
-1. Operator **dry-run** regular-update (or admin 1C update UI) — capture `verificationFingerprint`.
-2. Read-only audit:
+Do **not** run a v2 apply while the pipeline flag is OFF (apply remains blocked). Do **not** apply first and enable the flag afterward unless this sequence was re-validated on a clone.
+
+1. Backup + drain (above).
+2. Prod migrations (owner-approved).
+3. Deploy code with flag **OFF**.
+4. **Read-only audit** of the current 1C clients file — confirm explicit **v2** contract (self-ref heads, diagnostics), e.g.:
    ```bash
    export AUDIT_CLIENTS_PATH=/secure/path/all_clients.json
    node --import tsx scripts/holding-v2-diagnose-clients-file.ts
    ```
-3. Apply with matching `--expected-fingerprint` (same bundle + roster). **Do not** enable FTP/scheduled auto-import for v2 until owner sign-off.
-4. After owner approval only: set `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` on app + worker; repeat controlled apply; verify DB + UI sample.
+5. **Coordinated flag ON:** set `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` on app + worker; confirm **no queued jobs** and scheduled exchange still **OFF**.
+6. **Standard dry-run** (regular-update or admin 1C update UI on lk.tandoor.ru) → capture `verificationFingerprint` (bundle + roster stable read).
+7. **Exactly one owner-approved manual apply** with matching `--expected-fingerprint` / admin apply action.
+8. **Post-apply verification:** DB sample (`onec_holding_v2_*`, F1–F5), API scoped reads, UI sample (composition, type/category v2). Repeat identical bundle → **`NO_CHANGES`** without a new success import run.
 
 ## Dry-run (staging / test-DB)
 
-- Legacy apply with flag OFF — F1–F5 regressions unchanged.
-- Flag ON: `readStableImportBundle` validates v2 contract; apply runs clients + reconcile atomically.
-- Repeat apply → `NO_CHANGES` (gate includes v2 normalized hash).
+- Flag OFF: legacy validation; v2 apply blocked.
+- Flag ON: `readStableImportBundle` uses explicit v2 contract; apply writes clients + reconcile atomically.
+- Gate compares **persisted v2 tables vs desired projection** (not stale `apply_state` alone).
+- Repeat apply → `NO_CHANGES` when fingerprint and F1–F5/G3/roster unchanged.
 
 ## Rollback
 
@@ -53,18 +61,20 @@ Returning legacy **code** after a successful v2 apply does **not** automatically
 ## Verification (local CI)
 
 ```bash
+export TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test
 npm run typecheck && npm run build
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-stable-read.test.ts
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-pipeline.test.ts
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-reconcile.test.ts
-node --import tsx --test --test-concurrency=1 test/integration/clients-holding-v2-api.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-outlet-drift.test.ts
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-regular-update-backfill.test.ts
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-pipeline-lock.test.ts
-node --import tsx --test --test-concurrency=1 test/browser/holding-v2-e2e.browser.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/clients-holding-v2-api.test.ts
+node --import tsx --test test/browser/holding-v2-e2e.browser.test.ts
 ```
 
 ## Out of scope
 
-- Production merge/deploy/migrate by agent
+- Production merge/deploy/migrate by agent without owner approval
 - Enabling scheduled exchange
 - Holding-based scope/grant expansion

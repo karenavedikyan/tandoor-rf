@@ -128,6 +128,7 @@ export type ClientListItemDto = {
   };
   holdingV2CompositionLabel?: string;
   holdingV2TypeCategoryLabel?: string;
+  holdingV2NameCategoryLabel?: string;
 };
 
 export type ClientDetailDto = {

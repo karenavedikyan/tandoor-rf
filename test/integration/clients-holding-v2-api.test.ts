@@ -110,6 +110,8 @@ describe("clients API holding v2 exchange fields", { concurrency: false }, () =>
     assert.equal(card.status, 200);
     assert.equal(card.body.client?.holdingV2?.compositionSiteType, "mono");
     assert.match(card.body.client?.holdingV2?.typeCategory?.nameType?.label ?? "", /API Type Name/);
+    assert.equal(card.body.client?.holdingV2?.compositionAccess?.kind, "visible");
+    assert.ok(card.body.client?.holdingV2?.compositionDetail?.legalEntities?.length);
 
     const list = await request(app)
       .get("/api/clients?page=1&pageSize=50")
