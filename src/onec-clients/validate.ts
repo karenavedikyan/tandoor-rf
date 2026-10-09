@@ -58,6 +58,7 @@ export function validateClientsFileBytes(
         holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
         employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
         wholesaleCompositionMode: payload.wholesaleCompositionMode,
+        holdingExchangeSchema: payload.holdingExchangeSchema,
       },
     };
   }
@@ -73,7 +74,19 @@ export function validateClientsFileBytes(
       holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
       employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
       wholesaleCompositionMode: payload.wholesaleCompositionMode,
+      holdingExchangeSchema: payload.holdingExchangeSchema,
     },
   };
+}
+
+/** Confirmed 1C holding contract (v2) — diagnostic validation; production apply remains blocked until storage PR. */
+export function validateHoldingV2ClientsFileBytes(
+  bytes: Buffer,
+  limits?: ValidateClientsLimits,
+): ValidationResult {
+  return validateClientsFileBytes(bytes, {
+    ...limits,
+    holdingExchangeSchema: "v2",
+  });
 }
 
