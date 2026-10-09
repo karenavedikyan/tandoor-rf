@@ -27,9 +27,14 @@ export function safeIssue(issue: {
 
 export function summarizeTypeCategoryFromRecords(records: ParsedExtendedClientRecord[]): {
   rowsWithTypeCategoryObject: number;
+  rowsWithTypeCategoryFieldKeys: number;
 } {
   let rowsWithTypeCategoryObject = 0;
+  let rowsWithTypeCategoryFieldKeys = 0;
   for (const record of records) {
+    if (record.typeCategory.objectPresentInSource) {
+      rowsWithTypeCategoryObject += 1;
+    }
     const presence = record.typeCategory.fieldPresence;
     if (
       presence.guidType ||
@@ -37,10 +42,10 @@ export function summarizeTypeCategoryFromRecords(records: ParsedExtendedClientRe
       presence.guidCategory ||
       presence.nameCategory
     ) {
-      rowsWithTypeCategoryObject += 1;
+      rowsWithTypeCategoryFieldKeys += 1;
     }
   }
-  return { rowsWithTypeCategoryObject };
+  return { rowsWithTypeCategoryObject, rowsWithTypeCategoryFieldKeys };
 }
 
 export function buildHoldingV2DiagnoseReport(
@@ -69,6 +74,7 @@ export function buildHoldingV2DiagnoseReport(
     typeCategoryStats: {
       recordCount: null as number | null,
       rowsWithTypeCategoryObject: 0,
+      rowsWithTypeCategoryFieldKeys: 0,
       invalidCount: invalidTypeCategoryCount,
     },
     diagnosticsTallies: null as Record<string, number> | null,
@@ -99,6 +105,7 @@ export function buildHoldingV2DiagnoseReport(
   base.typeCategoryStats = {
     recordCount: payload.recordCount,
     rowsWithTypeCategoryObject: typeCategoryRows.rowsWithTypeCategoryObject,
+    rowsWithTypeCategoryFieldKeys: typeCategoryRows.rowsWithTypeCategoryFieldKeys,
     invalidCount: invalidTypeCategoryCount,
   };
   base.diagnosticsTallies = diagnostics

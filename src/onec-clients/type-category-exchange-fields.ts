@@ -3,6 +3,8 @@ export type ParsedTypeCategoryExchange = {
   nameType: string | null;
   guidCategory: string | null;
   nameCategory: string | null;
+  /** Source row included `type_category` as an object (including `{}`). */
+  objectPresentInSource: boolean;
   fieldPresence: {
     guidType: boolean;
     nameType: boolean;
@@ -17,6 +19,7 @@ export function createEmptyTypeCategoryExchange(): ParsedTypeCategoryExchange {
     nameType: null,
     guidCategory: null,
     nameCategory: null,
+    objectPresentInSource: false,
     fieldPresence: {
       guidType: false,
       nameType: false,
@@ -48,6 +51,7 @@ export function parseTypeCategoryExchangeFields(value: unknown): {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { typeCategory, invalid: true };
   }
+  typeCategory.objectPresentInSource = true;
   const raw = value as Record<string, unknown>;
   const guidType = readStringField(raw.guid_type);
   if (!guidType.ok) {

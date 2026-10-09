@@ -50,17 +50,28 @@ export function validateClientsFileBytes(
 
   const payload = extended.payload;
   if (payload.sourceFormat === "legacy") {
+    const legacyCompatible = {
+      ...toLegacyValidatedPayload(payload),
+      sourceFormat: "legacy" as const,
+      extendedDiagnostics: payload.diagnostics,
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
+      wholesaleCompositionMode: payload.wholesaleCompositionMode,
+      holdingExchangeSchema: payload.holdingExchangeSchema,
+      holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
+    };
+    if (payload.holdingExchangeSchema === "v2") {
+      return {
+        ok: true,
+        payload: {
+          ...legacyCompatible,
+          extendedRecords: payload.records,
+        },
+      };
+    }
     return {
       ok: true,
-      payload: {
-        ...toLegacyValidatedPayload(payload),
-        extendedDiagnostics: payload.diagnostics,
-        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
-        employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
-        wholesaleCompositionMode: payload.wholesaleCompositionMode,
-        holdingExchangeSchema: payload.holdingExchangeSchema,
-        holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
-      },
+      payload: legacyCompatible,
     };
   }
 

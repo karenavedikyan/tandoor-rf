@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
+import { buildHoldingV2DiagnoseReport } from "../../scripts/holding-v2-diagnose-clients-file.ts";
 import { applyClientsImport } from "../../src/onec-clients/apply";
 import {
   analyzeOutletsForHoldingComposition,
@@ -26,6 +31,36 @@ const M2 = "a1000000-0000-4000-8000-000000000011";
 const S1 = "b1000000-0000-4000-8000-000000000001";
 const S2 = "b1000000-0000-4000-8000-000000000002";
 const S3 = "b1000000-0000-4000-8000-000000000003";
+
+function sumCompositionTallies(
+  dist: NonNullable<
+    import("../../src/onec-clients/holding-v2-diagnostics").HoldingV2DiagnosticsSummary["compositionTypeDistribution"]
+  >,
+): number {
+  return (
+    dist.mono +
+    dist.mono_network +
+    dist.group +
+    dist.group_network +
+    dist.no_active_outlets +
+    dist.unknown
+  );
+}
+
+function assertSuccessfulV2BundleInvariants(
+  result: Extract<
+    ReturnType<typeof validateHoldingV2ClientsFileBytes>,
+    { ok: true }
+  >,
+): void {
+  const d = result.payload.holdingV2Diagnostics!;
+  const dist = d.compositionTypeDistribution;
+  assert.equal(sumCompositionTallies(dist), d.holdingRootCount);
+  assert.ok(
+    d.legalEntityRowCount >=
+      d.holdingRootCount + dist.group + dist.group_network,
+  );
+}
 
 describe("holding v2 exchange contract", () => {
   it("1) self-ref head without holding flag passes v2; legacy-shaped empty guid_holding fails v2", () => {
@@ -233,6 +268,66 @@ describe("holding v2 exchange contract", () => {
     assert.ok(legacy.issues.some((i) => i.code === "HOLDING_SELF_REFERENCE"));
   });
 
+  it("legacy-shaped v2 head keeps extendedRecords and type_category without extended markers", async () => {
+    const bytes = buildClientsFileBytes([
+      {
+        ...sampleClient({ guid_client: H1, guid_holding: H1, name_holding: "H" }),
+        type_category: typeCategory({ guid_type: "legacy-v2-type" }),
+      },
+    ]);
+    const legacyDefault = validateClientsFileBytes(bytes);
+    assert.equal(legacyDefault.ok, true);
+    if (!legacyDefault.ok) return;
+    assert.equal(legacyDefault.payload.extendedRecords, undefined);
+
+    const v2 = validateHoldingV2ClientsFileBytes(bytes);
+    assert.equal(v2.ok, true);
+    if (!v2.ok) return;
+    assert.equal(v2.payload.sourceFormat, "legacy");
+    const ext = v2.payload.extendedRecords!;
+    assert.equal(ext.length, 1);
+    assert.equal(ext[0]!.typeCategory.guidType, "legacy-v2-type");
+    assert.equal(ext[0]!.fieldPresence.retailOutlets, "missing");
+    assert.equal(ext[0]!.typeCategory.objectPresentInSource, true);
+
+    const report = buildHoldingV2DiagnoseReport(v2, { origin: "synthetic" });
+    const stats = report.typeCategoryStats as {
+      rowsWithTypeCategoryObject: number;
+      rowsWithTypeCategoryFieldKeys: number;
+    };
+    assert.equal(stats.rowsWithTypeCategoryObject, 1);
+    assert.equal(stats.rowsWithTypeCategoryFieldKeys, 1);
+
+    const emptyObjectBytes = buildClientsFileBytes([
+      {
+        ...sampleClient({ guid_client: H1, guid_holding: H1, name_holding: "H" }),
+        type_category: {},
+      },
+    ]);
+    const emptyObj = validateHoldingV2ClientsFileBytes(emptyObjectBytes);
+    assert.equal(emptyObj.ok, true);
+    if (!emptyObj.ok) return;
+    const row = emptyObj.payload.extendedRecords![0]!;
+    assert.equal(row.typeCategory.objectPresentInSource, true);
+    assert.equal(row.typeCategory.fieldPresence.guidType, false);
+    const emptyReport = buildHoldingV2DiagnoseReport(emptyObj, { origin: "synthetic" });
+    const emptyStats = emptyReport.typeCategoryStats as {
+      rowsWithTypeCategoryObject: number;
+      rowsWithTypeCategoryFieldKeys: number;
+    };
+    assert.equal(emptyStats.rowsWithTypeCategoryObject, 1);
+    assert.equal(emptyStats.rowsWithTypeCategoryFieldKeys, 0);
+
+    const fp = verificationFingerprintFromPayload({ payload: v2.payload });
+    const applyResult = await applyClientsImport({
+      payload: v2.payload,
+      expectedVerificationFingerprint: fp,
+    });
+    assert.equal(applyResult.ok, false);
+    if (applyResult.ok) return;
+    assert.equal(applyResult.code, "APPLY_BLOCKED");
+  });
+
   it("9) independent type_category values", () => {
     const bytes = buildHoldingV2FileBytes([
       headRow(H1, {
@@ -247,6 +342,43 @@ describe("holding v2 exchange contract", () => {
     const ext = result.payload.extendedRecords!;
     assert.equal(ext.find((r) => r.guid_client === H1)!.typeCategory.guidType, "t-head");
     assert.equal(ext.find((r) => r.guid_client === M2)!.typeCategory.guidType, "t-mem");
+    const outlet = ext.find((r) => r.guid_client === H1)!.retailOutlets[0]!;
+    assert.equal(outlet.typeCategory.guidType, "t-out");
+    assert.equal(outlet.typeCategory.objectPresentInSource, true);
+  });
+
+  it("outlet without type_category does not inherit head type_category", () => {
+    const bytes = buildHoldingV2FileBytes([
+      headRow(H1, {
+        type_category: typeCategory({ guid_type: "t-head" }),
+        retail_outlets: [minimalOutlet(S1)],
+      }),
+    ]);
+    const result = validateHoldingV2ClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const head = result.payload.extendedRecords!.find((r) => r.guid_client === H1)!;
+    assert.equal(head.typeCategory.guidType, "t-head");
+    const outlet = head.retailOutlets[0]!;
+    assert.equal(outlet.typeCategory.objectPresentInSource, false);
+    assert.equal(outlet.typeCategory.guidType, null);
+  });
+
+  it("transfer member legal entity between holdings across snapshots", () => {
+    const snapA = buildHoldingV2FileBytes([
+      headRow(H1, { retail_outlets: [minimalOutlet(S1)] }),
+      memberRow(M2, H1),
+    ]);
+    const snapB = buildHoldingV2FileBytes([
+      headRow(H1, { retail_outlets: [minimalOutlet(S1)] }),
+      headRow(H2, { retail_outlets: [minimalOutlet(S2)] }),
+      memberRow(M2, H2),
+    ]);
+    assert.equal(validateHoldingV2ClientsFileBytes(snapA).ok, true);
+    const b = validateHoldingV2ClientsFileBytes(snapB);
+    assert.equal(b.ok, true);
+    if (!b.ok) return;
+    assert.equal(b.payload.extendedRecords!.find((r) => r.guid_client === M2)!.guid_holding, H2);
   });
 
   it("12) v2 payload APPLY_BLOCKED before DB", async () => {
@@ -277,13 +409,57 @@ describe("holding v2 exchange contract", () => {
     assert.equal(dist.mono_network, 0);
     assert.equal(dist.group, 0);
     assert.equal(dist.group_network, 2320);
+    assert.equal(result.payload.recordCount, 5062);
     assert.equal(result.payload.holdingV2Diagnostics!.holdingRootCount, 2742);
+    assert.equal(result.payload.holdingV2Diagnostics!.legalEntityRowCount, 5062);
+    assertSuccessfulV2BundleInvariants(result);
     assert.equal(
       result.payload.extendedRecords!.filter(
         (r) => r.guid_holding && r.guid_client === r.guid_holding,
       ).length,
       2742,
     );
+    const diagReport = buildHoldingV2DiagnoseReport(result, { origin: "synthetic" });
+    const tc = diagReport.typeCategoryStats as { rowsWithTypeCategoryObject: number };
+    assert.equal(tc.rowsWithTypeCategoryObject, 5062);
+  });
+
+  it("diagnose CLI stdout/stderr do not leak audit path tokens", () => {
+    const secret = "syn-secret-audit-token-do-not-print";
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "holding-v2-audit-"));
+    const nested = path.join(dir, secret);
+    fs.mkdirSync(nested);
+    const filePath = path.join(nested, "clients.json");
+    fs.writeFileSync(
+      filePath,
+      buildHoldingV2FileBytes([headRow(H1, { retail_outlets: [minimalOutlet(S1)] })]),
+    );
+    try {
+      const env = { ...process.env, AUDIT_CLIENTS_PATH: filePath };
+      const okRun = spawnSync(
+        "node",
+        ["--import", "tsx", "scripts/holding-v2-diagnose-clients-file.ts"],
+        { cwd: process.cwd(), env, encoding: "utf8" },
+      );
+      assert.equal(okRun.status, 0);
+      assert.ok(!okRun.stdout.includes(secret));
+      assert.ok(!okRun.stderr.includes(secret));
+      assert.ok(!okRun.stdout.includes(filePath));
+
+      const missingRun = spawnSync(
+        "node",
+        ["--import", "tsx", "scripts/holding-v2-diagnose-clients-file.ts"],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, AUDIT_CLIENTS_PATH: path.join(nested, "missing.json") },
+          encoding: "utf8",
+        },
+      );
+      assert.ok(!missingRun.stdout.includes(secret));
+      assert.ok(!missingRun.stderr.includes(secret));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("analyzeOutletsForHoldingComposition unit edge cases", () => {
