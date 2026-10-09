@@ -29,10 +29,13 @@ import {
   resolveClientManagerRosterState,
 } from "./manager-status";
 import type { WholesaleCompositionMode } from "./wholesale-composition";
+import type { HoldingV2DiagnosticsSummary } from "./holding-v2-diagnostics";
 import {
   annotateHoldingV2LinkStates,
   validateHoldingV2Structure,
+  validateOutletGuidsForHoldingV2,
   type HoldingExchangeSchema,
+  type IndexedClientRecord,
 } from "./holding-v2-structure";
 import { sha256Hex } from "./sha256";
 import {
@@ -917,6 +920,7 @@ function validateRetailOutlets(
   warnings: ExtendedValidationWarning[],
   issueCount: { value: number },
   warningCount: { value: number },
+  holdingExchangeSchema: HoldingExchangeSchema = "legacy",
 ): ParsedRetailOutlet[] | null {
   if (raw === undefined) {
     return [];
@@ -1095,7 +1099,7 @@ function validateRetailOutlets(
     }
 
     let outletTypeCategory = createEmptyTypeCategoryExchange();
-    if ("type_category" in item) {
+    if (holdingExchangeSchema === "v2" && "type_category" in item) {
       const parsedOutletType = parseTypeCategoryExchangeFields(item.type_category);
       if (parsedOutletType.invalid) {
         pushIssue(
@@ -1240,6 +1244,7 @@ function validateExtendedRecord(
   warnings: ExtendedValidationWarning[],
   issueCount: { value: number },
   warningCount: { value: number },
+  holdingExchangeSchema: HoldingExchangeSchema = "legacy",
 ): ParsedExtendedClientRecord | null {
   if (raw === null) {
     pushIssue(issues, { code: "NULL_RECORD", index }, issueCount);
@@ -1334,6 +1339,7 @@ function validateExtendedRecord(
       warnings,
       issueCount,
       warningCount,
+      holdingExchangeSchema,
     );
     if (parsedOutlets === null) {
       return null;
@@ -1374,7 +1380,7 @@ function validateExtendedRecord(
   }
 
   let typeCategory = createEmptyTypeCategoryExchange();
-  if ("type_category" in raw) {
+  if (holdingExchangeSchema === "v2" && "type_category" in raw) {
     const parsedTypeCategory = parseTypeCategoryExchangeFields(raw.type_category);
     if (parsedTypeCategory.invalid) {
       pushIssue(issues, { code: "INVALID_TYPE_CATEGORY", field: "type_category", index }, issueCount);
@@ -1818,6 +1824,7 @@ export function validateExtendedClientsFileBytes(
 
   const sourceFormat = detectClientsSourceFormat(parsed);
   const records: ParsedExtendedClientRecord[] = [];
+  const recordSourceIndices: number[] = [];
   const seenClients = new Set<string>();
   const rejectedClientGuids = new Set<string>();
 
@@ -1830,6 +1837,7 @@ export function validateExtendedClientsFileBytes(
       warnings,
       issueCount,
       warningCount,
+      holdingExchangeSchema,
     );
     if (record === null) {
       const rejectedGuid = extractRejectedClientGuid(parsed[index]);
@@ -1844,33 +1852,39 @@ export function validateExtendedClientsFileBytes(
     }
     seenClients.add(record.guid_client);
     records.push(record);
+    recordSourceIndices.push(index);
   }
 
   const holdingErrorsBefore = issueCount.value;
   const holdingGuidStats = { holdingGuidUnknownCount: 0, holdingGuidRejectedCount: 0 };
   let outletGuidStats = { duplicateOutletGuidCount: 0, outletParentLinkConflicts: 0 };
-  if (sourceFormat === "extended_v1") {
-    if (holdingExchangeSchema === "v2") {
-      validateHoldingV2Structure(records, parsed, issues, issueCount);
-      outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
-      applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
-      annotateHoldingV2LinkStates(records);
-    } else {
-      detectHoldingCycles(
-        records,
-        rejectedClientGuids,
-        holdingLinkPolicy,
-        issues,
-        warnings,
-        issueCount,
-        warningCount,
-        holdingGuidStats,
-      );
-      validateHoldingTargets(records, issues, issueCount);
-      outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
-      applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
-      annotateHoldingLinkStates(records);
-    }
+  let holdingV2Diagnostics: HoldingV2DiagnosticsSummary | null = null;
+
+  if (holdingExchangeSchema === "v2") {
+    const indexedRecords: IndexedClientRecord[] = records.map((record, i) => ({
+      record,
+      sourceIndex: recordSourceIndices[i]!,
+    }));
+    const v2Result = validateHoldingV2Structure(indexedRecords, parsed, issues, issueCount);
+    holdingV2Diagnostics = v2Result.diagnostics;
+    outletGuidStats = validateOutletGuidsForHoldingV2(indexedRecords, issues, issueCount);
+    applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
+    annotateHoldingV2LinkStates(records);
+  } else if (sourceFormat === "extended_v1") {
+    detectHoldingCycles(
+      records,
+      rejectedClientGuids,
+      holdingLinkPolicy,
+      issues,
+      warnings,
+      issueCount,
+      warningCount,
+      holdingGuidStats,
+    );
+    validateHoldingTargets(records, issues, issueCount);
+    outletGuidStats = validateOutletGuidsAcrossFile(records, issues, warnings, issueCount, warningCount);
+    applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
+    annotateHoldingLinkStates(records);
   } else if (employeeRoster != null) {
     applyEmployeeRosterToRecords(records, employeeRoster, warnings, warningCount);
   }
@@ -1927,6 +1941,7 @@ export function validateExtendedClientsFileBytes(
       employeeRosterSourceSha256: employeeRoster?.sourceSha256 ?? null,
       wholesaleCompositionMode,
       holdingExchangeSchema,
+      holdingV2Diagnostics,
       issueCodes: [...issueCodes].sort(),
       warningCodes: [...warningCodes].sort(),
       issuesTruncated: false,

@@ -16,12 +16,61 @@ export const HOLDING_COMPOSITION_SITE_LABELS: Record<HoldingCompositionSiteType,
   unknown: "Неизвестно",
 };
 
+export type OutletCompositionAnalysis = {
+  activeUniqueGuidCount: number;
+  closedUniqueGuidCount: number;
+  unknownClosureGuidCount: number;
+  rowsWithoutGuidStore: number;
+  /** False when closure or guid identity is insufficient for site type. */
+  compositionDataComplete: boolean;
+};
+
+export function analyzeOutletsForHoldingComposition(
+  outlets: Array<{
+    closureStatus: string;
+    guidStore: string | null;
+    outletGuidStatus: string;
+  }>,
+): OutletCompositionAnalysis {
+  const active = new Set<string>();
+  const closed = new Set<string>();
+  const unknownClosure = new Set<string>();
+  let rowsWithoutGuidStore = 0;
+  let compositionDataComplete = true;
+
+  for (const outlet of outlets) {
+    if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore?.trim()) {
+      rowsWithoutGuidStore += 1;
+      compositionDataComplete = false;
+      continue;
+    }
+    const g = outlet.guidStore.trim().toLowerCase();
+    if (outlet.closureStatus === "open") {
+      active.add(g);
+    } else if (outlet.closureStatus === "closed") {
+      closed.add(g);
+    } else {
+      unknownClosure.add(g);
+      compositionDataComplete = false;
+    }
+  }
+
+  return {
+    activeUniqueGuidCount: active.size,
+    closedUniqueGuidCount: closed.size,
+    unknownClosureGuidCount: unknownClosure.size,
+    rowsWithoutGuidStore,
+    compositionDataComplete,
+  };
+}
+
 export function classifyHoldingCompositionSiteType(input: {
   legalEntityCount: number;
   activeOutletCount: number;
   membershipComplete: boolean;
+  compositionDataComplete: boolean;
 }): HoldingCompositionSiteType {
-  if (!input.membershipComplete || input.legalEntityCount <= 0) {
+  if (!input.membershipComplete || input.legalEntityCount <= 0 || !input.compositionDataComplete) {
     return "unknown";
   }
   if (input.activeOutletCount <= 0) {
@@ -42,21 +91,14 @@ export function classifyHoldingCompositionSiteType(input: {
   return "unknown";
 }
 
+/** @deprecated use analyzeOutletsForHoldingComposition */
 export function countActiveOutlets(
   outlets: Array<{ closureStatus: string; guidStore: string | null }>,
 ): number {
-  const seen = new Set<string>();
-  for (const outlet of outlets) {
-    if (outlet.closureStatus === "closed") {
-      continue;
-    }
-    if (outlet.closureStatus !== "open") {
-      continue;
-    }
-    const g = (outlet.guidStore ?? "").trim().toLowerCase();
-    if (g) {
-      seen.add(g);
-    }
-  }
-  return seen.size;
+  return analyzeOutletsForHoldingComposition(
+    outlets.map((o) => ({
+      ...o,
+      outletGuidStatus: o.guidStore ? "confirmed" : "not_provided",
+    })),
+  ).activeUniqueGuidCount;
 }

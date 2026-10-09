@@ -59,6 +59,7 @@ export function validateClientsFileBytes(
         employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
         wholesaleCompositionMode: payload.wholesaleCompositionMode,
         holdingExchangeSchema: payload.holdingExchangeSchema,
+        holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
       },
     };
   }
@@ -75,9 +76,12 @@ export function validateClientsFileBytes(
       employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
       wholesaleCompositionMode: payload.wholesaleCompositionMode,
       holdingExchangeSchema: payload.holdingExchangeSchema,
+      holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
     },
   };
 }
+
+export type { HoldingV2DiagnosticsSummary } from "./holding-v2-diagnostics";
 
 /** Confirmed 1C holding contract (v2) — diagnostic validation; production apply remains blocked until storage PR. */
 export function validateHoldingV2ClientsFileBytes(

@@ -372,4 +372,5 @@ export type ValidatedExtendedClientsPayload = {
   employeeRosterSourceSha256?: string | null;
   wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
   holdingExchangeSchema?: import("./holding-v2-structure").HoldingExchangeSchema;
+  holdingV2Diagnostics?: import("./holding-v2-diagnostics").HoldingV2DiagnosticsSummary | null;
 };
