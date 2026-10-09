@@ -65,6 +65,13 @@ export function buildHoldingV2DiagnoseReport(
     warningCount: validated.ok ? validated.payload.warningCount : validated.warningCount,
     issueCodes: validated.ok ? [] : validated.issueCodes ?? [],
     sampleIssues: validated.ok ? [] : validated.issues.slice(0, 20).map(safeIssue),
+    compositionTallies: null as Record<string, number> | null,
+    typeCategoryStats: {
+      recordCount: null as number | null,
+      rowsWithTypeCategoryObject: 0,
+      invalidCount: invalidTypeCategoryCount,
+    },
+    diagnosticsTallies: null as Record<string, number> | null,
   };
 
   if (meta.sha256) {
@@ -78,9 +85,6 @@ export function buildHoldingV2DiagnoseReport(
   }
 
   if (!validated.ok) {
-    base.typeCategoryStats = {
-      invalidCount: invalidTypeCategoryCount,
-    };
     return base;
   }
 
@@ -90,30 +94,29 @@ export function buildHoldingV2DiagnoseReport(
   const typeCategoryRows = summarizeTypeCategoryFromRecords(extended);
   const extDiag = payload.extendedDiagnostics;
 
-  return {
-    ...base,
+  base.recordCount = payload.recordCount;
+  base.compositionTallies = diagnostics?.compositionTypeDistribution ?? null;
+  base.typeCategoryStats = {
     recordCount: payload.recordCount,
-    compositionTallies: diagnostics?.compositionTypeDistribution ?? null,
-    typeCategoryStats: {
-      recordCount: payload.recordCount,
-      rowsWithTypeCategoryObject: typeCategoryRows.rowsWithTypeCategoryObject,
-      invalidCount: invalidTypeCategoryCount,
-    },
-    diagnosticsTallies: diagnostics
-      ? {
-          legalEntityRowCount: diagnostics.legalEntityRowCount,
-          holdingRootCount: diagnostics.holdingRootCount,
-          uniqueOutletGuidCount: diagnostics.uniqueOutletGuidCount,
-          activeOutletGuidCount: diagnostics.activeOutletGuidCount,
-          closedOutletGuidCount: diagnostics.closedOutletGuidCount,
-          unknownClosureOutletGuidCount: diagnostics.unknownClosureOutletGuidCount,
-          outletRowsWithoutGuidStore: diagnostics.outletRowsWithoutGuidStore,
-          duplicateOutletGuidCount: extDiag?.duplicateOutletGuidCount ?? 0,
-          outletParentLinkConflicts: extDiag?.outletParentLinkConflicts ?? 0,
-          holdingLinkErrors: extDiag?.holdingLinkErrors ?? 0,
-        }
-      : null,
+    rowsWithTypeCategoryObject: typeCategoryRows.rowsWithTypeCategoryObject,
+    invalidCount: invalidTypeCategoryCount,
   };
+  base.diagnosticsTallies = diagnostics
+    ? {
+        legalEntityRowCount: diagnostics.legalEntityRowCount,
+        holdingRootCount: diagnostics.holdingRootCount,
+        uniqueOutletGuidCount: diagnostics.uniqueOutletGuidCount,
+        activeOutletGuidCount: diagnostics.activeOutletGuidCount,
+        closedOutletGuidCount: diagnostics.closedOutletGuidCount,
+        unknownClosureOutletGuidCount: diagnostics.unknownClosureOutletGuidCount,
+        outletRowsWithoutGuidStore: diagnostics.outletRowsWithoutGuidStore,
+        duplicateOutletGuidCount: extDiag?.duplicateOutletGuidCount ?? 0,
+        outletParentLinkConflicts: extDiag?.outletParentLinkConflicts ?? 0,
+        holdingLinkErrors: extDiag?.holdingLinkErrors ?? 0,
+      }
+    : null;
+
+  return base;
 }
 
 async function main(): Promise<void> {
