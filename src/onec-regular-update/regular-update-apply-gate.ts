@@ -16,6 +16,7 @@ import { clientCodeExchangeIncomingDiffersFromStored } from "../onec-clients/cli
 import { clientContractExchangeIncomingDiffersFromStored } from "../onec-clients/client-contract-persisted-diff";
 import { counterpartyExchangeIncomingDiffersFromStored } from "../onec-clients/counterparty-persisted-diff";
 import { wholesaleExchangeIncomingDiffersFromStored } from "../onec-clients/wholesale-exchange-persisted-diff";
+import { holdingV2ReconcileIncomingDiffersFromStored } from "../onec-clients/holding-v2-reconcile-persisted-diff";
 import { detectAmbiguousRosterShrink } from "./roster-shrink-guard";
 
 export type RegularUpdateApplyGateResult =
@@ -93,12 +94,14 @@ export async function runRegularUpdateApplyGate(
     const counterpartyUnchanged = !(await counterpartyExchangeIncomingDiffersFromStored(client, input.payload));
     const clientContractUnchanged = !(await clientContractExchangeIncomingDiffersFromStored(client, input.payload));
     const clientCodeUnchanged = !(await clientCodeExchangeIncomingDiffersFromStored(client, input.payload));
+    const holdingV2Unchanged = !(await holdingV2ReconcileIncomingDiffersFromStored(client, input.payload));
     if (
       rosterUnchanged &&
       wholesaleUnchanged &&
       counterpartyUnchanged &&
       clientContractUnchanged &&
-      clientCodeUnchanged
+      clientCodeUnchanged &&
+      holdingV2Unchanged
     ) {
       return { ok: true, unchangedBundle: true };
     }

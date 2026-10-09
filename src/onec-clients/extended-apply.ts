@@ -486,7 +486,10 @@ export function buildExtendedSnapshotJson(
 export { extendedBusinessDataEqual };
 
 export function isExtendedApplyPayload(payload: ValidatedClientsPayload): boolean {
-  return payload.sourceFormat === "extended_v1" && Array.isArray(payload.extendedRecords);
+  return (
+    Array.isArray(payload.extendedRecords) &&
+    (payload.sourceFormat === "extended_v1" || payload.holdingExchangeSchema === "v2")
+  );
 }
 
 export function isExtendedContractVerified(payload: ValidatedClientsPayload): boolean {
@@ -498,6 +501,12 @@ export function resolveExtendedRecordsForApply(
 ): Map<string, ParsedExtendedClientRecord> {
   const map = new Map<string, ParsedExtendedClientRecord>();
   if (!isExtendedApplyPayload(payload)) {
+    return map;
+  }
+  if (payload.holdingExchangeSchema === "v2") {
+    for (const record of payload.extendedRecords!) {
+      map.set(record.guid_client, record);
+    }
     return map;
   }
   for (const record of payload.extendedRecords!) {

@@ -105,6 +105,7 @@ export type RetailOutletDto = {
   presentInCurrentExport: boolean;
   dataSourceLabel: string;
   freshnessLabel: string;
+  holdingV2?: import("./holding-v2-exchange").HoldingV2OutletExchangeDto;
 };
 
 export type ClientExtendedManagersDto = {

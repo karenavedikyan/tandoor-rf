@@ -129,6 +129,9 @@
   var discountProgramFilter = document.getElementById("discount-program-filter");
   var onecTop150Filter = document.getElementById("onec-top150-filter");
   var onecCategoryFilter = document.getElementById("onec-category-filter");
+  var holdingV2CompositionFilter = document.getElementById("holding-v2-composition-filter");
+  var holdingV2NameTypeFilter = document.getElementById("holding-v2-name-type-filter");
+  var holdingV2NameCategoryFilter = document.getElementById("holding-v2-name-category-filter");
   var onecCounterpartyFilter = document.getElementById("onec-counterparty-filter");
   var onecFullNameFilter = document.getElementById("onec-full-name-filter");
   var onecLegalTypeFilter = document.getElementById("onec-legal-type-filter");
@@ -1029,6 +1032,9 @@
       discountProgram: discountProgramFilter ? discountProgramFilter.value.trim() : "",
       onecTop150: onecTop150Filter ? onecTop150Filter.value : "",
       onecCategory: onecCategoryFilter ? onecCategoryFilter.value : "",
+      holdingV2Composition: holdingV2CompositionFilter ? holdingV2CompositionFilter.value : "",
+      holdingV2NameType: holdingV2NameTypeFilter ? holdingV2NameTypeFilter.value : "",
+      holdingV2NameCategory: holdingV2NameCategoryFilter ? holdingV2NameCategoryFilter.value : "",
       onecCounterpartyContains: onecCounterpartyFilter ? onecCounterpartyFilter.value.trim() : "",
       onecFullNameContains: onecFullNameFilter ? onecFullNameFilter.value.trim() : "",
       onecLegalEntityType: onecLegalTypeFilter ? onecLegalTypeFilter.value : "",
@@ -1191,6 +1197,11 @@
     if (discountProgramFilter) discountProgramFilter.value = state.discountProgram || "";
     if (onecTop150Filter) onecTop150Filter.value = state.onecTop150 || "";
     if (onecCategoryFilter) onecCategoryFilter.value = state.onecCategory || "";
+    if (holdingV2CompositionFilter) holdingV2CompositionFilter.value = state.holdingV2Composition || "";
+    if (holdingV2NameTypeFilter) holdingV2NameTypeFilter.value = state.holdingV2NameType || "";
+    if (holdingV2NameCategoryFilter) {
+      holdingV2NameCategoryFilter.value = state.holdingV2NameCategory || "";
+    }
     if (onecCounterpartyFilter) onecCounterpartyFilter.value = state.onecCounterpartyContains || "";
     if (onecFullNameFilter) onecFullNameFilter.value = state.onecFullNameContains || "";
     if (onecLegalTypeFilter) onecLegalTypeFilter.value = state.onecLegalEntityType || "";
@@ -1931,6 +1942,24 @@
         return renderNoDataCell();
       }
       return shell.escapeHtml(item.onecCategory.label || "—");
+    }
+    if (columnId === "holdingV2CompositionLabel") {
+      if (!item.holdingV2CompositionLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2CompositionLabel);
+    }
+    if (columnId === "holdingV2TypeCategoryLabel") {
+      if (!item.holdingV2TypeCategoryLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2TypeCategoryLabel);
+    }
+    if (columnId === "holdingV2NameCategoryLabel") {
+      if (!item.holdingV2NameCategoryLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2NameCategoryLabel);
     }
     if (columnId === "onecCounterparty") {
       if (!item.onecCounterparty || !item.onecCounterparty.hasSource) {
@@ -3935,6 +3964,39 @@
         });
         onecCategoryFilter.value = categoryCurrent;
       }
+      if (holdingV2CompositionFilter) {
+        var compositionCurrent = holdingV2CompositionFilter.value;
+        holdingV2CompositionFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.holdingV2CompositionValues || []).forEach(function (opt) {
+          var compOption = document.createElement("option");
+          compOption.value = opt.id;
+          compOption.textContent = opt.name;
+          holdingV2CompositionFilter.appendChild(compOption);
+        });
+        holdingV2CompositionFilter.value = compositionCurrent;
+      }
+      if (holdingV2NameTypeFilter) {
+        var hv2TypeCurrent = holdingV2NameTypeFilter.value;
+        holdingV2NameTypeFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.holdingV2NameTypeValues || []).forEach(function (opt) {
+          var typeOption = document.createElement("option");
+          typeOption.value = opt.id;
+          typeOption.textContent = opt.name;
+          holdingV2NameTypeFilter.appendChild(typeOption);
+        });
+        holdingV2NameTypeFilter.value = hv2TypeCurrent;
+      }
+      if (holdingV2NameCategoryFilter) {
+        var hv2CatCurrent = holdingV2NameCategoryFilter.value;
+        holdingV2NameCategoryFilter.innerHTML = '<option value="">Все</option>';
+        (result.data.holdingV2NameCategoryValues || []).forEach(function (opt) {
+          var catOption = document.createElement("option");
+          catOption.value = opt.id;
+          catOption.textContent = opt.name;
+          holdingV2NameCategoryFilter.appendChild(catOption);
+        });
+        holdingV2NameCategoryFilter.value = hv2CatCurrent;
+      }
       if (onecLegalTypeFilter) {
         var legalCurrent = onecLegalTypeFilter.value;
         onecLegalTypeFilter.innerHTML = '<option value="">Все</option>';
@@ -4269,6 +4331,9 @@
     if (discountProgramFilter) discountProgramFilter.value = "";
     if (onecTop150Filter) onecTop150Filter.value = "";
     if (onecCategoryFilter) onecCategoryFilter.value = "";
+    if (holdingV2CompositionFilter) holdingV2CompositionFilter.value = "";
+    if (holdingV2NameTypeFilter) holdingV2NameTypeFilter.value = "";
+    if (holdingV2NameCategoryFilter) holdingV2NameCategoryFilter.value = "";
     if (onecCounterpartyFilter) onecCounterpartyFilter.value = "";
     if (onecFullNameFilter) onecFullNameFilter.value = "";
     if (onecLegalTypeFilter) onecLegalTypeFilter.value = "";
@@ -4336,6 +4401,9 @@
       discountProgram: "",
       onecTop150: "",
       onecCategory: "",
+      holdingV2Composition: "",
+      holdingV2NameType: "",
+      holdingV2NameCategory: "",
       onecCounterpartyContains: "",
       onecFullNameContains: "",
       onecLegalEntityType: "",
@@ -4518,6 +4586,9 @@
   [
     onecTop150Filter,
     onecCategoryFilter,
+    holdingV2CompositionFilter,
+    holdingV2NameTypeFilter,
+    holdingV2NameCategoryFilter,
     onecCounterpartyFilter,
     onecFullNameFilter,
     onecLegalTypeFilter,

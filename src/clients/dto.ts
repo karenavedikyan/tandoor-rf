@@ -126,6 +126,9 @@ export type ClientListItemDto = {
     hasSource: boolean;
     label: string;
   };
+  holdingV2CompositionLabel?: string;
+  holdingV2TypeCategoryLabel?: string;
+  holdingV2NameCategoryLabel?: string;
 };
 
 export type ClientDetailDto = {
@@ -152,6 +155,7 @@ export type ClientDetailDto = {
   lastImportedAt: string;
   lastImportedAtLabel: string;
   extended?: ClientExtendedDto;
+  holdingV2?: import("./holding-v2-exchange").HoldingV2ClientExchangeDto;
 };
 
 export type { ClientExtendedDto };
@@ -238,6 +242,9 @@ export type ClientsOptionsResponse = {
   /** Distinct категория 1С values in accessible clients (non-empty). */
   onecCategoryValues: ClientOptionDto[];
   onecLegalEntityTypeValues: ClientOptionDto[];
+  holdingV2CompositionValues: ClientOptionDto[];
+  holdingV2NameTypeValues: ClientOptionDto[];
+  holdingV2NameCategoryValues: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =

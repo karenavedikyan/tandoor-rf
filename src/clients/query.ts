@@ -16,6 +16,7 @@ import {
   type AssignmentPresenceMode,
 } from "./assignment-filter-modes";
 import { validateFilledEmptyFields } from "./field-filter-registry";
+import { parseHoldingV2CompositionFilterToken } from "./holding-v2-list-filters";
 import { parseSortBy, parseSortDirection, type ClientSortField, type OutletSortField } from "./sort";
 import { isValidUuidParam } from "./uuid-param";
 
@@ -111,6 +112,9 @@ export type ClientsListQuery = {
   discountProgram?: string;
   onecTop150?: string;
   onecCategory?: string;
+  holdingV2Composition?: string;
+  holdingV2NameType?: string;
+  holdingV2NameCategory?: string;
   onecCounterpartyContains?: string;
   onecFullNameContains?: string;
   onecLegalEntityType?: string;
@@ -491,6 +495,42 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
   }
   if (entityRaw === "outlets" && onecCategory) {
     return { ok: false, message: "Поле «onecCategory» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const holdingV2CompositionRaw = parseExactFilterField(input.holdingV2Composition);
+  if (holdingV2CompositionRaw === null) {
+    return { ok: false, message: "Некорректный фильтр состава холдинга (v2)." };
+  }
+  const holdingV2Composition = holdingV2CompositionRaw
+    ? parseHoldingV2CompositionFilterToken(holdingV2CompositionRaw)
+    : undefined;
+  if (holdingV2CompositionRaw && holdingV2Composition === null) {
+    return { ok: false, message: "Некорректный фильтр состава холдинга (v2)." };
+  }
+  if (entityRaw === "outlets" && holdingV2Composition) {
+    return {
+      ok: false,
+      message: "Поле «holdingV2Composition» недоступно для фильтрации в режиме торговых точек.",
+    };
+  }
+
+  const holdingV2NameType = parseExactFilterField(input.holdingV2NameType);
+  if (holdingV2NameType === null) {
+    return { ok: false, message: "Некорректный фильтр типа 1С (v2)." };
+  }
+  if (entityRaw === "outlets" && holdingV2NameType) {
+    return { ok: false, message: "Поле «holdingV2NameType» недоступно для фильтрации в режиме торговых точек." };
+  }
+
+  const holdingV2NameCategory = parseExactFilterField(input.holdingV2NameCategory);
+  if (holdingV2NameCategory === null) {
+    return { ok: false, message: "Некорректный фильтр категории 1С (v2)." };
+  }
+  if (entityRaw === "outlets" && holdingV2NameCategory) {
+    return {
+      ok: false,
+      message: "Поле «holdingV2NameCategory» недоступно для фильтрации в режиме торговых точек.",
+    };
   }
 
   const onecCounterpartyContains = parseOptionalSearchField(input.onecCounterpartyContains, "onecCounterpartyContains");
@@ -941,6 +981,9 @@ export function parseClientsListQuery(input: Record<string, unknown>): ParsedCli
       discountProgram,
       onecTop150,
       onecCategory,
+      holdingV2Composition: holdingV2Composition ?? undefined,
+      holdingV2NameType,
+      holdingV2NameCategory,
       onecCounterpartyContains,
       onecFullNameContains,
       onecLegalEntityType,
@@ -1112,6 +1155,9 @@ export function queryHasActiveFilters(query: ClientsListQuery): boolean {
       query.discountProgram ||
       query.onecTop150 ||
       query.onecCategory ||
+      query.holdingV2Composition ||
+      query.holdingV2NameType ||
+      query.holdingV2NameCategory ||
       query.onecCounterpartyContains ||
       query.onecFullNameContains ||
       query.onecLegalEntityType ||

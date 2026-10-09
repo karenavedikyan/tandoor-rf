@@ -49,12 +49,139 @@
       esc(title) + '</summary><div class="pc-details__body">' + innerHtml + "</div></details>";
   }
 
+  function holdingV2TypeCategorySuffix(typeCategory) {
+    if (!typeCategory) {
+      return "";
+    }
+    var parts = [];
+    if (typeCategory.nameType && typeCategory.nameType.label) {
+      parts.push(typeCategory.nameType.label);
+    }
+    if (typeCategory.nameCategory && typeCategory.nameCategory.label) {
+      parts.push(typeCategory.nameCategory.label);
+    }
+    return parts.length > 0 ? " · " + esc(parts.join(" · ")) : "";
+  }
+
+  function holdingV2OutletHref(guidClient, guidStore) {
+    var params = new URLSearchParams(window.location.search);
+    var upstreamReturn = params.get("return");
+    params.delete("store");
+    params.delete("return");
+    var backParams = new URLSearchParams();
+    if (upstreamReturn) {
+      backParams.set("return", upstreamReturn);
+    }
+    var backQuery = backParams.toString() ? "?" + backParams.toString() : "";
+    return (
+      "/clients/" +
+      encodeURIComponent(guidClient) +
+      "?store=" +
+      encodeURIComponent(guidStore) +
+      "&return=" +
+      encodeURIComponent(backQuery)
+    );
+  }
+
+  function renderHoldingV2Composition(client) {
+    var hv2 = client.holdingV2;
+    if (!hv2 || !hv2.hasStoredState) {
+      return "";
+    }
+    var access = hv2.compositionAccess || { kind: "incomplete_source" };
+    if (access.kind === "withheld") {
+      return field("Состав холдинга (v2)", "Скрыто по области доступа", true);
+    }
+    var detail = hv2.compositionDetail;
+    if (!detail || !detail.legalEntities || detail.legalEntities.length === 0) {
+      return field("Состав холдинга (v2)", hv2.compositionLabel || "Не передан", !!(hv2.compositionLabel));
+    }
+    var html = "";
+    if (detail.legalEntities.length > 0) {
+      html += '<div class="pc-hv2-section"><div class="pc-label pc-hv2-section__title">Юрлица</div>';
+      detail.legalEntities.forEach(function (le) {
+        html +=
+          '<div class="pc-hv2-legal"><a class="clients-link" href="/clients/' +
+          esc(le.guidClient) +
+          '">' +
+          esc(le.nameClient) +
+          "</a>" +
+          (le.isHoldingHead ? " · голова холдинга" : "") +
+          holdingV2TypeCategorySuffix(le.typeCategory) +
+          "</div>";
+      });
+      html += "</div>";
+    }
+    var outlets = detail.outlets || [];
+    if (outlets.length > 0) {
+      html += '<div class="pc-hv2-section"><div class="pc-label pc-hv2-section__title">Торговые точки</div>';
+      outlets.forEach(function (outlet) {
+        var closedMark =
+          outlet.closureKnown && outlet.isClosed ? " · закрыта" : "";
+        var outletV2 =
+          outlet.holdingV2 && outlet.holdingV2.typeCategory ? outlet.holdingV2.typeCategory : null;
+        html +=
+          '<div class="pc-hv2-outlet"><a class="clients-link" href="' +
+          esc(holdingV2OutletHref(outlet.guidClient, outlet.guidStore)) +
+          '">' +
+          esc(outlet.label) +
+          "</a>" +
+          holdingV2TypeCategorySuffix(outletV2) +
+          esc(closedMark) +
+          "</div>";
+      });
+      html += "</div>";
+    }
+    var accessSuffix =
+      access.kind === "incomplete_source" ? " (источник неполный)" : "";
+    return (
+      '<div class="pc-field"><div class="pc-label">Состав холдинга (v2)' +
+      esc(accessSuffix) +
+      '</div><div class="pc-value pc-hv2-composition">' +
+      html +
+      "</div></div>" +
+      field(
+        "Доступ к составу (v2)",
+        access.kind === "visible"
+          ? "Полный состав в области доступа"
+          : "Данные источника неполные",
+        true,
+      )
+    );
+  }
+
   function renderOutletBlock(outlet, index) {
     var basics = field("Идентификация", outlet.identityLabel, true) +
       field("Статус", outlet.closureStatusLabel, true) +
       field("Источник данных", outlet.dataSourceLabel || outlet.freshnessLabel, true) +
       (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
-      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName);
+      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
+      field(
+        "Тип 1С (v2, ТТ)",
+        outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameType &&
+          outlet.holdingV2.typeCategory.nameType.label,
+        !!(
+          outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameType &&
+          outlet.holdingV2.typeCategory.nameType.hasSource
+        ),
+      ) +
+      field(
+        "Категория 1С (v2, ТТ)",
+        outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameCategory &&
+          outlet.holdingV2.typeCategory.nameCategory.label,
+        !!(
+          outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameCategory &&
+          outlet.holdingV2.typeCategory.nameCategory.hasSource
+        ),
+      );
     var addresses = field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
       field("Направление маршрута", outlet.addresses && outlet.addresses.routeDirection, !!(outlet.addresses && outlet.addresses.routeDirection)) +
@@ -214,7 +341,19 @@
     var outletCards = "";
     if (ext && ext.retailOutlets && ext.retailOutlets.length > 0) {
       outletCards = ext.retailOutlets.map(function (outlet, index) {
-        return card("Торговая точка " + (index + 1), '<div class="pc-pad">' + renderOutletBlock(outlet, index) + "</div>", "1С");
+        var storeAttr = outlet.guidStore
+          ? ' data-outlet-guid="' + esc(outlet.guidStore) + '"'
+          : "";
+        return (
+          '<section class="pc-card pc-outlet-card"' +
+          storeAttr +
+          ">" +
+          '<div class="pc-cardhead"><h2>Торговая точка ' +
+          (index + 1) +
+          '</h2><span class="pc-source">1С</span></div><div class="pc-pad">' +
+          renderOutletBlock(outlet, index) +
+          "</div></section>"
+        );
       }).join("");
       if (ext.retailOutletsTruncated) {
         outletCards += '<p class="pc-pad pc-label pc-unavailable">Показаны первые ' + ext.retailOutlets.length +
@@ -290,7 +429,49 @@
               ext.wholesaleExchange.outletCategory.hasSource
             ),
           ) +
-          field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext),
+          field(
+            "Холдинг / юрлица",
+            holdingCard +
+              (holding || "Холдинг не указан") +
+              " · " +
+              (client.holdingV2 && client.holdingV2.hasStoredState
+                ? client.holdingV2.compositionLabel +
+                  (client.holdingV2.isHoldingHead ? " · голова холдинга" : "")
+                : "состав холдинга не передан"),
+            !!(holding || (client.holdingV2 && client.holdingV2.hasStoredState) || ext),
+          ) +
+          field(
+            "Тип состава холдинга (v2)",
+            client.holdingV2 && client.holdingV2.compositionLabel,
+            !!(client.holdingV2 && client.holdingV2.hasStoredState),
+          ) +
+          field(
+            "Тип 1С (v2, клиент)",
+            client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameType &&
+              client.holdingV2.typeCategory.nameType.label,
+            !!(
+              client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameType &&
+              client.holdingV2.typeCategory.nameType.hasSource
+            ),
+          ) +
+          field(
+            "Категория 1С (v2, клиент)",
+            client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameCategory &&
+              client.holdingV2.typeCategory.nameCategory.label,
+            !!(
+              client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameCategory &&
+              client.holdingV2.typeCategory.nameCategory.hasSource
+            ),
+          ) +
+          renderHoldingV2Composition(client),
           true) +
         detailsBlock("Ответственные",
           field("Менеджер клиента", clientManagerField, !!manager) +

@@ -6,6 +6,8 @@ import { verificationFingerprintFromPayload } from "./import-verification-finger
 import { readStableClientsFile } from "./read-stable";
 import { readStableEmployeeRosterFile, type EmployeeRosterReader } from "./read-stable-roster";
 import type { ValidatedClientsPayload } from "./types";
+import { mergeHoldingV2StableReadLimits } from "./stable-read-validation";
+import type { ValidateClientsLimits } from "./validate";
 import { validateClientsFileBytes } from "./validate";
 
 export type StableBundleFailureCode =
@@ -50,10 +52,17 @@ export async function readStableImportBundle(
   const holdingLinkValidationPolicy =
     options.holdingLinkValidationPolicy ?? DEFAULT_HOLDING_LINK_VALIDATION_POLICY;
 
+  const baseStableLimits: ValidateClientsLimits = {
+    holdingLinkValidationPolicy,
+    employeeRosterExplicit: false,
+  };
+  const stableClientLimits = mergeHoldingV2StableReadLimits(baseStableLimits);
+
   const clientsStable = await readStableClientsFile(config, {
     reader: options.clientsReader,
     stabilityDelayMs: options.stabilityDelayMs,
     readDeadlineMs: options.readDeadlineMs,
+    validationLimits: stableClientLimits,
   });
 
   if (!clientsStable.ok) {
@@ -112,7 +121,7 @@ export async function readStableImportBundle(
     };
   }
 
-  const recheckValidated = validateClientsFileBytes(clientsRecheck.bytes);
+  const recheckValidated = validateClientsFileBytes(clientsRecheck.bytes, stableClientLimits);
   if (!recheckValidated.ok || recheckValidated.payload.sha256 !== clientsStable.payload.sha256) {
     return {
       ok: false,
@@ -126,11 +135,14 @@ export async function readStableImportBundle(
     };
   }
 
-  const validated = validateClientsFileBytes(clientsRecheck.bytes, {
-    holdingLinkValidationPolicy,
-    employeeRoster: rosterStable.roster,
-    employeeRosterExplicit: true,
-  });
+  const validated = validateClientsFileBytes(
+    clientsRecheck.bytes,
+    mergeHoldingV2StableReadLimits({
+      holdingLinkValidationPolicy,
+      employeeRoster: rosterStable.roster,
+      employeeRosterExplicit: true,
+    }),
+  );
 
   if (!validated.ok) {
     return {

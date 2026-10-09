@@ -82,6 +82,26 @@ export async function loadHoldingV2ApplyState(pool: Pool): Promise<HoldingV2Appl
   return result.rows[0] ?? { last_normalized_state_sha256: null, last_source_sha256: null };
 }
 
+/** Clears v2 link/metadata tables while keeping onec_clients and import run history (backfill drift tests). */
+export async function clearHoldingV2PersistedReconcileState(pool: Pool | PoolClient): Promise<void> {
+  await pool.query(`DELETE FROM onec_holding_v2_reconcile_runs`);
+  await pool.query(`DELETE FROM onec_holding_v2_legal_links`);
+  await pool.query(`DELETE FROM onec_holding_v2_outlet_links`);
+  await pool.query(`DELETE FROM onec_holding_v2_client_type_category`);
+  await pool.query(`DELETE FROM onec_holding_v2_outlet_type_category`);
+  await pool.query(
+    `
+      UPDATE onec_holding_v2_apply_state
+      SET
+        last_normalized_state_sha256 = NULL,
+        last_source_sha256 = NULL,
+        last_applied_at = NULL,
+        updated_at = NOW()
+      WHERE id = 1
+    `,
+  );
+}
+
 export async function countHoldingV2ReconcileRuns(
   pool: Pool,
   status: "success" | "no_changes" | "failed",

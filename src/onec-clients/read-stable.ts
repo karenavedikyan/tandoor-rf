@@ -1,5 +1,7 @@
 import type { OnecFtpConfig } from "../onec-ftp/types";
 import { defaultFtpReader, type FtpReader } from "./ftp-read";
+import { mergeHoldingV2StableReadLimits } from "./stable-read-validation";
+import type { ValidateClientsLimits } from "./validate";
 import { validateClientsFileBytes } from "./validate";
 import type { ValidatedClientsPayload } from "./types";
 
@@ -27,8 +29,10 @@ export async function readStableClientsFile(
     reader?: FtpReader;
     stabilityDelayMs: number;
     readDeadlineMs?: number;
+    validationLimits?: ValidateClientsLimits;
   },
 ): Promise<StableReadResult> {
+  const validationLimits = mergeHoldingV2StableReadLimits(options.validationLimits);
   const reader = options.reader ?? defaultFtpReader;
   const context = { readDeadlineMs: options.readDeadlineMs };
   let readCount = 0;
@@ -44,7 +48,7 @@ export async function readStableClientsFile(
     };
   }
 
-  const firstValidated = validateClientsFileBytes(firstRead.bytes);
+  const firstValidated = validateClientsFileBytes(firstRead.bytes, validationLimits);
   if (!firstValidated.ok) {
     return {
       ok: false,
@@ -71,7 +75,7 @@ export async function readStableClientsFile(
   }
 
   if (!firstRead.bytes.equals(secondRead.bytes)) {
-    const secondValidated = validateClientsFileBytes(secondRead.bytes);
+    const secondValidated = validateClientsFileBytes(secondRead.bytes, validationLimits);
     return {
       ok: false,
       code: "UNSTABLE_SOURCE",

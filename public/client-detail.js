@@ -239,7 +239,31 @@
     window.ClientCardPrototype.mount(detailRoot, client);
     sections.initCollapsibles(detailRoot);
     detailEl.classList.remove("clients-hidden");
+    applyStoreDeepLink(detailRoot);
     applyWorkDeepLink(detailRoot);
+  }
+
+  function applyStoreDeepLink(root) {
+    var params = new URLSearchParams(window.location.search);
+    var storeGuid = params.get("store");
+    if (!storeGuid) {
+      return;
+    }
+    var normalized = storeGuid.trim().toLowerCase();
+    var dataTab = root.querySelector("#pc-tab-data");
+    if (dataTab) {
+      dataTab.click();
+    }
+    var outletCard = null;
+    root.querySelectorAll(".pc-outlet-card[data-outlet-guid]").forEach(function (el) {
+      if (el.getAttribute("data-outlet-guid").toLowerCase() === normalized) {
+        outletCard = el;
+      }
+    });
+    if (outletCard) {
+      outletCard.scrollIntoView({ block: "nearest" });
+      outletCard.classList.add("pc-outlet-card--selected");
+    }
   }
 
   function applyWorkDeepLink(root) {
