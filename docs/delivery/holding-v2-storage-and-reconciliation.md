@@ -9,41 +9,41 @@
 |---------|------------|
 | `onec_holding_v2_legal_links` | 1 активная строка / `guid_client` → `guid_holding_root`, `is_holding_head` |
 | `onec_holding_v2_outlet_links` | 1 активная строка / `guid_store` → `guid_holding_root`, `is_closed`, `closure_known` |
-| `onec_holding_v2_client_type_category` | `type_category` + presence (без destructive omitted/{}) |
+| `onec_holding_v2_client_type_category` | `type_category` + presence (без destructive omitted/{}/null) |
 | `onec_holding_v2_outlet_type_category` | то же для ТТ |
-| `onec_holding_v2_reconcile_runs` | журнал internal apply |
+| `onec_holding_v2_reconcile_runs` | журнал прогонов (status, counts, safe `error_code`) |
 | `onec_holding_v2_apply_state` | последний `normalized_state_sha256` (singleton) |
 
-**Legacy compatibility:** `onec_clients`, `onec_retail_outlets`, extended snapshot и legacy import **не** переключаются этим PR. V2-слой заполняется только через `applyHoldingV2Reconciliation` после v2-валидации. FK `legal_links.guid_client → onec_clients` — stubs должны существовать (тесты seed через `seedOnecClientsForReconcile`).
+### Предпосылки (не реализовано в pipeline)
+
+- **`onec_clients` row must exist`** для каждого `guid_client` в v2-снимке (FK). Создание новых клиентских объектов рабочим import/apply **не** делает этот PR — в integration tests используется `seedOnecClientsForReconcile`.
+- **История:** сохраняются текущие v2-связи (`link_active`) и merge type_category; **не** ведётся полная event-sourced история каждого переноса. `onec_holding_v2_reconcile_runs` — агрегаты прогона, не audit trail полей.
+- **Витрина / дистрибуция / F1–F5 / roster:** перенос связей v2 **не** доказан сохранением каталога — только отсутствие destructive delete юрлица/ТТ в v2-таблицах. Scope/grants **не** меняются.
 
 ## Reconciliation
 
-Entry: `applyHoldingV2Reconciliation({ databaseUrl, payload })` — [`src/onec-clients/holding-v2-reconcile/`](../src/onec-clients/holding-v2-reconcile/).
+Entry: `applyHoldingV2Reconciliation({ databaseUrl, payload })`.
 
-1. `buildHoldingV2DesiredSnapshot` — order-independent карта связей из `extendedRecords`.
-2. `computeDesiredNormalizedStateSha256` — канонический hash активных связей + type_category patches.
-3. Сравнение с persisted hash → **`NO_CHANGES`** (совпадение SHA файла **не** достаточно).
-4. Иначе одна транзакция: advisory lock `902_451_003` → upsert legal/outlet links → для `membershipCompleteHoldings` deactivate ссылки внутри холдинга, отсутствующие в снимке → merge type_category (patch-by-presence).
-5. Инварианты: один active `guid_client`, один active `guid_store`.
+1. Pre-checks (без записи): `TYPE_CATEGORY_EXPLICIT_NULL`, `OUTLET_COMPOSITION_INCOMPLETE` (ТТ без `guid_store` при переданном списке).
+2. Под lock: load persisted → **`projectHoldingV2BusinessState(persisted, desired)`** (холдинги вне файла сохраняются; снятие связей только в `membershipCompleteHoldings`).
+3. **`ORPHAN_HOLDING_LINKS`**: каждая active legal/outlet link → active self-ref head root (отклонение до записи при демotion головы с висящими M/S).
+4. `computeBusinessStateSha256(persisted)` vs `computeBusinessStateSha256(projected)` → **`NO_CHANGES`** без upsert/`updated_at` (journal `no_changes` допустим). Same file SHA при пустой БД → первый прогон **SUCCESS** (backfill).
+5. Иначе транзакция: upsert links → merge type_category (patch-by-presence; `{}` не затирает ключи; **null с presence → reject**) → post invariant check → journal `success`.
 
-### Правила удаления связей
+Advisory lock: **`902_451_003`**. Конкурентное второе соединение → `RECONCILE_LOCKED`.
 
-- Холдинг **отсутствует целиком** в файле → строки v2 **не** трогаем.
-- Холдинг **в файле** и membership complete → outlet/legal links на этом root, не в desired set → `link_active=false`.
-- `retail_outlets: []` / explicit empty → нет active outlet links для complete head.
-- Omitted `type_category` → **не** обновляем stored metadata; `{}` → object present, ключи полей не очищают сохранённые значения.
+### Safe error codes (внешний результат)
+
+`TYPE_CATEGORY_EXPLICIT_NULL`, `OUTLET_COMPOSITION_INCOMPLETE`, `ORPHAN_HOLDING_LINKS`, `CLIENT_STUB_MISSING`, `RECONCILE_LOCKED`, `INVARIANT_VIOLATION`, `DATABASE_ERROR`.
 
 ## Production barrier
 
-`applyClientsImport` по-прежнему **`APPLY_BLOCKED`** для `holdingExchangeSchema: v2`. Internal reconcile **не** вызывается из CLI/FTP/regular-update.
+`applyClientsImport` → **`APPLY_BLOCKED`** для v2. Reconcile **не** в CLI/FTP/regular-update.
 
-## Следующий этап (не этот PR)
+## Следующий этап
 
-- Pipeline switch + verification gate на prod JSON (полный SHA audit).
-- API/DTO composition + `withheld` presentation.
-- Scope/grants при смене holding membership (без auto-expand доступа).
-- Связь v2 layer с `onec_retail_outlets.guid_client` при согласованной политике.
+Pipeline switch, prod SHA audit, API/UI, scope rules, optional sync с `onec_retail_outlets`.
 
 ## Production audit (этап 1)
 
-Цифры `recordCount=2742` vs `group_network=2320` **не подтверждены** на production JSON в CI. Воспроизводимый эталон — synthetic bundle (`recordCount=5062`, `holdingRootCount=2742`).
+Не подтверждён. Synthetic bundle: `recordCount=5062`, `holdingRootCount=2742`.

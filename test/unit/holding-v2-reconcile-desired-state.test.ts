@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildHoldingV2DesiredSnapshot,
-  computeDesiredNormalizedStateSha256,
+  computeBusinessStateSha256,
+  projectHoldingV2BusinessState,
 } from "../../src/onec-clients/holding-v2-reconcile";
+import type { HoldingV2PersistedState } from "../../src/onec-clients/holding-v2-reconcile";
 import { validateHoldingV2ClientsFileBytes } from "../../src/onec-clients/validate";
 import {
   buildHoldingV2FileBytes,
@@ -39,9 +41,14 @@ describe("holding v2 reconcile desired state", () => {
     assert.equal(da.ok, true);
     assert.equal(db.ok, true);
     if (!da.ok || !db.ok) return;
-    assert.equal(
-      computeDesiredNormalizedStateSha256(da.desired),
-      computeDesiredNormalizedStateSha256(db.desired),
-    );
+    const empty: HoldingV2PersistedState = {
+      legalLinks: [],
+      outletLinks: [],
+      clientTypeCategories: [],
+      outletTypeCategories: [],
+    };
+    const pa = projectHoldingV2BusinessState(empty, da.desired);
+    const pb = projectHoldingV2BusinessState(empty, db.desired);
+    assert.equal(computeBusinessStateSha256(pa), computeBusinessStateSha256(pb));
   });
 });

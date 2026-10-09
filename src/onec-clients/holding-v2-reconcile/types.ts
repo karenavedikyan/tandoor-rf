@@ -97,6 +97,10 @@ export type HoldingV2ReconcileApplyResult =
         | "RECONCILE_LOCKED"
         | "INVARIANT_VIOLATION"
         | "CLIENT_STUB_MISSING"
+        | "OUTLET_COMPOSITION_INCOMPLETE"
+        | "ORPHAN_HOLDING_LINKS"
+        | "TYPE_CATEGORY_EXPLICIT_NULL"
+        | "DATABASE_ERROR"
         | "FAILED";
       message: string;
       runId?: string;

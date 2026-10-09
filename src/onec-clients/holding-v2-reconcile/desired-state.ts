@@ -83,7 +83,18 @@ export function buildHoldingV2DesiredSnapshot(
     }
     holdingsInSnapshot.push(holdingRoot);
     if (!clusterErrors.has(holdingRoot)) {
-      membershipCompleteHoldings.add(holdingRoot);
+      let outletListIdentified = true;
+      if (head.fieldPresence.retailOutlets !== "missing") {
+        for (const outlet of head.retailOutlets) {
+          if (outlet.outletGuidStatus !== "confirmed" || !outlet.guidStore?.trim()) {
+            outletListIdentified = false;
+            break;
+          }
+        }
+      }
+      if (outletListIdentified) {
+        membershipCompleteHoldings.add(holdingRoot);
+      }
     }
 
     for (const member of members) {
