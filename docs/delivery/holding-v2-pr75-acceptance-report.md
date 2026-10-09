@@ -3,7 +3,7 @@
 **Branch:** `cursor/holding-v2-pipeline-ui-9e11` (Draft PR #75)  
 **Stack:** #73 → #74 → **#75**  
 **Base at start of this pass:** `d0d3911`  
-**Acceptance HEAD:** _(see git log after push; replaces `d0d3911` on same branch)_  
+**Acceptance HEAD:** `b7c1b61`  
 **Environment:** `TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test`  
 **Pipeline flag (tests):** `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` via test helpers  
 
