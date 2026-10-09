@@ -7,7 +7,10 @@ import {
   analyzeOutletsForHoldingComposition,
   classifyHoldingCompositionSiteType,
 } from "../../src/onec-clients/holding-v2-composition";
-import { applyHoldingV2Reconciliation } from "../../src/onec-clients/holding-v2-reconcile";
+import {
+  applyHoldingV2Reconciliation,
+  type HoldingV2ReconcileInjectFailure,
+} from "../../src/onec-clients/holding-v2-reconcile";
 import { verificationFingerprintFromPayload } from "../../src/onec-clients/import-verification-fingerprint";
 import { validateHoldingV2ClientsFileBytes } from "../../src/onec-clients/validate";
 import {
@@ -19,8 +22,12 @@ import {
   typeCategory,
 } from "../helpers/holding-v2-fixtures";
 import {
+  countHoldingV2ReconcileRuns,
   loadActiveLegalLinks,
   loadActiveOutletLinks,
+  loadClientTypeCategoryGuid,
+  loadHoldingV2ApplyState,
+  loadOutletTypeCategoryGuid,
   seedOnecClientsForReconcile,
 } from "../helpers/holding-v2-reconcile-db";
 import {
@@ -449,35 +456,109 @@ describe("onec holding v2 reconciliation integration", { concurrency: false }, (
     await pool.end();
   });
 
-  it("rolls back partial writes on injected failure then recovers", async () => {
-    const bytes = buildHoldingV2FileBytes([
-      headRow(H1, { retail_outlets: [minimalOutlet(S1)] }),
-      memberRow(M2, H1),
-    ]);
-    const validated = await validateAndSeed(databaseUrl, bytes);
-    const failed = await applyHoldingV2Reconciliation({
-      databaseUrl,
-      payload: validated.payload,
-      injectFailureForTests: "after_legal_links",
+  const injectFailurePhases: HoldingV2ReconcileInjectFailure[] = [
+    "after_legal_links",
+    "after_outlet_links",
+    "after_type_category",
+  ];
+
+  for (const injectPhase of injectFailurePhases) {
+    it(`rolls back phased inject failure (${injectPhase}) then recovers`, async () => {
+      const baselineBytes = buildHoldingV2FileBytes([
+        headRow(H1, {
+          type_category: typeCategory({ guid_type: "baseline-head-type" }),
+          retail_outlets: [
+            minimalOutlet(S1, { type_category: typeCategory({ guid_type: "baseline-out-type" }) }),
+          ],
+        }),
+        memberRow(M2, H1),
+      ]);
+      const baseline = await validateAndSeed(databaseUrl, baselineBytes);
+      const baselineApply = await applyHoldingV2Reconciliation({
+        databaseUrl,
+        payload: baseline.payload,
+      });
+      assert.equal(baselineApply.ok, true);
+      if (!baselineApply.ok) return;
+      assert.equal(baselineApply.code, "SUCCESS");
+
+      const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const baselineLegal = await loadActiveLegalLinks(pool);
+      const baselineOutlets = await loadActiveOutletLinks(pool);
+      const baselineApplyState = await loadHoldingV2ApplyState(pool);
+      const baselineSuccessRuns = await countHoldingV2ReconcileRuns(pool, "success");
+      const baselineHeadType = await loadClientTypeCategoryGuid(pool, H1);
+      const baselineOutletType = await loadOutletTypeCategoryGuid(pool, S1);
+      assert.equal(baselineHeadType, "baseline-head-type");
+      assert.equal(baselineOutletType, "baseline-out-type");
+
+      const updateBytes = buildHoldingV2FileBytes([
+        headRow(H1, {
+          type_category: typeCategory({ guid_type: "update-head-type" }),
+          retail_outlets: [
+            minimalOutlet(S1, { type_category: typeCategory({ guid_type: "update-out-type" }) }),
+            minimalOutlet(S2),
+          ],
+        }),
+        memberRow(M2, H1),
+      ]);
+      const update = validateHoldingV2ClientsFileBytes(updateBytes);
+      assert.equal(update.ok, true);
+      if (!update.ok) {
+        await pool.end();
+        return;
+      }
+      const client = await pool.connect();
+      await seedOnecClientsForReconcile(client, update.payload.records, update.payload.sha256);
+      client.release();
+
+      const failed = await applyHoldingV2Reconciliation({
+        databaseUrl,
+        payload: update.payload,
+        injectFailureForTests: injectPhase,
+      });
+      assert.equal(failed.ok, false);
+      if (failed.ok) {
+        await pool.end();
+        return;
+      }
+      assert.equal(failed.code, "FAILED");
+
+      assert.deepEqual(await loadActiveLegalLinks(pool), baselineLegal);
+      assert.deepEqual(await loadActiveOutletLinks(pool), baselineOutlets);
+      assert.deepEqual(await loadHoldingV2ApplyState(pool), baselineApplyState);
+      assert.equal(await countHoldingV2ReconcileRuns(pool, "success"), baselineSuccessRuns);
+      assert.equal(await loadClientTypeCategoryGuid(pool, H1), baselineHeadType);
+      assert.equal(await loadOutletTypeCategoryGuid(pool, S1), baselineOutletType);
+      assert.equal(await loadOutletTypeCategoryGuid(pool, S2), null);
+
+      const recovered = await applyHoldingV2Reconciliation({
+        databaseUrl,
+        payload: update.payload,
+      });
+      assert.equal(recovered.ok, true);
+      if (!recovered.ok) {
+        await pool.end();
+        return;
+      }
+      assert.equal(recovered.code, "SUCCESS");
+      assert.equal(await loadClientTypeCategoryGuid(pool, H1), "update-head-type");
+      assert.equal(await loadOutletTypeCategoryGuid(pool, S1), "update-out-type");
+      assert.equal((await loadActiveOutletLinks(pool)).length, 2);
+
+      const repeat = await applyHoldingV2Reconciliation({
+        databaseUrl,
+        payload: update.payload,
+      });
+      assert.equal(repeat.ok, true);
+      if (!repeat.ok) {
+        await pool.end();
+        return;
+      }
+      assert.equal(repeat.code, "NO_CHANGES");
+      await pool.end();
     });
-    assert.equal(failed.ok, false);
-    if (failed.ok) return;
-
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    let legal = await loadActiveLegalLinks(pool);
-    assert.equal(legal.length, 0);
-
-    const recovered = await applyHoldingV2Reconciliation({ databaseUrl, payload: validated.payload });
-    assert.equal(recovered.ok, true);
-    if (!recovered.ok) return;
-    assert.equal(recovered.code, "SUCCESS");
-
-    legal = await loadActiveLegalLinks(pool);
-    assert.equal(legal.length, 2);
-    const repeat = await applyHoldingV2Reconciliation({ databaseUrl, payload: validated.payload });
-    assert.equal(repeat.code, "NO_CHANGES");
-    await pool.end();
-  });
+  }
 
   it("second connection gets RECONCILE_LOCKED while lock held", async () => {
     const bytes = buildHoldingV2FileBytes([headRow(H1, { retail_outlets: [minimalOutlet(S1)] })]);

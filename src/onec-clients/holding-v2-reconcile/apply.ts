@@ -45,12 +45,15 @@ const SAFE_MESSAGES: Record<string, string> = {
   RECONCILE_LOCKED: "Holding v2 reconcile lock not acquired.",
 };
 
-async function upsertLegalAndOutletLinks(
+function throwInjectFailureForTests(): never {
+  throw new Error("TEST_INJECT_FAILURE");
+}
+
+async function upsertLegalLinkPhase(
   client: PoolClient,
   desired: HoldingV2DesiredSnapshot,
-): Promise<{ legalLinksWritten: number; outletLinksWritten: number }> {
+): Promise<number> {
   let legalLinksWritten = 0;
-  let outletLinksWritten = 0;
   const sourceSha256 = desired.sourceSha256;
 
   for (const link of desired.legalLinks) {
@@ -71,6 +74,17 @@ async function upsertLegalAndOutletLinks(
     );
     legalLinksWritten += 1;
   }
+
+  return legalLinksWritten;
+}
+
+async function upsertOutletLinkPhase(
+  client: PoolClient,
+  desired: HoldingV2DesiredSnapshot,
+): Promise<{ outletLinksWritten: number; legalLinksDeactivated: number }> {
+  let outletLinksWritten = 0;
+  let legalLinksDeactivated = 0;
+  const sourceSha256 = desired.sourceSha256;
 
   for (const link of desired.outletLinks) {
     await client.query(
@@ -116,7 +130,7 @@ async function upsertLegalAndOutletLinks(
       `,
       [holdingRoot, desiredLegalIds, sourceSha256],
     );
-    legalLinksWritten += deactivatedLegal.rowCount ?? 0;
+    legalLinksDeactivated += deactivatedLegal.rowCount ?? 0;
 
     const deactivatedOutlets = await client.query(
       `
@@ -131,7 +145,7 @@ async function upsertLegalAndOutletLinks(
     outletLinksWritten += deactivatedOutlets.rowCount ?? 0;
   }
 
-  return { legalLinksWritten, outletLinksWritten };
+  return { outletLinksWritten, legalLinksDeactivated };
 }
 
 async function upsertTypeCategoryPatch(
@@ -391,13 +405,16 @@ export async function applyHoldingV2Reconciliation(
         };
       }
 
-      const linkCounts = await upsertLegalAndOutletLinks(client, desired);
+      let legalLinksWritten = await upsertLegalLinkPhase(client, desired);
       if (options.injectFailureForTests === "after_legal_links") {
-        throw new Error("TEST_INJECT_FAILURE");
+        throwInjectFailureForTests();
       }
 
+      const outletPhase = await upsertOutletLinkPhase(client, desired);
+      let outletLinksWritten = outletPhase.outletLinksWritten;
+      legalLinksWritten += outletPhase.legalLinksDeactivated;
       if (options.injectFailureForTests === "after_outlet_links") {
-        // outlet phase already done in upsertLegalAndOutletLinks
+        throwInjectFailureForTests();
       }
 
       let typeCategoryWritten = 0;
@@ -406,7 +423,7 @@ export async function applyHoldingV2Reconciliation(
         typeCategoryWritten += 1;
       }
       if (options.injectFailureForTests === "after_type_category") {
-        throw new Error("TEST_INJECT_FAILURE");
+        throwInjectFailureForTests();
       }
 
       await assertPostApplyInvariants(client);
@@ -431,8 +448,8 @@ export async function applyHoldingV2Reconciliation(
         afterHash,
         options.verificationFingerprint ?? null,
         {
-          legal: linkCounts.legalLinksWritten,
-          outlet: linkCounts.outletLinksWritten,
+          legal: legalLinksWritten,
+          outlet: outletLinksWritten,
           typeCategory: typeCategoryWritten,
         },
       );
@@ -442,8 +459,8 @@ export async function applyHoldingV2Reconciliation(
         ok: true,
         code: "SUCCESS",
         normalizedStateSha256: afterHash,
-        legalLinksWritten: linkCounts.legalLinksWritten,
-        outletLinksWritten: linkCounts.outletLinksWritten,
+        legalLinksWritten,
+        outletLinksWritten,
         typeCategoryWritten,
         runId,
       };

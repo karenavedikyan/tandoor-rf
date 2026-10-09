@@ -65,3 +65,50 @@ export async function loadActiveOutletLinks(
   );
   return result.rows;
 }
+
+export type HoldingV2ApplyStateRow = {
+  last_normalized_state_sha256: string | null;
+  last_source_sha256: string | null;
+};
+
+export async function loadHoldingV2ApplyState(pool: Pool): Promise<HoldingV2ApplyStateRow> {
+  const result = await pool.query<HoldingV2ApplyStateRow>(
+    `
+      SELECT last_normalized_state_sha256, last_source_sha256
+      FROM onec_holding_v2_apply_state
+      WHERE id = 1
+    `,
+  );
+  return result.rows[0] ?? { last_normalized_state_sha256: null, last_source_sha256: null };
+}
+
+export async function countHoldingV2ReconcileRuns(
+  pool: Pool,
+  status: "success" | "no_changes" | "failed",
+): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM onec_holding_v2_reconcile_runs
+      WHERE status = $1
+    `,
+    [status],
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+export async function loadClientTypeCategoryGuid(pool: Pool, guidClient: string): Promise<string | null> {
+  const result = await pool.query<{ guid_type: string | null }>(
+    `SELECT guid_type FROM onec_holding_v2_client_type_category WHERE guid_client = $1::uuid`,
+    [guidClient],
+  );
+  return result.rows[0]?.guid_type ?? null;
+}
+
+export async function loadOutletTypeCategoryGuid(pool: Pool, guidStore: string): Promise<string | null> {
+  const result = await pool.query<{ guid_type: string | null }>(
+    `SELECT guid_type FROM onec_holding_v2_outlet_type_category WHERE guid_store = $1::uuid`,
+    [guidStore],
+  );
+  return result.rows[0]?.guid_type ?? null;
+}
