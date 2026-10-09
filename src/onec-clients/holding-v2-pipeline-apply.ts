@@ -1,5 +1,4 @@
 import type { PoolClient } from "pg";
-import { HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY } from "./constants";
 import { buildHoldingV2DesiredSnapshot } from "./holding-v2-reconcile/desired-state";
 import {
   HoldingV2ReconcilePipelineError,
@@ -10,6 +9,7 @@ import { validateTypeCategoryPatches } from "./holding-v2-reconcile/type-categor
 import type { HoldingV2ReconcileApplyResult } from "./holding-v2-reconcile/types";
 import type { ValidatedClientsPayload } from "./types";
 
+/** Caller must already hold HOLDING_V2_RECONCILE_ADVISORY_LOCK for the import transaction. */
 export async function runHoldingV2PipelineInImportTransaction(
   client: PoolClient,
   payload: ValidatedClientsPayload,
@@ -47,23 +47,7 @@ export async function runHoldingV2PipelineInImportTransaction(
     });
   }
 
-  const lock = await client.query<{ acquired: boolean }>(
-    `SELECT pg_try_advisory_lock($1) AS acquired`,
-    [HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY],
-  );
-  if (!lock.rows[0]?.acquired) {
-    throw new HoldingV2ReconcilePipelineError({
-      ok: false,
-      code: "RECONCILE_LOCKED",
-      message: "Holding v2 reconcile lock not acquired.",
-    });
-  }
-
-  try {
-    return await runHoldingV2ReconcileOnClient(client, desired, {
-      verificationFingerprint,
-    });
-  } finally {
-    await client.query(`SELECT pg_advisory_unlock($1)`, [HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY]);
-  }
+  return runHoldingV2ReconcileOnClient(client, desired, {
+    verificationFingerprint,
+  });
 }

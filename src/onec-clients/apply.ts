@@ -10,7 +10,7 @@ import {
   updateExchangeStateAfterApplyInTxn,
 } from "../onec-exchange/state";
 import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
-import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
+import { HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY, IMPORT_ADVISORY_LOCK_KEY } from "./constants";
 import { holdingV2PipelineEnabledEffective } from "./holding-v2-pipeline-config";
 import { runHoldingV2PipelineInImportTransaction } from "./holding-v2-pipeline-apply";
 import { HoldingV2ReconcilePipelineError } from "./holding-v2-reconcile/apply-internals";
@@ -127,6 +127,8 @@ export type ApplyTestHooks = {
   afterImportLock?: (client: PoolClient) => Promise<void>;
   /** Test-only: pause after roster upsert within the apply transaction, before commit. */
   afterRosterUpsert?: (client: PoolClient) => Promise<void>;
+  /** Test-only: pause after holding v2 reconcile, while v2 advisory lock is still held, before COMMIT. */
+  afterHoldingV2ReconcileBeforeCommit?: (client: PoolClient) => Promise<void>;
 };
 
 type ExistingClientRow = {
@@ -156,6 +158,7 @@ type ManagedClient = {
 
 type ApplyPhaseState = {
   lockHeld: boolean;
+  holdingV2LockHeld: boolean;
   runId?: string;
   commitAttempted: boolean;
   commitConfirmed: boolean;
@@ -615,6 +618,17 @@ async function releaseAdvisoryLock(
   await queryManaged(managed, "SELECT pg_advisory_unlock($1)", [IMPORT_ADVISORY_LOCK_KEY]);
 }
 
+async function releaseHoldingV2AdvisoryLockIfHeld(
+  managed: ManagedClient | undefined,
+  phase: ApplyPhaseState,
+): Promise<void> {
+  if (!managed || managed.faulted() || !phase.holdingV2LockHeld) {
+    return;
+  }
+  await queryManaged(managed, "SELECT pg_advisory_unlock($1)", [HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY]);
+  phase.holdingV2LockHeld = false;
+}
+
 export function createImportPool(databaseUrl: string): Pool {
   const pgOptions = createPgPoolOptions(databaseUrl);
   const pool = new Pool({
@@ -841,6 +855,7 @@ export async function applyClientsImport(options: {
   const recoveryDatabaseUrl = getDatabaseUrl() ?? applyDatabaseUrl;
   const phase: ApplyPhaseState = {
     lockHeld: options.lockAlreadyHeld === true,
+    holdingV2LockHeld: false,
     commitAttempted: false,
     commitConfirmed: false,
   };
@@ -1130,6 +1145,12 @@ export async function applyClientsImport(options: {
                 clientsSourceSha256: options.payload.sha256,
               });
             }
+          }
+          if (
+            options.payload.holdingExchangeSchema === "v2" &&
+            holdingV2PipelineEnabledEffective()
+          ) {
+            contractVerified = true;
           }
           const extendedRecords = resolveExtendedRecordsForApply(options.payload);
           const previousExtended = await loadExistingExtendedSnapshots(managed.client);
@@ -1461,11 +1482,25 @@ export async function applyClientsImport(options: {
             options.payload.holdingExchangeSchema === "v2" &&
             holdingV2PipelineEnabledEffective()
           ) {
+            const v2Lock = await queryManaged<{ locked: boolean }>(
+              managed,
+              "SELECT pg_try_advisory_lock($1) AS locked",
+              [HOLDING_V2_RECONCILE_ADVISORY_LOCK_KEY],
+            );
+            if (!v2Lock.rows[0]?.locked) {
+              throw new HoldingV2ReconcilePipelineError({
+                ok: false,
+                code: "RECONCILE_LOCKED",
+                message: "Holding v2 reconcile lock not acquired.",
+              });
+            }
+            phase.holdingV2LockHeld = true;
             holdingV2Reconcile = await runHoldingV2PipelineInImportTransaction(
               managed.client,
               options.payload,
               verifiedFingerprint,
             );
+            await options.testHooks?.afterHoldingV2ReconcileBeforeCommit?.(managed.client);
           }
 
           phase.counts = {
@@ -1486,6 +1521,8 @@ export async function applyClientsImport(options: {
             await queryManaged(managed, "COMMIT");
             phase.commitConfirmed = true;
           }
+
+          await releaseHoldingV2AdvisoryLockIfHeld(managed, phase);
 
           if (options.testHooks?.failAfterCommitConfirm) {
             throw new ClientConnectionFault();
@@ -1524,6 +1561,7 @@ export async function applyClientsImport(options: {
         } catch {
           // Rollback is best-effort; connection loss does not prove rollback.
         }
+        await releaseHoldingV2AdvisoryLockIfHeld(managed, phase);
         if (phase.runId) {
           try {
             await managed.client.query(
@@ -1552,6 +1590,7 @@ export async function applyClientsImport(options: {
         } catch {
           // Rollback is best-effort; connection loss does not prove rollback.
         }
+        await releaseHoldingV2AdvisoryLockIfHeld(managed, phase);
 
         if (phase.runId) {
           try {
@@ -1572,6 +1611,7 @@ export async function applyClientsImport(options: {
       outcome = { ok: false, code: "DATABASE_ERROR", message: "Database apply failed.", runId: phase.runId };
     }
   } finally {
+    await releaseHoldingV2AdvisoryLockIfHeld(managed, phase);
     if (!options.retainLock) {
       const unlockWarning = await safeUnlockAdvisoryLock(managed, phase.lockHeld);
       if (unlockWarning) {

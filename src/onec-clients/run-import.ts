@@ -13,6 +13,7 @@ import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
 import type { ValidateClientsLimits } from "./validate";
 import type { ClientsImportCliOptions, ClientsImportResult, ImportStatus, ValidationIssue } from "./types";
+import { mergeHoldingV2StableReadLimits } from "./stable-read-validation";
 import { validateClientsFileBytes } from "./validate";
 import {
   buildWholesaleCompositionPrepReport,
@@ -84,16 +85,26 @@ function buildValidationLimits(
   overrides: ValidateClientsLimits | undefined,
   employeeRosterExplicit: boolean,
 ): ValidateClientsLimits {
-  return {
-    ...overrides,
-    holdingLinkValidationPolicy:
-      overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
-    employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
-    employeeRosterExplicit: overrides?.employeeRosterExplicit ?? employeeRosterExplicit,
-    wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
-      ? "replacement_prep"
-      : overrides?.wholesaleCompositionMode ?? "standard",
-  };
+  return (
+    mergeHoldingV2StableReadLimits({
+      ...overrides,
+      holdingLinkValidationPolicy:
+        overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
+      employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
+      employeeRosterExplicit: overrides?.employeeRosterExplicit ?? employeeRosterExplicit,
+      wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
+        ? "replacement_prep"
+        : overrides?.wholesaleCompositionMode ?? "standard",
+    }) ?? {
+      holdingLinkValidationPolicy:
+        overrides?.holdingLinkValidationPolicy ?? cliOptions.holdingLinkValidationPolicy,
+      employeeRoster: overrides?.employeeRoster ?? employeeRoster ?? null,
+      employeeRosterExplicit: overrides?.employeeRosterExplicit ?? employeeRosterExplicit,
+      wholesaleCompositionMode: cliOptions.wholesaleCompositionPrep
+        ? "replacement_prep"
+        : overrides?.wholesaleCompositionMode ?? "standard",
+    }
+  );
 }
 
 async function buildCompositionPrepReportIfRequested(

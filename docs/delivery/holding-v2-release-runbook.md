@@ -1,72 +1,70 @@
 # Holding v2 — release runbook (pipeline + UI)
 
-**Stack:** PR #73 parser/validator → PR #74 storage/reconcile → PR pipeline/UI (feature flag).  
-**Production default:** `ONEC_HOLDING_V2_PIPELINE_ENABLED` unset/false → v2 payloads **`APPLY_BLOCKED`**.
+**Stack:** PR #73 → #74 → #75.  
+**Production default:** `ONEC_HOLDING_V2_PIPELINE_ENABLED` unset/false → v2 **`APPLY_BLOCKED`**.  
+**Scheduled 1C exchange:** remains **OFF** on rf.tandoor.ru; updates use **manual regular-update / admin path only**.
 
 ## Status matrix
 
-| Capability | Implemented | Local test-DB | Published branch | Prod confirmed |
-|------------|-------------|---------------|------------------|----------------|
+| Capability | Implemented | Local test-DB | Published branch | Prod real-data confirmed |
+|------------|-------------|---------------|------------------|---------------------------|
 | Parser/diagnostics v2 (#73) | yes | yes | draft #73 | no |
-| Reconcile tables + internal apply (#74) | yes | yes | draft #74 | no |
-| Atomic `applyClientsImport` + reconcile | yes | yes | draft pipeline PR | no |
-| API/UI type_category + composition | yes | yes | draft pipeline PR | no |
-| Feature flag OFF default | yes | yes | — | n/a |
+| Reconcile storage (#74) | yes | yes | draft #74 | no |
+| Stable read + regular-update v2 path (#75) | yes | yes | draft #75 | no |
+| Atomic apply + reconcile | yes | yes | draft #75 | no |
+| Scoped API/UI composition + type_category | yes | yes | draft #75 | no |
+| Browser E2E (1440/390) with login | yes | partial | draft #75 | no |
 
 ## Pre-release
 
-1. **Backup** PostgreSQL (full snapshot + `pg_dump` schema+data for `onec_*` holding v2 tables).
-2. **Drain jobs:** pause scheduled 1C exchange (`onec-scheduled-exchange`, nightly tick) per [import-runbook.md](./import-runbook.md).
-3. **Migration gate:** ensure migration `041_onec_holding_v2_reconciliation.sql` applied on staging; verify empty `onec_holding_v2_apply_state` row id=1.
-4. **Deploy** application build with **`ONEC_HOLDING_V2_PIPELINE_ENABLED` unset** (OFF).
+1. **Backup:** full PostgreSQL snapshot; include `onec_holding_v2_*` and `onec_clients`.
+2. **Drain:** wait for `onec_client_import_runs` / operator jobs — no `running` apply; cancel or complete pending admin update jobs.
+3. **Migrations:** apply through `041_onec_holding_v2_reconciliation.sql` on staging; verify singleton `onec_holding_v2_apply_state` row `id=1`.
+4. **Deploy** build with **`ONEC_HOLDING_V2_PIPELINE_ENABLED` unset (OFF)**.
 
-## Read-only audit (before enable)
+## Manual update path (production)
 
-```bash
-export AUDIT_CLIENTS_PATH=/secure/path/all_clients.json
-node --import tsx scripts/holding-v2-diagnose-clients-file.ts
-```
+1. Operator **dry-run** regular-update (or admin 1C update UI) — capture `verificationFingerprint`.
+2. Read-only audit:
+   ```bash
+   export AUDIT_CLIENTS_PATH=/secure/path/all_clients.json
+   node --import tsx scripts/holding-v2-diagnose-clients-file.ts
+   ```
+3. Apply with matching `--expected-fingerprint` (same bundle + roster). **Do not** enable FTP/scheduled auto-import for v2 until owner sign-off.
+4. After owner approval only: set `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` on app + worker; repeat controlled apply; verify DB + UI sample.
 
-Record stdout `sha256`, `compositionTallies`, `typeCategoryStats` in change ticket. Do **not** import production file until audit signed off.
+## Dry-run (staging / test-DB)
 
-## Dry-run
+- Legacy apply with flag OFF — F1–F5 regressions unchanged.
+- Flag ON: `readStableImportBundle` validates v2 contract; apply runs clients + reconcile atomically.
+- Repeat apply → `NO_CHANGES` (gate includes v2 normalized hash).
 
-1. Staging DB: run legacy apply on current production SHA (flag OFF) — regressions unchanged.
-2. Validate v2 file bytes only (`validateHoldingV2ClientsFileBytes`) — no writes.
-3. Optional: test-DB full pipeline test suite (`test/integration/onec-holding-v2-pipeline.test.ts`).
+## Rollback
 
-## Manual enable (production)
+| Layer | Action | Safe? |
+|-------|--------|-------|
+| Flag OFF | Blocks new v2 apply immediately | yes for **new** writes |
+| App redeploy (legacy code) | Stops v2 code paths | **not** data-safe if v2 tables already written |
+| DB restore | Full restore from pre-v2 backup | yes when v2 apply committed |
+| Legacy-only apply after v2 | May leave v2 tables stale vs `onec_clients` | **requires** owner decision + possible restore |
 
-1. Maintenance window; exchange jobs still off.
-2. Set env `ONEC_HOLDING_V2_PIPELINE_ENABLED=true` on app + worker processes.
-3. Run **controlled** clients apply with v2-validated payload + matching verification fingerprint (operator CLI / admin update path — not FTP auto until explicitly approved).
-4. Verify:
-   - `onec_holding_v2_apply_state.last_normalized_state_sha256` populated
-   - `onec_holding_v2_reconcile_runs` latest status `success` or `no_changes`
-   - Sample client card API: `holdingV2.compositionLabel`, `type_category` fields visible within scope
-   - Legacy list/card F1–F5 fields unchanged
-5. Re-enable scheduled exchange only after smoke pass.
+Returning legacy **code** after a successful v2 apply does **not** automatically revert v2 link/metadata tables.
 
-## Rollback dimensions
-
-| Layer | Action |
-|-------|--------|
-| Flag | Set `ONEC_HOLDING_V2_PIPELINE_ENABLED=false` → immediate **APPLY_BLOCKED** for v2 |
-| App | Redeploy previous build |
-| Data | v2 tables are additive; rollback **does not** auto-delete links. Restore from backup if bad reconcile committed |
-| Exchange | Re-point to last known-good `onec_clients` SHA via controlled apply (legacy schema) |
-
-## Verification commands (local/CI)
+## Verification (local CI)
 
 ```bash
-npm run typecheck
-npm run build
-node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-reconcile.test.ts
+npm run typecheck && npm run build
+node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-stable-read.test.ts
 node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-pipeline.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-reconcile.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/clients-holding-v2-api.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-regular-update-backfill.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/onec-holding-v2-pipeline-lock.test.ts
+node --import tsx --test --test-concurrency=1 test/browser/holding-v2-e2e.browser.test.ts
 ```
 
-## Out of scope for this runbook
+## Out of scope
 
-- Production merge/deploy (manual operator)
-- FTP/scheduled import switch to v2 validator
-- Holding-based scope expansion / grants changes
+- Production merge/deploy/migrate by agent
+- Enabling scheduled exchange
+- Holding-based scope/grant expansion

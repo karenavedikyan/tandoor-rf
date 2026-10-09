@@ -4,7 +4,11 @@ import {
   HOLDING_COMPOSITION_SITE_LABELS,
   type HoldingCompositionSiteType,
 } from "../onec-clients/holding-v2-composition";
+import type { AccessContext } from "../access/types";
 import { holdingV2PipelineEnabledEffective } from "../onec-clients/holding-v2-pipeline-config";
+import { resolveHoldingV2CompositionVisibility } from "./holding-v2-scope";
+
+const WITHHELD_COMPOSITION_LABEL = "Скрыто по области доступа";
 
 export type HoldingV2FieldPresentation = {
   value: string | null;
@@ -81,6 +85,50 @@ function readTypeCategoryRow(row: {
   return result;
 }
 
+async function loadCompositionCounts(
+  client: Pool | PoolClient,
+  holdingRootGuid: string,
+): Promise<{
+  legalEntityCount: number;
+  activeOutletCount: number;
+  membershipComplete: boolean;
+  compositionDataComplete: boolean;
+}> {
+  const counts = await client.query<{
+    legal_count: string;
+    active_outlets: string;
+    unknown_closure_outlets: string;
+    has_head: boolean;
+  }>(
+    `
+      SELECT
+        (SELECT COUNT(*)::text FROM onec_holding_v2_legal_links
+         WHERE guid_holding_root = $1::uuid AND link_active = TRUE) AS legal_count,
+        (SELECT COUNT(*)::text FROM onec_holding_v2_outlet_links
+         WHERE guid_holding_root = $1::uuid AND link_active = TRUE
+           AND closure_known = TRUE AND is_closed = FALSE) AS active_outlets,
+        (SELECT COUNT(*)::text FROM onec_holding_v2_outlet_links
+         WHERE guid_holding_root = $1::uuid AND link_active = TRUE
+           AND closure_known = FALSE) AS unknown_closure_outlets,
+        EXISTS (
+          SELECT 1 FROM onec_holding_v2_legal_links
+          WHERE guid_holding_root = $1::uuid AND guid_client = $1::uuid
+            AND link_active = TRUE AND is_holding_head = TRUE
+        ) AS has_head
+    `,
+    [holdingRootGuid],
+  );
+  const row = counts.rows[0];
+  const unknownClosure = Number(row?.unknown_closure_outlets ?? 0);
+  const membershipComplete = row?.has_head === true;
+  return {
+    legalEntityCount: Number(row?.legal_count ?? 0),
+    activeOutletCount: Number(row?.active_outlets ?? 0),
+    membershipComplete,
+    compositionDataComplete: membershipComplete && unknownClosure === 0,
+  };
+}
+
 async function loadApplyState(client: Pool | PoolClient): Promise<boolean> {
   const result = await client.query<{ last_normalized_state_sha256: string | null }>(
     `SELECT last_normalized_state_sha256 FROM onec_holding_v2_apply_state WHERE id = 1`,
@@ -91,8 +139,12 @@ async function loadApplyState(client: Pool | PoolClient): Promise<boolean> {
 export async function loadHoldingV2ClientExchange(
   client: Pool | PoolClient,
   guidClient: string,
-  options: { visibility: "visible" | "withheld" },
+  options: {
+    context?: AccessContext;
+    typeCategoryVisibility?: "visible" | "withheld";
+  },
 ): Promise<HoldingV2ClientExchangeDto | null> {
+  const typeCategoryVisibility = options.typeCategoryVisibility ?? "visible";
   const pipelineEnabled = holdingV2PipelineEnabledEffective();
   const hasStoredState = await loadApplyState(client);
   if (!hasStoredState) {
@@ -113,34 +165,25 @@ export async function loadHoldingV2ClientExchange(
   const legalRow = legal.rows[0];
   const holdingRootGuid = legalRow?.guid_holding_root ?? null;
 
+  const compositionVisibility =
+    options.context && holdingRootGuid
+      ? await resolveHoldingV2CompositionVisibility(options.context, client, holdingRootGuid)
+      : ("visible" as const);
+
   let compositionSiteType: HoldingCompositionSiteType = "unknown";
-  if (holdingRootGuid) {
-    const counts = await client.query<{ legal_count: string; active_outlets: string; has_head: boolean }>(
-      `
-        SELECT
-          (SELECT COUNT(*)::text FROM onec_holding_v2_legal_links
-           WHERE guid_holding_root = $1::uuid AND link_active = TRUE) AS legal_count,
-          (SELECT COUNT(*)::text FROM onec_holding_v2_outlet_links
-           WHERE guid_holding_root = $1::uuid AND link_active = TRUE
-             AND (closure_known = FALSE OR is_closed = FALSE)) AS active_outlets,
-          EXISTS (
-            SELECT 1 FROM onec_holding_v2_legal_links
-            WHERE guid_holding_root = $1::uuid AND guid_client = $1::uuid
-              AND link_active = TRUE AND is_holding_head = TRUE
-          ) AS has_head
-      `,
-      [holdingRootGuid],
-    );
-    const row = counts.rows[0];
-    const legalEntityCount = Number(row?.legal_count ?? 0);
-    const activeOutletCount = Number(row?.active_outlets ?? 0);
-    const membershipComplete = row?.has_head === true;
-    compositionSiteType = classifyHoldingCompositionSiteType({
-      legalEntityCount,
-      activeOutletCount,
-      membershipComplete,
-      compositionDataComplete: membershipComplete,
-    });
+  let compositionLabel = HOLDING_COMPOSITION_SITE_LABELS.unknown;
+  let exposedRootGuid: string | null = holdingRootGuid;
+  let exposedIsHead: boolean | null = legalRow?.is_holding_head ?? null;
+
+  if (compositionVisibility === "withheld") {
+    compositionSiteType = "unknown";
+    compositionLabel = WITHHELD_COMPOSITION_LABEL;
+    exposedRootGuid = null;
+    exposedIsHead = null;
+  } else if (holdingRootGuid) {
+    const counts = await loadCompositionCounts(client, holdingRootGuid);
+    compositionSiteType = classifyHoldingCompositionSiteType(counts);
+    compositionLabel = HOLDING_COMPOSITION_SITE_LABELS[compositionSiteType];
   }
 
   const tc = await client.query<{
@@ -161,19 +204,20 @@ export async function loadHoldingV2ClientExchange(
   return {
     pipelineEnabled,
     hasStoredState,
-    holdingRootGuid,
-    isHoldingHead: legalRow?.is_holding_head ?? null,
+    holdingRootGuid: exposedRootGuid,
+    isHoldingHead: exposedIsHead,
     compositionSiteType,
-    compositionLabel: HOLDING_COMPOSITION_SITE_LABELS[compositionSiteType],
-    typeCategory: readTypeCategoryRow(tc.rows[0], options.visibility),
+    compositionLabel,
+    typeCategory: readTypeCategoryRow(tc.rows[0], typeCategoryVisibility),
   };
 }
 
 export async function loadHoldingV2OutletExchange(
   client: Pool | PoolClient,
   guidStore: string,
-  options: { visibility: "visible" | "withheld" },
+  options: { typeCategoryVisibility?: "visible" | "withheld" },
 ): Promise<HoldingV2OutletExchangeDto | null> {
+  const typeCategoryVisibility = options.typeCategoryVisibility ?? "visible";
   const hasStoredState = await loadApplyState(client);
   if (!hasStoredState) {
     return null;
@@ -195,11 +239,12 @@ export async function loadHoldingV2OutletExchange(
   if (tc.rows.length === 0) {
     return null;
   }
-  return { typeCategory: readTypeCategoryRow(tc.rows[0], options.visibility) };
+  return { typeCategory: readTypeCategoryRow(tc.rows[0], typeCategoryVisibility) };
 }
 
 export async function loadHoldingV2ListSummaries(
   client: Pool | PoolClient,
+  context: AccessContext,
   guidClients: string[],
 ): Promise<Map<string, Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory">>> {
   const map = new Map<string, Pick<HoldingV2ClientExchangeDto, "compositionLabel" | "typeCategory">>();
@@ -243,30 +288,13 @@ export async function loadHoldingV2ListSummaries(
     const root = rootByClient.get(key);
     let compositionLabel = HOLDING_COMPOSITION_SITE_LABELS.unknown;
     if (root) {
-      const counts = await client.query<{ legal_count: string; active_outlets: string; has_head: boolean }>(
-        `
-          SELECT
-            (SELECT COUNT(*)::text FROM onec_holding_v2_legal_links
-             WHERE guid_holding_root = $1::uuid AND link_active = TRUE) AS legal_count,
-            (SELECT COUNT(*)::text FROM onec_holding_v2_outlet_links
-             WHERE guid_holding_root = $1::uuid AND link_active = TRUE
-               AND (closure_known = FALSE OR is_closed = FALSE)) AS active_outlets,
-            EXISTS (
-              SELECT 1 FROM onec_holding_v2_legal_links
-              WHERE guid_holding_root = $1::uuid AND guid_client = $1::uuid
-                AND link_active = TRUE AND is_holding_head = TRUE
-            ) AS has_head
-        `,
-        [root],
-      );
-      const row = counts.rows[0];
-      const siteType = classifyHoldingCompositionSiteType({
-        legalEntityCount: Number(row?.legal_count ?? 0),
-        activeOutletCount: Number(row?.active_outlets ?? 0),
-        membershipComplete: row?.has_head === true,
-        compositionDataComplete: row?.has_head === true,
-      });
-      compositionLabel = HOLDING_COMPOSITION_SITE_LABELS[siteType];
+      const compositionVisibility = await resolveHoldingV2CompositionVisibility(context, client, root);
+      if (compositionVisibility === "withheld") {
+        compositionLabel = WITHHELD_COMPOSITION_LABEL;
+      } else {
+        const counts = await loadCompositionCounts(client, root);
+        compositionLabel = HOLDING_COMPOSITION_SITE_LABELS[classifyHoldingCompositionSiteType(counts)];
+      }
     }
     map.set(key, {
       compositionLabel,

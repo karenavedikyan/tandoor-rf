@@ -458,6 +458,7 @@ export async function listClients(
   if (pool) {
   const summaries = await loadHoldingV2ListSummaries(
     pool,
+    context,
     items.map((item) => item.guid),
   );
   for (const item of items) {
@@ -741,7 +742,10 @@ export async function getClientByGuid(
   const detail = toClientDetail(row, context, { linkedEmployeeGuids, ropTeamEmployeeGuids });
   const pool = getPool();
   if (pool) {
-    const holdingV2 = await loadHoldingV2ClientExchange(pool, guid, { visibility: "visible" });
+    const holdingV2 = await loadHoldingV2ClientExchange(pool, guid, {
+      context,
+      typeCategoryVisibility: "visible",
+    });
     if (holdingV2) {
       detail.holdingV2 = holdingV2;
     }
@@ -751,7 +755,7 @@ export async function getClientByGuid(
           continue;
         }
         const outletV2 = await loadHoldingV2OutletExchange(pool, outlet.guidStore, {
-          visibility: "visible",
+          typeCategoryVisibility: "visible",
         });
         if (outletV2) {
           outlet.holdingV2 = outletV2;

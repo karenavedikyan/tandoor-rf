@@ -56,7 +56,7 @@
       (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
       field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
       field(
-        "type_category (ТТ, v2)",
+        "Тип 1С (v2, ТТ)",
         outlet.holdingV2 &&
           outlet.holdingV2.typeCategory &&
           outlet.holdingV2.typeCategory.nameType &&
@@ -66,6 +66,19 @@
           outlet.holdingV2.typeCategory &&
           outlet.holdingV2.typeCategory.nameType &&
           outlet.holdingV2.typeCategory.nameType.hasSource
+        ),
+      ) +
+      field(
+        "Категория 1С (v2, ТТ)",
+        outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameCategory &&
+          outlet.holdingV2.typeCategory.nameCategory.label,
+        !!(
+          outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameCategory &&
+          outlet.holdingV2.typeCategory.nameCategory.hasSource
         ),
       );
     var addresses = field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
@@ -303,14 +316,24 @@
               ext.wholesaleExchange.outletCategory.hasSource
             ),
           ) +
-          field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext) +
+          field(
+            "Холдинг / юрлица",
+            holdingCard +
+              (holding || "Холдинг не указан") +
+              " · " +
+              (client.holdingV2 && client.holdingV2.hasStoredState
+                ? client.holdingV2.compositionLabel +
+                  (client.holdingV2.isHoldingHead ? " · голова холдинга" : "")
+                : "состав холдинга не передан"),
+            !!(holding || (client.holdingV2 && client.holdingV2.hasStoredState) || ext),
+          ) +
           field(
             "Тип состава холдинга (v2)",
             client.holdingV2 && client.holdingV2.compositionLabel,
             !!(client.holdingV2 && client.holdingV2.hasStoredState),
           ) +
           field(
-            "type_category (клиент, v2)",
+            "Тип 1С (v2, клиент)",
             client.holdingV2 &&
               client.holdingV2.typeCategory &&
               client.holdingV2.typeCategory.nameType &&
@@ -323,16 +346,16 @@
             ),
           ) +
           field(
-            "type_category guid (клиент, v2)",
+            "Категория 1С (v2, клиент)",
             client.holdingV2 &&
               client.holdingV2.typeCategory &&
-              client.holdingV2.typeCategory.guidType &&
-              client.holdingV2.typeCategory.guidType.label,
+              client.holdingV2.typeCategory.nameCategory &&
+              client.holdingV2.typeCategory.nameCategory.label,
             !!(
               client.holdingV2 &&
               client.holdingV2.typeCategory &&
-              client.holdingV2.typeCategory.guidType &&
-              client.holdingV2.typeCategory.guidType.hasSource
+              client.holdingV2.typeCategory.nameCategory &&
+              client.holdingV2.typeCategory.nameCategory.hasSource
             ),
           ),
           true) +
