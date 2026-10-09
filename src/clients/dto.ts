@@ -242,6 +242,9 @@ export type ClientsOptionsResponse = {
   /** Distinct категория 1С values in accessible clients (non-empty). */
   onecCategoryValues: ClientOptionDto[];
   onecLegalEntityTypeValues: ClientOptionDto[];
+  holdingV2CompositionValues: ClientOptionDto[];
+  holdingV2NameTypeValues: ClientOptionDto[];
+  holdingV2NameCategoryValues: ClientOptionDto[];
 };
 
 export type ClientsSyncFreshnessState =

@@ -68,6 +68,9 @@
     "discountProgram",
     "onecTop150",
     "onecCategory",
+    "holdingV2Composition",
+    "holdingV2NameType",
+    "holdingV2NameCategory",
     "onecCounterpartyContains",
     "onecFullNameContains",
     "onecLegalEntityType",
@@ -195,6 +198,9 @@
     state.discountProgram = "";
     state.onecTop150 = "";
     state.onecCategory = "";
+    state.holdingV2Composition = "";
+    state.holdingV2NameType = "";
+    state.holdingV2NameCategory = "";
     state.onecCounterpartyContains = "";
     state.onecFullNameContains = "";
     state.onecLegalEntityType = "";
@@ -607,6 +613,9 @@
       discountProgram: params.get("discountProgram") || "",
       onecTop150: params.get("onecTop150") || "",
       onecCategory: params.get("onecCategory") || "",
+      holdingV2Composition: params.get("holdingV2Composition") || "",
+      holdingV2NameType: params.get("holdingV2NameType") || "",
+      holdingV2NameCategory: params.get("holdingV2NameCategory") || "",
       onecCounterpartyContains: params.get("onecCounterpartyContains") || "",
       onecFullNameContains: params.get("onecFullNameContains") || "",
       onecLegalEntityType: params.get("onecLegalEntityType") || "",
@@ -931,6 +940,9 @@
     if (state.discountProgram) params.set("discountProgram", state.discountProgram);
     if (state.onecTop150) params.set("onecTop150", state.onecTop150);
     if (state.onecCategory) params.set("onecCategory", state.onecCategory);
+    if (state.holdingV2Composition) params.set("holdingV2Composition", state.holdingV2Composition);
+    if (state.holdingV2NameType) params.set("holdingV2NameType", state.holdingV2NameType);
+    if (state.holdingV2NameCategory) params.set("holdingV2NameCategory", state.holdingV2NameCategory);
     if (state.onecCounterpartyContains) params.set("onecCounterpartyContains", state.onecCounterpartyContains);
     if (state.onecFullNameContains) params.set("onecFullNameContains", state.onecFullNameContains);
     if (state.onecLegalEntityType) params.set("onecLegalEntityType", state.onecLegalEntityType);

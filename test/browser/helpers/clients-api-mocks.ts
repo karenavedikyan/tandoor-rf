@@ -320,6 +320,9 @@ export function syntheticOptionsPayload(
       { id: "Компания", name: "Компания", shortId: "Компания" },
       { id: "Частное лицо", name: "Частное лицо", shortId: "Частное" },
     ],
+    holdingV2CompositionValues: [],
+    holdingV2NameTypeValues: [],
+    holdingV2NameCategoryValues: [],
   };
 }
 

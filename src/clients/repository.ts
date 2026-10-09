@@ -25,6 +25,13 @@ import { applyClientCodeFilters } from "./client-code-list-filters";
 import { applyClientContractFilters } from "./client-contract-list-filters";
 import { applyClientCounterpartyFilters } from "./counterparty-list-filters";
 import { applyClientWholesaleExchangeFilters } from "./wholesale-list-filters";
+import {
+  applyClientHoldingV2ListFilters,
+  holdingV2CompositionFilterLabel,
+  holdingV2CompositionTokenSubquery,
+  type HoldingV2CompositionFilterToken,
+} from "./holding-v2-list-filters";
+import { rebaseSqlPlaceholders } from "../access/combine-filters";
 import { hasOutletDerivedClientFilters } from "./field-filter-registry";
 import { buildOptionsDualScopeCte, scopedOutletLateralJoinSql } from "./outlet-elem-access";
 import { applyClientListAssignmentFilters } from "./list-assignment-filters";
@@ -285,6 +292,9 @@ async function resolveScopedFilter(
   }
 
   let combined = combineScopeAndFilter(scope, userFilter);
+  if (input.entity === "clients") {
+    combined = applyClientHoldingV2ListFilters(combined, input, context);
+  }
 
   let scopedEmployeeParam: string | undefined;
   let selectExtraParams: unknown[] = [];
@@ -664,6 +674,46 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     directFilter.params,
   );
 
+  const compositionTokenSubquery = holdingV2CompositionTokenSubquery(context, "scoped_clients.guid_client");
+  const compositionTokenSql = rebaseSqlPlaceholders(compositionTokenSubquery.sql, directFilter.params.length);
+  const holdingV2CompositionValues = await query<{ value: string }>(
+    `
+      ${dualScopeCte}
+      SELECT DISTINCT comp.token AS value
+      FROM scoped_clients
+      CROSS JOIN LATERAL (${compositionTokenSql}) AS comp(token)
+      WHERE comp.token IS NOT NULL
+      ORDER BY value ASC
+    `,
+    [...directFilter.params, ...compositionTokenSubquery.params],
+  );
+
+  const holdingV2NameTypeValues = await query<{ value: string }>(
+    `
+      ${dualScopeCte}
+      SELECT DISTINCT tc.name_type AS value
+      FROM scoped_clients sc
+      INNER JOIN onec_holding_v2_client_type_category tc ON tc.guid_client = sc.guid_client
+      WHERE (tc.field_presence->>'nameType') = 'true'
+        AND NULLIF(BTRIM(tc.name_type), '') IS NOT NULL
+      ORDER BY value ASC
+    `,
+    directFilter.params,
+  );
+
+  const holdingV2NameCategoryValues = await query<{ value: string }>(
+    `
+      ${dualScopeCte}
+      SELECT DISTINCT tc.name_category AS value
+      FROM scoped_clients sc
+      INNER JOIN onec_holding_v2_client_type_category tc ON tc.guid_client = sc.guid_client
+      WHERE (tc.field_presence->>'nameCategory') = 'true'
+        AND NULLIF(BTRIM(tc.name_category), '') IS NOT NULL
+      ORDER BY value ASC
+    `,
+    directFilter.params,
+  );
+
   return {
     managers: managers.rows.map((row) => toClientOption(row.id, row.name)),
     outletManagers: outletManagers.rows.map((row) => toClientOption(row.id, row.name)),
@@ -674,6 +724,16 @@ export async function getClientOptions(context: AccessContext): Promise<ClientsO
     onecTop150Values: onecTop150Values.rows.map((row) => toClientOption(row.value, row.value)),
     onecCategoryValues: onecCategoryValues.rows.map((row) => toClientOption(row.value, row.value)),
     onecLegalEntityTypeValues: onecLegalEntityTypeValues.rows.map((row) =>
+      toClientOption(row.value, row.value),
+    ),
+    holdingV2CompositionValues: holdingV2CompositionValues.rows.map((row) =>
+      toClientOption(
+        row.value,
+        holdingV2CompositionFilterLabel(row.value as HoldingV2CompositionFilterToken),
+      ),
+    ),
+    holdingV2NameTypeValues: holdingV2NameTypeValues.rows.map((row) => toClientOption(row.value, row.value)),
+    holdingV2NameCategoryValues: holdingV2NameCategoryValues.rows.map((row) =>
       toClientOption(row.value, row.value),
     ),
   };

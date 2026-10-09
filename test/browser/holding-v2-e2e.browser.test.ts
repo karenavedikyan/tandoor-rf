@@ -35,8 +35,9 @@ const MANAGER = "22222222-2222-4222-8222-222222222222";
 
 const CLIENT_NAME = "V2 Browser Client";
 const F5_CODE = "HV2-E2E-F5";
-const COMPOSITION_LABEL = "Холдинг моно";
+const COMPOSITION_LABEL = "Холдинг моно сеть";
 const TYPE_NAME = "E2E Holding Type";
+const CATEGORY_NAME = "E2E Holding Category";
 const STORE_ONE_LABEL = "E2E Store Alpha";
 const STORE_TWO_LABEL = "E2E Store Beta";
 
@@ -79,7 +80,12 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
       headRow(H1, {
         name_client: CLIENT_NAME,
         Код: F5_CODE,
-        type_category: typeCategory({ guid_type: "e2e-hv2-type", name_type: TYPE_NAME }),
+        type_category: typeCategory({
+          guid_type: "e2e-hv2-type",
+          name_type: TYPE_NAME,
+          guid_category: "e2e-hv2-cat",
+          name_category: CATEGORY_NAME,
+        }),
         retail_outlets: [
           minimalOutlet(S1, {
             address: { store_address: STORE_ONE_LABEL },
@@ -196,6 +202,117 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
       undefined,
       { timeout: 30000 },
     );
+  }
+
+  async function ensureFiltersPanelExpanded(page: Page): Promise<void> {
+    const toggle = page.locator("#clients-filters-toggle");
+    if (await toggle.isVisible()) {
+      const expanded = await toggle.getAttribute("aria-expanded");
+      if (expanded !== "true") {
+        await toggle.click();
+        await page.waitForSelector("#clients-filters-panel.clients-filters-panel--expanded");
+      }
+    }
+  }
+
+  async function openFieldFiltersSection(page: Page): Promise<void> {
+    await ensureFiltersPanelExpanded(page);
+    await page.locator("#field-filters-wrap").evaluate((el) => {
+      if (el instanceof HTMLDetailsElement) {
+        el.open = true;
+      }
+    });
+    await page.waitForSelector("#holding-v2-composition-filter", { state: "attached" });
+  }
+
+  function filteredClientsListPath(): string {
+    const params = new URLSearchParams({
+      view: "all",
+      entity: "clients",
+      holdingV2Composition: "mono_network",
+      holdingV2NameType: TYPE_NAME,
+      holdingV2NameCategory: CATEGORY_NAME,
+    });
+    return `/clients?${params.toString()}`;
+  }
+
+  async function applyHoldingV2ScopedFilters(page: Page): Promise<void> {
+    await openFieldFiltersSection(page);
+    await page.waitForFunction(
+      () => {
+        const select = document.getElementById("holding-v2-composition-filter") as HTMLSelectElement | null;
+        return select && select.options.length > 1;
+      },
+      undefined,
+      { timeout: 30000 },
+    );
+
+    const compositionListPromise = page.waitForResponse((response) => {
+      const request = response.request();
+      if (!isPrimaryClientsListGet(new URL(response.url()), request.method())) {
+        return false;
+      }
+      return new URL(response.url()).searchParams.get("holdingV2Composition") === "mono_network";
+    });
+    await page.selectOption("#holding-v2-composition-filter", "mono_network");
+    const compositionList = await compositionListPromise;
+    assert.equal(compositionList.status(), 200);
+    const compositionBody = (await compositionList.json()) as { total?: number };
+    assert.equal(compositionBody.total, 1);
+    assert.match(page.url(), /holdingV2Composition=mono_network/);
+
+    const typeListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("holdingV2NameType") === TYPE_NAME &&
+        url.searchParams.get("holdingV2Composition") === "mono_network"
+      );
+    });
+    await page.selectOption("#holding-v2-name-type-filter", TYPE_NAME);
+    const typeList = await typeListPromise;
+    assert.equal(typeList.status(), 200);
+    assert.equal((await typeList.json()).total, 1);
+
+    const categoryListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("holdingV2NameCategory") === CATEGORY_NAME
+      );
+    });
+    await page.selectOption("#holding-v2-name-category-filter", CATEGORY_NAME);
+    const categoryList = await categoryListPromise;
+    assert.equal(categoryList.status(), 200);
+    assert.equal((await categoryList.json()).total, 1);
+  }
+
+  async function assertFilteredListReloadAndReset(page: Page): Promise<void> {
+    const reloadListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        isPrimaryClientsListGet(url, response.request().method()) &&
+        url.searchParams.get("holdingV2Composition") === "mono_network" &&
+        url.searchParams.get("holdingV2NameType") === TYPE_NAME &&
+        url.searchParams.get("holdingV2NameCategory") === CATEGORY_NAME
+      );
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await reloadListPromise;
+    await openFieldFiltersSection(page);
+    assert.equal(await page.locator("#holding-v2-composition-filter").inputValue(), "mono_network");
+    assert.equal(await page.locator("#holding-v2-name-type-filter").inputValue(), TYPE_NAME);
+    assert.equal(await page.locator("#holding-v2-name-category-filter").inputValue(), CATEGORY_NAME);
+
+    const resetListPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return isPrimaryClientsListGet(url, response.request().method()) && !url.searchParams.get("holdingV2Composition");
+    });
+    await page.click("#reset-filters");
+    await resetListPromise;
+    await openFieldFiltersSection(page);
+    assert.equal(await page.locator("#holding-v2-composition-filter").inputValue(), "");
+    assert.doesNotMatch(page.url(), /holdingV2Composition=/);
   }
 
   async function enableHoldingV2CompositionColumn(page: Page): Promise<void> {
@@ -341,10 +458,11 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
       await listPromise;
       await waitForClientsList(page);
       await enableHoldingV2CompositionColumn(page);
+      await applyHoldingV2ScopedFilters(page);
       await assertListShowsHoldingV2(page, DESKTOP);
 
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "holding-v2-list-desktop.png"),
+        path: path.join(SCREENSHOT_DIR, "holding-v2-list-filters-desktop.png"),
         fullPage: true,
       });
 
@@ -359,6 +477,16 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
         path: path.join(SCREENSHOT_DIR, "holding-v2-composition-desktop.png"),
         fullPage: true,
       });
+
+      const filteredListPromise = page.waitForResponse(
+        (response) =>
+          isPrimaryClientsListGet(new URL(response.url()), response.request().method()) &&
+          response.status() === 200,
+      );
+      await page.goto(filteredClientsListPath(), { waitUntil: "domcontentloaded" });
+      await filteredListPromise;
+      await waitForClientsList(page);
+      await assertFilteredListReloadAndReset(page);
 
       await context.close();
     }
@@ -376,10 +504,11 @@ describe("holding v2 browser E2E (real API + PostgreSQL)", { concurrency: false 
       await listPromise;
       await waitForClientsList(page);
       await enableHoldingV2CompositionColumn(page);
+      await applyHoldingV2ScopedFilters(page);
       await assertListShowsHoldingV2(page, MOBILE);
 
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "holding-v2-list-mobile.png"),
+        path: path.join(SCREENSHOT_DIR, "holding-v2-list-filters-mobile.png"),
         fullPage: true,
       });
 
