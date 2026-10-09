@@ -258,6 +258,8 @@
     { id: "category", label: "Категория", entity: "clients", defaultVisible: false, sortable: false, hasSource: false },
     { id: "onecTop150", label: "ТОП-150 (1С)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecCategory", label: "Категория 1С", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "holdingV2CompositionLabel", label: "Состав холдинга (v2)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
+    { id: "holdingV2TypeCategoryLabel", label: "type_category (v2)", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecCounterparty", label: "Контрагент", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecFullName", label: "Полное наименование", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },
     { id: "onecLegalEntityType", label: "Тип контрагента", entity: "clients", defaultVisible: false, sortable: false, hasSource: true },

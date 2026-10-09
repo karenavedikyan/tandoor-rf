@@ -50,6 +50,11 @@ import {
   canUseUnassignedNavigation,
 } from "./role-presentation";
 import {
+  loadHoldingV2ClientExchange,
+  loadHoldingV2ListSummaries,
+  loadHoldingV2OutletExchange,
+} from "./holding-v2-exchange";
+import {
   toClientDetail,
   toClientListItem,
   toClientOption,
@@ -448,8 +453,29 @@ export async function listClients(
     listParams,
   );
 
+  const items = rows.rows.map(toClientListItem);
+  const pool = getPool();
+  if (pool) {
+  const summaries = await loadHoldingV2ListSummaries(
+    pool,
+    items.map((item) => item.guid),
+  );
+  for (const item of items) {
+    const summary = summaries.get(item.guid.toLowerCase());
+    if (!summary) {
+      continue;
+    }
+    item.holdingV2CompositionLabel = summary.compositionLabel;
+    const typeLabel =
+      summary.typeCategory.guidType?.label ?? summary.typeCategory.nameType?.label ?? undefined;
+    if (typeLabel) {
+      item.holdingV2TypeCategoryLabel = typeLabel;
+    }
+  }
+  }
+
   return {
-    items: rows.rows.map(toClientListItem),
+    items,
     total,
     page: input.page,
     pageSize: input.pageSize,
@@ -712,7 +738,28 @@ export async function getClientByGuid(
   if (!row) {
     return null;
   }
-  return toClientDetail(row, context, { linkedEmployeeGuids, ropTeamEmployeeGuids });
+  const detail = toClientDetail(row, context, { linkedEmployeeGuids, ropTeamEmployeeGuids });
+  const pool = getPool();
+  if (pool) {
+    const holdingV2 = await loadHoldingV2ClientExchange(pool, guid, { visibility: "visible" });
+    if (holdingV2) {
+      detail.holdingV2 = holdingV2;
+    }
+    if (detail.extended?.retailOutlets) {
+      for (const outlet of detail.extended.retailOutlets) {
+        if (!outlet.guidStore) {
+          continue;
+        }
+        const outletV2 = await loadHoldingV2OutletExchange(pool, outlet.guidStore, {
+          visibility: "visible",
+        });
+        if (outletV2) {
+          outlet.holdingV2 = outletV2;
+        }
+      }
+    }
+  }
+  return detail;
 }
 
 export async function canReadClientGuid(

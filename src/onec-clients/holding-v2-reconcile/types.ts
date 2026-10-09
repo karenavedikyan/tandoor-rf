@@ -80,6 +80,11 @@ export type HoldingV2PersistedState = {
   }>;
 };
 
+export type HoldingV2ReconcileInjectFailure =
+  | "after_legal_links"
+  | "after_outlet_links"
+  | "after_type_category";
+
 export type HoldingV2ReconcileApplyResult =
   | {
       ok: true;

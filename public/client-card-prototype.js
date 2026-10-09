@@ -54,7 +54,20 @@
       field("Статус", outlet.closureStatusLabel, true) +
       field("Источник данных", outlet.dataSourceLabel || outlet.freshnessLabel, true) +
       (outlet.closureNote ? '<p class="pc-label">' + esc(outlet.closureNote) + "</p>" : "") +
-      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName);
+      field("Холдинг (из точки)", outlet.holdingName, !!outlet.holdingName) +
+      field(
+        "type_category (ТТ, v2)",
+        outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameType &&
+          outlet.holdingV2.typeCategory.nameType.label,
+        !!(
+          outlet.holdingV2 &&
+          outlet.holdingV2.typeCategory &&
+          outlet.holdingV2.typeCategory.nameType &&
+          outlet.holdingV2.typeCategory.nameType.hasSource
+        ),
+      );
     var addresses = field("Адрес магазина", outlet.addresses && outlet.addresses.storeAddress, !!(outlet.addresses && outlet.addresses.storeAddress)) +
       field("Адрес доставки", outlet.addresses && outlet.addresses.deliveryAddress, !!(outlet.addresses && outlet.addresses.deliveryAddress)) +
       field("Направление маршрута", outlet.addresses && outlet.addresses.routeDirection, !!(outlet.addresses && outlet.addresses.routeDirection)) +
@@ -290,7 +303,38 @@
               ext.wholesaleExchange.outletCategory.hasSource
             ),
           ) +
-          field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext),
+          field("Холдинг / юрлица", holdingCard + (holding || "Холдинг не указан") + " · юрлица не переданы", !!holding || !!ext) +
+          field(
+            "Тип состава холдинга (v2)",
+            client.holdingV2 && client.holdingV2.compositionLabel,
+            !!(client.holdingV2 && client.holdingV2.hasStoredState),
+          ) +
+          field(
+            "type_category (клиент, v2)",
+            client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameType &&
+              client.holdingV2.typeCategory.nameType.label,
+            !!(
+              client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.nameType &&
+              client.holdingV2.typeCategory.nameType.hasSource
+            ),
+          ) +
+          field(
+            "type_category guid (клиент, v2)",
+            client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.guidType &&
+              client.holdingV2.typeCategory.guidType.label,
+            !!(
+              client.holdingV2 &&
+              client.holdingV2.typeCategory &&
+              client.holdingV2.typeCategory.guidType &&
+              client.holdingV2.typeCategory.guidType.hasSource
+            ),
+          ),
           true) +
         detailsBlock("Ответственные",
           field("Менеджер клиента", clientManagerField, !!manager) +

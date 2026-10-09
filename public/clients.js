@@ -1932,6 +1932,18 @@
       }
       return shell.escapeHtml(item.onecCategory.label || "—");
     }
+    if (columnId === "holdingV2CompositionLabel") {
+      if (!item.holdingV2CompositionLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2CompositionLabel);
+    }
+    if (columnId === "holdingV2TypeCategoryLabel") {
+      if (!item.holdingV2TypeCategoryLabel) {
+        return renderNoDataCell();
+      }
+      return shell.escapeHtml(item.holdingV2TypeCategoryLabel);
+    }
     if (columnId === "onecCounterparty") {
       if (!item.onecCounterparty || !item.onecCounterparty.hasSource) {
         return renderNoDataCell();

@@ -12,7 +12,7 @@ import { verificationFingerprintFromPayload } from "./import-verification-finger
 import { type FtpReader, readClientsFileFromFtp } from "./ftp-read";
 import { PLAIN_FTP_TRANSPORT_WARNING, sanitizeImportResult } from "./sanitize";
 import type { ValidateClientsLimits } from "./validate";
-import type { ClientsImportCliOptions, ClientsImportResult, ValidationIssue } from "./types";
+import type { ClientsImportCliOptions, ClientsImportResult, ImportStatus, ValidationIssue } from "./types";
 import { validateClientsFileBytes } from "./validate";
 import {
   buildWholesaleCompositionPrepReport,
@@ -376,13 +376,19 @@ export async function runClientsImport(
     testHooks: options.applyTestHooks,
   });
   if (!applied.ok) {
-    const mappedErrorCode =
-      applied.code === "VERIFICATION_FINGERPRINT_MISMATCH"
-        ? "HASH_MISMATCH"
-        : applied.code === "VERIFICATION_FINGERPRINT_REQUIRED" ||
-            applied.code === "VERIFICATION_PARAMETERS_MISMATCH"
-          ? "ARGUMENT_ERROR"
-          : applied.code;
+    let mappedErrorCode: ImportStatus = "DATABASE_ERROR";
+    if (applied.code.startsWith("HOLDING_V2_")) {
+      mappedErrorCode = "DATABASE_ERROR";
+    } else if (applied.code === "VERIFICATION_FINGERPRINT_MISMATCH") {
+      mappedErrorCode = "HASH_MISMATCH";
+    } else if (
+      applied.code === "VERIFICATION_FINGERPRINT_REQUIRED" ||
+      applied.code === "VERIFICATION_PARAMETERS_MISMATCH"
+    ) {
+      mappedErrorCode = "ARGUMENT_ERROR";
+    } else {
+      mappedErrorCode = applied.code as ImportStatus;
+    }
     return sanitizeImportResult(
       {
         status: mappedErrorCode,

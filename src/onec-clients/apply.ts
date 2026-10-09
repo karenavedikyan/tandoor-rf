@@ -11,6 +11,10 @@ import {
 } from "../onec-exchange/state";
 import { prepareJournalWarnings } from "../onec-exchange/warnings-journal";
 import { IMPORT_ADVISORY_LOCK_KEY } from "./constants";
+import { holdingV2PipelineEnabledEffective } from "./holding-v2-pipeline-config";
+import { runHoldingV2PipelineInImportTransaction } from "./holding-v2-pipeline-apply";
+import { HoldingV2ReconcilePipelineError } from "./holding-v2-reconcile/apply-internals";
+import type { HoldingV2ReconcileApplyResult } from "./holding-v2-reconcile/types";
 import {
   buildExtendedSnapshotJson,
   extendedBusinessDataEqual,
@@ -77,6 +81,7 @@ export type ApplyResult =
       counts: ApplyCounts;
       blockSummary?: ApplyBlockSummary;
       cleanupWarning?: string;
+      holdingV2Reconcile?: Extract<HoldingV2ReconcileApplyResult, { ok: true }>;
     }
   | {
       ok: false;
@@ -94,7 +99,14 @@ export type ApplyResult =
         | "VERIFICATION_FINGERPRINT_MISMATCH"
         | "VERIFICATION_PARAMETERS_MISMATCH"
         | "IMPORT_JOB_SUPERSEDED"
-        | "NIGHTLY_WINDOW_MISSED";
+        | "NIGHTLY_WINDOW_MISSED"
+        | "HOLDING_V2_INVALID_PAYLOAD"
+        | "HOLDING_V2_RECONCILE_LOCKED"
+        | "HOLDING_V2_ORPHAN_HOLDING_LINKS"
+        | "HOLDING_V2_CLIENT_STUB_MISSING"
+        | "HOLDING_V2_OUTLET_COMPOSITION_INCOMPLETE"
+        | "HOLDING_V2_TYPE_CATEGORY_EXPLICIT_NULL"
+        | "HOLDING_V2_INVARIANT_VIOLATION";
       message: string;
       runId?: string;
       actualFingerprint?: string;
@@ -682,17 +694,43 @@ function appendCleanupWarnings(result: ApplyResult, cleanupWarnings: string[]): 
   };
 }
 
+function mapHoldingV2ReconcileFailureCode(
+  code: Extract<HoldingV2ReconcileApplyResult, { ok: false }>["code"],
+): Extract<Extract<ApplyResult, { ok: false }>, { code: string }>["code"] {
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return "HOLDING_V2_INVALID_PAYLOAD";
+    case "RECONCILE_LOCKED":
+      return "HOLDING_V2_RECONCILE_LOCKED";
+    case "ORPHAN_HOLDING_LINKS":
+      return "HOLDING_V2_ORPHAN_HOLDING_LINKS";
+    case "CLIENT_STUB_MISSING":
+      return "HOLDING_V2_CLIENT_STUB_MISSING";
+    case "OUTLET_COMPOSITION_INCOMPLETE":
+      return "HOLDING_V2_OUTLET_COMPOSITION_INCOMPLETE";
+    case "TYPE_CATEGORY_EXPLICIT_NULL":
+      return "HOLDING_V2_TYPE_CATEGORY_EXPLICIT_NULL";
+    case "INVARIANT_VIOLATION":
+      return "HOLDING_V2_INVARIANT_VIOLATION";
+    default:
+      return "DATABASE_ERROR";
+  }
+}
+
 function rejectHoldingV2SchemaBeforeApply(
   payload: ValidatedClientsPayload,
 ): { code: "APPLY_BLOCKED"; message: string } | null {
-  if (payload.holdingExchangeSchema === "v2") {
-    return {
-      code: "APPLY_BLOCKED",
-      message:
-        "Holding exchange schema v2 is diagnostic-only in this release; storage/reconciliation apply is not enabled yet.",
-    };
+  if (payload.holdingExchangeSchema !== "v2") {
+    return null;
   }
-  return null;
+  if (holdingV2PipelineEnabledEffective()) {
+    return null;
+  }
+  return {
+    code: "APPLY_BLOCKED",
+    message:
+      "Holding exchange schema v2 is disabled (ONEC_HOLDING_V2_PIPELINE_ENABLED); enable explicitly after release checklist.",
+  };
 }
 
 function rejectMissingValidatedRosterStates(
@@ -1418,6 +1456,18 @@ export async function applyClientsImport(options: {
             });
           }
 
+          let holdingV2Reconcile: Extract<HoldingV2ReconcileApplyResult, { ok: true }> | undefined;
+          if (
+            options.payload.holdingExchangeSchema === "v2" &&
+            holdingV2PipelineEnabledEffective()
+          ) {
+            holdingV2Reconcile = await runHoldingV2PipelineInImportTransaction(
+              managed.client,
+              options.payload,
+              verifiedFingerprint,
+            );
+          }
+
           phase.counts = {
             newCount,
             changedCount,
@@ -1458,6 +1508,7 @@ export async function applyClientsImport(options: {
             counts: phase.counts,
             blockSummary: phase.blockSummary,
             cleanupWarning: postCommitCleanupWarning,
+            ...(holdingV2Reconcile ? { holdingV2Reconcile } : {}),
           };
         }
       }
@@ -1466,6 +1517,34 @@ export async function applyClientsImport(options: {
       outcome = await recoverFromCommitUncertainty(managed, phase, recoveryDatabaseUrl);
     } else if (isConnectionFault(error, managed)) {
       outcome = resolveConnectionFault(phase);
+    } else if (error instanceof HoldingV2ReconcilePipelineError) {
+      if (managed && !managed.faulted() && options.participatingTransaction !== true) {
+        try {
+          await managed.client.query("ROLLBACK");
+        } catch {
+          // Rollback is best-effort; connection loss does not prove rollback.
+        }
+        if (phase.runId) {
+          try {
+            await managed.client.query(
+              `
+                UPDATE onec_client_import_runs
+                SET status = 'failed', finished_at = NOW(), error_code = $2
+                WHERE id = $1 AND status = 'running'
+              `,
+              [phase.runId, mapHoldingV2ReconcileFailureCode(error.result.code)],
+            );
+          } catch {
+            // ignore journal failure
+          }
+        }
+      }
+      outcome = {
+        ok: false,
+        code: mapHoldingV2ReconcileFailureCode(error.result.code),
+        message: error.result.message,
+        runId: phase.runId,
+      };
     } else {
       if (managed && !managed.faulted() && options.participatingTransaction !== true) {
         try {

@@ -36,13 +36,14 @@ Advisory lock: **`902_451_003`**. Конкурентное второе соед
 
 `TYPE_CATEGORY_EXPLICIT_NULL`, `OUTLET_COMPOSITION_INCOMPLETE`, `ORPHAN_HOLDING_LINKS`, `CLIENT_STUB_MISSING`, `RECONCILE_LOCKED`, `INVARIANT_VIOLATION`, `DATABASE_ERROR`.
 
-## Production barrier
+## Production barrier (default)
 
-`applyClientsImport` → **`APPLY_BLOCKED`** для v2. Reconcile **не** в CLI/FTP/regular-update.
+`ONEC_HOLDING_V2_PIPELINE_ENABLED` **OFF** → `applyClientsImport` → **`APPLY_BLOCKED`** для v2.  
+При **ON** — reconcile в той же транзакции, что и legacy `onec_clients` apply (см. stacked PR pipeline/UI + [release runbook](./holding-v2-release-runbook.md)).
 
 ## Следующий этап
 
-Pipeline switch, prod SHA audit, API/UI, scope rules, optional sync с `onec_retail_outlets`.
+Prod SHA audit, controlled enable, optional sync с `onec_retail_outlets`, browser E2E D1–D4 с v2 колонками.
 
 ## Production audit (этап 1)
 
