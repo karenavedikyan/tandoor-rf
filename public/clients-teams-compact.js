@@ -675,10 +675,8 @@
       var isStale = callbacks.isStale || function () {
         return false;
       };
-      return ensureResponsiblesForSearch(context.rops || [], teamUi).then(function () {
-        if (isStale()) {
-          return;
-        }
+
+      function computeRenderState() {
         var autoExpand = [];
         if (teamUi.query || teamUi.kind) {
           (context.rops || []).forEach(function (rop) {
@@ -693,25 +691,55 @@
             mergedExpand.push(guid);
           }
         });
-        var renderState = Object.assign({}, state, { teamExpand: mergedExpand });
+        return {
+          renderState: Object.assign({}, state, { teamExpand: mergedExpand }),
+          autoExpand: autoExpand,
+          mergedExpand: mergedExpand,
+        };
+      }
+
+      function renderIfCurrent(renderState) {
+        if (isStale()) {
+          return;
+        }
         renderOverviewIntoContainer(container, renderState, context, callbacks);
-        if (mergedExpand.length === 0) {
+      }
+
+      var needsAsyncWork =
+        Boolean(teamUi.query || teamUi.kind) || (teamUi.expanded && teamUi.expanded.length > 0);
+
+      if (!needsAsyncWork) {
+        renderIfCurrent(computeRenderState().renderState);
+        if (callbacks.restoreSearchFocus) {
+          callbacks.restoreSearchFocus();
+        }
+        return Promise.resolve();
+      }
+
+      return ensureResponsiblesForSearch(context.rops || [], teamUi).then(function () {
+        if (isStale()) {
+          return;
+        }
+        var computed = computeRenderState();
+        renderIfCurrent(computed.renderState);
+        if (computed.mergedExpand.length === 0) {
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
           }
           return;
         }
         return Promise.all(
-          mergedExpand.map(function (ropGuid) {
+          computed.mergedExpand.map(function (ropGuid) {
             return ensureResponsibles(ropGuid);
           }),
         ).then(function () {
           if (isStale()) {
             return;
           }
-          renderOverviewIntoContainer(container, renderState, context, callbacks);
-          if (autoExpand.length > 0 && callbacks.syncExpand) {
-            callbacks.syncExpand(mergedExpand);
+          var refreshed = computeRenderState();
+          renderIfCurrent(refreshed.renderState);
+          if (refreshed.autoExpand.length > 0 && callbacks.syncExpand) {
+            callbacks.syncExpand(refreshed.mergedExpand);
           }
           if (callbacks.restoreSearchFocus) {
             callbacks.restoreSearchFocus();
