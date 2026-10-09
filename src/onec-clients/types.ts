@@ -88,6 +88,9 @@ export type ValidatedClientsPayload = {
   holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
   employeeRosterSourceSha256?: string | null;
   wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
+  /** When `v2`, apply/import is blocked until storage reconciliation PR (diagnostic validation only). */
+  holdingExchangeSchema?: import("./holding-v2-structure").HoldingExchangeSchema;
+  holdingV2Diagnostics?: import("./holding-v2-diagnostics").HoldingV2DiagnosticsSummary | null;
 };
 
 export type ClientsImportMode = "dry_run" | "apply";

@@ -153,6 +153,7 @@ export type ParsedRetailOutlet = {
   closureHistory: RetailOutletClosureHistoryEntry[];
   provenance: OutletProvenance;
   distributionAllowed: false;
+  typeCategory: import("./type-category-exchange-fields").ParsedTypeCategoryExchange;
 };
 
 export type RetailOutletHistoryEntry = {
@@ -244,6 +245,7 @@ export type ParsedExtendedClientRecord = {
   counterparty: import("./counterparty-exchange-fields").ParsedCounterpartyExchange;
   clientContract: import("./client-contract-exchange-fields").ParsedClientContractExchange;
   clientCode: import("./client-code-exchange-fields").ParsedClientCodeExchange;
+  typeCategory: import("./type-category-exchange-fields").ParsedTypeCategoryExchange;
   retailOutlets: ParsedRetailOutlet[];
   recordFormat: "legacy" | "extended_v1";
   hasExtendedManagerFields: boolean;
@@ -273,7 +275,14 @@ export type ExtendedValidationIssueCode =
   | "HOLDING_TARGET_NOT_HOLDING_CARD"
   | "HOLDING_SELF_REFERENCE"
   | "HOLDING_CYCLE"
-  | "MIXED_FORMAT_FILE";
+  | "MIXED_FORMAT_FILE"
+  | "INVALID_TYPE_CATEGORY"
+  | "HOLDING_V2_MISSING_HOLDING_GUID"
+  | "HOLDING_V2_MISSING_HEAD"
+  | "HOLDING_V2_NON_HEAD_OUTLETS"
+  | "HOLDING_V2_INDIRECT_HOLDING_LINK"
+  | "HOLDING_V2_CYCLE"
+  | "HOLDING_V2_OUTLET_HOLDING_MISMATCH";
 
 export type ExtendedValidationIssue = {
   code: ExtendedValidationIssueCode | import("./types").ValidationIssueCode;
@@ -362,4 +371,6 @@ export type ValidatedExtendedClientsPayload = {
   holdingLinkValidationPolicy?: import("./holding-link-policy").HoldingLinkValidationPolicy;
   employeeRosterSourceSha256?: string | null;
   wholesaleCompositionMode?: import("./wholesale-composition").WholesaleCompositionMode;
+  holdingExchangeSchema?: import("./holding-v2-structure").HoldingExchangeSchema;
+  holdingV2Diagnostics?: import("./holding-v2-diagnostics").HoldingV2DiagnosticsSummary | null;
 };

@@ -682,6 +682,19 @@ function appendCleanupWarnings(result: ApplyResult, cleanupWarnings: string[]): 
   };
 }
 
+function rejectHoldingV2SchemaBeforeApply(
+  payload: ValidatedClientsPayload,
+): { code: "APPLY_BLOCKED"; message: string } | null {
+  if (payload.holdingExchangeSchema === "v2") {
+    return {
+      code: "APPLY_BLOCKED",
+      message:
+        "Holding exchange schema v2 is diagnostic-only in this release; storage/reconciliation apply is not enabled yet.",
+    };
+  }
+  return null;
+}
+
 function rejectMissingValidatedRosterStates(
   payload: ValidatedClientsPayload,
 ): { code: "APPLY_BLOCKED"; message: string } | null {
@@ -743,6 +756,15 @@ export async function applyClientsImport(options: {
       ok: false,
       code: prepApplyRejection.code,
       message: prepApplyRejection.message,
+    };
+  }
+
+  const holdingV2Rejection = rejectHoldingV2SchemaBeforeApply(options.payload);
+  if (holdingV2Rejection) {
+    return {
+      ok: false,
+      code: holdingV2Rejection.code,
+      message: holdingV2Rejection.message,
     };
   }
 

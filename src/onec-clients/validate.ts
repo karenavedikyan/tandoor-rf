@@ -50,15 +50,28 @@ export function validateClientsFileBytes(
 
   const payload = extended.payload;
   if (payload.sourceFormat === "legacy") {
+    const legacyCompatible = {
+      ...toLegacyValidatedPayload(payload),
+      sourceFormat: "legacy" as const,
+      extendedDiagnostics: payload.diagnostics,
+      holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
+      employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
+      wholesaleCompositionMode: payload.wholesaleCompositionMode,
+      holdingExchangeSchema: payload.holdingExchangeSchema,
+      holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
+    };
+    if (payload.holdingExchangeSchema === "v2") {
+      return {
+        ok: true,
+        payload: {
+          ...legacyCompatible,
+          extendedRecords: payload.records,
+        },
+      };
+    }
     return {
       ok: true,
-      payload: {
-        ...toLegacyValidatedPayload(payload),
-        extendedDiagnostics: payload.diagnostics,
-        holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
-        employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
-        wholesaleCompositionMode: payload.wholesaleCompositionMode,
-      },
+      payload: legacyCompatible,
     };
   }
 
@@ -73,7 +86,22 @@ export function validateClientsFileBytes(
       holdingLinkValidationPolicy: payload.holdingLinkValidationPolicy,
       employeeRosterSourceSha256: payload.employeeRosterSourceSha256,
       wholesaleCompositionMode: payload.wholesaleCompositionMode,
+      holdingExchangeSchema: payload.holdingExchangeSchema,
+      holdingV2Diagnostics: payload.holdingV2Diagnostics ?? null,
     },
   };
+}
+
+export type { HoldingV2DiagnosticsSummary } from "./holding-v2-diagnostics";
+
+/** Confirmed 1C holding contract (v2) — diagnostic validation; production apply remains blocked until storage PR. */
+export function validateHoldingV2ClientsFileBytes(
+  bytes: Buffer,
+  limits?: ValidateClientsLimits,
+): ValidationResult {
+  return validateClientsFileBytes(bytes, {
+    ...limits,
+    holdingExchangeSchema: "v2",
+  });
 }
 
