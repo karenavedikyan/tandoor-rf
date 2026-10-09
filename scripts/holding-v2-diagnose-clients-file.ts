@@ -1,8 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ParsedExtendedClientRecord } from "../src/onec-clients/extended-types";
 import { sha256Hex } from "../src/onec-clients/sha256";
-import { validateHoldingV2ClientsFileBytes } from "../src/onec-clients/validate";
+import type { ValidatedClientsPayload } from "../src/onec-clients/types";
+import {
+  validateHoldingV2ClientsFileBytes,
+  type ValidationResult,
+} from "../src/onec-clients/validate";
 
 const inputPath = process.env.AUDIT_CLIENTS_PATH?.trim();
 
@@ -17,6 +22,97 @@ export function safeIssue(issue: {
     field: issue.field,
     index: issue.index,
     outletIndex: issue.outletIndex,
+  };
+}
+
+export function summarizeTypeCategoryFromRecords(records: ParsedExtendedClientRecord[]): {
+  rowsWithTypeCategoryObject: number;
+} {
+  let rowsWithTypeCategoryObject = 0;
+  for (const record of records) {
+    const presence = record.typeCategory.fieldPresence;
+    if (
+      presence.guidType ||
+      presence.nameType ||
+      presence.guidCategory ||
+      presence.nameCategory
+    ) {
+      rowsWithTypeCategoryObject += 1;
+    }
+  }
+  return { rowsWithTypeCategoryObject };
+}
+
+export function buildHoldingV2DiagnoseReport(
+  validated: ValidationResult,
+  meta: {
+    origin: "local_file" | "synthetic";
+    sha256?: string;
+    byteSize?: number;
+    mtimeMs?: number;
+  },
+): Record<string, unknown> {
+  const issueCount = validated.ok ? 0 : validated.issueCount;
+  const invalidTypeCategoryCount = validated.ok
+    ? 0
+    : validated.issues.filter((i) => i.code === "INVALID_TYPE_CATEGORY").length;
+
+  const base: Record<string, unknown> = {
+    ok: validated.ok,
+    origin: meta.origin,
+    holdingExchangeSchema: "v2",
+    issueCount,
+    warningCount: validated.ok ? validated.payload.warningCount : validated.warningCount,
+    issueCodes: validated.ok ? [] : validated.issueCodes ?? [],
+    sampleIssues: validated.ok ? [] : validated.issues.slice(0, 20).map(safeIssue),
+  };
+
+  if (meta.sha256) {
+    base.sha256 = meta.sha256;
+  }
+  if (meta.byteSize != null) {
+    base.byteSize = meta.byteSize;
+  }
+  if (meta.mtimeMs != null) {
+    base.mtimeMs = meta.mtimeMs;
+  }
+
+  if (!validated.ok) {
+    base.typeCategoryStats = {
+      invalidCount: invalidTypeCategoryCount,
+    };
+    return base;
+  }
+
+  const payload: ValidatedClientsPayload = validated.payload;
+  const diagnostics = payload.holdingV2Diagnostics ?? null;
+  const extended = payload.extendedRecords ?? [];
+  const typeCategoryRows = summarizeTypeCategoryFromRecords(extended);
+  const extDiag = payload.extendedDiagnostics;
+
+  return {
+    ...base,
+    recordCount: payload.recordCount,
+    compositionTallies: diagnostics?.compositionTypeDistribution ?? null,
+    typeCategoryStats: {
+      recordCount: payload.recordCount,
+      rowsWithTypeCategoryObject: typeCategoryRows.rowsWithTypeCategoryObject,
+      invalidCount: invalidTypeCategoryCount,
+    },
+    diagnosticsTallies: diagnostics
+      ? {
+          legalEntityRowCount: diagnostics.legalEntityRowCount,
+          holdingRootCount: diagnostics.holdingRootCount,
+          uniqueOutletGuidCount: diagnostics.uniqueOutletGuidCount,
+          activeOutletGuidCount: diagnostics.activeOutletGuidCount,
+          closedOutletGuidCount: diagnostics.closedOutletGuidCount,
+          unknownClosureOutletGuidCount: diagnostics.unknownClosureOutletGuidCount,
+          outletRowsWithoutGuidStore: diagnostics.outletRowsWithoutGuidStore,
+          duplicateOutletGuidCount: extDiag?.duplicateOutletGuidCount ?? 0,
+          outletParentLinkConflicts: extDiag?.outletParentLinkConflicts ?? 0,
+          holdingLinkErrors: extDiag?.holdingLinkErrors ?? 0,
+        }
+      : null,
   };
 }
 
@@ -54,20 +150,12 @@ async function main(): Promise<void> {
     const bytes = fs.readFileSync(resolved);
     const sha256 = sha256Hex(bytes);
     const validated = validateHoldingV2ClientsFileBytes(bytes);
-    const report = {
-      ok: validated.ok,
+    const report = buildHoldingV2DiagnoseReport(validated, {
       origin: "local_file",
-      mtimeMs: stat.mtimeMs,
       sha256,
       byteSize: bytes.length,
-      holdingExchangeSchema: "v2",
-      issueCount: validated.ok ? 0 : validated.issueCount,
-      warningCount: validated.ok ? validated.payload.warningCount : validated.warningCount,
-      issueCodes: validated.ok ? [] : validated.issueCodes,
-      sampleIssues: validated.ok ? [] : validated.issues.slice(0, 20).map(safeIssue),
-      recordCount: validated.ok ? validated.payload.recordCount : undefined,
-      holdingV2Diagnostics: validated.ok ? validated.payload.holdingV2Diagnostics : undefined,
-    };
+      mtimeMs: stat.mtimeMs,
+    });
     console.log(JSON.stringify(report, null, 2));
   } catch {
     console.log(

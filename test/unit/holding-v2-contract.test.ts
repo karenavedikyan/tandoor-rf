@@ -12,6 +12,7 @@ import {
 } from "../../src/onec-clients/validate";
 import { buildClientsFileBytes, sampleClient } from "../helpers/onec-clients-fixtures";
 import {
+  buildCompositionPatternBundle,
   buildHoldingV2FileBytes,
   headRow,
   memberRow,
@@ -261,6 +262,28 @@ describe("holding v2 exchange contract", () => {
     assert.equal(applyResult.ok, false);
     if (applyResult.ok) return;
     assert.equal(applyResult.code, "APPLY_BLOCKED");
+  });
+
+  it("regression: synthetic bundle matches audit composition pattern (422 mono + 2320 group_network)", () => {
+    const bytes = buildCompositionPatternBundle({
+      monoCount: 422,
+      groupNetworkCount: 2320,
+    });
+    const result = validateHoldingV2ClientsFileBytes(bytes);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const dist = result.payload.holdingV2Diagnostics!.compositionTypeDistribution;
+    assert.equal(dist.mono, 422);
+    assert.equal(dist.mono_network, 0);
+    assert.equal(dist.group, 0);
+    assert.equal(dist.group_network, 2320);
+    assert.equal(result.payload.holdingV2Diagnostics!.holdingRootCount, 2742);
+    assert.equal(
+      result.payload.extendedRecords!.filter(
+        (r) => r.guid_holding && r.guid_client === r.guid_holding,
+      ).length,
+      2742,
+    );
   });
 
   it("analyzeOutletsForHoldingComposition unit edge cases", () => {
