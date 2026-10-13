@@ -18,6 +18,7 @@ FILES=(
   test/integration/clients-v3-rop-branch.test.ts
   test/integration/onec-exchange-v3-import.test.ts
   test/integration/onec-exchange-v3-target-db-identity.test.ts
+  test/integration/onec-exchange-v3-target-db-safety.test.ts
   test/integration/onec-exchange-v3-clean-start.test.ts
   test/integration/onec-exchange-v3-bitrix-labels.test.ts
 )

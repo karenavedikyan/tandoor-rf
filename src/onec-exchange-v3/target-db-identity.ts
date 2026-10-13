@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 import { createPgPoolOptions } from "../config/pg-ssl";
 import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fingerprint";
 
 const ONE_OFF_CONNECT_MS = 5_000;
 export const ONE_OFF_STATEMENT_TIMEOUT_MS = 10_000;
+export const ONE_OFF_QUERY_TIMEOUT_MS = 10_000;
 
 export type TargetDbIdentity = TargetDbDescriptor & {
   fingerprint: string;
@@ -27,9 +28,40 @@ export class TargetDbIdentityError extends Error {
   }
 }
 
+export type OneOffPgPoolOptions = {
+  queryTimeoutMs?: number;
+};
+
+export type ReadTargetDbIdentityOptions = {
+  queryTimeoutMs?: number;
+  /** Integration tests only: deliberate delay before identity SQL. */
+  testPreSleepSec?: number;
+};
+
 export function fingerprintFromClusterAndDatabase(systemIdentifier: string, database: string): string {
   const canonical = `pg|${systemIdentifier}|${database}`;
   return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/** pg driver supports query_timeout at runtime; @types/pg omits it on QueryConfig. */
+export function pgQueryWithTimeout<T extends QueryResultRow = QueryResultRow>(
+  client: PoolClient,
+  text: string,
+  queryTimeoutMs: number,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  return client.query<T>({
+    text,
+    values,
+    query_timeout: queryTimeoutMs,
+  } as unknown as Parameters<PoolClient["query"]>[0]);
+}
+
+export function isPgTransportOrQueryTimeout(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /Query read timeout|query timeout|timeout exceeded|connection terminated|ECONNRESET|ETIMEDOUT/i.test(
+    msg,
+  );
 }
 
 function mapIdentityQueryError(error: unknown): never {
@@ -37,7 +69,10 @@ function mapIdentityQueryError(error: unknown): never {
     throw error;
   }
   const msg = error instanceof Error ? error.message : String(error);
-  if (/canceling statement due to statement timeout/i.test(msg)) {
+  if (
+    /canceling statement due to statement timeout/i.test(msg) ||
+    isPgTransportOrQueryTimeout(error)
+  ) {
     throw new TargetDbIdentityError(
       "TARGET_DB_IDENTITY_TIMEOUT",
       "Превышено время чтения идентичности БД",
@@ -61,7 +96,7 @@ export async function resetIdentityStatementTimeout(client: PoolClient): Promise
 }
 
 /** Single-use pool with the same TLS/CA policy as the application pool. */
-export function createOneOffPgPool(databaseUrl: string): Pool {
+export function createOneOffPgPool(databaseUrl: string, options?: OneOffPgPoolOptions): Pool {
   const { connectionString, ssl } = createPgPoolOptions(databaseUrl);
   return new Pool({
     connectionString,
@@ -69,22 +104,30 @@ export function createOneOffPgPool(databaseUrl: string): Pool {
     max: 1,
     connectionTimeoutMillis: ONE_OFF_CONNECT_MS,
     idleTimeoutMillis: 5_000,
+    query_timeout: options?.queryTimeoutMs ?? ONE_OFF_QUERY_TIMEOUT_MS,
   });
 }
 
 export async function withOneOffPgClient<T>(
   databaseUrl: string,
   fn: (client: PoolClient) => Promise<T>,
+  options?: OneOffPgPoolOptions,
 ): Promise<T> {
-  const pool = createOneOffPgPool(databaseUrl);
+  const pool = createOneOffPgPool(databaseUrl, options);
+  let client: PoolClient | undefined;
+  let discardClient = false;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     try {
       await setIdentityStatementTimeout(client);
       return await fn(client);
+    } catch (error) {
+      discardClient = isPgTransportOrQueryTimeout(error);
+      throw error;
     } finally {
       await resetIdentityStatementTimeout(client);
-      client.release();
+      client.release(discardClient);
+      client = undefined;
     }
   } finally {
     await pool.end();
@@ -94,18 +137,30 @@ export async function withOneOffPgClient<T>(
 export async function readTargetDbIdentityFromClient(
   client: PoolClient,
   databaseUrl?: string,
+  options?: ReadTargetDbIdentityOptions,
 ): Promise<TargetDbIdentity> {
+  const queryTimeoutMs = options?.queryTimeoutMs ?? ONE_OFF_QUERY_TIMEOUT_MS;
   try {
-    const row = await client.query<{
+    if (options?.testPreSleepSec && options.testPreSleepSec > 0) {
+      await pgQueryWithTimeout(
+        client,
+        `SELECT pg_sleep($1::double precision)`,
+        queryTimeoutMs,
+        [options.testPreSleepSec],
+      );
+    }
+    const row = await pgQueryWithTimeout<{
       db: string;
       host: string | null;
       port: string | null;
       system_id: string | null;
     }>(
+      client,
       `SELECT current_database() AS db,
               COALESCE(host(inet_server_addr())::text, '') AS host,
               COALESCE(inet_server_port()::text, '5432') AS port,
               (SELECT system_identifier::text FROM pg_control_system()) AS system_id`,
+      queryTimeoutMs,
     );
     const database = row.rows[0]?.db?.trim() ?? "";
     const systemIdentifier = row.rows[0]?.system_id?.trim() ?? "";

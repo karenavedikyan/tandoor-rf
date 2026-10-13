@@ -10,10 +10,12 @@ import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fi
 import { observeCleanStartState } from "./clean-start-verify";
 import {
   databaseNameMismatchBlocker,
+  isPgTransportOrQueryTimeout,
   readTargetDbIdentityFromClient,
   resetIdentityStatementTimeout,
   setIdentityStatementTimeout,
   TargetDbIdentityError,
+  withOneOffPgClient,
   type TargetDbIdentity,
 } from "./target-db-identity";
 
@@ -63,6 +65,8 @@ export type CleanStartTestHooks = {
   failCommit?: boolean;
   /** COMMIT succeeds, then simulates lost client acknowledgement. */
   loseCommitAckAfterSuccessfulCommit?: boolean;
+  /** Integration tests: simulate pg_control_system denial on apply connection identity read. */
+  simulatePgControlSystemDenied?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -94,6 +98,16 @@ async function assertNoConcurrentJobs(client: PoolClient): Promise<string | null
     return "Обнаружен активный или ожидающий onec_import_jobs";
   }
   return null;
+}
+
+/** Dry-run on a dedicated one-off connection (TLS/CA + statement/query timeouts). */
+export async function runExchangeV3CleanStartDryRun(
+  databaseUrl: string,
+  bundle: V3ValidatedBundle,
+): Promise<CleanStartDryRunReport> {
+  return withOneOffPgClient(databaseUrl, (client) =>
+    buildCleanStartDryRunReport(client, bundle, databaseUrl),
+  );
 }
 
 export async function buildCleanStartDryRunReport(
@@ -267,12 +281,22 @@ export async function runExchangeV3CleanStartApply(input: {
   let targetIdentity: TargetDbIdentity | undefined;
   let legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>> | undefined;
   let bitrixLabelsRevoked: number | undefined;
+  let discardPooledClient = false;
 
   try {
     await setIdentityStatementTimeout(client);
     try {
+      if (input.testHooks?.simulatePgControlSystemDenied) {
+        throw new TargetDbIdentityError(
+          "TARGET_DB_IDENTITY_UNAVAILABLE",
+          "Недостаточно прав для чтения идентификатора кластера (pg_control_system); проверьте роль приложения",
+        );
+      }
       targetIdentity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
     } catch (error) {
+      if (isPgTransportOrQueryTimeout(error)) {
+        discardPooledClient = true;
+      }
       const message =
         error instanceof TargetDbIdentityError
           ? error.message
@@ -369,6 +393,9 @@ export async function runExchangeV3CleanStartApply(input: {
     return { ok: true, report: applyReport };
   } catch (error) {
     primaryMessage = error instanceof Error ? error.message : String(error);
+    if (!commitAttempted && isPgTransportOrQueryTimeout(error)) {
+      discardPooledClient = true;
+    }
     if (commitAttempted && !commitConfirmed) {
       return resolveCleanStartCommitUncertainty({
         databaseUrl: input.databaseUrl,
@@ -398,7 +425,7 @@ export async function runExchangeV3CleanStartApply(input: {
     } catch {
       // Lock release must not mask apply outcome.
     }
-    client.release();
+    client.release(discardPooledClient);
   }
 }
 

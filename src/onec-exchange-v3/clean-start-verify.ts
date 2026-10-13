@@ -1,4 +1,6 @@
 import {
+  ONE_OFF_QUERY_TIMEOUT_MS,
+  pgQueryWithTimeout,
   readTargetDbIdentityFromClient,
   withOneOffPgClient,
   type TargetDbIdentity,
@@ -20,22 +22,25 @@ export async function observeCleanStartState(databaseUrl: string): Promise<Clean
   try {
     return await withOneOffPgClient(databaseUrl, async (client) => {
       const targetDb = await readTargetDbIdentityFromClient(client, databaseUrl);
-      const state = await client.query<{
+      const state = await pgQueryWithTimeout<{
         legacy_clean_start_completed_at: string | null;
         legacy_clean_start_bundle_fingerprint: string | null;
         last_bundle_fingerprint: string | null;
       }>(
+        client,
         `SELECT legacy_clean_start_completed_at,
                 legacy_clean_start_bundle_fingerprint,
                 last_bundle_fingerprint
          FROM onec_v3_exchange_state WHERE id = 1`,
+        ONE_OFF_QUERY_TIMEOUT_MS,
       );
-      const counts = await client.query<{
+      const counts = await pgQueryWithTimeout<{
         holdings: string;
         legal: string;
         retail: string;
         roster: string;
       }>(
+        client,
         `
           SELECT
             (SELECT COUNT(*)::text FROM onec_v3_holdings) AS holdings,
@@ -43,6 +48,7 @@ export async function observeCleanStartState(databaseUrl: string): Promise<Clean
             (SELECT COUNT(*)::text FROM onec_v3_retail_outlets) AS retail,
             (SELECT COUNT(*)::text FROM onec_wholesale_employee_roster) AS roster
         `,
+        ONE_OFF_QUERY_TIMEOUT_MS,
       );
       return {
         targetDb,

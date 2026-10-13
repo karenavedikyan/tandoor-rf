@@ -22,7 +22,7 @@
 
 1. Бэкап БД.
 2. Миграции до `042_onec_exchange_v3.sql`.
-3. Dry-run clean-start (только SELECT, без DELETE):  
+3. Dry-run clean-start (только SELECT, без DELETE; **one-off** TLS-соединение с `statement_timeout` и клиентским `query_timeout`, не shared pool):  
    `node dist/cli/onec-exchange-v3-clean-start.js --i-understand --dry-run --bundle-dir test/fixtures/onec-exchange-v3`  
    (локально после `npm run build`; в dev допустим `node --import tsx src/cli/onec-exchange-v3-clean-start.ts …`)  
    Сохранить `targetDb.fingerprint` (cluster `system_identifier` + `current_database()`, **не** host/IP из URL) и `bundleFingerprint` из JSON.
@@ -46,7 +46,7 @@
 ## Идентичность БД и preflight роли
 
 - Fingerprint: `sha256(pg|system_identifier|current_database())` с **фактического** соединения apply (до lock/purge), не только из URL.
-- Dry-run и recovery используют one-off pool с той же TLS-policy, `statement_timeout` (см. `ONE_OFF_STATEMENT_TIMEOUT_MS` в `target-db-identity.ts`).
+- Dry-run (`runExchangeV3CleanStartDryRun`), identity и recovery используют one-off pool с той же TLS-policy, серверным `statement_timeout` и клиентским `query_timeout` (см. `ONE_OFF_*_TIMEOUT_MS` в `target-db-identity.ts`). После транспортного/query timeout one-off соединение не возвращается в пул; на shared pool apply — `client.release(true)`.
 - Роль приложения должна иметь право читать `pg_control_system()` (или эквивалент для managed PostgreSQL). При отказе — **TARGET_DB_MISMATCH** до изменения данных; автоматических GRANT или ослабления проверки нет.
 - **Preflight под production-ролью:** выполнить dry-run CLI от имени той же роли, что и приложение (не локальный superuser `postgres` вместо managed-роли).
 
@@ -55,7 +55,7 @@
 | Проверка | Статус в PR |
 |----------|-------------|
 | TLS + CA к managed PostgreSQL | **NOT RUN** (нет разрешённого TLS-стенда в агенте) |
-| `pg_control_system` под production-ролью | **NOT RUN** (только локальный test DB / postgres) |
+| `pg_control_system` под production-ролью | **NOT RUN** (локальный PostgreSQL часто разрешает функцию обычным ролям; это не замена managed preflight) |
 
 Не считать production готовым только по локальным тестам.
 

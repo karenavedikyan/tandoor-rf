@@ -359,12 +359,12 @@
 | v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
 | Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
 | `npm run typecheck` / `npm run build` | ✅ | локально на HEAD PR |
-| `npm test` (unit) | ✅ 667/667 | `npm test` |
+| `npm test` (unit) | ✅ 669/669 | `npm test` |
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |
 | Target DB identity + TLS one-off pools (clean-start) | ✅ | `target-db-identity.ts`, apply identity on `PoolClient`, A/B DB test, recovery fingerprint gate |
-| Targeted integration (v3 API + teams + rop + import + identity + clean-start + Bitrix) | ✅ 18/18 | `npm run test:integration:v3-pr76` (последовательно) |
+| Targeted integration (v3 API + teams + rop + import + identity + safety + clean-start + Bitrix) | ✅ 22/22 | `npm run test:integration:v3-pr76` (последовательно, 8 файлов) |
 | Browser v3 (filters, card, nested nav, reload, history) | ✅ | `test/browser/clients-v3.browser.test.ts` (1440 + 390) |
 | Fixture inventory vs import test (3 legal / 6 labels) | ✅ | `test/unit/onec-exchange-v3-fixture-inventory.test.ts` |
 
@@ -377,7 +377,7 @@ npm run test:integration:v3-pr76
 npm run test:browser -- test/browser/clients-v3.browser.test.ts
 ```
 
-`npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: семь файлов **строго по очереди** (`--test-concurrency=1` на файл); финальная строка — только имя БД, без полного URL. Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
+`npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: восемь файлов **строго по очереди** (`--test-concurrency=1` на файл); финальная строка — только имя БД, без полного URL. Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
 | Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
 

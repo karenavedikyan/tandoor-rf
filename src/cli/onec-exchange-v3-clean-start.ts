@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-import { requirePool } from "../db/pool";
 import { getDatabaseUrl } from "../config";
 import { readStableV3Bundle } from "../onec-exchange-v3/read-stable-bundle";
 import {
-  buildCleanStartDryRunReport,
   loadValidatedBundleFromBytes,
   runExchangeV3CleanStartApply,
+  runExchangeV3CleanStartDryRun,
 } from "../onec-exchange-v3/clean-start";
 import { formatTargetDbForReport } from "../onec-exchange-v3/target-db-fingerprint";
 
@@ -56,45 +55,39 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const pool = requirePool();
-  const client = await pool.connect();
-  try {
-    if (mode === "dry_run") {
-      const report = await buildCleanStartDryRunReport(client, validated.bundle, databaseUrl);
-      console.log(
-        JSON.stringify(
-          {
-            ok: report.blockers.length === 0,
-            targetDbLabel: formatTargetDbForReport(databaseUrl),
-            report,
-          },
-          null,
-          2,
-        ),
-      );
-      process.exit(report.blockers.length === 0 ? 0 : 1);
-    }
-
-    if (!confirmTarget || !confirmBundle) {
-      console.error("Apply requires --confirm-target-db-fingerprint and --confirm-bundle-fingerprint from dry-run");
-      process.exit(2);
-    }
-
-    const result = await runExchangeV3CleanStartApply({
-      databaseUrl,
-      bundle: validated.bundle,
-      confirmTargetDbFingerprint: confirmTarget,
-      confirmBundleFingerprint: confirmBundle,
-      forceCleanStart: force,
-    });
-    if (!result.ok) {
-      console.error(JSON.stringify(result, null, 2));
-      process.exit(1);
-    }
-    console.log(JSON.stringify({ ok: true, report: result.report }, null, 2));
-  } finally {
-    client.release();
+  if (mode === "dry_run") {
+    const report = await runExchangeV3CleanStartDryRun(databaseUrl, validated.bundle);
+    console.log(
+      JSON.stringify(
+        {
+          ok: report.blockers.length === 0,
+          targetDbLabel: formatTargetDbForReport(databaseUrl),
+          report,
+        },
+        null,
+        2,
+      ),
+    );
+    process.exit(report.blockers.length === 0 ? 0 : 1);
   }
+
+  if (!confirmTarget || !confirmBundle) {
+    console.error("Apply requires --confirm-target-db-fingerprint and --confirm-bundle-fingerprint from dry-run");
+    process.exit(2);
+  }
+
+  const result = await runExchangeV3CleanStartApply({
+    databaseUrl,
+    bundle: validated.bundle,
+    confirmTargetDbFingerprint: confirmTarget,
+    confirmBundleFingerprint: confirmBundle,
+    forceCleanStart: force,
+  });
+  if (!result.ok) {
+    console.error(JSON.stringify(result, null, 2));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({ ok: true, report: result.report }, null, 2));
 }
 
 main().catch((err) => {
