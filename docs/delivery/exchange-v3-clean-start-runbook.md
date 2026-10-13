@@ -62,8 +62,16 @@
    - `all_clients.json`
    - `all_retail.json`
    - `all_employees.json`
-3. Зафиксировать **контрольные суммы** (например `sha256sum` по каждому файлу) и **ожидаемые количества** из бизнес-проверки выгрузки (холдинги, юрлица, ТТ, сотрудники). Для **тестового** эталона PR #76 см. `test/unit/onec-exchange-v3-fixture-inventory.test.ts` (1 holding, 3 legal, 2 retail, 6 label objects) — **production-числа будут другими**.
-4. Подтвердить у владельца/1С, что это **один завершённый** экспорт. **Двойное чтение** в CLI (см. `readStableV3Bundle`) фиксирует неизменность байтов между проходами, но **не доказывает** общую логическую версию всех файлов без маркера завершения выгрузки 1С.
+3. Зафиксировать **контрольные суммы** и **ожидаемые количества** из бизнес-проверки выгрузки (холдинги, юрлица, ТТ, сотрудники):
+
+```bash
+cd <BUNDLE_DIR>
+sha256sum all_holding.json all_clients.json all_retail.json all_employees.json
+```
+
+   Для **тестового** эталона PR #76 см. `test/unit/onec-exchange-v3-fixture-inventory.test.ts` (1 holding, 3 legal, 2 retail, 6 label objects) — **production-числа будут другими**.
+4. Заполнить протокол (бумага/тикет): **deploy SHA**, четыре SHA256, ожидаемые counts, дата/маркер завершения выгрузки 1С, подпись ответственного.
+5. Подтвердить у владельца/1С, что это **один завершённый** экспорт. **Двойное чтение** в CLI (см. `readStableV3Bundle`) фиксирует неизменность байтов между проходами, но **не доказывает** общую логическую версию всех файлов без маркера завершения выгрузки 1С.
 
 **PASS:** SHA записан; 4 файла на месте; checksums и ожидаемые counts согласованы с владельцем.
 
@@ -97,12 +105,12 @@
 **Действия:**
 
 1. Согласовать окно с владельцем.
-2. **Остановить / не запускать** до завершения apply и smoke:
-   - admin/worker задания `onec_import_jobs` (pending/running);
-   - ручные и scheduled **regular update** / legacy import;
-   - nightly exchange (`ONEC_NIGHTLY_EXCHANGE_ENABLED=false`, см. `docs/delivery/nightly-exchange-runbook.md`);
-   - прочие workers, ставящие jobs в `onec_import_jobs`.
-3. Зафиксировать **порядок включения обратно** (только после шага 9): сначала smoke OK → затем regular exchange → затем (отдельно) nightly/cron.
+2. **Остановить / не запускать** до завершения apply и smoke (порядок остановки):
+   1. Отключить nightly/cron (`ONEC_NIGHTLY_EXCHANGE_ENABLED=false`, см. `docs/delivery/nightly-exchange-runbook.md`).
+   2. Остановить процессы worker (`npm run onec-import-job-worker` / admin worker — см. `docs/delivery/import-runbook.md`), дождаться завершения `running`.
+   3. Не создавать новые operator jobs в `onec_import_jobs` (ручной regular update / legacy import).
+   4. Убедиться SQL-диагностикой, что нет `pending`/`running` jobs (см. `docs/delivery/f6-production-regular-update-runbook.md`).
+3. **Порядок включения обратно** (только после шага 9): smoke OK → regular exchange dry-run/apply → workers → (отдельное разрешение) nightly/cron и bootstrap Bitrix.
 
 **PASS:** нет активных конкурирующих jobs; расписания отключены или не создают новых jobs.
 
@@ -122,7 +130,7 @@
 
 **PASS:** бэкап создан; restore в изолированную БД проверен.
 
-**STOP:** нет проверенного бэkaпа.
+**STOP:** нет проверенного бэкапа.
 
 **Разрешение:** владелец — go на работу с production БД.
 
@@ -249,7 +257,7 @@ node dist/cli/onec-regular-update.js --apply --expected-fingerprint=<fingerprint
 
 **До destructive apply (шаг 7):**
 
-- Откат приложения на **прежний SHA** + БД из бэkaпа (шаг 4) — достаточен.
+- Откат приложения на **прежний SHA** + БД из бэкапа (шаг 4) — достаточен.
 
 **После successful clean-start apply:**
 
