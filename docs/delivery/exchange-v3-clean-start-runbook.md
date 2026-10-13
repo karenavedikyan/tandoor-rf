@@ -50,7 +50,8 @@
 | **Подключение read-only** | TLS identity, dry-run, observe recovery | 2, 6, recovery после 7 |
 | **Deploy + миграции** | Выпуск SHA, `npm run migrate`, перезапуск приложения | 5 |
 | **Destructive apply** | clean-start `--apply`, purge legacy, загрузка v3, **локальные** метки LK_H/LK_J/LK_T (`bootstrapBitrixLabelsForV3Domain` внутри `writeV3BundleToClient`) | 7 |
-| **Внешние действия Bitrix24** | `bitrix24-sync --apply`, `bitrix24-labels-bootstrap`, изменения задач/пользователей через API Bitrix24 | 8 (отдельно), 9 |
+| **Локальные изменяющие операции (реестр меток)** | CLI `bitrix24-labels-bootstrap --apply` — правки реестра меток и связей карточек **в БД**, без REST Bitrix24; **не** нужен для повторной выдачи LK_* после clean-start | 9 (по необходимости) |
+| **Внешние действия Bitrix24 (API)** | `bitrix24-sync --apply`, изменения задач/полей/пользователей через REST Bitrix24 | 8 (отдельно), 9 |
 
 Без соответствующего разрешения шаг **STOP**. Read-only smoke (списки, карточки, права, **чтение** уже выданных локальных меток в БД) — после apply в рамках приёмки UI; **без** вызовов Bitrix24 API с записью.
 
@@ -64,7 +65,10 @@
 
 **Локальные метки v3 (в scope destructive apply, та же транзакция загрузки):** после purge и upsert v3 `writeV3BundleToClient` вызывает `bootstrapBitrixLabelsForV3Domain` — выдача **локальных** кодов **LK_H** / **LK_J** / **LK_T** для объектов v3 в таблицах приложения (idempotent). Это **не** вызов Bitrix24 REST и **не** CLI `bitrix24-labels-bootstrap`.
 
-**Вне scope clean-start apply (отдельное разрешение, выключено до приёмки):** `bitrix24-sync --apply`, массовые внешние операции, изменение задач/полей в Bitrix24 через API.
+**Вне scope clean-start apply (отдельные разрешения, выключено до приёмки):**
+
+- **Локально (БД):** `bitrix24-labels-bootstrap --apply` — отдельная массовая операция над реестром/связями; после clean-start LK_* уже созданы в apply, повтор не требуется.
+- **Внешне (API):** `bitrix24-sync --apply`, изменение задач/полей в портале Bitrix24.
 
 ---
 
@@ -316,7 +320,7 @@ node dist/cli/onec-regular-update.js --apply --expected-fingerprint <fingerprint
 
 (или admin UI worker — тот же `runRegularUpdate`.)
 
-3. **Внешний** Bitrix24 (`bitrix24-sync --apply`, `bitrix24-labels-bootstrap`) — **отдельный явно разрешённый** шаг после smoke; локальные LK_* уже созданы при clean-start apply.
+3. **`bitrix24-labels-bootstrap --apply`** — только при отдельной локальной необходимости (реестр/связи); **не** для повторной выдачи LK_* (уже в apply). **`bitrix24-sync --apply`** и прочие записи через API Bitrix24 — **отдельное разрешение** на внешнюю синхронизацию после smoke.
 
 **PASS:** regular dry-run без сюрпризов; apply по fingerprint; workers не дублируют jobs.
 

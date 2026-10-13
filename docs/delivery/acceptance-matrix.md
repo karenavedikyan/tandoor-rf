@@ -358,32 +358,46 @@
 | v3 teams org-structure (legacy empty, v3 portfolios) | ✅ | `test/integration/clients-v3-teams.test.ts`, `src/clients/v3/teams-structure.ts`, `public/clients.js` v3 endpoints |
 | v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
 | Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
-| `npm run typecheck` / `npm run build` | ✅ `d56f236` | отдельный прогон typecheck/build |
-| `npm test` (unit) | ✅ 688/688 `d56f236` | отдельный прогон `npm test` |
-| identity / observe CLI на test DB | ✅ `d56f236` | ручной прогон entrypoints (не подменяет `npm test`) |
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |
 | Target DB identity + TLS one-off pools (clean-start) | ✅ | `target-db-identity.ts`, apply identity on `PoolClient`, A/B DB test, recovery fingerprint gate |
-| Targeted integration (v3 API + teams + rop + import + identity + safety + clean-start + apply-cleanup + Bitrix) | ✅ 29/29 | `npm run test:integration:v3-pr76` (последовательно, 9 файлов) |
-| Browser v3 (filters, card, nested nav, reload, history) | ✅ | `test/browser/clients-v3.browser.test.ts` (1440 + 390) |
+| Targeted integration (v3 API + teams + rop + import + identity + safety + clean-start + apply-cleanup + Bitrix) | ✅ | `npm run test:integration:v3-pr76` → 9 файлов integration (см. протокол ниже) |
+| Browser v3 (filters, card, nested nav, reload, history) | ✅ | `clients-v3.browser.test.ts` через `npm run test:browser` (см. протокол ниже) |
 | Fixture inventory vs import test (3 legal / 6 labels) | ✅ | `test/unit/onec-exchange-v3-fixture-inventory.test.ts` |
 
-**Команды приёмки PR #76 (только `*_test` PostgreSQL):**
+**Независимая приёмка кандидата `d56f236`** (test DB; каждая команда — отдельный прогон, результаты **не** подменяют друг друга):
+
+| Команда | Результат |
+|---------|-----------|
+| `npm run typecheck` | PASS |
+| `npm run build` | PASS |
+| `npm test` | 688/688 |
+| `npm run test:integration:v3-pr76` | 29/29 |
+| `npm run test:browser -- test/browser/clients-v3.browser.test.ts` | 1/1 |
+
+Дополнительно (вне npm-протокола выше): ручной прогон `onec-exchange-v3-target-db-identity` / `onec-exchange-v3-clean-start-observe` на test DB.
 
 ```bash
 export TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test
-npm run typecheck && npm run build && npm test
+npm run typecheck
+npm run build
+npm test
 npm run test:integration:v3-pr76
 npm run test:browser -- test/browser/clients-v3.browser.test.ts
 ```
 
-`npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: девять файлов **строго по очереди** (`--test-concurrency=1` на файл); финальная строка — только имя БД, без полного URL. Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
+`npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh` (свой набор `node --test` по integration-файлам; **не** входит в `npm test`). Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
 | Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
-| Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — identity/observe CLI, 042+043, freeze/drain, разрешения |
-| regular-update CLI argv → `runRegularUpdate` | ✅ | `onec-regular-update.ts`, `regular-update-cli-args.test.ts`, `onec-regular-update-cli-entry.test.ts` |
-| Локальная приёмка (HEAD PR после правок) | ✅ | typecheck/build PASS, unit 688; integration v3 29/29 и browser — на прежнем прогоне `9c8479b` + новые unit |
+| Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — локальные LK_* vs внешний Bitrix24, roster recovery |
+| regular-update CLI argv → `runRegularUpdate` | ✅ | `regular-update-cli-args.test.ts`, `onec-regular-update-cli-entry.test.ts` (прогон в составе `npm test`) |
+| **Локальная приёмка кандидата** | ✅ **`d56f236`** | см. таблицу «Независимая приёмка» выше |
+| Production TLS/CA + managed-роль | **NOT RUN** | — |
+| Production бэкап + restore в изолированную БД | **NOT RUN** | — |
+| Production freeze записей + приёмка реального комплекта 1С | **NOT RUN** | — |
+
+История: `9c8479b` (679 unit) — ранний прогон до CLI/runbook; не текущий кандидат.
 
 ---
 
