@@ -1,0 +1,34 @@
+[
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000001",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "warehouse": false,
+    "closed": false,
+    "type_category": {},
+    "address": { "store_address": "Store One Address" },
+    "information_loading": { "loading_time": "10:00" },
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "contact_information": {},
+    "LPR_information": {},
+    "additional_information": {}
+  },
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000002",
+    "guid_holding": "",
+    "warehouse": false,
+    "closed": false,
+    "type_category": {},
+    "address": { "store_address": "Orphan Store" },
+    "information_loading": {},
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "contact_information": {},
+    "LPR_information": {},
+    "additional_information": {}
+  }
+]

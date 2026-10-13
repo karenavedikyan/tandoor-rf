@@ -1,0 +1,30 @@
+[
+  {
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Holding One",
+    "type_category": {
+      "guid_type": "t1",
+      "name_type": "Type A",
+      "guid_category": "c1",
+      "name_category": "Cat A"
+    },
+    "retail_chain": true,
+    "holding_group": false,
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "legal_entities": [
+      {
+        "guid_retail": "b2000000-0000-4000-8000-000000000001",
+        "name_retail": "Legal One"
+      }
+    ],
+    "retail_outlets": [
+      {
+        "guid_retail": "c3000000-0000-4000-8000-000000000001",
+        "name_retail": "Store One"
+      }
+    ]
+  }
+]

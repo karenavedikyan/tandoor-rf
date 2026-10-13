@@ -1,0 +1,39 @@
+[
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000001",
+    "name_client": "Legal One",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Holding One",
+    "type_category": {
+      "guid_type": "t1",
+      "name_type": "Type A",
+      "guid_category": "c1",
+      "name_category": "Cat A"
+    },
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Manager One",
+    "address": "SYNTH address",
+    "telephone": ["+70000000001"],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {
+      "Код": "SYNTH-001"
+    }
+  },
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000002",
+    "name_client": "Legal Orphan",
+    "guid_holding": "",
+    "name_holding": "",
+    "type_category": {},
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Manager One",
+    "address": "",
+    "telephone": [],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {}
+  }
+]
