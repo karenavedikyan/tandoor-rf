@@ -380,6 +380,8 @@ npm run test:browser -- test/browser/clients-v3.browser.test.ts
 `npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: девять файлов **строго по очереди** (`--test-concurrency=1` на файл); финальная строка — только имя БД, без полного URL. Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
 | Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
+| Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — шаги 1–10, gates TLS/роль **NOT RUN** |
+| Локальная приёмка кода (кандидат `9c8479b`) | ✅ | typecheck/build, unit 679, integration v3 29/29, browser 1/1 — **не** production gates |
 
 ---
 
