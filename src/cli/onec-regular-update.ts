@@ -1,7 +1,7 @@
 import { getRegularUpdateExitCode, runRegularUpdate } from "../onec-regular-update/run-update";
 
 async function main(): Promise<void> {
-  const result = await runRegularUpdate();
+  const result = await runRegularUpdate({ argv: process.argv.slice(2) });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exit(getRegularUpdateExitCode(result));
 }

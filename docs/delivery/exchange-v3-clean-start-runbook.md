@@ -40,6 +40,19 @@
 
 ---
 
+## Разрешения (раздельно)
+
+| Тип | Что покрывает | Шаги |
+|-----|----------------|------|
+| **Подключение read-only** | TLS identity, dry-run, observe recovery | 2, 6, recovery после 7 |
+| **Deploy + миграции** | Выпуск SHA, `npm run migrate`, перезапуск приложения | 5 |
+| **Destructive apply** | clean-start `--apply`, purge legacy, загрузка v3 | 7 |
+| **Внешние действия Bitrix** | `bitrix24-sync --apply`, bootstrap меток, **выдача новой** клиентской метки в smoke | 8 (отдельно), 9 |
+
+Без соответствующего разрешения шаг **STOP**. Read-only smoke (списки, карточки, права без записи в Bitrix) допустим после apply в рамках приёмки UI.
+
+---
+
 ## Scope clean start (напоминание)
 
 **Сохраняется:** пользователи, сессии, `user_onec_employee_links`, команды РОП, матрица доступа, каталог, Bitrix-задачи/настройки (не bootstrap).
@@ -81,42 +94,57 @@ sha256sum all_holding.json all_clients.json all_retail.json all_employees.json
 
 ---
 
-### 2. TLS/CA и `pg_control_system` под ролью приложения
+### 2. TLS/CA и `pg_control_system` под ролью приложения (до миграций v3)
 
-**Действия (только в разрешённой среде, credentials приложения — не публиковать):**
+**Разрешение:** **подключение read-only** к production БД.
 
-1. Убедиться, что `DATABASE_URL` приложения использует штатную TLS-policy (`createPgPoolOptions`, без `sslmode=disable` в production).
-2. От имени **той же роли**, что runtime (не замена на локальный superuser):
-   - выполнить dry-run clean-start (шаг 6) **или** отдельный read-only вызов identity;
-   - убедиться, что fingerprint БД читается без `TARGET_DB_IDENTITY_UNAVAILABLE`.
+**Действия (credentials приложения на хосте CLI — не логировать, не выводить URL):**
 
-**PASS:** успешный dry-run identity; TLS handshake с верным CA.
+1. Убедиться, что конфиг приложения использует штатную TLS-policy (`createPgPoolOptions`, без `sslmode=disable` в production).
+2. От имени **той же роли**, что runtime (не superuser-замена), read-only identity через модуль `resolveTargetDbIdentityFromUrl` (one-off pool, те же CA/TLS):
 
-**STOP:** любой отказ TLS; отказ `pg_control_system`; предложение «выдать GRANT / ослабить fingerprint / отключить TLS».
+```bash
+npm run build
+# DATABASE_URL уже задан в окружении приложения (секрет не печатать)
+node dist/cli/onec-exchange-v3-target-db-identity.js
+```
 
-**Разрешение:** владелец инфраструктуры + подтверждение на production-подключение.
+3. Сохранить `identity.fingerprint` и `targetDbLabel` в протокол выпуска.
 
-**NOT RUN:** если нет разрешённого стенда — **выпуск блокируется** (gate выше).
+**Не использовать** полный clean-start dry-run (шаг 6) на **исходной** БД до миграций: dry-run ожидает схему v3 и таблицы из `042_onec_exchange_v3.sql`.
+
+**PASS:** exit 0; JSON `ok: true`; fingerprint и `systemIdentifier` прочитаны; TLS handshake успешен.
+
+**STOP:** `TARGET_DB_IDENTITY_UNAVAILABLE` / timeout; отказ TLS; предложение «выдать GRANT / ослабить fingerprint / отключить TLS».
+
+**NOT RUN:** если нет разрешённого стенда — **выпуск блокируется**.
 
 ---
 
 ### 3. Окно обслуживания и заморозка конкурирующих процессов
 
+**Разрешение:** владелец — окно и остановка jobs.
+
 **Действия:**
 
 1. Согласовать окно с владельцем.
-2. **Остановить / не запускать** до завершения apply и smoke (порядок остановки):
-   1. Отключить nightly/cron (`ONEC_NIGHTLY_EXCHANGE_ENABLED=false`, см. `docs/delivery/nightly-exchange-runbook.md`).
-   2. Остановить процессы worker (`npm run onec-import-job-worker` / admin worker — см. `docs/delivery/import-runbook.md`), дождаться завершения `running`.
-   3. Не создавать новые operator jobs в `onec_import_jobs` (ручной regular update / legacy import).
-   4. Убедиться SQL-диагностикой, что нет `pending`/`running` jobs (см. `docs/delivery/f6-production-regular-update-runbook.md`).
-3. **Порядок включения обратно** (только после шага 9): smoke OK → regular exchange dry-run/apply → workers → (отдельное разрешение) nightly/cron и bootstrap Bitrix.
+2. **Запретить создание новых jobs** до завершения apply и smoke:
+   - admin UI «Обновить из 1С» (POST → `onec_import_jobs`);
+   - CLI `onec-regular-update.js --apply`;
+   - cron/tick: `onec-nightly-exchange-tick`, `onec-scheduled-exchange` (см. `docs/delivery/nightly-exchange-runbook.md`);
+   - legacy operator import / clean-reload apply.
+   `ONEC_NIGHTLY_EXCHANGE_ENABLED=false` **только** отключает in-process nightly scheduler после старта приложения; **не** отменяет все фоновые импорты (отдельные cron, workers, ручной admin apply).
+3. **Дать `running` jobs корректно завершиться** (не убивать процесс на середине apply без процедуры).
+4. **Остановить исполнителей:** процессы `onec-import-job-worker`, отдельные worker-инстансы на хостах (см. `docs/delivery/import-runbook.md`).
+5. **Подтвердить пустую очередь** SQL-диагностикой: нет `onec_import_jobs` в `pending`/`running` (см. `docs/delivery/f6-production-regular-update-runbook.md`).
+6. На время **бэкапа (шаг 4), миграций и apply (шаг 5–7)** заморозить **изменяющие** операции приложения и конкурирующие **Bitrix sync с записью** (`bitrix24-sync --apply`, bootstrap меток — см. `docs/delivery/bitrix24-runbook.md`). Если автоматический Bitrix cron на стенде **не описан** — **STOP** и согласовать с владельцем ручное отключение; read-only smoke (UI/API без записи) — отдельно после apply.
+7. **Перед первым `start` / deploy нового SHA (шаг 5):** повторно проверить очередь `onec_import_jobs`. Иначе `startServer` → `drainPendingImportJobs()` может **сразу исполнить** pending regular-update job из backlog.
 
-**PASS:** нет активных конкурирующих jobs; расписания отключены или не создают новых jobs.
+**Порядок включения обратно** (только после шага 9): smoke OK → regular exchange dry-run/apply → workers → (отдельные разрешения) nightly/cron и Bitrix bootstrap.
 
-**STOP:** `onec_import_jobs` в `pending`/`running` при dry-run/apply (dry-run сообщит blocker).
+**PASS:** нет `pending`/`running` import jobs; новые jobs не создаются; Bitrix write-path заморожен или явно согласован.
 
-**Разрешение:** владелец — окно и остановка jobs.
+**STOP:** backlog jobs перед стартом сервера; активные workers; неизвестный Bitrix cron без плана STOP.
 
 ---
 
@@ -138,25 +166,42 @@ sha256sum all_holding.json all_clients.json all_retail.json all_employees.json
 
 ### 5. Deploy SHA и миграции (без импорта)
 
-**Разрешение:** отдельное **разрешение на выпуск** (deploy).
+**Разрешение:** **deploy + миграции** (отдельно от destructive apply).
 
 **Действия:**
 
-1. Выпустить на окружение **проверенный SHA** (сборка: `npm run build` на CI или эквивалент; артеfacts включают `dist/cli/onec-exchange-v3-clean-start.js`).
-2. Применить миграции (в т.ч. `server/migrations/042_onec_exchange_v3.sql` и все pending до неё):
+1. Выпустить на окружение **проверенный SHA** (сборка: `npm run build`; артеfacts включают `dist/cli/onec-exchange-v3-clean-start.js`, `onec-exchange-v3-target-db-identity.js`, `onec-exchange-v3-clean-start-observe.js`).
+2. Ещё раз убедиться: очередь import jobs пуста (шаг 3.7).
+3. Применить **все pending** миграции проверяемого SHA (обязательны как минимум):
+
+   - `server/migrations/042_onec_exchange_v3.sql` — схема v3;
+   - `server/migrations/043_onec_v3_clean_start_state.sql` — маркеры clean-start.
 
 ```bash
-# DATABASE_URL — production, credentials не логировать
+# DATABASE_URL в окружении; credentials не логировать
 npm run migrate
 ```
 
 (локально с `.env`: `npm run migrate:local` — только если так принято на стенде).
 
-3. **Не** запускать clean-start apply, regular update apply, purge, Bitrix bootstrap.
+4. **PASS-проверка схемы** (read-only SQL, без секретов):
 
-**PASS:** `npm run migrate` успешен; pending migrations включая `042_*` применены; приложение стартует на новом SHA.
+```sql
+SELECT filename FROM schema_migrations
+ WHERE filename IN ('042_onec_exchange_v3.sql', '043_onec_v3_clean_start_state.sql');
 
-**STOP:** ошибка миграции; SHA на сервере ≠ протоколу.
+SELECT column_name FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'onec_v3_exchange_state'
+   AND column_name IN ('legacy_clean_start_completed_at', 'legacy_clean_start_bundle_fingerprint');
+```
+
+   Должны быть **обе** строки в `schema_migrations` и **оба** столбца. Наличие только `042` **недостаточно**.
+
+5. Запустить приложение на новом SHA только после п.2–4. **Не** запускать clean-start apply, regular update apply, purge, Bitrix bootstrap.
+
+**PASS:** `npm run migrate` успешен; все pending миграции SHA применены; 042+043 в `schema_migrations`; legacy clean-start columns существуют; SHA на сервере = протоколу.
+
+**STOP:** ошибка миграции; отсутствует 043 или столбцы маркеров; SHA ≠ протоколу; pending jobs при старте.
 
 ---
 
@@ -204,11 +249,21 @@ node dist/cli/onec-exchange-v3-clean-start.js \
 
 Повтор после успешного clean-start — только с `--force-clean-start` (и снова dry-run + разрешение).
 
-**COMMIT_UNCERTAIN / transport:**
+**COMMIT_UNCERTAIN / transport — recovery (read-only, без повторного apply):**
 
-- **Не** повторять purge/import автоматически.
-- Новое TLS-соединение: `legacy_clean_start_*`, fingerprint наблюдаемой БД, counts v3 (`observeCleanStartState` / recovery в коде).
-- Успех recovery только при совпадении `observed.targetDb.fingerprint` с подтверждённым.
+- **Не** повторять purge/import; **не** вызывать `--force-clean-start` автоматически.
+- Новое TLS-соединение, модуль `observeCleanStartState`:
+
+```bash
+node dist/cli/onec-exchange-v3-clean-start-observe.js
+```
+
+- Сверить с протоколом dry-run:
+  - `observed.targetDb.fingerprint` = `--confirm-target-db-fingerprint`;
+  - `legacyCleanStartBundleFingerprint` = `--confirm-bundle-fingerprint` (если clean-start завершён);
+  - `legacyCleanStartCompletedAt` — ожидаемое значение после успеха;
+  - counts `v3HoldingsCount` / `v3LegalCount` / `v3RetailCount` / `v3EmployeeRosterCount` — согласованы с dry-run `wouldLoad`.
+- Если наблюдение **неоднозначно** (`ok: false`, несовпадение fingerprint/counts, null там где ожидался маркер) — **STOP**, эскалация владельцу; ручной разбор, без автоматического повтора apply.
 
 **PASS:** exit 0; JSON `ok: true`; legacy domain очищен; v3 tables загружены; маркеры в `onec_v3_exchange_state`.
 
@@ -218,17 +273,19 @@ node dist/cli/onec-exchange-v3-clean-start.js \
 
 ### 8. Smoke (ручной, в UI и API)
 
-**PASS (минимальный чек-лист):**
+**Разрешение:** приёмка smoke; **отдельное разрешение Bitrix** — если шаг создаёт метку / вызывает внешний API (`bitrix24-sync --apply`, выдача новой клиентской метки).
+
+**PASS (минимальный чек-лист, read-only где возможно):**
 
 - Список v3: холдинги, юрлица, ТТ; **orphan retail** без холдинга (если есть в комплекте).
 - Карточки, переходы list → detail → nested return.
 - Права: manager / ROP / admin (scope, 404 чужих).
 - Пользователи и `user_onec_employee_links` на месте.
-- Bitrix: старые клиентские метки отозваны; **новая** выдача метки по сценарию v3 (см. integration bitrix-labels) — **без** массового bootstrap без разрешения.
+- Bitrix: факт отзыва старых клиентских меток (read-only проверка); **новая** выдача метки — только с **разрешением на внешние действия Bitrix**, не часть обязательного read-only smoke.
 
 **STOP:** потеря пользователей/каталога; некорректный scope; критичные регрессии UI.
 
-**Разрешение:** владелец принимает smoke.
+**Разрешение:** владелец принимает smoke; Bitrix write — отдельно.
 
 ---
 
@@ -242,7 +299,7 @@ node dist/cli/onec-exchange-v3-clean-start.js \
 ```bash
 node dist/cli/onec-regular-update.js --dry-run
 # после приёмки dry-run и того же bundle fingerprint:
-node dist/cli/onec-regular-update.js --apply --expected-fingerprint=<fingerprint>
+node dist/cli/onec-regular-update.js --apply --expected-fingerprint <fingerprint>
 ```
 
 (или admin UI worker — тот же `runRegularUpdate`.)
@@ -257,15 +314,19 @@ node dist/cli/onec-regular-update.js --apply --expected-fingerprint=<fingerprint
 
 **До destructive apply (шаг 7):**
 
-- Откат приложения на **прежний SHA** + БД из бэкапа (шаг 4) — достаточен.
+- Откат приложения на **прежний SHA** + БД из бэкапа (шаг 4) — достаточен, если после бэкапа **не было** записей, которые нужно сохранить.
+
+**После бэкапа, но до apply (шаг 4–6):**
+
+- Любые записи в БД (миграции 042/043, служебные строки, случайные jobs) **не исчезнут** при restore «молча». Restore на точку бэкапа **откатывает** и миграции v3 на старой схеме — согласовать с откатом кода.
 
 **После successful clean-start apply:**
 
 - Откат **только кода** **недостаточен**: удалены legacy clients, grants, Bitrix bindings/метки.
-- Требуется **восстановление БД из бэkaпа** (шаг 4) на согласованное время + план по Bitrix (retired codes, повторная привязка задач, коммуникация с пользователями).
+- Требуется **восстановление БД из бэкапа** (шаг 4) на согласованное время + план по Bitrix (retired codes, повторная привязка задач, коммуникация с пользователями) + учёт изменений после момента бэкапа.
 - Повторный clean-start на «исправленной» БД без restore — **новое** destructive действие; только с dry-run + разрешением.
 
-**PASS (план):** документирован RTO/RPO; ответственный за restore и Bitrix; бэкап до шага 7 сохранён.
+**PASS (план):** документирован RTO/RPO; ответственный за restore и Bitrix; бэкап до шага 7 сохранён; перечень изменений после бэкапа зафиксирован.
 
 ---
 
