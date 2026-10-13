@@ -93,6 +93,8 @@ export async function clientSyncStatusHandler(
         : null,
       runningImport: status.runningImport,
       warning: status.warning,
+      exchangeV3Active: status.exchangeV3Active,
+      v3LastSuccessfulApplyAtLabel: status.v3LastSuccessfulApplyAtLabel,
     });
     return;
   }

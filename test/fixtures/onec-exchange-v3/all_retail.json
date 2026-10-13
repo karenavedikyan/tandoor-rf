@@ -1,0 +1,56 @@
+[
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000001",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "warehouse": false,
+    "closed": false,
+    "type_category": {
+      "guid_type": "rt1",
+      "name_type": "Retail Type",
+      "guid_category": "rc1",
+      "name_category": "Retail Cat"
+    },
+    "address": {
+      "store_address": "Store One Address",
+      "delivery_address": "Delivery One",
+      "direction_of_the_route": "Route North"
+    },
+    "information_loading": { "loading_time": "10:00" },
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One",
+      "guid_head_of_the_sales_department": "55555555-5555-4555-8555-555555555555",
+      "name_head_of_the_sales_department": "ROP One"
+    },
+    "contact_information": {
+      "store_phone": "+71111111111",
+      "accountant_email": "acc@example.com"
+    },
+    "LPR_information": {
+      "name": "Ivan LPR",
+      "bonus": "5%",
+      "conditions_bonus": "Annual",
+      "date_of_birth": "1980-01-02"
+    },
+    "additional_information": {
+      "status_tandoor_club": "Gold",
+      "bonus_tandoor_club": "10"
+    }
+  },
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000002",
+    "guid_holding": "",
+    "warehouse": false,
+    "closed": false,
+    "type_category": {},
+    "address": { "store_address": "Orphan Store" },
+    "information_loading": {},
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "contact_information": {},
+    "LPR_information": {},
+    "additional_information": {}
+  }
+]

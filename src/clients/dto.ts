@@ -270,6 +270,10 @@ export type ClientsSyncStatusResponse = {
   lastSourceModifiedAtLabel: string | null;
   runningImport: boolean;
   warning: string | null;
+  /** Exchange v3 bundle loaded — clients UI uses v3 API. */
+  exchangeV3Active: boolean;
+  v3LastSuccessfulApplyAt: string | null;
+  v3LastSuccessfulApplyAtLabel: string | null;
   /** Admin-only detail; omitted for scoped roles. */
   adminDetail?: {
     lastErrorCode: string | null;

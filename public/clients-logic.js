@@ -109,6 +109,16 @@
     "teamSource",
     "onecTeam",
     "onecPortfolioEmployee",
+    "v3mode",
+    "v3entity",
+    "closed",
+    "v3manager",
+    "v3type",
+    "v3category",
+    "v3view",
+    "missingManager",
+    "responsibleGuid",
+    "ropBranchGuid",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [
@@ -998,11 +1008,9 @@
     if (typeof value !== "string" || value === "") {
       return "";
     }
-    if (!value.startsWith("?")) {
-      return "";
-    }
+    var normalized = value.startsWith("?") ? value : "?" + value;
     try {
-      var probe = new URLSearchParams(value.slice(1));
+      var probe = new URLSearchParams(normalized.slice(1));
       if (
         Array.from(probe.keys()).some(function (key) {
           return LIST_QUERY_KEYS.indexOf(key) === -1;
@@ -1010,7 +1018,7 @@
       ) {
         return "";
       }
-      return value;
+      return normalized;
     } catch (_err) {
       return "";
     }

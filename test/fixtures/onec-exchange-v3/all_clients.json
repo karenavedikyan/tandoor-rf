@@ -1,0 +1,61 @@
+[
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000001",
+    "name_client": "Legal One",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Holding One",
+    "type_category": {
+      "guid_type": "t1",
+      "name_type": "Type A",
+      "guid_category": "c1",
+      "name_category": "Cat A"
+    },
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Manager One",
+    "guid_head_of_the_sales_department": "55555555-5555-4555-8555-555555555555",
+    "name_head_of_the_sales_department": "ROP One",
+    "address": "SYNTH address",
+    "telephone": ["+70000000001"],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {
+      "Код": "SYNTH-001"
+    }
+  },
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000002",
+    "name_client": "Legal Orphan",
+    "guid_holding": "",
+    "name_holding": "",
+    "type_category": {},
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "Manager One",
+    "address": "",
+    "telephone": [],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {}
+  },
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000003",
+    "name_client": "Legal Unassigned",
+    "guid_holding": "",
+    "name_holding": "",
+    "type_category": {
+      "guid_type": "t2",
+      "name_type": "Type B",
+      "guid_category": "c2",
+      "name_category": "Cat B"
+    },
+    "guid_manager": "",
+    "name_manager": "",
+    "address": "",
+    "telephone": [],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {}
+  }
+]

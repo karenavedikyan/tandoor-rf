@@ -880,6 +880,14 @@ export async function getClientsSyncStatus(options: {
       LIMIT 1
     `,
   );
+  const { isExchangeV3Active } = await import("./v3/list");
+  const v3Active = await isExchangeV3Active();
+  const v3State = v3Active
+    ? await query<{ last_successful_apply_at: Date | null }>(
+        `SELECT last_successful_apply_at FROM onec_v3_exchange_state WHERE id = 1`,
+      )
+    : { rows: [{ last_successful_apply_at: null }] };
+
   const exchangeState = await query<ExchangeStateQueryRow>(
     `
       SELECT
@@ -968,6 +976,11 @@ export async function getClientsSyncStatus(options: {
       : null,
     runningImport,
     warning,
+    exchangeV3Active: v3Active,
+    v3LastSuccessfulApplyAt: v3State.rows[0]?.last_successful_apply_at?.toISOString() ?? null,
+    v3LastSuccessfulApplyAtLabel: v3State.rows[0]?.last_successful_apply_at
+      ? formatMskDateTime(v3State.rows[0].last_successful_apply_at)
+      : null,
   };
 
   if (options.includeAdminDetail) {

@@ -16,6 +16,114 @@
     return logic.parseReturnQuery(window.location.search);
   }
 
+  function v3EntityFromQuery() {
+    return new URLSearchParams(window.location.search).get("v3Entity");
+  }
+
+  function currentDetailReturnParam() {
+    return encodeURIComponent(window.location.pathname + window.location.search);
+  }
+
+  function resolveV3BackHref() {
+    var raw = new URLSearchParams(window.location.search).get("return");
+    if (typeof raw === "string" && raw.startsWith("/clients")) {
+      try {
+        return decodeURIComponent(raw);
+      } catch (_err) {
+        return raw;
+      }
+    }
+    var returnQuery = parseReturnQuery();
+    return returnQuery ? "/clients" + returnQuery : "/clients?v3mode=1";
+  }
+
+  function renderV3Detail(payload) {
+    hideAllPanels();
+    detailEl.classList.remove("clients-hidden");
+    var backHref = resolveV3BackHref();
+    var ent = payload.entity || {};
+    var title =
+      ent.name ||
+      ent.name_client ||
+      (ent.address && ent.address.store_address) ||
+      payload.entityType ||
+      "Объект";
+    var body = window.ClientDetailV3
+      ? window.ClientDetailV3.renderBody(shell, payload.entityType, ent, payload.holdingLink)
+      : "";
+    var html =
+      '<p><a href="' +
+      shell.escapeHtml(backHref) +
+      '" data-testid="v3-back-to-list">← К списку</a></p>' +
+      "<h1 data-testid=\"v3-detail-title\">" +
+      shell.escapeHtml(String(title)) +
+      "</h1>" +
+      body;
+    if (payload.entityType === "holding") {
+      html +=
+        '<div id="v3-composition" class="client-card-section" data-holding-guid="' +
+        shell.escapeHtml(ent.guid) +
+        '">Загрузка состава…</div>';
+    }
+    detailRoot.innerHTML = html;
+    if (payload.entityType === "holding" && ent.guid) {
+      api
+        .apiRequest("/api/clients/v3/holdings/" + encodeURIComponent(ent.guid) + "/composition")
+        .then(function (result) {
+          var host = document.getElementById("v3-composition");
+          if (!host) return;
+          if (!result.response.ok || !result.data) {
+            host.innerHTML =
+              '<p class="clients-error">Не удалось загрузить состав.</p>' +
+              '<button type="button" class="workspace-button workspace-button--secondary" id="v3-composition-retry">Повторить</button>';
+            document.getElementById("v3-composition-retry")?.addEventListener("click", function () {
+              renderV3Detail(payload);
+            });
+            return;
+          }
+          var legal = result.data.legalEntities || [];
+          var retail = result.data.retailOutlets || [];
+          var parentReturn = currentDetailReturnParam();
+          host.innerHTML =
+            "<h2>Юрлица</h2><ul>" +
+            legal
+              .map(function (row) {
+                return (
+                  "<li><a href=\"/clients/" +
+                  encodeURIComponent(row.guid) +
+                  "?v3Entity=legal&return=" +
+                  parentReturn +
+                  '">' +
+                  shell.escapeHtml(row.name) +
+                  "</a></li>"
+                );
+              })
+              .join("") +
+            "</ul><h2>Торговые точки</h2><ul>" +
+            retail
+              .map(function (row) {
+                return (
+                  "<li><a href=\"/clients/" +
+                  encodeURIComponent(row.guid) +
+                  "?v3Entity=retail&return=" +
+                  parentReturn +
+                  '">' +
+                  shell.escapeHtml(row.name) +
+                  "</a></li>"
+                );
+              })
+              .join("") +
+            "</ul>";
+        })
+        .catch(function () {
+          var host = document.getElementById("v3-composition");
+          if (host) {
+            host.innerHTML = '<p class="clients-error">Ошибка сети при загрузке состава.</p>';
+          }
+        });
+    }
+  }
+
   function clientGuidFromPath() {
     var parts = window.location.pathname.split("/").filter(Boolean);
     if (parts.length !== 2 || parts[0] !== "clients") {
@@ -399,9 +507,41 @@
       showState("Загрузка карточки…", "", null);
     },
     fetchClient: function (guid) {
+      var v3Entity = v3EntityFromQuery();
+      if (v3Entity) {
+        return api.apiRequest(
+          "/api/clients/v3/detail?entity=" +
+            encodeURIComponent(v3Entity) +
+            "&guid=" +
+            encodeURIComponent(guid),
+        );
+      }
       return api.apiRequest("/api/clients/" + encodeURIComponent(guid));
     },
     handleClientResult: function (result) {
+      var v3Entity = v3EntityFromQuery();
+      if (v3Entity) {
+        if (result.response.status === 401) {
+          window.location.replace("/login");
+          return;
+        }
+        if (result.response.status === 404) {
+          showState("Объект не найден", "Проверьте ссылку или вернитесь к списку.", null);
+          return;
+        }
+        if (result.response.status !== 200 || !result.data || !result.data.entity) {
+          showState("Не удалось загрузить карточку", "Повторите попытку позже.", function () {
+            return detailController.loadClient();
+          });
+          return;
+        }
+        renderV3Detail({
+          entityType: v3Entity,
+          entity: result.data.entity,
+          holdingLink: result.data.holdingLink,
+        });
+        return;
+      }
       if (result.response.status === 401) {
         window.location.replace("/login");
         return;

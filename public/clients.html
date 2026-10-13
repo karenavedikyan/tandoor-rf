@@ -156,6 +156,34 @@
                 Моя закреплённая область
               </p>
               <div id="clients-filters-panel" class="clients-toolbar__row clients-toolbar__row--filters">
+                <div id="v3-filters-wrap" class="clients-toolbar__row clients-toolbar__row--filters clients-hidden">
+                  <label class="clients-field">
+                    <span class="clients-field__label">Менеджер</span>
+                    <select id="v3-manager-filter" class="clients-field__select">
+                      <option value="">Все</option>
+                    </select>
+                  </label>
+                  <label class="clients-field">
+                    <span class="clients-field__label">Тип</span>
+                    <select id="v3-type-filter" class="clients-field__select">
+                      <option value="">Все</option>
+                    </select>
+                  </label>
+                  <label class="clients-field">
+                    <span class="clients-field__label">Категория</span>
+                    <select id="v3-category-filter" class="clients-field__select">
+                      <option value="">Все</option>
+                    </select>
+                  </label>
+                  <label class="clients-field" id="v3-closed-filter-wrap">
+                    <span class="clients-field__label">Статус ТТ</span>
+                    <select id="v3-closed-filter" class="clients-field__select">
+                      <option value="">Все</option>
+                      <option value="false">Открыта</option>
+                      <option value="true">Закрыта</option>
+                    </select>
+                  </label>
+                </div>
                 <div class="clients-field clients-hidden clients-assignment-filter-wrap" id="rop-filter-wrap">
                   <span class="clients-field__label" id="rop-filter-label">РОП клиента</span>
                   <select
@@ -651,6 +679,7 @@
     <script src="/clients-shell.js" defer></script>
     <script src="/clients-teams-compact.js" defer></script>
     <script src="/clients-onec-teams.js" defer></script>
+    <script src="/clients-v3.js" defer></script>
     <script src="/clients.js" defer></script>
   </body>
 </html>

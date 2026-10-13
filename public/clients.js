@@ -5,6 +5,7 @@
   var shell = window.ClientsShell;
   var logic = window.ClientsLogic;
   var DEBOUNCE_MS = 300;
+  var exchangeV3Active = false;
 
   var appEl = document.getElementById("clients-app");
   var accessPanel = document.getElementById("access-panel");
@@ -2662,6 +2663,28 @@
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
     var isCompleteness = state.view === "completeness";
+    var v3FiltersWrap = document.getElementById("v3-filters-wrap");
+    if (v3FiltersWrap) {
+      var v3ModeUrl = new URLSearchParams(window.location.search).get("v3mode") === "1";
+      var showV3Filters =
+        (exchangeV3Active || v3ModeUrl) &&
+        !isCompleteness &&
+        ((!isTeams && !isReview) ||
+          (isTeams && (logic.hasResponsibleSelection(state) || logic.isBranchPortfolioList(state))) ||
+          (isReview && (Boolean(state.unassignedCategory) || Boolean(state.manager))));
+      v3FiltersWrap.classList.toggle("clients-hidden", !showV3Filters);
+    }
+    if (exchangeV3Active && !isCompleteness) {
+      ropFilterWrap?.classList.add("clients-hidden");
+      managerFilterWrap?.classList.add("clients-hidden");
+      holdingFilterWrap?.classList.add("clients-hidden");
+      phoneFilter.closest(".clients-field")?.classList.add("clients-hidden");
+      outletStatusFilterWrap?.classList.add("clients-hidden");
+      warehouseFilterWrap?.classList.add("clients-hidden");
+      regionalFilterWrap?.classList.add("clients-hidden");
+      hardwareFilterWrap?.classList.add("clients-hidden");
+      fieldFiltersWrap?.classList.add("clients-hidden");
+    }
     var isOutlets = (state.entity || "clients") === "outlets";
     var showAssignmentFilters =
       rolePresentation &&
@@ -3650,6 +3673,47 @@
     if (state.view !== "teams") {
       return Promise.resolve({ ok: true });
     }
+    if (exchangeV3Active) {
+      var v3Requests = [];
+      if (!state.ropEmployee) {
+        v3Requests.push(
+          api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              syncTeamContextFromOrgStructure(result.data);
+            } else {
+              teamContext.loadError = true;
+            }
+            return result.response.status === 200;
+          }),
+        );
+      } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
+        v3Requests.push(
+          api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              syncTeamContextFromOrgStructure(result.data, state.ropEmployee);
+            } else {
+              teamContext.loadError = true;
+            }
+            return result.response.status === 200;
+          }),
+          api
+            .apiRequest(
+              "/api/clients/v3/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
+            )
+            .then(function (result) {
+              if (result.response.status === 200 && result.data) {
+                teamContext.managers = result.data.items || [];
+              } else {
+                teamContext.loadError = true;
+              }
+              return result.response.status === 200;
+            }),
+        );
+      }
+      return Promise.all(v3Requests).then(function (results) {
+        return { ok: results.every(Boolean) || results.length === 0 };
+      });
+    }
     var requests = [];
     if (usesOnecTeamSource(state) && (!state.ropEmployee || isRopDesignSession())) {
       var fetchGen = fetchGeneration != null ? fetchGeneration : bumpOnecTeamsFetchGeneration();
@@ -3811,8 +3875,73 @@
         return { ok: false };
       }
       renderSyncStatus(result.data);
-      return { ok: true };
+      exchangeV3Active = !!result.data.exchangeV3Active;
+      return { ok: true, data: result.data };
     });
+  }
+
+  function buildV3UiContext() {
+    return {
+      api: api,
+      shell: shell,
+      getSearchQuery: function () {
+        return searchInput.value.trim();
+      },
+      showResultsState: showResultsState,
+      showResultsContent: showResultsContent,
+      showAccessDenied: showAccessDenied,
+      resultCountEl: resultCountEl,
+      tableHeadRow: tableHeadRow,
+      tableBody: tableBody,
+      cardsEl: cardsEl,
+      paginationEl: paginationEl,
+      pageTitleEl: pageTitleEl,
+      entitySwitcherEl: entitySwitcherEl,
+      nextListFetchSignal: nextListFetchSignal,
+      renderPagination: function (v3state, totalPages) {
+        if (totalPages <= 1) {
+          paginationEl.innerHTML = "";
+          return;
+        }
+        var prevDisabled = v3state.page <= 1;
+        var nextDisabled = v3state.page >= totalPages;
+        paginationEl.innerHTML =
+          '<button type="button" class="workspace-button workspace-button--secondary" id="page-prev"' +
+          (prevDisabled ? " disabled" : "") +
+          ">Назад</button><span>Страница " +
+          v3state.page +
+          " из " +
+          totalPages +
+          '</span><button type="button" class="workspace-button workspace-button--secondary" id="page-next"' +
+          (nextDisabled ? " disabled" : "") +
+          ">Вперёд</button>";
+        document.getElementById("page-prev")?.addEventListener("click", function () {
+          if (v3state.page <= 1) return;
+          cancelScheduledLoad();
+          invalidateInFlightRequests();
+          var next = window.ClientsV3.readState();
+          next.page = v3state.page - 1;
+          next.q = searchInput.value.trim();
+          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+        });
+        document.getElementById("page-next")?.addEventListener("click", function () {
+          if (v3state.page >= totalPages) return;
+          cancelScheduledLoad();
+          invalidateInFlightRequests();
+          var next = window.ClientsV3.readState();
+          next.page = v3state.page + 1;
+          next.q = searchInput.value.trim();
+          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+        });
+      },
+    };
+  }
+
+  function shouldUseV3List(state) {
+    if (!exchangeV3Active || !window.ClientsV3) {
+      return false;
+    }
+    return (state.view || "all") !== "completeness";
   }
 
   function shouldShowOnecUpdatePanel() {
@@ -4034,6 +4163,23 @@
     cancelScheduledLoad();
     activeRequestId += 1;
     var requestId = activeRequestId;
+    if (shouldUseV3List(state)) {
+      return window.ClientsV3.loadOrchestrated(buildV3UiContext(), state, replaceHistory, {
+        showAppShell: showAppShell,
+        updateViewChrome: updateViewChrome,
+        loadTeamsContext: loadTeamsContext,
+        renderTeamsPanel: renderTeamsPanel,
+        logic: logic,
+        requestId: requestId,
+        activeRequestId: activeRequestId,
+        getSearchQuery: function () {
+          return searchInput.value.trim();
+        },
+        unassignedPanelEl: unassignedPanelEl,
+        navigateState: navigateState,
+        currentStateFromForm: currentStateFromForm,
+      });
+    }
     applyStateToForm(state);
     writeStateToUrl(state, replaceHistory);
     showAppShell();
@@ -4297,6 +4443,11 @@
   function resetFilters() {
     cancelScheduledLoad();
     invalidateInFlightRequests();
+    if (exchangeV3Active && window.ClientsV3) {
+      searchInput.value = "";
+      window.ClientsV3.resetFilters(buildV3UiContext());
+      return;
+    }
     searchInput.value = "";
     phoneFilter.value = "all";
     if (managerCombobox) {
@@ -4516,6 +4667,19 @@
           window.location.search,
         );
         applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
+        applyStateToForm(initialState);
+        if (exchangeV3Active && window.ClientsV3) {
+          window.ClientsV3.mountEntitySwitcher(entitySwitcherEl);
+          window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
+            cancelScheduledLoad();
+            invalidateInFlightRequests();
+            var v3state = window.ClientsV3.readState();
+            v3state.v3entity = entityId;
+            v3state.page = 1;
+            v3state.q = searchInput.value.trim() || v3state.q || "";
+            window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
+          });
+        }
         loadPortfolioStats(initialState);
         loadList(initialState, true);
       })
