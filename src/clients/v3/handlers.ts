@@ -64,7 +64,8 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
     ? (responsibleKindRaw as V3ResponsibleKind)
     : undefined;
-  const responsibleGuid = parseGuidParam(req.query.responsibleGuid) ?? parseGuidParam(req.query.managerGuid);
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -74,6 +75,7 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     managerGuid: managerGuid ?? undefined,
     responsibleGuid: responsibleGuid ?? undefined,
     responsibleKind,
+    ropBranchGuid: ropBranchGuid ?? undefined,
     typeGuid: typeGuid || undefined,
     categoryGuid: categoryGuid || undefined,
     missingManager: missingManager || undefined,

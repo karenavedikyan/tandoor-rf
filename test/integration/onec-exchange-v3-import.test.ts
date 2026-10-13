@@ -9,6 +9,12 @@ import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from ".
 import { Pool } from "pg";
 
 const MANAGER = "22222222-2222-4222-8222-222222222222";
+const HOLDING = "a1000000-0000-4000-8000-000000000001";
+const LEGAL_ONE = "b2000000-0000-4000-8000-000000000001";
+const LEGAL_ORPHAN = "b2000000-0000-4000-8000-000000000002";
+const LEGAL_UNASSIGNED = "b2000000-0000-4000-8000-000000000003";
+const RETAIL_ONE = "c3000000-0000-4000-8000-000000000001";
+const RETAIL_ORPHAN = "c3000000-0000-4000-8000-000000000002";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 
 function loadFixture(name: string): Buffer {
@@ -85,14 +91,41 @@ describe("exchange v3 import", { concurrency: false }, () => {
       `,
     );
     assert.equal(counts.rows[0]?.h, 1);
-    assert.equal(counts.rows[0]?.l, 2);
+    assert.equal(counts.rows[0]?.l, 3);
     assert.equal(counts.rows[0]?.r, 2);
     assert.equal(counts.rows[0]?.orphan, 1);
+
+    const guids = await pool.query<{ guid: string; kind: string }>(
+      `
+        SELECT guid_holding::text AS guid, 'holding' AS kind FROM onec_v3_holdings
+        UNION ALL SELECT guid_client::text, 'legal' FROM onec_v3_legal_entities
+        UNION ALL SELECT guid_store::text, 'retail' FROM onec_v3_retail_outlets
+      `,
+    );
+    const guidSet = new Set(guids.rows.map((r) => r.guid.toLowerCase()));
+    for (const expected of [HOLDING, LEGAL_ONE, LEGAL_ORPHAN, LEGAL_UNASSIGNED, RETAIL_ONE, RETAIL_ORPHAN]) {
+      assert.ok(guidSet.has(expected.toLowerCase()), `missing imported object ${expected}`);
+    }
+
+    const unassignedMgr = await pool.query<{ empty: boolean }>(
+      `SELECT NULLIF(TRIM(COALESCE(managers->>'guidManager', '')), '') IS NULL AS empty
+       FROM onec_v3_legal_entities WHERE guid_client = $1::uuid`,
+      [LEGAL_UNASSIGNED],
+    );
+    assert.equal(unassignedMgr.rows[0]?.empty, true);
 
     const labels = await pool.query<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM bitrix24_object_labels WHERE revoked_at IS NULL`,
     );
-    assert.equal(labels.rows[0]?.count, 5);
+    assert.equal(labels.rows[0]?.count, 6);
+
+    const labeled = await pool.query<{ object_guid: string }>(
+      `SELECT object_guid::text FROM bitrix24_object_labels WHERE revoked_at IS NULL`,
+    );
+    const labeledSet = new Set(labeled.rows.map((r) => r.object_guid.toLowerCase()));
+    for (const expected of [HOLDING, LEGAL_ONE, LEGAL_ORPHAN, LEGAL_UNASSIGNED, RETAIL_ONE, RETAIL_ORPHAN]) {
+      assert.ok(labeledSet.has(expected.toLowerCase()), `missing label for ${expected}`);
+    }
 
     const reapplied = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
@@ -106,7 +139,12 @@ describe("exchange v3 import", { concurrency: false }, () => {
     const labelsAfter = await pool.query<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM bitrix24_object_labels WHERE revoked_at IS NULL`,
     );
-    assert.equal(labelsAfter.rows[0]?.count, 5);
+    assert.equal(labelsAfter.rows[0]?.count, 6);
+
+    const countsAfter = await pool.query<{ l: number }>(
+      `SELECT COUNT(*)::int AS l FROM onec_v3_legal_entities`,
+    );
+    assert.equal(countsAfter.rows[0]?.l, 3);
     await pool.end();
   });
 });

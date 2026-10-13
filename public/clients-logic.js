@@ -117,6 +117,8 @@
     "v3category",
     "v3view",
     "missingManager",
+    "responsibleGuid",
+    "ropBranchGuid",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [

@@ -25,7 +25,16 @@ export type V3ListQuery = {
   missingManager?: boolean;
   responsibleGuid?: string;
   responsibleKind?: V3ResponsibleKind;
+  ropBranchGuid?: string;
 };
+
+function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknown[]): string {
+  if (!input.ropBranchGuid) {
+    return "";
+  }
+  params.push(input.ropBranchGuid);
+  return ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = $${params.length}::uuid`;
+}
 
 function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
@@ -46,6 +55,7 @@ function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unkn
   if (input.missingManager) {
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
   }
+  sql += appendRopBranchFilter(input, alias, params);
   return sql;
 }
 

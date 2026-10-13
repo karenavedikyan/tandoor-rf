@@ -17,11 +17,26 @@
     return ENTITIES[1];
   }
 
+  function normalizeResponsibleKind(value) {
+    if (value === "manager" || value === "regional" || value === "hardware") {
+      return value;
+    }
+    return "";
+  }
+
   function readState(search) {
     var params = new URLSearchParams(search || window.location.search);
     var entity = params.get("v3entity") || "legal";
     if (!ENTITIES.some(function (e) { return e.id === entity; })) {
       entity = "legal";
+    }
+    var responsibleKind =
+      normalizeResponsibleKind(params.get("responsibleKind") || "") ||
+      normalizeResponsibleKind(params.get("teamKind") || "") ||
+      "manager";
+    var responsibleGuid = params.get("responsibleGuid") || "";
+    if (!responsibleGuid && responsibleKind === "manager") {
+      responsibleGuid = params.get("v3manager") || "";
     }
     return {
       v3entity: entity,
@@ -33,26 +48,46 @@
       v3category: params.get("v3category") || "",
       v3view: params.get("v3view") || "all",
       missingManager: params.get("missingManager") === "1",
+      ropEmployee: params.get("ropEmployee") || "",
+      responsibleGuid: responsibleGuid,
+      responsibleKind: responsibleGuid ? responsibleKind : "",
     };
   }
 
   function mergeFromLegacyState(legacy, v3) {
+    var params = new URLSearchParams(window.location.search);
     var next = Object.assign({}, v3);
-    var view = legacy.view || "all";
-    if (view === "teams") next.v3view = "teams";
-    else if (view === "review") next.v3view = "unassigned";
-    else next.v3view = "all";
-    var kind = legacy.teamKind || "manager";
-    var mgr = next.v3manager || "";
-    if (!mgr) {
-      if (kind === "regional") mgr = legacy.regionalManager || legacy.clientRegionalManager || legacy.outletRegionalManager || "";
-      else if (kind === "hardware") mgr = legacy.hardwareManager || legacy.clientHardwareManager || legacy.outletHardwareManager || "";
-      else mgr = legacy.manager || legacy.clientManager || legacy.outletManager || "";
+    if (!params.has("v3view")) {
+      var view = legacy.view || "all";
+      if (view === "teams") next.v3view = "teams";
+      else if (view === "review") next.v3view = "unassigned";
+      else next.v3view = "all";
     }
-    if (mgr) {
-      next.v3manager = mgr;
-      next.responsibleGuid = mgr;
+    if (legacy.ropEmployee) {
+      next.ropEmployee = legacy.ropEmployee;
+    }
+    var kind =
+      normalizeResponsibleKind(legacy.teamKind || legacy.responsibleKind || "") ||
+      next.responsibleKind ||
+      "manager";
+    var responsibleGuid = next.responsibleGuid || "";
+    if (!responsibleGuid) {
+      if (kind === "regional") {
+        responsibleGuid =
+          legacy.regionalManager || legacy.clientRegionalManager || legacy.outletRegionalManager || "";
+      } else if (kind === "hardware") {
+        responsibleGuid =
+          legacy.hardwareManager || legacy.clientHardwareManager || legacy.outletHardwareManager || "";
+      } else {
+        responsibleGuid = legacy.manager || legacy.clientManager || legacy.outletManager || "";
+      }
+    }
+    if (responsibleGuid) {
+      next.responsibleGuid = responsibleGuid;
       next.responsibleKind = kind;
+      if (kind === "manager" && !next.v3manager) {
+        next.v3manager = responsibleGuid;
+      }
     }
     if (legacy.unassignedCategory === "v3_missing_manager") {
       next.missingManager = true;
@@ -82,6 +117,17 @@
     else params.delete("v3view");
     if (state.missingManager) params.set("missingManager", "1");
     else params.delete("missingManager");
+    if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
+    else params.delete("ropEmployee");
+    if (state.responsibleGuid) {
+      params.set("responsibleGuid", state.responsibleGuid);
+      params.set("responsibleKind", state.responsibleKind || "manager");
+      params.set("teamKind", state.responsibleKind || "manager");
+    } else {
+      params.delete("responsibleGuid");
+      params.delete("responsibleKind");
+      params.delete("teamKind");
+    }
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -103,6 +149,12 @@
     if (s.v3category) params.set("v3category", s.v3category);
     if (s.v3view) params.set("v3view", s.v3view);
     if (s.missingManager) params.set("missingManager", "1");
+    if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
+    if (s.responsibleGuid) {
+      params.set("responsibleGuid", s.responsibleGuid);
+      params.set("responsibleKind", s.responsibleKind || "manager");
+      params.set("teamKind", s.responsibleKind || "manager");
+    }
     return "?" + params.toString();
   }
 
@@ -201,10 +253,15 @@
         params.set("q", state.q);
       }
       if (state.closed === "true" || state.closed === "false") params.set("closed", state.closed);
-      if (state.responsibleGuid || state.v3manager) {
-        params.set("responsibleGuid", state.responsibleGuid || state.v3manager);
-        params.set("responsibleKind", state.responsibleKind || "manager");
-        params.set("managerGuid", state.v3manager || state.responsibleGuid);
+      if (state.ropEmployee) {
+        params.set("ropBranchGuid", state.ropEmployee);
+      }
+      if (state.responsibleGuid && state.responsibleKind) {
+        params.set("responsibleGuid", state.responsibleGuid);
+        params.set("responsibleKind", state.responsibleKind);
+      }
+      if (state.v3manager) {
+        params.set("managerGuid", state.v3manager);
       }
       if (state.v3type) params.set("typeGuid", state.v3type);
       if (state.v3category) params.set("categoryGuid", state.v3category);
@@ -416,6 +473,9 @@
           v3category: "",
           v3view: readState().v3view,
           missingManager: false,
+          ropEmployee: readState().ropEmployee,
+          responsibleGuid: "",
+          responsibleKind: "",
         },
         true,
       );
