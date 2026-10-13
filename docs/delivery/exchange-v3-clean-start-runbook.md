@@ -8,16 +8,19 @@
 
 ## Локальная приёмка кода (PR #76, изолированные test DB)
 
-**Выполнено** на кандидате `9c8479b` (не равно выпуску в production до merge и отдельного deploy-разрешения):
+**Текущий проверенный кандидат:** `d56f236` (локальная test DB; **не** равно выпуску в production до merge и отдельного deploy-разрешения).
 
 | Проверка | Результат |
 |----------|-----------|
 | `npm run typecheck` / `npm run build` | PASS |
-| `npm test` | 679/679 |
-| `npm run test:integration:v3-pr76` | 29/29 (9 файлов, последовательно) |
+| `npm test` | 688/688 |
+| `npm run test:integration:v3-pr76` | 29/29 |
 | `npm run test:browser -- test/browser/clients-v3.browser.test.ts` | 1/1 |
+| `onec-exchange-v3-target-db-identity` / `onec-exchange-v3-clean-start-observe` на test DB | PASS (ручной прогон entrypoints) |
 
-Команды — только на `*_test` PostgreSQL (см. `docs/delivery/acceptance-matrix.md`, раздел Exchange v3).
+История: ранний прогон **`9c8479b`** (679 unit) — до правок CLI/runbook; не считать текущим кандидатом.
+
+Протокол команд — `docs/delivery/acceptance-matrix.md`, раздел Exchange v3. Production release gates ниже — **NOT RUN**.
 
 ---
 
@@ -34,7 +37,7 @@
 | Dry-run без blockers + приёмка владельцем | ⏸ оператор | Любой blocker или несовпадение counts/fingerprint |
 | Отдельное разрешение на **destructive apply** | ⏸ владелец | Apply без второго явного OK |
 | Smoke после apply | ⏸ оператор | Любой критичный сценарий FAIL |
-| Регular exchange / расписания / bootstrap Bitrix | ⏸ владелец | До явного включения после smoke |
+| Regular exchange / расписания / **внешний** Bitrix24 (sync API, задачи) | ⏸ владелец | До явного включения после smoke |
 
 Локальный PostgreSQL и superuser **не заменяют** gates TLS и production-роли.
 
@@ -46,18 +49,22 @@
 |-----|----------------|------|
 | **Подключение read-only** | TLS identity, dry-run, observe recovery | 2, 6, recovery после 7 |
 | **Deploy + миграции** | Выпуск SHA, `npm run migrate`, перезапуск приложения | 5 |
-| **Destructive apply** | clean-start `--apply`, purge legacy, загрузка v3 | 7 |
-| **Внешние действия Bitrix** | `bitrix24-sync --apply`, bootstrap меток, **выдача новой** клиентской метки в smoke | 8 (отдельно), 9 |
+| **Destructive apply** | clean-start `--apply`, purge legacy, загрузка v3, **локальные** метки LK_H/LK_J/LK_T (`bootstrapBitrixLabelsForV3Domain` внутри `writeV3BundleToClient`) | 7 |
+| **Внешние действия Bitrix24** | `bitrix24-sync --apply`, `bitrix24-labels-bootstrap`, изменения задач/пользователей через API Bitrix24 | 8 (отдельно), 9 |
 
-Без соответствующего разрешения шаг **STOP**. Read-only smoke (списки, карточки, права без записи в Bitrix) допустим после apply в рамках приёмки UI.
+Без соответствующего разрешения шаг **STOP**. Read-only smoke (списки, карточки, права, **чтение** уже выданных локальных меток в БД) — после apply в рамках приёмки UI; **без** вызовов Bitrix24 API с записью.
 
 ---
 
 ## Scope clean start (напоминание)
 
-**Сохраняется:** пользователи, сессии, `user_onec_employee_links`, команды РОП, матрица доступа, каталог, Bitrix-задачи/настройки (не bootstrap).
+**Сохраняется:** пользователи, сессии, `user_onec_employee_links`, команды РОП, матрица доступа, каталог, записи Bitrix-задач/настроек в БД (без внешней синхронизации).
 
-**Удаляется:** legacy `onec_clients` / `onec_retail_outlets`, журналы import/quarantine/baseline/holding-v2, клиентские grants/delegations, активные метки Bitrix (коды → `bitrix24_label_codes_retired`), привязки задач (`binding_status = revoked`). Реализация: `src/onec-exchange-v3/clean-start-purge.ts`.
+**Удаляется:** legacy `onec_clients` / `onec_retail_outlets`, журналы import/quarantine/baseline/holding-v2, клиентские grants/delegations, **активные legacy** клиентские метки (коды → `bitrix24_label_codes_retired`), привязки задач (`binding_status = revoked`). Реализация purge: `src/onec-exchange-v3/clean-start-purge.ts`.
+
+**Локальные метки v3 (в scope destructive apply, та же транзакция загрузки):** после purge и upsert v3 `writeV3BundleToClient` вызывает `bootstrapBitrixLabelsForV3Domain` — выдача **локальных** кодов **LK_H** / **LK_J** / **LK_T** для объектов v3 в таблицах приложения (idempotent). Это **не** вызов Bitrix24 REST и **не** CLI `bitrix24-labels-bootstrap`.
+
+**Вне scope clean-start apply (отдельное разрешение, выключено до приёмки):** `bitrix24-sync --apply`, массовые внешние операции, изменение задач/полей в Bitrix24 через API.
 
 ---
 
@@ -137,10 +144,10 @@ node dist/cli/onec-exchange-v3-target-db-identity.js
 3. **Дать `running` jobs корректно завершиться** (не убивать процесс на середине apply без процедуры).
 4. **Остановить исполнителей:** процессы `onec-import-job-worker`, отдельные worker-инстансы на хостах (см. `docs/delivery/import-runbook.md`).
 5. **Подтвердить пустую очередь** SQL-диагностикой: нет `onec_import_jobs` в `pending`/`running` (см. `docs/delivery/f6-production-regular-update-runbook.md`).
-6. На время **бэкапа (шаг 4), миграций и apply (шаг 5–7)** заморозить **изменяющие** операции приложения и конкурирующие **Bitrix sync с записью** (`bitrix24-sync --apply`, bootstrap меток — см. `docs/delivery/bitrix24-runbook.md`). Если автоматический Bitrix cron на стенде **не описан** — **STOP** и согласовать с владельцем ручное отключение; read-only smoke (UI/API без записи) — отдельно после apply.
+6. На время **бэкапа (шаг 4), миграций и apply (шаг 5–7)** заморозить **изменяющие** операции приложения и конкурирующую **внешнюю** синхронизацию Bitrix24 (`bitrix24-sync --apply`, cron sync — см. `docs/delivery/bitrix24-runbook.md`). Локальная выдача LK_* при clean-start apply — часть шага 7, не отменяется этой заморозкой. Если автоматический Bitrix cron на стенде **не описан** — **STOP** и согласовать с владельцем ручное отключение внешних write-path.
 7. **Перед первым `start` / deploy нового SHA (шаг 5):** повторно проверить очередь `onec_import_jobs`. Иначе `startServer` → `drainPendingImportJobs()` может **сразу исполнить** pending regular-update job из backlog.
 
-**Порядок включения обратно** (только после шага 9): smoke OK → regular exchange dry-run/apply → workers → (отдельные разрешения) nightly/cron и Bitrix bootstrap.
+**Порядок включения обратно** (только после шага 9): smoke OK → regular exchange dry-run/apply → workers → (отдельные разрешения) nightly/cron и **внешний** Bitrix24 sync.
 
 **PASS:** нет `pending`/`running` import jobs; новые jobs не создаются; Bitrix write-path заморожен или явно согласован.
 
@@ -197,7 +204,7 @@ SELECT column_name FROM information_schema.columns
 
    Должны быть **обе** строки в `schema_migrations` и **оба** столбца. Наличие только `042` **недостаточно**.
 
-5. Запустить приложение на новом SHA только после п.2–4. **Не** запускать clean-start apply, regular update apply, purge, Bitrix bootstrap.
+5. Запустить приложение на новом SHA только после п.2–4. **Не** запускать clean-start apply, regular update apply, purge, **внешний** Bitrix24 sync/bootstrap CLI.
 
 **PASS:** `npm run migrate` успешен; все pending миграции SHA применены; 042+043 в `schema_migrations`; legacy clean-start columns существуют; SHA на сервере = протоколу.
 
@@ -224,7 +231,9 @@ node dist/cli/onec-exchange-v3-clean-start.js \
 - `report.targetDb.fingerprint` — сохранить для apply;
 - `report.bundleFingerprint`, `report.fileSha256`;
 - `report.blockers` — **должен быть пуст**;
-- `report.wouldRemove` / `report.wouldLoad` / `report.preserved` — сверить с ожиданиями владельца (counts).
+- `report.wouldRemove` / `report.wouldLoad` / `report.preserved` — сверить с ожиданиями владельца.
+  - holdings / legal / retail — с counts комплекта;
+  - `wouldLoad.employees` — **wholesale** в входящем файле, не полный roster БД (см. recovery ниже).
 
 **PASS:** exit code 0; blockers пуст; fingerprints и counts приняты владельцем.
 
@@ -249,6 +258,8 @@ node dist/cli/onec-exchange-v3-clean-start.js \
 
 Повтор после успешного clean-start — только с `--force-clean-start` (и снова dry-run + разрешение).
 
+**Внутри apply (в scope разрешения destructive apply):** purge legacy меток; загрузка v3; `upsertWholesaleEmployeeRoster` (сохраняет сотрудников, отсутствующих в файле); локальный `bootstrapBitrixLabelsForV3Domain` (LK_H/LK_J/LK_T). Внешний Bitrix24 **не** вызывается.
+
 **COMMIT_UNCERTAIN / transport — recovery (read-only, без повторного apply):**
 
 - **Не** повторять purge/import; **не** вызывать `--force-clean-start` автоматически.
@@ -262,8 +273,9 @@ node dist/cli/onec-exchange-v3-clean-start-observe.js
   - `observed.targetDb.fingerprint` = `--confirm-target-db-fingerprint`;
   - `legacyCleanStartBundleFingerprint` = `--confirm-bundle-fingerprint` (если clean-start завершён);
   - `legacyCleanStartCompletedAt` — ожидаемое значение после успеха;
-  - counts `v3HoldingsCount` / `v3LegalCount` / `v3RetailCount` / `v3EmployeeRosterCount` — согласованы с dry-run `wouldLoad`.
-- Если наблюдение **неоднозначно** (`ok: false`, несовпадение fingerprint/counts, null там где ожидался маркер) — **STOP**, эскалация владельцу; ручной разбор, без автоматического повтора apply.
+  - **holdings / legal / retail:** `v3HoldingsCount`, `v3LegalCount`, `v3RetailCount` — согласованы с dry-run `wouldLoad` для комплекта;
+  - **roster:** `v3EmployeeRosterCount` — **все** строки `onec_wholesale_employee_roster` в БД; dry-run `wouldLoad.employees` — только wholesale во **входящем** комплекте. **Равенство не требовать:** `upsertWholesaleEmployeeRoster` оставляет ранее существовавших сотрудников, не попавших в файл. До apply зафиксировать в протоколе ожидаемый итог roster (исходные GUID + wholesale из комплекта); recovery — spot-check импортированных GUID и сохранность `user_onec_employee_links`, не «employees == wouldLoad».
+- Если наблюдение **неоднозначно** (`ok: false`, несовпадение fingerprint или counts holdings/legal/retail, null маркера, roster вне согласованного ожидания) — **STOP**, эскалация владельцу; без автоматического повтора apply и без `--force-clean-start`.
 
 **PASS:** exit 0; JSON `ok: true`; legacy domain очищен; v3 tables загружены; маркеры в `onec_v3_exchange_state`.
 
@@ -273,19 +285,19 @@ node dist/cli/onec-exchange-v3-clean-start-observe.js
 
 ### 8. Smoke (ручной, в UI и API)
 
-**Разрешение:** приёмка smoke; **отдельное разрешение Bitrix** — если шаг создаёт метку / вызывает внешний API (`bitrix24-sync --apply`, выдача новой клиентской метки).
+**Разрешение:** приёмка smoke (read-only). **Внешний Bitrix24** (`bitrix24-sync --apply`, API с записью в задачи/портал) — **отдельное разрешение**, после smoke, шаг 9+.
 
-**PASS (минимальный чек-лист, read-only где возможно):**
+**PASS (минимальный чек-лист, read-only):**
 
 - Список v3: холдинги, юрлица, ТТ; **orphan retail** без холдинга (если есть в комплекте).
 - Карточки, переходы list → detail → nested return.
 - Права: manager / ROP / admin (scope, 404 чужих).
 - Пользователи и `user_onec_employee_links` на месте.
-- Bitrix: факт отзыва старых клиентских меток (read-only проверка); **новая** выдача метки — только с **разрешением на внешние действия Bitrix**, не часть обязательного read-only smoke.
+- **Локальные метки (БД):** legacy коды retired; для v3-объектов read-only проверить уже выданные при apply **LK_H / LK_J / LK_T** (clean-start не требует повторной «выдачи» в smoke). Синхронизация этих меток **в Bitrix24** — не smoke, только с разрешением на внешние действия.
 
-**STOP:** потеря пользователей/каталога; некорректный scope; критичные регрессии UI.
+**STOP:** потеря пользователей/каталога/links; некорректный scope; отсутствие ожидаемых локальных LK_* после apply; критичные регрессии UI.
 
-**Разрешение:** владелец принимает smoke; Bitrix write — отдельно.
+**Разрешение:** владелец принимает smoke; внешний Bitrix24 — отдельно.
 
 ---
 
@@ -304,7 +316,7 @@ node dist/cli/onec-regular-update.js --apply --expected-fingerprint <fingerprint
 
 (или admin UI worker — тот же `runRegularUpdate`.)
 
-3. Bootstrap Bitrix / массовые операции с метками — **отдельный явно разрешённый** шаг, не часть clean-start.
+3. **Внешний** Bitrix24 (`bitrix24-sync --apply`, `bitrix24-labels-bootstrap`) — **отдельный явно разрешённый** шаг после smoke; локальные LK_* уже созданы при clean-start apply.
 
 **PASS:** regular dry-run без сюрпризов; apply по fingerprint; workers не дублируют jobs.
 
@@ -323,16 +335,18 @@ node dist/cli/onec-regular-update.js --apply --expected-fingerprint <fingerprint
 **После successful clean-start apply:**
 
 - Откат **только кода** **недостаточен**: удалены legacy clients, grants, Bitrix bindings/метки.
-- Требуется **восстановление БД из бэкапа** (шаг 4) на согласованное время + план по Bitrix (retired codes, повторная привязка задач, коммуникация с пользователями) + учёт изменений после момента бэкапа.
+- Требуется **восстановление БД из бэкапа** (шаг 4) на согласованное время + план по **внешним** эффектам Bitrix24 (если sync успел выполниться до отката) + учёт изменений после момента бэкапа.
 - Повторный clean-start на «исправленной» БД без restore — **новое** destructive действие; только с dry-run + разрешением.
 
 **PASS (план):** документирован RTO/RPO; ответственный за restore и Bitrix; бэкап до шага 7 сохранён; перечень изменений после бэкапа зафиксирован.
 
 ---
 
-## Техническая справка (identity, TLS, recovery)
+## Техническая справка (identity, TLS, recovery, метки, roster)
 
 - Fingerprint БД: `sha256(pg|system_identifier|current_database())` на **фактическом** соединении apply (до lock/purge).
+- Локальные метки: `src/onec-exchange-v3/bitrix-bootstrap.ts` ← `writeV3BundleToClient` (`apply-internals.ts`).
+- Roster: `wouldLoad.employees` = wholesale в bundle; `observeCleanStartState.v3EmployeeRosterCount` = `COUNT(*)` roster table; upsert не удаляет отсутствующих в файле.
 - Dry-run: `runExchangeV3CleanStartDryRun` — one-off pool, `statement_timeout` + `query_timeout` (`target-db-identity.ts`).
 - `TargetDbIdentityError.discardConnection`: client transport → уничтожить соединение; server `statement_timeout` — иное.
 - После client/transport timeout: `release(true)`; без RESET/ROLLBACK/advisory unlock на испорченной сессии.

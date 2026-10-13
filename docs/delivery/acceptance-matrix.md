@@ -358,8 +358,9 @@
 | v3 teams org-structure (legacy empty, v3 portfolios) | ✅ | `test/integration/clients-v3-teams.test.ts`, `src/clients/v3/teams-structure.ts`, `public/clients.js` v3 endpoints |
 | v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
 | Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
-| `npm run typecheck` / `npm run build` | ✅ | локально на HEAD PR |
-| `npm test` (unit) | ✅ 688/688 | `npm test` (+ regular-update CLI argv/entry) |
+| `npm run typecheck` / `npm run build` | ✅ `d56f236` | отдельный прогон typecheck/build |
+| `npm test` (unit) | ✅ 688/688 `d56f236` | отдельный прогон `npm test` |
+| identity / observe CLI на test DB | ✅ `d56f236` | ручной прогон entrypoints (не подменяет `npm test`) |
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |
@@ -380,8 +381,9 @@ npm run test:browser -- test/browser/clients-v3.browser.test.ts
 `npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: девять файлов **строго по очереди** (`--test-concurrency=1` на файл); финальная строка — только имя БД, без полного URL. Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
 | Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
-| Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — шаги 1–10, gates TLS/роль **NOT RUN** |
-| Локальная приёмка кода (кандидат `9c8479b`) | ✅ | typecheck/build, unit 679, integration v3 29/29, browser 1/1 — **не** production gates |
+| Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — identity/observe CLI, 042+043, freeze/drain, разрешения |
+| regular-update CLI argv → `runRegularUpdate` | ✅ | `onec-regular-update.ts`, `regular-update-cli-args.test.ts`, `onec-regular-update-cli-entry.test.ts` |
+| Локальная приёмка (HEAD PR после правок) | ✅ | typecheck/build PASS, unit 688; integration v3 29/29 и browser — на прежнем прогоне `9c8479b` + новые unit |
 
 ---
 
