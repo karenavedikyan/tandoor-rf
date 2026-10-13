@@ -76,7 +76,7 @@ describe("exchange v3 bitrix labels", { concurrency: false }, () => {
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const targetFp = computeTargetDbFingerprint(databaseUrl)!;
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
     const clean = await runExchangeV3CleanStartApply({
       databaseUrl,
       bundle: validated.bundle,

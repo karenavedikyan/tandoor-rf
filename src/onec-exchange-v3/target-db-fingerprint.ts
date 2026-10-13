@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { resolveTargetDbIdentityFromUrl } from "./target-db-identity";
 
 export type TargetDbDescriptor = {
   host: string;
@@ -24,14 +24,14 @@ export function parseTargetDbDescriptor(databaseUrl: string): TargetDbDescriptor
   }
 }
 
-/** Fingerprint without credentials — for operator confirmation only. */
-export function computeTargetDbFingerprint(databaseUrl: string): string | null {
-  const descriptor = parseTargetDbDescriptor(databaseUrl);
-  if (!descriptor) {
+/** Live cluster + database fingerprint (requires connection; uses standard TLS/CA). */
+export async function computeTargetDbFingerprint(databaseUrl: string): Promise<string | null> {
+  try {
+    const identity = await resolveTargetDbIdentityFromUrl(databaseUrl);
+    return identity.fingerprint;
+  } catch {
     return null;
   }
-  const canonical = `${descriptor.host}|${descriptor.port}|${descriptor.database}`;
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
 export function formatTargetDbForReport(databaseUrl: string): string {

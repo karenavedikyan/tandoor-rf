@@ -6,16 +6,18 @@ import type { V3ValidatedBundle } from "./types";
 import { countLegacyClientScope, purgeLegacyClientDomain } from "./legacy-client-purge";
 import { revokeLegacyBitrixClientLabels, purgeV3Domain } from "./clean-start-purge";
 import { applyExchangeV3BundleOnClient } from "./apply";
+import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fingerprint";
+import { observeCleanStartState } from "./clean-start-verify";
 import {
-  computeTargetDbFingerprint,
-  parseTargetDbDescriptor,
-  type TargetDbDescriptor,
-} from "./target-db-fingerprint";
-import { computeTargetDbFingerprintFromConnection, observeCleanStartState } from "./clean-start-verify";
+  databaseNameMismatchBlocker,
+  readTargetDbIdentityFromClient,
+  resolveTargetDbIdentityFromUrl,
+  type TargetDbIdentity,
+} from "./target-db-identity";
 
 export type CleanStartDryRunReport = {
   mode: "dry_run";
-  targetDb: TargetDbDescriptor & { fingerprint: string };
+  targetDb: TargetDbIdentity;
   bundleFingerprint: string;
   fileSha256: Record<string, string>;
   wouldRemove: Awaited<ReturnType<typeof countLegacyClientScope>>;
@@ -36,7 +38,7 @@ export type CleanStartDryRunReport = {
 
 export type CleanStartApplyReport = {
   mode: "apply";
-  targetDb: TargetDbDescriptor & { fingerprint: string };
+  targetDb: TargetDbIdentity;
   bundleFingerprint: string;
   legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>>;
   bitrixLabelsRevoked: number;
@@ -45,7 +47,7 @@ export type CleanStartApplyReport = {
 
 export type CleanStartCommitUncertainReport = {
   mode: "apply";
-  targetDb: TargetDbDescriptor & { fingerprint: string };
+  targetDb: TargetDbIdentity;
   bundleFingerprint: string;
   observed: Awaited<ReturnType<typeof observeCleanStartState>>;
   message: string;
@@ -53,8 +55,10 @@ export type CleanStartCommitUncertainReport = {
 
 export type CleanStartTestHooks = {
   failAfter?: "lock" | "purge_legacy" | "bitrix" | "apply";
-  /** Simulates lost COMMIT acknowledgement (transaction may still commit). */
+  /** Throws before COMMIT (transaction rolls back). */
   failCommit?: boolean;
+  /** COMMIT succeeds, then simulates lost client acknowledgement. */
+  loseCommitAckAfterSuccessfulCommit?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -93,22 +97,14 @@ export async function buildCleanStartDryRunReport(
   bundle: V3ValidatedBundle,
   databaseUrl: string,
 ): Promise<CleanStartDryRunReport> {
-  const connectionFp = await computeTargetDbFingerprintFromConnection(databaseUrl);
-  const urlFp = computeTargetDbFingerprint(databaseUrl) ?? "";
-  const fingerprint = connectionFp ?? urlFp;
-  const desc = parseTargetDbDescriptor(databaseUrl);
-  const parsed = {
-    host: desc?.host ?? "",
-    port: desc?.port ?? "",
-    database: desc?.database ?? "",
-    fingerprint,
-  };
+  const targetDb = await readTargetDbIdentityFromClient(client, databaseUrl);
 
   const wouldRemove = await countLegacyClientScope(client);
   const preserved = await countPreserved(client);
   const blockers: string[] = [];
-  if (connectionFp && urlFp && connectionFp !== urlFp) {
-    blockers.push("Fingerprint DATABASE_URL не совпадает с фактическим подключением");
+  const dbMismatch = databaseNameMismatchBlocker(targetDb, databaseUrl);
+  if (dbMismatch) {
+    blockers.push(dbMismatch);
   }
   const jobBlocker = await assertNoConcurrentJobs(client);
   if (jobBlocker) {
@@ -123,7 +119,7 @@ export async function buildCleanStartDryRunReport(
 
   return {
     mode: "dry_run",
-    targetDb: parsed,
+    targetDb,
     bundleFingerprint: bundle.bundleFingerprint,
     fileSha256: bundle.fileSha256,
     wouldRemove,
@@ -148,13 +144,19 @@ async function resolveCommitUncertainty(input: {
   | { ok: false; errorCode: "COMMIT_UNCERTAIN"; message: string; report: CleanStartCommitUncertainReport }
 > {
   const observed = await observeCleanStartState(input.databaseUrl);
-  const desc = parseTargetDbDescriptor(input.databaseUrl);
-  const targetDb = {
-    host: desc?.host ?? observed?.targetDb.host ?? "",
-    port: desc?.port ?? observed?.targetDb.port ?? "",
-    database: desc?.database ?? observed?.targetDb.database ?? "",
-    fingerprint: observed?.targetDb.fingerprint ?? input.confirmTargetDbFingerprint,
-  };
+  const fallbackIdentity = await resolveTargetDbIdentityFromUrl(input.databaseUrl).catch(() => null);
+  const targetDb: TargetDbIdentity =
+    observed?.targetDb ?? fallbackIdentity ?? {
+      host: "",
+      port: "",
+      database: parseTargetDbDescriptor(input.databaseUrl)?.database ?? "",
+      fingerprint: input.confirmTargetDbFingerprint,
+      systemIdentifier: "",
+      serverHost: "",
+      serverPort: "",
+      urlHost: "",
+      urlPort: "",
+    };
 
   if (
     observed?.legacyCleanStartCompletedAt &&
@@ -179,9 +181,9 @@ async function resolveCommitUncertainty(input: {
         bitrixLabelsRevoked: 0,
         loaded: {
           holdings: observed.v3HoldingsCount,
-          legalEntities: 0,
-          retailOutlets: 0,
-          employees: 0,
+          legalEntities: observed.v3LegalCount,
+          retailOutlets: observed.v3RetailCount,
+          employees: observed.v3EmployeeRosterCount,
         },
       },
     };
@@ -218,18 +220,18 @@ export async function runExchangeV3CleanStartApply(input: {
       report?: Partial<CleanStartApplyReport> | CleanStartCommitUncertainReport;
     }
 > {
-  const connectionFp = await computeTargetDbFingerprintFromConnection(input.databaseUrl);
-  const urlFp = computeTargetDbFingerprint(input.databaseUrl);
-  const targetFp = connectionFp ?? urlFp;
-  if (!targetFp || targetFp !== input.confirmTargetDbFingerprint) {
-    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "targetDbFingerprint не совпадает с подключением" };
+  let targetIdentity: TargetDbIdentity;
+  try {
+    targetIdentity = await resolveTargetDbIdentityFromUrl(input.databaseUrl);
+  } catch {
+    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "Не удалось определить идентичность целевой БД" };
   }
-  if (connectionFp && urlFp && connectionFp !== urlFp) {
-    return {
-      ok: false,
-      errorCode: "TARGET_DB_MISMATCH",
-      message: "DATABASE_URL не соответствует фактической БД соединения",
-    };
+  const dbMismatch = databaseNameMismatchBlocker(targetIdentity, input.databaseUrl);
+  if (dbMismatch) {
+    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: dbMismatch };
+  }
+  if (targetIdentity.fingerprint !== input.confirmTargetDbFingerprint) {
+    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "targetDbFingerprint не совпадает с подключением" };
   }
   if (input.confirmBundleFingerprint !== input.bundle.bundleFingerprint) {
     return { ok: false, errorCode: "BUNDLE_FINGERPRINT_MISMATCH", message: "bundleFingerprint не совпадает" };
@@ -303,17 +305,14 @@ export async function runExchangeV3CleanStartApply(input: {
       throw new Error("Simulated commit response loss.");
     }
     await client.query("COMMIT");
+    if (input.testHooks?.loseCommitAckAfterSuccessfulCommit) {
+      throw new Error("Simulated commit response loss after successful COMMIT.");
+    }
     commitConfirmed = true;
 
-    const desc = parseTargetDbDescriptor(input.databaseUrl);
     applyReport = {
       mode: "apply",
-      targetDb: {
-        host: desc?.host ?? "",
-        port: desc?.port ?? "",
-        database: desc?.database ?? "",
-        fingerprint: targetFp,
-      },
+      targetDb: targetIdentity,
       bundleFingerprint: input.bundle.bundleFingerprint,
       legacyRemoved,
       bitrixLabelsRevoked,

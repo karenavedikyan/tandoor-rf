@@ -96,7 +96,7 @@ describe("exchange v3 clean start", { concurrency: false }, () => {
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const targetFp = computeTargetDbFingerprint(databaseUrl)!;
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
     const result = await runExchangeV3CleanStartApply({
       databaseUrl,
       bundle: validated.bundle,
@@ -131,7 +131,7 @@ describe("exchange v3 clean start", { concurrency: false }, () => {
     );
     await poolSeed.end();
 
-    const targetFp = computeTargetDbFingerprint(databaseUrl)!;
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
     const applied = await runExchangeV3CleanStartApply({
       databaseUrl,
       bundle: validated.bundle,
@@ -153,13 +153,34 @@ describe("exchange v3 clean start", { concurrency: false }, () => {
     assert.equal(roster.rows[0]?.name_manager, "Manager One");
   });
 
-  it("returns COMMIT_UNCERTAIN when commit acknowledgement is lost", async () => {
+  it("recovers apply report with observed v3 counts after successful COMMIT with lost ack", async () => {
     await prepareDatabase(databaseUrl);
     const validated = await validatedBundle();
     assert.equal(validated.ok, true);
     if (!validated.ok) return;
 
-    const targetFp = computeTargetDbFingerprint(databaseUrl)!;
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: targetFp,
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+      testHooks: { loseCommitAckAfterSuccessfulCommit: true },
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.report.loaded.holdings, 1);
+    assert.ok(result.report.loaded.legalEntities >= 1);
+    assert.ok(result.report.loaded.retailOutlets >= 1);
+  });
+
+  it("returns COMMIT_UNCERTAIN when commit acknowledgement is lost before COMMIT", async () => {
+    await prepareDatabase(databaseUrl);
+    const validated = await validatedBundle();
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
     const result = await runExchangeV3CleanStartApply({
       databaseUrl,
       bundle: validated.bundle,

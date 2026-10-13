@@ -7,7 +7,7 @@ import {
   loadValidatedBundleFromBytes,
   runExchangeV3CleanStartApply,
 } from "../onec-exchange-v3/clean-start";
-import { computeTargetDbFingerprint, formatTargetDbForReport } from "../onec-exchange-v3/target-db-fingerprint";
+import { formatTargetDbForReport } from "../onec-exchange-v3/target-db-fingerprint";
 
 function argValue(args: string[], name: string): string | undefined {
   const prefix = `${name}=`;
@@ -54,12 +54,6 @@ async function main(): Promise<void> {
   if (!validated.ok) {
     console.error(JSON.stringify({ ok: false, error: validated.message, code: validated.errorCode }));
     process.exit(1);
-  }
-
-  const targetDbFingerprint = computeTargetDbFingerprint(databaseUrl);
-  if (!targetDbFingerprint) {
-    console.error("Invalid DATABASE_URL for fingerprint");
-    process.exit(2);
   }
 
   const pool = requirePool();

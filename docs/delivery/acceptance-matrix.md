@@ -359,11 +359,12 @@
 | v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
 | Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
 | `npm run typecheck` / `npm run build` | ✅ | локально на HEAD PR |
-| `npm test` (unit) | ✅ 662/662 | `npm test` |
+| `npm test` (unit) | ✅ 667/667 | `npm test` |
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |
-| Targeted integration (v3 API + teams + rop + import + clean-start + Bitrix) | ✅ 14/14 | см. команду ниже (не параллельный glob — lock миграций) |
+| Target DB identity + TLS one-off pools (clean-start) | ✅ | `target-db-identity.ts`, `onec-exchange-v3-target-db-identity.test.ts`, `target-db-identity.test.ts` |
+| Targeted integration (v3 API + teams + rop + import + identity + clean-start + Bitrix) | ✅ 15/15 | `npm run test:integration:v3-pr76` (последовательно) |
 | Browser v3 (filters, card, nested nav, reload, history) | ✅ | `test/browser/clients-v3.browser.test.ts` (1440 + 390) |
 | Fixture inventory vs import test (3 legal / 6 labels) | ✅ | `test/unit/onec-exchange-v3-fixture-inventory.test.ts` |
 
