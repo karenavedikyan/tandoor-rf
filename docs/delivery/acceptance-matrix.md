@@ -392,7 +392,8 @@ npm run test:browser -- test/browser/clients-v3.browser.test.ts
 | Production merge/deploy | ⏸ вне scope | — |
 | Release preflight / первая загрузка (runbook) | 📋 документ | `docs/delivery/exchange-v3-clean-start-runbook.md` — локальные LK_* vs внешний Bitrix24, roster recovery |
 | regular-update CLI argv → `runRegularUpdate` | ✅ | `regular-update-cli-args.test.ts`, `onec-regular-update-cli-entry.test.ts` (прогон в составе `npm test`) |
-| **Локальная приёмка кандидата** | ✅ **`d56f236`** | см. таблицу «Независимая приёмка» выше |
+| **Локальная приёмка кандидата** | ✅ **`d56f236`** / docs **`f85074b`** | см. таблицу «Независимая приёмка»; повтор на checkout `f85074b`: typecheck/build, unit 688, v3-integ 29, v3 browser 1 |
+| **Production выпуск lk.tandoor.ru** | ⏸ **NOT RUN** | агент без env; оператор — runbook + store checklist |
 | Production TLS/CA + managed-роль | **NOT RUN** | — |
 | Production бэкап + restore в изолированную БД | **NOT RUN** | — |
 | Production freeze записей + приёмка реального комплекта 1С | **NOT RUN** | — |
