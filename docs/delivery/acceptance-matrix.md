@@ -359,7 +359,7 @@
 | v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
 | Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
 | `npm run typecheck` / `npm run build` | ✅ | локально на HEAD PR |
-| `npm test` (unit) | ✅ 672/672 | `npm test` |
+| `npm test` (unit) | ✅ 676/676 | `npm test` |
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |

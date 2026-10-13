@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
-import { tryAcquireImportLock, releaseImportLock } from "../onec-clients/import-lock";
+import { IMPORT_ADVISORY_LOCK_KEY } from "../onec-clients/constants";
+import { tryAcquireImportLock } from "../onec-clients/import-lock";
 import { requirePool } from "../db/pool";
 import { validateExchangeV3Bundle } from "./validate-bundle";
 import type { V3ValidatedBundle } from "./types";
@@ -10,6 +11,8 @@ import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fi
 import { observeCleanStartState } from "./clean-start-verify";
 import {
   databaseNameMismatchBlocker,
+  IDENTITY_ADMIN_QUERY_TIMEOUT_MS,
+  pgQueryWithTimeout,
   readTargetDbIdentityFromClient,
   resetIdentityStatementTimeout,
   setIdentityStatementTimeout,
@@ -18,6 +21,37 @@ import {
   withOneOffPgClient,
   type TargetDbIdentity,
 } from "./target-db-identity";
+
+/** @internal exported for regression tests */
+export async function rollbackCleanStartTransaction(client: PoolClient): Promise<boolean> {
+  try {
+    await pgQueryWithTimeout(client, "ROLLBACK", IDENTITY_ADMIN_QUERY_TIMEOUT_MS);
+    return false;
+  } catch (error) {
+    return shouldDiscardPgClientAfterError(error);
+  }
+}
+
+/** @internal exported for regression tests */
+export async function releaseCleanStartImportLock(
+  client: PoolClient,
+  testHooks?: CleanStartTestHooks,
+): Promise<boolean> {
+  try {
+    if (testHooks?.simulateLockReleaseTransportTimeout) {
+      throw new Error("Query read timeout");
+    }
+    await pgQueryWithTimeout(
+      client,
+      "SELECT pg_advisory_unlock($1)",
+      IDENTITY_ADMIN_QUERY_TIMEOUT_MS,
+      [IMPORT_ADVISORY_LOCK_KEY],
+    );
+    return false;
+  } catch (error) {
+    return shouldDiscardPgClientAfterError(error);
+  }
+}
 
 export type CleanStartDryRunReport = {
   mode: "dry_run";
@@ -72,6 +106,10 @@ export type CleanStartTestHooks = {
   identityQueryTimeoutMs?: number;
   /** Integration tests: transport error after successful COMMIT before ack flag is set. */
   simulateCommitTransportTimeout?: boolean;
+  /** Integration tests: transport error while releasing advisory lock in finally. */
+  simulateLockReleaseTransportTimeout?: boolean;
+  /** Integration tests: transport error during ROLLBACK in error path. */
+  simulateRollbackTransportTimeout?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -288,6 +326,7 @@ export async function runExchangeV3CleanStartApply(input: {
   let bitrixLabelsRevoked: number | undefined;
   let discardPooledClient = false;
   let identityPhaseDiscard = false;
+  let identityFailureMessage: string | null = null;
 
   try {
     await setIdentityStatementTimeout(client);
@@ -305,16 +344,28 @@ export async function runExchangeV3CleanStartApply(input: {
       });
     } catch (error) {
       identityPhaseDiscard = shouldDiscardPgClientAfterError(error);
-      discardPooledClient = identityPhaseDiscard;
-      const message =
+      identityFailureMessage =
         error instanceof TargetDbIdentityError
           ? error.message
           : "Не удалось определить идентичность целевой БД на соединении apply";
-      return { ok: false, errorCode: "TARGET_DB_MISMATCH", message };
     } finally {
       if (!identityPhaseDiscard) {
-        await resetIdentityStatementTimeout(client);
+        try {
+          await resetIdentityStatementTimeout(client);
+        } catch (cleanupError) {
+          if (shouldDiscardPgClientAfterError(cleanupError)) {
+            identityPhaseDiscard = true;
+          }
+        }
       }
+    }
+    if (identityFailureMessage || !targetIdentity) {
+      discardPooledClient = identityPhaseDiscard;
+      return {
+        ok: false,
+        errorCode: "TARGET_DB_MISMATCH",
+        message: identityFailureMessage ?? "Не удалось определить идентичность целевой БД на соединении apply",
+      };
     }
 
     const dbMismatch = databaseNameMismatchBlocker(targetIdentity, input.databaseUrl);
@@ -332,7 +383,9 @@ export async function runExchangeV3CleanStartApply(input: {
     await client.query("BEGIN");
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
-      await client.query("ROLLBACK");
+      if (await rollbackCleanStartTransaction(client)) {
+        discardPooledClient = true;
+      }
       return { ok: false, errorCode: "IMPORT_LOCKED", message: "Не удалось захватить import lock" };
     }
     if (input.testHooks?.failAfter === "lock") {
@@ -341,7 +394,9 @@ export async function runExchangeV3CleanStartApply(input: {
 
     const jobBlocker = await assertNoConcurrentJobs(client);
     if (jobBlocker) {
-      await client.query("ROLLBACK");
+      if (await rollbackCleanStartTransaction(client)) {
+        discardPooledClient = true;
+      }
       return { ok: false, errorCode: "CONCURRENT_JOBS", message: jobBlocker };
     }
 
@@ -349,7 +404,9 @@ export async function runExchangeV3CleanStartApply(input: {
       `SELECT legacy_clean_start_completed_at FROM onec_v3_exchange_state WHERE id = 1 FOR UPDATE`,
     );
     if (state.rows[0]?.legacy_clean_start_completed_at && !input.forceCleanStart) {
-      await client.query("ROLLBACK");
+      if (await rollbackCleanStartTransaction(client)) {
+        discardPooledClient = true;
+      }
       return {
         ok: false,
         errorCode: "CLEAN_START_ALREADY_DONE",
@@ -376,7 +433,9 @@ export async function runExchangeV3CleanStartApply(input: {
       cleanStartBundleFingerprint: input.bundle.bundleFingerprint,
     });
     if (!applied.ok) {
-      await client.query("ROLLBACK");
+      if (await rollbackCleanStartTransaction(client)) {
+        discardPooledClient = true;
+      }
       return applied;
     }
     if (input.testHooks?.failAfter === "apply") {
@@ -421,12 +480,10 @@ export async function runExchangeV3CleanStartApply(input: {
       });
     }
     if (!commitAttempted && !discardPooledClient) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        primaryErrorCode = "CLEAN_START_FAILED";
-        primaryMessage =
-          "Clean start failed; откат транзакции не подтверждён — проверьте состояние БД новым подключением.";
+      if (input.testHooks?.simulateRollbackTransportTimeout) {
+        discardPooledClient = true;
+      } else if (await rollbackCleanStartTransaction(client)) {
+        discardPooledClient = true;
       }
     }
     return {
@@ -436,10 +493,8 @@ export async function runExchangeV3CleanStartApply(input: {
     };
   } finally {
     if (!discardPooledClient) {
-      try {
-        await releaseImportLock(client);
-      } catch {
-        // Lock release must not mask apply outcome.
+      if (await releaseCleanStartImportLock(client, input.testHooks)) {
+        discardPooledClient = true;
       }
     }
     client.release(discardPooledClient);

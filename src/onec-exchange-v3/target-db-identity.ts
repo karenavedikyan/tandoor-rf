@@ -138,9 +138,26 @@ export async function setIdentityStatementTimeout(client: PoolClient): Promise<v
 }
 
 export async function resetIdentityStatementTimeout(client: PoolClient): Promise<void> {
-  await pgQueryWithTimeout(client, "RESET statement_timeout", IDENTITY_ADMIN_QUERY_TIMEOUT_MS).catch(
-    () => undefined,
-  );
+  await pgQueryWithTimeout(client, "RESET statement_timeout", IDENTITY_ADMIN_QUERY_TIMEOUT_MS);
+}
+
+/** One-off client teardown: optional RESET, then release (never swallows RESET transport errors). */
+export async function finalizeOneOffIdentityClient(
+  client: PoolClient,
+  discardFromWork: boolean,
+): Promise<boolean> {
+  let discard = discardFromWork;
+  if (!discard) {
+    try {
+      await resetIdentityStatementTimeout(client);
+    } catch (error) {
+      if (shouldDiscardPgClientAfterError(error)) {
+        discard = true;
+      }
+    }
+  }
+  client.release(discard);
+  return discard;
 }
 
 /** Single-use pool with the same TLS/CA policy as the application pool. */
@@ -174,10 +191,7 @@ export async function withOneOffPgClient<T>(
       throw error;
     } finally {
       if (client) {
-        if (!discardClient) {
-          await resetIdentityStatementTimeout(client);
-        }
-        client.release(discardClient);
+        discardClient = await finalizeOneOffIdentityClient(client, discardClient);
         client = undefined;
       }
     }

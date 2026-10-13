@@ -141,6 +141,41 @@ describe("exchange v3 target db safety", { concurrency: false }, () => {
     await poolOk.end();
   });
 
+  it("successful apply stays ok when lock release cleanup hits transport timeout", async () => {
+    await prepareDatabase(databaseUrl);
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { loadValidatedBundleFromBytes } = await import("../../src/onec-exchange-v3/clean-start");
+    const { buildEmployeeRosterBytes, buildEmployeeRosterEntry } = await import(
+      "../helpers/onec-clients-employee-roster-fixtures"
+    );
+    const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
+    const validated = loadValidatedBundleFromBytes({
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      employeesBytes: buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222", { name_manager: "Manager One" }),
+      ]),
+    });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: targetFp,
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+      testHooks: { simulateLockReleaseTransportTimeout: true },
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.report.recoveredAfterCommitUncertainty, undefined);
+
+    await resetPoolForTests();
+  });
+
   it("transport error after COMMIT uses fresh recovery and discards pooled client", async () => {
     await prepareDatabase(databaseUrl);
     const fs = await import("node:fs");
