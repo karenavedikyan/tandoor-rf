@@ -5,6 +5,7 @@ import {
   createOneOffPgPool,
   databaseNameMismatchBlocker,
   fingerprintFromClusterAndDatabase,
+  TargetDbIdentityError,
 } from "../../src/onec-exchange-v3/target-db-identity";
 
 const ORIGINAL_ENV = { ...process.env };

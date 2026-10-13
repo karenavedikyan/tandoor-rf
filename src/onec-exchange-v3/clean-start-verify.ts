@@ -1,4 +1,8 @@
-import { createOneOffPgPool, readTargetDbIdentityFromClient, type TargetDbIdentity } from "./target-db-identity";
+import {
+  readTargetDbIdentityFromClient,
+  withOneOffPgClient,
+  type TargetDbIdentity,
+} from "./target-db-identity";
 
 export type CleanStartObservedState = {
   targetDb: TargetDbIdentity;
@@ -13,10 +17,8 @@ export type CleanStartObservedState = {
 
 /** Inspect clean-start markers on a fresh TLS-configured connection (operator recovery). */
 export async function observeCleanStartState(databaseUrl: string): Promise<CleanStartObservedState | null> {
-  const pool = createOneOffPgPool(databaseUrl);
   try {
-    const client = await pool.connect();
-    try {
+    return await withOneOffPgClient(databaseUrl, async (client) => {
       const targetDb = await readTargetDbIdentityFromClient(client, databaseUrl);
       const state = await client.query<{
         legacy_clean_start_completed_at: string | null;
@@ -52,12 +54,8 @@ export async function observeCleanStartState(databaseUrl: string): Promise<Clean
         v3RetailCount: Number(counts.rows[0]?.retail ?? "0"),
         v3EmployeeRosterCount: Number(counts.rows[0]?.roster ?? "0"),
       };
-    } finally {
-      client.release();
-    }
+    });
   } catch {
     return null;
-  } finally {
-    await pool.end();
   }
 }

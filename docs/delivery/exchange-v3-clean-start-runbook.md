@@ -35,13 +35,29 @@
 
 ## Стабильность комплекта (ограничение)
 
-Двойное чтение фиксирует, что **каждый из четырёх файлов не менялся между двумя полными проходами** в пределах deadline. Это **не** доказывает, что все файлы принадлежат одной логической версии выгрузки 1С, если в FTP нет маркера завершения выгрузки. При `COMMIT_UNCERTAIN` после clean-start **не** повторять purge автоматически — проверить `legacy_clean_start_completed_at`, `legacy_clean_start_bundle_fingerprint` и counts v3 **новым TLS-подключением** (`observeCleanStartState` через `createOneOffPgPool` / CLI dry-run). Recovery-отчёт содержит фактические counts v3, без подстановки нулей для legal/retail/roster при успешном commit.
+Двойное чтение фиксирует, что **каждый из четырёх файлов не менялся между двумя полными проходами** в пределах deadline. Это **не** доказывает, что все файлы принадлежат одной логической версии выгрузки 1С, если в FTP нет маркера завершения выгрузки. При `COMMIT_UNCERTAIN` после clean-start **не** повторять purge автоматически — проверить `legacy_clean_start_completed_at`, `legacy_clean_start_bundle_fingerprint`, **fingerprint наблюдаемой БД** и counts v3 **новым TLS-подключением** (`observeCleanStartState`). Успешное recovery (`recoveredAfterCommitUncertainty: true`) только если `observed.targetDb.fingerprint` совпал с подтверждённым; `legacyRemoved` / `bitrixLabelsRevoked` — сохранённые значения транзакции или `null`, не вымышленные нули.
 
 ## Регулярное обновление
 
 - Кнопка админа / worker → `runRegularUpdate` (только v3, 4 файла).
 - Расписание и nightly **выключены** до решения владельца.
 - Повтор apply с тем же fingerprint → без дублей (состояние в `onec_v3_exchange_state`).
+
+## Идентичность БД и preflight роли
+
+- Fingerprint: `sha256(pg|system_identifier|current_database())` с **фактического** соединения apply (до lock/purge), не только из URL.
+- Dry-run и recovery используют one-off pool с той же TLS-policy, `statement_timeout` (см. `ONE_OFF_STATEMENT_TIMEOUT_MS` в `target-db-identity.ts`).
+- Роль приложения должна иметь право читать `pg_control_system()` (или эквивалент для managed PostgreSQL). При отказе — **TARGET_DB_MISMATCH** до изменения данных; автоматических GRANT или ослабления проверки нет.
+- **Preflight под production-ролью:** выполнить dry-run CLI от имени той же роли, что и приложение (не локальный superuser `postgres` вместо managed-роли).
+
+### Release gates (вне локального CI)
+
+| Проверка | Статус в PR |
+|----------|-------------|
+| TLS + CA к managed PostgreSQL | **NOT RUN** (нет разрешённого TLS-стенда в агенте) |
+| `pg_control_system` под production-ролью | **NOT RUN** (только локальный test DB / postgres) |
+
+Не считать production готовым только по локальным тестам.
 
 ## Production (только инструкция)
 

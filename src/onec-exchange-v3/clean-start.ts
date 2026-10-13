@@ -11,7 +11,9 @@ import { observeCleanStartState } from "./clean-start-verify";
 import {
   databaseNameMismatchBlocker,
   readTargetDbIdentityFromClient,
-  resolveTargetDbIdentityFromUrl,
+  resetIdentityStatementTimeout,
+  setIdentityStatementTimeout,
+  TargetDbIdentityError,
   type TargetDbIdentity,
 } from "./target-db-identity";
 
@@ -40,9 +42,11 @@ export type CleanStartApplyReport = {
   mode: "apply";
   targetDb: TargetDbIdentity;
   bundleFingerprint: string;
-  legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>>;
-  bitrixLabelsRevoked: number;
+  legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>> | null;
+  bitrixLabelsRevoked: number | null;
   loaded: { holdings: number; legalEntities: number; retailOutlets: number; employees: number };
+  /** Set when outcome was inferred after lost COMMIT acknowledgement (not a full apply trace). */
+  recoveredAfterCommitUncertainty?: boolean;
 };
 
 export type CleanStartCommitUncertainReport = {
@@ -135,31 +139,67 @@ export async function buildCleanStartDryRunReport(
   };
 }
 
-async function resolveCommitUncertainty(input: {
+export async function resolveCleanStartCommitUncertainty(input: {
   databaseUrl: string;
   bundleFingerprint: string;
   confirmTargetDbFingerprint: string;
+  pendingLegacyRemoved?: Awaited<ReturnType<typeof purgeLegacyClientDomain>>;
+  pendingBitrixLabelsRevoked?: number;
 }): Promise<
   | { ok: true; report: CleanStartApplyReport }
-  | { ok: false; errorCode: "COMMIT_UNCERTAIN"; message: string; report: CleanStartCommitUncertainReport }
+  | {
+      ok: false;
+      errorCode: "COMMIT_UNCERTAIN" | "TARGET_DB_MISMATCH";
+      message: string;
+      report: CleanStartCommitUncertainReport;
+    }
 > {
   const observed = await observeCleanStartState(input.databaseUrl);
-  const fallbackIdentity = await resolveTargetDbIdentityFromUrl(input.databaseUrl).catch(() => null);
-  const targetDb: TargetDbIdentity =
-    observed?.targetDb ?? fallbackIdentity ?? {
-      host: "",
-      port: "",
-      database: parseTargetDbDescriptor(input.databaseUrl)?.database ?? "",
-      fingerprint: input.confirmTargetDbFingerprint,
-      systemIdentifier: "",
-      serverHost: "",
-      serverPort: "",
-      urlHost: "",
-      urlPort: "",
+  const targetDb: TargetDbIdentity | null = observed?.targetDb ?? null;
+
+  if (!observed || !targetDb) {
+    return {
+      ok: false,
+      errorCode: "COMMIT_UNCERTAIN",
+      message:
+        "Исход COMMIT неизвестен; не удалось достоверно прочитать состояние БД. Повтор clean-start запрещён.",
+      report: {
+        mode: "apply",
+        targetDb: targetDb ?? {
+          host: "",
+          port: "",
+          database: parseTargetDbDescriptor(input.databaseUrl)?.database ?? "",
+          fingerprint: "",
+          systemIdentifier: "",
+          serverHost: "",
+          serverPort: "",
+          urlHost: "",
+          urlPort: "",
+        },
+        bundleFingerprint: input.bundleFingerprint,
+        observed,
+        message: "commit_outcome_unknown",
+      },
     };
+  }
+
+  if (targetDb.fingerprint !== input.confirmTargetDbFingerprint) {
+    return {
+      ok: false,
+      errorCode: "TARGET_DB_MISMATCH",
+      message: "Наблюдаемая БД не совпадает с подтверждённым targetDbFingerprint; успех COMMIT не заявлен.",
+      report: {
+        mode: "apply",
+        targetDb,
+        bundleFingerprint: input.bundleFingerprint,
+        observed,
+        message: "observed_db_fingerprint_mismatch",
+      },
+    };
+  }
 
   if (
-    observed?.legacyCleanStartCompletedAt &&
+    observed.legacyCleanStartCompletedAt &&
     observed.legacyCleanStartBundleFingerprint === input.bundleFingerprint &&
     observed.v3HoldingsCount > 0
   ) {
@@ -169,22 +209,15 @@ async function resolveCommitUncertainty(input: {
         mode: "apply",
         targetDb,
         bundleFingerprint: input.bundleFingerprint,
-        legacyRemoved: {
-          onecClients: 0,
-          onecRetailOutlets: 0,
-          accessGrantsClient: 0,
-          clientReviewRecords: 0,
-          holdingV2LegalLinks: 0,
-          importJobs: 0,
-          accessGrantsRemoved: 0,
-        },
-        bitrixLabelsRevoked: 0,
+        legacyRemoved: input.pendingLegacyRemoved ?? null,
+        bitrixLabelsRevoked: input.pendingBitrixLabelsRevoked ?? null,
         loaded: {
           holdings: observed.v3HoldingsCount,
           legalEntities: observed.v3LegalCount,
           retailOutlets: observed.v3RetailCount,
           employees: observed.v3EmployeeRosterCount,
         },
+        recoveredAfterCommitUncertainty: true,
       },
     };
   }
@@ -220,19 +253,6 @@ export async function runExchangeV3CleanStartApply(input: {
       report?: Partial<CleanStartApplyReport> | CleanStartCommitUncertainReport;
     }
 > {
-  let targetIdentity: TargetDbIdentity;
-  try {
-    targetIdentity = await resolveTargetDbIdentityFromUrl(input.databaseUrl);
-  } catch {
-    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "Не удалось определить идентичность целевой БД" };
-  }
-  const dbMismatch = databaseNameMismatchBlocker(targetIdentity, input.databaseUrl);
-  if (dbMismatch) {
-    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: dbMismatch };
-  }
-  if (targetIdentity.fingerprint !== input.confirmTargetDbFingerprint) {
-    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "targetDbFingerprint не совпадает с подключением" };
-  }
   if (input.confirmBundleFingerprint !== input.bundle.bundleFingerprint) {
     return { ok: false, errorCode: "BUNDLE_FINGERPRINT_MISMATCH", message: "bundleFingerprint не совпадает" };
   }
@@ -244,8 +264,36 @@ export async function runExchangeV3CleanStartApply(input: {
   let primaryErrorCode = "CLEAN_START_FAILED";
   let primaryMessage = "Clean start failed";
   let applyReport: CleanStartApplyReport | undefined;
+  let targetIdentity: TargetDbIdentity | undefined;
+  let legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>> | undefined;
+  let bitrixLabelsRevoked: number | undefined;
 
   try {
+    await setIdentityStatementTimeout(client);
+    try {
+      targetIdentity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+    } catch (error) {
+      const message =
+        error instanceof TargetDbIdentityError
+          ? error.message
+          : "Не удалось определить идентичность целевой БД на соединении apply";
+      return { ok: false, errorCode: "TARGET_DB_MISMATCH", message };
+    } finally {
+      await resetIdentityStatementTimeout(client);
+    }
+
+    const dbMismatch = databaseNameMismatchBlocker(targetIdentity, input.databaseUrl);
+    if (dbMismatch) {
+      return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: dbMismatch };
+    }
+    if (targetIdentity.fingerprint !== input.confirmTargetDbFingerprint) {
+      return {
+        ok: false,
+        errorCode: "TARGET_DB_MISMATCH",
+        message: "targetDbFingerprint не совпадает с фактическим соединением apply",
+      };
+    }
+
     await client.query("BEGIN");
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
@@ -274,12 +322,12 @@ export async function runExchangeV3CleanStartApply(input: {
       };
     }
 
-    const legacyRemoved = await purgeLegacyClientDomain(client);
+    legacyRemoved = await purgeLegacyClientDomain(client);
     if (input.testHooks?.failAfter === "purge_legacy") {
       throw new Error("TEST_FAIL_AFTER_PURGE");
     }
 
-    const bitrixLabelsRevoked = await revokeLegacyBitrixClientLabels(client);
+    bitrixLabelsRevoked = await revokeLegacyBitrixClientLabels(client);
     if (input.testHooks?.failAfter === "bitrix") {
       throw new Error("TEST_FAIL_AFTER_BITRIX");
     }
@@ -322,10 +370,12 @@ export async function runExchangeV3CleanStartApply(input: {
   } catch (error) {
     primaryMessage = error instanceof Error ? error.message : String(error);
     if (commitAttempted && !commitConfirmed) {
-      return resolveCommitUncertainty({
+      return resolveCleanStartCommitUncertainty({
         databaseUrl: input.databaseUrl,
         bundleFingerprint: input.bundle.bundleFingerprint,
         confirmTargetDbFingerprint: input.confirmTargetDbFingerprint,
+        pendingLegacyRemoved: legacyRemoved,
+        pendingBitrixLabelsRevoked: bitrixLabelsRevoked,
       });
     }
     if (!commitAttempted) {
