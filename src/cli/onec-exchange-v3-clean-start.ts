@@ -1,48 +1,103 @@
 #!/usr/bin/env node
-/**
- * Controlled legacy purge for exchange v3. Requires --confirm-database-url and --i-understand.
- * Does not run on application startup.
- */
 import { requirePool } from "../db/pool";
-import { runExchangeV3CleanStartPurge } from "../onec-exchange-v3/clean-start-purge";
+import { getDatabaseUrl } from "../config";
+import { readStableV3Bundle } from "../onec-exchange-v3/read-stable-bundle";
+import {
+  buildCleanStartDryRunReport,
+  loadValidatedBundleFromBytes,
+  runExchangeV3CleanStartApply,
+} from "../onec-exchange-v3/clean-start";
+import { computeTargetDbFingerprint, formatTargetDbForReport } from "../onec-exchange-v3/target-db-fingerprint";
+
+function argValue(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`;
+  const inline = args.find((a) => a.startsWith(prefix));
+  if (inline) {
+    return inline.slice(prefix.length);
+  }
+  const index = args.indexOf(name);
+  if (index >= 0 && args[index + 1]) {
+    return args[index + 1];
+  }
+  return undefined;
+}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const confirmUrl = args.find((a) => a.startsWith("--confirm-database-url="))?.split("=")[1];
-  const dryRun = args.includes("--dry-run");
-  const understood = args.includes("--i-understand");
+  const mode = args.includes("--apply") ? "apply" : "dry_run";
+  const bundleDir = argValue(args, "--bundle-dir");
+  const confirmTarget = argValue(args, "--confirm-target-db-fingerprint");
+  const confirmBundle = argValue(args, "--confirm-bundle-fingerprint");
+  const force = args.includes("--force-clean-start");
 
-  const activeUrl = process.env.DATABASE_URL?.trim();
-  if (!understood) {
+  if (!args.includes("--i-understand")) {
     console.error("Refusing: pass --i-understand");
     process.exit(2);
   }
-  if (!confirmUrl || !activeUrl || confirmUrl !== activeUrl) {
-    console.error("Refusing: --confirm-database-url must match DATABASE_URL");
+  if (!bundleDir) {
+    console.error("Required: --bundle-dir=...");
     process.exit(2);
   }
-  if (activeUrl.includes("tandoor_rf") && !activeUrl.includes("_test")) {
-    console.error("Refusing: production-like DATABASE_URL");
+
+  const databaseUrl = process.env.DATABASE_URL?.trim() || getDatabaseUrl();
+  if (!databaseUrl) {
+    console.error("DATABASE_URL required");
+    process.exit(2);
+  }
+
+  const stable = await readStableV3Bundle({ bundleDir });
+  if (!stable.ok) {
+    console.error(JSON.stringify({ ok: false, error: stable.message, code: stable.code }));
+    process.exit(1);
+  }
+  const validated = loadValidatedBundleFromBytes(stable.bundle);
+  if (!validated.ok) {
+    console.error(JSON.stringify({ ok: false, error: validated.message, code: validated.errorCode }));
+    process.exit(1);
+  }
+
+  const targetDbFingerprint = computeTargetDbFingerprint(databaseUrl);
+  if (!targetDbFingerprint) {
+    console.error("Invalid DATABASE_URL for fingerprint");
     process.exit(2);
   }
 
   const pool = requirePool();
   const client = await pool.connect();
   try {
-    if (dryRun) {
-      await client.query("BEGIN");
+    if (mode === "dry_run") {
+      const report = await buildCleanStartDryRunReport(client, validated.bundle, databaseUrl);
+      console.log(
+        JSON.stringify(
+          {
+            ok: report.blockers.length === 0,
+            targetDbLabel: formatTargetDbForReport(databaseUrl),
+            report,
+          },
+          null,
+          2,
+        ),
+      );
+      process.exit(report.blockers.length === 0 ? 0 : 1);
     }
-    const report = await runExchangeV3CleanStartPurge(client);
-    if (dryRun) {
-      await client.query("ROLLBACK");
-      console.log(JSON.stringify({ dryRun: true, report }, null, 2));
-    } else {
-      await client.query("COMMIT");
-      console.log(JSON.stringify({ dryRun: false, report }, null, 2));
+
+    if (!confirmTarget || !confirmBundle) {
+      console.error("Apply requires --confirm-target-db-fingerprint and --confirm-bundle-fingerprint from dry-run");
+      process.exit(2);
     }
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: confirmTarget,
+      confirmBundleFingerprint: confirmBundle,
+      forceCleanStart: force,
+    });
+    if (!result.ok) {
+      console.error(JSON.stringify(result, null, 2));
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ ok: true, report: result.report }, null, 2));
   } finally {
     client.release();
   }

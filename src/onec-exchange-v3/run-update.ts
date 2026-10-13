@@ -5,7 +5,7 @@ import { parseRegularUpdateCliArgs, REGULAR_UPDATE_CLI_ERRORS } from "../onec-re
 import { loadRegularUpdateConfig } from "../onec-regular-update/config";
 import type { RegularUpdateResult } from "../onec-regular-update/types";
 import { applyExchangeV3Bundle } from "./apply";
-import { readV3BundleFromDirectory, readV3BundleFromFtp } from "./read-bundle";
+import { readStableV3Bundle } from "./read-stable-bundle";
 import { validateExchangeV3Bundle } from "./validate-bundle";
 
 function rejectedResult(input: Omit<RegularUpdateResult, "finishedAt" | "durationMs"> & { startedAtMs: number }): RegularUpdateResult {
@@ -49,21 +49,28 @@ export async function runExchangeV3RegularUpdate(options: RunExchangeV3UpdateOpt
   }
   const cliOptions = parsedArgs.options;
 
-  let bundleRead:
-    | { ok: true; bundle: import("./read-bundle").V3BundleBytes }
-    | { ok: false; message: string; code?: string };
+  let bundleBytes: import("./read-bundle").V3BundleBytes;
 
   if (options.bundleDir) {
-    bundleRead = await readV3BundleFromDirectory(options.bundleDir);
+    const stable = await readStableV3Bundle({ bundleDir: options.bundleDir });
+    if (!stable.ok) {
+      return rejectedResult({
+        status: "REJECTED_BY_CHECKS",
+        mode: cliOptions.mode,
+        startedAt,
+        startedAtMs,
+        errorCode: stable.code,
+        message: stable.message,
+        applyPermitted: false,
+      });
+    }
+    bundleBytes = stable.bundle;
   } else if (options.holdingsBytes && options.clientsBytes && options.retailBytes && options.employeesBytes) {
-    bundleRead = {
-      ok: true,
-      bundle: {
-        holdingsBytes: options.holdingsBytes,
-        clientsBytes: options.clientsBytes,
-        retailBytes: options.retailBytes,
-        employeesBytes: options.employeesBytes,
-      },
+    bundleBytes = {
+      holdingsBytes: options.holdingsBytes,
+      clientsBytes: options.clientsBytes,
+      retailBytes: options.retailBytes,
+      employeesBytes: options.employeesBytes,
     };
   } else {
     const loadedConfig = loadOnecFtpConfig(env);
@@ -77,22 +84,22 @@ export async function runExchangeV3RegularUpdate(options: RunExchangeV3UpdateOpt
         message: loadedConfig.message,
       });
     }
-    bundleRead = await readV3BundleFromFtp(loadedConfig.config);
+    const stable = await readStableV3Bundle({ ftpConfig: loadedConfig.config });
+    if (!stable.ok) {
+      return rejectedResult({
+        status: "REJECTED_BY_CHECKS",
+        mode: cliOptions.mode,
+        startedAt,
+        startedAtMs,
+        errorCode: stable.code,
+        message: stable.message,
+        applyPermitted: false,
+      });
+    }
+    bundleBytes = stable.bundle;
   }
 
-  if (!bundleRead.ok) {
-    return rejectedResult({
-      status: "REJECTED_BY_CHECKS",
-      mode: cliOptions.mode,
-      startedAt,
-      startedAtMs,
-      errorCode: bundleRead.code ?? "BUNDLE_READ_FAILED",
-      message: bundleRead.message,
-      applyPermitted: false,
-    });
-  }
-
-  const validated = validateExchangeV3Bundle(bundleRead.bundle);
+  const validated = validateExchangeV3Bundle(bundleBytes);
   if (!validated.ok) {
     return rejectedResult({
       status: "REJECTED_BY_CHECKS",
@@ -173,6 +180,17 @@ export async function runExchangeV3RegularUpdate(options: RunExchangeV3UpdateOpt
       ...base,
       errorCode: applied.errorCode,
       message: applied.message,
+    });
+  }
+
+  if (applied.unchanged) {
+    return rejectedResult({
+      status: "NO_CHANGES",
+      mode: "apply",
+      startedAt,
+      startedAtMs,
+      ...base,
+      message: "Bundle fingerprint matches last successful apply; no changes.",
     });
   }
 

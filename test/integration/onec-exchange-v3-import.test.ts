@@ -34,7 +34,7 @@ describe("exchange v3 import", { concurrency: false }, () => {
     ]);
     const dry = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
-      argv: ["--mode", "dry-run"],
+      argv: ["--dry-run"],
       holdingsBytes: loadFixture("all_holding.json"),
       clientsBytes: loadFixture("all_clients.json"),
       retailBytes: loadFixture("all_retail.json"),
@@ -55,7 +55,7 @@ describe("exchange v3 import", { concurrency: false }, () => {
     ]);
     const dry = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
-      argv: ["--mode", "dry-run"],
+      argv: ["--dry-run"],
       holdingsBytes: loadFixture("all_holding.json"),
       clientsBytes: loadFixture("all_clients.json"),
       retailBytes: loadFixture("all_retail.json"),
@@ -66,7 +66,7 @@ describe("exchange v3 import", { concurrency: false }, () => {
 
     const applied = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
-      argv: ["--mode", "apply", "--expected-fingerprint", fp],
+      argv: ["--apply", "--expected-fingerprint", fp],
       holdingsBytes: loadFixture("all_holding.json"),
       clientsBytes: loadFixture("all_clients.json"),
       retailBytes: loadFixture("all_retail.json"),

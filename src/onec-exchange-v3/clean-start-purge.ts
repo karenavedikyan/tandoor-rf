@@ -1,5 +1,4 @@
 import type { PoolClient } from "pg";
-import { purgeCleanReloadScope } from "../onec-clean-reload/purge";
 
 async function tableExists(client: PoolClient, tableName: string): Promise<boolean> {
   const result = await client.query<{ exists: boolean }>(
@@ -44,22 +43,6 @@ export async function revokeLegacyBitrixClientLabels(client: PoolClient): Promis
   return revoked.rowCount ?? 0;
 }
 
-export async function purgeHoldingV2Tables(client: PoolClient): Promise<void> {
-  const tables = [
-    "onec_holding_v2_outlet_type_category",
-    "onec_holding_v2_client_type_category",
-    "onec_holding_v2_outlet_links",
-    "onec_holding_v2_legal_links",
-    "onec_holding_v2_reconcile_runs",
-    "onec_holding_v2_apply_state",
-  ];
-  for (const table of tables) {
-    if (await tableExists(client, table)) {
-      await client.query(`DELETE FROM ${table}`);
-    }
-  }
-}
-
 export async function purgeV3Domain(client: PoolClient): Promise<void> {
   if (await tableExists(client, "onec_v3_holding_composition")) {
     await client.query(`DELETE FROM onec_v3_holding_composition`);
@@ -91,22 +74,4 @@ export async function purgeV3Domain(client: PoolClient): Promise<void> {
       `,
     );
   }
-}
-
-export type CleanStartDryRunReport = {
-  legacyClientsRemoved: number;
-  bitrixLabelsRevoked: number;
-  v3Cleared: boolean;
-};
-
-export async function runExchangeV3CleanStartPurge(client: PoolClient): Promise<CleanStartDryRunReport> {
-  await purgeHoldingV2Tables(client);
-  const legacy = await purgeCleanReloadScope(client);
-  const bitrixLabelsRevoked = await revokeLegacyBitrixClientLabels(client);
-  await purgeV3Domain(client);
-  return {
-    legacyClientsRemoved: legacy.clientsRemoved,
-    bitrixLabelsRevoked,
-    v3Cleared: true,
-  };
 }
