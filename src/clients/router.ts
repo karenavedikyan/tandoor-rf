@@ -59,6 +59,8 @@ import {
   v3ClientsListHandler,
   v3ClientsOptionsHandler,
   v3HoldingCompositionHandler,
+  v3OrgStructureHandler,
+  v3RopResponsiblesHandler,
   v3UnassignedSummaryHandler,
 } from "./v3/handlers";
 
@@ -90,6 +92,14 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/unassigned-summary", ...readChain, (req, res, next) => {
     void v3UnassignedSummaryHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/org-structure", ...readChain, (req, res, next) => {
+    void v3OrgStructureHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/org-structure/:guid/responsibles", ...readChain, (req, res, next) => {
+    void v3RopResponsiblesHandler(req, res).catch(next);
   });
 
   router.get("/v3/detail", ...readChain, (req, res, next) => {

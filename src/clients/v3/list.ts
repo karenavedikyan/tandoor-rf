@@ -1,6 +1,15 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
+import { v3CategoryGuidSql, v3JsonManagerField, v3TypeGuidSql } from "./json-paths";
+
+export type V3ResponsibleKind = "manager" | "regional" | "hardware";
+
+function responsibleGuidField(kind: V3ResponsibleKind): keyof import("./json-paths").V3ManagersJson {
+  if (kind === "regional") return "guidRegionalManager";
+  if (kind === "hardware") return "guidHardwareManager";
+  return "guidManager";
+}
 
 export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
 
@@ -14,24 +23,28 @@ export type V3ListQuery = {
   typeGuid?: string;
   categoryGuid?: string;
   missingManager?: boolean;
+  responsibleGuid?: string;
+  responsibleKind?: V3ResponsibleKind;
 };
 
 function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
-  if (input.managerGuid) {
-    params.push(input.managerGuid);
-    sql += ` AND (${alias}.managers->>'guidManager')::uuid = $${params.length}::uuid`;
+  const guidFilter = input.responsibleGuid ?? input.managerGuid;
+  const kind = input.responsibleKind ?? (input.managerGuid ? "manager" : undefined);
+  if (guidFilter && kind) {
+    params.push(guidFilter);
+    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
   }
   if (input.typeGuid) {
     params.push(input.typeGuid);
-    sql += ` AND ${alias}.type_category->>'guid_type' = $${params.length}`;
+    sql += ` AND ${v3TypeGuidSql(alias)} = $${params.length}`;
   }
   if (input.categoryGuid) {
     params.push(input.categoryGuid);
-    sql += ` AND ${alias}.type_category->>'guid_category' = $${params.length}`;
+    sql += ` AND ${v3CategoryGuidSql(alias)} = $${params.length}`;
   }
   if (input.missingManager) {
-    sql += ` AND NULLIF(TRIM(COALESCE(${alias}.managers->>'guidManager', '')), '') IS NULL`;
+    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
   }
   return sql;
 }

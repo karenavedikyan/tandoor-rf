@@ -22,21 +22,22 @@
     return '<section class="client-card-section"><h2>' + title + "</h2><dl>" + rowsHtml + "</dl></section>";
   }
 
-  function formatManagers(managers) {
+  function formatManagersBlock(shell, managers) {
     if (!managers || typeof managers !== "object") {
       return "—";
     }
-    var parts = [];
-    if (managers.name_manager) parts.push("Менеджер: " + managers.name_manager);
-    if (managers.name_regional_manager) parts.push("Региональный: " + managers.name_regional_manager);
-    if (managers.name_hardware_manager) parts.push("Фурнитура: " + managers.name_hardware_manager);
-    return parts.length ? parts.join("; ") : "—";
+    var rows = [];
+    if (managers.nameManager) rows.push(dlRow("Менеджер", esc(shell, managers.nameManager)));
+    if (managers.nameRegionalManager) rows.push(dlRow("Региональный менеджер", esc(shell, managers.nameRegionalManager)));
+    if (managers.nameHardwareManager) rows.push(dlRow("Менеджер фурнитуры", esc(shell, managers.nameHardwareManager)));
+    if (managers.nameHeadOfSales) rows.push(dlRow("РОП", esc(shell, managers.nameHeadOfSales)));
+    return rows.length ? rows.join("") : "—";
   }
 
   function formatTypeCategory(shell, tc) {
     if (!tc || typeof tc !== "object") return "—";
-    var type = tc.name_type || tc.guid_type || "";
-    var cat = tc.name_category || tc.guid_category || "";
+    var type = tc.nameType || tc.guidType || "";
+    var cat = tc.nameCategory || tc.guidCategory || "";
     if (type && cat) return esc(shell, type + " / " + cat);
     return esc(shell, type || cat || "—");
   }
@@ -70,31 +71,63 @@
     if (!loading || typeof loading !== "object") return "—";
     var days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
     var keys = [
-      "loading_on_monday",
-      "loading_on_tuesday",
-      "loading_on_wednesday",
-      "loading_on_thursday",
-      "loading_on_friday",
-      "loading_on_saturday",
-      "loading_on_sunday",
+      ["loadingOnMonday", "loading_on_monday"],
+      ["loadingOnTuesday", "loading_on_tuesday"],
+      ["loadingOnWednesday", "loading_on_wednesday"],
+      ["loadingOnThursday", "loading_on_thursday"],
+      ["loadingOnFriday", "loading_on_friday"],
+      ["loadingOnSaturday", "loading_on_saturday"],
+      ["loadingOnSunday", "loading_on_sunday"],
     ];
     var parts = [];
     for (var i = 0; i < keys.length; i += 1) {
-      if (loading[keys[i]] === true) parts.push(days[i]);
+      if (loading[keys[i][0]] === true || loading[keys[i][1]] === true) parts.push(days[i]);
     }
-    var time = loading.loading_time || "";
+    var time = loading.loadingTime || loading.loading_time || "";
     var line = parts.length ? parts.join(", ") : "—";
     if (time) line += " · " + time;
     return esc(shell, line);
   }
 
-  function formatLpr(shell, lpr) {
+  function formatContacts(shell, contacts) {
+    if (!contacts || typeof contacts !== "object") return "—";
+    var rows = [];
+    if (contacts.store_phone || contacts.storePhone) {
+      rows.push(dlRow("Телефон магазина", esc(shell, contacts.store_phone || contacts.storePhone)));
+    }
+    if (contacts.accountant_phone || contacts.accountantPhone) {
+      rows.push(dlRow("Телефон бухгалтерии", esc(shell, contacts.accountant_phone || contacts.accountantPhone)));
+    }
+    if (contacts.accountant_email || contacts.accountantEmail) {
+      rows.push(dlRow("Email бухгалтерии", esc(shell, contacts.accountant_email || contacts.accountantEmail)));
+    }
+    return rows.length ? "<dl>" + rows.join("") + "</dl>" : "—";
+  }
+
+  function formatLprBlock(shell, lpr) {
     if (!lpr || typeof lpr !== "object") return "—";
+    var rows = [];
+    if (lpr.name) rows.push(dlRow("ФИО", esc(shell, lpr.name)));
+    if (lpr.post) rows.push(dlRow("Должность", esc(shell, lpr.post)));
+    if (lpr.phone) rows.push(dlRow("Телефон", esc(shell, lpr.phone)));
+    if (lpr.email) rows.push(dlRow("Email", esc(shell, lpr.email)));
+    if (lpr.date_of_birth || lpr.dateOfBirth) {
+      rows.push(dlRow("Дата рождения", esc(shell, lpr.date_of_birth || lpr.dateOfBirth)));
+    }
+    if (lpr.bonus) rows.push(dlRow("Бонус", esc(shell, lpr.bonus)));
+    if (lpr.conditions_bonus || lpr.conditionsBonus) {
+      rows.push(dlRow("Условия бонуса", esc(shell, lpr.conditions_bonus || lpr.conditionsBonus)));
+    }
+    return rows.length ? "<dl>" + rows.join("") + "</dl>" : "—";
+  }
+
+  function formatClub(shell, add) {
+    if (!add || typeof add !== "object") return "—";
+    var status = add.status_tandoor_club ?? add.statusTandoorClub;
+    var bonus = add.bonus_tandoor_club ?? add.bonusTandoorClub;
     var parts = [];
-    if (lpr.name) parts.push(lpr.name);
-    if (lpr.post) parts.push(lpr.post);
-    if (lpr.phone) parts.push(lpr.phone);
-    if (lpr.email) parts.push(lpr.email);
+    if (status != null && status !== "") parts.push("Статус: " + status);
+    if (bonus != null && bonus !== "") parts.push("Бонус: " + bonus);
     return esc(shell, parts.join(" · ") || "—");
   }
 
@@ -103,19 +136,6 @@
       "Источник",
       dlRow("Обновлено из 1С", esc(shell, ent.last_imported_at || "—")) +
         dlRow("SHA источника", esc(shell, ent.last_source_sha256 || "—")),
-    );
-  }
-
-  function renderHolding(shell, ent) {
-    return (
-      section(
-        "Холдинг",
-        dlRow("Название", esc(shell, ent.name)) +
-          dlRow("Тип и категория", formatTypeCategory(shell, ent.type_category)) +
-          dlRow("Retail chain", boolLabel(ent.retail_chain)) +
-          dlRow("Holding group", boolLabel(ent.holding_group)) +
-          dlRow("Ответственные", esc(shell, formatManagers(ent.managers))),
-      ) + metaBlock(shell, ent)
     );
   }
 
@@ -133,8 +153,20 @@
     );
   }
 
+  function renderHolding(shell, ent) {
+    return (
+      section(
+        "Холдинг",
+        dlRow("Название", esc(shell, ent.name)) +
+          dlRow("Тип и категория", formatTypeCategory(shell, ent.type_category)) +
+          dlRow("Розничная сеть", boolLabel(ent.retail_chain)) +
+          dlRow("Группа холдинга", boolLabel(ent.holding_group)) +
+          dlRow("Ответственные", formatManagersBlock(shell, ent.managers)),
+      ) + metaBlock(shell, ent)
+    );
+  }
+
   function renderLegal(shell, ent, holdingLink) {
-    var holdingHtml = formatHoldingLink(shell, holdingLink);
     return (
       section(
         "Юрлицо",
@@ -142,38 +174,34 @@
           dlRow("Адрес", esc(shell, ent.address || "—")) +
           dlRow("Телефоны", formatTelephones(shell, ent.telephone)) +
           dlRow("Тип и категория", formatTypeCategory(shell, ent.type_category)) +
-          dlRow("Ответственные", esc(shell, formatManagers(ent.managers))) +
-          dlRow("Discount", esc(shell, ent.discount ?? "—")) +
-          dlRow("DiscountAmount", esc(shell, ent.discount_amount ?? "—")) +
+          dlRow("Ответственные", formatManagersBlock(shell, ent.managers)) +
+          dlRow("Скидка", esc(shell, ent.discount ?? "—")) +
+          dlRow("Сумма скидки", esc(shell, ent.discount_amount ?? "—")) +
           dlRow("Наценки", formatMarkups(shell, ent.markups)) +
           dlRow("Реквизиты", formatOtherFields(shell, ent.other_fields)) +
-          dlRow("Холдинг", holdingHtml),
+          dlRow("Холдинг", formatHoldingLink(shell, holdingLink)),
       ) + metaBlock(shell, ent)
     );
   }
 
   function renderRetail(shell, ent, holdingLink) {
     var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
-    var club =
-      ent.additional_information && typeof ent.additional_information === "object"
-        ? ent.additional_information.tandoor_club || ent.additional_information.TandoorClub
-        : null;
-    var holdingHtml = formatHoldingLink(shell, holdingLink);
+    var route = addr.direction_of_the_route || addr.directionOfTheRoute || "—";
     return (
       section(
         "Торговая точка",
-        dlRow("Адрес магазина", esc(shell, addr.store_address || "—")) +
-          dlRow("Адрес доставки", esc(shell, addr.delivery_address || "—")) +
-          dlRow("Маршрут", esc(shell, addr.route_direction || "—")) +
+        dlRow("Адрес магазина", esc(shell, addr.store_address || addr.storeAddress || "—")) +
+          dlRow("Адрес доставки", esc(shell, addr.delivery_address || addr.deliveryAddress || "—")) +
+          dlRow("Маршрут", esc(shell, route)) +
           dlRow("Склад", boolLabel(ent.warehouse)) +
           dlRow("Закрыта", boolLabel(ent.closed)) +
           dlRow("Тип и категория", formatTypeCategory(shell, ent.type_category)) +
           dlRow("Приёмка", formatLoading(shell, ent.information_loading)) +
-          dlRow("Контакты", esc(shell, JSON.stringify(ent.contact_information || {}))) +
-          dlRow("ЛПР", formatLpr(shell, ent.lpr_information)) +
-          dlRow("Tandoor Club", esc(shell, club != null ? String(club) : "—")) +
-          dlRow("Ответственные", esc(shell, formatManagers(ent.managers))) +
-          dlRow("Холдинг", holdingHtml),
+          dlRow("Контакты", formatContacts(shell, ent.contact_information)) +
+          dlRow("ЛПР", formatLprBlock(shell, ent.lpr_information)) +
+          dlRow("Tandoor Club", formatClub(shell, ent.additional_information)) +
+          dlRow("Ответственные", formatManagersBlock(shell, ent.managers)) +
+          dlRow("Холдинг", formatHoldingLink(shell, holdingLink)),
       ) + metaBlock(shell, ent)
     );
   }

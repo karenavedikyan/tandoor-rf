@@ -12,8 +12,10 @@ export type V3UnassignedSummary = {
   };
 };
 
+import { v3JsonManagerField } from "./json-paths";
+
 function missingManagerClause(alias: string): string {
-  return `NULLIF(TRIM(COALESCE(${alias}.managers->>'guidManager', '')), '') IS NULL`;
+  return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
 }
 
 export async function buildV3UnassignedSummary(context: AccessContext): Promise<V3UnassignedSummary> {

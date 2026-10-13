@@ -6,6 +6,13 @@ import {
   type V3ScopeSql,
 } from "./access-scope";
 import type { V3ListEntity } from "./list";
+import {
+  v3CategoryGuidSql,
+  v3CategoryNameSql,
+  v3JsonManagerField,
+  v3TypeGuidSql,
+  v3TypeNameSql,
+} from "./json-paths";
 
 export type V3FilterOptions = {
   managers: Array<{ guid: string; name: string; count: number }>;
@@ -32,12 +39,12 @@ async function loadDistinctFromTable(
   const managers = await query<{ guid: string; name: string; count: string }>(
     `
       SELECT
-        LOWER(TRIM(${alias}.managers->>'guidManager')) AS guid,
-        MAX(COALESCE(${alias}.managers->>'nameManager', '')) AS name,
+        LOWER(TRIM(${v3JsonManagerField(alias, "guidManager")})) AS guid,
+        MAX(COALESCE(${v3JsonManagerField(alias, "nameManager")}, '')) AS name,
         COUNT(*)::text AS count
       FROM ${table} AS ${alias}
       WHERE ${baseWhere}
-        AND NULLIF(TRIM(${alias}.managers->>'guidManager'), '') IS NOT NULL
+        AND NULLIF(TRIM(${v3JsonManagerField(alias, "guidManager")}), '') IS NOT NULL
       GROUP BY 1
       ORDER BY name ASC
     `,
@@ -46,12 +53,12 @@ async function loadDistinctFromTable(
   const types = await query<{ guid: string; name: string; count: string }>(
     `
       SELECT
-        ${alias}.type_category->>'guid_type' AS guid,
-        MAX(COALESCE(${alias}.type_category->>'name_type', '')) AS name,
+        ${v3TypeGuidSql(alias)} AS guid,
+        MAX(COALESCE(${v3TypeNameSql(alias)}, '')) AS name,
         COUNT(*)::text AS count
       FROM ${table} AS ${alias}
       WHERE ${baseWhere}
-        AND NULLIF(TRIM(${alias}.type_category->>'guid_type'), '') IS NOT NULL
+        AND NULLIF(TRIM(${v3TypeGuidSql(alias)}), '') IS NOT NULL
       GROUP BY 1
       ORDER BY name ASC
     `,
@@ -60,12 +67,12 @@ async function loadDistinctFromTable(
   const categories = await query<{ guid: string; name: string; count: string }>(
     `
       SELECT
-        ${alias}.type_category->>'guid_category' AS guid,
-        MAX(COALESCE(${alias}.type_category->>'name_category', '')) AS name,
+        ${v3CategoryGuidSql(alias)} AS guid,
+        MAX(COALESCE(${v3CategoryNameSql(alias)}, '')) AS name,
         COUNT(*)::text AS count
       FROM ${table} AS ${alias}
       WHERE ${baseWhere}
-        AND NULLIF(TRIM(${alias}.type_category->>'guid_category'), '') IS NOT NULL
+        AND NULLIF(TRIM(${v3CategoryGuidSql(alias)}), '') IS NOT NULL
       GROUP BY 1
       ORDER BY name ASC
     `,

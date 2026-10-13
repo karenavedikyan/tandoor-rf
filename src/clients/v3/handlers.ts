@@ -6,6 +6,9 @@ import { isValidUuidParam } from "../uuid-param";
 import { listV3Entities, isExchangeV3Active, type V3ListEntity } from "./list";
 import { loadV3FilterOptions } from "./options";
 import { buildV3UnassignedSummary } from "./unassigned";
+import { getV3OrgStructureOverview, listV3RopResponsibles } from "./teams-structure";
+import { OrgStructureAccessError } from "../org/structure-repository";
+import type { V3ResponsibleKind } from "./list";
 import {
   getV3HoldingComposition,
   getV3HoldingDetail,
@@ -57,6 +60,11 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   const typeGuid = typeof req.query.typeGuid === "string" ? req.query.typeGuid.trim() : undefined;
   const categoryGuid = typeof req.query.categoryGuid === "string" ? req.query.categoryGuid.trim() : undefined;
   const missingManager = String(req.query.missingManager ?? "") === "true";
+  const responsibleKindRaw = String(req.query.responsibleKind ?? "");
+  const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
+    ? (responsibleKindRaw as V3ResponsibleKind)
+    : undefined;
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid) ?? parseGuidParam(req.query.managerGuid);
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -64,6 +72,8 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     q,
     closed,
     managerGuid: managerGuid ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind,
     typeGuid: typeGuid || undefined,
     categoryGuid: categoryGuid || undefined,
     missingManager: missingManager || undefined,
@@ -84,6 +94,47 @@ export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response)
   const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity);
   setNoStore(res);
   res.json(options);
+}
+
+export async function v3OrgStructureHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  try {
+    const overview = await getV3OrgStructureOverview(req.accessContext!);
+    setNoStore(res);
+    res.json(overview);
+  } catch (error) {
+    if (error instanceof OrgStructureAccessError) {
+      setNoStore(res);
+      res.status(error.code === "FORBIDDEN" ? 403 : 404).json(apiError(ERROR_CODES.FORBIDDEN, error.message));
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function v3RopResponsiblesHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const ropGuid = parseGuidParam(req.params.guid);
+  if (!ropGuid) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный GUID РОП."));
+    return;
+  }
+  try {
+    const items = await listV3RopResponsibles(req.accessContext!, ropGuid);
+    setNoStore(res);
+    res.json({ items });
+  } catch (error) {
+    if (error instanceof OrgStructureAccessError) {
+      setNoStore(res);
+      res.status(error.code === "FORBIDDEN" ? 403 : 404).json(apiError(ERROR_CODES.FORBIDDEN, error.message));
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function v3UnassignedSummaryHandler(req: AccessRequest, res: Response): Promise<void> {

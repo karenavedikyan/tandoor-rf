@@ -352,15 +352,17 @@
 
 | Сценарий | Статус | Доказательство |
 |----------|--------|----------------|
-| v3 list/detail/composition API + scope (404 withheld) | ✅ | `test/integration/clients-v3-api.test.ts` (нужен `TEST_DATABASE_URL`) |
-| v3 UI: карточки полей, return state, list (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
-| Bitrix: новая метка после revoke + idempotent re-import | ✅ | `test/integration/onec-exchange-v3-bitrix-labels.test.ts` |
-| `npm test` (unit) | ✅ 661/661 | Node 22, `npm test` |
-| Legacy `onec-clients-import` / clean-reload / wholesale-baseline npm | удалены | `package.json`, `src/cli/onec-clients-import.ts` |
-| v3 фильтры (manager/type/category/closed) + teams/unassigned UI | ✅ селекты + `/v3/options`; teams/review через `loadOrchestrated` | `public/clients-v3.js`, `src/clients/v3/options.ts` |
-| Integration v3 (import, clean-start, API, Bitrix) | ✅ на `TEST_DATABASE_URL` | см. команды ниже |
-| Browser v3 E2E (фильтры, карточка, return) | ✅ | `test/browser/clients-v3.browser.test.ts` |
-| `npm test` unit | ✅ 661/661 | `npm test` |
+| camelCase JSONB: карточки, SQL-фильтры, options | ✅ | `src/clients/v3/json-paths.ts`, `public/client-detail-v3.js`, `test/unit/client-detail-v3-fields.test.ts`, `clients-v3-api` filter test |
+| v3 list/detail/composition API + scope (404 withheld) | ✅ | `test/integration/clients-v3-api.test.ts` |
+| v3 filter options + missingManager + scope на options | ✅ | `clients-v3-api.test.ts` «returns scoped v3 filter options…» |
+| v3 teams org-structure (legacy empty, v3 portfolios) | ✅ | `test/integration/clients-v3-teams.test.ts`, `src/clients/v3/teams-structure.ts`, `public/clients.js` v3 endpoints |
+| v3 UI: фильтр type, entity switch, поля карточки, nested return (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
+| Bitrix: re-issue после retired revoke; блок ручного revoke | ✅ | `onec-exchange-v3-bitrix-labels.test.ts` (2 кейса) |
+| `npm run typecheck` / `npm run build` | ✅ | локально на HEAD PR |
+| `npm test` (unit) | ✅ 662/662 | `npm test` |
+| Targeted integration (v3 API + teams + Bitrix) | ✅ 6/6 | `TEST_DATABASE_URL=*_test`, прогон файлов по очереди |
+| Browser v3 | ✅ 1/1 | `test/browser/clients-v3.browser.test.ts` |
+| Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
 
 ---

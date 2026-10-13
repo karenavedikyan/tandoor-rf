@@ -3673,6 +3673,47 @@
     if (state.view !== "teams") {
       return Promise.resolve({ ok: true });
     }
+    if (exchangeV3Active) {
+      var v3Requests = [];
+      if (!state.ropEmployee) {
+        v3Requests.push(
+          api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              syncTeamContextFromOrgStructure(result.data);
+            } else {
+              teamContext.loadError = true;
+            }
+            return result.response.status === 200;
+          }),
+        );
+      } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
+        v3Requests.push(
+          api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
+            if (result.response.status === 200 && result.data) {
+              syncTeamContextFromOrgStructure(result.data, state.ropEmployee);
+            } else {
+              teamContext.loadError = true;
+            }
+            return result.response.status === 200;
+          }),
+          api
+            .apiRequest(
+              "/api/clients/v3/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
+            )
+            .then(function (result) {
+              if (result.response.status === 200 && result.data) {
+                teamContext.managers = result.data.items || [];
+              } else {
+                teamContext.loadError = true;
+              }
+              return result.response.status === 200;
+            }),
+        );
+      }
+      return Promise.all(v3Requests).then(function (results) {
+        return { ok: results.every(Boolean) || results.length === 0 };
+      });
+    }
     var requests = [];
     if (usesOnecTeamSource(state) && (!state.ropEmployee || isRopDesignSession())) {
       var fetchGen = fetchGeneration != null ? fetchGeneration : bumpOnecTeamsFetchGeneration();

@@ -4,7 +4,12 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { closePool } from "../../src/db/pool";
-import { findActiveLabel, findLatestRevokedLabel } from "../../src/bitrix24/labels/repository";
+import {
+  findActiveLabel,
+  findLatestRevokedLabel,
+  issueLabelOnClient,
+  LabelRepositoryError,
+} from "../../src/bitrix24/labels/repository";
 import {
   loadValidatedBundleFromBytes,
   runExchangeV3CleanStartApply,
@@ -105,5 +110,34 @@ describe("exchange v3 bitrix labels", { concurrency: false }, () => {
     assert.equal(active2?.labelCode, active!.labelCode);
     const revoked = await findLatestRevokedLabel("legal_entity", LEGAL);
     assert.equal(revoked?.labelCode, "LK_J_000001");
+  });
+
+  it("blocks re-issue after manual revoke when label is not retired", async () => {
+    await prepareDatabase(databaseUrl);
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO bitrix24_confirmed_objects (object_type, object_guid) VALUES ('legal_entity', $1::uuid)`,
+        [LEGAL],
+      );
+      await client.query(
+        `INSERT INTO bitrix24_object_labels (object_type, object_guid, label_code)
+         VALUES ('legal_entity', $1::uuid, 'LK_J_000099')`,
+        [LEGAL],
+      );
+      await client.query(
+        `UPDATE bitrix24_object_labels SET revoked_at = NOW()
+         WHERE object_type = 'legal_entity' AND object_guid = $1::uuid AND label_code = 'LK_J_000099'`,
+        [LEGAL],
+      );
+      await assert.rejects(
+        () => issueLabelOnClient("legal_entity", LEGAL, null, client),
+        (error: unknown) => error instanceof LabelRepositoryError && error.code === "LABEL_REVOKED",
+      );
+    } finally {
+      client.release();
+      await pool.end();
+    }
   });
 });

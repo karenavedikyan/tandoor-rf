@@ -90,7 +90,99 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForURL(/\/(clients|profile|work)/);
   }
 
-  it("desktop and mobile: v3 list, entity switch, card navigation and return", async () => {
+  async function runViewportFlow(page: Page, viewport: { width: number; height: number }): Promise<void> {
+    await page.setViewportSize(viewport);
+    const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1";
+    const initialList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
+        res.url().includes("typeGuid=t1") &&
+        res.status() === 200,
+    );
+    const initialOptions = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/options") && res.url().includes("entity=legal") && res.status() === 200,
+    );
+    await page.goto(listUrl);
+    await Promise.all([initialList, initialOptions]);
+    await page.waitForFunction(function () {
+      var wrap = document.getElementById("v3-filters-wrap");
+      var typeFilter = document.getElementById("v3-type-filter");
+      return wrap && !wrap.classList.contains("clients-hidden") && typeFilter && typeFilter.options.length > 1;
+    });
+    const typeValue = await page.$eval("#v3-type-filter", (sel) => (sel as HTMLSelectElement).value);
+    assert.equal(typeValue, "t1");
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+
+    const holdingsClick = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=holdings") && res.status() === 200,
+    );
+    await page.click('[data-v3entity="holdings"]');
+    await holdingsClick;
+    await page.waitForFunction(function () {
+      return document.querySelector('[data-v3entity="holdings"].clients-view-switcher__btn--active');
+    });
+
+    const legalClick = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=legal") && res.status() === 200,
+    );
+    await page.click('[data-v3entity="legal"]');
+    await legalClick;
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+
+    const link =
+      viewport.width <= 400
+        ? page.locator('#clients-cards a:has-text("Legal One")')
+        : page.locator('#clients-table-body a:has-text("Legal One")');
+    await link.first().click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.waitForSelector("dt:has-text('Тип и категория') + dd:has-text('Type A / Cat A')");
+    await page.waitForSelector("dt:has-text('РОП') + dd:has-text('ROP One')");
+
+    const returnParam = new URL(page.url()).searchParams.get("return");
+    assert.ok(returnParam && returnParam.includes("v3mode=1"));
+    assert.ok(returnParam.includes("v3entity=legal"));
+
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForURL(/\/clients\?.*v3mode=1/);
+    assert.match(page.url(), /v3entity=legal/);
+
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+    const cardLink =
+      viewport.width <= 400
+        ? page.locator('#clients-cards a:has-text("Legal One")').first()
+        : page.locator('#clients-table-body a:has-text("Legal One")').first();
+    await cardLink.click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    const holdingNav = page.locator('.client-card-section a[href*="v3Entity=holding"]').first();
+    await holdingNav.waitFor({ state: "visible", timeout: 15000 });
+    await holdingNav.click();
+    await page.waitForSelector("#v3-composition a", { timeout: 15000 });
+    await page.locator("#v3-composition a").first().click();
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForSelector("#v3-composition", { timeout: 15000 });
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForURL(/\/clients\?.*v3mode=1/);
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+  }
+
+  it("desktop and mobile: v3 filters, entity switch, card fields and nested navigation", async () => {
     const { createApp } = await import("../../src/server");
     const app = createApp();
     server = http.createServer(app);
@@ -101,53 +193,9 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const creds = await seed();
 
     for (const viewport of [DESKTOP, MOBILE]) {
-      const page = await browser.newPage({ viewport });
+      const page = await browser.newPage();
       await login(page, creds.email);
-      const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal";
-      await page.goto(listUrl);
-      await page.waitForSelector("#clients-table-body a, #clients-cards a", {
-        timeout: 15000,
-        state: "attached",
-      });
-      await page.waitForFunction(function () {
-        var wrap = document.getElementById("v3-filters-wrap");
-        return wrap && !wrap.classList.contains("clients-hidden");
-      });
-      const managerOptions = await page.locator("#v3-manager-filter option").count();
-      assert.ok(managerOptions >= 1);
-      await page.selectOption("#v3-closed-filter", "false").catch(function () {
-        /* closed filter only for retail entities */
-      });
-      await page.click('[data-v3entity="holdings"]');
-      await page.waitForURL(/v3entity=holdings/);
-      await page.click('[data-v3entity="legal"]');
-      await page.waitForURL(/v3entity=legal/);
-      const link =
-        viewport.width <= 400
-          ? page.locator("#clients-cards a").first()
-          : page.locator("#clients-table-body a").first();
-      await link.scrollIntoViewIfNeeded();
-      await link.click({ force: true });
-      await page.waitForSelector('[data-testid="v3-detail-title"]');
-      await page.waitForSelector("dt:has-text('Discount')");
-      const returnParam = new URL(page.url()).searchParams.get("return");
-      assert.ok(returnParam && returnParam.includes("v3mode=1"));
-      assert.ok(returnParam.includes("v3entity=legal"));
-      await page.click('[data-testid="v3-back-to-list"]');
-      await page.waitForURL(/\/clients\?.*v3mode=1/);
-      assert.match(page.url(), /v3entity=legal/);
-      assert.match(page.url(), /q=Legal/);
-
-      const holdingNav = page.locator('.client-card-section a[href*="v3Entity=holding"]').first();
-      if (await holdingNav.count()) {
-        await holdingNav.click();
-        await page.waitForSelector("#v3-composition a", { timeout: 15000 });
-        await page.locator("#v3-composition a").first().click();
-        await page.waitForSelector('[data-testid="v3-back-to-list"]');
-        await page.click('[data-testid="v3-back-to-list"]');
-        await page.waitForSelector("h1");
-      }
-
+      await runViewportFlow(page, viewport);
       await page.close();
     }
   });

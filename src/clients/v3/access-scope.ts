@@ -1,5 +1,6 @@
 import type { AccessContext } from "../../access/types";
 import { ropLegacyTeamEmployeesSubquery } from "../../access/rop-read-scope";
+import { v3JsonManagerField } from "./json-paths";
 
 export type V3ScopeSql = { clause: string; params: unknown[] };
 
@@ -21,11 +22,11 @@ export function v3BaseAccessGate(context: AccessContext): V3ScopeSql | null {
 }
 
 function managerAssignmentClause(alias: string, employeeParam: string): string {
-  return `(${alias}.managers->>'guidManager')::uuid = ${employeeParam}::uuid`;
+  return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '')::uuid = ${employeeParam}::uuid`;
 }
 
 function regionalAssignmentClause(alias: string, employeeParam: string): string {
-  return `(${alias}.managers->>'guidRegionalManager')::uuid = ${employeeParam}::uuid`;
+  return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidRegionalManager")}, '')), '')::uuid = ${employeeParam}::uuid`;
 }
 
 function appendObjectDenials(

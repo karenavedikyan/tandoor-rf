@@ -42,13 +42,18 @@
     if (view === "teams") next.v3view = "teams";
     else if (view === "review") next.v3view = "unassigned";
     else next.v3view = "all";
-    var mgr =
-      next.v3manager ||
-      legacy.manager ||
-      legacy.clientManager ||
-      legacy.outletManager ||
-      "";
-    if (mgr) next.v3manager = mgr;
+    var kind = legacy.teamKind || "manager";
+    var mgr = next.v3manager || "";
+    if (!mgr) {
+      if (kind === "regional") mgr = legacy.regionalManager || legacy.clientRegionalManager || legacy.outletRegionalManager || "";
+      else if (kind === "hardware") mgr = legacy.hardwareManager || legacy.clientHardwareManager || legacy.outletHardwareManager || "";
+      else mgr = legacy.manager || legacy.clientManager || legacy.outletManager || "";
+    }
+    if (mgr) {
+      next.v3manager = mgr;
+      next.responsibleGuid = mgr;
+      next.responsibleKind = kind;
+    }
     if (legacy.unassignedCategory === "v3_missing_manager") {
       next.missingManager = true;
     }
@@ -196,7 +201,11 @@
         params.set("q", state.q);
       }
       if (state.closed === "true" || state.closed === "false") params.set("closed", state.closed);
-      if (state.v3manager) params.set("managerGuid", state.v3manager);
+      if (state.responsibleGuid || state.v3manager) {
+        params.set("responsibleGuid", state.responsibleGuid || state.v3manager);
+        params.set("responsibleKind", state.responsibleKind || "manager");
+        params.set("managerGuid", state.v3manager || state.responsibleGuid);
+      }
       if (state.v3type) params.set("typeGuid", state.v3type);
       if (state.v3category) params.set("categoryGuid", state.v3category);
       if (state.missingManager) params.set("missingManager", "true");
