@@ -363,8 +363,20 @@
 | v3 import counts + GUID/labels (Legal Unassigned) | ✅ | `onec-exchange-v3-import.test.ts` (3 legal, 6 labels) |
 | v3 list scoped by ROP branch + responsible kind | ✅ | `clients-v3-rop-branch.test.ts`, `ropBranchGuid` в list API |
 | URL state teams (rop/responsible/kind/v3view) | ✅ | `clients-v3.js` read/write/return + `clients-logic.js` whitelist |
-| Targeted integration (v3 API + teams + rop + import + clean-start + Bitrix) | ✅ 14/14 | `TEST_DATABASE_URL=*_test`, файлы по очереди |
-| Browser v3 | ✅ 1/1 | `test/browser/clients-v3.browser.test.ts` |
+| Targeted integration (v3 API + teams + rop + import + clean-start + Bitrix) | ✅ 14/14 | см. команду ниже (не параллельный glob — lock миграций) |
+| Browser v3 (filters, card, nested nav, reload, history) | ✅ | `test/browser/clients-v3.browser.test.ts` (1440 + 390) |
+| Fixture inventory vs import test (3 legal / 6 labels) | ✅ | `test/unit/onec-exchange-v3-fixture-inventory.test.ts` |
+
+**Команды приёмки PR #76 (только `*_test` PostgreSQL):**
+
+```bash
+export TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test
+npm run typecheck && npm run build && npm test
+npm run test:integration:v3-pr76
+npm run test:browser -- test/browser/clients-v3.browser.test.ts
+```
+
+`npm run test:integration:v3-pr76` — обёртка `scripts/test-exchange-v3-pr76-integration.sh`: шесть файлов **строго по очереди** (`--test-concurrency=1` на файл). Полный `test/integration/**/*.test.ts` одним процессом node может дать «Another migration process is already running».
 | Legacy `onec-clients-import` / clean-reload npm | удалены | без изменений в этом проходе |
 | Production merge/deploy | ⏸ вне scope | — |
 

@@ -90,6 +90,39 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForURL(/\/(clients|profile|work)/);
   }
 
+  async function assertListFilterState(page: Page): Promise<void> {
+    const url = new URL(page.url());
+    assert.equal(url.searchParams.get("v3mode"), "1");
+    assert.equal(url.searchParams.get("v3entity"), "legal");
+    assert.equal(url.searchParams.get("v3type"), "t1");
+    assert.match(url.searchParams.get("q") || "", /Legal/i);
+    await page.waitForFunction(function () {
+      var typeFilter = document.getElementById("v3-type-filter") as HTMLSelectElement | null;
+      return Boolean(typeFilter && typeFilter.value === "t1");
+    });
+  }
+
+  async function waitForLegalList(page: Page, expectTypeFilterRequest: boolean): Promise<void> {
+    if (expectTypeFilterRequest) {
+      await page
+        .waitForResponse(
+          (res) =>
+            res.url().includes("/api/clients/v3/list") &&
+            res.url().includes("entity=legal") &&
+            res.url().includes("typeGuid=t1") &&
+            res.status() === 200,
+          { timeout: 20000 },
+        )
+        .catch(function () {
+          /* bfcache / history navigation may restore list without a new request */
+        });
+    }
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+  }
+
   async function runViewportFlow(page: Page, viewport: { width: number; height: number }): Promise<void> {
     await page.setViewportSize(viewport);
     const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1";
@@ -113,10 +146,18 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     });
     const typeValue = await page.$eval("#v3-type-filter", (sel) => (sel as HTMLSelectElement).value);
     assert.equal(typeValue, "t1");
-    await page
-      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
-      .first()
-      .waitFor({ state: "attached", timeout: 15000 });
+    await assertListFilterState(page);
+
+    const reloadList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
+        res.url().includes("typeGuid=t1") &&
+        res.status() === 200,
+    );
+    await page.reload();
+    await reloadList;
+    await assertListFilterState(page);
 
     const holdingsClick = page.waitForResponse(
       (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=holdings") && res.status() === 200,
@@ -152,12 +193,16 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
 
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/\/clients\?.*v3mode=1/);
-    assert.match(page.url(), /v3entity=legal/);
+    await waitForLegalList(page, true);
+    await assertListFilterState(page);
 
-    await page
-      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
-      .first()
-      .waitFor({ state: "attached", timeout: 15000 });
+    await page.goBack();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.goForward();
+    await page.waitForURL(/\/clients\?.*v3mode=1/);
+    await assertListFilterState(page);
+    await waitForLegalList(page, false);
+
     const cardLink =
       viewport.width <= 400
         ? page.locator('#clients-cards a:has-text("Legal One")').first()
