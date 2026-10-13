@@ -54,6 +54,7 @@ import {
 } from "./org/handlers";
 import { listTeamManagersHandler, listTeamRopsHandler } from "./teams/handlers";
 import { unassignedSummaryHandler } from "./unassigned/handlers";
+import { v3ClientsListHandler } from "./v3/handlers";
 
 export function createClientsRouter(): express.Router {
   const router = express.Router();
@@ -72,6 +73,10 @@ export function createClientsRouter(): express.Router {
     blockPreviewWrites,
     requireClientReadAccess,
   ] as const;
+
+  router.get("/v3/list", ...readChain, (req, res, next) => {
+    void v3ClientsListHandler(req, res).catch(next);
+  });
 
   router.get("/sync-status", ...readChain, (req, res, next) => {
     void clientSyncStatusHandler(req, res).catch(next);
