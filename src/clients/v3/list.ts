@@ -72,7 +72,7 @@ export async function listV3Entities(
     return { total: Number(total.rows[0]?.count ?? 0), items: rows.rows };
   }
 
-  const scope = v3EntityAssignmentScope(context, "ro");
+  const scope = v3EntityAssignmentScope(context, "ro", "retail");
   const orphanOnly = input.entity === "orphan_retail" ? " AND ro.guid_holding IS NULL" : "";
   const search = qPattern
     ? ` AND COALESCE(ro.address->>'store_address', '') ILIKE $${scope.params.length + 1} ESCAPE '\\'`

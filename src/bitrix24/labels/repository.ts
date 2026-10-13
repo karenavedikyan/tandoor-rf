@@ -293,12 +293,26 @@ export async function issueLabelOnClient(
      FOR UPDATE`,
     [objectType],
   );
-  const nextValue = seq.rows[0]?.next_value;
+  let nextValue = seq.rows[0]?.next_value;
   const exhausted = seq.rows[0]?.exhausted ?? false;
   if (!nextValue || exhausted || nextValue > 999999) {
     throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
   }
-  const labelCode = formatLabelCode(objectType, nextValue);
+
+  let labelCode = formatLabelCode(objectType, nextValue);
+  while (
+    (
+      await client.query(`SELECT 1 FROM bitrix24_label_codes_retired WHERE label_code = $1 LIMIT 1`, [
+        labelCode,
+      ])
+    ).rows.length > 0
+  ) {
+    nextValue += 1;
+    if (nextValue > 999999) {
+      throw new LabelRepositoryError("LABEL_SEQUENCE_EXHAUSTED", "LABEL_SEQUENCE_EXHAUSTED");
+    }
+    labelCode = formatLabelCode(objectType, nextValue);
+  }
 
   const inserted = await client.query<{
     id: string;
@@ -319,19 +333,19 @@ export async function issueLabelOnClient(
     return { ...raced, created: false };
   }
 
-  if (nextValue === 999999) {
+  if (nextValue >= 999999) {
     await client.query(
       `UPDATE bitrix24_label_sequences
-       SET exhausted = TRUE
+       SET exhausted = TRUE, next_value = $2
        WHERE object_type = $1::bitrix24_object_type`,
-      [objectType],
+      [objectType, nextValue],
     );
   } else {
     await client.query(
       `UPDATE bitrix24_label_sequences
-       SET next_value = next_value + 1
+       SET next_value = $2
        WHERE object_type = $1::bitrix24_object_type`,
-      [objectType],
+      [objectType, nextValue + 1],
     );
   }
   await recordLabelAudit("issue", objectType, objectGuid, labelCode, actorUserId, null, client);

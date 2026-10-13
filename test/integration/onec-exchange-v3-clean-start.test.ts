@@ -152,4 +152,49 @@ describe("exchange v3 clean start", { concurrency: false }, () => {
     assert.equal(v3h, 1);
     assert.equal(roster.rows[0]?.name_manager, "Manager One");
   });
+
+  it("returns COMMIT_UNCERTAIN when commit acknowledgement is lost", async () => {
+    await prepareDatabase(databaseUrl);
+    const validated = await validatedBundle();
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const targetFp = computeTargetDbFingerprint(databaseUrl)!;
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: targetFp,
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+      testHooks: { failCommit: true },
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.errorCode, "COMMIT_UNCERTAIN");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const v3 = Number((await pool.query(`SELECT COUNT(*)::int AS c FROM onec_v3_holdings`)).rows[0]?.c ?? 0);
+    const marker = await pool.query<{ legacy_clean_start_completed_at: string | null }>(
+      `SELECT legacy_clean_start_completed_at FROM onec_v3_exchange_state WHERE id = 1`,
+    );
+    await pool.end();
+    assert.equal(v3, 0);
+    assert.equal(marker.rows[0]?.legacy_clean_start_completed_at, null);
+  });
+
+  it("rejects wrong targetDb fingerprint", async () => {
+    await prepareDatabase(databaseUrl);
+    const validated = await validatedBundle();
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: "0".repeat(64),
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.errorCode, "TARGET_DB_MISMATCH");
+  });
 });

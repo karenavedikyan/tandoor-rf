@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { upsertWholesaleEmployeeRoster } from "../onec-clients/roster-upsert";
 import type { V3ValidatedBundle } from "./types";
+import { bootstrapBitrixLabelsForV3Domain } from "./bitrix-bootstrap";
 
 export async function deleteV3DomainOnClient(client: PoolClient): Promise<void> {
   await client.query(`DELETE FROM onec_v3_holding_composition`);
@@ -135,6 +136,8 @@ export async function writeV3BundleToClient(
   }
 
   await upsertWholesaleEmployeeRoster(client, bundle.employeeRoster);
+
+  await bootstrapBitrixLabelsForV3Domain(client, null);
 
   await client.query(
     `

@@ -88,6 +88,25 @@ describe("exchange v3 import", { concurrency: false }, () => {
     assert.equal(counts.rows[0]?.l, 2);
     assert.equal(counts.rows[0]?.r, 2);
     assert.equal(counts.rows[0]?.orphan, 1);
+
+    const labels = await pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM bitrix24_object_labels WHERE revoked_at IS NULL`,
+    );
+    assert.equal(labels.rows[0]?.count, 5);
+
+    const reapplied = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", fp],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: loadFixture("all_clients.json"),
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(reapplied.status, "NO_CHANGES");
+    const labelsAfter = await pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM bitrix24_object_labels WHERE revoked_at IS NULL`,
+    );
+    assert.equal(labelsAfter.rows[0]?.count, 5);
     await pool.end();
   });
 });

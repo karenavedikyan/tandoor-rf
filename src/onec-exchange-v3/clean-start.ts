@@ -11,6 +11,7 @@ import {
   parseTargetDbDescriptor,
   type TargetDbDescriptor,
 } from "./target-db-fingerprint";
+import { computeTargetDbFingerprintFromConnection, observeCleanStartState } from "./clean-start-verify";
 
 export type CleanStartDryRunReport = {
   mode: "dry_run";
@@ -42,8 +43,18 @@ export type CleanStartApplyReport = {
   loaded: { holdings: number; legalEntities: number; retailOutlets: number; employees: number };
 };
 
+export type CleanStartCommitUncertainReport = {
+  mode: "apply";
+  targetDb: TargetDbDescriptor & { fingerprint: string };
+  bundleFingerprint: string;
+  observed: Awaited<ReturnType<typeof observeCleanStartState>>;
+  message: string;
+};
+
 export type CleanStartTestHooks = {
   failAfter?: "lock" | "purge_legacy" | "bitrix" | "apply";
+  /** Simulates lost COMMIT acknowledgement (transaction may still commit). */
+  failCommit?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -82,7 +93,9 @@ export async function buildCleanStartDryRunReport(
   bundle: V3ValidatedBundle,
   databaseUrl: string,
 ): Promise<CleanStartDryRunReport> {
-  const fingerprint = computeTargetDbFingerprint(databaseUrl) ?? "";
+  const connectionFp = await computeTargetDbFingerprintFromConnection(databaseUrl);
+  const urlFp = computeTargetDbFingerprint(databaseUrl) ?? "";
+  const fingerprint = connectionFp ?? urlFp;
   const desc = parseTargetDbDescriptor(databaseUrl);
   const parsed = {
     host: desc?.host ?? "",
@@ -94,6 +107,9 @@ export async function buildCleanStartDryRunReport(
   const wouldRemove = await countLegacyClientScope(client);
   const preserved = await countPreserved(client);
   const blockers: string[] = [];
+  if (connectionFp && urlFp && connectionFp !== urlFp) {
+    blockers.push("Fingerprint DATABASE_URL не совпадает с фактическим подключением");
+  }
   const jobBlocker = await assertNoConcurrentJobs(client);
   if (jobBlocker) {
     blockers.push(jobBlocker);
@@ -123,6 +139,69 @@ export async function buildCleanStartDryRunReport(
   };
 }
 
+async function resolveCommitUncertainty(input: {
+  databaseUrl: string;
+  bundleFingerprint: string;
+  confirmTargetDbFingerprint: string;
+}): Promise<
+  | { ok: true; report: CleanStartApplyReport }
+  | { ok: false; errorCode: "COMMIT_UNCERTAIN"; message: string; report: CleanStartCommitUncertainReport }
+> {
+  const observed = await observeCleanStartState(input.databaseUrl);
+  const desc = parseTargetDbDescriptor(input.databaseUrl);
+  const targetDb = {
+    host: desc?.host ?? observed?.targetDb.host ?? "",
+    port: desc?.port ?? observed?.targetDb.port ?? "",
+    database: desc?.database ?? observed?.targetDb.database ?? "",
+    fingerprint: observed?.targetDb.fingerprint ?? input.confirmTargetDbFingerprint,
+  };
+
+  if (
+    observed?.legacyCleanStartCompletedAt &&
+    observed.legacyCleanStartBundleFingerprint === input.bundleFingerprint &&
+    observed.v3HoldingsCount > 0
+  ) {
+    return {
+      ok: true,
+      report: {
+        mode: "apply",
+        targetDb,
+        bundleFingerprint: input.bundleFingerprint,
+        legacyRemoved: {
+          onecClients: 0,
+          onecRetailOutlets: 0,
+          accessGrantsClient: 0,
+          clientReviewRecords: 0,
+          holdingV2LegalLinks: 0,
+          importJobs: 0,
+          accessGrantsRemoved: 0,
+        },
+        bitrixLabelsRevoked: 0,
+        loaded: {
+          holdings: observed.v3HoldingsCount,
+          legalEntities: 0,
+          retailOutlets: 0,
+          employees: 0,
+        },
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    errorCode: "COMMIT_UNCERTAIN",
+    message:
+      "Исход COMMIT неизвестен; автоматический повтор clean-start запрещён. Проверьте legacy_clean_start_* и fingerprint через новое подключение.",
+    report: {
+      mode: "apply",
+      targetDb,
+      bundleFingerprint: input.bundleFingerprint,
+      observed,
+      message: "commit_outcome_unknown",
+    },
+  };
+}
+
 export async function runExchangeV3CleanStartApply(input: {
   databaseUrl: string;
   bundle: V3ValidatedBundle;
@@ -132,11 +211,25 @@ export async function runExchangeV3CleanStartApply(input: {
   testHooks?: CleanStartTestHooks;
 }): Promise<
   | { ok: true; report: CleanStartApplyReport }
-  | { ok: false; errorCode: string; message: string; report?: Partial<CleanStartApplyReport> }
+  | {
+      ok: false;
+      errorCode: string;
+      message: string;
+      report?: Partial<CleanStartApplyReport> | CleanStartCommitUncertainReport;
+    }
 > {
-  const targetFp = computeTargetDbFingerprint(input.databaseUrl);
+  const connectionFp = await computeTargetDbFingerprintFromConnection(input.databaseUrl);
+  const urlFp = computeTargetDbFingerprint(input.databaseUrl);
+  const targetFp = connectionFp ?? urlFp;
   if (!targetFp || targetFp !== input.confirmTargetDbFingerprint) {
-    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "targetDbFingerprint не совпадает" };
+    return { ok: false, errorCode: "TARGET_DB_MISMATCH", message: "targetDbFingerprint не совпадает с подключением" };
+  }
+  if (connectionFp && urlFp && connectionFp !== urlFp) {
+    return {
+      ok: false,
+      errorCode: "TARGET_DB_MISMATCH",
+      message: "DATABASE_URL не соответствует фактической БД соединения",
+    };
   }
   if (input.confirmBundleFingerprint !== input.bundle.bundleFingerprint) {
     return { ok: false, errorCode: "BUNDLE_FINGERPRINT_MISMATCH", message: "bundleFingerprint не совпадает" };
@@ -144,6 +237,12 @@ export async function runExchangeV3CleanStartApply(input: {
 
   const pool = requirePool();
   const client = await pool.connect();
+  let commitAttempted = false;
+  let commitConfirmed = false;
+  let primaryErrorCode = "CLEAN_START_FAILED";
+  let primaryMessage = "Clean start failed";
+  let applyReport: CleanStartApplyReport | undefined;
+
   try {
     await client.query("BEGIN");
     const locked = await tryAcquireImportLock(client);
@@ -199,34 +298,57 @@ export async function runExchangeV3CleanStartApply(input: {
       throw new Error("TEST_FAIL_AFTER_APPLY");
     }
 
+    commitAttempted = true;
+    if (input.testHooks?.failCommit) {
+      throw new Error("Simulated commit response loss.");
+    }
     await client.query("COMMIT");
+    commitConfirmed = true;
 
     const desc = parseTargetDbDescriptor(input.databaseUrl);
-    return {
-      ok: true,
-      report: {
-        mode: "apply",
-        targetDb: {
-          host: desc?.host ?? "",
-          port: desc?.port ?? "",
-          database: desc?.database ?? "",
-          fingerprint: targetFp,
-        },
-        bundleFingerprint: input.bundle.bundleFingerprint,
-        legacyRemoved,
-        bitrixLabelsRevoked,
-        loaded: applied.counts,
+    applyReport = {
+      mode: "apply",
+      targetDb: {
+        host: desc?.host ?? "",
+        port: desc?.port ?? "",
+        database: desc?.database ?? "",
+        fingerprint: targetFp,
       },
+      bundleFingerprint: input.bundle.bundleFingerprint,
+      legacyRemoved,
+      bitrixLabelsRevoked,
+      loaded: applied.counts,
     };
+    return { ok: true, report: applyReport };
   } catch (error) {
-    await client.query("ROLLBACK");
+    primaryMessage = error instanceof Error ? error.message : String(error);
+    if (commitAttempted && !commitConfirmed) {
+      return resolveCommitUncertainty({
+        databaseUrl: input.databaseUrl,
+        bundleFingerprint: input.bundle.bundleFingerprint,
+        confirmTargetDbFingerprint: input.confirmTargetDbFingerprint,
+      });
+    }
+    if (!commitAttempted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        primaryErrorCode = "CLEAN_START_FAILED";
+        primaryMessage =
+          "Clean start failed; откат транзакции не подтверждён — проверьте состояние БД новым подключением.";
+      }
+    }
     return {
       ok: false,
-      errorCode: "CLEAN_START_FAILED",
-      message: error instanceof Error ? error.message : String(error),
+      errorCode: primaryErrorCode,
+      message: primaryMessage,
     };
   } finally {
-    await releaseImportLock(client);
+    try {
+      await releaseImportLock(client);
+    } catch {
+      // Lock release must not mask apply outcome.
+    }
     client.release();
   }
 }

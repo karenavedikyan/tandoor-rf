@@ -29,8 +29,12 @@
    `node --import tsx src/cli/onec-exchange-v3-clean-start.ts --i-understand --apply --bundle-dir test/fixtures/onec-exchange-v3 --confirm-target-db-fingerprint=<sha> --confirm-bundle-fingerprint=<sha>`  
    Повтор после успешного перехода только с `--force-clean-start`.
 5. Регулярное обновление (без clean-start):  
-   `node --import tsx src/cli/onec-regular-update.ts --dry-run` (или admin worker) — комплект v3 со **стабильным двойным чтением** четырёх файлов.
-5. Проверка: `onec_v3_*` таблицы, пользователи и каталог на месте.
+   `node --import tsx src/cli/onec-regular-update.ts --dry-run` (или admin worker) — комплект v3 со **стабильным двойным чтением** четырёх файлов (два полных прохода по всем файлам, общий deadline).
+6. Проверка: `onec_v3_*` таблицы, пользователи и каталог на месте.
+
+## Стабильность комплекта (ограничение)
+
+Двойное чтение фиксирует, что **каждый из четырёх файлов не менялся между двумя полными проходами** в пределах deadline. Это **не** доказывает, что все файлы принадлежат одной логической версии выгрузки 1С, если в FTP нет маркера завершения выгрузки. При `COMMIT_UNCERTAIN` после clean-start **не** повторять purge автоматически — проверить `legacy_clean_start_completed_at`, `legacy_clean_start_bundle_fingerprint` и counts v3 **новым подключением** (`observeCleanStartState` / CLI dry-run fingerprint).
 
 ## Регулярное обновление
 
