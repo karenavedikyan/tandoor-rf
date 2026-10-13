@@ -268,4 +268,37 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.exchangeV3Active, true);
   });
+
+  it("sync-status uses v3 apply time when legacy import journal is empty", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DELETE FROM onec_client_import_runs`);
+    await pool.query(`
+      UPDATE onec_exchange_state
+      SET last_successful_apply_at = NULL, last_attempt_at = NULL
+      WHERE id = 1
+    `);
+    await pool.end();
+    await resetPoolForTests();
+
+    const adminEmail = "admin-v3-freshness@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Freshness",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.exchangeV3Active, true);
+    assert.ok(res.body.v3LastSuccessfulApplyAt);
+    assert.notEqual(res.body.freshnessState, "never");
+    assert.equal(res.body.freshnessState, "current");
+    assert.ok(res.body.lastSuccessfulImportAt);
+  });
 });

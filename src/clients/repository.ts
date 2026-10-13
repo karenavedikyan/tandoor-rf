@@ -887,6 +887,7 @@ export async function getClientsSyncStatus(options: {
         `SELECT last_successful_apply_at FROM onec_v3_exchange_state WHERE id = 1`,
       )
     : { rows: [{ last_successful_apply_at: null }] };
+  const v3LastSuccessfulApplyAt = v3State.rows[0]?.last_successful_apply_at ?? null;
 
   const exchangeState = await query<ExchangeStateQueryRow>(
     `
@@ -904,8 +905,11 @@ export async function getClientsSyncStatus(options: {
   );
 
   const state = exchangeState.rows[0];
-  const lastSuccessfulImportAt =
+  let lastSuccessfulImportAt =
     state?.last_successful_apply_at ?? lastSuccess.rows[0]?.finished_at ?? null;
+  if (v3Active && v3LastSuccessfulApplyAt) {
+    lastSuccessfulImportAt = v3LastSuccessfulApplyAt;
+  }
   const lastAttemptAt = state?.last_attempt_at ?? null;
   const lastVerifiedAt = state?.last_verified_at ?? null;
   const lastVerifiedSha256 = state?.last_verified_sha256 ?? null;
@@ -923,7 +927,12 @@ export async function getClientsSyncStatus(options: {
       }
     }
   }
-  const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
+  let runningImport = Number(running.rows[0]?.count ?? "0") > 0;
+  if (v3Active && !runningImport) {
+    const { loadActiveRegularUpdateJob } = await import("./admin-onec-update/repository");
+    const activeRegularJob = await loadActiveRegularUpdateJob();
+    runningImport = activeRegularJob != null;
+  }
   const latestRun = latest.rows[0];
 
   let warning: string | null = null;
@@ -943,6 +952,7 @@ export async function getClientsSyncStatus(options: {
     warning =
       "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
   } else if (
+    !v3Active &&
     lastVerifiedSha256 &&
     committedSha256 &&
     lastVerifiedSha256 !== committedSha256
@@ -977,9 +987,9 @@ export async function getClientsSyncStatus(options: {
     runningImport,
     warning,
     exchangeV3Active: v3Active,
-    v3LastSuccessfulApplyAt: v3State.rows[0]?.last_successful_apply_at?.toISOString() ?? null,
-    v3LastSuccessfulApplyAtLabel: v3State.rows[0]?.last_successful_apply_at
-      ? formatMskDateTime(v3State.rows[0].last_successful_apply_at)
+    v3LastSuccessfulApplyAt: v3LastSuccessfulApplyAt?.toISOString() ?? null,
+    v3LastSuccessfulApplyAtLabel: v3LastSuccessfulApplyAt
+      ? formatMskDateTime(v3LastSuccessfulApplyAt)
       : null,
   };
 

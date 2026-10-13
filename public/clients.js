@@ -4159,10 +4159,27 @@
     });
   }
 
+  function isBareClientsMenuEntry() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.toString() === "") {
+      return true;
+    }
+    return (
+      !params.has("view") &&
+      !params.has("v3view") &&
+      !params.has("entity") &&
+      !params.has("v3entity") &&
+      (params.get("v3mode") === "1" || params.toString() === "v3mode=1")
+    );
+  }
+
   function loadList(state, replaceHistory) {
     cancelScheduledLoad();
     activeRequestId += 1;
     var requestId = activeRequestId;
+    if (logic.reconcileLegacyStateWithV3) {
+      state = logic.reconcileLegacyStateWithV3(state, window.location.search);
+    }
     if (shouldUseV3List(state)) {
       return window.ClientsV3.loadOrchestrated(buildV3UiContext(), state, replaceHistory, {
         showAppShell: showAppShell,
@@ -4659,6 +4676,13 @@
             optionsResult.message || "Повторите попытку позже.",
           );
           return;
+        }
+        if (exchangeV3Active && rolePresentation && isBareClientsMenuEntry()) {
+          var roleEntry = rolePresentation.clientsHref;
+          if (roleEntry && roleEntry !== "/clients" && roleEntry.indexOf("?") !== -1) {
+            window.location.replace(roleEntry);
+            return;
+          }
         }
         var urlState = readStateFromUrl();
         var initialState = logic.applyPresentationDefaults(

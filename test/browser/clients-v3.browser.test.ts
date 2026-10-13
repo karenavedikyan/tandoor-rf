@@ -190,6 +190,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const returnParam = new URL(page.url()).searchParams.get("return");
     assert.ok(returnParam && returnParam.includes("v3mode=1"));
     assert.ok(returnParam.includes("v3entity=legal"));
+    assert.ok(returnParam.includes("view=all"));
 
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/\/clients\?.*v3mode=1/);
@@ -226,6 +227,34 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       .first()
       .waitFor({ state: "attached", timeout: 15000 });
   }
+
+  it("loads v3 all list when v3view=all conflicts with legacy view=teams in URL", async () => {
+    const { createApp } = await import("../../src/server");
+    const app = createApp();
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+    const creds = await seed();
+    const page = await browser.newPage();
+    await login(page, creds.email);
+    const listResponse = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=legal") && res.status() === 200,
+    );
+    await page.goto(
+      baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&v3view=all&view=teams",
+    );
+    await listResponse;
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+    const url = new URL(page.url());
+    assert.equal(url.searchParams.get("view"), "all");
+    assert.ok(!await page.locator("text=Выберите РОП").isVisible().catch(() => false));
+    await page.close();
+  });
 
   it("desktop and mobile: v3 filters, entity switch, card fields and nested navigation", async () => {
     const { createApp } = await import("../../src/server");

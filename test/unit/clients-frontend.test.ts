@@ -10,7 +10,13 @@ const logic = require("../../public/clients-logic.js") as {
     holding: string;
     phone: string;
     page: number;
+    view?: string;
+    entity?: string;
   };
+  reconcileLegacyStateWithV3: (
+    state: { view: string; entity: string },
+    search: string,
+  ) => { view: string; entity: string };
   buildListQueryString: (state: {
     q: string;
     manager: string;
@@ -212,6 +218,19 @@ describe("clients frontend logic", () => {
     assert.equal(state.bonusTandoorClub, "0");
   });
 
+  it("prefers v3view over conflicting legacy view when v3mode is active", () => {
+    const state = logic.readStateFromSearch(
+      "?v3mode=1&v3entity=legal&v3view=all&view=teams&page=1",
+    );
+    assert.equal(state.view, "all");
+    assert.equal(state.entity, "clients");
+    const reconciled = logic.reconcileLegacyStateWithV3(
+      { view: "teams", entity: "clients" },
+      "?v3mode=1&v3entity=legal&v3view=all&view=teams",
+    );
+    assert.equal(reconciled.view, "all");
+  });
+
   it("labels sync status as LK import, not 1C file time", () => {
     const formatted = logic.formatSyncStatusParts({
       freshnessState: "current",
@@ -219,6 +238,16 @@ describe("clients frontend logic", () => {
     });
     assert.match(formatted.text, /Данные загружены в ЛК/);
     assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С|FTP/i);
+  });
+
+  it("shows v3 apply label when legacy import label is absent", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      exchangeV3Active: true,
+      v3LastSuccessfulApplyAtLabel: "28.09.2026, 09:00",
+      lastSuccessfulImportAtLabel: null,
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК: 28.09.2026, 09:00/);
   });
 
   it("shows unknown 1C formation date separately from LK load time", () => {

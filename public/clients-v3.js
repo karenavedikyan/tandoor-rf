@@ -54,14 +54,48 @@
     };
   }
 
+  function legacyViewFromV3View(v3view) {
+    if (v3view === "teams") return "teams";
+    if (v3view === "unassigned") return "review";
+    return "all";
+  }
+
+  function v3ViewFromLegacyView(view) {
+    if (view === "teams") return "teams";
+    if (view === "review") return "unassigned";
+    return "all";
+  }
+
+  function legacyEntityFromV3Entity(v3entity) {
+    if (v3entity === "retail" || v3entity === "orphan_retail") return "outlets";
+    return "clients";
+  }
+
+  function syncLegacyListParams(params, state) {
+    var v3view = state.v3view || "all";
+    var legacyView = legacyViewFromV3View(v3view);
+    params.set("view", legacyView);
+    if (v3view !== "all") {
+      params.set("v3view", v3view);
+    } else {
+      params.delete("v3view");
+    }
+    var legacyEntity = legacyEntityFromV3Entity(state.v3entity || "legal");
+    if (legacyEntity === "outlets") {
+      params.set("entity", "outlets");
+    } else {
+      params.delete("entity");
+    }
+  }
+
   function mergeFromLegacyState(legacy, v3) {
     var params = new URLSearchParams(window.location.search);
     var next = Object.assign({}, v3);
-    if (!params.has("v3view")) {
+    if (params.has("v3view")) {
+      next.v3view = params.get("v3view") || "all";
+    } else if (!params.has("v3view")) {
       var view = legacy.view || "all";
-      if (view === "teams") next.v3view = "teams";
-      else if (view === "review") next.v3view = "unassigned";
-      else next.v3view = "all";
+      next.v3view = v3ViewFromLegacyView(view);
     }
     if (legacy.ropEmployee) {
       next.ropEmployee = legacy.ropEmployee;
@@ -99,6 +133,7 @@
     var params = new URLSearchParams(window.location.search);
     params.set("v3mode", "1");
     params.set("v3entity", state.v3entity);
+    syncLegacyListParams(params, state);
     params.set("page", String(state.page));
     if (state.q) {
       params.set("q", state.q);
@@ -113,8 +148,6 @@
     else params.delete("v3type");
     if (state.v3category) params.set("v3category", state.v3category);
     else params.delete("v3category");
-    if (state.v3view && state.v3view !== "all") params.set("v3view", state.v3view);
-    else params.delete("v3view");
     if (state.missingManager) params.set("missingManager", "1");
     else params.delete("missingManager");
     if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
@@ -141,13 +174,13 @@
     var params = new URLSearchParams();
     params.set("v3mode", "1");
     params.set("v3entity", s.v3entity);
+    syncLegacyListParams(params, s);
     params.set("page", String(s.page || 1));
     if (s.q) params.set("q", s.q);
     if (s.closed) params.set("closed", s.closed);
     if (s.v3manager) params.set("v3manager", s.v3manager);
     if (s.v3type) params.set("v3type", s.v3type);
     if (s.v3category) params.set("v3category", s.v3category);
-    if (s.v3view) params.set("v3view", s.v3view);
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
     if (s.responsibleGuid) {
@@ -401,6 +434,9 @@
     },
 
     loadOrchestrated: function (ctx, legacyState, replaceHistory, hooks) {
+      if (hooks.logic && hooks.logic.reconcileLegacyStateWithV3) {
+        legacyState = hooks.logic.reconcileLegacyStateWithV3(legacyState, window.location.search);
+      }
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);
       window.ClientsV3.bindFilters(ctx, function (nextV3) {

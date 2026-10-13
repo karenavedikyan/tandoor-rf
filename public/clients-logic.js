@@ -546,8 +546,57 @@
     return next;
   }
 
+  function legacyViewFromV3View(v3view) {
+    if (v3view === "teams") {
+      return "teams";
+    }
+    if (v3view === "unassigned") {
+      return "review";
+    }
+    return "all";
+  }
+
+  function v3ViewFromLegacyView(view) {
+    if (view === "teams") {
+      return "teams";
+    }
+    if (view === "review") {
+      return "unassigned";
+    }
+    return "all";
+  }
+
+  function legacyEntityFromV3Entity(v3entity) {
+    if (v3entity === "retail" || v3entity === "orphan_retail") {
+      return "outlets";
+    }
+    return "clients";
+  }
+
+  function v3EntityFromLegacyEntity(entity) {
+    return entity === "outlets" ? "retail" : "legal";
+  }
+
+  function reconcileLegacyStateWithV3(state, search) {
+    var params = new URLSearchParams(search || (typeof window !== "undefined" ? window.location.search : ""));
+    if (params.get("v3mode") !== "1") {
+      return state;
+    }
+    var next = Object.assign({}, state);
+    if (params.has("v3view")) {
+      next.view = legacyViewFromV3View(params.get("v3view") || "all");
+    } else if (params.has("view")) {
+      next.view = params.get("view") || next.view || "all";
+    }
+    if (params.has("v3entity")) {
+      next.entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
+    }
+    return next;
+  }
+
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
+    var v3mode = params.get("v3mode") === "1";
     var view = params.get("view") || "all";
     if (view !== "all" && view !== "teams" && view !== "review" && view !== "completeness") {
       view = "all";
@@ -555,6 +604,12 @@
     var entity = params.get("entity") || "clients";
     if (entity !== "clients" && entity !== "outlets") {
       entity = "clients";
+    }
+    if (v3mode && params.has("v3view")) {
+      view = legacyViewFromV3View(params.get("v3view") || "all");
+    }
+    if (v3mode && params.has("v3entity")) {
+      entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
     }
     var legacyManager = params.get("manager") || "";
     var clientManager = params.get("clientManager") || (entity === "clients" ? legacyManager : "");
@@ -695,13 +750,13 @@
     }
     var params = new URLSearchParams(search || "");
     var next = Object.assign({}, state);
-    if (!params.has("view")) {
+    if (!params.has("view") && !params.has("v3view")) {
       next.view = presentation.defaultView || next.view;
     }
-    if (!params.has("entity")) {
+    if (!params.has("entity") && !params.has("v3entity")) {
       next.entity = presentation.defaultEntity || next.entity;
     }
-    return next;
+    return reconcileLegacyStateWithV3(next, search);
   }
 
   function isBranchPortfolioList(state) {
@@ -1780,8 +1835,9 @@
       parts.push("Обнаружен новый файл, ожидается согласованное обновление.");
     } else if (data.freshnessState === "stale") {
       parts.push("Актуальность данных в ЛК может быть устаревшей.");
-    } else if (data.lastSuccessfulImportAtLabel) {
-      parts.push("Данные загружены в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+    } else if (data.lastSuccessfulImportAtLabel || (data.exchangeV3Active && data.v3LastSuccessfulApplyAtLabel)) {
+      var loadedLabel = data.lastSuccessfulImportAtLabel || data.v3LastSuccessfulApplyAtLabel;
+      parts.push("Данные загружены в ЛК: " + loadedLabel + " (МСК)");
       if (data.sourceFormationKnown && data.lastSourceModifiedAtLabel) {
         parts.push("Выгрузка 1С сформирована: " + data.lastSourceModifiedAtLabel + " (МСК)");
       } else if (data.sourceFormationKnown === false) {
@@ -2063,6 +2119,11 @@
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     sanitizeStateForEntity: sanitizeStateForEntity,
     readStateFromSearch: readStateFromSearch,
+    legacyViewFromV3View: legacyViewFromV3View,
+    v3ViewFromLegacyView: v3ViewFromLegacyView,
+    legacyEntityFromV3Entity: legacyEntityFromV3Entity,
+    v3EntityFromLegacyEntity: v3EntityFromLegacyEntity,
+    reconcileLegacyStateWithV3: reconcileLegacyStateWithV3,
     normalizeTeamKind: normalizeTeamKind,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,

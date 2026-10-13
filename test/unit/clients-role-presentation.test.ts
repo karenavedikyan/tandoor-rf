@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AccessContext } from "../../src/access/types";
 import {
+  buildRoleClientsHref,
   canUseReviewNavigation,
   canUseUnassignedNavigation,
   resolveRolePresentation,
@@ -74,6 +75,21 @@ describe("clients role presentation", () => {
     assert.equal(presentation.reviewReadOnly, false);
     assert.equal(presentation.directorLayout, true);
     assert.deepEqual(presentation.allowedViews, ["all", "teams", "review", "completeness"]);
+  });
+
+  it("builds v3-aware clients href for role menu entry", () => {
+    assert.equal(
+      buildRoleClientsHref({ view: "all", entity: "clients" }),
+      "/clients?v3mode=1&v3entity=legal&view=all",
+    );
+    assert.equal(
+      buildRoleClientsHref({ view: "teams", entity: "clients" }),
+      "/clients?v3mode=1&v3entity=legal&view=teams&v3view=teams",
+    );
+    assert.match(
+      resolveRolePresentation(context({ role: "manager" }))!.clientsHref,
+      /v3mode=1.*v3entity=legal/,
+    );
   });
 
   it("rejects disallowed list modes per role", () => {
