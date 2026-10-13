@@ -37,7 +37,7 @@ describe("exchange v3 target db safety", { concurrency: false }, () => {
     await closePool();
   });
 
-  it("times out identity read safely without claiming success", async () => {
+  it("times out identity read on server statement_timeout without discardConnection", async () => {
     await assert.rejects(
       () =>
         withOneOffPgClient(databaseUrl, async (client) => {
@@ -45,11 +45,138 @@ describe("exchange v3 target db safety", { concurrency: false }, () => {
           return readTargetDbIdentityFromClient(client, databaseUrl, { testPreSleepSec: 5 });
         }),
       (error: unknown) =>
-        error instanceof TargetDbIdentityError && error.code === "TARGET_DB_IDENTITY_TIMEOUT",
+        error instanceof TargetDbIdentityError &&
+        error.code === "TARGET_DB_IDENTITY_TIMEOUT" &&
+        error.timeoutKind === "server_statement" &&
+        error.discardConnection === false,
     );
 
     const observed = await observeCleanStartState(databaseUrl);
     assert.ok(observed);
+  });
+
+  it("discards one-off client on client-side Query read timeout", async () => {
+    let releasedWithDiscard = false;
+    await assert.rejects(
+      () =>
+        withOneOffPgClient(
+          databaseUrl,
+          async (client) => {
+            const originalRelease = client.release.bind(client);
+            client.release = (err?: boolean | Error) => {
+              releasedWithDiscard = err === true;
+              return originalRelease(err);
+            };
+            return readTargetDbIdentityFromClient(client, databaseUrl, {
+              testPreSleepSec: 5,
+              queryTimeoutMs: 100,
+            });
+          },
+          { queryTimeoutMs: 100 },
+        ),
+      (error: unknown) =>
+        error instanceof TargetDbIdentityError &&
+        error.timeoutKind === "client_transport" &&
+        error.discardConnection === true,
+    );
+    assert.equal(releasedWithDiscard, true);
+  });
+
+  it("apply discards pooled client on client query timeout without purge", async () => {
+    await prepareDatabase(databaseUrl);
+    await insertSuccessfulImportRun(databaseUrl);
+
+    const admin = new Pool({ connectionString: databaseUrl, max: 1 });
+    await admin.query(
+      `
+        INSERT INTO onec_clients (guid_client, name_client, guid_holding, name_holding, guid_manager, name_manager, address, telephone, last_imported_at, source_sha256)
+        VALUES ($1::uuid, 'Legacy Timeout', $1::uuid, 'H', $2::uuid, 'Mgr', '', '[]'::jsonb, NOW(), repeat('d', 64))
+        ON CONFLICT (guid_client) DO NOTHING
+      `,
+      ["e1000000-0000-4000-8000-000000000001", "22222222-2222-4222-8222-222222222222"],
+    );
+    const legacyBefore = Number(
+      (await admin.query(`SELECT COUNT(*)::int AS c FROM onec_clients`)).rows[0]?.c ?? 0,
+    );
+    await admin.end();
+
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { loadValidatedBundleFromBytes } = await import("../../src/onec-exchange-v3/clean-start");
+    const { buildEmployeeRosterBytes, buildEmployeeRosterEntry } = await import(
+      "../helpers/onec-clients-employee-roster-fixtures"
+    );
+    const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
+    const validated = loadValidatedBundleFromBytes({
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      employeesBytes: buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222", { name_manager: "Manager One" }),
+      ]),
+    });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: targetFp,
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+      testHooks: { identityTestPreSleepSec: 5, identityQueryTimeoutMs: 100 },
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.errorCode, "TARGET_DB_MISMATCH");
+
+    const verify = new Pool({ connectionString: databaseUrl, max: 1 });
+    const legacyAfter = Number((await verify.query(`SELECT COUNT(*)::int AS c FROM onec_clients`)).rows[0]?.c ?? 0);
+    await verify.end();
+    assert.equal(legacyAfter, legacyBefore);
+
+    await resetPoolForTests();
+    const poolOk = new Pool({ connectionString: databaseUrl, max: 1 });
+    await poolOk.query("SELECT 1");
+    await poolOk.end();
+  });
+
+  it("transport error after COMMIT uses fresh recovery and discards pooled client", async () => {
+    await prepareDatabase(databaseUrl);
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { loadValidatedBundleFromBytes } = await import("../../src/onec-exchange-v3/clean-start");
+    const { buildEmployeeRosterBytes, buildEmployeeRosterEntry } = await import(
+      "../helpers/onec-clients-employee-roster-fixtures"
+    );
+    const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
+    const validated = loadValidatedBundleFromBytes({
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      employeesBytes: buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222", { name_manager: "Manager One" }),
+      ]),
+    });
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+
+    const targetFp = (await computeTargetDbFingerprint(databaseUrl))!;
+    const result = await runExchangeV3CleanStartApply({
+      databaseUrl,
+      bundle: validated.bundle,
+      confirmTargetDbFingerprint: targetFp,
+      confirmBundleFingerprint: validated.bundle.bundleFingerprint,
+      testHooks: { simulateCommitTransportTimeout: true },
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.report.recoveredAfterCommitUncertainty, true);
+
+    await resetPoolForTests();
+    const poolOk = new Pool({ connectionString: databaseUrl, max: 1 });
+    await poolOk.query("SELECT 1");
+    await poolOk.end();
   });
 
   it("returns COMMIT_UNCERTAIN when recovery observation cannot complete", async () => {

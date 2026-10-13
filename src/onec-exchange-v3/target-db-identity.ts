@@ -6,6 +6,7 @@ import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fi
 const ONE_OFF_CONNECT_MS = 5_000;
 export const ONE_OFF_STATEMENT_TIMEOUT_MS = 10_000;
 export const ONE_OFF_QUERY_TIMEOUT_MS = 10_000;
+export const IDENTITY_ADMIN_QUERY_TIMEOUT_MS = 2_000;
 
 export type TargetDbIdentity = TargetDbDescriptor & {
   fingerprint: string;
@@ -18,13 +19,27 @@ export type TargetDbIdentity = TargetDbDescriptor & {
 
 export type TargetDbIdentityErrorCode = "TARGET_DB_IDENTITY_UNAVAILABLE" | "TARGET_DB_IDENTITY_TIMEOUT";
 
+export type TargetDbIdentityTimeoutKind = "client_transport" | "server_statement";
+
 export class TargetDbIdentityError extends Error {
   readonly code: TargetDbIdentityErrorCode;
+  readonly timeoutKind?: TargetDbIdentityTimeoutKind;
+  readonly discardConnection: boolean;
 
-  constructor(code: TargetDbIdentityErrorCode, message: string) {
-    super(message);
+  constructor(
+    code: TargetDbIdentityErrorCode,
+    message: string,
+    options?: {
+      timeoutKind?: TargetDbIdentityTimeoutKind;
+      discardConnection?: boolean;
+      cause?: unknown;
+    },
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = "TargetDbIdentityError";
     this.code = code;
+    this.timeoutKind = options?.timeoutKind;
+    this.discardConnection = options?.discardConnection ?? false;
   }
 }
 
@@ -57,11 +72,24 @@ export function pgQueryWithTimeout<T extends QueryResultRow = QueryResultRow>(
   } as unknown as Parameters<PoolClient["query"]>[0]);
 }
 
-export function isPgTransportOrQueryTimeout(error: unknown): boolean {
+/** Raw driver/network timeout detection (not for wrapped TargetDbIdentityError). */
+export function isPgRawTransportOrQueryTimeout(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
   return /Query read timeout|query timeout|timeout exceeded|connection terminated|ECONNRESET|ETIMEDOUT/i.test(
     msg,
   );
+}
+
+/** @deprecated Use shouldDiscardPgClientAfterError for pooled/one-off cleanup decisions. */
+export function isPgTransportOrQueryTimeout(error: unknown): boolean {
+  return isPgRawTransportOrQueryTimeout(error);
+}
+
+export function shouldDiscardPgClientAfterError(error: unknown): boolean {
+  if (error instanceof TargetDbIdentityError) {
+    return error.discardConnection;
+  }
+  return isPgRawTransportOrQueryTimeout(error);
 }
 
 function mapIdentityQueryError(error: unknown): never {
@@ -69,30 +97,50 @@ function mapIdentityQueryError(error: unknown): never {
     throw error;
   }
   const msg = error instanceof Error ? error.message : String(error);
-  if (
-    /canceling statement due to statement timeout/i.test(msg) ||
-    isPgTransportOrQueryTimeout(error)
-  ) {
+  if (/canceling statement due to statement timeout/i.test(msg)) {
+    throw new TargetDbIdentityError(
+      "TARGET_DB_IDENTITY_TIMEOUT",
+      "Превышено время чтения идентичности БД (statement_timeout)",
+      {
+        timeoutKind: "server_statement",
+        discardConnection: false,
+        cause: error,
+      },
+    );
+  }
+  if (isPgRawTransportOrQueryTimeout(error)) {
     throw new TargetDbIdentityError(
       "TARGET_DB_IDENTITY_TIMEOUT",
       "Превышено время чтения идентичности БД",
+      {
+        timeoutKind: "client_transport",
+        discardConnection: true,
+        cause: error,
+      },
     );
   }
   if (/permission denied|must be superuser|pg_control_system/i.test(msg)) {
     throw new TargetDbIdentityError(
       "TARGET_DB_IDENTITY_UNAVAILABLE",
       "Недостаточно прав для чтения идентификатора кластера (pg_control_system); проверьте роль приложения",
+      { discardConnection: false, cause: error },
     );
   }
   throw error;
 }
 
 export async function setIdentityStatementTimeout(client: PoolClient): Promise<void> {
-  await client.query(`SET statement_timeout = ${ONE_OFF_STATEMENT_TIMEOUT_MS}`);
+  await pgQueryWithTimeout(
+    client,
+    `SET statement_timeout = ${ONE_OFF_STATEMENT_TIMEOUT_MS}`,
+    IDENTITY_ADMIN_QUERY_TIMEOUT_MS,
+  );
 }
 
 export async function resetIdentityStatementTimeout(client: PoolClient): Promise<void> {
-  await client.query("RESET statement_timeout").catch(() => undefined);
+  await pgQueryWithTimeout(client, "RESET statement_timeout", IDENTITY_ADMIN_QUERY_TIMEOUT_MS).catch(
+    () => undefined,
+  );
 }
 
 /** Single-use pool with the same TLS/CA policy as the application pool. */
@@ -122,12 +170,16 @@ export async function withOneOffPgClient<T>(
       await setIdentityStatementTimeout(client);
       return await fn(client);
     } catch (error) {
-      discardClient = isPgTransportOrQueryTimeout(error);
+      discardClient = shouldDiscardPgClientAfterError(error);
       throw error;
     } finally {
-      await resetIdentityStatementTimeout(client);
-      client.release(discardClient);
-      client = undefined;
+      if (client) {
+        if (!discardClient) {
+          await resetIdentityStatementTimeout(client);
+        }
+        client.release(discardClient);
+        client = undefined;
+      }
     }
   } finally {
     await pool.end();
@@ -168,6 +220,7 @@ export async function readTargetDbIdentityFromClient(
       throw new TargetDbIdentityError(
         "TARGET_DB_IDENTITY_UNAVAILABLE",
         "Не удалось определить идентичность целевой БД",
+        { discardConnection: false },
       );
     }
     const urlDesc = databaseUrl ? parseTargetDbDescriptor(databaseUrl) : null;

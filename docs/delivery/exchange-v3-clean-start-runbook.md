@@ -46,7 +46,7 @@
 ## Идентичность БД и preflight роли
 
 - Fingerprint: `sha256(pg|system_identifier|current_database())` с **фактического** соединения apply (до lock/purge), не только из URL.
-- Dry-run (`runExchangeV3CleanStartDryRun`), identity и recovery используют one-off pool с той же TLS-policy, серверным `statement_timeout` и клиентским `query_timeout` (см. `ONE_OFF_*_TIMEOUT_MS` в `target-db-identity.ts`). После транспортного/query timeout one-off соединение не возвращается в пул; на shared pool apply — `client.release(true)`.
+- Dry-run (`runExchangeV3CleanStartDryRun`), identity и recovery используют one-off pool с той же TLS-policy, серверным `statement_timeout` и клиентским `query_timeout` (см. `ONE_OFF_*_TIMEOUT_MS` в `target-db-identity.ts`). `TargetDbIdentityError.discardConnection` отделяет **client_transport** (уничтожить соединение) от **server_statement** (соединение может остаться пригодным). После client/transport timeout — `release(true)` без RESET/ROLLBACK/advisory unlock; на discard-сессии закрытие освобождает session locks.
 - Роль приложения должна иметь право читать `pg_control_system()` (или эквивалент для managed PostgreSQL). При отказе — **TARGET_DB_MISMATCH** до изменения данных; автоматических GRANT или ослабления проверки нет.
 - **Preflight под production-ролью:** выполнить dry-run CLI от имени той же роли, что и приложение (не локальный superuser `postgres` вместо managed-роли).
 

@@ -10,10 +10,10 @@ import { parseTargetDbDescriptor, type TargetDbDescriptor } from "./target-db-fi
 import { observeCleanStartState } from "./clean-start-verify";
 import {
   databaseNameMismatchBlocker,
-  isPgTransportOrQueryTimeout,
   readTargetDbIdentityFromClient,
   resetIdentityStatementTimeout,
   setIdentityStatementTimeout,
+  shouldDiscardPgClientAfterError,
   TargetDbIdentityError,
   withOneOffPgClient,
   type TargetDbIdentity,
@@ -67,6 +67,11 @@ export type CleanStartTestHooks = {
   loseCommitAckAfterSuccessfulCommit?: boolean;
   /** Integration tests: simulate pg_control_system denial on apply connection identity read. */
   simulatePgControlSystemDenied?: boolean;
+  /** Integration tests: trigger client-side query_timeout during identity read on apply pool. */
+  identityTestPreSleepSec?: number;
+  identityQueryTimeoutMs?: number;
+  /** Integration tests: transport error after successful COMMIT before ack flag is set. */
+  simulateCommitTransportTimeout?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -282,6 +287,7 @@ export async function runExchangeV3CleanStartApply(input: {
   let legacyRemoved: Awaited<ReturnType<typeof purgeLegacyClientDomain>> | undefined;
   let bitrixLabelsRevoked: number | undefined;
   let discardPooledClient = false;
+  let identityPhaseDiscard = false;
 
   try {
     await setIdentityStatementTimeout(client);
@@ -290,20 +296,25 @@ export async function runExchangeV3CleanStartApply(input: {
         throw new TargetDbIdentityError(
           "TARGET_DB_IDENTITY_UNAVAILABLE",
           "Недостаточно прав для чтения идентификатора кластера (pg_control_system); проверьте роль приложения",
+          { discardConnection: false },
         );
       }
-      targetIdentity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+      targetIdentity = await readTargetDbIdentityFromClient(client, input.databaseUrl, {
+        testPreSleepSec: input.testHooks?.identityTestPreSleepSec,
+        queryTimeoutMs: input.testHooks?.identityQueryTimeoutMs,
+      });
     } catch (error) {
-      if (isPgTransportOrQueryTimeout(error)) {
-        discardPooledClient = true;
-      }
+      identityPhaseDiscard = shouldDiscardPgClientAfterError(error);
+      discardPooledClient = identityPhaseDiscard;
       const message =
         error instanceof TargetDbIdentityError
           ? error.message
           : "Не удалось определить идентичность целевой БД на соединении apply";
       return { ok: false, errorCode: "TARGET_DB_MISMATCH", message };
     } finally {
-      await resetIdentityStatementTimeout(client);
+      if (!identityPhaseDiscard) {
+        await resetIdentityStatementTimeout(client);
+      }
     }
 
     const dbMismatch = databaseNameMismatchBlocker(targetIdentity, input.databaseUrl);
@@ -377,6 +388,10 @@ export async function runExchangeV3CleanStartApply(input: {
       throw new Error("Simulated commit response loss.");
     }
     await client.query("COMMIT");
+    if (input.testHooks?.simulateCommitTransportTimeout) {
+      discardPooledClient = true;
+      throw new Error("Query read timeout");
+    }
     if (input.testHooks?.loseCommitAckAfterSuccessfulCommit) {
       throw new Error("Simulated commit response loss after successful COMMIT.");
     }
@@ -393,7 +408,7 @@ export async function runExchangeV3CleanStartApply(input: {
     return { ok: true, report: applyReport };
   } catch (error) {
     primaryMessage = error instanceof Error ? error.message : String(error);
-    if (!commitAttempted && isPgTransportOrQueryTimeout(error)) {
+    if (shouldDiscardPgClientAfterError(error)) {
       discardPooledClient = true;
     }
     if (commitAttempted && !commitConfirmed) {
@@ -405,7 +420,7 @@ export async function runExchangeV3CleanStartApply(input: {
         pendingBitrixLabelsRevoked: bitrixLabelsRevoked,
       });
     }
-    if (!commitAttempted) {
+    if (!commitAttempted && !discardPooledClient) {
       try {
         await client.query("ROLLBACK");
       } catch {
@@ -420,10 +435,12 @@ export async function runExchangeV3CleanStartApply(input: {
       message: primaryMessage,
     };
   } finally {
-    try {
-      await releaseImportLock(client);
-    } catch {
-      // Lock release must not mask apply outcome.
+    if (!discardPooledClient) {
+      try {
+        await releaseImportLock(client);
+      } catch {
+        // Lock release must not mask apply outcome.
+      }
     }
     client.release(discardPooledClient);
   }
