@@ -86,11 +86,12 @@ export function readSnapshotWholesaleClientExchange(
 }
 
 export function mergeWholesaleClientExchangeFields(
-  incoming: ParsedWholesaleClientExchange,
+  incoming: ParsedWholesaleClientExchange | undefined,
   previous: ParsedWholesaleClientExchange | undefined,
 ): ParsedWholesaleClientExchange {
+  const inc = incoming ?? createEmptyWholesaleClientExchange();
   const prev = previous ?? createEmptyWholesaleClientExchange();
-  if (!hasAnyWholesaleClientExchangeField(incoming)) {
+  if (!hasAnyWholesaleClientExchangeField(inc)) {
     return {
       top150: prev.top150,
       outletCategory: prev.outletCategory,
@@ -98,11 +99,11 @@ export function mergeWholesaleClientExchangeFields(
     };
   }
   return {
-    top150: incoming.fieldPresence.top150 ? incoming.top150 : prev.top150,
-    outletCategory: incoming.fieldPresence.outletCategory ? incoming.outletCategory : prev.outletCategory,
+    top150: inc.fieldPresence.top150 ? inc.top150 : prev.top150,
+    outletCategory: inc.fieldPresence.outletCategory ? inc.outletCategory : prev.outletCategory,
     fieldPresence: {
-      top150: incoming.fieldPresence.top150 || prev.fieldPresence.top150,
-      outletCategory: incoming.fieldPresence.outletCategory || prev.fieldPresence.outletCategory,
+      top150: inc.fieldPresence.top150 || prev.fieldPresence.top150,
+      outletCategory: inc.fieldPresence.outletCategory || prev.fieldPresence.outletCategory,
     },
   };
 }

@@ -118,11 +118,12 @@ export function readSnapshotCounterpartyExchange(
 }
 
 export function mergeCounterpartyExchangeFields(
-  incoming: ParsedCounterpartyExchange,
+  incoming: ParsedCounterpartyExchange | undefined,
   previous: ParsedCounterpartyExchange | undefined,
 ): ParsedCounterpartyExchange {
+  const inc = incoming ?? createEmptyCounterpartyExchange();
   const prev = previous ?? createEmptyCounterpartyExchange();
-  if (!hasAnyCounterpartyExchangeField(incoming)) {
+  if (!hasAnyCounterpartyExchangeField(inc)) {
     return {
       counterparty: prev.counterparty,
       legalEntityType: prev.legalEntityType,
@@ -132,15 +133,15 @@ export function mergeCounterpartyExchangeFields(
     };
   }
   return {
-    counterparty: incoming.fieldPresence.counterparty ? incoming.counterparty : prev.counterparty,
-    legalEntityType: incoming.fieldPresence.legalEntityType ? incoming.legalEntityType : prev.legalEntityType,
-    ogrn: incoming.fieldPresence.ogrn ? incoming.ogrn : prev.ogrn,
-    fullName: incoming.fieldPresence.fullName ? incoming.fullName : prev.fullName,
+    counterparty: inc.fieldPresence.counterparty ? inc.counterparty : prev.counterparty,
+    legalEntityType: inc.fieldPresence.legalEntityType ? inc.legalEntityType : prev.legalEntityType,
+    ogrn: inc.fieldPresence.ogrn ? inc.ogrn : prev.ogrn,
+    fullName: inc.fieldPresence.fullName ? inc.fullName : prev.fullName,
     fieldPresence: {
-      counterparty: incoming.fieldPresence.counterparty || prev.fieldPresence.counterparty,
-      legalEntityType: incoming.fieldPresence.legalEntityType || prev.fieldPresence.legalEntityType,
-      ogrn: incoming.fieldPresence.ogrn || prev.fieldPresence.ogrn,
-      fullName: incoming.fieldPresence.fullName || prev.fieldPresence.fullName,
+      counterparty: inc.fieldPresence.counterparty || prev.fieldPresence.counterparty,
+      legalEntityType: inc.fieldPresence.legalEntityType || prev.fieldPresence.legalEntityType,
+      ogrn: inc.fieldPresence.ogrn || prev.fieldPresence.ogrn,
+      fullName: inc.fieldPresence.fullName || prev.fieldPresence.fullName,
     },
   };
 }

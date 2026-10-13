@@ -128,11 +128,12 @@ export function readSnapshotCommercial(snapshot: ExtendedSnapshot | null): Snaps
 export const COMMERCIAL_JSON_KEYS = ["Discount", "DiscountAmount", "Markups"] as const;
 
 export function mergeCommercialFields(
-  incoming: ParsedClientCommercial,
+  incoming: ParsedClientCommercial | undefined,
   previous: ParsedClientCommercial | undefined,
 ): ParsedClientCommercial {
+  const inc = incoming ?? createEmptyCommercial();
   const prev = previous ?? createEmptyCommercial();
-  if (!hasAnyCommercialField(incoming)) {
+  if (!hasAnyCommercialField(inc)) {
     return {
       discountProgram: prev.discountProgram,
       discountAmount: prev.discountAmount,
@@ -141,13 +142,13 @@ export function mergeCommercialFields(
     };
   }
   return {
-    discountProgram: incoming.fieldPresence.discountProgram ? incoming.discountProgram : prev.discountProgram,
-    discountAmount: incoming.fieldPresence.discountAmount ? incoming.discountAmount : prev.discountAmount,
-    markups: incoming.fieldPresence.markups ? incoming.markups.slice() : prev.markups.slice(),
+    discountProgram: inc.fieldPresence.discountProgram ? inc.discountProgram : prev.discountProgram,
+    discountAmount: inc.fieldPresence.discountAmount ? inc.discountAmount : prev.discountAmount,
+    markups: inc.fieldPresence.markups ? inc.markups.slice() : prev.markups.slice(),
     fieldPresence: {
-      discountProgram: incoming.fieldPresence.discountProgram || prev.fieldPresence.discountProgram,
-      discountAmount: incoming.fieldPresence.discountAmount || prev.fieldPresence.discountAmount,
-      markups: incoming.fieldPresence.markups || prev.fieldPresence.markups,
+      discountProgram: inc.fieldPresence.discountProgram || prev.fieldPresence.discountProgram,
+      discountAmount: inc.fieldPresence.discountAmount || prev.fieldPresence.discountAmount,
+      markups: inc.fieldPresence.markups || prev.fieldPresence.markups,
     },
   };
 }

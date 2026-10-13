@@ -83,11 +83,12 @@ export function readSnapshotClientContractExchange(
 }
 
 export function mergeClientContractExchangeFields(
-  incoming: ParsedClientContractExchange,
+  incoming: ParsedClientContractExchange | undefined,
   previous: ParsedClientContractExchange | undefined,
 ): ParsedClientContractExchange {
+  const inc = incoming ?? createEmptyClientContractExchange();
   const prev = previous ?? createEmptyClientContractExchange();
-  if (!hasAnyClientContractExchangeField(incoming)) {
+  if (!hasAnyClientContractExchangeField(inc)) {
     return {
       primaryContract: prev.primaryContract,
       mainAgreement: prev.mainAgreement,
@@ -95,11 +96,11 @@ export function mergeClientContractExchangeFields(
     };
   }
   return {
-    primaryContract: incoming.fieldPresence.primaryContract ? incoming.primaryContract : prev.primaryContract,
-    mainAgreement: incoming.fieldPresence.mainAgreement ? incoming.mainAgreement : prev.mainAgreement,
+    primaryContract: inc.fieldPresence.primaryContract ? inc.primaryContract : prev.primaryContract,
+    mainAgreement: inc.fieldPresence.mainAgreement ? inc.mainAgreement : prev.mainAgreement,
     fieldPresence: {
-      primaryContract: incoming.fieldPresence.primaryContract || prev.fieldPresence.primaryContract,
-      mainAgreement: incoming.fieldPresence.mainAgreement || prev.fieldPresence.mainAgreement,
+      primaryContract: inc.fieldPresence.primaryContract || prev.fieldPresence.primaryContract,
+      mainAgreement: inc.fieldPresence.mainAgreement || prev.fieldPresence.mainAgreement,
     },
   };
 }

@@ -28,6 +28,10 @@
       page: Math.max(1, Number(params.get("page") || "1")),
       q: params.get("q") || "",
       closed: params.get("closed") || "",
+      v3manager: params.get("v3manager") || "",
+      v3type: params.get("v3type") || "",
+      v3category: params.get("v3category") || "",
+      v3view: params.get("v3view") || "all",
     };
   }
 
@@ -41,11 +45,16 @@
     } else {
       params.delete("q");
     }
-    if (state.closed) {
-      params.set("closed", state.closed);
-    } else {
-      params.delete("closed");
-    }
+    if (state.closed) params.set("closed", state.closed);
+    else params.delete("closed");
+    if (state.v3manager) params.set("v3manager", state.v3manager);
+    else params.delete("v3manager");
+    if (state.v3type) params.set("v3type", state.v3type);
+    else params.delete("v3type");
+    if (state.v3category) params.set("v3category", state.v3category);
+    else params.delete("v3category");
+    if (state.v3view && state.v3view !== "all") params.set("v3view", state.v3view);
+    else params.delete("v3view");
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -54,14 +63,29 @@
     }
   }
 
-  function detailHref(guid, detailEntity, listQuery) {
+  function buildListReturnQuery(state) {
+    var s = state || readState();
+    var params = new URLSearchParams();
+    params.set("v3mode", "1");
+    params.set("v3entity", s.v3entity);
+    params.set("page", String(s.page || 1));
+    if (s.q) params.set("q", s.q);
+    if (s.closed) params.set("closed", s.closed);
+    if (s.v3manager) params.set("v3manager", s.v3manager);
+    if (s.v3type) params.set("v3type", s.v3type);
+    if (s.v3category) params.set("v3category", s.v3category);
+    if (s.v3view) params.set("v3view", s.v3view);
+    return "?" + params.toString();
+  }
+
+  function detailHref(guid, detailEntity, state) {
     return (
       "/clients/" +
       encodeURIComponent(guid) +
       "?v3Entity=" +
       encodeURIComponent(detailEntity) +
       "&return=" +
-      encodeURIComponent(listQuery || window.location.search.replace(/^\?/, ""))
+      encodeURIComponent(buildListReturnQuery(state))
     );
   }
 
@@ -121,9 +145,10 @@
       if (state.q) {
         params.set("q", state.q);
       }
-      if (state.closed === "true" || state.closed === "false") {
-        params.set("closed", state.closed);
-      }
+      if (state.closed === "true" || state.closed === "false") params.set("closed", state.closed);
+      if (state.v3manager) params.set("managerGuid", state.v3manager);
+      if (state.v3type) params.set("typeGuid", state.v3type);
+      if (state.v3category) params.set("categoryGuid", state.v3category);
       return api
         .apiRequest("/api/clients/v3/list?" + params.toString(), { signal: ctx.nextListFetchSignal?.() })
         .then(function (result) {
@@ -163,13 +188,12 @@
             return;
           }
           ctx.showResultsContent();
-          var listQuery = window.location.search.replace(/^\?/, "");
           var detailType = meta.detailEntity;
           ctx.tableHeadRow.innerHTML =
             "<th>Название</th><th>Холдинг</th><th>Статус</th>";
           ctx.tableBody.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, listQuery);
+              var href = detailHref(item.guid, detailType, state);
               var holding = item.holding_guid ? shell.escapeHtml(item.holding_guid.slice(0, 8) + "…") : "—";
               var status = item.closed === true ? "Закрыта" : item.closed === false ? "Открыта" : "—";
               return (
@@ -187,7 +211,7 @@
             .join("");
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, listQuery);
+              var href = detailHref(item.guid, detailType, state);
               return (
                 '<a class="clients-card" href="' +
                 href +

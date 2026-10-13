@@ -103,21 +103,30 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     for (const viewport of [DESKTOP, MOBILE]) {
       const page = await browser.newPage({ viewport });
       await login(page, creds.email);
-      await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal");
+      const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal";
+      await page.goto(listUrl);
       await page.waitForSelector("#clients-table-body a, #clients-cards a", {
         timeout: 15000,
         state: "attached",
       });
       await page.click('[data-v3entity="holdings"]');
-      await page.waitForSelector("#clients-table-body a, #clients-cards a", { state: "attached" });
+      await page.waitForURL(/v3entity=holdings/);
+      await page.click('[data-v3entity="legal"]');
+      await page.waitForURL(/v3entity=legal/);
       const link =
         viewport.width <= 400
           ? page.locator("#clients-cards a").first()
           : page.locator("#clients-table-body a").first();
       await link.click({ force: viewport.width <= 400 });
-      await page.waitForSelector("h1");
-      await page.click('text=← К списку');
-      await page.waitForURL(/\/clients\?/);
+      await page.waitForSelector('[data-testid="v3-detail-title"]');
+      await page.waitForSelector("dt:has-text('Discount')");
+      const returnParam = new URL(page.url()).searchParams.get("return");
+      assert.ok(returnParam && returnParam.includes("v3mode=1"));
+      assert.ok(returnParam.includes("v3entity=legal"));
+      await page.click('[data-testid="v3-back-to-list"]');
+      await page.waitForURL(/\/clients\?.*v3mode=1/);
+      assert.match(page.url(), /v3entity=legal/);
+      assert.match(page.url(), /q=Legal/);
       await page.close();
     }
   });

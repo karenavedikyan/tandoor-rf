@@ -243,6 +243,13 @@ export async function restoreRevokedLabel(
     if (!revoked) {
       throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
     }
+    const retired = await client.query(
+      `SELECT 1 FROM bitrix24_label_codes_retired WHERE label_code = $1 LIMIT 1`,
+      [revoked.labelCode],
+    );
+    if (retired.rows.length > 0) {
+      throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
+    }
     const restored = await client.query<{ issued_at: Date }>(
       `UPDATE bitrix24_object_labels
        SET revoked_at = NULL, issued_at = NOW()
@@ -275,11 +282,6 @@ export async function issueLabelOnClient(
   const existing = await findActiveLabel(objectType, objectGuid, client);
   if (existing) {
     return { ...existing, created: false };
-  }
-
-  const revoked = await findLatestRevokedLabel(objectType, objectGuid, client);
-  if (revoked) {
-    throw new LabelRepositoryError("LABEL_REVOKED", "LABEL_REVOKED");
   }
 
   const confirmed = await isObjectConfirmed(objectType, objectGuid, client);

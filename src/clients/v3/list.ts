@@ -10,7 +10,27 @@ export type V3ListQuery = {
   pageSize: number;
   q: string;
   closed?: boolean;
+  managerGuid?: string;
+  typeGuid?: string;
+  categoryGuid?: string;
 };
+
+function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+  let sql = "";
+  if (input.managerGuid) {
+    params.push(input.managerGuid);
+    sql += ` AND (${alias}.managers->>'guidManager')::uuid = $${params.length}::uuid`;
+  }
+  if (input.typeGuid) {
+    params.push(input.typeGuid);
+    sql += ` AND ${alias}.type_category->>'guid_type' = $${params.length}`;
+  }
+  if (input.categoryGuid) {
+    params.push(input.categoryGuid);
+    sql += ` AND ${alias}.type_category->>'guid_category' = $${params.length}`;
+  }
+  return sql;
+}
 
 export async function isExchangeV3Active(): Promise<boolean> {
   const result = await query<{ active: boolean }>(
@@ -29,19 +49,20 @@ export async function listV3Entities(
 
   if (input.entity === "holdings") {
     const scope = v3HoldingVisibilityScope(context, "h");
-    const search = qPattern ? ` AND h.name_holding ILIKE $${scope.params.length + 1} ESCAPE '\\'` : "";
     const params = [...scope.params];
-    if (qPattern) params.push(qPattern);
+    const search = qPattern ? ` AND h.name_holding ILIKE $${params.push(qPattern)} ESCAPE '\\'` : "";
+    const filters = appendAssignmentFilters(input, "h", params);
+    const countParams = [...params];
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM onec_v3_holdings h WHERE (${scope.clause})${search}`,
-      qPattern ? [...scope.params, qPattern] : scope.params,
+      `SELECT COUNT(*)::text AS count FROM onec_v3_holdings h WHERE (${scope.clause})${search}${filters}`,
+      countParams,
     );
     const rows = await query(
       `
         SELECT h.guid_holding::text AS guid, h.name_holding AS name
         FROM onec_v3_holdings h
-        WHERE (${scope.clause})${search}
+        WHERE (${scope.clause})${search}${filters}
         ORDER BY h.name_holding ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
@@ -52,19 +73,20 @@ export async function listV3Entities(
 
   if (input.entity === "legal") {
     const scope = v3EntityAssignmentScope(context, "le");
-    const search = qPattern ? ` AND le.name_client ILIKE $${scope.params.length + 1} ESCAPE '\\'` : "";
     const params = [...scope.params];
-    if (qPattern) params.push(qPattern);
+    const search = qPattern ? ` AND le.name_client ILIKE $${params.push(qPattern)} ESCAPE '\\'` : "";
+    const filters = appendAssignmentFilters(input, "le", params);
+    const countParams = [...params];
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM onec_v3_legal_entities le WHERE (${scope.clause})${search}`,
-      qPattern ? [...scope.params, qPattern] : scope.params,
+      `SELECT COUNT(*)::text AS count FROM onec_v3_legal_entities le WHERE (${scope.clause})${search}${filters}`,
+      countParams,
     );
     const rows = await query(
       `
         SELECT le.guid_client::text AS guid, le.name_client AS name, le.guid_holding::text AS holding_guid
         FROM onec_v3_legal_entities le
-        WHERE (${scope.clause})${search}
+        WHERE (${scope.clause})${search}${filters}
         ORDER BY le.name_client ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
@@ -77,15 +99,16 @@ export async function listV3Entities(
   const orphanOnly = input.entity === "orphan_retail" ? " AND ro.guid_holding IS NULL" : "";
   const closedFilter =
     input.closed === true ? " AND ro.closed = TRUE" : input.closed === false ? " AND ro.closed = FALSE" : "";
-  const search = qPattern
-    ? ` AND COALESCE(ro.address->>'store_address', '') ILIKE $${scope.params.length + 1} ESCAPE '\\'`
-    : "";
   const params = [...scope.params];
-  if (qPattern) params.push(qPattern);
+  const search = qPattern
+    ? ` AND COALESCE(ro.address->>'store_address', '') ILIKE $${params.push(qPattern)} ESCAPE '\\'`
+    : "";
+  const filters = appendAssignmentFilters(input, "ro", params);
+  const countParams = [...params];
   params.push(input.pageSize, offset);
   const total = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}`,
-    qPattern ? [...scope.params, qPattern] : scope.params,
+    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}`,
+    countParams,
   );
   const rows = await query(
     `
@@ -94,7 +117,7 @@ export async function listV3Entities(
              ro.guid_holding::text AS holding_guid,
              ro.closed
       FROM onec_v3_retail_outlets ro
-      WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}
+      WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
       ORDER BY name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,

@@ -3872,13 +3872,13 @@
   }
 
   function shouldUseV3List(state) {
-    return (
-      exchangeV3Active &&
-      window.ClientsV3 &&
-      state.view !== "teams" &&
-      state.view !== "review" &&
-      state.view !== "completeness"
-    );
+    if (!exchangeV3Active || !window.ClientsV3) {
+      return false;
+    }
+    if (state.view === "teams" || state.view === "review" || state.view === "completeness") {
+      return false;
+    }
+    return true;
   }
 
   function shouldShowOnecUpdatePanel() {
@@ -4602,7 +4602,6 @@
             var v3state = { v3entity: entityId, page: 1, q: searchInput.value.trim(), closed: "" };
             window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
           });
-          viewSwitcherEl?.classList.add("clients-hidden");
         }
         loadPortfolioStats(initialState);
         loadList(initialState, true);

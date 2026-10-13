@@ -68,20 +68,21 @@ export function readSnapshotClientCodeExchange(
 }
 
 export function mergeClientCodeExchangeFields(
-  incoming: ParsedClientCodeExchange,
+  incoming: ParsedClientCodeExchange | undefined,
   previous: ParsedClientCodeExchange | undefined,
 ): ParsedClientCodeExchange {
+  const inc = incoming ?? createEmptyClientCodeExchange();
   const prev = previous ?? createEmptyClientCodeExchange();
-  if (!hasAnyClientCodeExchangeField(incoming)) {
+  if (!hasAnyClientCodeExchangeField(inc)) {
     return {
       code1c: prev.code1c,
       fieldPresence: { ...prev.fieldPresence },
     };
   }
   return {
-    code1c: incoming.fieldPresence.code1c ? incoming.code1c : prev.code1c,
+    code1c: inc.fieldPresence.code1c ? inc.code1c : prev.code1c,
     fieldPresence: {
-      code1c: incoming.fieldPresence.code1c || prev.fieldPresence.code1c,
+      code1c: inc.fieldPresence.code1c || prev.fieldPresence.code1c,
     },
   };
 }

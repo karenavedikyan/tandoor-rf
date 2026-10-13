@@ -21,19 +21,11 @@ async function ensureLabel(
     return;
   }
   await confirmObject(objectType, objectGuid, actorUserId, client);
-  try {
-    const issued = await issueLabelOnClient(objectType, objectGuid, actorUserId, client);
-    if (issued.created) {
-      stats.labelsIssued += 1;
-    } else {
-      stats.labelsSkippedExisting += 1;
-    }
-  } catch (error) {
-    if (error instanceof LabelRepositoryError && error.code === "LABEL_REVOKED") {
-      stats.labelsSkippedRevoked += 1;
-      return;
-    }
-    throw error;
+  const issued = await issueLabelOnClient(objectType, objectGuid, actorUserId, client);
+  if (issued.created) {
+    stats.labelsIssued += 1;
+  } else {
+    stats.labelsSkippedExisting += 1;
   }
 }
 

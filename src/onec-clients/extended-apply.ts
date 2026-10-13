@@ -415,29 +415,6 @@ export function buildExtendedSnapshotJson(
     ...outletMerge.historyEntries,
   ];
 
-  const businessChanged = !extendedBusinessDataEqual(previous, {
-    formatVersion: "extended_v1",
-    sourceSha256: previous?.sourceSha256 ?? sourceSha256,
-    importedAt: previous?.importedAt ?? importedAt,
-    isHolding,
-    holdingLink,
-    clientManagerRosterState,
-    regionalManager,
-    hardwareManager,
-    headOfSales,
-    commercial,
-    wholesaleExchange,
-    counterparty,
-    clientContract,
-    clientCode,
-    currentRetailOutlets,
-    retailOutletHistory,
-    blocks: previous?.blocks ?? {
-      clientExtendedReady: false,
-      outletNormalizedReady: false,
-    },
-  });
-
   const blockFreshness = {
     ...buildBlockFreshness(record.fieldPresence, hasPrevious),
     retailOutlets: deriveRetailOutletsBlockFreshness(
@@ -447,6 +424,41 @@ export function buildExtendedSnapshotJson(
     ),
   };
   const blockProvenance = buildBlockProvenance(blockFreshness, previous, sourceSha256, importedAt);
+  const normalizedCommercial = hasAnyCommercialField(commercial) ? commercial : undefined;
+  const normalizedWholesale = hasAnyWholesaleClientExchangeField(wholesaleExchange)
+    ? wholesaleExchange
+    : undefined;
+  const normalizedCounterparty = hasAnyCounterpartyExchangeField(counterparty) ? counterparty : undefined;
+  const normalizedClientContract = hasAnyClientContractExchangeField(clientContract)
+    ? clientContract
+    : undefined;
+  const normalizedClientCode = hasAnyClientCodeExchangeField(clientCode) ? clientCode : undefined;
+  const snapshotForCompare: ExtendedSnapshot = {
+    formatVersion: "extended_v1",
+    sourceSha256,
+    importedAt,
+    isHolding,
+    holdingLink,
+    clientManagerRosterState,
+    regionalManager,
+    hardwareManager,
+    headOfSales,
+    commercial: normalizedCommercial,
+    wholesaleExchange: normalizedWholesale,
+    counterparty: normalizedCounterparty,
+    clientContract: normalizedClientContract,
+    clientCode: normalizedClientCode,
+    currentRetailOutlets,
+    retailOutletHistory,
+    blocks: {
+      clientExtendedReady: options.contractVerified,
+      outletNormalizedReady: false,
+      clientExtendedBlockedReason: options.contractVerified ? null : "awaiting_live_json_verification",
+      blockFreshness,
+      blockProvenance,
+    },
+  };
+  const businessChanged = previous ? !extendedBusinessDataEqual(previous, snapshotForCompare) : true;
   const effectiveImportedAt =
     previous && !businessChanged ? previous.importedAt : importedAt;
 
@@ -460,11 +472,11 @@ export function buildExtendedSnapshotJson(
     regionalManager,
     hardwareManager,
     headOfSales,
-    commercial,
-    wholesaleExchange: hasAnyWholesaleClientExchangeField(wholesaleExchange) ? wholesaleExchange : undefined,
-    counterparty: hasAnyCounterpartyExchangeField(counterparty) ? counterparty : undefined,
-    clientContract: hasAnyClientContractExchangeField(clientContract) ? clientContract : undefined,
-    clientCode: hasAnyClientCodeExchangeField(clientCode) ? clientCode : undefined,
+    commercial: normalizedCommercial,
+    wholesaleExchange: normalizedWholesale,
+    counterparty: normalizedCounterparty,
+    clientContract: normalizedClientContract,
+    clientCode: normalizedClientCode,
     currentRetailOutlets,
     retailOutletHistory: appendHistoryWhenBusinessChanged(
       previous,

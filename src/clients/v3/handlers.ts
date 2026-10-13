@@ -51,12 +51,18 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   const closedRaw = String(req.query.closed ?? "");
   const closed =
     closedRaw === "true" ? true : closedRaw === "false" ? false : undefined;
+  const managerGuid = parseGuidParam(req.query.managerGuid);
+  const typeGuid = typeof req.query.typeGuid === "string" ? req.query.typeGuid.trim() : undefined;
+  const categoryGuid = typeof req.query.categoryGuid === "string" ? req.query.categoryGuid.trim() : undefined;
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
     pageSize,
     q,
     closed,
+    managerGuid: managerGuid ?? undefined,
+    typeGuid: typeGuid || undefined,
+    categoryGuid: categoryGuid || undefined,
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });

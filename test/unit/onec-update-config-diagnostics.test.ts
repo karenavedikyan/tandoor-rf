@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { runOnecUpdateReadOnlyProbe } from "../../src/clients/admin-onec-update/config-diagnostics";
-import { buildClientsFileBytes, sampleClient } from "../helpers/onec-clients-fixtures";
+import fs from "node:fs";
+import path from "node:path";
 import {
   buildEmployeeRosterBytes,
   buildEmployeeRosterEntry,
 } from "../helpers/onec-clients-employee-roster-fixtures";
+
+const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 
 const env = {
   ONEC_FTP_ENABLED: "true",
@@ -26,12 +29,13 @@ describe("onec update config diagnostics", () => {
   });
 
   it("reports ready bundle when manifest is absent", async () => {
-    const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222"),
     ]);
     const outcome = await runOnecUpdateReadOnlyProbe(env, {
-      clientsBytes,
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
       employeeRosterBytes: rosterBytes,
     });
     assert.equal(outcome.readOk, true);
@@ -41,12 +45,13 @@ describe("onec update config diagnostics", () => {
   });
 
   it("ignores invalid manifest on read-only dry-run probe", async () => {
-    const clientsBytes = buildClientsFileBytes([sampleClient()]);
     const rosterBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry("22222222-2222-4222-8222-222222222222"),
     ]);
     const outcome = await runOnecUpdateReadOnlyProbe(env, {
-      clientsBytes,
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
       employeeRosterBytes: rosterBytes,
       manifestBytes: Buffer.from("{ invalid json"),
     });
