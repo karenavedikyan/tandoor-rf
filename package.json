@@ -17,8 +17,6 @@
     "grant-admin-access:local": "node --env-file=.env dist/cli/grant-admin-access.js",
     "onec-ftp-probe": "node dist/cli/onec-ftp-probe.js",
     "onec-ftp-probe:local": "node --env-file=.env dist/cli/onec-ftp-probe.js",
-    "onec-clients-import": "node dist/cli/onec-clients-import.js",
-    "onec-clients-import:local": "node --env-file=.env dist/cli/onec-clients-import.js",
     "onec-wholesale-baseline-replace": "node dist/cli/onec-wholesale-baseline-replace.js",
     "onec-wholesale-baseline-replace:local": "node --env-file=.env dist/cli/onec-wholesale-baseline-replace.js",
     "onec-import-job-worker": "node dist/cli/onec-import-job-worker.js",

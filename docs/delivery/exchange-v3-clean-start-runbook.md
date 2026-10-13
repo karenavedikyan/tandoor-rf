@@ -30,7 +30,7 @@
    Повтор после успешного перехода только с `--force-clean-start`.
 5. Регулярное обновление (без clean-start):  
    `node --import tsx src/cli/onec-regular-update.ts --dry-run` (или admin worker) — комплект v3 со **стабильным двойным чтением** четырёх файлов (два полных прохода по всем файлам, общий deadline).
-6. Проверка: `onec_v3_*` таблицы, пользователи и каталог на месте.
+6. Проверка: `onec_v3_*` таблицы, пользователи и каталог на месте; UI `/clients` переключается на v3 при `exchangeV3Active` (API `/api/clients/v3/list`, `/api/clients/v3/detail`, composition).
 
 ## Стабильность комплекта (ограничение)
 

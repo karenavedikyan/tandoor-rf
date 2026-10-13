@@ -9,6 +9,7 @@ export type V3ListQuery = {
   page: number;
   pageSize: number;
   q: string;
+  closed?: boolean;
 };
 
 export async function isExchangeV3Active(): Promise<boolean> {
@@ -74,6 +75,8 @@ export async function listV3Entities(
 
   const scope = v3EntityAssignmentScope(context, "ro", "retail");
   const orphanOnly = input.entity === "orphan_retail" ? " AND ro.guid_holding IS NULL" : "";
+  const closedFilter =
+    input.closed === true ? " AND ro.closed = TRUE" : input.closed === false ? " AND ro.closed = FALSE" : "";
   const search = qPattern
     ? ` AND COALESCE(ro.address->>'store_address', '') ILIKE $${scope.params.length + 1} ESCAPE '\\'`
     : "";
@@ -81,7 +84,7 @@ export async function listV3Entities(
   if (qPattern) params.push(qPattern);
   params.push(input.pageSize, offset);
   const total = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${search}`,
+    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}`,
     qPattern ? [...scope.params, qPattern] : scope.params,
   );
   const rows = await query(
@@ -91,7 +94,7 @@ export async function listV3Entities(
              ro.guid_holding::text AS holding_guid,
              ro.closed
       FROM onec_v3_retail_outlets ro
-      WHERE (${scope.clause})${orphanOnly}${search}
+      WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}
       ORDER BY name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,

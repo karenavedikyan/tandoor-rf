@@ -5,6 +5,7 @@
   var shell = window.ClientsShell;
   var logic = window.ClientsLogic;
   var DEBOUNCE_MS = 300;
+  var exchangeV3Active = false;
 
   var appEl = document.getElementById("clients-app");
   var accessPanel = document.getElementById("access-panel");
@@ -3811,8 +3812,73 @@
         return { ok: false };
       }
       renderSyncStatus(result.data);
-      return { ok: true };
+      exchangeV3Active = !!result.data.exchangeV3Active;
+      return { ok: true, data: result.data };
     });
+  }
+
+  function buildV3UiContext() {
+    return {
+      api: api,
+      shell: shell,
+      showResultsState: showResultsState,
+      showResultsContent: showResultsContent,
+      showAccessDenied: showAccessDenied,
+      resultCountEl: resultCountEl,
+      tableHeadRow: tableHeadRow,
+      tableBody: tableBody,
+      cardsEl: cardsEl,
+      paginationEl: paginationEl,
+      pageTitleEl: pageTitleEl,
+      entitySwitcherEl: entitySwitcherEl,
+      nextListFetchSignal: nextListFetchSignal,
+      renderPagination: function (v3state, totalPages) {
+        if (totalPages <= 1) {
+          paginationEl.innerHTML = "";
+          return;
+        }
+        var prevDisabled = v3state.page <= 1;
+        var nextDisabled = v3state.page >= totalPages;
+        paginationEl.innerHTML =
+          '<button type="button" class="workspace-button workspace-button--secondary" id="page-prev"' +
+          (prevDisabled ? " disabled" : "") +
+          ">Назад</button><span>Страница " +
+          v3state.page +
+          " из " +
+          totalPages +
+          '</span><button type="button" class="workspace-button workspace-button--secondary" id="page-next"' +
+          (nextDisabled ? " disabled" : "") +
+          ">Вперёд</button>";
+        document.getElementById("page-prev")?.addEventListener("click", function () {
+          if (v3state.page <= 1) return;
+          cancelScheduledLoad();
+          invalidateInFlightRequests();
+          var next = window.ClientsV3.readState();
+          next.page = v3state.page - 1;
+          next.q = searchInput.value.trim();
+          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+        });
+        document.getElementById("page-next")?.addEventListener("click", function () {
+          if (v3state.page >= totalPages) return;
+          cancelScheduledLoad();
+          invalidateInFlightRequests();
+          var next = window.ClientsV3.readState();
+          next.page = v3state.page + 1;
+          next.q = searchInput.value.trim();
+          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+        });
+      },
+    };
+  }
+
+  function shouldUseV3List(state) {
+    return (
+      exchangeV3Active &&
+      window.ClientsV3 &&
+      state.view !== "teams" &&
+      state.view !== "review" &&
+      state.view !== "completeness"
+    );
   }
 
   function shouldShowOnecUpdatePanel() {
@@ -4034,6 +4100,13 @@
     cancelScheduledLoad();
     activeRequestId += 1;
     var requestId = activeRequestId;
+    if (shouldUseV3List(state)) {
+      showAppShell();
+      var v3state = window.ClientsV3.readState();
+      v3state.page = state.page || v3state.page || 1;
+      v3state.q = searchInput.value.trim() || v3state.q;
+      return window.ClientsV3.loadList(buildV3UiContext(), v3state, replaceHistory);
+    }
     applyStateToForm(state);
     writeStateToUrl(state, replaceHistory);
     showAppShell();
@@ -4297,6 +4370,11 @@
   function resetFilters() {
     cancelScheduledLoad();
     invalidateInFlightRequests();
+    if (exchangeV3Active && window.ClientsV3) {
+      searchInput.value = "";
+      window.ClientsV3.resetFilters(buildV3UiContext());
+      return;
+    }
     searchInput.value = "";
     phoneFilter.value = "all";
     if (managerCombobox) {
@@ -4516,6 +4594,16 @@
           window.location.search,
         );
         applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
+        if (exchangeV3Active && window.ClientsV3) {
+          window.ClientsV3.mountEntitySwitcher(entitySwitcherEl);
+          window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
+            cancelScheduledLoad();
+            invalidateInFlightRequests();
+            var v3state = { v3entity: entityId, page: 1, q: searchInput.value.trim(), closed: "" };
+            window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
+          });
+          viewSwitcherEl?.classList.add("clients-hidden");
+        }
         loadPortfolioStats(initialState);
         loadList(initialState, true);
       })

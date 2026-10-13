@@ -348,6 +348,18 @@
 
 ---
 
+## Exchange v3 (draft PR #76, test DB only)
+
+| Сценарий | Статус | Доказательство |
+|----------|--------|----------------|
+| v3 list/detail/composition API + scope (404 withheld) | ✅ на HEAD PR | `test/integration/clients-v3-api.test.ts` |
+| v3 UI list/entity switch/detail/return (1440 + 390) | ✅ на HEAD PR | `test/browser/clients-v3.browser.test.ts` |
+| Legacy `onec-clients-import` npm scripts | удалены; CLI disabled без `ONEC_ALLOW_LEGACY_CLIENTS_IMPORT` | `src/cli/onec-clients-import.ts` |
+| Полный `npm test` / все legacy browser suites | ⏳ не перенос с прошлых SHA | — |
+| Production merge/deploy | ⏸ вне scope | — |
+
+---
+
 ## Следующий шаг
 
 Для **R1.1** нужны подтверждённые правила коммерческих полей **Q4–Q6** и приёмка применимой части R0.2. **Q8** относится к **R1.2**; вопросы каталога **Q12–Q17** относятся к **R3** и не являются техническими условиями реализации R1.1.
