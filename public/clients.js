@@ -2663,6 +2663,28 @@
     var isReview = state.view === "review";
     var isTeams = state.view === "teams";
     var isCompleteness = state.view === "completeness";
+    var v3FiltersWrap = document.getElementById("v3-filters-wrap");
+    if (v3FiltersWrap) {
+      var v3ModeUrl = new URLSearchParams(window.location.search).get("v3mode") === "1";
+      var showV3Filters =
+        (exchangeV3Active || v3ModeUrl) &&
+        !isCompleteness &&
+        ((!isTeams && !isReview) ||
+          (isTeams && (logic.hasResponsibleSelection(state) || logic.isBranchPortfolioList(state))) ||
+          (isReview && (Boolean(state.unassignedCategory) || Boolean(state.manager))));
+      v3FiltersWrap.classList.toggle("clients-hidden", !showV3Filters);
+    }
+    if (exchangeV3Active && !isCompleteness) {
+      ropFilterWrap?.classList.add("clients-hidden");
+      managerFilterWrap?.classList.add("clients-hidden");
+      holdingFilterWrap?.classList.add("clients-hidden");
+      phoneFilter.closest(".clients-field")?.classList.add("clients-hidden");
+      outletStatusFilterWrap?.classList.add("clients-hidden");
+      warehouseFilterWrap?.classList.add("clients-hidden");
+      regionalFilterWrap?.classList.add("clients-hidden");
+      hardwareFilterWrap?.classList.add("clients-hidden");
+      fieldFiltersWrap?.classList.add("clients-hidden");
+    }
     var isOutlets = (state.entity || "clients") === "outlets";
     var showAssignmentFilters =
       rolePresentation &&
@@ -3821,6 +3843,9 @@
     return {
       api: api,
       shell: shell,
+      getSearchQuery: function () {
+        return searchInput.value.trim();
+      },
       showResultsState: showResultsState,
       showResultsContent: showResultsContent,
       showAccessDenied: showAccessDenied,
@@ -3875,10 +3900,7 @@
     if (!exchangeV3Active || !window.ClientsV3) {
       return false;
     }
-    if (state.view === "teams" || state.view === "review" || state.view === "completeness") {
-      return false;
-    }
-    return true;
+    return (state.view || "all") !== "completeness";
   }
 
   function shouldShowOnecUpdatePanel() {
@@ -4101,11 +4123,21 @@
     activeRequestId += 1;
     var requestId = activeRequestId;
     if (shouldUseV3List(state)) {
-      showAppShell();
-      var v3state = window.ClientsV3.readState();
-      v3state.page = state.page || v3state.page || 1;
-      v3state.q = searchInput.value.trim() || v3state.q;
-      return window.ClientsV3.loadList(buildV3UiContext(), v3state, replaceHistory);
+      return window.ClientsV3.loadOrchestrated(buildV3UiContext(), state, replaceHistory, {
+        showAppShell: showAppShell,
+        updateViewChrome: updateViewChrome,
+        loadTeamsContext: loadTeamsContext,
+        renderTeamsPanel: renderTeamsPanel,
+        logic: logic,
+        requestId: requestId,
+        activeRequestId: activeRequestId,
+        getSearchQuery: function () {
+          return searchInput.value.trim();
+        },
+        unassignedPanelEl: unassignedPanelEl,
+        navigateState: navigateState,
+        currentStateFromForm: currentStateFromForm,
+      });
     }
     applyStateToForm(state);
     writeStateToUrl(state, replaceHistory);
@@ -4594,12 +4626,16 @@
           window.location.search,
         );
         applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
+        applyStateToForm(initialState);
         if (exchangeV3Active && window.ClientsV3) {
           window.ClientsV3.mountEntitySwitcher(entitySwitcherEl);
           window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
             cancelScheduledLoad();
             invalidateInFlightRequests();
-            var v3state = { v3entity: entityId, page: 1, q: searchInput.value.trim(), closed: "" };
+            var v3state = window.ClientsV3.readState();
+            v3state.v3entity = entityId;
+            v3state.page = 1;
+            v3state.q = searchInput.value.trim() || v3state.q || "";
             window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
           });
         }

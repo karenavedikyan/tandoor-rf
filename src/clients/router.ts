@@ -54,7 +54,13 @@ import {
 } from "./org/handlers";
 import { listTeamManagersHandler, listTeamRopsHandler } from "./teams/handlers";
 import { unassignedSummaryHandler } from "./unassigned/handlers";
-import { v3ClientsDetailHandler, v3ClientsListHandler, v3HoldingCompositionHandler } from "./v3/handlers";
+import {
+  v3ClientsDetailHandler,
+  v3ClientsListHandler,
+  v3ClientsOptionsHandler,
+  v3HoldingCompositionHandler,
+  v3UnassignedSummaryHandler,
+} from "./v3/handlers";
 
 export function createClientsRouter(): express.Router {
   const router = express.Router();
@@ -76,6 +82,14 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/list", ...readChain, (req, res, next) => {
     void v3ClientsListHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/options", ...readChain, (req, res, next) => {
+    void v3ClientsOptionsHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/unassigned-summary", ...readChain, (req, res, next) => {
+    void v3UnassignedSummaryHandler(req, res).catch(next);
   });
 
   router.get("/v3/detail", ...readChain, (req, res, next) => {

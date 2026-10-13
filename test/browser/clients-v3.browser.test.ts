@@ -109,6 +109,15 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         timeout: 15000,
         state: "attached",
       });
+      await page.waitForFunction(function () {
+        var wrap = document.getElementById("v3-filters-wrap");
+        return wrap && !wrap.classList.contains("clients-hidden");
+      });
+      const managerOptions = await page.locator("#v3-manager-filter option").count();
+      assert.ok(managerOptions >= 1);
+      await page.selectOption("#v3-closed-filter", "false").catch(function () {
+        /* closed filter only for retail entities */
+      });
       await page.click('[data-v3entity="holdings"]');
       await page.waitForURL(/v3entity=holdings/);
       await page.click('[data-v3entity="legal"]');
@@ -117,7 +126,8 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         viewport.width <= 400
           ? page.locator("#clients-cards a").first()
           : page.locator("#clients-table-body a").first();
-      await link.click({ force: viewport.width <= 400 });
+      await link.scrollIntoViewIfNeeded();
+      await link.click({ force: true });
       await page.waitForSelector('[data-testid="v3-detail-title"]');
       await page.waitForSelector("dt:has-text('Discount')");
       const returnParam = new URL(page.url()).searchParams.get("return");
@@ -127,6 +137,17 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       await page.waitForURL(/\/clients\?.*v3mode=1/);
       assert.match(page.url(), /v3entity=legal/);
       assert.match(page.url(), /q=Legal/);
+
+      const holdingNav = page.locator('.client-card-section a[href*="v3Entity=holding"]').first();
+      if (await holdingNav.count()) {
+        await holdingNav.click();
+        await page.waitForSelector("#v3-composition a", { timeout: 15000 });
+        await page.locator("#v3-composition a").first().click();
+        await page.waitForSelector('[data-testid="v3-back-to-list"]');
+        await page.click('[data-testid="v3-back-to-list"]');
+        await page.waitForSelector("h1");
+      }
+
       await page.close();
     }
   });

@@ -116,6 +116,7 @@
     "v3type",
     "v3category",
     "v3view",
+    "missingManager",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [

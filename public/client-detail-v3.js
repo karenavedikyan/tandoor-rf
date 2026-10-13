@@ -119,14 +119,22 @@
     );
   }
 
+  function formatHoldingLink(shell, holdingLink) {
+    if (!holdingLink) return "—";
+    var ret = encodeURIComponent(window.location.pathname + window.location.search);
+    return (
+      '<a href="/clients/' +
+      encodeURIComponent(holdingLink.guid) +
+      "?v3Entity=holding&return=" +
+      ret +
+      '">' +
+      esc(shell, holdingLink.name) +
+      "</a>"
+    );
+  }
+
   function renderLegal(shell, ent, holdingLink) {
-    var holdingHtml = holdingLink
-      ? '<a href="/clients/' +
-        encodeURIComponent(holdingLink.guid) +
-        '">' +
-        esc(shell, holdingLink.name) +
-        "</a>"
-      : "—";
+    var holdingHtml = formatHoldingLink(shell, holdingLink);
     return (
       section(
         "Юрлицо",
@@ -150,13 +158,7 @@
       ent.additional_information && typeof ent.additional_information === "object"
         ? ent.additional_information.tandoor_club || ent.additional_information.TandoorClub
         : null;
-    var holdingHtml = holdingLink
-      ? '<a href="/clients/' +
-        encodeURIComponent(holdingLink.guid) +
-        '">' +
-        esc(shell, holdingLink.name) +
-        "</a>"
-      : "—";
+    var holdingHtml = formatHoldingLink(shell, holdingLink);
     return (
       section(
         "Торговая точка",

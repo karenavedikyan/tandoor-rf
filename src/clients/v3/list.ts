@@ -13,6 +13,7 @@ export type V3ListQuery = {
   managerGuid?: string;
   typeGuid?: string;
   categoryGuid?: string;
+  missingManager?: boolean;
 };
 
 function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
@@ -28,6 +29,9 @@ function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unkn
   if (input.categoryGuid) {
     params.push(input.categoryGuid);
     sql += ` AND ${alias}.type_category->>'guid_category' = $${params.length}`;
+  }
+  if (input.missingManager) {
+    sql += ` AND NULLIF(TRIM(COALESCE(${alias}.managers->>'guidManager', '')), '') IS NULL`;
   }
   return sql;
 }

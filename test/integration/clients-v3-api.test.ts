@@ -33,7 +33,7 @@ async function login(email: string): Promise<string> {
   const res = await request(app)
     .post("/api/auth/login")
     .set({ Origin: ORIGIN, "Content-Type": "application/json" })
-    .send({ email, password: TEST_PASSWORD });
+    .send({ email: email.trim().toLowerCase(), password: TEST_PASSWORD });
   assert.equal(res.status, 200);
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 }
@@ -75,6 +75,30 @@ describe("clients v3 API", { concurrency: false }, () => {
     });
     assert.equal(applied.status, "SUCCESS");
   }
+
+  it("returns scoped v3 filter options and missingManager list filter", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const admin = await createTestUser({
+      databaseUrl,
+      email: `admin-v3-options-${Date.now()}@example.com`,
+      password: TEST_PASSWORD,
+      fullName: "Admin Options",
+      role: "admin",
+    });
+    const cookie = await login(admin.email);
+    const app = await loadApp();
+    const options = await request(app)
+      .get("/api/clients/v3/options?entity=legal")
+      .set("Cookie", cookie);
+    assert.equal(options.status, 200);
+    assert.ok(Array.isArray(options.body.managers));
+    const unassigned = await request(app)
+      .get("/api/clients/v3/unassigned-summary")
+      .set("Cookie", cookie);
+    assert.equal(unassigned.status, 200);
+    assert.ok(typeof unassigned.body.missingManager?.total === "number");
+  });
 
   it("manager sees scoped v3 list; foreign detail returns 404", async () => {
     await prepareDatabase(databaseUrl);

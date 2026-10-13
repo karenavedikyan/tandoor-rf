@@ -4,6 +4,8 @@ import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
 import { isValidUuidParam } from "../uuid-param";
 import { listV3Entities, isExchangeV3Active, type V3ListEntity } from "./list";
+import { loadV3FilterOptions } from "./options";
+import { buildV3UnassignedSummary } from "./unassigned";
 import {
   getV3HoldingComposition,
   getV3HoldingDetail,
@@ -54,6 +56,7 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   const managerGuid = parseGuidParam(req.query.managerGuid);
   const typeGuid = typeof req.query.typeGuid === "string" ? req.query.typeGuid.trim() : undefined;
   const categoryGuid = typeof req.query.categoryGuid === "string" ? req.query.categoryGuid.trim() : undefined;
+  const missingManager = String(req.query.missingManager ?? "") === "true";
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -63,9 +66,33 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     managerGuid: managerGuid ?? undefined,
     typeGuid: typeGuid || undefined,
     categoryGuid: categoryGuid || undefined,
+    missingManager: missingManager || undefined,
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });
+}
+
+export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const entityRaw = String(req.query.entity ?? "legal");
+  if (!LIST_ENTITIES.has(entityRaw as V3ListEntity)) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
+    return;
+  }
+  const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity);
+  setNoStore(res);
+  res.json(options);
+}
+
+export async function v3UnassignedSummaryHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const summary = await buildV3UnassignedSummary(req.accessContext!);
+  setNoStore(res);
+  res.json(summary);
 }
 
 export async function v3ClientsDetailHandler(req: AccessRequest, res: Response): Promise<void> {
