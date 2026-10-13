@@ -77,10 +77,8 @@ describe("clean start pooled/one-off client cleanup", () => {
       if (!identityPhaseDiscard) {
         try {
           await resetIdentityStatementTimeout(client);
-        } catch (cleanupError) {
-          if (shouldDiscardPgClientAfterError(cleanupError)) {
-            identityPhaseDiscard = true;
-          }
+        } catch {
+          identityPhaseDiscard = true;
         }
       }
     }
@@ -99,6 +97,26 @@ describe("clean start pooled/one-off client cleanup", () => {
     assert.equal(client.queryTexts.length, 0);
   });
 
+  it("releaseCleanStartImportLock returns discard on generic SQL cleanup error", async () => {
+    const client = mockClient({});
+    const discard = await releaseCleanStartImportLock(client, {
+      simulateLockReleaseSqlError: true,
+    });
+    assert.equal(discard, true);
+    assert.equal(client.queryTexts.length, 0);
+  });
+
+  it("releaseCleanStartImportLock returns discard when pg_advisory_unlock is false", async () => {
+    const client = mockClient({});
+    client.query = (async (cfg: string | { text: string }) => {
+      const text = typeof cfg === "string" ? cfg : cfg.text;
+      client.queryTexts.push(text);
+      return { rows: [{ pg_advisory_unlock: false }] };
+    }) as PoolClient["query"];
+    const discard = await releaseCleanStartImportLock(client, {});
+    assert.equal(discard, true);
+  });
+
   it("rollbackCleanStartTransaction returns discard on Query read timeout", async () => {
     const client = mockClient({
       onQuery: () => ({ throwError: new Error("Query read timeout") }),
@@ -106,5 +124,12 @@ describe("clean start pooled/one-off client cleanup", () => {
     const discard = await rollbackCleanStartTransaction(client);
     assert.equal(discard, true);
     assert.deepEqual(client.queryTexts, ["ROLLBACK"]);
+  });
+
+  it("rollbackCleanStartTransaction returns discard on generic SQL error", async () => {
+    const client = mockClient({});
+    const discard = await rollbackCleanStartTransaction(client, { simulateRollbackSqlError: true });
+    assert.equal(discard, true);
+    assert.equal(client.queryTexts.length, 0);
   });
 });

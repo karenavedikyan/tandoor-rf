@@ -150,10 +150,8 @@ export async function finalizeOneOffIdentityClient(
   if (!discard) {
     try {
       await resetIdentityStatementTimeout(client);
-    } catch (error) {
-      if (shouldDiscardPgClientAfterError(error)) {
-        discard = true;
-      }
+    } catch {
+      discard = true;
     }
   }
   client.release(discard);

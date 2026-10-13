@@ -23,12 +23,18 @@ import {
 } from "./target-db-identity";
 
 /** @internal exported for regression tests */
-export async function rollbackCleanStartTransaction(client: PoolClient): Promise<boolean> {
+export async function rollbackCleanStartTransaction(
+  client: PoolClient,
+  testHooks?: CleanStartTestHooks,
+): Promise<boolean> {
   try {
+    if (testHooks?.simulateRollbackSqlError) {
+      throw new Error("rollback cleanup failed");
+    }
     await pgQueryWithTimeout(client, "ROLLBACK", IDENTITY_ADMIN_QUERY_TIMEOUT_MS);
     return false;
-  } catch (error) {
-    return shouldDiscardPgClientAfterError(error);
+  } catch {
+    return true;
   }
 }
 
@@ -41,15 +47,21 @@ export async function releaseCleanStartImportLock(
     if (testHooks?.simulateLockReleaseTransportTimeout) {
       throw new Error("Query read timeout");
     }
-    await pgQueryWithTimeout(
+    if (testHooks?.simulateLockReleaseSqlError) {
+      throw new Error("advisory unlock cleanup failed");
+    }
+    const unlocked = await pgQueryWithTimeout<{ pg_advisory_unlock: boolean }>(
       client,
-      "SELECT pg_advisory_unlock($1)",
+      "SELECT pg_advisory_unlock($1) AS pg_advisory_unlock",
       IDENTITY_ADMIN_QUERY_TIMEOUT_MS,
       [IMPORT_ADVISORY_LOCK_KEY],
     );
+    if (unlocked.rows[0]?.pg_advisory_unlock !== true) {
+      return true;
+    }
     return false;
-  } catch (error) {
-    return shouldDiscardPgClientAfterError(error);
+  } catch {
+    return true;
   }
 }
 
@@ -108,8 +120,10 @@ export type CleanStartTestHooks = {
   simulateCommitTransportTimeout?: boolean;
   /** Integration tests: transport error while releasing advisory lock in finally. */
   simulateLockReleaseTransportTimeout?: boolean;
-  /** Integration tests: transport error during ROLLBACK in error path. */
-  simulateRollbackTransportTimeout?: boolean;
+  /** Integration tests: generic SQL error during ROLLBACK in error path. */
+  simulateRollbackSqlError?: boolean;
+  /** Integration tests: generic SQL error during advisory unlock in finally. */
+  simulateLockReleaseSqlError?: boolean;
 };
 
 async function countPreserved(client: PoolClient): Promise<CleanStartDryRunReport["preserved"]> {
@@ -352,19 +366,25 @@ export async function runExchangeV3CleanStartApply(input: {
       if (!identityPhaseDiscard) {
         try {
           await resetIdentityStatementTimeout(client);
-        } catch (cleanupError) {
-          if (shouldDiscardPgClientAfterError(cleanupError)) {
-            identityPhaseDiscard = true;
-          }
+        } catch {
+          identityPhaseDiscard = true;
         }
       }
     }
+    discardPooledClient = identityPhaseDiscard;
     if (identityFailureMessage || !targetIdentity) {
-      discardPooledClient = identityPhaseDiscard;
       return {
         ok: false,
         errorCode: "TARGET_DB_MISMATCH",
         message: identityFailureMessage ?? "Не удалось определить идентичность целевой БД на соединении apply",
+      };
+    }
+    if (identityPhaseDiscard) {
+      return {
+        ok: false,
+        errorCode: "TARGET_DB_MISMATCH",
+        message:
+          "Соединение с БД непригодно после проверки идентичности (ошибка RESET statement_timeout)",
       };
     }
 
@@ -383,7 +403,7 @@ export async function runExchangeV3CleanStartApply(input: {
     await client.query("BEGIN");
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
-      if (await rollbackCleanStartTransaction(client)) {
+      if (await rollbackCleanStartTransaction(client, input.testHooks)) {
         discardPooledClient = true;
       }
       return { ok: false, errorCode: "IMPORT_LOCKED", message: "Не удалось захватить import lock" };
@@ -394,7 +414,7 @@ export async function runExchangeV3CleanStartApply(input: {
 
     const jobBlocker = await assertNoConcurrentJobs(client);
     if (jobBlocker) {
-      if (await rollbackCleanStartTransaction(client)) {
+      if (await rollbackCleanStartTransaction(client, input.testHooks)) {
         discardPooledClient = true;
       }
       return { ok: false, errorCode: "CONCURRENT_JOBS", message: jobBlocker };
@@ -404,7 +424,7 @@ export async function runExchangeV3CleanStartApply(input: {
       `SELECT legacy_clean_start_completed_at FROM onec_v3_exchange_state WHERE id = 1 FOR UPDATE`,
     );
     if (state.rows[0]?.legacy_clean_start_completed_at && !input.forceCleanStart) {
-      if (await rollbackCleanStartTransaction(client)) {
+      if (await rollbackCleanStartTransaction(client, input.testHooks)) {
         discardPooledClient = true;
       }
       return {
@@ -433,7 +453,7 @@ export async function runExchangeV3CleanStartApply(input: {
       cleanStartBundleFingerprint: input.bundle.bundleFingerprint,
     });
     if (!applied.ok) {
-      if (await rollbackCleanStartTransaction(client)) {
+      if (await rollbackCleanStartTransaction(client, input.testHooks)) {
         discardPooledClient = true;
       }
       return applied;
@@ -480,9 +500,7 @@ export async function runExchangeV3CleanStartApply(input: {
       });
     }
     if (!commitAttempted && !discardPooledClient) {
-      if (input.testHooks?.simulateRollbackTransportTimeout) {
-        discardPooledClient = true;
-      } else if (await rollbackCleanStartTransaction(client)) {
+      if (await rollbackCleanStartTransaction(client, input.testHooks)) {
         discardPooledClient = true;
       }
     }

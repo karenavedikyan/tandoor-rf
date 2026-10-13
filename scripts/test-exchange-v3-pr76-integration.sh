@@ -20,6 +20,7 @@ FILES=(
   test/integration/onec-exchange-v3-target-db-identity.test.ts
   test/integration/onec-exchange-v3-target-db-safety.test.ts
   test/integration/onec-exchange-v3-clean-start.test.ts
+  test/integration/onec-exchange-v3-clean-start-apply-cleanup.test.ts
   test/integration/onec-exchange-v3-bitrix-labels.test.ts
 )
 
