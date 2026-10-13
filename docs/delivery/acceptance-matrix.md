@@ -352,10 +352,13 @@
 
 | Сценарий | Статус | Доказательство |
 |----------|--------|----------------|
-| v3 list/detail/composition API + scope (404 withheld) | ✅ на HEAD PR | `test/integration/clients-v3-api.test.ts` |
-| v3 UI list/entity switch/detail/return (1440 + 390) | ✅ на HEAD PR | `test/browser/clients-v3.browser.test.ts` |
-| Legacy `onec-clients-import` npm scripts | удалены; CLI disabled без `ONEC_ALLOW_LEGACY_CLIENTS_IMPORT` | `src/cli/onec-clients-import.ts` |
-| Полный `npm test` / все legacy browser suites | ⏳ не перенос с прошлых SHA | — |
+| v3 list/detail/composition API + scope (404 withheld) | ✅ | `test/integration/clients-v3-api.test.ts` (нужен `TEST_DATABASE_URL`) |
+| v3 UI: карточки полей, return state, list (1440 + 390) | ✅ | `test/browser/clients-v3.browser.test.ts` |
+| Bitrix: новая метка после revoke + idempotent re-import | ✅ | `test/integration/onec-exchange-v3-bitrix-labels.test.ts` |
+| `npm test` (unit) | ✅ 661/661 | Node 22, `npm test` |
+| Legacy `onec-clients-import` / clean-reload / wholesale-baseline npm | удалены | `package.json`, `src/cli/onec-clients-import.ts` |
+| v3 фильтры (manager/type/category/closed) + teams/unassigned UI | ⏳ API list filters; teams/completeness views ещё на legacy loader | `src/clients/v3/list.ts`, `public/clients-v3.js` |
+| `test:integration` / browser полный прогон в CI агенте | ⏳ без `TEST_DATABASE_URL` | — |
 | Production merge/deploy | ⏸ вне scope | — |
 
 ---
