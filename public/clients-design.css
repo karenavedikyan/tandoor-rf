@@ -11,6 +11,7 @@
   --rf-surface-muted: #eef5e7;
   --rf-warning-text: #93600d;
   --rf-warning-bg: #fff4df;
+  --rf-row-hover: #fafbfc;
   --rf-radius: 9px;
   --rf-shadow-sm: none;
   --rf-shadow: none;
@@ -20,6 +21,26 @@
   line-height: 1.45;
   color: var(--rf-text);
   background: var(--rf-bg);
+}
+
+[data-theme="dark"] .clients-design-page .legacy-content {
+  --rf-bg: #172019;
+  --rf-surface: #222c25;
+  --rf-text: #ecf0e9;
+  --rf-text-muted: #a7b2a9;
+  --rf-border: #39483d;
+  --rf-primary: #86b832;
+  --rf-primary-hover: #a8cb78;
+  --rf-surface-muted: #31422b;
+  --rf-warning-text: #f0c674;
+  --rf-warning-bg: #3d3420;
+  --rf-row-hover: #2a352c;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .legacy-content {
+    padding: 24px 28px;
+  }
 }
 
 .clients-design-page .legacy-content button,
@@ -47,8 +68,21 @@
 }
 
 .clients-design-page .clients-field__select--multi {
-  min-height: 4.5rem;
-  padding: 4px 8px;
+  min-height: 4.75rem;
+  padding: 6px 8px;
+  border-color: var(--rf-border);
+  background: var(--rf-surface);
+  line-height: 1.35;
+}
+
+.clients-design-page .clients-field__select--multi option {
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.clients-design-page .clients-field__select--multi option:checked {
+  background: var(--rf-surface-muted);
+  color: var(--rf-text);
 }
 
 .clients-design-page .clients-field--multi .clients-field__label {
@@ -418,10 +452,6 @@
   max-height: calc(100vh - 20rem);
 }
 
-.clients-design-page .clients-results-shell .clients-cards {
-  padding: 0 18px 12px;
-}
-
 .clients-design-page .clients-results-shell .clients-pagination {
   margin: 0;
   padding: 12px 18px 14px;
@@ -463,11 +493,11 @@
 }
 
 .clients-design-page .clients-table tbody tr:hover td {
-  background: #fafbfc;
+  background: var(--rf-row-hover);
 }
 
 .clients-design-page .clients-table tbody tr:hover td:first-child {
-  background: #fafbfc;
+  background: var(--rf-row-hover);
 }
 
 .clients-design-page .clients-link {
@@ -495,17 +525,48 @@
   background: var(--rf-warning-bg);
 }
 
-.clients-design-page .clients-card {
+.clients-design-page .clients-results-shell .clients-cards {
+  gap: 10px;
+  padding: 12px 18px 16px;
+}
+
+.clients-design-page .clients-results-shell .clients-card {
+  display: block;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--rf-text);
+  text-decoration: none;
   border-radius: var(--rf-radius);
   box-shadow: none;
 }
 
+.clients-design-page .clients-results-shell .clients-card:focus-visible {
+  outline: 3px solid var(--rf-primary);
+  outline-offset: 2px;
+}
+
 .clients-design-page .clients-card__title {
-  font-size: 14px;
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .clients-design-page .clients-card__line {
+  margin: 0 0 4px;
   font-size: 12px;
+  line-height: 1.4;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-card__line:last-child {
+  margin-bottom: 0;
+}
+
+.clients-design-page .clients-card__meta {
+  display: inline;
+  color: inherit;
+  font-weight: 400;
 }
 
 .clients-design-page .clients-team-card {
@@ -1026,8 +1087,9 @@
 }
 
 .clients-design-page .clients-team-mode-switch__btn--active {
-  border-color: var(--rf-accent);
-  background: color-mix(in srgb, var(--rf-accent) 12%, var(--rf-surface));
+  border-color: var(--rf-primary);
+  background: color-mix(in srgb, var(--rf-primary) 12%, var(--rf-surface));
+  color: var(--rf-primary);
 }
 
 .clients-design-page .clients-compact-team-toolbar {
@@ -1553,6 +1615,37 @@
     z-index: 3;
     padding-top: 4px;
     padding-bottom: 4px;
-    background: var(--rf-surface);
+    background: var(--rf-bg);
   }
+
+  .clients-design-page .clients-toolbar {
+    padding: 12px 14px;
+  }
+
+  .clients-design-page .clients-results-shell__head {
+    padding: 12px 14px;
+  }
+
+  .clients-design-page .clients-results-shell .clients-cards {
+    padding: 10px 14px 14px;
+  }
+}
+
+[data-theme="dark"] .clients-design-page .clients-toolbar__search-row--sticky {
+  background: var(--rf-bg);
+}
+
+[data-theme="dark"] .clients-design-page .clients-table th,
+[data-theme="dark"] .clients-design-page .clients-table th:first-child,
+[data-theme="dark"] .clients-design-page .clients-table td:first-child {
+  background: var(--rf-surface);
+}
+
+[data-theme="dark"] .clients-design-page .clients-entity-switcher {
+  background: var(--rf-surface-muted);
+}
+
+[data-theme="dark"] .clients-design-page .clients-entity-switcher .clients-view-switcher__btn--active {
+  background: var(--rf-surface);
+  box-shadow: 0 0 0 1px var(--rf-border);
 }

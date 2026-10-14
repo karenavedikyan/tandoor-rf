@@ -843,7 +843,7 @@
                 .map(function (col, index) {
                   if (index === 0) {
                     return (
-                      "<td><a href=\"" +
+                      '<td><a class="clients-link" href="' +
                       href +
                       '">' +
                       shell.escapeHtml(item.name || item.guid) +
@@ -867,22 +867,23 @@
                     return "";
                   }
                   return (
-                    '<span class="clients-card__meta">' +
+                    '<p class="clients-card__line"><span class="clients-card__meta">' +
                     shell.escapeHtml(col.label) +
                     ": " +
                     value +
-                    "</span>"
+                    "</span></p>"
                   );
                 })
                 .join("");
               return (
-                '<a class="clients-card" href="' +
+                '<article class="clients-card">' +
+                '<h2 class="clients-card__title"><a class="clients-link" href="' +
                 href +
-                '"><span class="clients-card__title">' +
+                '">' +
                 shell.escapeHtml(item.name || item.guid) +
-                "</span>" +
+                "</a></h2>" +
                 meta +
-                "</a>"
+                "</article>"
               );
             })
             .join("");
