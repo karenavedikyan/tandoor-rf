@@ -14,7 +14,7 @@ import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
-const SHA = "77bd0c3";
+const SHA = "78be40f";
 const TEST_PASSWORD = "StrongPass123!";
 const M1 = "22222222-2222-4222-8222-222222222222";
 const M2 = "33333333-3333-4333-8333-333333333333";
@@ -25,7 +25,7 @@ const LEGAL_ONE = "b2000000-0000-4000-8000-000000000001";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const OUT =
   process.env.CLIENTS_V3_VISUAL_DIR ||
-  "/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/clients-v3-visual-review/captures-77bd0c3";
+  "/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/clients-v3-visual-review/captures-78be40f";
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
