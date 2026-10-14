@@ -111,7 +111,12 @@ export async function listV3Entities(
     );
     const rows = await query(
       `
-        SELECT le.guid_client::text AS guid, le.name_client AS name, le.guid_holding::text AS holding_guid
+        SELECT le.guid_client::text AS guid,
+               le.name_client AS name,
+               le.guid_holding::text AS holding_guid,
+               le.managers->>'nameManager' AS manager_name,
+               le.managers->>'nameRegionalManager' AS regional_name,
+               le.managers->>'nameHeadOfSales' AS rop_name
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
         ORDER BY le.name_client ASC
@@ -142,7 +147,11 @@ export async function listV3Entities(
       SELECT ro.guid_store::text AS guid,
              COALESCE(ro.address->>'store_address', ro.guid_store::text) AS name,
              ro.guid_holding::text AS holding_guid,
-             ro.closed
+             ro.closed,
+             ro.managers->>'nameManager' AS manager_name,
+             ro.managers->>'nameRegionalManager' AS regional_name,
+             ro.managers->>'nameHeadOfSales' AS rop_name,
+             ro.address->>'store_address' AS store_address
       FROM onec_v3_retail_outlets ro
       WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
       ORDER BY name ASC

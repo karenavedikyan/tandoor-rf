@@ -3884,6 +3884,7 @@
     return {
       api: api,
       shell: shell,
+      rolePresentation: rolePresentation,
       getSearchQuery: function () {
         return searchInput.value.trim();
       },
@@ -4159,26 +4160,16 @@
     });
   }
 
-  function isBareClientsMenuEntry() {
-    var params = new URLSearchParams(window.location.search);
-    if (params.toString() === "") {
-      return true;
-    }
-    return (
-      !params.has("view") &&
-      !params.has("v3view") &&
-      !params.has("entity") &&
-      !params.has("v3entity") &&
-      (params.get("v3mode") === "1" || params.toString() === "v3mode=1")
-    );
-  }
-
-  function loadList(state, replaceHistory) {
+  function loadList(state, replaceHistory, loadSource) {
     cancelScheduledLoad();
     activeRequestId += 1;
     var requestId = activeRequestId;
-    if (logic.reconcileLegacyStateWithV3) {
-      state = logic.reconcileLegacyStateWithV3(state, window.location.search);
+    applyStateToForm(state);
+    if (loadSource === "url") {
+      var parsed = logic.parseLegacyStateFromV3Url(window.location.search);
+      if (parsed) {
+        state = Object.assign({}, parsed, state);
+      }
     }
     if (shouldUseV3List(state)) {
       return window.ClientsV3.loadOrchestrated(buildV3UiContext(), state, replaceHistory, {
@@ -4677,9 +4668,12 @@
           );
           return;
         }
-        if (exchangeV3Active && rolePresentation && isBareClientsMenuEntry()) {
-          var roleEntry = rolePresentation.clientsHref;
-          if (roleEntry && roleEntry !== "/clients" && roleEntry.indexOf("?") !== -1) {
+        if (exchangeV3Active && rolePresentation && logic.isBareClientsMenuSearch(window.location.search)) {
+          var roleEntry = logic.mergeRoleEntryHref(
+            rolePresentation.clientsHref,
+            window.location.search,
+          );
+          if (roleEntry && roleEntry !== window.location.pathname + window.location.search) {
             window.location.replace(roleEntry);
             return;
           }
@@ -4705,7 +4699,7 @@
           });
         }
         loadPortfolioStats(initialState);
-        loadList(initialState, true);
+        loadList(initialState, true, "url");
       })
       .catch(function (err) {
         showInitError("Ошибка инициализации", api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000));
@@ -4855,7 +4849,7 @@
     cancelScheduledLoad();
     invalidateInFlightRequests();
     applyStateToForm(readStateFromUrl());
-    loadList(readStateFromUrl(), true);
+    loadList(readStateFromUrl(), true, "url");
   });
 
   mountFilterComboboxes();

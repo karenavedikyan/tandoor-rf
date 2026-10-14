@@ -88,14 +88,37 @@
     }
   }
 
+  function legacyStateToV3(legacy) {
+    var urlFilters = readState();
+    var view = legacy.view || "all";
+    var entity = legacy.entity || "clients";
+    var v3entity = "legal";
+    if (entity === "outlets") {
+      v3entity = urlFilters.v3entity === "orphan_retail" ? "orphan_retail" : "retail";
+    } else if (urlFilters.v3entity === "holdings" || urlFilters.v3entity === "legal") {
+      v3entity = urlFilters.v3entity;
+    }
+    return {
+      v3entity: v3entity,
+      v3view: v3ViewFromLegacyView(view),
+      page: legacy.page || urlFilters.page || 1,
+      q: legacy.q != null ? legacy.q : urlFilters.q || "",
+      closed: urlFilters.closed || "",
+      v3manager: urlFilters.v3manager || "",
+      v3type: urlFilters.v3type || "",
+      v3category: urlFilters.v3category || "",
+      missingManager: legacy.missingManager || urlFilters.missingManager || false,
+      ropEmployee: legacy.ropEmployee || urlFilters.ropEmployee || "",
+      responsibleGuid: urlFilters.responsibleGuid || "",
+      responsibleKind: urlFilters.responsibleKind || "",
+    };
+  }
+
   function mergeFromLegacyState(legacy, v3) {
+    var next = Object.assign({}, legacyStateToV3(legacy), v3 || {});
     var params = new URLSearchParams(window.location.search);
-    var next = Object.assign({}, v3);
-    if (params.has("v3view")) {
+    if (params.has("v3view") && !legacy.view) {
       next.v3view = params.get("v3view") || "all";
-    } else if (!params.has("v3view")) {
-      var view = legacy.view || "all";
-      next.v3view = v3ViewFromLegacyView(view);
     }
     if (legacy.ropEmployee) {
       next.ropEmployee = legacy.ropEmployee;
@@ -216,6 +239,57 @@
     var closedWrap = document.getElementById("v3-closed-filter-wrap");
     var isRetail = state.v3entity === "retail" || state.v3entity === "orphan_retail";
     closedWrap?.classList.toggle("clients-hidden", !isRetail);
+  }
+
+  function v3ListColumns(presentation, v3entity) {
+    var role = presentation && presentation.businessRole;
+    if (role === "regional_manager" && (v3entity === "retail" || v3entity === "orphan_retail")) {
+      return [
+        { id: "name", label: "Торговая точка" },
+        { id: "store_address", label: "Адрес магазина" },
+        { id: "manager_name", label: "Менеджер ТТ" },
+        { id: "regional_name", label: "Региональный ТТ" },
+        { id: "rop_name", label: "РОП ТТ" },
+      ];
+    }
+    if (role === "manager" || role === "assistant") {
+      return [
+        { id: "name", label: "Название клиента" },
+        { id: "manager_name", label: "Менеджер клиента" },
+        { id: "regional_name", label: "Региональный" },
+        { id: "rop_name", label: "РОП клиента" },
+      ];
+    }
+    if (v3entity === "retail" || v3entity === "orphan_retail") {
+      return [
+        { id: "name", label: "Торговая точка" },
+        { id: "store_address", label: "Адрес" },
+        { id: "manager_name", label: "Менеджер" },
+        { id: "regional_name", label: "Региональный" },
+        { id: "rop_name", label: "РОП" },
+        { id: "closed", label: "Статус" },
+      ];
+    }
+    return [
+      { id: "name", label: "Название" },
+      { id: "holding", label: "Холдинг" },
+      { id: "manager_name", label: "Менеджер" },
+      { id: "regional_name", label: "Региональный" },
+      { id: "rop_name", label: "РОП" },
+    ];
+  }
+
+  function v3CellValue(item, col, shell) {
+    if (col.id === "holding") {
+      return item.holding_guid ? shell.escapeHtml(item.holding_guid.slice(0, 8) + "…") : "—";
+    }
+    if (col.id === "closed") {
+      if (item.closed === true) return "Закрыта";
+      if (item.closed === false) return "Открыта";
+      return "—";
+    }
+    var value = item[col.id];
+    return value ? shell.escapeHtml(String(value)) : "—";
   }
 
   function detailHref(guid, detailEntity, state) {
@@ -350,24 +424,30 @@
           }
           ctx.showResultsContent();
           var detailType = meta.detailEntity;
-          ctx.tableHeadRow.innerHTML =
-            "<th>Название</th><th>Холдинг</th><th>Статус</th>";
+          var columns = v3ListColumns(ctx.rolePresentation, state.v3entity);
+          ctx.tableHeadRow.innerHTML = columns
+            .map(function (col) {
+              return "<th>" + shell.escapeHtml(col.label) + "</th>";
+            })
+            .join("");
           ctx.tableBody.innerHTML = items
             .map(function (item) {
               var href = detailHref(item.guid, detailType, state);
-              var holding = item.holding_guid ? shell.escapeHtml(item.holding_guid.slice(0, 8) + "…") : "—";
-              var status = item.closed === true ? "Закрыта" : item.closed === false ? "Открыта" : "—";
-              return (
-                "<tr><td><a href=\"" +
-                href +
-                '">' +
-                shell.escapeHtml(item.name || item.guid) +
-                "</a></td><td>" +
-                holding +
-                "</td><td>" +
-                status +
-                "</td></tr>"
-              );
+              var cells = columns
+                .map(function (col, index) {
+                  if (index === 0) {
+                    return (
+                      "<td><a href=\"" +
+                      href +
+                      '">' +
+                      shell.escapeHtml(item.name || item.guid) +
+                      "</a></td>"
+                    );
+                  }
+                  return "<td>" + v3CellValue(item, col, shell) + "</td>";
+                })
+                .join("");
+              return "<tr>" + cells + "</tr>";
             })
             .join("");
           ctx.cardsEl.innerHTML = items
@@ -434,15 +514,14 @@
     },
 
     loadOrchestrated: function (ctx, legacyState, replaceHistory, hooks) {
-      if (hooks.logic && hooks.logic.reconcileLegacyStateWithV3) {
-        legacyState = hooks.logic.reconcileLegacyStateWithV3(legacyState, window.location.search);
-      }
+      var syncedV3 = legacyStateToV3(legacyState);
+      writeState(syncedV3, replaceHistory);
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);
       window.ClientsV3.bindFilters(ctx, function (nextV3) {
         window.ClientsV3.loadList(ctx, nextV3, true);
       });
-      var v3state = mergeFromLegacyState(legacyState, readState());
+      var v3state = syncedV3;
       v3state.page = legacyState.page || v3state.page || 1;
       v3state.q = hooks.getSearchQuery() || v3state.q;
 
@@ -518,6 +597,7 @@
     },
 
     mergeFromLegacyState: mergeFromLegacyState,
+    legacyStateToV3: legacyStateToV3,
   };
 
   function paramsEnsureV3Mode() {

@@ -269,6 +269,56 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(res.body.exchangeV3Active, true);
   });
 
+  it("sync-status GET does not mutate regular update jobs", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminEmail = "admin-v3-readonly@example.com";
+    const admin = await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Readonly",
+      role: "admin",
+    });
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind, mode, status, expires_at, requested_by_user_id, job_source
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() + INTERVAL '2 hours',
+          $1::uuid,
+          'admin_manual'
+        )
+      `,
+      [admin.id],
+    );
+    const before = await pool.query<{ id: string; status: string; finished_at: Date | null }>(
+      `SELECT id::text, status, finished_at FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const after = await poolAfter.query<{ id: string; status: string; finished_at: Date | null }>(
+      `SELECT id::text, status, finished_at FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await poolAfter.end();
+    assert.equal(after.rows[0]?.id, before.rows[0]?.id);
+    assert.equal(after.rows[0]?.status, before.rows[0]?.status);
+    assert.equal(after.rows[0]?.finished_at, before.rows[0]?.finished_at);
+  });
+
   it("sync-status uses v3 apply time when legacy import journal is empty", async () => {
     await prepareDatabase(databaseUrl);
     await seedV3();

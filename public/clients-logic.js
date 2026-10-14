@@ -577,21 +577,51 @@
     return entity === "outlets" ? "retail" : "legal";
   }
 
-  function reconcileLegacyStateWithV3(state, search) {
-    var params = new URLSearchParams(search || (typeof window !== "undefined" ? window.location.search : ""));
+  function parseLegacyStateFromV3Url(search) {
+    var params = new URLSearchParams(search || "");
     if (params.get("v3mode") !== "1") {
-      return state;
+      return null;
     }
-    var next = Object.assign({}, state);
+    var state = readStateFromSearch(search);
     if (params.has("v3view")) {
-      next.view = legacyViewFromV3View(params.get("v3view") || "all");
-    } else if (params.has("view")) {
-      next.view = params.get("view") || next.view || "all";
+      state.view = legacyViewFromV3View(params.get("v3view") || "all");
     }
     if (params.has("v3entity")) {
-      next.entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
+      state.entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
     }
-    return next;
+    return state;
+  }
+
+  function isBareClientsMenuSearch(search) {
+    var params = new URLSearchParams(search || "");
+    if (params.toString() === "") {
+      return true;
+    }
+    var allowedBareKeys = { v3mode: true };
+    var hasOther = false;
+    params.forEach(function (_value, key) {
+      if (!allowedBareKeys[key]) {
+        hasOther = true;
+      }
+    });
+    return !hasOther && params.get("v3mode") === "1";
+  }
+
+  function mergeRoleEntryHref(roleHref, currentSearch) {
+    if (!roleHref || roleHref.indexOf("?") === -1) {
+      return roleHref || "/clients";
+    }
+    var roleParams = new URLSearchParams(roleHref.split("?")[1] || "");
+    var current = new URLSearchParams(currentSearch || "");
+    roleParams.forEach(function (value, key) {
+      if (!current.has(key)) {
+        current.set(key, value);
+      }
+    });
+    if (!current.has("v3mode")) {
+      current.set("v3mode", "1");
+    }
+    return "/clients?" + current.toString();
   }
 
   function readStateFromSearch(search) {
@@ -756,7 +786,7 @@
     if (!params.has("entity") && !params.has("v3entity")) {
       next.entity = presentation.defaultEntity || next.entity;
     }
-    return reconcileLegacyStateWithV3(next, search);
+    return next;
   }
 
   function isBranchPortfolioList(state) {
@@ -2123,7 +2153,9 @@
     v3ViewFromLegacyView: v3ViewFromLegacyView,
     legacyEntityFromV3Entity: legacyEntityFromV3Entity,
     v3EntityFromLegacyEntity: v3EntityFromLegacyEntity,
-    reconcileLegacyStateWithV3: reconcileLegacyStateWithV3,
+    parseLegacyStateFromV3Url: parseLegacyStateFromV3Url,
+    isBareClientsMenuSearch: isBareClientsMenuSearch,
+    mergeRoleEntryHref: mergeRoleEntryHref,
     normalizeTeamKind: normalizeTeamKind,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,

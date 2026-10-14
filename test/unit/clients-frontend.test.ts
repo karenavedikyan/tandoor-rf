@@ -13,10 +13,9 @@ const logic = require("../../public/clients-logic.js") as {
     view?: string;
     entity?: string;
   };
-  reconcileLegacyStateWithV3: (
-    state: { view: string; entity: string },
-    search: string,
-  ) => { view: string; entity: string };
+  parseLegacyStateFromV3Url: (search: string) => { view: string; entity: string } | null;
+  isBareClientsMenuSearch: (search: string) => boolean;
+  mergeRoleEntryHref: (roleHref: string, currentSearch: string) => string;
   buildListQueryString: (state: {
     q: string;
     manager: string;
@@ -218,17 +217,31 @@ describe("clients frontend logic", () => {
     assert.equal(state.bonusTandoorClub, "0");
   });
 
-  it("prefers v3view over conflicting legacy view when v3mode is active", () => {
+  it("parses v3view as legacy view on initial URL read", () => {
     const state = logic.readStateFromSearch(
       "?v3mode=1&v3entity=legal&v3view=all&view=teams&page=1",
     );
     assert.equal(state.view, "all");
     assert.equal(state.entity, "clients");
-    const reconciled = logic.reconcileLegacyStateWithV3(
-      { view: "teams", entity: "clients" },
-      "?v3mode=1&v3entity=legal&v3view=all&view=teams",
+    const parsed = logic.parseLegacyStateFromV3Url(
+      "?v3mode=1&v3entity=legal&v3view=all&view=teams&page=1",
     );
-    assert.equal(reconciled.view, "all");
+    assert.ok(parsed);
+    assert.equal(parsed!.view, "all");
+  });
+
+  it("detects bare menu entry and preserves deep-link params on role merge", () => {
+    assert.equal(logic.isBareClientsMenuSearch(""), true);
+    assert.equal(logic.isBareClientsMenuSearch("?v3mode=1"), true);
+    assert.equal(logic.isBareClientsMenuSearch("?v3mode=1&q=important&page=3"), false);
+    const merged = logic.mergeRoleEntryHref(
+      "/clients?v3mode=1&v3entity=legal&view=all",
+      "?v3mode=1&q=important&page=3&ropEmployee=abc",
+    );
+    assert.match(merged, /q=important/);
+    assert.match(merged, /page=3/);
+    assert.match(merged, /ropEmployee=abc/);
+    assert.match(merged, /v3entity=legal/);
   });
 
   it("labels sync status as LK import, not 1C file time", () => {
