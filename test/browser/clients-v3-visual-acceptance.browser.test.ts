@@ -30,7 +30,18 @@ const OUT_BASE =
 const OUT = path.join(OUT_BASE, `captures-${SHA}`);
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
-const manifest: Array<{ file: string; role: string; scenario: string; viewport: string; theme: string }> = [];
+
+type ManifestCapture = {
+  file: string;
+  role: string;
+  scenario: string;
+  viewport: string;
+  theme: string;
+  status: "captured" | "missing";
+};
+
+const manifest: ManifestCapture[] = [];
+let plannedCaptureCount = 0;
 
 describe("clients v3 visual acceptance captures", { concurrency: false }, () => {
   let browser: Browser;
@@ -56,9 +67,27 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
   });
 
   after(async () => {
+    for (const entry of manifest) {
+      const exists = fs.existsSync(path.join(OUT, entry.file));
+      entry.status = exists ? "captured" : "missing";
+    }
+    const captured = manifest.filter((e) => e.status === "captured").length;
+    const runStatus = captured === plannedCaptureCount && plannedCaptureCount > 0 ? "complete" : "partial";
     fs.writeFileSync(
       path.join(OUT, "manifest.json"),
-      JSON.stringify({ sha: SHA, generatedAt: new Date().toISOString(), captures: manifest }, null, 2),
+      JSON.stringify(
+        {
+          sha: SHA,
+          generatedAt: new Date().toISOString(),
+          runStatus,
+          plannedCaptureCount,
+          capturedCount: captured,
+          missingCount: plannedCaptureCount - captured,
+          captures: manifest,
+        },
+        null,
+        2,
+      ),
     );
     await browser?.close();
     if (appServer) {
@@ -150,6 +179,31 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     await page.waitForURL(/\/(clients|profile|work)/);
   }
 
+  async function waitForClientsScenarioReady(page: Page): Promise<void> {
+    await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60000 });
+    await page.waitForFunction(function () {
+      var loading = document.getElementById("results-state");
+      if (loading && !loading.classList.contains("clients-hidden")) {
+        var text = (loading.textContent || "").trim();
+        if (text.indexOf("Загрузка") !== -1) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  async function waitForClientsListReady(page: Page): Promise<void> {
+    await waitForClientsScenarioReady(page);
+    await page.waitForFunction(function () {
+      var table = document.getElementById("clients-table-body");
+      var cards = document.getElementById("clients-cards");
+      var hasTableRows = table && table.querySelector("a");
+      var hasCards = cards && cards.querySelector("a");
+      return Boolean(hasTableRows || hasCards);
+    });
+  }
+
   async function shot(
     page: Page,
     slug: string,
@@ -158,6 +212,7 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     viewport: { width: number; height: number },
     theme?: "dark",
   ): Promise<void> {
+    plannedCaptureCount += 1;
     await page.setViewportSize(viewport);
     if (theme === "dark") {
       await page.evaluate(
@@ -172,7 +227,14 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     const vp = viewport.width <= 400 ? "mobile" : "desktop";
     const file = `${SHA}-${slug}-${vp}${themeSuffix}.png`;
     await page.screenshot({ path: path.join(OUT, file), fullPage: true });
-    manifest.push({ file, role, scenario, viewport: vp, theme: theme === "dark" ? "dark" : "light" });
+    manifest.push({
+      file,
+      role,
+      scenario,
+      viewport: vp,
+      theme: theme === "dark" ? "dark" : "light",
+      status: "captured",
+    });
   }
 
   const roles: Array<{ slug: string; email: string; path: string }> = [
@@ -189,7 +251,7 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
       const page = await browser.newPage();
       await login(page, role.email);
       await page.goto(baseUrl + role.path, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60000 });
+      await waitForClientsScenarioReady(page);
       await shot(page, `${role.slug}-entry`, role.slug, "entry-list", DESKTOP);
       await shot(page, `${role.slug}-entry`, role.slug, "entry-list", MOBILE);
       await shot(page, `${role.slug}-entry`, role.slug, "entry-list", DESKTOP, "dark");
@@ -197,7 +259,7 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     });
   }
 
-  it("capture manager filters chips and card return", async () => {
+  it("capture manager filters chips and card return on desktop and mobile", async () => {
     const page = await browser.newPage();
     await login(page, "vis-manager@example.com");
     const list = page.waitForResponse(
@@ -209,16 +271,28 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3type=t1", { waitUntil: "domcontentloaded" });
     await list;
     await page.waitForSelector(".clients-v3-filter-chip", { timeout: 20000 });
+    await waitForClientsListReady(page);
     await shot(page, "manager-filters-chips", "manager", "filters-chips", DESKTOP);
     await shot(page, "manager-filters-chips", "manager", "filters-chips", MOBILE);
+
+    await page.setViewportSize(DESKTOP);
     await page.locator('#clients-table-body a:has-text("Legal One")').first().click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await shot(page, "manager-card-detail", "manager", "card-detail", DESKTOP);
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForURL(/\/clients\?.*v3mode=1/);
+    await waitForClientsListReady(page);
+    await page.waitForSelector(".clients-v3-filter-chip", { timeout: 15000 });
+    await shot(page, "manager-return-list", "manager", "return-list", DESKTOP);
+
+    await page.setViewportSize(MOBILE);
+    await waitForClientsListReady(page);
+    await page.locator('#clients-cards a:has-text("Legal One")').first().click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
     await shot(page, "manager-card-detail", "manager", "card-detail", MOBILE);
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/\/clients\?.*v3mode=1/);
-    await page.waitForSelector(".clients-v3-filter-chip", { timeout: 15000 });
-    await shot(page, "manager-return-list", "manager", "return-list", DESKTOP);
+    await waitForClientsListReady(page);
     await shot(page, "manager-return-list", "manager", "return-list", MOBILE);
     await page.close();
   });
@@ -228,7 +302,10 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     await login(page, "vis-assistant@example.com");
     await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all", { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60000 });
-    await page.waitForSelector(".clients-delegation-banner, #clients-app", { timeout: 30000 });
+    await page.waitForSelector('[data-testid="clients-delegation-banner"]:not(.clients-hidden)', {
+      timeout: 60000,
+    });
+    await waitForClientsListReady(page);
     await shot(page, "assistant-delegation", "assistant", "delegation-banner", DESKTOP);
     await shot(page, "assistant-delegation", "assistant", "delegation-banner", MOBILE);
     await page.close();
@@ -261,6 +338,7 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
       (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
       { timeout: 60000 },
     );
+    await waitForClientsScenarioReady(ropPage);
     await shot(ropPage, "rop-team-base-list", "rop", "team-base-tab", DESKTOP);
     await ropPage.close();
 

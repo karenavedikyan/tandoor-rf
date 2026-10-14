@@ -170,11 +170,77 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     ) as Promise<{ types: string[]; categories: string[] }>;
   }
 
+  async function waitForV3ListUiSettled(
+    page: Page,
+    expected: { types: string[]; categories: string[] },
+  ): Promise<void> {
+    const typesKey = expected.types.slice().sort().join(",");
+    const catsKey = expected.categories.slice().sort().join(",");
+    await page.waitForFunction(
+      function (keys) {
+        var loading = document.getElementById("results-state");
+        if (loading && !loading.classList.contains("clients-hidden")) {
+          var loadingText = (loading.textContent || "").trim();
+          if (loadingText.indexOf("Загрузка") !== -1) {
+            return false;
+          }
+        }
+        var params = new URL(window.location.href).searchParams;
+        var typeRaw = params.get("typeGuids") || params.get("v3type") || "";
+        var catRaw = params.get("categoryGuids") || params.get("v3category") || "";
+        var urlTypes = typeRaw
+          ? typeRaw
+              .split(",")
+              .map(function (s) {
+                return s.trim();
+              })
+              .filter(Boolean)
+              .sort()
+              .join(",")
+          : "";
+        var urlCats = catRaw
+          ? catRaw
+              .split(",")
+              .map(function (s) {
+                return s.trim();
+              })
+              .filter(Boolean)
+              .sort()
+              .join(",")
+          : "";
+        if (urlTypes !== keys.types || urlCats !== keys.cats) {
+          return false;
+        }
+        var typeEl = document.getElementById("v3-type-filter");
+        var catEl = document.getElementById("v3-category-filter");
+        if (!typeEl || !catEl) {
+          return false;
+        }
+        var domTypes = Array.from(typeEl.selectedOptions)
+          .map(function (o) {
+            return o.value;
+          })
+          .sort()
+          .join(",");
+        var domCats = Array.from(catEl.selectedOptions)
+          .map(function (o) {
+            return o.value;
+          })
+          .sort()
+          .join(",");
+        return domTypes === keys.types && domCats === keys.cats;
+      },
+      { types: typesKey, cats: catsKey },
+      { timeout: 60000 },
+    );
+  }
+
   async function assertMultiselectSets(
     page: Page,
     expected: { types: string[]; categories: string[] },
     apiUrl?: string,
   ): Promise<void> {
+    await waitForV3ListUiSettled(page, expected);
     const dom = await readDomMultiselectSets(page);
     assert.deepEqual(dom.types.sort(), expected.types.slice().sort());
     assert.deepEqual(dom.categories.sort(), expected.categories.slice().sort());
@@ -825,6 +891,51 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       )
       .first()
       .waitFor({ state: "attached", timeout: 15000 });
+    await page.close();
+  });
+
+  it("direct responsible URL loads switcher strip and v3 list", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    const responsibles = page.waitForResponse(
+      (res) => res.url().includes("/responsibles") && res.status() === 200,
+      { timeout: 60000 },
+    );
+    const listReady = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&view=teams&v3view=teams&ropEmployee=" +
+        encodeURIComponent(ROP) +
+        "&responsibleGuid=" +
+        encodeURIComponent(M1) +
+        "&responsibleKind=manager&v3entity=legal",
+      { waitUntil: "domcontentloaded" },
+    );
+    await responsibles;
+    await listReady;
+    await page.locator('[data-testid="clients-team-member-switcher"]').waitFor({ state: "visible", timeout: 60000 });
+    const switcher = page.locator(
+      `.clients-team-member-row__count[data-manager="${M2}"][data-responsible-entity="clients"]`,
+    );
+    await switcher.waitFor({ state: "visible", timeout: 60000 });
+    const listM2 = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M2)) &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await switcher.click();
+    await listM2;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator('[data-testid="clients-team-member-switcher"]').waitFor({ state: "visible", timeout: 60000 });
+    assert.equal(new URL(page.url()).searchParams.get("responsibleGuid"), M2);
     await page.close();
   });
 

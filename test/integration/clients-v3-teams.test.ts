@@ -101,6 +101,8 @@ describe("clients v3 teams org-structure", { concurrency: false }, () => {
     assert.ok(ropRow, "ROP from roster expected");
     assert.ok(ropRow.uniqueClientCount >= 1, "v3 legal count in ROP branch");
     assert.ok(ropRow.uniqueOutletCount >= 1, "v3 retail count in ROP branch");
+    assert.ok(ropRow.managerCount >= 1, "manager count matches accessible responsibles");
+    assert.ok(ropRow.teamMemberCount >= ropRow.managerCount, "team members deduped across kinds");
 
     const adminCtx = {
       status: "active" as const,

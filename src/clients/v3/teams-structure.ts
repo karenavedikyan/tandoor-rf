@@ -28,6 +28,30 @@ function v3HeadOfSalesClause(alias: string, ropParam: string): string {
   return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = ${ropParam}::uuid`;
 }
 
+function teamCountsFromResponsibles(items: OrgResponsibleSummary[]): {
+  managerCount: number;
+  regionalCount: number;
+  teamMemberCount: number;
+} {
+  const managers = new Set<string>();
+  const regionals = new Set<string>();
+  const allMembers = new Set<string>();
+  for (const item of items) {
+    const guid = item.employeeGuid.toLowerCase();
+    allMembers.add(guid);
+    if (item.kind === "manager") {
+      managers.add(guid);
+    } else if (item.kind === "regional") {
+      regionals.add(guid);
+    }
+  }
+  return {
+    managerCount: managers.size,
+    regionalCount: regionals.size,
+    teamMemberCount: allMembers.size,
+  };
+}
+
 async function countBranch(context: AccessContext, ropGuid: string): Promise<{ legal: number; retail: number }> {
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
@@ -75,17 +99,28 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
   const rops: OrgRopSummary[] = [];
   for (const row of rosterRops.rows) {
     const counts = await countBranch(context, row.guid_manager);
+    const hasPortfolio = counts.legal + counts.retail > 0;
+    let managerCount = 0;
+    let regionalCount = 0;
+    let teamMemberCount = 0;
+    if (hasPortfolio && rosterLoaded) {
+      const responsibles = await listV3RopResponsibles(context, row.guid_manager);
+      const teamCounts = teamCountsFromResponsibles(responsibles);
+      managerCount = teamCounts.managerCount;
+      regionalCount = teamCounts.regionalCount;
+      teamMemberCount = teamCounts.teamMemberCount;
+    }
     rops.push({
       employeeGuid: row.guid_manager,
       name: row.name_manager,
       shortId: shortUuidLabel(row.guid_manager),
       rosterPost: row.post,
       hasLinkedAccount: linked.has(row.guid_manager.toLowerCase()),
-      hasAssignedPortfolio: counts.legal + counts.retail > 0,
-      portfolioNote: counts.legal + counts.retail > 0 ? null : "Нет объектов v3 в ветке РОП",
-      managerCount: 0,
-      regionalCount: 0,
-      teamMemberCount: 0,
+      hasAssignedPortfolio: hasPortfolio,
+      portfolioNote: hasPortfolio ? null : "Нет объектов v3 в ветке РОП",
+      managerCount,
+      regionalCount,
+      teamMemberCount,
       uniqueClientCount: counts.legal,
       uniqueOutletCount: counts.retail,
       parentClientCount: 0,

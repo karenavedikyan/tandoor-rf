@@ -692,6 +692,7 @@
       outletRopEmployeeMode: params.get("outletRopEmployeeMode") || "",
       portfolio: params.get("portfolio") || "",
       responsibleKind: params.get("responsibleKind") || "",
+      responsibleGuid: params.get("responsibleGuid") || "",
       completenessReasons: params
         .getAll("completenessReason")
         .map(function (value) {
@@ -785,12 +786,25 @@
     var guid = "";
     if (kind === "regional") {
       guid =
-        state.regionalManager || state.clientRegionalManager || state.outletRegionalManager || "";
+        state.regionalManager ||
+        state.clientRegionalManager ||
+        state.outletRegionalManager ||
+        (state.responsibleKind === "regional" ? state.responsibleGuid : "") ||
+        "";
     } else if (kind === "hardware") {
       guid =
-        state.hardwareManager || state.clientHardwareManager || state.outletHardwareManager || "";
+        state.hardwareManager ||
+        state.clientHardwareManager ||
+        state.outletHardwareManager ||
+        (state.responsibleKind === "hardware" ? state.responsibleGuid : "") ||
+        "";
     } else if (kind === "manager") {
-      guid = state.manager || state.clientManager || state.outletManager || "";
+      guid =
+        state.manager ||
+        state.clientManager ||
+        state.outletManager ||
+        state.responsibleGuid ||
+        "";
     } else if (state.responsibleGuid) {
       guid = state.responsibleGuid;
       kind = normalizeTeamKind(state.responsibleKind) || "manager";
@@ -887,16 +901,7 @@
     if (!state || state.view !== "teams" || !state.ropEmployee) {
       return false;
     }
-    if (state.responsibleKind === "regional") {
-      return Boolean(state.regionalManager);
-    }
-    if (state.responsibleKind === "hardware") {
-      return Boolean(state.hardwareManager);
-    }
-    if (state.responsibleKind === "manager") {
-      return Boolean(state.manager);
-    }
-    return Boolean(state.manager);
+    return Boolean(v3ResponsibleFromLegacyState(state).responsibleGuid);
   }
 
   function appendAssignmentParams(params, state) {

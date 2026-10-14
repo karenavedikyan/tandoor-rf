@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  var v3ListLoadGeneration = 0;
+
   var ENTITIES = [
     { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
     { id: "legal", label: "Клиенты", detailEntity: "legal", listNoun: "клиентов" },
@@ -712,6 +714,11 @@
     loadList: function (ctx, state, replaceHistory) {
       var api = ctx.api;
       var shell = ctx.shell;
+      v3ListLoadGeneration += 1;
+      var loadGeneration = v3ListLoadGeneration;
+      function isStaleListLoad() {
+        return loadGeneration !== v3ListLoadGeneration;
+      }
       state = state || readState();
       var urlState = readState();
       if (!Object.prototype.hasOwnProperty.call(state, "v3types")) {
@@ -759,19 +766,22 @@
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
-      );
-      return Promise.all([
-        optionsPromise,
-        api.apiRequest("/api/clients/v3/list?" + params.toString(), { signal: ctx.nextListFetchSignal?.() }),
-      ]).then(function (pair) {
-        var optionsResult = pair[0];
-        var result = pair[1];
-        if (optionsResult.response.ok && optionsResult.data) {
-          syncFilterDom(shell, state, optionsResult.data);
-          window.ClientsV3.renderFilterChips(shell, state, optionsResult.data);
+      ).then(function (optionsResult) {
+        if (isStaleListLoad()) {
+          return;
         }
-        return result;
-      }).then(function (result) {
+        if (optionsResult.response.ok && optionsResult.data) {
+          var liveState = readState();
+          syncFilterDom(shell, liveState, optionsResult.data);
+          window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
+        }
+      });
+      var listPromise = api
+        .apiRequest("/api/clients/v3/list?" + params.toString(), { signal: ctx.nextListFetchSignal?.() })
+        .then(function (result) {
+          if (isStaleListLoad()) {
+            return;
+          }
           if (result.response.status === 401) {
             window.location.replace("/login");
             return;
@@ -886,6 +896,7 @@
             totalPages,
           );
         });
+      return Promise.all([optionsPromise, listPromise]);
     },
 
     bindFilters: function (ctx, reload) {
@@ -990,6 +1001,31 @@
         });
       }
 
+      var teamsResponsibleList =
+        legacyState.view === "teams" &&
+        !hooks.logic.isBranchPortfolioList(legacyState) &&
+        hooks.logic.hasResponsibleSelection(legacyState) &&
+        Boolean(legacyState.ropEmployee);
+      if (teamsResponsibleList) {
+        ctx.showResultsState("loading", "Загрузка команд…", "", "");
+        return hooks.loadTeamsContext(legacyState).then(function (teamCtx) {
+          if (!hooks.logic.shouldAcceptListResponse(hooks.requestId, hooks.activeRequestId)) {
+            return;
+          }
+          if (!teamCtx.ok) {
+            ctx.showResultsState("error", "Не удалось загрузить команду", "Повторите попытку.", "");
+            return;
+          }
+          return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
+            if (!hooks.logic.shouldAcceptListResponse(hooks.requestId, hooks.activeRequestId)) {
+              return;
+            }
+            hooks.updateViewChrome(legacyState);
+            return window.ClientsV3.loadList(ctx, v3state, replaceHistory);
+          });
+        });
+      }
+
       var unassignedPick =
         legacyState.view === "review" &&
         !legacyState.manager &&
@@ -1045,6 +1081,12 @@
     buildListReturnQuery: buildListReturnQuery,
     listFilterTokens: listFilterTokens,
     appendTypeCategoryParams: appendTypeCategoryParams,
+    resetListLoadGenerationForTests: function () {
+      v3ListLoadGeneration = 0;
+    },
+    getListLoadGenerationForTests: function () {
+      return v3ListLoadGeneration;
+    },
   };
 
   function paramsEnsureV3Mode() {
