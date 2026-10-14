@@ -2867,7 +2867,11 @@
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
     var branchList = logic.isBranchPortfolioList(state);
     var responsibleList = logic.hasResponsibleSelection(state);
-    teamsPanelEl.classList.toggle("clients-hidden", !isTeams || branchList || responsibleList);
+    var teamMemberSwitcher = shouldShowTeamsMemberSwitcher(state);
+    teamsPanelEl.classList.toggle(
+      "clients-hidden",
+      !isTeams || branchList || (responsibleList && !teamMemberSwitcher),
+    );
     var reviewEmployeePick = isReview && Boolean(state.unassignedCategory) && !state.manager;
     unassignedPanelEl.classList.toggle("clients-hidden", !isReview);
     resultsContentEl.classList.toggle(
@@ -3375,12 +3379,75 @@
     });
   }
 
+  function renderDirectorRopTeamCard(state) {
+    var summary =
+      teamContext.ropSummary ||
+      (state.ropEmployee
+        ? {
+            employeeGuid: state.ropEmployee,
+            name: teamContext.ropName || "РОП",
+            uniqueClientCount: undefined,
+            uniqueOutletCount: undefined,
+            teamMemberCount: (teamContext.managers || []).length,
+          }
+        : null);
+    if (!summary) {
+      teamsPanelEl.innerHTML =
+        '<div class="clients-compact-team__empty">Выберите РОП в структуре команд.</div>';
+      return Promise.resolve();
+    }
+    teamsPanelEl.innerHTML = buildTeamCardShellHtml(summary, teamContext.managers || [], {
+      limitationNote: teamContext.limitationNote || "",
+    });
+    bindTeamCardPanelEvents(teamsPanelEl, {
+      state: state,
+      ropEmployeeGuid: state.ropEmployee || "",
+      managers: teamContext.managers || [],
+    });
+    return Promise.resolve();
+  }
+
+  function renderTeamsMemberSwitcher(state) {
+    var groupsHtml = buildTeamCardGroupsHtml(teamContext.managers || []);
+    if (!groupsHtml) {
+      teamsPanelEl.innerHTML = "";
+      return;
+    }
+    teamsPanelEl.innerHTML =
+      '<div class="clients-team-switcher-strip" data-testid="clients-team-member-switcher">' +
+      '<p class="clients-team-switcher-strip__label">Другие ответственные в ветке</p>' +
+      groupsHtml +
+      "</div>";
+    bindTeamCardPanelEvents(teamsPanelEl, {
+      state: state,
+      ropEmployeeGuid: state.ropEmployee || "",
+      managers: teamContext.managers || [],
+    });
+  }
+
+  function shouldShowTeamsMemberSwitcher(state) {
+    return (
+      state.view === "teams" &&
+      Boolean(state.ropEmployee) &&
+      logic.hasResponsibleSelection(state) &&
+      !logic.isBranchPortfolioList(state) &&
+      (usesDirectorLayout() || isRopDesignSession())
+    );
+  }
+
   function renderTeamsPanel(state) {
-    if (
-      state.view !== "teams" ||
-      logic.isBranchPortfolioList(state) ||
-      logic.hasResponsibleSelection(state)
-    ) {
+    if (state.view !== "teams" || logic.isBranchPortfolioList(state)) {
+      teamsPanelEl.innerHTML = "";
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
+      teamsPanelEl.__onecOverviewHtml = "";
+      onecTeamsOverviewRenderSignature = "";
+      return Promise.resolve();
+    }
+    if (shouldShowTeamsMemberSwitcher(state)) {
+      renderTeamsMemberSwitcher(state);
+      return Promise.resolve();
+    }
+    if (logic.hasResponsibleSelection(state)) {
       teamsPanelEl.innerHTML = "";
       teamsPanelEl.removeAttribute("data-onec-teams-ready");
       teamsPanelEl.__onecOverviewHtml = "";
@@ -3388,6 +3455,9 @@
       return Promise.resolve();
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
+      if (usesDirectorLayout() && !isRopDesignSession()) {
+        return renderDirectorRopTeamCard(state);
+      }
       return renderCompactRopTeamPanel(state);
     }
     if ((usesDirectorLayout() && !state.ropEmployee) || (isRopDesignSession() && usesOnecTeamSource(state))) {
@@ -3834,7 +3904,7 @@
             return result.response.status === 200;
           }),
         );
-      } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
+      } else if (state.ropEmployee && !logic.isBranchPortfolioList(state)) {
         v3Requests.push(
           api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
             if (result.response.status === 200 && result.data) {
@@ -3914,7 +3984,7 @@
           return result.response.status === 200;
         }),
       );
-    } else if (!logic.hasResponsibleSelection(state) && !logic.isBranchPortfolioList(state)) {
+    } else if (state.ropEmployee && !logic.isBranchPortfolioList(state)) {
       requests.push(
         api.apiRequest("/api/clients/org-structure").then(function (result) {
           if (result.response.status === 200 && result.data) {

@@ -18,7 +18,9 @@ const REGIONAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const DIRECTOR = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const LEGAL_ONE = "b2000000-0000-4000-8000-000000000001";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
-const SCREENSHOT_DIR = process.env.CLIENTS_V3_SCREENSHOT_DIR || "/opt/cursor/artifacts/screenshots";
+const SCREENSHOT_DIR =
+  process.env.CLIENTS_V3_SCREENSHOT_DIR ||
+  path.join(process.cwd(), "tmp/clients-v3-role-screenshots");
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
@@ -30,13 +32,15 @@ describe("clients v3 role screens", { concurrency: false }, () => {
   before(async () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     browser = await chromium.launch({ headless: true });
+    await resetPoolForTests();
+    await seedV3Once("");
     const { createApp } = await import("../../src/server");
     appServer = http.createServer(createApp());
     await new Promise<void>((resolve) => appServer!.listen(0, "127.0.0.1", resolve));
     const addr = appServer!.address();
     assert.ok(addr && typeof addr === "object");
     baseUrl = `http://127.0.0.1:${addr.port}`;
-    await seedV3Once();
+    setIntegrationEnv(getIntegrationDatabaseUrl(), baseUrl);
   });
 
   after(async () => {
@@ -49,10 +53,9 @@ describe("clients v3 role screens", { concurrency: false }, () => {
     await closePool();
   });
 
-  async function seedV3Once(): Promise<void> {
+  async function seedV3Once(origin: string): Promise<void> {
     const databaseUrl = getIntegrationDatabaseUrl();
-    setIntegrationEnv(databaseUrl, baseUrl);
-    await resetPoolForTests();
+    setIntegrationEnv(databaseUrl, origin || "http://127.0.0.1:0");
     await prepareDatabase(databaseUrl);
     const admin = await createTestUser({
       databaseUrl,

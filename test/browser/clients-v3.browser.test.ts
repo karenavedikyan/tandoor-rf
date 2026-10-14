@@ -524,8 +524,16 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.locator(`button[data-manager="${M1}"][data-responsible-entity="clients"]`).click();
     await listM1;
     await selectLegalMultiselectFilters(page);
-    const m2Btn = page.locator(`button[data-manager="${M2}"][data-responsible-entity="clients"]`).first();
-    await m2Btn.waitFor({ state: "attached", timeout: 60000 });
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForFunction(function () {
+      var params = new URL(window.location.href).searchParams;
+      return !params.get("responsibleGuid") && !params.get("v3manager");
+    });
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] });
+    const m2Btn = page.locator(
+      `.clients-team-member-row__count[data-manager="${M2}"][data-responsible-entity="clients"]`,
+    );
+    await m2Btn.waitFor({ state: "visible", timeout: 60000 });
     const listM2 = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
@@ -535,14 +543,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         res.status() === 200,
       { timeout: 60000 },
     );
-    await page.evaluate(function (managerGuid) {
-      var btn = document.querySelector(
-        'button[data-manager="' + managerGuid + '"][data-responsible-entity="clients"]',
-      );
-      if (btn) {
-        btn.click();
-      }
-    }, M2);
+    await m2Btn.click();
     const respM2 = await listM2;
     await page.waitForFunction(function () {
       var params = new URL(window.location.href).searchParams;

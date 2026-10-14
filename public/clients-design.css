@@ -665,6 +665,29 @@
   color: var(--rf-text-muted);
 }
 
+.clients-design-page .clients-team-switcher-strip {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface-muted);
+}
+
+.clients-design-page .clients-team-switcher-strip__label {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-switcher-strip .clients-team-group {
+  margin: 0;
+}
+
+.clients-design-page .clients-team-switcher-strip .clients-team-group + .clients-team-group {
+  margin-top: 10px;
+}
+
 .clients-design-page .clients-team-group__list {
   display: grid;
   gap: 8px;
