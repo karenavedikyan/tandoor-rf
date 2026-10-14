@@ -11,6 +11,8 @@ export type BusinessClientsRole =
   | "assistant"
   | "other";
 
+export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
+
 export type RolePresentation = {
   businessRole: BusinessClientsRole;
   pageTitle: string;
@@ -21,6 +23,7 @@ export type RolePresentation = {
   defaultEntity: ClientsEntityMode;
   allowedViews: ClientsViewMode[];
   allowedEntities: ClientsEntityMode[];
+  allowedV3Entities: readonly V3ListEntity[];
   /** When false, entity switcher stays hidden even if multiple entities are allowed. */
   showEntitySwitcher?: boolean;
   showViewSwitcher: boolean;
@@ -30,6 +33,10 @@ export type RolePresentation = {
   /** Director-style teams overview, stats strip, and completeness navigation. */
   directorLayout?: boolean;
   cardFocusHints: readonly string[];
+  delegationContext?: {
+    delegatorName: string;
+    clientCount: number;
+  } | null;
 };
 
 const MANAGER_FOCUS = [
@@ -55,6 +62,10 @@ const DIRECTOR_FOCUS = [
   "Планы и результат",
   "Назначения и данные",
 ] as const;
+
+const ALL_V3_ENTITIES = ["holdings", "legal", "retail", "orphan_retail"] as const satisfies readonly V3ListEntity[];
+const MANAGER_V3_ENTITIES = ["legal", "retail"] as const satisfies readonly V3ListEntity[];
+const ASSISTANT_V3_ENTITIES = ["legal"] as const satisfies readonly V3ListEntity[];
 
 export function canUseReviewNavigation(context: AccessContext): boolean {
   return context.role === "admin" || (context.role === "director" && context.fullClientBase);
@@ -154,6 +165,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "clients",
         allowedViews: ["all"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,
@@ -172,6 +184,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "outlets",
         allowedViews: ["all"],
         allowedEntities: ["outlets", "clients"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,
@@ -190,6 +203,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "clients",
         allowedViews: ["all", "teams"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showEntitySwitcher: false,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
@@ -212,6 +226,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "clients",
         allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: ALL_V3_ENTITIES,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,
@@ -231,6 +246,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "clients",
         allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: ALL_V3_ENTITIES,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,
@@ -250,6 +266,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         defaultEntity: "clients",
         allowedViews: ["all"],
         allowedEntities: ["clients"],
+        allowedV3Entities: ASSISTANT_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,

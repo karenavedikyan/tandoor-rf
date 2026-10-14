@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { AccessRequest } from "../access/middleware";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
+import { loadAssistantDelegationContext } from "./delegation-context";
 import { resolveRolePresentation } from "./role-presentation";
 
 export async function clientsPresentationHandler(
@@ -14,6 +15,14 @@ export async function clientsPresentationHandler(
     setNoStore(res);
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нет доступа к разделу клиентов."));
     return;
+  }
+
+  if (presentation.businessRole === "assistant") {
+    try {
+      presentation.delegationContext = await loadAssistantDelegationContext(context.userId);
+    } catch {
+      presentation.delegationContext = null;
+    }
   }
 
   setNoStore(res);

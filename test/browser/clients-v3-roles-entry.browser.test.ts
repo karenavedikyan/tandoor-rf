@@ -183,12 +183,17 @@ describe("clients v3 role screens", { concurrency: false }, () => {
     const page = await browser.newPage();
     await login(page, "role-assistant@example.com");
     await openClients(page);
+    await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60000 });
     assert.equal(new URL(page.url()).searchParams.get("view"), "all");
     assert.equal(new URL(page.url()).searchParams.get("v3entity"), "legal");
+    await page.waitForSelector('[data-testid="clients-delegation-banner"]:not(.clients-hidden)', {
+      timeout: 15000,
+    });
     await page.waitForSelector('#clients-table-body a:has-text("Legal One"), .clients-card a:has-text("Legal One")', {
       timeout: 30000,
     });
     await capture(page, "assistant", DESKTOP);
+    await capture(page, "assistant", MOBILE);
     await page.close();
   });
 
@@ -251,6 +256,7 @@ describe("clients v3 role screens", { concurrency: false }, () => {
     await page.waitForSelector('[data-v3entity="legal"]', { timeout: 15000 });
     await page.waitForSelector("#onec-update-panel", { timeout: 15000 });
     await capture(page, "admin", DESKTOP);
+    await capture(page, "admin", MOBILE);
     await page.close();
   });
 });

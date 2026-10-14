@@ -66,6 +66,8 @@
   var filtersScopeLabelEl = document.getElementById("clients-filters-scope-label");
   var workspaceNavEl = document.querySelector(".clients-workspace-nav");
   var workspaceNavTabEl = document.getElementById("clients-workspace-nav-tab");
+  var delegationBannerEl = document.getElementById("clients-delegation-banner");
+  var v3FilterChipsEl = document.getElementById("v3-filter-chips");
   var viewAllTabEl = viewSwitcherEl?.querySelector('[data-view="all"]');
   var viewTeamsTabEl = viewSwitcherEl?.querySelector('[data-view="teams"]');
   var breadcrumbsRowEl = document.getElementById("clients-breadcrumbs-row");
@@ -858,6 +860,14 @@
       statNoOutletsLabel: "Команды РОПов",
       showThirdStat: true,
     },
+    assistant: {
+      subtitle: "Список клиентов по действующему замещению.",
+      scopeValue: "Только клиенты из утверждённого замещения",
+      statClientLabel: "Клиенты замещения",
+      statOutletLabel: "Доступные ТТ",
+      statNoOutletsLabel: "",
+      showThirdStat: false,
+    },
   };
 
   function isRopDesignSession() {
@@ -1300,17 +1310,57 @@
     }
   }
 
+  function renderDelegationBanner(presentation) {
+    if (!delegationBannerEl) {
+      return;
+    }
+    var ctx = presentation && presentation.delegationContext;
+    if (!ctx || presentation.businessRole !== "assistant") {
+      delegationBannerEl.classList.add("clients-hidden");
+      delegationBannerEl.innerHTML = "";
+      return;
+    }
+    delegationBannerEl.classList.remove("clients-hidden");
+    delegationBannerEl.innerHTML =
+      "<strong>Действующее замещение</strong> · вы работаете от имени " +
+      shell.escapeHtml(ctx.delegatorName) +
+      ". Доступно клиентов: " +
+      shell.escapeHtml(String(ctx.clientCount)) +
+      ".";
+  }
+
+  function fetchV3ListTotal(entity) {
+    return api
+      .apiRequest(
+        "/api/clients/v3/list?entity=" +
+          encodeURIComponent(entity) +
+          "&page=1&pageSize=1",
+      )
+      .then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          return null;
+        }
+        return typeof result.data.total === "number" ? result.data.total : null;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
   function applyPortfolioDesignChrome(presentation, user, state) {
     var viewState = state || currentStateFromForm();
     var config = portfolioDesignConfig(presentation, viewState);
     var isManager = presentation && presentation.businessRole === "manager";
     var isRegional = presentation && presentation.businessRole === "regional_manager";
+    var isAssistant = presentation && presentation.businessRole === "assistant";
     var isRop = isRopDesignSession() && (viewState.view || "all") === "teams";
     var isDirector = usesDirectorLayout();
     document.body.classList.toggle("clients-role-manager", Boolean(isManager));
     document.body.classList.toggle("clients-role-regional", Boolean(isRegional));
+    document.body.classList.toggle("clients-role-assistant", Boolean(isAssistant));
     document.body.classList.toggle("clients-role-rop", Boolean(isRop));
     document.body.classList.toggle("clients-role-director", Boolean(isDirector));
+    renderDelegationBanner(presentation);
     if (pageSubtitleEl) {
       if (config && config.subtitle) {
         pageSubtitleEl.textContent = config.subtitle;
@@ -1324,10 +1374,13 @@
       managerChromeEl.classList.toggle("clients-hidden", !config);
     }
     if (workspaceNavEl) {
-      workspaceNavEl.classList.toggle("clients-hidden", isRopDesignSession() || isDirector);
+      workspaceNavEl.classList.toggle(
+        "clients-hidden",
+        isRopDesignSession() || isDirector || isAssistant,
+      );
     }
-    if (workspaceNavTabEl && !isRopDesignSession() && !isDirector) {
-      workspaceNavTabEl.textContent = "Моя база";
+    if (workspaceNavTabEl && !isRopDesignSession() && !isDirector && !isAssistant) {
+      workspaceNavTabEl.textContent = isRegional ? "Моя база" : "Моя база";
     }
     if (incompleteStatsStripEl) {
       incompleteStatsStripEl.classList.toggle("clients-hidden", !isDirector);
@@ -1387,7 +1440,10 @@
       renderRopStatsFromSummary(teamContext.ropSummary);
       return Promise.resolve();
     }
-    return api.apiRequest("/api/clients/org-structure").then(function (result) {
+    var structureUrl = exchangeV3Active
+      ? "/api/clients/v3/org-structure"
+      : "/api/clients/org-structure";
+    return api.apiRequest(structureUrl).then(function (result) {
       if (result.response.status !== 200 || !result.data) {
         renderRopStatsFromSummary(null);
         return;
@@ -1407,9 +1463,12 @@
     if (!usesDirectorLayout()) {
       return Promise.resolve();
     }
-    var baseParams = { view: "all", page: "1", pageSize: "1" };
     function fetchTotal(extra) {
-      var params = new URLSearchParams(baseParams);
+      if (exchangeV3Active) {
+        var entity = extra.entity === "outlets" ? "retail" : "legal";
+        return fetchV3ListTotal(entity);
+      }
+      var params = new URLSearchParams({ view: "all", page: "1", pageSize: "1" });
       Object.keys(extra).forEach(function (key) {
         params.set(key, extra[key]);
       });
@@ -1428,10 +1487,13 @@
           return null;
         });
     }
+    var structureUrl = exchangeV3Active
+      ? "/api/clients/v3/org-structure"
+      : "/api/clients/org-structure";
     return Promise.all([
       fetchTotal({ entity: "clients" }),
       fetchTotal({ entity: "outlets" }),
-      api.apiRequest("/api/clients/org-structure"),
+      api.apiRequest(structureUrl),
       api.apiRequest("/api/clients/completeness-queue?page=1&pageSize=1"),
     ]).then(function (results) {
       if (statClientsEl) {
@@ -1551,6 +1613,19 @@
     if (isRopDesignSession()) {
       return loadRopTeamStats(state || currentStateFromForm());
     }
+    if (exchangeV3Active) {
+      return Promise.all([fetchV3ListTotal("legal"), fetchV3ListTotal("retail")]).then(function (totals) {
+        if (statClientsEl) {
+          statClientsEl.textContent = formatStatValue(totals[0]);
+        }
+        if (statOutletsEl) {
+          statOutletsEl.textContent = formatStatValue(totals[1]);
+        }
+        if (statNoOutletsWrapEl) {
+          statNoOutletsWrapEl.classList.add("clients-hidden");
+        }
+      });
+    }
     var baseParams = { view: "all", page: "1", pageSize: "1" };
     function fetchTotal(extra) {
       var params = new URLSearchParams(baseParams);
@@ -1616,6 +1691,9 @@
     }
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(presentation, currentUser, currentStateFromForm());
+    if (exchangeV3Active && window.ClientsV3 && entitySwitcherEl && presentation.allowedV3Entities) {
+      window.ClientsV3.mountEntitySwitcher(entitySwitcherEl, presentation.allowedV3Entities.slice());
+    }
   }
 
   function assignmentFilterIsActive(state, keys, entity) {
@@ -2660,11 +2738,17 @@
       return;
     }
     if (isRopDesignSession()) {
-      viewAllTabEl.textContent = "Клиенты команды";
+      viewAllTabEl.textContent = "База команды";
       viewTeamsTabEl.textContent = "Моя команда";
+    } else if (usesDirectorLayout()) {
+      viewAllTabEl.textContent = "Вся база";
+      viewTeamsTabEl.textContent = "По командам";
     } else {
       viewAllTabEl.textContent = "Все клиенты";
       viewTeamsTabEl.textContent = "По командам";
+    }
+    if (viewCompletenessTab && usesDirectorLayout()) {
+      viewCompletenessTab.textContent = "Незаполненные";
     }
     if (viewReviewTab) {
       viewReviewTab.textContent = usesDirectorLayout() ? "Ревизии" : "Требуют проверки";
@@ -2718,16 +2802,6 @@
     );
     holdingFilterWrap?.classList.toggle("clients-hidden", isCompleteness || isTeams);
     phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
-    entitySwitcherEl.classList.toggle(
-      "clients-hidden",
-      !isCompleteness &&
-        !(
-          rolePresentation &&
-          rolePresentation.allowedEntities &&
-          rolePresentation.allowedEntities.length > 1 &&
-          rolePresentation.showEntitySwitcher !== false
-        ),
-    );
     completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
     var showOutletDerivedFilters = !isTeams && !isReview && state.view === "all";
     outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
@@ -2774,6 +2848,24 @@
       usesDirectorLayout() && isTeams && !branchList && !responsibleList;
     var isDirectorTeamsOverview = isDirectorTeamsSurface && !state.ropEmployee;
     var isTeamsSurface = isDirectorTeamsOverview || isRopTeamHome;
+    var showEntityNav =
+      !isCompleteness &&
+      !isTeamsSurface &&
+      rolePresentation &&
+      rolePresentation.allowedEntities &&
+      rolePresentation.allowedEntities.length > 1 &&
+      rolePresentation.showEntitySwitcher !== false;
+    entitySwitcherEl.classList.toggle("clients-hidden", !showEntityNav);
+    if (
+      exchangeV3Active &&
+      window.ClientsV3 &&
+      entitySwitcherEl &&
+      rolePresentation &&
+      rolePresentation.allowedV3Entities &&
+      showEntityNav
+    ) {
+      window.ClientsV3.mountEntitySwitcher(entitySwitcherEl, rolePresentation.allowedV3Entities.slice());
+    }
     document.body.classList.toggle("clients-teams-surface", Boolean(isTeamsSurface));
     if (incompleteStatsCompactEl) {
       incompleteStatsCompactEl.classList.toggle(
@@ -4749,7 +4841,43 @@
         applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
         applyStateToForm(initialState);
         if (exchangeV3Active && window.ClientsV3) {
-          window.ClientsV3.mountEntitySwitcher(entitySwitcherEl);
+          window.ClientsV3.mountEntitySwitcher(
+            entitySwitcherEl,
+            rolePresentation && rolePresentation.allowedV3Entities
+              ? rolePresentation.allowedV3Entities.slice()
+              : null,
+          );
+          if (v3FilterChipsEl && !v3FilterChipsEl.dataset.bound) {
+            v3FilterChipsEl.dataset.bound = "1";
+            v3FilterChipsEl.addEventListener("click", function (event) {
+              var btn = event.target.closest("[data-v3-clear-filter]");
+              if (!btn || !window.ClientsV3) {
+                return;
+              }
+              var key = btn.getAttribute("data-v3-clear-filter");
+              var patch = { page: 1 };
+              if (key === "q") {
+                searchInput.value = "";
+                patch.q = "";
+              } else if (key === "v3manager") {
+                patch.v3manager = "";
+                patch.responsibleGuid = "";
+                patch.responsibleKind = "";
+              } else if (key === "v3type") {
+                patch.v3type = "";
+              } else if (key === "v3category") {
+                patch.v3category = "";
+              } else if (key === "closed") {
+                patch.closed = "";
+              } else {
+                return;
+              }
+              cancelScheduledLoad();
+              invalidateInFlightRequests();
+              var next = window.ClientsV3.mergeListStateForUserAction(patch);
+              window.ClientsV3.loadList(buildV3UiContext(), next, true);
+            });
+          }
           window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
             cancelScheduledLoad();
             invalidateInFlightRequests();

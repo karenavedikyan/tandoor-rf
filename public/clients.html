@@ -16,10 +16,17 @@
       <div class="legacy-frame">
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
-          <header class="clients-page-header">
+            <header class="clients-page-header">
             <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
             <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
           </header>
+
+            <div
+              id="clients-delegation-banner"
+              class="clients-delegation-banner clients-hidden"
+              data-testid="clients-delegation-banner"
+              role="status"
+            ></div>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
           <div id="init-panel" class="clients-hidden" role="alert"></div>
@@ -118,8 +125,10 @@
             <div id="teams-panel" class="clients-teams-panel clients-hidden"></div>
             <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
 
+            <div id="v3-filter-chips" class="clients-v3-filter-chips clients-hidden" aria-live="polite"></div>
+
             <div class="clients-toolbar">
-              <div class="clients-toolbar__search-row">
+              <div class="clients-toolbar__search-row clients-toolbar__search-row--sticky">
                 <label class="clients-field clients-field--search">
                   <span class="clients-field__label">Поиск</span>
                   <input

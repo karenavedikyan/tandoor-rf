@@ -182,13 +182,13 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await reloadList;
     await assertListFilterState(page);
 
-    const holdingsClick = page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=holdings") && res.status() === 200,
+    const retailClick = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=retail") && res.status() === 200,
     );
-    await page.click('[data-v3entity="holdings"]');
-    await holdingsClick;
+    await page.click('[data-v3entity="retail"]');
+    await retailClick;
     await page.waitForFunction(function () {
-      return document.querySelector('[data-v3entity="holdings"].clients-view-switcher__btn--active');
+      return document.querySelector('[data-v3entity="retail"].clients-view-switcher__btn--active');
     });
 
     const legalClick = page.waitForResponse(
@@ -196,7 +196,17 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     );
     await page.click('[data-v3entity="legal"]');
     await legalClick;
+    const restoreList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
+        res.url().includes("typeGuid=t1") &&
+        res.status() === 200,
+    );
+    await page.goto(listUrl);
+    await restoreList;
     await waitForLegalList(page, true);
+    await assertListFilterState(page);
 
     const link =
       viewport.width <= 400

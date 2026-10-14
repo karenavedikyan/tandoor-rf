@@ -33,6 +33,18 @@ describe("clients role presentation", () => {
     assert.equal(presentation.showViewSwitcher, false);
     assert.deepEqual(presentation.allowedViews, ["all"]);
     assert.deepEqual(presentation.allowedEntities, ["clients", "outlets"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal", "retail"]);
+  });
+
+  it("maps assistant to legal-only portfolio without view switcher", () => {
+    const presentation = resolveRolePresentation(context({ role: "assistant" }));
+    assert.ok(presentation);
+    assert.equal(presentation.pageTitle, "Клиенты замещения");
+    assert.equal(presentation.defaultView, "all");
+    assert.equal(presentation.showViewSwitcher, false);
+    assert.deepEqual(presentation.allowedViews, ["all"]);
+    assert.deepEqual(presentation.allowedEntities, ["clients"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal"]);
   });
 
   it("maps regional manager defaults to outlets list", () => {
@@ -41,6 +53,7 @@ describe("clients role presentation", () => {
     assert.equal(presentation.pageTitle, "Мои торговые точки");
     assert.equal(presentation.defaultEntity, "outlets");
     assert.deepEqual(presentation.allowedEntities, ["outlets", "clients"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal", "retail"]);
   });
 
   it("maps ROP defaults to teams view", () => {

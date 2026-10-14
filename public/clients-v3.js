@@ -443,20 +443,89 @@
       return new URLSearchParams(search || window.location.search).get("v3mode") === "1";
     },
 
-    mountEntitySwitcher: function (entitySwitcherEl) {
+    mountEntitySwitcher: function (entitySwitcherEl, allowedIds) {
       if (!entitySwitcherEl) {
         return;
       }
+      var allowed =
+        allowedIds && allowedIds.length
+          ? allowedIds
+          : ENTITIES.map(function (e) {
+              return e.id;
+            });
+      var visible = ENTITIES.filter(function (e) {
+        return allowed.indexOf(e.id) !== -1;
+      });
+      if (!visible.length) {
+        entitySwitcherEl.classList.add("clients-hidden");
+        entitySwitcherEl.innerHTML = "";
+        return;
+      }
       entitySwitcherEl.classList.remove("clients-hidden");
-      entitySwitcherEl.innerHTML = ENTITIES.map(function (e) {
-        return (
-          '<button type="button" class="clients-view-switcher__btn" data-v3entity="' +
-          e.id +
-          '">' +
-          e.label +
-          "</button>"
-        );
-      }).join("");
+      entitySwitcherEl.innerHTML = visible
+        .map(function (e) {
+          return (
+            '<button type="button" class="clients-view-switcher__btn" data-v3entity="' +
+            e.id +
+            '">' +
+            e.label +
+            "</button>"
+          );
+        })
+        .join("");
+    },
+
+    renderFilterChips: function (shell, state, options) {
+      var wrap = document.getElementById("v3-filter-chips");
+      if (!wrap) {
+        return;
+      }
+      var chips = [];
+      if (state.q) {
+        chips.push({ label: "Поиск: " + state.q, key: "q" });
+      }
+      if (state.v3manager && options && options.managers) {
+        var mgr = (options.managers || []).find(function (m) {
+          return m.guid === state.v3manager;
+        });
+        chips.push({ label: "Менеджер: " + (mgr ? mgr.name : state.v3manager.slice(0, 8)), key: "v3manager" });
+      }
+      if (state.v3type && options && options.types) {
+        var tp = (options.types || []).find(function (t) {
+          return t.guid === state.v3type;
+        });
+        chips.push({ label: "Тип: " + (tp ? tp.name : state.v3type), key: "v3type" });
+      }
+      if (state.v3category && options && options.categories) {
+        var cat = (options.categories || []).find(function (c) {
+          return c.guid === state.v3category;
+        });
+        chips.push({ label: "Категория: " + (cat ? cat.name : state.v3category), key: "v3category" });
+      }
+      if (state.closed === "true") {
+        chips.push({ label: "ТТ: закрыта", key: "closed" });
+      } else if (state.closed === "false") {
+        chips.push({ label: "ТТ: открыта", key: "closed" });
+      }
+      if (!chips.length) {
+        wrap.classList.add("clients-hidden");
+        wrap.innerHTML = "";
+        return;
+      }
+      wrap.classList.remove("clients-hidden");
+      wrap.innerHTML =
+        '<span class="clients-v3-filter-chips__label">Фильтры</span>' +
+        chips
+          .map(function (chip) {
+            return (
+              '<span class="clients-v3-filter-chip">' +
+              shell.escapeHtml(chip.label) +
+              '<button type="button" class="clients-v3-filter-chip__clear" data-v3-clear-filter="' +
+              shell.escapeHtml(chip.key) +
+              '" aria-label="Снять фильтр">×</button></span>'
+            );
+          })
+          .join("");
     },
 
     bindEntitySwitcher: function (entitySwitcherEl, onSwitch) {
@@ -522,6 +591,7 @@
         var result = pair[1];
         if (optionsResult.response.ok && optionsResult.data) {
           syncFilterDom(shell, state, optionsResult.data);
+          window.ClientsV3.renderFilterChips(shell, state, optionsResult.data);
         }
         return result;
       }).then(function (result) {
