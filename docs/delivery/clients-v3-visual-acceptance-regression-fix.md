@@ -59,6 +59,20 @@
 - Каталог: `CLIENTS_V3_VISUAL_DIR` или store `media/clients-v3-visual-review/captures-<sha>/`
 - SHA: `resolveVerifiedGitSha()` (короткий префикс в имени каталога допустим)
 
-## Production
+## Production (PR #77 release)
 
-Не изменялся.
+| Поле | Значение |
+|------|----------|
+| Статус | **MERGED** в `main`; **deploy на lk.tandoor.ru — ожидает оператора / автодеплой Timeweb** |
+| PR HEAD | `fca1e3218e07f649af47307e5e55973da943c64d` |
+| Merge commit `main` | `b90e8a31beaad40c3d6fa4744514b96136fce7f6` (2026-10-14) |
+| Timeweb app | **258307** → https://lk.tandoor.ru |
+| Pre-release prod marker | `clients-v3.js` без `navigationIsStale` (Last-Modified 2026-10-13) |
+| Миграции в diff PR | **нет** — отдельный `npm run migrate` не требуется для этого выпуска |
+| Prod smoke (агент) | health/ready PASS; сценарии с логином — **NOT RUN** (нет production-сессии в среде агента) |
+
+**Оператор (если автодеплой не стартовал):** Timeweb Cloud → приложение **258307** → деплой ветки `main`, commit **`b90e8a3`** (или «последний коммит main» после merge). API: `POST /api/v1/apps/258307/deploy` с телом `{"commit_sha":"b90e8a3..."}` и токеном из панели (не в репозитории).
+
+**Откат:** redeploy предыдущего успешного deployment / commit `234abc8` (pre-#77) без изменений БД и env.
+
+Очистка клиентов, импорт 1С, Bitrix24, права и расписания **не выполнялись**.
