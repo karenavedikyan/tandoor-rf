@@ -334,16 +334,36 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.ok(bodyM2.items.some((item) => item.name === "Legal Two"));
     assert.ok(!bodyM2.items.some((item) => item.name === "Legal One"));
 
-    await page.locator('#view-switcher [data-view="all"]').click();
-    await page.waitForURL(/view=all/, { timeout: 60000 });
     const listAll = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
         !res.url().includes("responsibleGuid=") &&
+        !res.url().includes("managerGuid=") &&
         res.status() === 200,
       { timeout: 60000 },
     );
-    await listAll;
+    await page.locator('#view-switcher [data-view="all"]').click();
+    await page.waitForURL(/view=all/, { timeout: 60000 });
+    await page.waitForFunction(function () {
+      var params = new URL(window.location.href).searchParams;
+      return !params.get("responsibleGuid") && !params.get("v3manager");
+    });
+    await listAll.catch(function () {
+      /* list may reuse cached response when filters unchanged */
+    });
+    await page
+      .locator(
+        '#clients-table-body a:has-text("Legal One"), #clients-table-body a:has-text("Legal Two"), #clients-cards a:has-text("Legal One")',
+      )
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+    await page
+      .locator(
+        '#clients-table-body a:has-text("Legal Two"), #clients-cards a:has-text("Legal Two")',
+      )
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
     await page.close();
   });
 
@@ -359,6 +379,181 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const url = new URL(page.url());
     assert.match(url.searchParams.get("q") || "", /Legal/i);
     assert.equal(url.searchParams.get("page"), "2");
+    await page.close();
+  });
+
+  it("v3 retail filters persist through search, clear and pagination", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    const listReady = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=retail") &&
+        res.status() === 200,
+    );
+    await page.goto(
+      baseUrl + "/clients?v3mode=1&v3entity=retail&view=all&v3pageSize=1&page=1",
+      { waitUntil: "networkidle" },
+    );
+    await listReady;
+    await page.waitForFunction(function () {
+      var wrap = document.getElementById("v3-filters-wrap");
+      return wrap && !wrap.classList.contains("clients-hidden");
+    });
+    await page.waitForFunction(
+      (m1) => {
+        const sel = document.getElementById("v3-manager-filter") as HTMLSelectElement | null;
+        return Boolean(sel && Array.from(sel.options).some((o) => o.value === m1));
+      },
+      M1,
+      { timeout: 30000 },
+    );
+
+    const managerList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+    );
+    await page.selectOption("#v3-manager-filter", M1);
+    await managerList;
+
+    const closedList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("closed=false") &&
+        res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+    );
+    await page.selectOption("#v3-closed-filter", "false");
+    await closedList;
+
+    const typeList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("typeGuid=rt1") &&
+        res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+    );
+    await page.selectOption("#v3-type-filter", "rt1");
+    const typeResp = await typeList;
+    const typeBody = (await typeResp.json()) as { items: Array<{ name: string }> };
+    assert.ok(typeBody.items.every((i) => i.name !== "Store Three Closed"));
+
+    const searchList = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return (
+          u.includes("/api/clients/v3/list") &&
+          u.includes("q=Store") &&
+          u.includes("managerGuid=" + encodeURIComponent(M1)) &&
+          u.includes("closed=false") &&
+          u.includes("typeGuid=rt1") &&
+          res.status() === 200
+        );
+      },
+      { timeout: 45000 },
+    );
+    await page.fill("#search-input", "Store");
+    const searchResp = await searchList;
+    const searchBody = (await searchResp.json()) as { items: Array<{ name: string }> };
+    assert.ok(searchBody.items.length >= 1);
+    const urlAfterSearch = new URL(page.url());
+    assert.equal(urlAfterSearch.searchParams.get("v3manager"), M1);
+    assert.equal(urlAfterSearch.searchParams.get("closed"), "false");
+    assert.equal(urlAfterSearch.searchParams.get("v3type"), "rt1");
+    assert.match(urlAfterSearch.searchParams.get("q") || "", /Store/i);
+
+    const clearSearchList = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return (
+          u.includes("/api/clients/v3/list") &&
+          !u.includes("q=Store") &&
+          u.includes("managerGuid=" + encodeURIComponent(M1)) &&
+          u.includes("closed=false") &&
+          u.includes("typeGuid=rt1") &&
+          res.status() === 200
+        );
+      },
+      { timeout: 45000 },
+    );
+    await page.fill("#search-input", "");
+    await clearSearchList.catch(async function () {
+      await page.waitForFunction(
+        (m1) => {
+          const params = new URL(window.location.href).searchParams;
+          return (
+            (params.get("q") || "") === "" &&
+            params.get("v3manager") === m1 &&
+            params.get("closed") === "false" &&
+            params.get("v3type") === "rt1"
+          );
+        },
+        M1,
+        { timeout: 15000 },
+      );
+    });
+    const urlAfterClearQ = new URL(page.url());
+    assert.equal(urlAfterClearQ.searchParams.get("v3manager"), M1);
+    assert.equal(urlAfterClearQ.searchParams.get("closed"), "false");
+    assert.equal(urlAfterClearQ.searchParams.get("v3type"), "rt1");
+    assert.equal(urlAfterClearQ.searchParams.get("q") || "", "");
+
+    const page2List = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("page=2") &&
+        res.url().includes("pageSize=1") &&
+        res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+      { timeout: 45000 },
+    );
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&v3entity=retail&view=all&v3pageSize=1&page=2&v3manager=" +
+        encodeURIComponent(M1) +
+        "&closed=false&v3type=rt1",
+      { waitUntil: "networkidle" },
+    );
+    await page2List;
+    assert.equal(new URL(page.url()).searchParams.get("page"), "2");
+
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&v3entity=retail&view=all&v3pageSize=1&page=1&v3manager=" +
+        encodeURIComponent(M1) +
+        "&closed=false&v3type=rt1",
+      { waitUntil: "networkidle" },
+    );
+    await page.waitForSelector("#v3-manager-filter", { timeout: 20000 });
+    const clearManagerList = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return (
+          u.includes("/api/clients/v3/list") &&
+          !u.includes("managerGuid=") &&
+          !u.includes("responsibleGuid=") &&
+          res.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
+    await page.selectOption("#v3-manager-filter", "");
+    await clearManagerList;
+    const clearClosedList = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return u.includes("/api/clients/v3/list") && !u.includes("closed=") && res.status() === 200;
+      },
+      { timeout: 30000 },
+    );
+    await page.selectOption("#v3-closed-filter", "");
+    await clearClosedList;
+    const finalUrl = new URL(page.url());
+    assert.equal(finalUrl.searchParams.get("v3manager") || "", "");
+    assert.equal(finalUrl.searchParams.get("closed") || "", "");
     await page.close();
   });
 

@@ -7,14 +7,14 @@ const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 
 /** Expected import surface for PR #76 synthetic bundle (must match onec-exchange-v3-import.test.ts). */
 describe("onec exchange v3 fixture inventory", () => {
-  it("matches import test expectations: 1 holding, 4 legal, 2 retail, 7 label objects", () => {
+  it("matches import test expectations: 1 holding, 4 legal, 4 retail, 9 label objects", () => {
     const holdings = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json"), "utf8"));
     const clients = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json"), "utf8"));
     const retail = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json"), "utf8"));
 
     assert.equal(holdings.length, 1);
     assert.equal(clients.length, 4);
-    assert.equal(retail.length, 2);
+    assert.equal(retail.length, 4);
 
     const orphanRetail = retail.filter((r: { guid_holding?: string }) => !r.guid_holding);
     assert.equal(orphanRetail.length, 1);
@@ -26,6 +26,6 @@ describe("onec exchange v3 fixture inventory", () => {
     assert.equal(unassignedLegal.length, 1);
 
     const labelObjectCount = holdings.length + clients.length + retail.length;
-    assert.equal(labelObjectCount, 7);
+    assert.equal(labelObjectCount, 9);
   });
 });

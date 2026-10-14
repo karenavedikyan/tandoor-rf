@@ -19,6 +19,8 @@
     "managers": {
       "guid_manager": "22222222-2222-4222-8222-222222222222",
       "name_manager": "Manager One",
+      "guid_regional_manager": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name_regional_manager": "Regional One",
       "guid_head_of_the_sales_department": "55555555-5555-4555-8555-555555555555",
       "name_head_of_the_sales_department": "ROP One"
     },
@@ -44,6 +46,48 @@
     "closed": false,
     "type_category": {},
     "address": { "store_address": "Orphan Store" },
+    "information_loading": {},
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "contact_information": {},
+    "LPR_information": {},
+    "additional_information": {}
+  },
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000003",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "warehouse": false,
+    "closed": true,
+    "type_category": {
+      "guid_type": "rt1",
+      "name_type": "Retail Type",
+      "guid_category": "rc1",
+      "name_category": "Retail Cat"
+    },
+    "address": { "store_address": "Store Three Closed" },
+    "information_loading": {},
+    "managers": {
+      "guid_manager": "22222222-2222-4222-8222-222222222222",
+      "name_manager": "Manager One"
+    },
+    "contact_information": {},
+    "LPR_information": {},
+    "additional_information": {}
+  },
+  {
+    "guid_store": "c3000000-0000-4000-8000-000000000004",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "warehouse": false,
+    "closed": false,
+    "type_category": {
+      "guid_type": "rt1",
+      "name_type": "Retail Type",
+      "guid_category": "rc1",
+      "name_category": "Retail Cat"
+    },
+    "address": { "store_address": "Store Four Open" },
     "information_loading": {},
     "managers": {
       "guid_manager": "22222222-2222-4222-8222-222222222222",

@@ -4460,6 +4460,14 @@
   function scheduleLoad(resetPage, replaceHistory) {
     cancelScheduledLoad();
     debounceTimer = setTimeout(function () {
+      if (exchangeV3Active && window.ClientsV3 && shouldUseV3List({ view: currentView() })) {
+        var next = window.ClientsV3.mergeListStateForUserAction({
+          q: searchInput.value.trim(),
+          page: resetPage ? 1 : window.ClientsV3.readState().page,
+        });
+        window.ClientsV3.loadList(buildV3UiContext(), next, replaceHistory);
+        return;
+      }
       var state = currentStateFromForm();
       if (resetPage) {
         state.page = 1;
@@ -4632,6 +4640,8 @@
       ropEmployee: "",
       portfolio: "",
       responsibleKind: "",
+      responsibleGuid: "",
+      v3manager: "",
       hardwareManager: "",
       unassignedCategory: "",
       reviewState: "",
@@ -4711,10 +4721,14 @@
           window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
             cancelScheduledLoad();
             invalidateInFlightRequests();
-            var v3state = window.ClientsV3.readState();
-            v3state.v3entity = entityId;
-            v3state.page = 1;
-            v3state.q = searchInput.value.trim() || v3state.q || "";
+            var v3state = window.ClientsV3.mergeListStateForUserAction({
+              v3entity: entityId,
+              page: 1,
+              q: searchInput.value.trim(),
+            });
+            if (entityId !== "retail" && entityId !== "orphan_retail") {
+              v3state.closed = "";
+            }
             window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
           });
         }

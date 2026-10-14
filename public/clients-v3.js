@@ -51,6 +51,7 @@
       ropEmployee: params.get("ropEmployee") || "",
       responsibleGuid: responsibleGuid,
       responsibleKind: responsibleGuid ? responsibleKind : "",
+      pageSize: Math.min(100, Math.max(1, Number(params.get("v3pageSize") || "50") || 50)),
     };
   }
 
@@ -88,9 +89,64 @@
     }
   }
 
+  function readFiltersFromDom() {
+    return {
+      v3manager: document.getElementById("v3-manager-filter")?.value || "",
+      v3type: document.getElementById("v3-type-filter")?.value || "",
+      v3category: document.getElementById("v3-category-filter")?.value || "",
+      closed: document.getElementById("v3-closed-filter")?.value || "",
+    };
+  }
+
+  function v3FilterFallback(key, legacy, fromUrl, urlFilters, domFilters) {
+    if (legacy && Object.prototype.hasOwnProperty.call(legacy, key)) {
+      return legacy[key] || "";
+    }
+    if (!fromUrl && domFilters) {
+      return domFilters[key] || "";
+    }
+    return urlFilters[key] || "";
+  }
+
+  function mergeListStateForUserAction(patch) {
+    var url = readState();
+    var dom = readFiltersFromDom();
+    var next = {
+      v3entity: url.v3entity,
+      v3view: url.v3view,
+      page: url.page,
+      q: url.q,
+      closed: dom.closed || url.closed || "",
+      v3manager: dom.v3manager || url.v3manager || "",
+      v3type: dom.v3type || url.v3type || "",
+      v3category: dom.v3category || url.v3category || "",
+      missingManager: url.missingManager,
+      ropEmployee: url.ropEmployee,
+      responsibleGuid: url.responsibleGuid,
+      responsibleKind: url.responsibleKind,
+      pageSize: url.pageSize || 50,
+    };
+    if (patch) {
+      Object.keys(patch).forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(patch, key)) {
+          next[key] = patch[key];
+        }
+      });
+    }
+    if (next.v3manager) {
+      next.responsibleGuid = next.v3manager;
+      next.responsibleKind = "manager";
+    } else if (patch && Object.prototype.hasOwnProperty.call(patch, "v3manager") && !patch.v3manager) {
+      next.responsibleGuid = "";
+      next.responsibleKind = "";
+    }
+    return next;
+  }
+
   function legacyStateToV3(legacy, loadSource) {
     var logic = typeof ClientsLogic !== "undefined" ? ClientsLogic : null;
     var urlFilters = readState();
+    var domFilters = loadSource === "url" ? null : readFiltersFromDom();
     var fromUrl = loadSource === "url";
     var view = legacy.view || "all";
     var entity = legacy.entity || "clients";
@@ -99,10 +155,28 @@
       : entity === "outlets"
         ? "retail"
         : "legal";
+    var v3managerVal = logic
+      ? logic.legacyStringField(
+          legacy,
+          "v3manager",
+          v3FilterFallback("v3manager", legacy, fromUrl, urlFilters, domFilters),
+        )
+      : v3FilterFallback("v3manager", legacy, fromUrl, urlFilters, domFilters);
     var assignment = logic
       ? logic.v3ResponsibleFromLegacyState(legacy)
       : { responsibleGuid: "", responsibleKind: "", v3manager: "" };
-    if (
+    if (v3managerVal) {
+      assignment = {
+        responsibleGuid: v3managerVal,
+        responsibleKind: "manager",
+        v3manager: v3managerVal,
+      };
+    } else if (
+      Object.prototype.hasOwnProperty.call(legacy || {}, "v3manager") &&
+      !v3managerVal
+    ) {
+      assignment = { responsibleGuid: "", responsibleKind: "", v3manager: "" };
+    } else if (
       fromUrl &&
       !assignment.responsibleGuid &&
       urlFilters.responsibleGuid &&
@@ -113,26 +187,54 @@
         responsibleKind: urlFilters.responsibleKind || "manager",
         v3manager: urlFilters.v3manager || urlFilters.responsibleGuid,
       };
+    } else if (
+      !fromUrl &&
+      (legacy.view || "all") === "teams" &&
+      !assignment.responsibleGuid &&
+      urlFilters.responsibleGuid &&
+      !v3managerVal &&
+      !(logic && logic.hasResponsibleSelection(legacy))
+    ) {
+      assignment = {
+        responsibleGuid: urlFilters.responsibleGuid,
+        responsibleKind: urlFilters.responsibleKind || "manager",
+        v3manager: urlFilters.v3manager || urlFilters.responsibleGuid,
+      };
     }
     var ropEmployee = logic
-      ? logic.legacyStringField(legacy, "ropEmployee", fromUrl ? urlFilters.ropEmployee : "")
+      ? logic.legacyStringField(
+          legacy,
+          "ropEmployee",
+          v3FilterFallback("ropEmployee", legacy, fromUrl, urlFilters, domFilters),
+        )
       : legacy.ropEmployee || (fromUrl ? urlFilters.ropEmployee : "") || "";
     var v3type = logic
-      ? logic.legacyStringField(legacy, "v3type", urlFilters.v3type || "")
-      : fromUrl
-        ? urlFilters.v3type || ""
-        : "";
+      ? logic.legacyStringField(
+          legacy,
+          "v3type",
+          v3FilterFallback("v3type", legacy, fromUrl, urlFilters, domFilters),
+        )
+      : v3FilterFallback("v3type", legacy, fromUrl, urlFilters, domFilters);
     var v3category = logic
-      ? logic.legacyStringField(legacy, "v3category", urlFilters.v3category || "")
-      : fromUrl
-        ? urlFilters.v3category || ""
-        : "";
+      ? logic.legacyStringField(
+          legacy,
+          "v3category",
+          v3FilterFallback("v3category", legacy, fromUrl, urlFilters, domFilters),
+        )
+      : v3FilterFallback("v3category", legacy, fromUrl, urlFilters, domFilters);
+    var closed = logic
+      ? logic.legacyStringField(
+          legacy,
+          "closed",
+          v3FilterFallback("closed", legacy, fromUrl, urlFilters, domFilters),
+        )
+      : v3FilterFallback("closed", legacy, fromUrl, urlFilters, domFilters);
     return {
       v3entity: v3entity,
       v3view: v3ViewFromLegacyView(view),
       page: legacy.page != null ? legacy.page : fromUrl ? urlFilters.page || 1 : 1,
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
-      closed: fromUrl ? urlFilters.closed || "" : legacy.closed != null ? legacy.closed : "",
+      closed: closed,
       v3manager: assignment.v3manager,
       v3type: v3type,
       v3category: v3category,
@@ -140,6 +242,7 @@
       ropEmployee: ropEmployee,
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
+      pageSize: urlFilters.pageSize || 50,
     };
   }
 
@@ -170,6 +273,11 @@
     else params.delete("v3type");
     if (state.v3category) params.set("v3category", state.v3category);
     else params.delete("v3category");
+    if (state.pageSize && state.pageSize !== 50) {
+      params.set("v3pageSize", String(state.pageSize));
+    } else {
+      params.delete("v3pageSize");
+    }
     if (state.missingManager) params.set("missingManager", "1");
     else params.delete("missingManager");
     if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
@@ -337,6 +445,8 @@
     },
 
     readState: readState,
+    readFiltersFromDom: readFiltersFromDom,
+    mergeListStateForUserAction: mergeListStateForUserAction,
     writeState: writeState,
 
     loadList: function (ctx, state, replaceHistory) {
@@ -354,7 +464,7 @@
       var params = new URLSearchParams();
       params.set("entity", state.v3entity);
       params.set("page", String(state.page));
-      params.set("pageSize", "50");
+      params.set("pageSize", String(state.pageSize || 50));
       if (state.q) {
         params.set("q", state.q);
       }
@@ -499,6 +609,13 @@
           next.v3type = document.getElementById("v3-type-filter")?.value || "";
           next.v3category = document.getElementById("v3-category-filter")?.value || "";
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
+          if (next.v3manager) {
+            next.responsibleGuid = next.v3manager;
+            next.responsibleKind = "manager";
+          } else {
+            next.responsibleGuid = "";
+            next.responsibleKind = "";
+          }
           next.page = 1;
           next.q = ctx.getSearchQuery ? ctx.getSearchQuery() : next.q;
           reload(next);
