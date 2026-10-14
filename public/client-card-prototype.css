@@ -21,7 +21,9 @@
 .client-card-page .client-card-section h2 {margin:0 0 10px;font-size:16px;font-weight:600;line-height:1.3;}
 .client-card-page .client-card-section dl {margin:0;display:grid;gap:10px;}
 .client-card-page .client-card-section dt {font-size:12px;font-weight:600;color:var(--rf-text-muted);margin:0;}
-.client-card-page .client-card-section dd {margin:0;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere;word-break:break-all;min-width:0;max-width:100%;}
+.client-card-page .client-card-section dd {margin:0;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere;word-break:break-word;min-width:0;max-width:100%;}
+.client-card-page .client-card-section dd:not(:empty){hyphens:auto;}
+.client-card-page #client-detail-root pre,.client-card-page #client-detail-root code{overflow-wrap:anywhere;word-break:break-word;max-width:100%;}
 .client-card-page .client-card-section a {color:var(--rf-primary-hover);font-weight:600;text-decoration:none;}
 .client-card-page .client-card-section a:hover {text-decoration:underline;}
 .client-card-page .client-detail-header {margin-bottom:16px;}
