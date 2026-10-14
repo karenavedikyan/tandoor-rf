@@ -116,6 +116,7 @@
     "v3type",
     "v3category",
     "v3view",
+    "v3pageSize",
     "missingManager",
     "responsibleGuid",
     "ropBranchGuid",
@@ -868,6 +869,16 @@
       return Boolean(state.onecTeam) && (state.portfolio === "clients" || state.portfolio === "outlets");
     }
     return Boolean(state.ropEmployee);
+  }
+
+  function hasExplicitResponsibleNavigation(state) {
+    if (!state) {
+      return false;
+    }
+    if (Object.prototype.hasOwnProperty.call(state, "responsibleGuid")) {
+      return true;
+    }
+    return hasResponsibleSelection(state);
   }
 
   function hasResponsibleSelection(state) {
@@ -2229,6 +2240,7 @@
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,
     hasResponsibleSelection: hasResponsibleSelection,
+    hasExplicitResponsibleNavigation: hasExplicitResponsibleNavigation,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,
     resolveAddressPresentation: resolveAddressPresentation,

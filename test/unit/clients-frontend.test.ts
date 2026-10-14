@@ -16,6 +16,7 @@ const logic = require("../../public/clients-logic.js") as {
   parseLegacyStateFromV3Url: (search: string) => { view: string; entity: string } | null;
   isBareClientsMenuSearch: (search: string) => boolean;
   mergeRoleEntryHref: (roleHref: string, currentSearch: string) => string;
+  hasExplicitResponsibleNavigation: (state: Record<string, string>) => boolean;
   v3ResponsibleFromLegacyState: (state: Record<string, string>) => {
     responsibleGuid: string;
     responsibleKind: string;
@@ -279,6 +280,30 @@ describe("clients frontend logic", () => {
     });
     assert.equal(cleared.responsibleGuid, "");
     assert.equal(cleared.responsibleKind, "");
+  });
+
+  it("detects explicit team responsible navigation", () => {
+    assert.equal(
+      logic.hasExplicitResponsibleNavigation({
+        view: "teams",
+        ropEmployee: "rop-guid",
+        manager: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        responsibleGuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        responsibleKind: "manager",
+      }),
+      true,
+    );
+    assert.equal(
+      logic.hasExplicitResponsibleNavigation({
+        view: "teams",
+        ropEmployee: "rop-guid",
+        responsibleGuid: "",
+        manager: "",
+        responsibleKind: "",
+      }),
+      true,
+    );
+    assert.equal(logic.hasExplicitResponsibleNavigation({ view: "all", q: "x" }), false);
   });
 
   it("clears ropEmployee when legacy state explicitly empty", () => {

@@ -24,6 +24,15 @@
     return "";
   }
 
+  function isV3TeamAssignment(state) {
+    return Boolean(
+      state &&
+        state.responsibleGuid &&
+        state.responsibleKind &&
+        (state.v3view === "teams" || state.ropEmployee),
+    );
+  }
+
   function readState(search) {
     var params = new URLSearchParams(search || window.location.search);
     var entity = params.get("v3entity") || "legal";
@@ -111,13 +120,19 @@
   function mergeListStateForUserAction(patch) {
     var url = readState();
     var dom = readFiltersFromDom();
+    var teamResponsible =
+      url.responsibleGuid && url.responsibleKind && (url.v3view === "teams" || url.ropEmployee);
     var next = {
       v3entity: url.v3entity,
       v3view: url.v3view,
       page: url.page,
       q: url.q,
       closed: dom.closed || url.closed || "",
-      v3manager: dom.v3manager || url.v3manager || "",
+      v3manager: teamResponsible
+        ? url.responsibleKind === "manager"
+          ? url.v3manager || url.responsibleGuid
+          : ""
+        : dom.v3manager || url.v3manager || "",
       v3type: dom.v3type || url.v3type || "",
       v3category: dom.v3category || url.v3category || "",
       missingManager: url.missingManager,
@@ -165,7 +180,17 @@
     var assignment = logic
       ? logic.v3ResponsibleFromLegacyState(legacy)
       : { responsibleGuid: "", responsibleKind: "", v3manager: "" };
-    if (v3managerVal) {
+    var explicitResponsible = logic && logic.hasExplicitResponsibleNavigation(legacy);
+    if (explicitResponsible) {
+      if (
+        Object.prototype.hasOwnProperty.call(legacy || {}, "responsibleGuid") &&
+        !legacy.responsibleGuid
+      ) {
+        assignment = { responsibleGuid: "", responsibleKind: "", v3manager: "" };
+      } else if (assignment.responsibleKind && assignment.responsibleKind !== "manager") {
+        assignment.v3manager = "";
+      }
+    } else if (v3managerVal) {
       assignment = {
         responsibleGuid: v3managerVal,
         responsibleKind: "manager",
@@ -317,6 +342,9 @@
       params.set("responsibleGuid", s.responsibleGuid);
       params.set("responsibleKind", s.responsibleKind || "manager");
       params.set("teamKind", s.responsibleKind || "manager");
+    }
+    if (s.pageSize && s.pageSize !== 50) {
+      params.set("v3pageSize", String(s.pageSize));
     }
     return "?" + params.toString();
   }
@@ -472,11 +500,12 @@
       if (state.ropEmployee) {
         params.set("ropBranchGuid", state.ropEmployee);
       }
-      if (state.responsibleGuid && state.responsibleKind) {
+      var teamAssignment = isV3TeamAssignment(state);
+      if (teamAssignment) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
       }
-      if (state.v3manager) {
+      if (state.v3manager && !teamAssignment) {
         params.set("managerGuid", state.v3manager);
       }
       if (state.v3type) params.set("typeGuid", state.v3type);
@@ -589,10 +618,17 @@
               );
             })
             .join("");
-          var totalPages = Math.max(1, Math.ceil((data.total || 0) / 50));
+          var pageSize = state.pageSize || 50;
+          var totalPages = Math.max(1, Math.ceil((data.total || 0) / pageSize));
           ctx.resultCountEl.textContent = (data.total || 0) + " записей";
           ctx.renderPagination(
-            { page: state.page, v3entity: state.v3entity, q: state.q, closed: state.closed },
+            {
+              page: state.page,
+              v3entity: state.v3entity,
+              q: state.q,
+              closed: state.closed,
+              pageSize: pageSize,
+            },
             totalPages,
           );
         });
@@ -609,12 +645,15 @@
           next.v3type = document.getElementById("v3-type-filter")?.value || "";
           next.v3category = document.getElementById("v3-category-filter")?.value || "";
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
-          if (next.v3manager) {
-            next.responsibleGuid = next.v3manager;
-            next.responsibleKind = "manager";
-          } else {
-            next.responsibleGuid = "";
-            next.responsibleKind = "";
+          var teamView = next.v3view === "teams" || next.ropEmployee;
+          if (id === "v3-manager-filter" && teamView) {
+            if (next.v3manager) {
+              next.responsibleGuid = next.v3manager;
+              next.responsibleKind = "manager";
+            } else {
+              next.responsibleGuid = "";
+              next.responsibleKind = "";
+            }
           }
           next.page = 1;
           next.q = ctx.getSearchQuery ? ctx.getSearchQuery() : next.q;
@@ -672,14 +711,15 @@
             ctx.showResultsState("error", "Не удалось загрузить команду", "Повторите попытку.", "");
             return;
           }
-          hooks.renderTeamsPanel(legacyState);
-          hooks.updateViewChrome(legacyState);
-          ctx.showResultsState(
-            "empty",
-            legacyState.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
-            "Список v3 загрузится после выбора ответственного.",
-            "",
-          );
+          return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
+            hooks.updateViewChrome(legacyState);
+            ctx.showResultsState(
+              "empty",
+              legacyState.ropEmployee ? "Выберите ответственного" : "Выберите РОП",
+              "Список v3 загрузится после выбора ответственного.",
+              "",
+            );
+          });
         });
       }
 

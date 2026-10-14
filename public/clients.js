@@ -2641,6 +2641,7 @@
       outletHardwareManager: kind === "hardware" ? guid : "",
       responsibleKind: kind,
       responsibleGuid: guid,
+      v3manager: kind === "manager" ? guid : "",
       entity: entityMode || "clients",
       page: 1,
     };
@@ -3040,6 +3041,7 @@
       outletHardwareManager: kind === "hardware" ? guid : "",
       responsibleKind: kind,
       responsibleGuid: guid,
+      v3manager: kind === "manager" ? guid : "",
       entity: entityMode || "clients",
       page: 1,
     });
@@ -3255,11 +3257,10 @@
       teamsPanelEl.removeAttribute("data-onec-teams-ready");
       teamsPanelEl.__onecOverviewHtml = "";
       onecTeamsOverviewRenderSignature = "";
-      return;
+      return Promise.resolve();
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
-      renderCompactRopTeamPanel(state);
-      return;
+      return renderCompactRopTeamPanel(state);
     }
     if ((usesDirectorLayout() && !state.ropEmployee) || (isRopDesignSession() && usesOnecTeamSource(state))) {
       if (usesOnecTeamSource(state)) {
@@ -4626,6 +4627,37 @@
       rolePresentation.allowedViews &&
       rolePresentation.allowedViews.indexOf(view) === -1
     ) {
+      return;
+    }
+    var current = currentStateFromForm();
+    if (
+      view === "teams" &&
+      (current.view || "all") === "teams" &&
+      logic.hasResponsibleSelection(current)
+    ) {
+      navigateState({
+        view: "teams",
+        ropEmployee: current.ropEmployee || "",
+        manager: "",
+        clientManager: "",
+        outletManager: "",
+        regionalManager: "",
+        clientRegionalManager: "",
+        outletRegionalManager: "",
+        hardwareManager: "",
+        clientHardwareManager: "",
+        outletHardwareManager: "",
+        responsibleKind: "",
+        responsibleGuid: "",
+        v3manager: "",
+        teamKind: "",
+        portfolio: "",
+        page: 1,
+      });
+      var v3ManagerFilter = document.getElementById("v3-manager-filter");
+      if (v3ManagerFilter) {
+        v3ManagerFilter.value = "";
+      }
       return;
     }
     var nextEntity = view === "completeness" ? "clients" : currentEntity();

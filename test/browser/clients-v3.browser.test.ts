@@ -14,6 +14,8 @@ const TEST_PASSWORD = "StrongPass123!";
 const M1 = "22222222-2222-4222-8222-222222222222";
 const M2 = "33333333-3333-4333-8333-333333333333";
 const ROP = "55555555-5555-4555-8555-555555555555";
+const REGIONAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const HARDWARE = "77777777-7777-4777-8777-777777777777";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const DESKTOP = { width: 1440, height: 1100 };
 const MOBILE = { width: 390, height: 844 };
@@ -73,6 +75,8 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const employeesBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
       buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
+      buildEmployeeRosterEntry(REGIONAL, { name_manager: "Regional One" }),
+      buildEmployeeRosterEntry(HARDWARE, { name_manager: "Hardware One" }),
       buildEmployeeRosterEntry(ROP, {
         name_manager: "ROP One",
         post: "Руководитель отдела продаж",
@@ -311,11 +315,11 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.ok(!bodyM1.items.some((item) => item.name === "Legal Two"));
     assert.match(new URL(page.url()).search, new RegExp(encodeURIComponent(M1)));
 
-    const teamsUrl =
-      "/clients?v3mode=1&view=teams&v3view=teams&ropEmployee=" +
-      encodeURIComponent(ROP) +
-      "&v3entity=legal";
-    await page.goto(baseUrl + teamsUrl, { waitUntil: "networkidle" });
+    await page.locator("#v3-manager-filter").evaluate(function (el, m1) {
+      (el as HTMLSelectElement).value = m1;
+    }, M1);
+
+    await page.locator('#view-switcher [data-view="teams"]').click();
     await page.waitForSelector(
       `button[data-manager="${M2}"][data-responsible-entity="clients"]`,
       { timeout: 60000 },
@@ -333,6 +337,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const bodyM2 = (await respM2.json()) as { items: Array<{ name: string }> };
     assert.ok(bodyM2.items.some((item) => item.name === "Legal Two"));
     assert.ok(!bodyM2.items.some((item) => item.name === "Legal One"));
+    assert.ok(!respM2.url().includes(encodeURIComponent(M1)));
 
     const listAll = page.waitForResponse(
       (res) =>
@@ -364,6 +369,96 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       )
       .first()
       .waitFor({ state: "attached", timeout: 15000 });
+    await page.close();
+  });
+
+  it("team responsible kind switches without reload", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&view=teams&v3view=teams&ropEmployee=" +
+        encodeURIComponent(ROP) +
+        "&v3entity=legal&v3manager=" +
+        encodeURIComponent(M1),
+      { waitUntil: "networkidle" },
+    );
+    await page.waitForSelector(
+      `button[data-manager="${M1}"][data-responsible-entity="clients"]`,
+      { timeout: 60000 },
+    );
+    const listM1 = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
+        res.url().includes("responsibleKind=manager") &&
+        res.status() === 200,
+    );
+    await page.locator(`button[data-manager="${M1}"][data-responsible-entity="clients"]`).click();
+    await listM1;
+
+    const responsiblesReload = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/org-structure/") &&
+        res.url().includes("/responsibles") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await responsiblesReload;
+    await page.waitForSelector(
+      `button[data-manager="${REGIONAL}"][data-responsible-kind="regional"][data-responsible-entity="clients"]`,
+      { timeout: 60000 },
+    );
+    const listRegional = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("responsibleGuid=" + encodeURIComponent(REGIONAL)) &&
+        res.url().includes("responsibleKind=regional") &&
+        !res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page
+      .locator(
+        `button[data-manager="${REGIONAL}"][data-responsible-kind="regional"][data-responsible-entity="clients"]`,
+      )
+      .click();
+    await listRegional;
+
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForSelector(
+      `button[data-manager="${HARDWARE}"][data-responsible-kind="hardware"]`,
+      { timeout: 60000 },
+    );
+    const listHardware = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(HARDWARE)) &&
+        res.url().includes("responsibleKind=hardware") &&
+        res.status() === 200,
+    );
+    await page
+      .locator(
+        `button[data-manager="${HARDWARE}"][data-responsible-kind="hardware"][data-responsible-entity="clients"]`,
+      )
+      .click();
+    await listHardware;
+
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForSelector(
+      `button[data-manager="${M2}"][data-responsible-entity="clients"]`,
+      { timeout: 60000 },
+    );
+    const listClear = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        !res.url().includes("responsibleGuid=") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.locator('#view-switcher [data-view="all"]').click();
+    await listClear.catch(() => undefined);
+    assert.equal(new URL(page.url()).searchParams.get("responsibleGuid") || "", "");
     await page.close();
   });
 
@@ -501,6 +596,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.equal(urlAfterClearQ.searchParams.get("v3type"), "rt1");
     assert.equal(urlAfterClearQ.searchParams.get("q") || "", "");
 
+    await page.waitForSelector("#page-next:not([disabled])", { timeout: 15000 });
     const page2List = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
@@ -510,23 +606,38 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         res.status() === 200,
       { timeout: 45000 },
     );
-    await page.goto(
-      baseUrl +
-        "/clients?v3mode=1&v3entity=retail&view=all&v3pageSize=1&page=2&v3manager=" +
-        encodeURIComponent(M1) +
-        "&closed=false&v3type=rt1",
-      { waitUntil: "networkidle" },
-    );
+    await page.click("#page-next");
     await page2List;
     assert.equal(new URL(page.url()).searchParams.get("page"), "2");
 
-    await page.goto(
-      baseUrl +
-        "/clients?v3mode=1&v3entity=retail&view=all&v3pageSize=1&page=1&v3manager=" +
-        encodeURIComponent(M1) +
-        "&closed=false&v3type=rt1",
-      { waitUntil: "networkidle" },
-    );
+    const firstRow = page.locator("#clients-table-body a, #clients-cards a").first();
+    await firstRow.click();
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    const returnQuery = new URL(page.url()).searchParams.get("return") || "";
+    assert.ok(returnQuery.includes("page=2"));
+    assert.ok(returnQuery.includes("v3pageSize=1"));
+    assert.ok(returnQuery.includes("v3manager=" + encodeURIComponent(M1)));
+    const backToList = page
+      .waitForResponse(
+        (res) =>
+          res.url().includes("/api/clients/v3/list") &&
+          res.url().includes("page=2") &&
+          res.url().includes("pageSize=1") &&
+          res.status() === 200,
+        { timeout: 45000 },
+      )
+      .catch(function () {
+        return null;
+      });
+    await Promise.all([
+      page.waitForURL((url) => new URL(url).searchParams.get("page") === "2", { timeout: 45000 }),
+      page.click('[data-testid="v3-back-to-list"]'),
+    ]);
+    await backToList;
+    await page.waitForSelector("#clients-table-body a, #clients-cards a", { timeout: 15000 });
+    assert.equal(new URL(page.url()).searchParams.get("page"), "2");
+    assert.equal(new URL(page.url()).searchParams.get("v3manager"), M1);
+
     await page.waitForSelector("#v3-manager-filter", { timeout: 20000 });
     const clearManagerList = page.waitForResponse(
       (res) => {
