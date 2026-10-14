@@ -1,4 +1,4 @@
-# Clients v3 — регрессии multiselect и приёмка (после `42913b3`)
+# Clients v3 — регрессии multiselect и приёмка — SHA `7687a2d`
 
 ## Исправленные блокеры
 
