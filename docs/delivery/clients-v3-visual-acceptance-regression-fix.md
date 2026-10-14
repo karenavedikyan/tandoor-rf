@@ -65,7 +65,8 @@
 |------|----------|
 | Статус | **MERGED** в `main`; **deploy на lk.tandoor.ru — ожидает оператора / автодеплой Timeweb** |
 | PR HEAD | `fca1e3218e07f649af47307e5e55973da943c64d` |
-| Merge commit `main` | `b90e8a31beaad40c3d6fa4744514b96136fce7f6` (2026-10-14) |
+| Merge commit `main` (код PR #77) | `b90e8a31beaad40c3d6fa4744514b96136fce7f6` (2026-10-14) |
+| Запись release notes на `main` | `c81840d` (только документ) |
 | Timeweb app | **258307** → https://lk.tandoor.ru |
 | Pre-release prod marker | `clients-v3.js` без `navigationIsStale` (Last-Modified 2026-10-13) |
 | Миграции в diff PR | **нет** — отдельный `npm run migrate` не требуется для этого выпуска |
