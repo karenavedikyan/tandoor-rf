@@ -2,7 +2,7 @@
 
 ## SHA и объём
 
-- **Итоговый SHA:** `6968730` (ветка `cursor/clients-v3-prototype-ui-9e11`, PR #77).
+- **Итоговый SHA:** `13b8fd2` (ветка `cursor/clients-v3-prototype-ui-9e11`, PR #77).
 - **Предыдущие опорные:** `7687a2d` (multiselect return/persistence), `ec00c76` (captures/docs).
 
 ## Закрытый дефект: приоритет пустых массивов
