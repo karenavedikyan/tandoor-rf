@@ -17,8 +17,34 @@
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
             <header class="clients-page-header">
-            <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
-            <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
+            <div class="clients-page-header__row">
+              <div class="clients-page-header__titles">
+                <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
+                <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
+              </div>
+              <div
+                id="onec-update-panel"
+                class="clients-onec-update clients-admin-onec-bar clients-header-actions clients-hidden"
+                aria-live="polite"
+              >
+                <button
+                  type="button"
+                  id="onec-update-button"
+                  class="workspace-button workspace-button--primary clients-onec-update__button"
+                  data-testid="onec-update-button"
+                >
+                  Обновить из 1С
+                </button>
+                <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
+                <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
+                <a
+                  href="/clients/field-map"
+                  id="clients-field-map-link"
+                  class="workspace-button workspace-button--ghost clients-onec-update__field-map clients-hidden"
+                  >Карта полей и источников</a
+                >
+              </div>
+            </div>
           </header>
 
             <div
@@ -32,36 +58,6 @@
           <div id="init-panel" class="clients-hidden" role="alert"></div>
 
           <div id="clients-app" class="clients-hidden">
-            <nav id="view-switcher" class="clients-view-switcher" aria-label="Режим просмотра">
-              <button type="button" class="clients-view-switcher__btn" data-view="all">Все клиенты</button>
-              <button type="button" class="clients-view-switcher__btn" data-view="teams">По командам</button>
-              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
-                Требуют проверки
-              </button>
-              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="completeness" id="view-completeness-tab">
-                Незаполненные назначения
-              </button>
-            </nav>
-
-            <div id="onec-update-panel" class="clients-onec-update clients-admin-onec-bar clients-hidden" aria-live="polite">
-              <button
-                type="button"
-                id="onec-update-button"
-                class="workspace-button workspace-button--primary clients-onec-update__button"
-                data-testid="onec-update-button"
-              >
-                Обновить из 1С
-              </button>
-              <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
-              <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
-              <a
-                href="/clients/field-map"
-                id="clients-field-map-link"
-                class="workspace-button workspace-button--ghost clients-onec-update__field-map clients-hidden"
-                >Карта полей и источников</a
-              >
-            </div>
-
             <div id="clients-manager-chrome" class="clients-manager-chrome clients-hidden">
               <div class="clients-role-head">
                 <div class="clients-employee-card" id="clients-employee-card">
@@ -78,18 +74,34 @@
                   </div>
                 </div>
               </div>
-              <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
-                <div class="clients-stat">
-                  <span class="clients-stat__value" id="clients-stat-clients">—</span>
-                  <span class="clients-stat__label" id="clients-stat-clients-label">Мои клиенты</span>
+              <div class="clients-kpi-band" id="clients-kpi-band">
+                <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
+                  <div class="clients-stat">
+                    <span class="clients-stat__value" id="clients-stat-clients">—</span>
+                    <span class="clients-stat__label" id="clients-stat-clients-label">Мои клиенты</span>
+                  </div>
+                  <div class="clients-stat">
+                    <span class="clients-stat__value" id="clients-stat-outlets">—</span>
+                    <span class="clients-stat__label" id="clients-stat-outlets-label">Доступные ТТ</span>
+                  </div>
+                  <div class="clients-stat" id="clients-stat-no-outlets-wrap">
+                    <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
+                    <span class="clients-stat__label" id="clients-stat-no-outlets-label">Клиенты без ТТ</span>
+                  </div>
                 </div>
-                <div class="clients-stat">
-                  <span class="clients-stat__value" id="clients-stat-outlets">—</span>
-                  <span class="clients-stat__label" id="clients-stat-outlets-label">Доступные ТТ</span>
-                </div>
-                <div class="clients-stat" id="clients-stat-no-outlets-wrap">
-                  <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
-                  <span class="clients-stat__label" id="clients-stat-no-outlets-label">Клиенты без ТТ</span>
+                <div
+                  id="clients-stats-incomplete-strip"
+                  class="clients-stats-strip clients-stats-strip--incomplete clients-hidden"
+                  aria-label="Незаполненные назначения"
+                >
+                  <div class="clients-stat">
+                    <span class="clients-stat__value" id="clients-stat-incomplete-clients">—</span>
+                    <span class="clients-stat__label">Клиенты с незаполненными назначениями</span>
+                  </div>
+                  <div class="clients-stat">
+                    <span class="clients-stat__value" id="clients-stat-incomplete-outlets">—</span>
+                    <span class="clients-stat__label">ТТ с незаполненными назначениями</span>
+                  </div>
                 </div>
               </div>
               <p
@@ -103,20 +115,6 @@
                   <span id="clients-stat-incomplete-compact-outlets">—</span> ТТ
                 </button>
               </p>
-              <div
-                id="clients-stats-incomplete-strip"
-                class="clients-stats-strip clients-stats-strip--incomplete clients-hidden"
-                aria-label="Незаполненные назначения"
-              >
-                <div class="clients-stat">
-                  <span class="clients-stat__value" id="clients-stat-incomplete-clients">—</span>
-                  <span class="clients-stat__label">Клиенты с незаполненными назначениями</span>
-                </div>
-                <div class="clients-stat">
-                  <span class="clients-stat__value" id="clients-stat-incomplete-outlets">—</span>
-                  <span class="clients-stat__label">ТТ с незаполненными назначениями</span>
-                </div>
-              </div>
               <nav class="clients-workspace-nav" aria-label="Рабочая область">
                 <span
                   id="clients-workspace-nav-tab"
@@ -125,6 +123,17 @@
                 >
               </nav>
             </div>
+
+            <nav id="view-switcher" class="clients-view-switcher clients-view-switcher--primary" aria-label="Режим просмотра">
+              <button type="button" class="clients-view-switcher__btn" data-view="all">Все клиенты</button>
+              <button type="button" class="clients-view-switcher__btn" data-view="teams">По командам</button>
+              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="review" id="view-review-tab">
+                Требуют проверки
+              </button>
+              <button type="button" class="clients-view-switcher__btn clients-hidden" data-view="completeness" id="view-completeness-tab">
+                Незаполненные назначения
+              </button>
+            </nav>
 
             <nav id="clients-breadcrumbs" class="clients-breadcrumbs clients-hidden" aria-label="Навигация">
               <div id="clients-breadcrumbs-row" class="clients-breadcrumbs__row"></div>
@@ -147,17 +156,19 @@
                     placeholder="Название, холдинг, менеджер, адрес или телефон"
                   />
                 </label>
-                <nav
-                  id="entity-switcher"
-                  class="clients-view-switcher clients-entity-switcher clients-hidden"
-                  aria-label="Тип списка"
-                >
-                  <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
-                  <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
-                </nav>
-                <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
-                  Колонки
-                </button>
+                <div class="clients-toolbar__controls-row">
+                  <nav
+                    id="entity-switcher"
+                    class="clients-view-switcher clients-entity-switcher clients-hidden"
+                    aria-label="Тип списка"
+                  >
+                    <button type="button" class="clients-view-switcher__btn" data-entity="clients">Клиенты</button>
+                    <button type="button" class="clients-view-switcher__btn" data-entity="outlets">Торговые точки</button>
+                  </nav>
+                  <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
+                    Колонки
+                  </button>
+                </div>
               </div>
               <button
                 type="button"
