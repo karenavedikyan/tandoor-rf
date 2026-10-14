@@ -32,7 +32,9 @@
 .pc-source,.pc-label {font-size:12px;}
 .pc-source {white-space:nowrap;}
 .pc-pad {padding:20px;}
-.pc-field {padding:14px 0;border-bottom:1px solid var(--rf-border);overflow-wrap:anywhere;}
+.pc-field {padding:14px 0;border-bottom:1px solid var(--rf-border);overflow-wrap:anywhere;word-break:break-word;}
+.pc-value,.client-card-page .client-detail-value,.client-card-page .client-detail-uuid{overflow-wrap:anywhere;word-break:break-word;}
+.client-card-page .client-detail-uuid{font-size:12px;line-height:1.4;}
 .pc-field:first-child {padding-top:0;}
 .pc-field:last-child {border-bottom:0;padding-bottom:0;}
 .pc-details {border:1px solid var(--rf-border);border-radius:8px;margin:0 0 12px;overflow:hidden;}

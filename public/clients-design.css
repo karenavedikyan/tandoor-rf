@@ -68,11 +68,14 @@
 }
 
 .clients-design-page .clients-field__select--multi {
-  min-height: 4.75rem;
-  padding: 6px 8px;
+  min-height: 0;
+  height: auto;
+  max-height: 4.5rem;
+  padding: 4px 8px;
   border-color: var(--rf-border);
   background: var(--rf-surface);
-  line-height: 1.35;
+  line-height: 1.3;
+  font-size: 13px;
 }
 
 .clients-design-page .clients-field__select--multi option {
@@ -111,30 +114,53 @@
 .clients-design-page #clients-app {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .clients-design-page .clients-manager-chrome {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+}
+
+.clients-design-page .clients-role-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page .clients-role-strip {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+  }
 }
 
 .clients-design-page .clients-employee-card {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding: 10px 14px;
-  background: var(--rf-surface);
-  border: 1px solid var(--rf-border);
-  border-radius: var(--rf-radius);
+  gap: 8px 12px;
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .clients-design-page .clients-employee-card__main {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clients-design-page .clients-employee-card__identity {
+  display: grid;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -143,83 +169,102 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--rf-surface-muted);
   color: var(--rf-primary);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .clients-design-page .clients-employee-card__name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .clients-design-page .clients-employee-card__role {
-  margin-top: 2px;
   font-size: 12px;
   color: var(--rf-text-muted);
+  line-height: 1.25;
 }
 
 .clients-design-page .clients-employee-card__scope {
-  display: grid;
-  gap: 2px;
-  text-align: right;
-}
-
-.clients-design-page .clients-employee-card__scope-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
   font-size: 12px;
+  line-height: 1.35;
   color: var(--rf-text-muted);
 }
 
+.clients-design-page .clients-employee-card__scope-label::after {
+  content: ":";
+}
+
 .clients-design-page .clients-employee-card__scope-value {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
+  color: var(--rf-text);
 }
 
 .clients-design-page .clients-stats-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  background: var(--rf-surface);
-  border: 1px solid var(--rf-border);
-  border-radius: var(--rf-radius);
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .clients-design-page .clients-stats-strip--two-cols {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 100%;
 }
 
-.clients-design-page .clients-stats-strip--two-cols .clients-stat:nth-child(2) {
-  border-right: 0;
+.clients-design-page.clients-role-manager .clients-stats-strip,
+.clients-design-page.clients-role-regional .clients-stats-strip,
+.clients-design-page.clients-role-assistant .clients-stats-strip {
+  flex-wrap: nowrap;
+}
+
+.clients-design-page.clients-role-manager #clients-stat-no-outlets-wrap,
+.clients-design-page.clients-role-regional #clients-stat-no-outlets-wrap,
+.clients-design-page.clients-role-assistant #clients-stat-no-outlets-wrap {
+  display: none;
 }
 
 .clients-design-page .clients-stat {
-  padding: 12px 16px;
-  border-right: 1px solid var(--rf-border);
+  display: grid;
+  gap: 1px;
+  padding: 6px 12px;
+  min-width: 0;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
 }
 
 .clients-design-page .clients-stat:last-child {
-  border-right: 0;
+  border-right: 1px solid var(--rf-border);
 }
 
 .clients-design-page .clients-stat__label {
   display: block;
-  margin-top: 2px;
-  font-size: 12px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.25;
   color: var(--rf-text-muted);
 }
 
 .clients-design-page .clients-stat__value {
   display: block;
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.15;
 }
 
 .clients-design-page .clients-workspace-nav {
@@ -242,12 +287,12 @@
 
 .clients-design-page .clients-toolbar {
   margin-bottom: 0;
-  padding: 14px 18px;
+  padding: 10px 14px;
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
   border-radius: var(--rf-radius);
   box-shadow: none;
-  gap: 10px;
+  gap: 8px;
 }
 
 .clients-design-page .clients-toolbar__search-row {
@@ -370,9 +415,10 @@
 
 .clients-design-page #v3-filters-wrap {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
   width: 100%;
   align-items: end;
+  gap: 8px;
 }
 
 .clients-design-page #v3-filters-wrap .clients-field {
@@ -877,7 +923,9 @@
 }
 
 .clients-design-page .clients-stats-strip--incomplete {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  width: 100%;
 }
 
 @media (min-width: 768px) {
@@ -905,31 +953,29 @@
     width: 100%;
   }
 
-  .clients-design-page .clients-stats-strip {
+  .clients-design-page .clients-role-strip {
+    gap: 8px;
+  }
+
+  .clients-design-page .clients-stats-strip:not(.clients-stats-strip--incomplete) {
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .clients-design-page.clients-role-rop .clients-stats-strip:not(.clients-stats-strip--incomplete),
+  .clients-design-page.clients-role-director .clients-stats-strip:not(.clients-stats-strip--incomplete) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clients-design-page.clients-role-rop .clients-stats-strip:not(.clients-stats-strip--incomplete) .clients-stat:nth-child(3),
+  .clients-design-page.clients-role-director .clients-stats-strip:not(.clients-stats-strip--incomplete) .clients-stat:nth-child(3) {
+    grid-column: 1 / -1;
   }
 
   .clients-design-page .clients-stats-strip--incomplete {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .clients-design-page .clients-stats-strip--incomplete .clients-stat:nth-child(2) {
-    border-right: 0;
-    border-bottom: 0;
-  }
-
-  .clients-design-page .clients-stat:nth-child(2) {
-    border-right: 0;
-  }
-
-  .clients-design-page .clients-stat:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--rf-border);
-  }
-
-  .clients-design-page .clients-stat:nth-child(3) {
-    grid-column: 1 / -1;
-    border-right: 0;
-    border-bottom: 0;
   }
 
   .clients-design-page.clients-role-manager .clients-toolbar__search-row,
@@ -1315,7 +1361,7 @@
   padding: 8px 10px;
   border: 1px solid var(--rf-border);
   border-radius: 8px;
-  background: var(--rf-bg);
+  background: var(--rf-surface);
 }
 
 @media (min-width: 768px) {
@@ -1345,8 +1391,12 @@
 }
 
 .clients-design-page .clients-compact-team__kind-tag {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--rf-text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--rf-surface-muted);
 }
 
 .clients-design-page .clients-compact-team__member-counts {
@@ -1648,4 +1698,27 @@
 [data-theme="dark"] .clients-design-page .clients-entity-switcher .clients-view-switcher__btn--active {
   background: var(--rf-surface);
   box-shadow: 0 0 0 1px var(--rf-border);
+}
+
+[data-theme="dark"] .clients-design-page .clients-toolbar,
+[data-theme="dark"] .clients-design-page .clients-results-shell,
+[data-theme="dark"] .clients-design-page .clients-compact-team {
+  background: var(--rf-surface);
+  border-color: var(--rf-border);
+}
+
+[data-theme="dark"] .clients-design-page .clients-field__input,
+[data-theme="dark"] .clients-design-page .clients-field__select {
+  background: var(--rf-surface);
+  color: var(--rf-text);
+  border-color: var(--rf-border);
+}
+
+[data-theme="dark"] .clients-design-page .clients-compact-team__member {
+  background: var(--rf-bg);
+}
+
+[data-theme="dark"] .clients-design-page .clients-stat {
+  background: var(--rf-surface);
+  border-color: var(--rf-border);
 }

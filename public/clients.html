@@ -63,20 +63,21 @@
             </div>
 
             <div id="clients-manager-chrome" class="clients-manager-chrome clients-hidden">
-              <div class="clients-employee-card" id="clients-employee-card">
-                <div class="clients-employee-card__main">
-                  <div class="clients-employee-card__avatar" id="clients-employee-avatar" aria-hidden="true"></div>
-                  <div>
-                    <div class="clients-employee-card__name" id="clients-employee-name"></div>
-                    <div class="clients-employee-card__role" id="clients-employee-role"></div>
+              <div class="clients-role-strip">
+                <div class="clients-employee-card" id="clients-employee-card">
+                  <div class="clients-employee-card__main">
+                    <div class="clients-employee-card__avatar" id="clients-employee-avatar" aria-hidden="true"></div>
+                    <div class="clients-employee-card__identity">
+                      <div class="clients-employee-card__name" id="clients-employee-name"></div>
+                      <div class="clients-employee-card__role" id="clients-employee-role"></div>
+                    </div>
+                  </div>
+                  <div class="clients-employee-card__scope">
+                    <span class="clients-employee-card__scope-label">Область видимости</span>
+                    <span class="clients-employee-card__scope-value" id="clients-employee-scope-value">Мои назначения</span>
                   </div>
                 </div>
-                <div class="clients-employee-card__scope">
-                  <span class="clients-employee-card__scope-label">Область видимости</span>
-                  <span class="clients-employee-card__scope-value" id="clients-employee-scope-value">Мои назначения</span>
-                </div>
-              </div>
-              <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
+                <div class="clients-stats-strip" id="clients-stats-strip" aria-label="Сводка по назначениям">
                 <div class="clients-stat">
                   <span class="clients-stat__value" id="clients-stat-clients">—</span>
                   <span class="clients-stat__label" id="clients-stat-clients-label">Мои клиенты</span>
@@ -88,6 +89,7 @@
                 <div class="clients-stat" id="clients-stat-no-outlets-wrap">
                   <span class="clients-stat__value" id="clients-stat-no-outlets">—</span>
                   <span class="clients-stat__label" id="clients-stat-no-outlets-label">Клиенты без ТТ</span>
+                </div>
                 </div>
               </div>
               <p
@@ -180,7 +182,7 @@
                   </label>
                   <label class="clients-field clients-field--multi">
                     <span class="clients-field__label">Тип (можно несколько)</span>
-                    <select id="v3-type-filter" class="clients-field__select clients-field__select--multi" multiple size="3"></select>
+                    <select id="v3-type-filter" class="clients-field__select clients-field__select--multi" multiple size="2"></select>
                   </label>
                   <label class="clients-field clients-field--multi">
                     <span class="clients-field__label">Категория (можно несколько)</span>
@@ -188,7 +190,7 @@
                       id="v3-category-filter"
                       class="clients-field__select clients-field__select--multi"
                       multiple
-                      size="3"
+                      size="2"
                     ></select>
                   </label>
                   <label class="clients-field" id="v3-closed-filter-wrap">
