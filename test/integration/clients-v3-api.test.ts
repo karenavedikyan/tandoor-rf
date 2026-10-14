@@ -203,6 +203,16 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.ok(byType.body.items.every((i: { name: string }) => i.name === "Legal One"));
     assert.ok(!byType.body.items.some((i: { guid: string }) => i.guid === LEGAL_UNASSIGNED));
 
+    const byMultiType = await request(app)
+      .get(`/api/clients/v3/list?entity=legal&typeGuids=${TYPE_A},${TYPE_B}&page=1&pageSize=50`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byMultiType.status, 200);
+    assert.ok(byMultiType.body.total >= 1);
+
+    const catalog = await request(app).get("/api/clients/v3/field-catalog").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(catalog.status, 200);
+    assert.ok(Array.isArray(catalog.body.items) && catalog.body.items.length > 0);
+
     const byCatB = await request(app)
       .get(`/api/clients/v3/list?entity=legal&categoryGuid=${CAT_B}&page=1&pageSize=50`)
       .set({ Origin: ORIGIN, Cookie: cookie });

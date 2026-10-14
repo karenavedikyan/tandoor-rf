@@ -118,7 +118,12 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.match(url.searchParams.get("q") || "", /Legal/i);
     await page.waitForFunction(function () {
       var typeFilter = document.getElementById("v3-type-filter") as HTMLSelectElement | null;
-      return Boolean(typeFilter && typeFilter.value === "t1");
+      if (!typeFilter) {
+        return false;
+      }
+      return Array.from(typeFilter.selectedOptions || []).some(function (opt) {
+        return opt.value === "t1";
+      });
     });
   }
 
@@ -164,8 +169,10 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       var typeFilter = document.getElementById("v3-type-filter");
       return wrap && !wrap.classList.contains("clients-hidden") && typeFilter && typeFilter.options.length > 1;
     });
-    const typeValue = await page.$eval("#v3-type-filter", (sel) => (sel as HTMLSelectElement).value);
-    assert.equal(typeValue, "t1");
+    const typeSelected = await page.$eval("#v3-type-filter", (sel) =>
+      Array.from((sel as HTMLSelectElement).selectedOptions).map((o) => o.value),
+    );
+    assert.ok(typeSelected.includes("t1"));
     await assertListFilterState(page);
     if (viewport.width <= 400) {
       await page.locator(".clients-card__meta").first().waitFor({ state: "attached", timeout: 15000 });

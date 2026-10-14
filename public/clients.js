@@ -4028,6 +4028,52 @@
     });
   }
 
+  function v3EntityListNoun(v3entity) {
+    if (v3entity === "retail" || v3entity === "orphan_retail") {
+      return "торговых точек";
+    }
+    if (v3entity === "holdings") {
+      return "холдингов";
+    }
+    return "клиентов";
+  }
+
+  function formatV3ResultCount(v3entity, total) {
+    var n = Number(total) || 0;
+    var noun = v3EntityListNoun(v3entity);
+    return "Найдено " + n + " " + noun;
+  }
+
+  function refreshV3ListChrome(v3State, entityMeta) {
+    if (rolePresentation && pageTitleEl) {
+      pageTitleEl.textContent = rolePresentation.pageTitle || "Клиенты";
+      document.title = (rolePresentation.pageTitle || "Клиенты") + " — tandoor-rf";
+    }
+    var subtitleEl = document.getElementById("clients-page-subtitle");
+    if (subtitleEl) {
+      var role = rolePresentation && rolePresentation.businessRole;
+      var multiEntity =
+        rolePresentation &&
+        rolePresentation.allowedV3Entities &&
+        rolePresentation.allowedV3Entities.length > 1;
+      if (multiEntity && entityMeta && v3State.v3entity !== "legal") {
+        subtitleEl.textContent = "Список: " + entityMeta.label;
+        subtitleEl.classList.remove("clients-hidden");
+      } else if (role === "assistant" && rolePresentation.delegationContext) {
+        subtitleEl.textContent = "Режим замещения · только юрлица в вашей области";
+        subtitleEl.classList.remove("clients-hidden");
+      } else {
+        subtitleEl.textContent = "";
+        subtitleEl.classList.add("clients-hidden");
+      }
+    }
+    var legacyEntity =
+      v3State.v3entity === "retail" || v3State.v3entity === "orphan_retail" ? "outlets" : "clients";
+    var legacyView =
+      v3State.v3view === "teams" ? "teams" : v3State.v3view === "unassigned" ? "review" : "all";
+    updateResultsTitle({ view: legacyView, entity: legacyEntity });
+  }
+
   function buildV3UiContext() {
     return {
       api: api,
@@ -4035,6 +4081,12 @@
       rolePresentation: rolePresentation,
       getSearchQuery: function () {
         return searchInput.value.trim();
+      },
+      refreshListChrome: refreshV3ListChrome,
+      formatResultCount: function (state, total) {
+        if (resultCountEl) {
+          resultCountEl.textContent = formatV3ResultCount(state.v3entity, total);
+        }
       },
       showResultsState: showResultsState,
       showResultsContent: showResultsContent,
@@ -4106,7 +4158,12 @@
     if (!onecUpdatePanelEl) {
       return;
     }
-    onecUpdatePanelEl.classList.toggle("clients-hidden", !shouldShowOnecUpdatePanel());
+    var showAdminBar = shouldShowOnecUpdatePanel();
+    onecUpdatePanelEl.classList.toggle("clients-hidden", !showAdminBar);
+    var fieldMapLink = document.getElementById("clients-field-map-link");
+    if (fieldMapLink) {
+      fieldMapLink.classList.toggle("clients-hidden", !showAdminBar);
+    }
   }
 
   function renderOnecUpdateStatus(data) {
@@ -4900,9 +4957,29 @@
                 patch.responsibleGuid = "";
                 patch.responsibleKind = "";
               } else if (key === "v3type") {
-                patch.v3type = "";
+                var token = btn.getAttribute("data-v3-clear-token");
+                var current = window.ClientsV3.readState();
+                if (token && current.v3types && current.v3types.length > 1) {
+                  patch.v3types = current.v3types.filter(function (t) {
+                    return t !== token;
+                  });
+                  patch.v3type = patch.v3types[0] || "";
+                } else {
+                  patch.v3type = "";
+                  patch.v3types = [];
+                }
               } else if (key === "v3category") {
-                patch.v3category = "";
+                var catToken = btn.getAttribute("data-v3-clear-token");
+                var cur = window.ClientsV3.readState();
+                if (catToken && cur.v3categories && cur.v3categories.length > 1) {
+                  patch.v3categories = cur.v3categories.filter(function (t) {
+                    return t !== catToken;
+                  });
+                  patch.v3category = patch.v3categories[0] || "";
+                } else {
+                  patch.v3category = "";
+                  patch.v3categories = [];
+                }
               } else if (key === "closed") {
                 patch.closed = "";
               } else {

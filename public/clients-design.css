@@ -46,6 +46,34 @@
   max-width: 42rem;
 }
 
+.clients-design-page .clients-field__select--multi {
+  min-height: 4.5rem;
+  padding: 4px 8px;
+}
+
+.clients-design-page .clients-field--multi .clients-field__label {
+  font-size: 12px;
+}
+
+.clients-design-page .clients-onec-update__field-map {
+  margin-left: auto;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.clients-design-page .client-card-empty {
+  margin: 0;
+  color: var(--rf-text-muted);
+  font-size: 13px;
+}
+
+.clients-design-page .clients-compact-team__member {
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  box-shadow: 0 1px 0 rgba(35, 44, 53, 0.04);
+}
+
 .clients-design-page #clients-app {
   display: flex;
   flex-direction: column;

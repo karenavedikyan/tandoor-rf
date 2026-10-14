@@ -167,6 +167,20 @@
   }
 
   function renderLegal(shell, ent, holdingLink) {
+    var commercialRows =
+      dlRow("Скидка", esc(shell, ent.discount ?? "—")) +
+      dlRow("Сумма скидки", esc(shell, ent.discount_amount ?? "—")) +
+      dlRow("Наценки", formatMarkups(shell, ent.markups));
+    var hasCommercial =
+      (ent.discount != null && ent.discount !== "") ||
+      (ent.discount_amount != null && ent.discount_amount !== "") ||
+      (Array.isArray(ent.markups) && ent.markups.length > 0);
+    var commercialSection = hasCommercial
+      ? section("Скидки и наценки", commercialRows)
+      : section(
+          "Скидки и наценки",
+          '<p class="client-card-empty">Нет данных о скидках и наценках в текущем обмене.</p>',
+        );
     return (
       section(
         "Юрлицо",
@@ -175,12 +189,11 @@
           dlRow("Телефоны", formatTelephones(shell, ent.telephone)) +
           dlRow("Тип и категория", formatTypeCategory(shell, ent.type_category)) +
           dlRow("Ответственные", formatManagersBlock(shell, ent.managers)) +
-          dlRow("Скидка", esc(shell, ent.discount ?? "—")) +
-          dlRow("Сумма скидки", esc(shell, ent.discount_amount ?? "—")) +
-          dlRow("Наценки", formatMarkups(shell, ent.markups)) +
           dlRow("Реквизиты", formatOtherFields(shell, ent.other_fields)) +
           dlRow("Холдинг", formatHoldingLink(shell, holdingLink)),
-      ) + metaBlock(shell, ent)
+      ) +
+      commercialSection +
+      metaBlock(shell, ent)
     );
   }
 

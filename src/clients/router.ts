@@ -58,6 +58,7 @@ import {
   v3ClientsDetailHandler,
   v3ClientsListHandler,
   v3ClientsOptionsHandler,
+  v3FieldCatalogHandler,
   v3HoldingCompositionHandler,
   v3OrgStructureHandler,
   v3RopResponsiblesHandler,
@@ -104,6 +105,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/detail", ...readChain, (req, res, next) => {
     void v3ClientsDetailHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/field-catalog", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
+    void v3FieldCatalogHandler(req, res).catch(next);
   });
 
   router.get("/v3/holdings/:guid/composition", ...readChain, (req, res, next) => {

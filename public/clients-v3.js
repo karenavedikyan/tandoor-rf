@@ -2,11 +2,27 @@
   "use strict";
 
   var ENTITIES = [
-    { id: "holdings", label: "Холдинги", detailEntity: "holding" },
-    { id: "legal", label: "Юрлица", detailEntity: "legal" },
-    { id: "retail", label: "Торговые точки", detailEntity: "retail" },
-    { id: "orphan_retail", label: "ТТ без холдинга", detailEntity: "retail" },
+    { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
+    { id: "legal", label: "Клиенты", detailEntity: "legal", listNoun: "клиентов" },
+    { id: "retail", label: "Торговые точки", detailEntity: "retail", listNoun: "торговых точек" },
+    { id: "orphan_retail", label: "ТТ без холдинга", detailEntity: "retail", listNoun: "торговых точек" },
   ];
+
+  function parseTokenList(raw) {
+    if (!raw) {
+      return [];
+    }
+    return String(raw)
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(Boolean);
+  }
+
+  function joinTokenList(tokens) {
+    return (tokens || []).filter(Boolean).join(",");
+  }
 
   function entityMeta(id) {
     for (var i = 0; i < ENTITIES.length; i += 1) {
@@ -55,6 +71,8 @@
       v3manager: params.get("v3manager") || "",
       v3type: params.get("v3type") || "",
       v3category: params.get("v3category") || "",
+      v3types: parseTokenList(params.get("typeGuids") || params.get("v3type") || ""),
+      v3categories: parseTokenList(params.get("categoryGuids") || params.get("v3category") || ""),
       v3view: params.get("v3view") || "all",
       missingManager: params.get("missingManager") === "1",
       ropEmployee: params.get("ropEmployee") || "",
@@ -98,11 +116,30 @@
     }
   }
 
+  function readMultiSelectValues(id) {
+    var el = document.getElementById(id);
+    if (!el) {
+      return [];
+    }
+    if (el.multiple) {
+      return Array.from(el.selectedOptions || [])
+        .map(function (opt) {
+          return opt.value;
+        })
+        .filter(Boolean);
+    }
+    return el.value ? [el.value] : [];
+  }
+
   function readFiltersFromDom() {
+    var types = readMultiSelectValues("v3-type-filter");
+    var categories = readMultiSelectValues("v3-category-filter");
     return {
       v3manager: document.getElementById("v3-manager-filter")?.value || "",
-      v3type: document.getElementById("v3-type-filter")?.value || "",
-      v3category: document.getElementById("v3-category-filter")?.value || "",
+      v3type: types[0] || "",
+      v3category: categories[0] || "",
+      v3types: types,
+      v3categories: categories,
       closed: document.getElementById("v3-closed-filter")?.value || "",
     };
   }
@@ -133,8 +170,12 @@
           ? url.v3manager || url.responsibleGuid
           : ""
         : dom.v3manager || url.v3manager || "",
-      v3type: dom.v3type || url.v3type || "",
-      v3category: dom.v3category || url.v3category || "",
+      v3type: dom.v3types?.length ? dom.v3types[0] : dom.v3type || url.v3types?.[0] || url.v3type || "",
+      v3category: dom.v3categories?.length
+        ? dom.v3categories[0]
+        : dom.v3category || url.v3categories?.[0] || url.v3category || "",
+      v3types: dom.v3types?.length ? dom.v3types : url.v3types || parseTokenList(url.v3type),
+      v3categories: dom.v3categories?.length ? dom.v3categories : url.v3categories || parseTokenList(url.v3category),
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       responsibleGuid: url.responsibleGuid,
@@ -261,8 +302,16 @@
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
       closed: closed,
       v3manager: assignment.v3manager,
-      v3type: v3type,
-      v3category: v3category,
+      v3type: v3type || (urlFilters.v3types && urlFilters.v3types[0]) || "",
+      v3category: v3category || (urlFilters.v3categories && urlFilters.v3categories[0]) || "",
+      v3types:
+        fromUrl && urlFilters.v3types && urlFilters.v3types.length
+          ? urlFilters.v3types
+          : parseTokenList(v3type),
+      v3categories:
+        fromUrl && urlFilters.v3categories && urlFilters.v3categories.length
+          ? urlFilters.v3categories
+          : parseTokenList(v3category),
       missingManager: Boolean(legacy.missingManager) || (fromUrl && urlFilters.missingManager),
       ropEmployee: ropEmployee,
       responsibleGuid: assignment.responsibleGuid,
@@ -294,10 +343,24 @@
     else params.delete("closed");
     if (state.v3manager) params.set("v3manager", state.v3manager);
     else params.delete("v3manager");
-    if (state.v3type) params.set("v3type", state.v3type);
-    else params.delete("v3type");
-    if (state.v3category) params.set("v3category", state.v3category);
-    else params.delete("v3category");
+    params.delete("v3type");
+    params.delete("typeGuids");
+    if (state.v3types && state.v3types.length > 1) {
+      params.set("typeGuids", joinTokenList(state.v3types));
+    } else if (state.v3types && state.v3types.length === 1) {
+      params.set("v3type", state.v3types[0]);
+    } else if (state.v3type) {
+      params.set("v3type", state.v3type);
+    }
+    params.delete("v3category");
+    params.delete("categoryGuids");
+    if (state.v3categories && state.v3categories.length > 1) {
+      params.set("categoryGuids", joinTokenList(state.v3categories));
+    } else if (state.v3categories && state.v3categories.length === 1) {
+      params.set("v3category", state.v3categories[0]);
+    } else if (state.v3category) {
+      params.set("v3category", state.v3category);
+    }
     if (state.pageSize && state.pageSize !== 50) {
       params.set("v3pageSize", String(state.pageSize));
     } else {
@@ -334,8 +397,12 @@
     if (s.q) params.set("q", s.q);
     if (s.closed) params.set("closed", s.closed);
     if (s.v3manager) params.set("v3manager", s.v3manager);
-    if (s.v3type) params.set("v3type", s.v3type);
-    if (s.v3category) params.set("v3category", s.v3category);
+    if (s.v3types && s.v3types.length > 1) params.set("typeGuids", joinTokenList(s.v3types));
+    else if (s.v3types && s.v3types.length === 1) params.set("v3type", s.v3types[0]);
+    else if (s.v3type) params.set("v3type", s.v3type);
+    if (s.v3categories && s.v3categories.length > 1) params.set("categoryGuids", joinTokenList(s.v3categories));
+    else if (s.v3categories && s.v3categories.length === 1) params.set("v3category", s.v3categories[0]);
+    else if (s.v3category) params.set("v3category", s.v3category);
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
     if (s.responsibleGuid) {
@@ -365,10 +432,30 @@
     selectEl.innerHTML = html;
   }
 
+  function fillMultiSelect(shell, selectEl, items, selectedGuids) {
+    if (!selectEl) return;
+    var selected = selectedGuids || [];
+    var html = "";
+    (items || []).forEach(function (item) {
+      html +=
+        '<option value="' +
+        shell.escapeHtml(item.guid) +
+        '"' +
+        (selected.indexOf(item.guid) !== -1 ? " selected" : "") +
+        ">" +
+        shell.escapeHtml(item.name + " (" + item.count + ")") +
+        "</option>";
+    });
+    selectEl.innerHTML = html;
+  }
+
   function syncFilterDom(shell, state, options) {
     fillSelect(shell, document.getElementById("v3-manager-filter"), options.managers, state.v3manager);
-    fillSelect(shell, document.getElementById("v3-type-filter"), options.types, state.v3type);
-    fillSelect(shell, document.getElementById("v3-category-filter"), options.categories, state.v3category);
+    var types = state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
+    var categories =
+      state.v3categories && state.v3categories.length ? state.v3categories : parseTokenList(state.v3category);
+    fillMultiSelect(shell, document.getElementById("v3-type-filter"), options.types, types);
+    fillMultiSelect(shell, document.getElementById("v3-category-filter"), options.categories, categories);
     var closedEl = document.getElementById("v3-closed-filter");
     if (closedEl) closedEl.value = state.closed || "";
     var closedWrap = document.getElementById("v3-closed-filter-wrap");
@@ -391,7 +478,8 @@
       return [
         { id: "name", label: "Название клиента" },
         { id: "manager_name", label: "Менеджер клиента" },
-        { id: "regional_name", label: "Региональный" },
+        { id: "regional_name", label: "Региональный клиента" },
+        { id: "hardware_name", label: "По фурнитуре клиента" },
         { id: "rop_name", label: "РОП клиента" },
       ];
     }
@@ -416,6 +504,9 @@
 
   function v3CellValue(item, col, shell) {
     if (col.id === "holding") {
+      if (item.holding_name) {
+        return shell.escapeHtml(String(item.holding_name));
+      }
       return item.holding_guid ? shell.escapeHtml(item.holding_guid.slice(0, 8) + "…") : "—";
     }
     if (col.id === "closed") {
@@ -490,18 +581,25 @@
         });
         chips.push({ label: "Менеджер: " + (mgr ? mgr.name : state.v3manager.slice(0, 8)), key: "v3manager" });
       }
-      if (state.v3type && options && options.types) {
-        var tp = (options.types || []).find(function (t) {
-          return t.guid === state.v3type;
-        });
-        chips.push({ label: "Тип: " + (tp ? tp.name : state.v3type), key: "v3type" });
-      }
-      if (state.v3category && options && options.categories) {
-        var cat = (options.categories || []).find(function (c) {
-          return c.guid === state.v3category;
-        });
-        chips.push({ label: "Категория: " + (cat ? cat.name : state.v3category), key: "v3category" });
-      }
+      var typeTokens =
+        state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
+      typeTokens.forEach(function (guid) {
+        var tp = options && options.types ? (options.types || []).find(function (t) { return t.guid === guid; }) : null;
+        chips.push({ label: "Тип: " + (tp ? tp.name : guid), key: "v3type", token: guid });
+      });
+      var categoryTokens =
+        state.v3categories && state.v3categories.length
+          ? state.v3categories
+          : parseTokenList(state.v3category);
+      categoryTokens.forEach(function (guid) {
+        var cat =
+          options && options.categories
+            ? (options.categories || []).find(function (c) {
+                return c.guid === guid;
+              })
+            : null;
+        chips.push({ label: "Категория: " + (cat ? cat.name : guid), key: "v3category", token: guid });
+      });
       if (state.closed === "true") {
         chips.push({ label: "ТТ: закрыта", key: "closed" });
       } else if (state.closed === "false") {
@@ -522,7 +620,9 @@
               shell.escapeHtml(chip.label) +
               '<button type="button" class="clients-v3-filter-chip__clear" data-v3-clear-filter="' +
               shell.escapeHtml(chip.key) +
-              '" aria-label="Снять фильтр">×</button></span>'
+              '"' +
+              (chip.token ? ' data-v3-clear-token="' + shell.escapeHtml(chip.token) + '"' : "") +
+              ' aria-label="Снять фильтр">×</button></span>'
             );
           })
           .join("");
@@ -555,8 +655,10 @@
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
       });
       var meta = entityMeta(state.v3entity);
-      if (ctx.pageTitleEl) {
-        ctx.pageTitleEl.textContent = meta.label;
+      if (ctx.refreshListChrome) {
+        ctx.refreshListChrome(state, meta);
+      } else if (ctx.pageTitleEl && ctx.rolePresentation) {
+        ctx.pageTitleEl.textContent = ctx.rolePresentation.pageTitle || "Клиенты";
       }
       var params = new URLSearchParams();
       params.set("entity", state.v3entity);
@@ -577,8 +679,16 @@
       if (state.v3manager && !teamAssignment) {
         params.set("managerGuid", state.v3manager);
       }
-      if (state.v3type) params.set("typeGuid", state.v3type);
-      if (state.v3category) params.set("categoryGuid", state.v3category);
+      var typeTokens =
+        state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
+      if (typeTokens.length > 1) params.set("typeGuids", joinTokenList(typeTokens));
+      else if (typeTokens.length === 1) params.set("typeGuid", typeTokens[0]);
+      var categoryTokens =
+        state.v3categories && state.v3categories.length
+          ? state.v3categories
+          : parseTokenList(state.v3category);
+      if (categoryTokens.length > 1) params.set("categoryGuids", joinTokenList(categoryTokens));
+      else if (categoryTokens.length === 1) params.set("categoryGuid", categoryTokens[0]);
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
@@ -618,13 +728,16 @@
           var data = result.data || { items: [], total: 0 };
           var items = data.items || [];
           if (!items.length) {
-            ctx.showResultsState(
-              "empty",
-              "Нет записей",
-              "Измените поиск или фильтры.",
-              "",
-            );
-            ctx.resultCountEl.textContent = "0 записей";
+            var emptyTitle = state.q ? "Ничего не найдено" : "Нет записей";
+            var emptyText = state.q
+              ? "По запросу «" + state.q + "» нет совпадений. Измените поиск или снимите фильтры."
+              : "Измените поиск или фильтры.";
+            ctx.showResultsState("empty", emptyTitle, emptyText, "");
+            if (ctx.formatResultCount) {
+              ctx.formatResultCount(state, 0);
+            } else {
+              ctx.resultCountEl.textContent = "0 записей";
+            }
             ctx.tableBody.innerHTML = "";
             ctx.cardsEl.innerHTML = "";
             ctx.paginationEl.innerHTML = "";
@@ -690,7 +803,11 @@
             .join("");
           var pageSize = state.pageSize || 50;
           var totalPages = Math.max(1, Math.ceil((data.total || 0) / pageSize));
-          ctx.resultCountEl.textContent = (data.total || 0) + " записей";
+          if (ctx.formatResultCount) {
+            ctx.formatResultCount(state, data.total || 0);
+          } else {
+            ctx.resultCountEl.textContent = (data.total || 0) + " записей";
+          }
           ctx.renderPagination(
             {
               page: state.page,
@@ -712,8 +829,10 @@
         el.addEventListener("change", function () {
           var next = readState();
           next.v3manager = document.getElementById("v3-manager-filter")?.value || "";
-          next.v3type = document.getElementById("v3-type-filter")?.value || "";
-          next.v3category = document.getElementById("v3-category-filter")?.value || "";
+          next.v3types = readMultiSelectValues("v3-type-filter");
+          next.v3categories = readMultiSelectValues("v3-category-filter");
+          next.v3type = next.v3types[0] || "";
+          next.v3category = next.v3categories[0] || "";
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
           var teamView = next.v3view === "teams" || next.ropEmployee;
           if (id === "v3-manager-filter" && teamView) {
@@ -831,6 +950,8 @@
           v3manager: "",
           v3type: "",
           v3category: "",
+          v3types: [],
+          v3categories: [],
           v3view: readState().v3view,
           missingManager: false,
           ropEmployee: readState().ropEmployee,

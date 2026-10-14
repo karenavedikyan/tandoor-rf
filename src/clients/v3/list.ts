@@ -22,6 +22,8 @@ export type V3ListQuery = {
   managerGuid?: string;
   typeGuid?: string;
   categoryGuid?: string;
+  typeGuids?: string[];
+  categoryGuids?: string[];
   missingManager?: boolean;
   responsibleGuid?: string;
   responsibleKind?: V3ResponsibleKind;
@@ -44,13 +46,39 @@ function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unkn
     params.push(guidFilter);
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
   }
-  if (input.typeGuid) {
-    params.push(input.typeGuid);
+  const typeGuids =
+    input.typeGuids && input.typeGuids.length > 0
+      ? input.typeGuids
+      : input.typeGuid
+        ? [input.typeGuid]
+        : [];
+  if (typeGuids.length === 1) {
+    params.push(typeGuids[0]);
     sql += ` AND ${v3TypeGuidSql(alias)} = $${params.length}`;
+  } else if (typeGuids.length > 1) {
+    const placeholders: string[] = [];
+    for (const guid of typeGuids) {
+      params.push(guid);
+      placeholders.push(`$${params.length}`);
+    }
+    sql += ` AND ${v3TypeGuidSql(alias)} IN (${placeholders.join(", ")})`;
   }
-  if (input.categoryGuid) {
-    params.push(input.categoryGuid);
+  const categoryGuids =
+    input.categoryGuids && input.categoryGuids.length > 0
+      ? input.categoryGuids
+      : input.categoryGuid
+        ? [input.categoryGuid]
+        : [];
+  if (categoryGuids.length === 1) {
+    params.push(categoryGuids[0]);
     sql += ` AND ${v3CategoryGuidSql(alias)} = $${params.length}`;
+  } else if (categoryGuids.length > 1) {
+    const placeholders: string[] = [];
+    for (const guid of categoryGuids) {
+      params.push(guid);
+      placeholders.push(`$${params.length}`);
+    }
+    sql += ` AND ${v3CategoryGuidSql(alias)} IN (${placeholders.join(", ")})`;
   }
   if (input.missingManager) {
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
@@ -114,8 +142,10 @@ export async function listV3Entities(
         SELECT le.guid_client::text AS guid,
                le.name_client AS name,
                le.guid_holding::text AS holding_guid,
+               le.name_holding AS holding_name,
                le.managers->>'nameManager' AS manager_name,
                le.managers->>'nameRegionalManager' AS regional_name,
+               le.managers->>'nameHardwareManager' AS hardware_name,
                le.managers->>'nameHeadOfSales' AS rop_name
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
@@ -150,6 +180,7 @@ export async function listV3Entities(
              ro.closed,
              ro.managers->>'nameManager' AS manager_name,
              ro.managers->>'nameRegionalManager' AS regional_name,
+             ro.managers->>'nameHardwareManager' AS hardware_name,
              ro.managers->>'nameHeadOfSales' AS rop_name,
              ro.address->>'store_address' AS store_address
       FROM onec_v3_retail_outlets ro
