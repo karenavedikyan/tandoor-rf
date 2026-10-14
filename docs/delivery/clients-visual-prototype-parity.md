@@ -1,6 +1,6 @@
 # Clients — визуальное соответствие прототипу (#clients)
 
-PR: https://github.com/karenavedikyan/tandoor-rf/pull/78 (draft), HEAD `3a9e7e3` (presentation code `3ffaf82`).
+PR: https://github.com/karenavedikyan/tandoor-rf/pull/78 (draft), HEAD `3ecd53d`.
 
 Эталон: [Perplexity «3. Клиентская база»](https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c) (`#clients`, не экран #exchange «28. Клиенты, ТТ и ответственные»).
 
@@ -55,9 +55,18 @@ PNG из `media/clients-v3-visual-review/prototype/` — IA exchange; не ис�
 | Admin entry desktop | `impl-admin-entry-desktop-1440x900.png` |
 | Aliases (expanded roster) | `impl/teams-expanded-desktop.png`, `impl/teams-expanded-mobile.png` |
 
-## Проверки (HEAD `3a9e7e3`)
+## Approved captures (HEAD)
+
+- **Git SHA:** `3ecd53d` (`3ecd53d67e2ad2060e14b40dc240a4d0c3e928a2`)
+- **API / repo artifact:** `artifacts/clients-pr78-approved-3ecd53d.zip` (PNG + `FILES.txt`; light/dark computed bg в `FILES.txt`)
+- **Store export (MAIN agent GET):** `/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/artifacts/clients-pr78-approved-3ecd53d.zip` — same relative path `artifacts/clients-pr78-approved-3ecd53d.zip`
+- **Workspace copy:** `artifacts/clients-pr78-approved-3ecd53d.zip`, unpacked screens under `artifacts/pr78-approved-3ecd53d-screens/`
+- **Содержимое:** manager desktop light/dark (dark via theme toggle), regional desktop, manager mobile, director ROP roster desktop/mobile (`ropEmployee` navigation)
+
+## Проверки (HEAD `3ecd53d`)
 
 - `npm run typecheck`, `npm run build` — OK
 - `clients-v3-roles-entry.browser.test.ts` — 6/6
 - `clients-v3.browser.test.ts` — 12/12
 - `clients-v3-visual-acceptance.browser.test.ts` — 9/9; captures → `media/clients-visual-pr/captures-3ffaf82/`
+- Approved zip: `artifacts/clients-pr78-approved-3ecd53d.zip` (post toolbar-revert + true dark capture)
