@@ -1,6 +1,10 @@
 import type { AccessContext } from "../access/types";
 import { query } from "../db/pool";
-import { v3EntityAssignmentScope } from "./v3/access-scope";
+import {
+  v3ActiveDelegationRowSql,
+  v3DelegationClientGrantDenialsSql,
+  v3EntityAssignmentScope,
+} from "./v3/access-scope";
 import { isExchangeV3Active } from "./v3/list";
 
 export type AssistantDelegationContext =
@@ -102,14 +106,9 @@ async function countAccessibleLegalClientsLegacy(assistantUserId: string): Promi
 async function delegatorsWithAccessibleClients(
   assistantUserId: string,
   v3Active: boolean,
-  context: AccessContext,
 ): Promise<{ id: string; name: string }[]> {
   if (v3Active) {
-    const scope = v3EntityAssignmentScope(context, "le", "legal");
-    const params = [assistantUserId, ...scope.params];
     const assistantParam = "$1";
-    const scopeOffset = 1;
-    const scopeClause = scope.clause.replace(/\$(\d+)/g, (_m, index) => `$${Number(index) + scopeOffset}`);
     const result = await query<{ id: string; name: string }>(
       `
         SELECT DISTINCT
@@ -117,37 +116,17 @@ async function delegatorsWithAccessibleClients(
           COALESCE(NULLIF(BTRIM(u.full_name), ''), u.email, 'Менеджер') AS name
         FROM delegations d
         JOIN users u ON u.id = d.delegator_user_id
-        WHERE d.assistant_user_id = ${assistantParam}::uuid
-          AND d.status = 'active'
-          AND d.approved_by_user_id IS NOT NULL
-          AND d.revoked_at IS NULL
-          AND d.starts_at <= NOW()
-          AND d.ends_at > NOW()
-          AND NOT EXISTS (
-            SELECT 1
-            FROM delegation_change_requests dcr
-            WHERE dcr.delegation_id = d.id
-              AND dcr.status = 'pending_approval'
-          )
-          AND EXISTS (
-            SELECT 1
-            FROM user_onec_employee_links uoel
-            JOIN users delegator ON delegator.id = d.delegator_user_id
-            WHERE uoel.user_id = d.delegator_user_id
-              AND uoel.revoked_at IS NULL
-              AND delegator.status = 'active'
-              AND delegator.role IN ('manager', 'rop')
-          )
+        WHERE ${v3ActiveDelegationRowSql("d", assistantParam)}
           AND EXISTS (
             SELECT 1
             FROM delegation_clients dc
             JOIN onec_v3_legal_entities le ON le.guid_client = dc.guid_client
             WHERE dc.delegation_id = d.id
-              AND (${scopeClause})
+              AND ${v3DelegationClientGrantDenialsSql("d", "le.guid_client", assistantParam)}
           )
         ORDER BY name ASC
       `,
-      params,
+      [assistantUserId],
     );
     return result.rows;
   }
@@ -184,13 +163,16 @@ async function delegatorsWithAccessibleClients(
                   OR ad.object_id = dc.guid_client
                 )
             )
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM access_denials ad
-          WHERE ad.user_id = $1::uuid
-            AND ad.revoked_at IS NULL
-            AND ad.scope_type = 'all_clients'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM access_denials ad
+              WHERE ad.user_id = $1::uuid
+                AND ad.revoked_at IS NULL
+                AND (
+                  ad.scope_type = 'all_clients'
+                  OR ad.object_id = dc.guid_client
+                )
+            )
         )
       ORDER BY name ASC
     `,
@@ -215,7 +197,7 @@ export async function loadAssistantDelegationContext(
     return null;
   }
 
-  const delegators = await delegatorsWithAccessibleClients(context.userId, v3Active, context);
+  const delegators = await delegatorsWithAccessibleClients(context.userId, v3Active);
   if (delegators.length === 0) {
     return null;
   }

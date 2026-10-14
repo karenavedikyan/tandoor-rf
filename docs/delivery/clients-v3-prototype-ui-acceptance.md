@@ -56,7 +56,7 @@ Production **не изменялся**.
 | `npm run build` | PASS |
 | `npm test` | 696/696 PASS |
 | `test/integration/clients-v3-api.test.ts` | 6/6 PASS |
-| `test/integration/clients-assistant-delegation-presentation.test.ts` | 7/7 PASS |
+| `test/integration/clients-assistant-delegation-presentation.test.ts` | 11/11 PASS |
 | `test/browser/clients-v3.browser.test.ts` | 8/8 ×2, exit 0 |
 | `test/browser/clients-v3-roles-entry.browser.test.ts` | 6/6 ×2, exit 0 |
 

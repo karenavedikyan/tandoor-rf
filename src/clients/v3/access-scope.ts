@@ -63,43 +63,80 @@ function v3GrantClause(alias: string, objectGuidSql: string, userParam: string):
   )`;
 }
 
-function v3AssistantDelegationClause(alias: string, objectGuidSql: string, userParam: string): string {
-  return `EXISTS (
-    SELECT 1
-    FROM delegations d
-    JOIN delegation_clients dc ON dc.delegation_id = d.id
-    WHERE d.assistant_user_id = ${userParam}::uuid
-      AND d.status = 'active'
-      AND d.approved_by_user_id IS NOT NULL
-      AND d.revoked_at IS NULL
-      AND d.starts_at <= NOW()
-      AND d.ends_at > NOW()
-      AND dc.guid_client = ${objectGuidSql}
+/** Active approved delegation row for assistant (no per-client checks). */
+export function v3ActiveDelegationRowSql(delegationAlias: string, assistantUserParam: string): string {
+  return `${delegationAlias}.assistant_user_id = ${assistantUserParam}::uuid
+      AND ${delegationAlias}.status = 'active'
+      AND ${delegationAlias}.approved_by_user_id IS NOT NULL
+      AND ${delegationAlias}.revoked_at IS NULL
+      AND ${delegationAlias}.starts_at <= NOW()
+      AND ${delegationAlias}.ends_at > NOW()
       AND NOT EXISTS (
         SELECT 1
         FROM delegation_change_requests dcr
-        WHERE dcr.delegation_id = d.id
+        WHERE dcr.delegation_id = ${delegationAlias}.id
           AND dcr.status = 'pending_approval'
       )
       AND EXISTS (
         SELECT 1
         FROM user_onec_employee_links uoel
-        JOIN users delegator ON delegator.id = d.delegator_user_id
-        WHERE uoel.user_id = d.delegator_user_id
+        JOIN users delegator ON delegator.id = ${delegationAlias}.delegator_user_id
+        WHERE uoel.user_id = ${delegationAlias}.delegator_user_id
           AND uoel.revoked_at IS NULL
           AND delegator.status = 'active'
           AND delegator.role IN ('manager', 'rop')
-          AND NOT EXISTS (
-            SELECT 1
-            FROM access_denials ad
-            WHERE ad.user_id = d.delegator_user_id
-              AND ad.revoked_at IS NULL
-              AND (
-                ad.scope_type = 'all_clients'
-                OR ad.object_id = ${objectGuidSql}
-              )
+      )`;
+}
+
+/** Delegator and assistant denials for one client guid under a specific delegation row. */
+export function v3DelegationClientGrantDenialsSql(
+  delegationAlias: string,
+  clientGuidSql: string,
+  assistantUserParam: string,
+): string {
+  return `NOT EXISTS (
+        SELECT 1
+        FROM access_denials ad
+        WHERE ad.user_id = ${delegationAlias}.delegator_user_id
+          AND ad.revoked_at IS NULL
+          AND (
+            ad.scope_type = 'all_clients'
+            OR ad.object_id = ${clientGuidSql}
           )
       )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM access_denials ad
+        WHERE ad.user_id = ${assistantUserParam}::uuid
+          AND ad.revoked_at IS NULL
+          AND (
+            ad.scope_type = 'all_clients'
+            OR ad.object_id = ${clientGuidSql}
+          )
+      )`;
+}
+
+/** Client guid is assigned to this delegation and both sides may access it. */
+export function v3DelegationClientGrantSql(
+  delegationAlias: string,
+  clientGuidSql: string,
+  assistantUserParam: string,
+): string {
+  return `EXISTS (
+    SELECT 1
+    FROM delegation_clients dc
+    WHERE dc.delegation_id = ${delegationAlias}.id
+      AND dc.guid_client = ${clientGuidSql}
+      AND ${v3DelegationClientGrantDenialsSql(delegationAlias, clientGuidSql, assistantUserParam)}
+  )`;
+}
+
+function v3AssistantDelegationClause(alias: string, objectGuidSql: string, userParam: string): string {
+  return `EXISTS (
+    SELECT 1
+    FROM delegations d
+    WHERE ${v3ActiveDelegationRowSql("d", userParam)}
+      AND ${v3DelegationClientGrantSql("d", objectGuidSql, userParam)}
   )`;
 }
 

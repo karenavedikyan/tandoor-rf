@@ -303,7 +303,7 @@ describe("assistant delegation presentation vs v3 list", { concurrency: false },
     assert.equal(result.listTotal, 0);
   });
 
-  it("multiple active delegations use aggregate context, not a single arbitrary delegator", async () => {
+  it("multiple active delegations use aggregate context when delegators differ", async () => {
     const ids = await seedV3Users();
     await insertDelegation({
       delegatorUserId: ids.manager1Id,
@@ -324,5 +324,96 @@ describe("assistant delegation presentation vs v3 list", { concurrency: false },
     assert.equal(presentation!.delegatorCount, 2);
     assert.equal(presentation!.clientCount, listTotal);
     assert.equal(listTotal, 2);
+  });
+
+  async function insertDenial(userId: string, adminId: string, input: { allClients?: boolean; objectId?: string }) {
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    if (input.allClients) {
+      await pool.query(
+        `
+          INSERT INTO access_denials (user_id, scope_type, reason, basis, created_by_user_id)
+          VALUES ($1::uuid, 'all_clients', 'test', 'test', $2::uuid)
+        `,
+        [userId, adminId],
+      );
+    } else if (input.objectId) {
+      await pool.query(
+        `
+          INSERT INTO access_denials (user_id, scope_type, object_id, reason, basis, created_by_user_id)
+          VALUES ($1::uuid, 'client', $2::uuid, 'test', 'test', $3::uuid)
+        `,
+        [userId, input.objectId, adminId],
+      );
+    }
+    await pool.end();
+  }
+
+  async function dualDelegationSameClient(ids: {
+    manager1Id: string;
+    manager2Id: string;
+    assistantId: string;
+    adminId: string;
+  }): Promise<void> {
+    await insertDelegation({
+      delegatorUserId: ids.manager1Id,
+      assistantUserId: ids.assistantId,
+      adminId: ids.adminId,
+      clientGuids: [LEGAL_M1],
+    });
+    await insertDelegation({
+      delegatorUserId: ids.manager2Id,
+      assistantUserId: ids.assistantId,
+      adminId: ids.adminId,
+      clientGuids: [LEGAL_M1],
+    });
+  }
+
+  it("same client in two delegations: B all_clients denial → single A only", async () => {
+    const ids = await seedV3Users();
+    await dualDelegationSameClient(ids);
+    await insertDenial(ids.manager2Id, ids.adminId, { allClients: true });
+    const cookie = await login("deleg-pres-assistant@example.com");
+    const { presentation, listTotal } = await presentationAndList(cookie);
+    assert.ok(presentation);
+    assert.equal(presentation!.mode, "single");
+    assert.equal(presentation!.delegatorName, "Manager One");
+    assert.equal(presentation!.clientCount, 1);
+    assert.equal(listTotal, 1);
+  });
+
+  it("same client in two delegations: B object denial on X → single A only", async () => {
+    const ids = await seedV3Users();
+    await dualDelegationSameClient(ids);
+    await insertDenial(ids.manager2Id, ids.adminId, { objectId: LEGAL_M1 });
+    const cookie = await login("deleg-pres-assistant@example.com");
+    const { presentation, listTotal } = await presentationAndList(cookie);
+    assert.ok(presentation);
+    assert.equal(presentation!.mode, "single");
+    assert.equal(presentation!.delegatorName, "Manager One");
+    assert.equal(presentation!.clientCount, 1);
+    assert.equal(listTotal, 1);
+  });
+
+  it("same client in two delegations: both valid → multiple with one unique client", async () => {
+    const ids = await seedV3Users();
+    await dualDelegationSameClient(ids);
+    const cookie = await login("deleg-pres-assistant@example.com");
+    const { presentation, listTotal } = await presentationAndList(cookie);
+    assert.ok(presentation);
+    assert.equal(presentation!.mode, "multiple");
+    assert.equal(presentation!.delegatorCount, 2);
+    assert.equal(presentation!.clientCount, 1);
+    assert.equal(listTotal, 1);
+  });
+
+  it("same client in two delegations: both delegators denied → null and empty list", async () => {
+    const ids = await seedV3Users();
+    await dualDelegationSameClient(ids);
+    await insertDenial(ids.manager1Id, ids.adminId, { allClients: true });
+    await insertDenial(ids.manager2Id, ids.adminId, { allClients: true });
+    const cookie = await login("deleg-pres-assistant@example.com");
+    const { presentation, listTotal } = await presentationAndList(cookie);
+    assert.equal(presentation, null);
+    assert.equal(listTotal, 0);
   });
 });
