@@ -24,9 +24,15 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   let browser: Browser;
   let appServer: http.Server | null = null;
   let baseUrl = "";
+  let testCreds = { email: "manager-v3-ui@example.com", adminEmail: "admin-v3-ui@example.com" };
 
   before(async () => {
     browser = await chromium.launch({ headless: true });
+    const databaseUrl = getIntegrationDatabaseUrl();
+    setIntegrationEnv(databaseUrl, "http://127.0.0.1:0");
+    await resetPoolForTests();
+    await prepareDatabase(databaseUrl);
+    testCreds = await seedDatabase(databaseUrl);
     const { createApp } = await import("../../src/server");
     const app = createApp();
     appServer = http.createServer(app);
@@ -34,6 +40,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const addr = appServer!.address();
     assert.ok(addr && typeof addr === "object");
     baseUrl = `http://127.0.0.1:${addr.port}`;
+    setIntegrationEnv(databaseUrl, baseUrl);
   });
 
   after(async () => {
@@ -47,11 +54,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await closePool();
   });
 
-  async function seed(): Promise<{ email: string; adminEmail: string }> {
-    const databaseUrl = getIntegrationDatabaseUrl();
-    setIntegrationEnv(databaseUrl, baseUrl || "http://127.0.0.1:3000");
-    await resetPoolForTests();
-    await prepareDatabase(databaseUrl);
+  async function seedDatabase(databaseUrl: string): Promise<{ email: string; adminEmail: string }> {
     const admin = await createTestUser({
       databaseUrl,
       email: "admin-v3-ui@example.com",
@@ -482,7 +485,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   }
 
   it("loads v3 all list when v3view=all conflicts with legacy view=teams in URL", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "manager-v3-ui@example.com");
     const listResponse = page.waitForResponse(
@@ -499,7 +501,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("switches teams to all to teams without URL overriding user action", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     await page.goto(
@@ -523,7 +524,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("return from card preserves multiselect typeGuids in list context", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     const listReady = page.waitForResponse(
@@ -567,7 +567,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("team responsible switch preserves dual multiselect filters without reload", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     await page.goto(
@@ -631,7 +630,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("multiselect filters persist across responsible kind, card, history and chip clears", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     const initialList = page.waitForResponse(
@@ -809,7 +807,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("team responsible selection filters v3 list and clears on view change", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     await page.goto(
@@ -895,7 +892,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("direct responsible URL loads switcher strip and v3 list", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     const responsibles = page.waitForResponse(
@@ -940,7 +936,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("team responsible kind switches without reload", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     await page.goto(
@@ -1030,7 +1025,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("preserves query params when merging role entry href", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "manager-v3-ui@example.com");
     const listResponse = page.waitForResponse(
@@ -1045,7 +1039,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("v3 retail filters persist through search, clear and pagination", async () => {
-    await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
     const listReady = page.waitForResponse(
@@ -1236,7 +1229,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("v3 hides legacy phone filter; type chip clears without affecting other filters", async () => {
-    const creds = await seed();
+    const creds = testCreds;
     const page = await browser.newPage();
     await login(page, creds.email);
     const listReady = page.waitForResponse(
@@ -1274,7 +1267,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   });
 
   it("desktop and mobile: v3 filters, entity switch, card fields and nested navigation", async () => {
-    const creds = await seed();
+    const creds = testCreds;
     for (const viewport of [DESKTOP, MOBILE]) {
       const page = await browser.newPage();
       await login(page, creds.email);

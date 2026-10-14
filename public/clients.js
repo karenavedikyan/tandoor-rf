@@ -4144,11 +4144,16 @@
     updateResultsTitle({ view: legacyView, entity: legacyEntity });
   }
 
-  function buildV3UiContext() {
+  function buildV3UiContext(navigationRequestId) {
+    var navId = typeof navigationRequestId === "number" ? navigationRequestId : activeRequestId;
     return {
       api: api,
       shell: shell,
       rolePresentation: rolePresentation,
+      navigationRequestId: navId,
+      isNavigationCurrent: function () {
+        return navId === activeRequestId;
+      },
       getSearchQuery: function () {
         return searchInput.value.trim();
       },
@@ -4193,7 +4198,7 @@
           var next = window.ClientsV3.readState();
           next.page = v3state.page - 1;
           next.q = searchInput.value.trim();
-          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+          window.ClientsV3.loadList(buildV3UiContext(activeRequestId), next, false);
         });
         document.getElementById("page-next")?.addEventListener("click", function () {
           if (v3state.page >= totalPages) return;
@@ -4202,7 +4207,7 @@
           var next = window.ClientsV3.readState();
           next.page = v3state.page + 1;
           next.q = searchInput.value.trim();
-          window.ClientsV3.loadList(buildV3UiContext(), next, false);
+          window.ClientsV3.loadList(buildV3UiContext(activeRequestId), next, false);
         });
       },
     };
@@ -4447,7 +4452,7 @@
       }
     }
     if (shouldUseV3List(state)) {
-      return window.ClientsV3.loadOrchestrated(buildV3UiContext(), state, replaceHistory, {
+      return window.ClientsV3.loadOrchestrated(buildV3UiContext(requestId), state, replaceHistory, {
         showAppShell: showAppShell,
         updateViewChrome: updateViewChrome,
         loadTeamsContext: loadTeamsContext,
@@ -4455,13 +4460,21 @@
         logic: logic,
         loadSource: loadSource || "",
         requestId: requestId,
-        activeRequestId: activeRequestId,
+        isNavigationCurrent: function () {
+          return requestId === activeRequestId;
+        },
         getSearchQuery: function () {
           return searchInput.value.trim();
         },
         unassignedPanelEl: unassignedPanelEl,
         navigateState: navigateState,
         currentStateFromForm: currentStateFromForm,
+        reloadFromV3Filters: function (nextV3) {
+          cancelScheduledLoad();
+          activeRequestId += 1;
+          var filterRequestId = activeRequestId;
+          window.ClientsV3.loadList(buildV3UiContext(filterRequestId), nextV3, true);
+        },
       });
     }
     applyStateToForm(state);

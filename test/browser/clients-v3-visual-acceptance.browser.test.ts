@@ -6,11 +6,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { closePool } from "../../src/db/pool";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
+import {
+  buildVisualCaptureFilename,
+  finalizeVisualManifest,
+  type VisualCapturePlanEntry,
+} from "../helpers/clients-v3-visual-manifest";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import { resolveVerifiedGitSha } from "../helpers/verified-git-sha";
@@ -31,17 +36,92 @@ const OUT = path.join(OUT_BASE, `captures-${SHA}`);
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
-type ManifestCapture = {
-  file: string;
-  role: string;
-  scenario: string;
-  viewport: string;
-  theme: string;
-  status: "captured" | "missing";
-};
+const ROLE_SLUGS = ["manager", "assistant", "regional", "rop", "director", "admin"] as const;
 
-const manifest: ManifestCapture[] = [];
-let plannedCaptureCount = 0;
+function buildFullCapturePlan(sha: string): VisualCapturePlanEntry[] {
+  const plan: VisualCapturePlanEntry[] = [];
+  for (const slug of ROLE_SLUGS) {
+    for (const spec of [
+      { viewport: DESKTOP, theme: undefined as "dark" | undefined, scenario: "entry-list" },
+      { viewport: MOBILE, theme: undefined, scenario: "entry-list" },
+      { viewport: DESKTOP, theme: "dark" as const, scenario: "entry-list" },
+    ]) {
+      const built = buildVisualCaptureFilename(sha, `${slug}-entry`, spec.viewport, spec.theme);
+      plan.push({
+        file: built.file,
+        role: slug,
+        scenario: spec.scenario,
+        viewport: built.viewportLabel,
+        theme: built.themeLabel,
+        status: "planned",
+      });
+    }
+  }
+  const extras: Array<{ slug: string; role: string; scenario: string; viewports: Array<{ vp: typeof DESKTOP; theme?: "dark" }> }> =
+    [
+      {
+        slug: "manager-filters-chips",
+        role: "manager",
+        scenario: "filters-chips",
+        viewports: [{ vp: DESKTOP }, { vp: MOBILE }],
+      },
+      {
+        slug: "manager-card-detail",
+        role: "manager",
+        scenario: "card-detail",
+        viewports: [{ vp: DESKTOP }, { vp: MOBILE }],
+      },
+      {
+        slug: "manager-return-list",
+        role: "manager",
+        scenario: "return-list",
+        viewports: [{ vp: DESKTOP }, { vp: MOBILE }],
+      },
+      {
+        slug: "assistant-delegation",
+        role: "assistant",
+        scenario: "delegation-banner",
+        viewports: [{ vp: DESKTOP }, { vp: MOBILE }],
+      },
+      {
+        slug: "admin-teams-roster",
+        role: "admin",
+        scenario: "teams-roster-filled",
+        viewports: [{ vp: DESKTOP }, { vp: MOBILE }],
+      },
+      {
+        slug: "rop-team-base-list",
+        role: "rop",
+        scenario: "team-base-tab",
+        viewports: [{ vp: DESKTOP }],
+      },
+      {
+        slug: "director-teams-overview",
+        role: "director",
+        scenario: "teams-overview",
+        viewports: [{ vp: DESKTOP }],
+      },
+    ];
+  for (const extra of extras) {
+    for (const item of extra.viewports) {
+      const built = buildVisualCaptureFilename(sha, extra.slug, item.vp, item.theme);
+      plan.push({
+        file: built.file,
+        role: extra.role,
+        scenario: extra.scenario,
+        viewport: built.viewportLabel,
+        theme: built.themeLabel,
+        status: "planned",
+      });
+    }
+  }
+  return plan;
+}
+
+const capturePlan = buildFullCapturePlan(SHA);
+const planByFile = new Map(capturePlan.map((entry) => [entry.file, entry]));
+let scenariosCompleted = true;
+let activeScenarioFiles: string[] = [];
 
 describe("clients v3 visual acceptance captures", { concurrency: false }, () => {
   let browser: Browser;
@@ -50,6 +130,12 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
 
   before(async () => {
     fs.mkdirSync(OUT, { recursive: true });
+    for (const entry of fs.readdirSync(OUT)) {
+      if (entry.endsWith(".png")) {
+        fs.unlinkSync(path.join(OUT, entry));
+      }
+    }
+    assert.equal(capturePlan.length, 30, "expected 30 planned visual captures for PR #77 matrix");
     const { resetPoolForTests } = await import("../../src/db/pool");
     await resetPoolForTests();
     const databaseUrl = getIntegrationDatabaseUrl();
@@ -66,29 +152,40 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     browser = await chromium.launch({ headless: true });
   });
 
-  after(async () => {
-    for (const entry of manifest) {
-      const exists = fs.existsSync(path.join(OUT, entry.file));
-      entry.status = exists ? "captured" : "missing";
+  afterEach((ctx) => {
+    if (ctx?.details?.result?.pass === false) {
+      scenariosCompleted = false;
+      for (const file of activeScenarioFiles) {
+        const entry = planByFile.get(file);
+        if (entry && entry.status === "planned") {
+          entry.status = "not-run";
+        }
+      }
     }
-    const captured = manifest.filter((e) => e.status === "captured").length;
-    const runStatus = captured === plannedCaptureCount && plannedCaptureCount > 0 ? "complete" : "partial";
-    fs.writeFileSync(
-      path.join(OUT, "manifest.json"),
-      JSON.stringify(
-        {
-          sha: SHA,
-          generatedAt: new Date().toISOString(),
-          runStatus,
-          plannedCaptureCount,
-          capturedCount: captured,
-          missingCount: plannedCaptureCount - captured,
-          captures: manifest,
-        },
-        null,
-        2,
-      ),
-    );
+    activeScenarioFiles = [];
+  });
+
+  after(async () => {
+    for (const entry of capturePlan) {
+      if (entry.status === "planned") {
+        entry.status = "not-run";
+      }
+      if (entry.status === "captured") {
+        const exists = fs.existsSync(path.join(OUT, entry.file));
+        if (!exists) {
+          entry.status = "missing";
+        }
+      } else if (entry.status !== "not-run" && entry.status !== "missing") {
+        const exists = fs.existsSync(path.join(OUT, entry.file));
+        entry.status = exists ? "captured" : "missing";
+      }
+    }
+    const finalized = finalizeVisualManifest({
+      sha: SHA,
+      planned: capturePlan,
+      scenariosCompleted,
+    });
+    fs.writeFileSync(path.join(OUT, "manifest.json"), JSON.stringify({ generatedAt: new Date().toISOString(), ...finalized }, null, 2));
     await browser?.close();
     if (appServer) {
       await new Promise<void>((resolve, reject) =>
@@ -212,7 +309,10 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
     viewport: { width: number; height: number },
     theme?: "dark",
   ): Promise<void> {
-    plannedCaptureCount += 1;
+    const built = buildVisualCaptureFilename(SHA, slug, viewport, theme);
+    const entry = planByFile.get(built.file);
+    assert.ok(entry, `missing plan entry for ${built.file}`);
+    activeScenarioFiles.push(built.file);
     await page.setViewportSize(viewport);
     if (theme === "dark") {
       await page.evaluate(
@@ -223,18 +323,8 @@ describe("clients v3 visual acceptance captures", { concurrency: false }, () => 
       );
     }
     await page.waitForTimeout(300);
-    const themeSuffix = theme === "dark" ? "-dark" : "";
-    const vp = viewport.width <= 400 ? "mobile" : "desktop";
-    const file = `${SHA}-${slug}-${vp}${themeSuffix}.png`;
-    await page.screenshot({ path: path.join(OUT, file), fullPage: true });
-    manifest.push({
-      file,
-      role,
-      scenario,
-      viewport: vp,
-      theme: theme === "dark" ? "dark" : "light",
-      status: "captured",
-    });
+    await page.screenshot({ path: path.join(OUT, built.file), fullPage: true });
+    entry.status = "captured";
   }
 
   const roles: Array<{ slug: string; email: string; path: string }> = [

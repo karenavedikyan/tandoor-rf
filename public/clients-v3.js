@@ -2,6 +2,8 @@
   "use strict";
 
   var v3ListLoadGeneration = 0;
+  var v3FilterReloadRef = null;
+  var v3FilterCtxRef = null;
 
   var ENTITIES = [
     { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
@@ -717,7 +719,13 @@
       v3ListLoadGeneration += 1;
       var loadGeneration = v3ListLoadGeneration;
       function isStaleListLoad() {
+        if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
+          return true;
+        }
         return loadGeneration !== v3ListLoadGeneration;
+      }
+      if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
+        return Promise.resolve();
       }
       state = state || readState();
       var urlState = readState();
@@ -900,11 +908,15 @@
     },
 
     bindFilters: function (ctx, reload) {
+      v3FilterReloadRef = reload;
+      v3FilterCtxRef = ctx;
       ["v3-manager-filter", "v3-type-filter", "v3-category-filter", "v3-closed-filter"].forEach(function (id) {
         var el = document.getElementById(id);
         if (!el || el.dataset.v3Bound) return;
         el.dataset.v3Bound = "1";
         el.addEventListener("change", function () {
+          var liveCtx = v3FilterCtxRef || ctx;
+          var liveReload = v3FilterReloadRef || reload;
           var next = readState();
           next.v3manager = document.getElementById("v3-manager-filter")?.value || "";
           next.v3types = readMultiSelectValues("v3-type-filter");
@@ -922,8 +934,8 @@
             }
           }
           next.page = 1;
-          next.q = ctx.getSearchQuery ? ctx.getSearchQuery() : next.q;
-          reload(next);
+          next.q = liveCtx.getSearchQuery ? liveCtx.getSearchQuery() : next.q;
+          liveReload(next);
         });
       });
     },
@@ -953,6 +965,15 @@
     },
 
     loadOrchestrated: function (ctx, legacyState, replaceHistory, hooks) {
+      function navigationIsStale() {
+        if (hooks.isNavigationCurrent) {
+          return !hooks.isNavigationCurrent();
+        }
+        if (hooks.requestId != null && hooks.activeRequestId != null) {
+          return hooks.requestId !== hooks.activeRequestId;
+        }
+        return false;
+      }
       var loadSource = hooks.loadSource || "";
       var syncedV3 = legacyStateToV3(legacyState, loadSource);
       var urlNow = readState();
@@ -967,10 +988,17 @@
         }
       }
       syncV3FilterAliases(syncedV3);
+      if (navigationIsStale()) {
+        return Promise.resolve();
+      }
       writeState(syncedV3, replaceHistory);
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);
       window.ClientsV3.bindFilters(ctx, function (nextV3) {
+        if (hooks.reloadFromV3Filters) {
+          hooks.reloadFromV3Filters(nextV3);
+          return;
+        }
         window.ClientsV3.loadList(ctx, nextV3, true);
       });
       var v3state = syncedV3;
@@ -984,12 +1012,13 @@
       if (teamsHome) {
         ctx.showResultsState("loading", "Загрузка команд…", "", "");
         return hooks.loadTeamsContext(legacyState).then(function (teamCtx) {
-          if (!hooks.logic.shouldAcceptListResponse(hooks.requestId, hooks.activeRequestId)) return;
+          if (navigationIsStale()) return;
           if (!teamCtx.ok) {
             ctx.showResultsState("error", "Не удалось загрузить команду", "Повторите попытку.", "");
             return;
           }
           return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
+            if (navigationIsStale()) return;
             hooks.updateViewChrome(legacyState);
             ctx.showResultsState(
               "empty",
@@ -1009,7 +1038,7 @@
       if (teamsResponsibleList) {
         ctx.showResultsState("loading", "Загрузка команд…", "", "");
         return hooks.loadTeamsContext(legacyState).then(function (teamCtx) {
-          if (!hooks.logic.shouldAcceptListResponse(hooks.requestId, hooks.activeRequestId)) {
+          if (navigationIsStale()) {
             return;
           }
           if (!teamCtx.ok) {
@@ -1017,7 +1046,7 @@
             return;
           }
           return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
-            if (!hooks.logic.shouldAcceptListResponse(hooks.requestId, hooks.activeRequestId)) {
+            if (navigationIsStale()) {
               return;
             }
             hooks.updateViewChrome(legacyState);
@@ -1032,6 +1061,9 @@
         !legacyState.unassignedCategory;
       if (unassignedPick) {
         return ctx.api.apiRequest("/api/clients/v3/unassigned-summary").then(function (result) {
+          if (navigationIsStale()) {
+            return;
+          }
           if (!result.response.ok) {
             ctx.showResultsState("error", "Не удалось загрузить сводку", "", "");
             return;
