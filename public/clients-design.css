@@ -46,6 +46,34 @@
   max-width: 42rem;
 }
 
+.clients-design-page .clients-field__select--multi {
+  min-height: 4.5rem;
+  padding: 4px 8px;
+}
+
+.clients-design-page .clients-field--multi .clients-field__label {
+  font-size: 12px;
+}
+
+.clients-design-page .clients-onec-update__field-map {
+  margin-left: auto;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.clients-design-page .client-card-empty {
+  margin: 0;
+  color: var(--rf-text-muted);
+  font-size: 13px;
+}
+
+.clients-design-page .clients-compact-team__member {
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface);
+  box-shadow: 0 1px 0 rgba(35, 44, 53, 0.04);
+}
+
 .clients-design-page #clients-app {
   display: flex;
   flex-direction: column;
@@ -304,6 +332,24 @@
 
 .clients-design-page .clients-toolbar__row--filters {
   gap: 10px;
+}
+
+.clients-design-page #v3-filters-wrap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+  width: 100%;
+  align-items: end;
+}
+
+.clients-design-page #v3-filters-wrap .clients-field {
+  min-width: 0;
+  margin: 0;
+}
+
+.clients-design-page #v3-filters-wrap .clients-field__select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .clients-design-page .clients-view-switcher:not(.clients-entity-switcher) {
@@ -617,6 +663,29 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-switcher-strip {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  background: var(--rf-surface-muted);
+}
+
+.clients-design-page .clients-team-switcher-strip__label {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-team-switcher-strip .clients-team-group {
+  margin: 0;
+}
+
+.clients-design-page .clients-team-switcher-strip .clients-team-group + .clients-team-group {
+  margin-top: 10px;
 }
 
 .clients-design-page .clients-team-group__list {
@@ -1423,4 +1492,67 @@
   margin: 0 0 8px;
   font-size: 13px;
   color: var(--rf-error-text, var(--rf-warning-text));
+}
+
+.clients-design-page .clients-delegation-banner {
+  padding: 12px 16px;
+  background: var(--rf-surface-muted);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.clients-design-page .clients-delegation-banner strong {
+  font-weight: 600;
+}
+
+.clients-design-page .clients-v3-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.clients-design-page .clients-v3-filter-chips__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rf-text-muted);
+}
+
+.clients-design-page .clients-v3-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  font-size: 13px;
+}
+
+.clients-design-page .clients-v3-filter-chip__clear {
+  border: 0;
+  background: transparent;
+  color: var(--rf-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.clients-design-page.clients-role-assistant .clients-toolbar__search-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: 768px) {
+  .clients-design-page .clients-toolbar__search-row--sticky {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    background: var(--rf-surface);
+  }
 }

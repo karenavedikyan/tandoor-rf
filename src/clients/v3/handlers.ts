@@ -16,6 +16,8 @@ import {
   getV3RetailDetail,
   type V3DetailEntity,
 } from "./detail";
+import { parseMultiFilterTokenParam } from "./query-params";
+import { getV3FieldCatalog } from "./field-catalog";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -59,6 +61,18 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   const managerGuid = parseGuidParam(req.query.managerGuid);
   const typeGuid = typeof req.query.typeGuid === "string" ? req.query.typeGuid.trim() : undefined;
   const categoryGuid = typeof req.query.categoryGuid === "string" ? req.query.categoryGuid.trim() : undefined;
+  const typeGuidsRaw = parseMultiFilterTokenParam(req.query.typeGuids);
+  const categoryGuidsRaw = parseMultiFilterTokenParam(req.query.categoryGuids);
+  if (req.query.typeGuids !== undefined && typeGuidsRaw === undefined) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый typeGuids."));
+    return;
+  }
+  if (req.query.categoryGuids !== undefined && categoryGuidsRaw === undefined) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый categoryGuids."));
+    return;
+  }
+  const typeGuids = typeGuidsRaw ?? (typeGuid ? [typeGuid] : undefined);
+  const categoryGuids = categoryGuidsRaw ?? (categoryGuid ? [categoryGuid] : undefined);
   const missingManager = String(req.query.missingManager ?? "") === "true";
   const responsibleKindRaw = String(req.query.responsibleKind ?? "");
   const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
@@ -76,8 +90,10 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     responsibleGuid: responsibleGuid ?? undefined,
     responsibleKind,
     ropBranchGuid: ropBranchGuid ?? undefined,
-    typeGuid: typeGuid || undefined,
-    categoryGuid: categoryGuid || undefined,
+    typeGuid: typeGuids?.length === 1 ? typeGuids[0] : undefined,
+    categoryGuid: categoryGuids?.length === 1 ? categoryGuids[0] : undefined,
+    typeGuids: typeGuids && typeGuids.length > 1 ? typeGuids : undefined,
+    categoryGuids: categoryGuids && categoryGuids.length > 1 ? categoryGuids : undefined,
     missingManager: missingManager || undefined,
   });
   setNoStore(res);
@@ -181,6 +197,11 @@ export async function v3ClientsDetailHandler(req: AccessRequest, res: Response):
 
   setNoStore(res);
   res.json({ entity, ...detail });
+}
+
+export async function v3FieldCatalogHandler(_req: AccessRequest, res: Response): Promise<void> {
+  setNoStore(res);
+  res.json(getV3FieldCatalog());
 }
 
 export async function v3HoldingCompositionHandler(req: AccessRequest, res: Response): Promise<void> {

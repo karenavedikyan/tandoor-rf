@@ -31,6 +31,16 @@ export async function resetDatabase(databaseUrl: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query(`
+      SELECT pg_terminate_backend(pid)
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid <> pg_backend_pid()
+        AND usename = current_user
+    `);
+    await client.query("SELECT pg_advisory_unlock($1)", [902_451_001]).catch(function () {
+      /* lock may be free after terminate */
+    });
+    await client.query(`
       DROP SCHEMA public CASCADE;
       CREATE SCHEMA public;
       GRANT ALL ON SCHEMA public TO PUBLIC;

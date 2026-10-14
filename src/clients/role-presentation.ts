@@ -11,6 +11,8 @@ export type BusinessClientsRole =
   | "assistant"
   | "other";
 
+export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
+
 export type RolePresentation = {
   businessRole: BusinessClientsRole;
   pageTitle: string;
@@ -21,6 +23,7 @@ export type RolePresentation = {
   defaultEntity: ClientsEntityMode;
   allowedViews: ClientsViewMode[];
   allowedEntities: ClientsEntityMode[];
+  allowedV3Entities: readonly V3ListEntity[];
   /** When false, entity switcher stays hidden even if multiple entities are allowed. */
   showEntitySwitcher?: boolean;
   showViewSwitcher: boolean;
@@ -30,6 +33,18 @@ export type RolePresentation = {
   /** Director-style teams overview, stats strip, and completeness navigation. */
   directorLayout?: boolean;
   cardFocusHints: readonly string[];
+  delegationContext?:
+    | {
+        mode: "single";
+        delegatorName: string;
+        clientCount: number;
+      }
+    | {
+        mode: "multiple";
+        delegatorCount: number;
+        clientCount: number;
+      }
+    | null;
 };
 
 const MANAGER_FOCUS = [
@@ -56,6 +71,10 @@ const DIRECTOR_FOCUS = [
   "Назначения и данные",
 ] as const;
 
+const ALL_V3_ENTITIES = ["holdings", "legal", "retail", "orphan_retail"] as const satisfies readonly V3ListEntity[];
+const MANAGER_V3_ENTITIES = ["legal", "retail"] as const satisfies readonly V3ListEntity[];
+const ASSISTANT_V3_ENTITIES = ["legal"] as const satisfies readonly V3ListEntity[];
+
 export function canUseReviewNavigation(context: AccessContext): boolean {
   return context.role === "admin" || (context.role === "director" && context.fullClientBase);
 }
@@ -66,6 +85,42 @@ export function canUseUnassignedNavigation(context: AccessContext): boolean {
 
 export function canUseCompletenessNavigation(context: AccessContext): boolean {
   return canUseReviewNavigation(context);
+}
+
+export function v3EntityFromLegacyEntity(entity: ClientsEntityMode): "holdings" | "legal" | "retail" | "orphan_retail" {
+  return entity === "outlets" ? "retail" : "legal";
+}
+
+export function v3ViewFromLegacyView(view: ClientsViewMode): "all" | "teams" | "unassigned" {
+  if (view === "teams") {
+    return "teams";
+  }
+  if (view === "review") {
+    return "unassigned";
+  }
+  return "all";
+}
+
+export function buildRoleClientsHref(input: {
+  view: ClientsViewMode;
+  entity: ClientsEntityMode;
+}): string {
+  const params = new URLSearchParams();
+  params.set("v3mode", "1");
+  params.set("v3entity", v3EntityFromLegacyEntity(input.entity));
+  const v3view = v3ViewFromLegacyView(input.view);
+  if (input.view !== "all") {
+    params.set("view", input.view);
+  } else {
+    params.set("view", "all");
+  }
+  if (v3view !== "all") {
+    params.set("v3view", v3view);
+  }
+  if (input.entity !== "clients") {
+    params.set("entity", input.entity);
+  }
+  return `/clients?${params.toString()}`;
 }
 
 export function resolveBusinessClientsRole(role: UserRole): BusinessClientsRole {
@@ -113,11 +168,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Мои клиенты",
         workHubTitle: "Мой рабочий день",
         workHubPrimaryActionLabel: "Открыть моих клиентов",
-        clientsHref: "/clients",
+        clientsHref: buildRoleClientsHref({ view: "all", entity: "clients" }),
         defaultView: "all",
         defaultEntity: "clients",
         allowedViews: ["all"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,
@@ -131,11 +187,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Мои торговые точки",
         workHubTitle: "Моя работа на территории",
         workHubPrimaryActionLabel: "Мои торговые точки",
-        clientsHref: "/clients?entity=outlets",
+        clientsHref: buildRoleClientsHref({ view: "all", entity: "outlets" }),
         defaultView: "all",
         defaultEntity: "outlets",
         allowedViews: ["all"],
         allowedEntities: ["outlets", "clients"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,
@@ -149,11 +206,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Клиенты моей команды",
         workHubTitle: "Обзор моей команды",
         workHubPrimaryActionLabel: null,
-        clientsHref: "/clients?view=teams",
+        clientsHref: buildRoleClientsHref({ view: "teams", entity: "clients" }),
         defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: MANAGER_V3_ENTITIES,
         showEntitySwitcher: false,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
@@ -171,11 +229,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Вся клиентская база",
         workHubTitle: "Обзор отдела ОПТ",
         workHubPrimaryActionLabel: null,
-        clientsHref: "/clients?view=teams",
+        clientsHref: buildRoleClientsHref({ view: "teams", entity: "clients" }),
         defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: ALL_V3_ENTITIES,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,
@@ -190,11 +249,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Вся клиентская база",
         workHubTitle: null,
         workHubPrimaryActionLabel: null,
-        clientsHref: "/clients?view=teams",
+        clientsHref: buildRoleClientsHref({ view: "teams", entity: "clients" }),
         defaultView: "teams",
         defaultEntity: "clients",
         allowedViews: ["all", "teams", "review", "completeness"],
         allowedEntities: ["clients", "outlets"],
+        allowedV3Entities: ALL_V3_ENTITIES,
         showViewSwitcher: true,
         showManagerTeamFilter: true,
         showTeamNavigation: true,
@@ -209,11 +269,12 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         pageTitle: "Клиенты замещения",
         workHubTitle: null,
         workHubPrimaryActionLabel: null,
-        clientsHref: "/clients",
+        clientsHref: buildRoleClientsHref({ view: "all", entity: "clients" }),
         defaultView: "all",
         defaultEntity: "clients",
         allowedViews: ["all"],
         allowedEntities: ["clients"],
+        allowedV3Entities: ASSISTANT_V3_ENTITIES,
         showViewSwitcher: false,
         showManagerTeamFilter: false,
         showTeamNavigation: false,

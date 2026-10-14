@@ -883,10 +883,44 @@ export async function getClientsSyncStatus(options: {
   const { isExchangeV3Active } = await import("./v3/list");
   const v3Active = await isExchangeV3Active();
   const v3State = v3Active
-    ? await query<{ last_successful_apply_at: Date | null }>(
-        `SELECT last_successful_apply_at FROM onec_v3_exchange_state WHERE id = 1`,
+    ? await query<{
+        last_successful_apply_at: Date | null;
+        last_attempt_at: Date | null;
+        apply_blocked: boolean;
+      }>(
+        `SELECT last_successful_apply_at, last_attempt_at, apply_blocked
+         FROM onec_v3_exchange_state WHERE id = 1`,
       )
-    : { rows: [{ last_successful_apply_at: null }] };
+    : { rows: [{ last_successful_apply_at: null, last_attempt_at: null, apply_blocked: false }] };
+  const v3LastSuccessfulApplyAt = v3State.rows[0]?.last_successful_apply_at ?? null;
+  const v3LastAttemptAt = v3State.rows[0]?.last_attempt_at ?? null;
+  const v3ApplyBlocked = v3State.rows[0]?.apply_blocked === true;
+
+  const v3LatestImport = v3Active
+    ? await query<{
+        status: string;
+        finished_at: Date | null;
+        error_code: string | null;
+        started_at: Date;
+      }>(
+        `SELECT status, finished_at, error_code, started_at
+         FROM onec_v3_import_runs
+         ORDER BY started_at DESC
+         LIMIT 1`,
+      )
+    : { rows: [] };
+
+  const v3RunningImport = v3Active
+    ? await query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM onec_v3_import_runs WHERE status = 'running'`,
+      )
+    : { rows: [{ count: "0" }] };
+
+  const { peekActiveRegularUpdateJob, peekLatestRegularUpdateJob } = await import(
+    "./admin-onec-update/repository"
+  );
+  const activeRegularJob = v3Active ? await peekActiveRegularUpdateJob() : null;
+  const latestRegularJob = v3Active ? await peekLatestRegularUpdateJob() : null;
 
   const exchangeState = await query<ExchangeStateQueryRow>(
     `
@@ -904,12 +938,15 @@ export async function getClientsSyncStatus(options: {
   );
 
   const state = exchangeState.rows[0];
-  const lastSuccessfulImportAt =
+  let lastSuccessfulImportAt =
     state?.last_successful_apply_at ?? lastSuccess.rows[0]?.finished_at ?? null;
-  const lastAttemptAt = state?.last_attempt_at ?? null;
+  if (v3Active) {
+    lastSuccessfulImportAt = v3LastSuccessfulApplyAt ?? null;
+  }
+  const lastAttemptAt = v3Active ? v3LastAttemptAt ?? null : state?.last_attempt_at ?? null;
   const lastVerifiedAt = state?.last_verified_at ?? null;
   const lastVerifiedSha256 = state?.last_verified_sha256 ?? null;
-  const sourceFormationKnown = state?.last_source_modified_at != null;
+  const sourceFormationKnown = v3Active ? false : state?.last_source_modified_at != null;
 
   let committedSha256 = state?.last_successful_apply_sha256 ?? null;
   if (!committedSha256) {
@@ -923,17 +960,54 @@ export async function getClientsSyncStatus(options: {
       }
     }
   }
-  const runningImport = Number(running.rows[0]?.count ?? "0") > 0;
+  let runningImport = Number(running.rows[0]?.count ?? "0") > 0;
+  if (v3Active) {
+    runningImport =
+      runningImport ||
+      Number(v3RunningImport.rows[0]?.count ?? "0") > 0 ||
+      activeRegularJob != null;
+  }
   const latestRun = latest.rows[0];
+  const v3ImportLatest = v3LatestImport.rows[0];
 
   let warning: string | null = null;
   let freshnessState: ClientsSyncStatusResponse["freshnessState"] = "unknown";
+
+  function regularJobFailedAfterApply(): boolean {
+    if (!latestRegularJob || latestRegularJob.status !== "failed") {
+      return false;
+    }
+    const finishedAt = latestRegularJob.finished_at;
+    if (!finishedAt) {
+      return false;
+    }
+    return !lastSuccessfulImportAt || finishedAt > lastSuccessfulImportAt;
+  }
+
+  function v3ImportFailedAfterApply(): boolean {
+    if (!v3ImportLatest) {
+      return false;
+    }
+    if (v3ImportLatest.status !== "failed" && v3ImportLatest.status !== "rejected") {
+      return false;
+    }
+    const finishedAt = v3ImportLatest.finished_at;
+    if (!finishedAt) {
+      return false;
+    }
+    return !lastSuccessfulImportAt || finishedAt > lastSuccessfulImportAt;
+  }
 
   if (runningImport) {
     freshnessState = "updating";
   } else if (!lastSuccessfulImportAt) {
     freshnessState = "never";
+  } else if (v3Active && (regularJobFailedAfterApply() || v3ImportFailedAfterApply())) {
+    freshnessState = "error";
+    warning =
+      "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
   } else if (
+    !v3Active &&
     latestRun &&
     (latestRun.status === "failed" || latestRun.status === "validation_failed") &&
     latestRun.finished_at &&
@@ -943,6 +1017,7 @@ export async function getClientsSyncStatus(options: {
     warning =
       "Последняя попытка обновления завершилась с ошибкой; в ЛК остаются данные предыдущей успешной загрузки.";
   } else if (
+    !v3Active &&
     lastVerifiedSha256 &&
     committedSha256 &&
     lastVerifiedSha256 !== committedSha256
@@ -970,28 +1045,35 @@ export async function getClientsSyncStatus(options: {
     lastVerifiedAt: lastVerifiedAt?.toISOString() ?? null,
     lastVerifiedAtLabel: lastVerifiedAt ? formatMskDateTime(lastVerifiedAt) : null,
     sourceFormationKnown,
-    lastSourceModifiedAt: state?.last_source_modified_at?.toISOString() ?? null,
-    lastSourceModifiedAtLabel: state?.last_source_modified_at
-      ? formatMskDateTime(state.last_source_modified_at)
-      : null,
+    lastSourceModifiedAt: v3Active
+      ? null
+      : state?.last_source_modified_at?.toISOString() ?? null,
+    lastSourceModifiedAtLabel:
+      !v3Active && state?.last_source_modified_at
+        ? formatMskDateTime(state.last_source_modified_at)
+        : null,
     runningImport,
     warning,
     exchangeV3Active: v3Active,
-    v3LastSuccessfulApplyAt: v3State.rows[0]?.last_successful_apply_at?.toISOString() ?? null,
-    v3LastSuccessfulApplyAtLabel: v3State.rows[0]?.last_successful_apply_at
-      ? formatMskDateTime(v3State.rows[0].last_successful_apply_at)
+    v3LastSuccessfulApplyAt: v3LastSuccessfulApplyAt?.toISOString() ?? null,
+    v3LastSuccessfulApplyAtLabel: v3LastSuccessfulApplyAt
+      ? formatMskDateTime(v3LastSuccessfulApplyAt)
       : null,
   };
 
   if (options.includeAdminDetail) {
+    const regularErrorCode =
+      latestRegularJob?.error_code ?? latestRegularJob?.result?.errorCode ?? null;
     response.adminDetail = {
-      lastErrorCode: latestRun?.error_code ?? null,
+      lastErrorCode: v3Active
+        ? regularErrorCode ?? v3ImportLatest?.error_code ?? null
+        : latestRun?.error_code ?? null,
       recordCount: lastSuccess.rows[0]?.source_record_count ?? null,
       committedSha256,
       verifiedSha256: lastVerifiedSha256,
       warningCount: latestRun?.warning_count ?? null,
       warningsTruncated: latestRun?.warnings_truncated ?? null,
-      applyBlocked: state?.apply_blocked ?? false,
+      applyBlocked: v3Active ? v3ApplyBlocked : state?.apply_blocked ?? false,
     };
   }
 

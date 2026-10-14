@@ -10,7 +10,23 @@ const logic = require("../../public/clients-logic.js") as {
     holding: string;
     phone: string;
     page: number;
+    view?: string;
+    entity?: string;
   };
+  parseLegacyStateFromV3Url: (search: string) => { view: string; entity: string } | null;
+  isBareClientsMenuSearch: (search: string) => boolean;
+  mergeRoleEntryHref: (roleHref: string, currentSearch: string) => string;
+  hasExplicitResponsibleNavigation: (state: Record<string, string>) => boolean;
+  v3ResponsibleFromLegacyState: (state: Record<string, string>) => {
+    responsibleGuid: string;
+    responsibleKind: string;
+    v3manager: string;
+  };
+  legacyStringField: (
+    state: Record<string, string>,
+    key: string,
+    urlFallback: string,
+  ) => string;
   buildListQueryString: (state: {
     q: string;
     manager: string;
@@ -106,6 +122,14 @@ describe("clients frontend logic", () => {
     assert.equal(logic.parseReturnQuery("?return=%3Fq%3Dtest"), "?q=test");
     assert.equal(logic.parseReturnQuery("?return=https%3A%2F%2Fevil.test"), "");
     assert.equal(logic.parseReturnQuery("?return=%3Fevil%3D1"), "");
+    const multiReturn = encodeURIComponent(
+      "?v3mode=1&v3entity=legal&typeGuids=t1,t2&categoryGuids=c1&page=2&q=Legal&view=all",
+    );
+    assert.equal(
+      logic.parseReturnQuery("?return=" + multiReturn),
+      "?v3mode=1&v3entity=legal&typeGuids=t1,t2&categoryGuids=c1&page=2&q=Legal&view=all",
+    );
+    assert.equal(logic.parseReturnQuery("?return=" + encodeURIComponent("?typeGuids=t1&evil=1")), "");
   });
 
   it("invalidates stale list responses", () => {
@@ -212,6 +236,109 @@ describe("clients frontend logic", () => {
     assert.equal(state.bonusTandoorClub, "0");
   });
 
+  it("parses v3view as legacy view on initial URL read", () => {
+    const state = logic.readStateFromSearch(
+      "?v3mode=1&v3entity=legal&v3view=all&view=teams&page=1",
+    );
+    assert.equal(state.view, "all");
+    assert.equal(state.entity, "clients");
+    const parsed = logic.parseLegacyStateFromV3Url(
+      "?v3mode=1&v3entity=legal&v3view=all&view=teams&page=1",
+    );
+    assert.ok(parsed);
+    assert.equal(parsed!.view, "all");
+  });
+
+  it("maps new responsible selection from legacy state for v3 API", () => {
+    const firstPick = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      responsibleKind: "manager",
+      regionalManager: "",
+      hardwareManager: "",
+    });
+    assert.equal(firstPick.responsibleGuid, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    assert.equal(firstPick.responsibleKind, "manager");
+    assert.equal(firstPick.v3manager, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+
+    const switchManager = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      responsibleKind: "manager",
+      responsibleGuid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    assert.equal(switchManager.responsibleGuid, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+
+    const regional = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "",
+      regionalManager: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      responsibleKind: "regional",
+    });
+    assert.equal(regional.responsibleGuid, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    assert.equal(regional.responsibleKind, "regional");
+    assert.equal(regional.v3manager, "");
+
+    const cleared = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "",
+      regionalManager: "",
+      hardwareManager: "",
+      responsibleKind: "",
+    });
+    assert.equal(cleared.responsibleGuid, "");
+    assert.equal(cleared.responsibleKind, "");
+  });
+
+  it("detects explicit team responsible navigation", () => {
+    assert.equal(
+      logic.hasExplicitResponsibleNavigation({
+        view: "teams",
+        ropEmployee: "rop-guid",
+        manager: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        responsibleGuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        responsibleKind: "manager",
+      }),
+      true,
+    );
+    assert.equal(
+      logic.hasExplicitResponsibleNavigation({
+        view: "teams",
+        ropEmployee: "rop-guid",
+        responsibleGuid: "",
+        manager: "",
+        responsibleKind: "",
+      }),
+      true,
+    );
+    assert.equal(logic.hasExplicitResponsibleNavigation({ view: "all", q: "x" }), false);
+  });
+
+  it("clears ropEmployee when legacy state explicitly empty", () => {
+    assert.equal(
+      logic.legacyStringField({ ropEmployee: "" }, "ropEmployee", "old-rop-guid"),
+      "",
+    );
+    assert.equal(
+      logic.legacyStringField({}, "ropEmployee", "old-rop-guid"),
+      "old-rop-guid",
+    );
+  });
+
+  it("detects bare menu entry and preserves deep-link params on role merge", () => {
+    assert.equal(logic.isBareClientsMenuSearch(""), true);
+    assert.equal(logic.isBareClientsMenuSearch("?v3mode=1"), true);
+    assert.equal(logic.isBareClientsMenuSearch("?v3mode=1&q=important&page=3"), false);
+    const merged = logic.mergeRoleEntryHref(
+      "/clients?v3mode=1&v3entity=legal&view=all",
+      "?v3mode=1&q=important&page=3&ropEmployee=abc",
+    );
+    assert.match(merged, /q=important/);
+    assert.match(merged, /page=3/);
+    assert.match(merged, /ropEmployee=abc/);
+    assert.match(merged, /v3entity=legal/);
+  });
+
   it("labels sync status as LK import, not 1C file time", () => {
     const formatted = logic.formatSyncStatusParts({
       freshnessState: "current",
@@ -219,6 +346,16 @@ describe("clients frontend logic", () => {
     });
     assert.match(formatted.text, /Данные загружены в ЛК/);
     assert.doesNotMatch(formatted.text, /Обновлено в 1С|загрузка из 1С|FTP/i);
+  });
+
+  it("shows v3 apply label when legacy import label is absent", () => {
+    const formatted = logic.formatSyncStatusParts({
+      freshnessState: "current",
+      exchangeV3Active: true,
+      v3LastSuccessfulApplyAtLabel: "28.09.2026, 09:00",
+      lastSuccessfulImportAtLabel: null,
+    });
+    assert.match(formatted.text, /Данные загружены в ЛК: 28.09.2026, 09:00/);
   });
 
   it("shows unknown 1C formation date separately from LK load time", () => {

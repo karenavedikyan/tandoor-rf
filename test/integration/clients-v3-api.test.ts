@@ -203,6 +203,39 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.ok(byType.body.items.every((i: { name: string }) => i.name === "Legal One"));
     assert.ok(!byType.body.items.some((i: { guid: string }) => i.guid === LEGAL_UNASSIGNED));
 
+    const byMultiType = await request(app)
+      .get(`/api/clients/v3/list?entity=legal&typeGuids=${TYPE_A},${TYPE_B}&page=1&pageSize=50`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byMultiType.status, 200);
+    assert.ok(byMultiType.body.total >= 2);
+    assert.ok(byMultiType.body.items.some((i: { guid: string }) => i.guid === LEGAL));
+    assert.ok(byMultiType.body.items.some((i: { guid: string }) => i.guid === LEGAL_UNASSIGNED));
+
+    const byTypeAndCategory = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal&typeGuid=${TYPE_A}&categoryGuid=${CAT_A}&page=1&pageSize=50`,
+      )
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byTypeAndCategory.status, 200);
+    assert.equal(byTypeAndCategory.body.total, 1);
+    assert.equal(byTypeAndCategory.body.items[0].guid, LEGAL);
+
+    const byMultiTypeAndCategory = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal&typeGuids=${TYPE_A},${TYPE_B}&categoryGuid=${CAT_B}&page=1&pageSize=50`,
+      )
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byMultiTypeAndCategory.status, 200);
+    assert.equal(byMultiTypeAndCategory.body.total, 1);
+    assert.equal(byMultiTypeAndCategory.body.items[0].guid, LEGAL_UNASSIGNED);
+
+    const catalogAnon = await request(app).get("/api/clients/v3/field-catalog").set({ Origin: ORIGIN });
+    assert.equal(catalogAnon.status, 401);
+
+    const catalog = await request(app).get("/api/clients/v3/field-catalog").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(catalog.status, 200);
+    assert.ok(Array.isArray(catalog.body.items) && catalog.body.items.length > 0);
+
     const byCatB = await request(app)
       .get(`/api/clients/v3/list?entity=legal&categoryGuid=${CAT_B}&page=1&pageSize=50`)
       .set({ Origin: ORIGIN, Cookie: cookie });
@@ -249,6 +282,11 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(withheldList.status, 200);
     assert.equal(withheldList.body.total, 0);
+
+    const catalogManager = await request(app)
+      .get("/api/clients/v3/field-catalog")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(catalogManager.status, 403);
   });
 
   it("sync-status exposes exchangeV3Active", async () => {
@@ -267,5 +305,145 @@ describe("clients v3 API", { concurrency: false }, () => {
     const res = await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(res.status, 200);
     assert.equal(res.body.exchangeV3Active, true);
+  });
+
+  it("sync-status GET does not finalize expired pending jobs for scoped user", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const managerEmail = "manager-v3-readonly@example.com";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager Readonly",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: M1,
+      confirmedByUserId: manager.id,
+    });
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind, mode, status, requested_at, expires_at, requested_by_user_id, job_source
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() - INTERVAL '3 hours',
+          NOW() - INTERVAL '1 hour',
+          $1::uuid,
+          'admin_manual'
+        )
+      `,
+      [manager.id],
+    );
+    const before = await pool.query<{ id: string; status: string; error_code: string | null }>(
+      `SELECT id::text, status, error_code FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const cookie = await login(managerEmail);
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const after = await poolAfter.query<{ id: string; status: string; error_code: string | null }>(
+      `SELECT id::text, status, error_code FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await poolAfter.end();
+    assert.equal(after.rows[0]?.id, before.rows[0]?.id);
+    assert.equal(after.rows[0]?.status, "pending");
+    assert.equal(after.rows[0]?.error_code, before.rows[0]?.error_code);
+  });
+
+  it("sync-status GET does not mutate regular update jobs", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const adminEmail = "admin-v3-readonly@example.com";
+    const admin = await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Readonly",
+      role: "admin",
+    });
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind, mode, status, expires_at, requested_by_user_id, job_source
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() + INTERVAL '2 hours',
+          $1::uuid,
+          'admin_manual'
+        )
+      `,
+      [admin.id],
+    );
+    const before = await pool.query<{ id: string; status: string; finished_at: Date | null }>(
+      `SELECT id::text, status, finished_at FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const after = await poolAfter.query<{ id: string; status: string; finished_at: Date | null }>(
+      `SELECT id::text, status, finished_at FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await poolAfter.end();
+    assert.equal(after.rows[0]?.id, before.rows[0]?.id);
+    assert.equal(after.rows[0]?.status, before.rows[0]?.status);
+    assert.equal(after.rows[0]?.finished_at, before.rows[0]?.finished_at);
+  });
+
+  it("sync-status uses v3 apply time when legacy import journal is empty", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await pool.query(`DELETE FROM onec_client_import_runs`);
+    await pool.query(`
+      UPDATE onec_exchange_state
+      SET last_successful_apply_at = NULL, last_attempt_at = NULL
+      WHERE id = 1
+    `);
+    await pool.end();
+    await resetPoolForTests();
+
+    const adminEmail = "admin-v3-freshness@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Freshness",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.exchangeV3Active, true);
+    assert.ok(res.body.v3LastSuccessfulApplyAt);
+    assert.notEqual(res.body.freshnessState, "never");
+    assert.equal(res.body.freshnessState, "current");
+    assert.ok(res.body.lastSuccessfulImportAt);
   });
 });

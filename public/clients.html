@@ -16,10 +16,17 @@
       <div class="legacy-frame">
         <div id="workspace-topbar"></div>
         <main class="legacy-content">
-          <header class="clients-page-header">
+            <header class="clients-page-header">
             <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
             <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
           </header>
+
+            <div
+              id="clients-delegation-banner"
+              class="clients-delegation-banner clients-hidden"
+              data-testid="clients-delegation-banner"
+              role="status"
+            ></div>
 
           <div id="access-panel" class="clients-hidden" role="alert"></div>
           <div id="init-panel" class="clients-hidden" role="alert"></div>
@@ -47,6 +54,12 @@
               </button>
               <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
               <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
+              <a
+                href="/clients/field-map"
+                id="clients-field-map-link"
+                class="workspace-button workspace-button--ghost clients-onec-update__field-map clients-hidden"
+                >Карта полей и источников</a
+              >
             </div>
 
             <div id="clients-manager-chrome" class="clients-manager-chrome clients-hidden">
@@ -118,8 +131,10 @@
             <div id="teams-panel" class="clients-teams-panel clients-hidden"></div>
             <div id="unassigned-panel" class="clients-unassigned-panel clients-hidden"></div>
 
+            <div id="v3-filter-chips" class="clients-v3-filter-chips clients-hidden" aria-live="polite"></div>
+
             <div class="clients-toolbar">
-              <div class="clients-toolbar__search-row">
+              <div class="clients-toolbar__search-row clients-toolbar__search-row--sticky">
                 <label class="clients-field clients-field--search">
                   <span class="clients-field__label">Поиск</span>
                   <input
@@ -163,17 +178,18 @@
                       <option value="">Все</option>
                     </select>
                   </label>
-                  <label class="clients-field">
-                    <span class="clients-field__label">Тип</span>
-                    <select id="v3-type-filter" class="clients-field__select">
-                      <option value="">Все</option>
-                    </select>
+                  <label class="clients-field clients-field--multi">
+                    <span class="clients-field__label">Тип (можно несколько)</span>
+                    <select id="v3-type-filter" class="clients-field__select clients-field__select--multi" multiple size="3"></select>
                   </label>
-                  <label class="clients-field">
-                    <span class="clients-field__label">Категория</span>
-                    <select id="v3-category-filter" class="clients-field__select">
-                      <option value="">Все</option>
-                    </select>
+                  <label class="clients-field clients-field--multi">
+                    <span class="clients-field__label">Категория (можно несколько)</span>
+                    <select
+                      id="v3-category-filter"
+                      class="clients-field__select clients-field__select--multi"
+                      multiple
+                      size="3"
+                    ></select>
                   </label>
                   <label class="clients-field" id="v3-closed-filter-wrap">
                     <span class="clients-field__label">Статус ТТ</span>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Карта полей — tandoor-rf</title>
+    <link rel="stylesheet" href="/fonts/golos/fonts.css" />
+    <link rel="stylesheet" href="/brand/legacy-shell.css" />
+    <link rel="stylesheet" href="/clients-design.css" />
+    <style>
+      .field-map-page {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      .field-map-page h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      .field-map-page__meta {
+        color: var(--rf-text-muted);
+        margin-bottom: 20px;
+      }
+      .field-map-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        background: var(--rf-surface);
+        border: 1px solid var(--rf-border);
+        border-radius: var(--rf-radius);
+      }
+      .field-map-table th,
+      .field-map-table td {
+        border-bottom: 1px solid var(--rf-border);
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .field-map-table th {
+        background: var(--rf-surface-muted);
+        font-weight: 600;
+      }
+      .field-map-table tr:last-child td {
+        border-bottom: none;
+      }
+    </style>
+  </head>
+  <body class="legacy-body clients-design-page">
+    <div class="field-map-page">
+      <p><a href="/clients?v3mode=1">← Клиенты</a></p>
+      <h1>Карта полей и источников (v3)</h1>
+      <p class="field-map-page__meta" id="field-map-meta">Загрузка…</p>
+      <div id="field-map-error" class="clients-hidden" role="alert"></div>
+      <div class="clients-table-wrap">
+        <table class="field-map-table clients-hidden" id="field-map-table">
+          <thead>
+            <tr>
+              <th>Экран / блок</th>
+              <th>JSON 1С</th>
+              <th>Хранение v3</th>
+              <th>Фильтр списка</th>
+              <th>Карточка</th>
+              <th>Примечание</th>
+            </tr>
+          </thead>
+          <tbody id="field-map-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <script src="/api-shell.js"></script>
+    <script>
+      (function () {
+        var metaEl = document.getElementById("field-map-meta");
+        var errEl = document.getElementById("field-map-error");
+        var tableEl = document.getElementById("field-map-table");
+        var bodyEl = document.getElementById("field-map-body");
+        function esc(s) {
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        }
+        fetch("/api/clients/v3/field-catalog", { credentials: "same-origin" })
+          .then(function (res) {
+            return res.json().then(function (data) {
+              return { ok: res.ok, status: res.status, data: data };
+            });
+          })
+          .then(function (result) {
+            if (result.status === 401) {
+              window.location.replace("/login?return=" + encodeURIComponent(window.location.pathname));
+              return;
+            }
+            if (!result.ok) {
+              errEl.textContent =
+                result.data && result.data.message
+                  ? result.data.message
+                  : "Доступ только для администратора.";
+              errEl.classList.remove("clients-hidden");
+              metaEl.textContent = "";
+              return;
+            }
+            metaEl.textContent = "Read-only справочник · обновлено " + (result.data.updatedAt || "—");
+            bodyEl.innerHTML = (result.data.items || [])
+              .map(function (row) {
+                return (
+                  "<tr><td>" +
+                  esc(row.prototypeLabel) +
+                  "</td><td><code>" +
+                  esc(row.jsonSource) +
+                  "</code></td><td>" +
+                  esc(row.v3Storage) +
+                  "</td><td>" +
+                  esc(row.listFilter || "—") +
+                  "</td><td>" +
+                  esc(row.cardSection || "—") +
+                  "</td><td>" +
+                  esc(row.notes || "—") +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+            tableEl.classList.remove("clients-hidden");
+          })
+          .catch(function () {
+            errEl.textContent = "Не удалось загрузить каталог.";
+            errEl.classList.remove("clients-hidden");
+            metaEl.textContent = "";
+          });
+      })();
+    </script>
+  </body>
+</html>

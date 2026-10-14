@@ -236,6 +236,48 @@ export async function loadLatestRegularUpdateJob(): Promise<JobRow | null> {
   }
 }
 
+/** Read-only: does not finalize stale jobs or take row locks. */
+export async function peekActiveRegularUpdateJob(): Promise<JobRow | null> {
+  const pool = getPool();
+  if (!pool) {
+    return null;
+  }
+  const result = await pool.query<JobRow>(
+    `
+      SELECT ${JOB_ROW_SELECT}
+      FROM onec_import_jobs
+      WHERE kind = $1
+        AND (
+          (status = 'pending' AND expires_at > NOW())
+          OR status = 'running'
+        )
+      ORDER BY requested_at DESC, id DESC
+      LIMIT 1
+    `,
+    [REGULAR_UPDATE_JOB_KIND],
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Read-only: latest regular-update job row without lifecycle side effects. */
+export async function peekLatestRegularUpdateJob(): Promise<JobRow | null> {
+  const pool = getPool();
+  if (!pool) {
+    return null;
+  }
+  const result = await pool.query<JobRow>(
+    `
+      SELECT ${JOB_ROW_SELECT}
+      FROM onec_import_jobs
+      WHERE kind = $1
+      ORDER BY requested_at DESC, id DESC
+      LIMIT 1
+    `,
+    [REGULAR_UPDATE_JOB_KIND],
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function loadActiveRegularUpdateJob(): Promise<JobRow | null> {
   const pool = getPool();
   if (!pool) {

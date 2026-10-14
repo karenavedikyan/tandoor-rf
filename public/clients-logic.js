@@ -115,7 +115,10 @@
     "v3manager",
     "v3type",
     "v3category",
+    "typeGuids",
+    "categoryGuids",
     "v3view",
+    "v3pageSize",
     "missingManager",
     "responsibleGuid",
     "ropBranchGuid",
@@ -546,8 +549,87 @@
     return next;
   }
 
+  function legacyViewFromV3View(v3view) {
+    if (v3view === "teams") {
+      return "teams";
+    }
+    if (v3view === "unassigned") {
+      return "review";
+    }
+    return "all";
+  }
+
+  function v3ViewFromLegacyView(view) {
+    if (view === "teams") {
+      return "teams";
+    }
+    if (view === "review") {
+      return "unassigned";
+    }
+    return "all";
+  }
+
+  function legacyEntityFromV3Entity(v3entity) {
+    if (v3entity === "retail" || v3entity === "orphan_retail") {
+      return "outlets";
+    }
+    return "clients";
+  }
+
+  function v3EntityFromLegacyEntity(entity) {
+    return entity === "outlets" ? "retail" : "legal";
+  }
+
+  function parseLegacyStateFromV3Url(search) {
+    var params = new URLSearchParams(search || "");
+    if (params.get("v3mode") !== "1") {
+      return null;
+    }
+    var state = readStateFromSearch(search);
+    if (params.has("v3view")) {
+      state.view = legacyViewFromV3View(params.get("v3view") || "all");
+    }
+    if (params.has("v3entity")) {
+      state.entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
+    }
+    return state;
+  }
+
+  function isBareClientsMenuSearch(search) {
+    var params = new URLSearchParams(search || "");
+    if (params.toString() === "") {
+      return true;
+    }
+    var allowedBareKeys = { v3mode: true };
+    var hasOther = false;
+    params.forEach(function (_value, key) {
+      if (!allowedBareKeys[key]) {
+        hasOther = true;
+      }
+    });
+    return !hasOther && params.get("v3mode") === "1";
+  }
+
+  function mergeRoleEntryHref(roleHref, currentSearch) {
+    if (!roleHref || roleHref.indexOf("?") === -1) {
+      return roleHref || "/clients";
+    }
+    var roleParams = new URLSearchParams(roleHref.split("?")[1] || "");
+    var current = new URLSearchParams(currentSearch || "");
+    roleParams.forEach(function (value, key) {
+      if (!current.has(key)) {
+        current.set(key, value);
+      }
+    });
+    if (!current.has("v3mode")) {
+      current.set("v3mode", "1");
+    }
+    return "/clients?" + current.toString();
+  }
+
   function readStateFromSearch(search) {
     var params = new URLSearchParams(search || "");
+    var v3mode = params.get("v3mode") === "1";
     var view = params.get("view") || "all";
     if (view !== "all" && view !== "teams" && view !== "review" && view !== "completeness") {
       view = "all";
@@ -555,6 +637,12 @@
     var entity = params.get("entity") || "clients";
     if (entity !== "clients" && entity !== "outlets") {
       entity = "clients";
+    }
+    if (v3mode && params.has("v3view")) {
+      view = legacyViewFromV3View(params.get("v3view") || "all");
+    }
+    if (v3mode && params.has("v3entity")) {
+      entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
     }
     var legacyManager = params.get("manager") || "";
     var clientManager = params.get("clientManager") || (entity === "clients" ? legacyManager : "");
@@ -604,6 +692,7 @@
       outletRopEmployeeMode: params.get("outletRopEmployeeMode") || "",
       portfolio: params.get("portfolio") || "",
       responsibleKind: params.get("responsibleKind") || "",
+      responsibleGuid: params.get("responsibleGuid") || "",
       completenessReasons: params
         .getAll("completenessReason")
         .map(function (value) {
@@ -689,16 +778,94 @@
     return "";
   }
 
+  function v3ResponsibleFromLegacyState(state) {
+    if (!state) {
+      return { responsibleGuid: "", responsibleKind: "", v3manager: "" };
+    }
+    var kind = normalizeTeamKind(state.responsibleKind || state.teamKind || "");
+    var guid = "";
+    if (kind === "regional") {
+      guid =
+        state.regionalManager ||
+        state.clientRegionalManager ||
+        state.outletRegionalManager ||
+        (state.responsibleKind === "regional" ? state.responsibleGuid : "") ||
+        "";
+    } else if (kind === "hardware") {
+      guid =
+        state.hardwareManager ||
+        state.clientHardwareManager ||
+        state.outletHardwareManager ||
+        (state.responsibleKind === "hardware" ? state.responsibleGuid : "") ||
+        "";
+    } else if (kind === "manager") {
+      guid =
+        state.manager ||
+        state.clientManager ||
+        state.outletManager ||
+        state.responsibleGuid ||
+        "";
+    } else if (state.responsibleGuid) {
+      guid = state.responsibleGuid;
+      kind = normalizeTeamKind(state.responsibleKind) || "manager";
+    } else {
+      guid = state.manager || state.clientManager || state.outletManager || "";
+      if (guid) {
+        kind = "manager";
+      } else {
+        guid =
+          state.regionalManager || state.clientRegionalManager || state.outletRegionalManager || "";
+        if (guid) {
+          kind = "regional";
+        } else {
+          guid =
+            state.hardwareManager ||
+            state.clientHardwareManager ||
+            state.outletHardwareManager ||
+            "";
+          if (guid) {
+            kind = "hardware";
+          }
+        }
+      }
+    }
+    if (!guid) {
+      kind = "";
+    }
+    return {
+      responsibleGuid: guid,
+      responsibleKind: kind,
+      v3manager: kind === "manager" ? guid : "",
+    };
+  }
+
+  function legacyStringField(state, key, urlFallback) {
+    if (state && Object.prototype.hasOwnProperty.call(state, key)) {
+      return state[key] || "";
+    }
+    return urlFallback || "";
+  }
+
+  function mapLegacyEntityToV3Entity(entity, urlV3Entity) {
+    if (entity === "outlets") {
+      return urlV3Entity === "orphan_retail" ? "orphan_retail" : "retail";
+    }
+    if (urlV3Entity === "holdings" || urlV3Entity === "legal") {
+      return urlV3Entity;
+    }
+    return "legal";
+  }
+
   function applyPresentationDefaults(state, presentation, search) {
     if (!presentation) {
       return state;
     }
     var params = new URLSearchParams(search || "");
     var next = Object.assign({}, state);
-    if (!params.has("view")) {
+    if (!params.has("view") && !params.has("v3view")) {
       next.view = presentation.defaultView || next.view;
     }
-    if (!params.has("entity")) {
+    if (!params.has("entity") && !params.has("v3entity")) {
       next.entity = presentation.defaultEntity || next.entity;
     }
     return next;
@@ -720,20 +887,21 @@
     return Boolean(state.ropEmployee);
   }
 
+  function hasExplicitResponsibleNavigation(state) {
+    if (!state) {
+      return false;
+    }
+    if (Object.prototype.hasOwnProperty.call(state, "responsibleGuid")) {
+      return true;
+    }
+    return hasResponsibleSelection(state);
+  }
+
   function hasResponsibleSelection(state) {
     if (!state || state.view !== "teams" || !state.ropEmployee) {
       return false;
     }
-    if (state.responsibleKind === "regional") {
-      return Boolean(state.regionalManager);
-    }
-    if (state.responsibleKind === "hardware") {
-      return Boolean(state.hardwareManager);
-    }
-    if (state.responsibleKind === "manager") {
-      return Boolean(state.manager);
-    }
-    return Boolean(state.manager);
+    return Boolean(v3ResponsibleFromLegacyState(state).responsibleGuid);
   }
 
   function appendAssignmentParams(params, state) {
@@ -1780,8 +1948,9 @@
       parts.push("Обнаружен новый файл, ожидается согласованное обновление.");
     } else if (data.freshnessState === "stale") {
       parts.push("Актуальность данных в ЛК может быть устаревшей.");
-    } else if (data.lastSuccessfulImportAtLabel) {
-      parts.push("Данные загружены в ЛК: " + data.lastSuccessfulImportAtLabel + " (МСК)");
+    } else if (data.lastSuccessfulImportAtLabel || (data.exchangeV3Active && data.v3LastSuccessfulApplyAtLabel)) {
+      var loadedLabel = data.lastSuccessfulImportAtLabel || data.v3LastSuccessfulApplyAtLabel;
+      parts.push("Данные загружены в ЛК: " + loadedLabel + " (МСК)");
       if (data.sourceFormationKnown && data.lastSourceModifiedAtLabel) {
         parts.push("Выгрузка 1С сформирована: " + data.lastSourceModifiedAtLabel + " (МСК)");
       } else if (data.sourceFormationKnown === false) {
@@ -2063,11 +2232,22 @@
     normalizeStateForEntitySwitch: normalizeStateForEntitySwitch,
     sanitizeStateForEntity: sanitizeStateForEntity,
     readStateFromSearch: readStateFromSearch,
+    legacyViewFromV3View: legacyViewFromV3View,
+    v3ViewFromLegacyView: v3ViewFromLegacyView,
+    legacyEntityFromV3Entity: legacyEntityFromV3Entity,
+    v3EntityFromLegacyEntity: v3EntityFromLegacyEntity,
+    parseLegacyStateFromV3Url: parseLegacyStateFromV3Url,
+    isBareClientsMenuSearch: isBareClientsMenuSearch,
+    mergeRoleEntryHref: mergeRoleEntryHref,
     normalizeTeamKind: normalizeTeamKind,
+    v3ResponsibleFromLegacyState: v3ResponsibleFromLegacyState,
+    legacyStringField: legacyStringField,
+    mapLegacyEntityToV3Entity: mapLegacyEntityToV3Entity,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,
     hasResponsibleSelection: hasResponsibleSelection,
+    hasExplicitResponsibleNavigation: hasExplicitResponsibleNavigation,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,
     resolveAddressPresentation: resolveAddressPresentation,

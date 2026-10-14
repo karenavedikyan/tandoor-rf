@@ -136,9 +136,10 @@
     return Boolean(user && CLIENT_READ_ROLES[user.role]);
   }
 
-  function renderSidebar(active, showClients, showAdminAccess, showAccessWorkspace) {
+  function renderSidebar(active, showClients, showAdminAccess, showAccessWorkspace, clientsHref) {
+    var clientsNavHref = clientsHref || "/clients";
     var clientsLink = showClients
-      ? navLink("/clients", "Клиенты", "clients", active, "clients")
+      ? navLink(clientsNavHref, "Клиенты", "clients", active, "clients")
       : "";
     var workLink = showClients
       ? navLink("/work", "Моя работа", "work", active, "work")
@@ -587,11 +588,17 @@
     });
   }
 
-  function mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace) {
+  function mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace, clientsHref) {
     var sidebarMount = document.getElementById("workspace-sidebar");
     var topbarMount = document.getElementById("workspace-topbar");
     if (sidebarMount) {
-      sidebarMount.innerHTML = renderSidebar(active, showClients, showAdminAccess, showAccessWorkspace);
+      sidebarMount.innerHTML = renderSidebar(
+        active,
+        showClients,
+        showAdminAccess,
+        showAccessWorkspace,
+        clientsHref,
+      );
     }
     if (topbarMount) {
       topbarMount.innerHTML = renderTopbar();
@@ -709,10 +716,31 @@
       var showClients = canReadClients(user);
       var isAdmin = user && user.role === "admin";
       var showAccessWorkspace = canUseAccessWorkspace(user);
-      mountShellParts(active, showClients, isAdmin, showAccessWorkspace);
-      if (typeof onUserReady === "function") {
-        onUserReady(user, null);
+      var clientsHref = "/clients";
+      if (!showClients || !api) {
+        mountShellParts(active, showClients, isAdmin, showAccessWorkspace, clientsHref);
+        if (typeof onUserReady === "function") {
+          onUserReady(user, null);
+        }
+        return;
       }
+      api
+        .apiRequest("/api/clients/presentation")
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.presentation) {
+            clientsHref = result.data.presentation.clientsHref || clientsHref;
+          }
+          mountShellParts(active, showClients, isAdmin, showAccessWorkspace, clientsHref);
+          if (typeof onUserReady === "function") {
+            onUserReady(user, null);
+          }
+        })
+        .catch(function () {
+          mountShellParts(active, showClients, isAdmin, showAccessWorkspace, clientsHref);
+          if (typeof onUserReady === "function") {
+            onUserReady(user, null);
+          }
+        });
     });
   }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AccessContext } from "../../src/access/types";
 import {
+  buildRoleClientsHref,
   canUseReviewNavigation,
   canUseUnassignedNavigation,
   resolveRolePresentation,
@@ -32,6 +33,18 @@ describe("clients role presentation", () => {
     assert.equal(presentation.showViewSwitcher, false);
     assert.deepEqual(presentation.allowedViews, ["all"]);
     assert.deepEqual(presentation.allowedEntities, ["clients", "outlets"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal", "retail"]);
+  });
+
+  it("maps assistant to legal-only portfolio without view switcher", () => {
+    const presentation = resolveRolePresentation(context({ role: "assistant" }));
+    assert.ok(presentation);
+    assert.equal(presentation.pageTitle, "Клиенты замещения");
+    assert.equal(presentation.defaultView, "all");
+    assert.equal(presentation.showViewSwitcher, false);
+    assert.deepEqual(presentation.allowedViews, ["all"]);
+    assert.deepEqual(presentation.allowedEntities, ["clients"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal"]);
   });
 
   it("maps regional manager defaults to outlets list", () => {
@@ -40,6 +53,7 @@ describe("clients role presentation", () => {
     assert.equal(presentation.pageTitle, "Мои торговые точки");
     assert.equal(presentation.defaultEntity, "outlets");
     assert.deepEqual(presentation.allowedEntities, ["outlets", "clients"]);
+    assert.deepEqual(presentation.allowedV3Entities, ["legal", "retail"]);
   });
 
   it("maps ROP defaults to teams view", () => {
@@ -74,6 +88,21 @@ describe("clients role presentation", () => {
     assert.equal(presentation.reviewReadOnly, false);
     assert.equal(presentation.directorLayout, true);
     assert.deepEqual(presentation.allowedViews, ["all", "teams", "review", "completeness"]);
+  });
+
+  it("builds v3-aware clients href for role menu entry", () => {
+    assert.equal(
+      buildRoleClientsHref({ view: "all", entity: "clients" }),
+      "/clients?v3mode=1&v3entity=legal&view=all",
+    );
+    assert.equal(
+      buildRoleClientsHref({ view: "teams", entity: "clients" }),
+      "/clients?v3mode=1&v3entity=legal&view=teams&v3view=teams",
+    );
+    assert.match(
+      resolveRolePresentation(context({ role: "manager" }))!.clientsHref,
+      /v3mode=1.*v3entity=legal/,
+    );
   });
 
   it("rejects disallowed list modes per role", () => {
