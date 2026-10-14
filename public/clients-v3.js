@@ -154,6 +154,24 @@
     return urlFilters[key] || "";
   }
 
+  function resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, singleKey, multiKey) {
+    if (legacy && Object.prototype.hasOwnProperty.call(legacy, multiKey)) {
+      var legacyVal = legacy[multiKey];
+      if (Array.isArray(legacyVal)) {
+        return legacyVal.slice();
+      }
+      return parseTokenList(legacyVal);
+    }
+    if (!fromUrl && domFilters) {
+      return (domFilters[multiKey] || []).slice();
+    }
+    if (urlFilters[multiKey] && urlFilters[multiKey].length) {
+      return urlFilters[multiKey].slice();
+    }
+    var single = v3FilterFallback(singleKey, legacy, fromUrl, urlFilters, domFilters);
+    return parseTokenList(single);
+  }
+
   function mergeListStateForUserAction(patch) {
     var url = readState();
     var dom = readFiltersFromDom();
@@ -302,16 +320,16 @@
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
       closed: closed,
       v3manager: assignment.v3manager,
-      v3type: v3type || (urlFilters.v3types && urlFilters.v3types[0]) || "",
-      v3category: v3category || (urlFilters.v3categories && urlFilters.v3categories[0]) || "",
-      v3types:
-        fromUrl && urlFilters.v3types && urlFilters.v3types.length
-          ? urlFilters.v3types
-          : parseTokenList(v3type),
-      v3categories:
-        fromUrl && urlFilters.v3categories && urlFilters.v3categories.length
-          ? urlFilters.v3categories
-          : parseTokenList(v3category),
+      v3types: resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3type", "v3types"),
+      v3categories: resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3category", "v3categories"),
+      v3type: (function () {
+        var types = resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3type", "v3types");
+        return types[0] || v3type || "";
+      })(),
+      v3category: (function () {
+        var cats = resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3category", "v3categories");
+        return cats[0] || v3category || "";
+      })(),
       missingManager: Boolean(legacy.missingManager) || (fromUrl && urlFilters.missingManager),
       ropEmployee: ropEmployee,
       responsibleGuid: assignment.responsibleGuid,
@@ -649,6 +667,26 @@
     loadList: function (ctx, state, replaceHistory) {
       var api = ctx.api;
       var shell = ctx.shell;
+      state = state || readState();
+      var urlState = readState();
+      if (!Object.prototype.hasOwnProperty.call(state, "v3types")) {
+        state.v3types =
+          urlState.v3types && urlState.v3types.length
+            ? urlState.v3types.slice()
+            : parseTokenList(state.v3type || urlState.v3type);
+      }
+      if (!Object.prototype.hasOwnProperty.call(state, "v3categories")) {
+        state.v3categories =
+          urlState.v3categories && urlState.v3categories.length
+            ? urlState.v3categories.slice()
+            : parseTokenList(state.v3category || urlState.v3category);
+      }
+      if (!state.v3type && state.v3types && state.v3types.length) {
+        state.v3type = state.v3types[0];
+      }
+      if (!state.v3category && state.v3categories && state.v3categories.length) {
+        state.v3category = state.v3categories[0];
+      }
       writeState(state, replaceHistory);
       ctx.showResultsState("loading", "Загрузка списка…", "", "");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
@@ -878,6 +916,23 @@
     loadOrchestrated: function (ctx, legacyState, replaceHistory, hooks) {
       var loadSource = hooks.loadSource || "";
       var syncedV3 = legacyStateToV3(legacyState, loadSource);
+      var urlNow = readState();
+      if (
+        !Object.prototype.hasOwnProperty.call(legacyState || {}, "v3types") &&
+        urlNow.v3types &&
+        urlNow.v3types.length
+      ) {
+        syncedV3.v3types = urlNow.v3types.slice();
+        syncedV3.v3type = syncedV3.v3types[0] || syncedV3.v3type || "";
+      }
+      if (
+        !Object.prototype.hasOwnProperty.call(legacyState || {}, "v3categories") &&
+        urlNow.v3categories &&
+        urlNow.v3categories.length
+      ) {
+        syncedV3.v3categories = urlNow.v3categories.slice();
+        syncedV3.v3category = syncedV3.v3categories[0] || syncedV3.v3category || "";
+      }
       writeState(syncedV3, replaceHistory);
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);

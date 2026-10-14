@@ -207,7 +207,30 @@ describe("clients v3 API", { concurrency: false }, () => {
       .get(`/api/clients/v3/list?entity=legal&typeGuids=${TYPE_A},${TYPE_B}&page=1&pageSize=50`)
       .set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(byMultiType.status, 200);
-    assert.ok(byMultiType.body.total >= 1);
+    assert.ok(byMultiType.body.total >= 2);
+    assert.ok(byMultiType.body.items.some((i: { guid: string }) => i.guid === LEGAL));
+    assert.ok(byMultiType.body.items.some((i: { guid: string }) => i.guid === LEGAL_UNASSIGNED));
+
+    const byTypeAndCategory = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal&typeGuid=${TYPE_A}&categoryGuid=${CAT_A}&page=1&pageSize=50`,
+      )
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byTypeAndCategory.status, 200);
+    assert.equal(byTypeAndCategory.body.total, 1);
+    assert.equal(byTypeAndCategory.body.items[0].guid, LEGAL);
+
+    const byMultiTypeAndCategory = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal&typeGuids=${TYPE_A},${TYPE_B}&categoryGuid=${CAT_B}&page=1&pageSize=50`,
+      )
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byMultiTypeAndCategory.status, 200);
+    assert.equal(byMultiTypeAndCategory.body.total, 1);
+    assert.equal(byMultiTypeAndCategory.body.items[0].guid, LEGAL_UNASSIGNED);
+
+    const catalogAnon = await request(app).get("/api/clients/v3/field-catalog").set({ Origin: ORIGIN });
+    assert.equal(catalogAnon.status, 401);
 
     const catalog = await request(app).get("/api/clients/v3/field-catalog").set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(catalog.status, 200);
@@ -259,6 +282,11 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(withheldList.status, 200);
     assert.equal(withheldList.body.total, 0);
+
+    const catalogManager = await request(app)
+      .get("/api/clients/v3/field-catalog")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(catalogManager.status, 403);
   });
 
   it("sync-status exposes exchangeV3Active", async () => {

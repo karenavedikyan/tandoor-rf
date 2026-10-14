@@ -122,6 +122,14 @@ describe("clients frontend logic", () => {
     assert.equal(logic.parseReturnQuery("?return=%3Fq%3Dtest"), "?q=test");
     assert.equal(logic.parseReturnQuery("?return=https%3A%2F%2Fevil.test"), "");
     assert.equal(logic.parseReturnQuery("?return=%3Fevil%3D1"), "");
+    const multiReturn = encodeURIComponent(
+      "?v3mode=1&v3entity=legal&typeGuids=t1,t2&categoryGuids=c1&page=2&q=Legal&view=all",
+    );
+    assert.equal(
+      logic.parseReturnQuery("?return=" + multiReturn),
+      "?v3mode=1&v3entity=legal&typeGuids=t1,t2&categoryGuids=c1&page=2&q=Legal&view=all",
+    );
+    assert.equal(logic.parseReturnQuery("?return=" + encodeURIComponent("?typeGuids=t1&evil=1")), "");
   });
 
   it("invalidates stale list responses", () => {

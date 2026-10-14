@@ -115,6 +115,8 @@
     "v3manager",
     "v3type",
     "v3category",
+    "typeGuids",
+    "categoryGuids",
     "v3view",
     "v3pageSize",
     "missingManager",

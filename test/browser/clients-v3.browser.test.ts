@@ -167,7 +167,16 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForFunction(function () {
       var wrap = document.getElementById("v3-filters-wrap");
       var typeFilter = document.getElementById("v3-type-filter");
-      return wrap && !wrap.classList.contains("clients-hidden") && typeFilter && typeFilter.options.length > 1;
+      if (!wrap || wrap.classList.contains("clients-hidden") || !typeFilter) {
+        return false;
+      }
+      var hasT1 = Array.from(typeFilter.options).some(function (opt) {
+        return opt.value === "t1";
+      });
+      var selectedT1 = Array.from(typeFilter.selectedOptions).some(function (opt) {
+        return opt.value === "t1";
+      });
+      return hasT1 && selectedT1;
     });
     const typeSelected = await page.$eval("#v3-type-filter", (sel) =>
       Array.from((sel as HTMLSelectElement).selectedOptions).map((o) => o.value),
@@ -228,6 +237,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.ok(returnParam && returnParam.includes("v3mode=1"));
     assert.ok(returnParam.includes("v3entity=legal"));
     assert.ok(returnParam.includes("view=all"));
+    assert.ok(returnParam.includes("v3type=t1") || returnParam.includes("typeGuids="));
 
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/\/clients\?.*v3mode=1/);
@@ -300,6 +310,112 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await teamsTab.click();
     await page.waitForURL(/view=teams/, { timeout: 60000 });
     assert.equal(new URL(page.url()).searchParams.get("view"), "teams");
+    await page.close();
+  });
+
+  it("return from card preserves multiselect typeGuids in list context", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    const listReady = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
+        res.status() === 200,
+    );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&page=1&q=Legal", {
+      waitUntil: "networkidle",
+    });
+    await listReady;
+    await page.waitForFunction(function () {
+      var sel = document.getElementById("v3-type-filter");
+      return sel && sel.options.length >= 2;
+    });
+    const multiList = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("typeGuids=t1") &&
+        res.status() === 200,
+    );
+    await page.selectOption("#v3-type-filter", ["t1", "t2"]);
+    await page.selectOption("#v3-category-filter", "c1");
+    await multiList;
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .waitFor({ state: "attached", timeout: 15000 });
+    await page.locator('#clients-table-body a:has-text("Legal One")').first().click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    const returnParam = decodeURIComponent(new URL(page.url()).searchParams.get("return") || "");
+    assert.ok(returnParam.includes("typeGuids=t1"));
+    assert.ok(returnParam.includes("categoryGuids=c1") || returnParam.includes("v3category=c1"));
+    assert.ok(returnParam.includes("q=Legal"));
+    await page.click('[data-testid="v3-back-to-list"]');
+    await page.waitForURL(/typeGuids=t1/);
+    assert.match(new URL(page.url()).search, /typeGuids=t1/);
+    await page.close();
+  });
+
+  it("team responsible switch preserves multiselect type filter without reload", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&view=teams&v3view=teams&ropEmployee=" +
+        encodeURIComponent(ROP) +
+        "&v3entity=legal",
+      { waitUntil: "networkidle" },
+    );
+    await page.waitForSelector(`button[data-manager="${M1}"][data-responsible-entity="clients"]`, {
+      timeout: 60000,
+    });
+    const listM1 = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.locator(`button[data-manager="${M1}"][data-responsible-entity="clients"]`).click();
+    await listM1;
+    await page.waitForFunction(function () {
+      var sel = document.getElementById("v3-type-filter");
+      return sel && sel.options.length > 0;
+    });
+    const typeFiltered = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("typeGuid=t1") &&
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.selectOption("#v3-type-filter", "t1");
+    await typeFiltered;
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForSelector(`button[data-manager="${M2}"][data-responsible-entity="clients"]`, {
+      timeout: 60000,
+    });
+    const listM2 = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M2)) &&
+        res.url().includes("typeGuid=t1") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.locator(`button[data-manager="${M2}"][data-responsible-entity="clients"]`).click();
+    await listM2;
+    await page.waitForFunction(function () {
+      var sel = document.getElementById("v3-type-filter");
+      return (
+        sel &&
+        Array.from(sel.selectedOptions).some(function (opt) {
+          return opt.value === "t1";
+        })
+      );
+    });
     await page.close();
   });
 
@@ -714,8 +830,8 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await chipClear;
     assert.equal(new URL(page.url()).searchParams.get("v3type") || "", "");
     await page.waitForFunction(function () {
-      var sel = document.getElementById("v3-type-filter") as HTMLSelectElement | null;
-      return Boolean(sel && sel.value === "");
+      var sel = document.getElementById("v3-type-filter");
+      return sel && Array.from(sel.selectedOptions).length === 0;
     });
     assert.ok((await page.locator(".clients-v3-filter-chip").count()) === 0);
     await page.reload({ waitUntil: "networkidle" });
