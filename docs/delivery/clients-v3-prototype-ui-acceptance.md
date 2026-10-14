@@ -3,6 +3,8 @@
 PR: https://github.com/karenavedikyan/tandoor-rf/pull/77  
 Production **не изменялся**.
 
+**Финальная визуальная приёмка (SHA `77bd0c3`):** [clients-v3-visual-acceptance-77bd0c3.md](./clients-v3-visual-acceptance-77bd0c3.md) — **не пройдена** (блокеры B/C). Zip: store `media/clients-v3-visual-review/clients-v3-visual-77bd0c3.zip`.
+
 Эталон прототипа: [Perplexity computer](https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c)  
 Визуальные пары (эталон/реализация): `/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/clients-v3-visual-review/`  
 Скриншоты прогона browser: `/opt/cursor/artifacts/screenshots/impl-v3-{role}-{desktop|mobile}.png`
