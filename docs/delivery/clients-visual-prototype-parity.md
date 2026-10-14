@@ -1,5 +1,7 @@
 # Clients — визуальное соответствие прототипу
 
+PR: https://github.com/karenavedikyan/tandoor-rf/pull/78 (draft), HEAD `5504374`.
+
 Эталон: [Perplexity prototype](https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c).  
 Сохранённые PNG эталона: store `media/clients-v3-visual-review/prototype/`.  
 Пары «эталон / реализация» для этого PR: store `media/clients-visual-pr/`.
