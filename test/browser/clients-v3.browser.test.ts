@@ -678,6 +678,44 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("v3 hides legacy phone filter; type chip clears without affecting other filters", async () => {
+    const creds = await seed();
+    const page = await browser.newPage();
+    await login(page, creds.email);
+    const listReady = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=legal") &&
+        res.url().includes("typeGuid=t1") &&
+        res.status() === 200,
+    );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3type=t1", {
+      waitUntil: "networkidle",
+    });
+    await listReady;
+    assert.ok(await page.locator("#phone-filter").isHidden());
+    assert.ok(await page.locator("#holding-filter-wrap").isHidden());
+    await page.waitForSelector(".clients-v3-filter-chip", { timeout: 15000 });
+    const chipClear = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return u.includes("/api/clients/v3/list") && !u.includes("typeGuid=") && res.status() === 200;
+      },
+      { timeout: 30000 },
+    );
+    await page.click('[data-v3-clear-filter="v3type"]');
+    await chipClear;
+    assert.equal(new URL(page.url()).searchParams.get("v3type") || "", "");
+    await page.waitForFunction(function () {
+      var sel = document.getElementById("v3-type-filter") as HTMLSelectElement | null;
+      return Boolean(sel && sel.value === "");
+    });
+    assert.ok((await page.locator(".clients-v3-filter-chip").count()) === 0);
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(new URL(page.url()).searchParams.get("v3type") || "", "");
+    await page.close();
+  });
+
   it("desktop and mobile: v3 filters, entity switch, card fields and nested navigation", async () => {
     const creds = await seed();
     for (const viewport of [DESKTOP, MOBILE]) {

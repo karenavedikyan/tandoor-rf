@@ -1321,12 +1321,21 @@
       return;
     }
     delegationBannerEl.classList.remove("clients-hidden");
-    delegationBannerEl.innerHTML =
-      "<strong>Действующее замещение</strong> · вы работаете от имени " +
-      shell.escapeHtml(ctx.delegatorName) +
-      ". Доступно клиентов: " +
-      shell.escapeHtml(String(ctx.clientCount)) +
-      ".";
+    if (ctx.mode === "multiple") {
+      delegationBannerEl.innerHTML =
+        "<strong>Действующие замещения</strong> · одновременно " +
+        shell.escapeHtml(String(ctx.delegatorCount)) +
+        " делегаторов. Доступно клиентов: " +
+        shell.escapeHtml(String(ctx.clientCount)) +
+        ".";
+    } else {
+      delegationBannerEl.innerHTML =
+        "<strong>Действующее замещение</strong> · вы работаете от имени " +
+        shell.escapeHtml(ctx.delegatorName) +
+        ". Доступно клиентов: " +
+        shell.escapeHtml(String(ctx.clientCount)) +
+        ".";
+    }
   }
 
   function fetchV3ListTotal(entity) {
@@ -2770,16 +2779,35 @@
           (isReview && (Boolean(state.unassignedCategory) || Boolean(state.manager))));
       v3FiltersWrap.classList.toggle("clients-hidden", !showV3Filters);
     }
-    if (exchangeV3Active && !isCompleteness) {
+    var v3ModeUrl = new URLSearchParams(window.location.search).get("v3mode") === "1";
+    var v3UiActive = (exchangeV3Active || v3ModeUrl) && !isCompleteness;
+    if (v3UiActive) {
       ropFilterWrap?.classList.add("clients-hidden");
       managerFilterWrap?.classList.add("clients-hidden");
       holdingFilterWrap?.classList.add("clients-hidden");
       phoneFilter.closest(".clients-field")?.classList.add("clients-hidden");
+      outletsFilterWrap?.classList.add("clients-hidden");
       outletStatusFilterWrap?.classList.add("clients-hidden");
       warehouseFilterWrap?.classList.add("clients-hidden");
       regionalFilterWrap?.classList.add("clients-hidden");
       hardwareFilterWrap?.classList.add("clients-hidden");
+      tandoorFilterWrap?.classList.add("clients-hidden");
       fieldFiltersWrap?.classList.add("clients-hidden");
+      outletManagerFilterWrap?.classList.add("clients-hidden");
+      outletRegionalFilterWrap?.classList.add("clients-hidden");
+      outletHardwareFilterWrap?.classList.add("clients-hidden");
+      outletRopFilterWrap?.classList.add("clients-hidden");
+      document.querySelectorAll(".clients-field--clients-only").forEach(function (el) {
+        el.classList.add("clients-hidden");
+      });
+      var v3ClosedWrap = document.getElementById("v3-closed-filter-wrap");
+      var v3Entity =
+        (window.ClientsV3 && window.ClientsV3.readState && window.ClientsV3.readState().v3entity) ||
+        new URLSearchParams(window.location.search).get("v3entity") ||
+        "legal";
+      if (v3ClosedWrap) {
+        v3ClosedWrap.classList.toggle("clients-hidden", v3Entity !== "retail");
+      }
     }
     var isOutlets = (state.entity || "clients") === "outlets";
     var showAssignmentFilters =
@@ -2792,39 +2820,47 @@
       showAssignmentFilters ||
       isCompleteness ||
       (isRegionalRole && !isTeams && !isReview);
-    ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
-    managerFilterWrap?.classList.toggle("clients-hidden", !showManagerFilterInput);
-    managerFilterWrap?.classList.remove("clients-field--label-only");
-    document.getElementById("manager-combobox")?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    if (!v3UiActive) {
+      ropFilterWrap?.classList.toggle("clients-hidden", !showAssignmentFilters && !isCompleteness);
+      managerFilterWrap?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    }
+    if (!v3UiActive) {
+      managerFilterWrap?.classList.remove("clients-field--label-only");
+      document.getElementById("manager-combobox")?.classList.toggle("clients-hidden", !showManagerFilterInput);
+    }
     filtersScopeLabelEl?.classList.toggle(
       "clients-hidden",
       !isRegionalRole || isTeams || isReview || isCompleteness,
     );
-    holdingFilterWrap?.classList.toggle("clients-hidden", isCompleteness || isTeams);
-    phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    if (!v3UiActive) {
+      holdingFilterWrap?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+      phoneFilter.closest(".clients-field")?.classList.toggle("clients-hidden", isCompleteness || isTeams);
+    }
     completenessReasonFilterWrap?.classList.toggle("clients-hidden", !isCompleteness);
     var showOutletDerivedFilters = !isTeams && !isReview && state.view === "all";
-    outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
-    outletStatusFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
-    warehouseFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
-    regionalFilterWrap.classList.toggle(
-      "clients-hidden",
-      !(showAssignmentFilters || isCompleteness) || isRegionalRole,
-    );
-    hardwareFilterWrap?.classList.toggle(
-      "clients-hidden",
-      !(showAssignmentFilters || isCompleteness) || isRegionalRole,
-    );
-    tandoorFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
-    fieldFiltersWrap?.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
-    document.querySelectorAll(".clients-field--clients-only").forEach(function (el) {
-      el.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness || isOutlets);
-    });
-    var showOutletLevelAssignments = showAssignmentFilters && !isOutlets;
-    outletManagerFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
-    outletRegionalFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
-    outletHardwareFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
-    outletRopFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
+    if (!v3UiActive) {
+      outletsFilterWrap.classList.toggle("clients-hidden", state.view === "all" || isCompleteness);
+      outletStatusFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+      warehouseFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+      regionalFilterWrap.classList.toggle(
+        "clients-hidden",
+        !(showAssignmentFilters || isCompleteness) || isRegionalRole,
+      );
+      hardwareFilterWrap?.classList.toggle(
+        "clients-hidden",
+        !(showAssignmentFilters || isCompleteness) || isRegionalRole,
+      );
+      tandoorFilterWrap.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+      fieldFiltersWrap?.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness);
+      document.querySelectorAll(".clients-field--clients-only").forEach(function (el) {
+        el.classList.toggle("clients-hidden", !showOutletDerivedFilters || isCompleteness || isOutlets);
+      });
+      var showOutletLevelAssignments = showAssignmentFilters && !isOutlets;
+      outletManagerFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
+      outletRegionalFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
+      outletHardwareFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments || isRegionalRole);
+      outletRopFilterWrap?.classList.toggle("clients-hidden", !showOutletLevelAssignments);
+    }
     updateResponsibleFilterLabels(isOutlets);
     reviewStateFilterWrap.classList.toggle("clients-hidden", !isReview);
     reviewDecisionFilterWrap.classList.toggle("clients-hidden", !isReview);

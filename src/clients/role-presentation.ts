@@ -33,10 +33,18 @@ export type RolePresentation = {
   /** Director-style teams overview, stats strip, and completeness navigation. */
   directorLayout?: boolean;
   cardFocusHints: readonly string[];
-  delegationContext?: {
-    delegatorName: string;
-    clientCount: number;
-  } | null;
+  delegationContext?:
+    | {
+        mode: "single";
+        delegatorName: string;
+        clientCount: number;
+      }
+    | {
+        mode: "multiple";
+        delegatorCount: number;
+        clientCount: number;
+      }
+    | null;
 };
 
 const MANAGER_FOCUS = [

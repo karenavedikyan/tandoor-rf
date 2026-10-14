@@ -19,7 +19,7 @@ export async function clientsPresentationHandler(
 
   if (presentation.businessRole === "assistant") {
     try {
-      presentation.delegationContext = await loadAssistantDelegationContext(context.userId);
+      presentation.delegationContext = await loadAssistantDelegationContext(context);
     } catch {
       presentation.delegationContext = null;
     }

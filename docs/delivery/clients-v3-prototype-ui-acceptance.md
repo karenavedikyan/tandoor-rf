@@ -12,7 +12,7 @@ Production **не изменялся**.
 | Роль | Функция | ACL | UI vs прототип | Desktop | Mobile |
 |------|---------|-----|----------------|---------|--------|
 | manager | PASS — legal-first, KPI v3, filters+chips, карточка | PASS scoped legal/retail | PARTIAL — нет row actions, карточка без полных вторичных блоков | PASS browser + screenshot | PASS |
-| assistant | PASS — legal list, баннер замещения, KPI | PASS delegation_clients | PARTIAL — только legal entity (данные замещения) | PASS | PASS |
+| assistant | PASS — legal list, баннер замещения (count = v3 list), KPI | PASS delegation scope | PARTIAL — только legal entity (данные замещения) | PASS | PASS |
 | regional_manager | PASS — retail-first, v3 filters | PASS regional on retail | PARTIAL — select+chips vs multiselect прототипа | PASS | PASS |
 | rop | PASS — «База команды»/«Моя команда», KPI v3, compact team | PASS team scope | PARTIAL — compact team vs карточки прототипа | PASS | PASS |
 | director | PASS — «Вся база»/«По командам», overview+expand | PASS fullClientBase | PARTIAL — стили карточек команд | PASS | PASS |
@@ -27,7 +27,8 @@ Production **не изменялся**.
 | Один уровень навигации list vs teams | View switcher с ролевыми подписями; v3 entity switcher скрыт на teams home и для ROP (`showEntitySwitcher: false`) | Данные + UI |
 | KPI над списком | Portfolio stats через `/api/clients/v3/list` totals (v3 active) | Backend v3 |
 | Баннер assistant «работаю от имени» | `#clients-delegation-banner` + `delegationContext` API | Backend ACL |
-| Фильтры + активные условия | v3 selects + `#v3-filter-chips` с очисткой | UI |
+| Фильтры + активные условия | v3 selects + `#v3-filter-chips` с очисткой; legacy (телефон, холдинг, статус ТТ legacy, склад, поля ТТ, Tandoor Club) **скрыты** при v3 | UI |
+| Баннер assistant | `delegationContext` = доступные v3 legal (scope), multiple mode при нескольких делегаторах | Backend ACL |
 | ROP tabs | «База команды» / «Моя команда» | UI |
 | Director/admin tabs | «Вся база» / «По командам» | UI |
 | Mobile sticky search | CSS `clients-search-row--sticky` | UI |
@@ -41,6 +42,7 @@ Production **не изменялся**.
 | Row quick actions в таблице | Нет согласованных разрешённых операций в строке | Backend+ACL+UX spec |
 | Полные блоки скидок/наценок/LPR в карточке | DTO v3 не содержит все поля прототипа | Обмен/контракт карточки |
 | Multiselect фильтров как в прототипе | v3 API — одиночные type/category/manager | Контракт фильтров v3 |
+| Фильтры legacy (телефон, холдинг, склад, поля ТТ, Tandoor Club) | Не поддержаны v3 list API — скрыты в v3 UI | Расширение v3 query или field-builder |
 | ТТ без связей | Отдельная группа сущностей `orphan_retail` — только director/admin | Не смешивать с ролевым portfolio |
 | Pixel-parity compact team / director cards | Функционально достаточно для R2; стили отличаются | Design pass по запросу |
 
@@ -52,9 +54,10 @@ Production **не изменялся**.
 |---------|-----------|
 | `npm run typecheck` | PASS |
 | `npm run build` | PASS |
-| `npm test` | 695/695 PASS |
+| `npm test` | 696/696 PASS |
 | `test/integration/clients-v3-api.test.ts` | 6/6 PASS |
-| `test/browser/clients-v3.browser.test.ts` | 7/7 ×2, exit 0 |
+| `test/integration/clients-assistant-delegation-presentation.test.ts` | 7/7 PASS |
+| `test/browser/clients-v3.browser.test.ts` | 8/8 ×2, exit 0 |
 | `test/browser/clients-v3-roles-entry.browser.test.ts` | 6/6 ×2, exit 0 |
 
 Регрессии: смена ответственного без reload, поиск с фильтрами, очистка фильтров, пагинация, карточка/back/forward, read-only sync-status — покрыты browser suite #77.
