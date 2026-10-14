@@ -104,13 +104,6 @@
   font-size: 13px;
 }
 
-.clients-design-page .clients-compact-team__member {
-  border: 1px solid var(--rf-border);
-  border-radius: var(--rf-radius);
-  background: var(--rf-surface);
-  box-shadow: 0 1px 0 rgba(35, 44, 53, 0.04);
-}
-
 .clients-design-page #clients-app {
   display: flex;
   flex-direction: column;
@@ -122,28 +115,19 @@
   gap: 8px;
 }
 
-.clients-design-page .clients-role-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-@media (min-width: 768px) {
-  .clients-design-page .clients-role-strip {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px 16px;
-  }
+.clients-design-page .clients-role-head {
+  display: block;
+  width: 100%;
 }
 
 .clients-design-page .clients-employee-card {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  flex: 1 1 240px;
+  justify-content: space-between;
+  gap: 6px 12px;
+  flex: none;
+  width: 100%;
   min-width: 0;
   padding: 0;
   background: transparent;
@@ -212,24 +196,20 @@
   color: var(--rf-text);
 }
 
-.clients-design-page .clients-stats-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: stretch;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+.clients-design-page .clients-stats-strip:not(.clients-stats-strip--incomplete) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius);
+  overflow: hidden;
 }
 
-.clients-design-page .clients-stats-strip--two-cols {
-  max-width: 100%;
-}
-
-.clients-design-page.clients-role-manager .clients-stats-strip,
-.clients-design-page.clients-role-regional .clients-stats-strip,
-.clients-design-page.clients-role-assistant .clients-stats-strip {
-  flex-wrap: nowrap;
+.clients-design-page.clients-role-rop .clients-stats-strip:not(.clients-stats-strip--incomplete),
+.clients-design-page.clients-role-director .clients-stats-strip:not(.clients-stats-strip--incomplete),
+.clients-design-page.clients-role-admin .clients-stats-strip:not(.clients-stats-strip--incomplete) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .clients-design-page.clients-role-manager #clients-stat-no-outlets-wrap,
@@ -238,31 +218,36 @@
   display: none;
 }
 
+.clients-design-page .clients-stats-strip--two-cols:not(.clients-stats-strip--incomplete) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .clients-design-page .clients-stat {
   display: grid;
-  gap: 1px;
-  padding: 6px 12px;
+  gap: 2px;
+  padding: 10px 14px;
   min-width: 0;
-  border: 1px solid var(--rf-border);
-  border-radius: var(--rf-radius);
-  background: var(--rf-surface);
+  border: 0;
+  border-right: 1px solid var(--rf-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .clients-design-page .clients-stat:last-child {
-  border-right: 1px solid var(--rf-border);
+  border-right: 0;
 }
 
 .clients-design-page .clients-stat__label {
   display: block;
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.25;
   color: var(--rf-text-muted);
 }
 
 .clients-design-page .clients-stat__value {
   display: block;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   line-height: 1.15;
 }
@@ -410,12 +395,37 @@
 }
 
 .clients-design-page .clients-toolbar__row--filters {
-  gap: 10px;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .clients-design-page #clients-filters-panel {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px 10px;
+    align-items: end;
+    width: 100%;
+  }
+
+  .clients-design-page #v3-filters-wrap {
+    display: contents;
+  }
+
+  .clients-design-page #clients-filters-panel > .clients-field {
+    min-width: 0;
+  }
+
+  .clients-design-page #clients-filters-panel #reset-filters {
+    grid-column: 1 / -1;
+    justify-self: start;
+    min-height: 36px;
+    margin-top: 2px;
+  }
 }
 
 .clients-design-page #v3-filters-wrap {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   align-items: end;
   gap: 8px;
@@ -664,7 +674,7 @@
 }
 
 .clients-design-page .clients-team-card-shell__head {
-  padding: 14px 18px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--rf-border);
 }
 
@@ -756,7 +766,7 @@
 }
 
 .clients-design-page .clients-team-group {
-  padding: 12px 18px 0;
+  padding: 8px 14px 0;
 }
 
 .clients-design-page .clients-team-group:last-child {
@@ -805,11 +815,16 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 16px;
-  padding: 10px 12px;
-  border: 1px solid var(--rf-border);
-  border-radius: 8px;
-  background: var(--rf-bg);
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--rf-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.clients-design-page .clients-team-group__list .clients-team-member-row:last-child {
+  border-bottom: 0;
 }
 
 .clients-design-page .clients-team-member-row__main {
@@ -929,11 +944,6 @@
 }
 
 @media (min-width: 768px) {
-  .clients-design-page .clients-toolbar__row--filters {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    align-items: end;
-  }
-
   .clients-design-page .clients-director-teams-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -953,14 +963,14 @@
     width: 100%;
   }
 
-  .clients-design-page .clients-role-strip {
-    gap: 8px;
+  .clients-design-page .clients-role-head {
+    margin: 0;
   }
 
   .clients-design-page .clients-stats-strip:not(.clients-stats-strip--incomplete) {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 0;
     width: 100%;
   }
 
@@ -1183,9 +1193,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  padding: 8px 10px;
-  min-height: 44px;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  min-height: 40px;
 }
 
 .clients-design-page .clients-compact-team__toggle {
@@ -1335,10 +1345,10 @@
 
 .clients-design-page .clients-compact-team__members {
   display: grid;
-  gap: 6px;
+  gap: 0;
   max-height: min(420px, 55vh);
   overflow: auto;
-  padding: 0 10px 10px;
+  padding: 0;
   border-top: 1px solid var(--rf-border);
 }
 
@@ -1357,11 +1367,17 @@
 
 .clients-design-page .clients-compact-team__member {
   display: grid;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--rf-border);
-  border-radius: 8px;
-  background: var(--rf-surface);
+  gap: 4px;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--rf-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.clients-design-page .clients-compact-team__member:last-child {
+  border-bottom: 0;
 }
 
 @media (min-width: 768px) {
