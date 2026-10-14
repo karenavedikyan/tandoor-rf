@@ -57,5 +57,27 @@
     "DiscountAmount": 0,
     "markups": [],
     "other": {}
+  },
+  {
+    "guid_client": "b2000000-0000-4000-8000-000000000004",
+    "name_client": "Legal Two",
+    "guid_holding": "a1000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Holding One",
+    "type_category": {
+      "guid_type": "t3",
+      "name_type": "Type C",
+      "guid_category": "c3",
+      "name_category": "Cat C"
+    },
+    "guid_manager": "33333333-3333-4333-8333-333333333333",
+    "name_manager": "Manager Two",
+    "guid_head_of_the_sales_department": "55555555-5555-4555-8555-555555555555",
+    "name_head_of_the_sales_department": "ROP One",
+    "address": "SYNTH address two",
+    "telephone": [],
+    "Discount": "",
+    "DiscountAmount": 0,
+    "markups": [],
+    "other": {}
   }
 ]

@@ -774,6 +774,71 @@
     return "";
   }
 
+  function v3ResponsibleFromLegacyState(state) {
+    if (!state) {
+      return { responsibleGuid: "", responsibleKind: "", v3manager: "" };
+    }
+    var kind = normalizeTeamKind(state.responsibleKind || state.teamKind || "");
+    var guid = "";
+    if (kind === "regional") {
+      guid =
+        state.regionalManager || state.clientRegionalManager || state.outletRegionalManager || "";
+    } else if (kind === "hardware") {
+      guid =
+        state.hardwareManager || state.clientHardwareManager || state.outletHardwareManager || "";
+    } else if (kind === "manager") {
+      guid = state.manager || state.clientManager || state.outletManager || "";
+    } else if (state.responsibleGuid) {
+      guid = state.responsibleGuid;
+      kind = normalizeTeamKind(state.responsibleKind) || "manager";
+    } else {
+      guid = state.manager || state.clientManager || state.outletManager || "";
+      if (guid) {
+        kind = "manager";
+      } else {
+        guid =
+          state.regionalManager || state.clientRegionalManager || state.outletRegionalManager || "";
+        if (guid) {
+          kind = "regional";
+        } else {
+          guid =
+            state.hardwareManager ||
+            state.clientHardwareManager ||
+            state.outletHardwareManager ||
+            "";
+          if (guid) {
+            kind = "hardware";
+          }
+        }
+      }
+    }
+    if (!guid) {
+      kind = "";
+    }
+    return {
+      responsibleGuid: guid,
+      responsibleKind: kind,
+      v3manager: kind === "manager" ? guid : "",
+    };
+  }
+
+  function legacyStringField(state, key, urlFallback) {
+    if (state && Object.prototype.hasOwnProperty.call(state, key)) {
+      return state[key] || "";
+    }
+    return urlFallback || "";
+  }
+
+  function mapLegacyEntityToV3Entity(entity, urlV3Entity) {
+    if (entity === "outlets") {
+      return urlV3Entity === "orphan_retail" ? "orphan_retail" : "retail";
+    }
+    if (urlV3Entity === "holdings" || urlV3Entity === "legal") {
+      return urlV3Entity;
+    }
+    return "legal";
+  }
+
   function applyPresentationDefaults(state, presentation, search) {
     if (!presentation) {
       return state;
@@ -2157,6 +2222,9 @@
     isBareClientsMenuSearch: isBareClientsMenuSearch,
     mergeRoleEntryHref: mergeRoleEntryHref,
     normalizeTeamKind: normalizeTeamKind,
+    v3ResponsibleFromLegacyState: v3ResponsibleFromLegacyState,
+    legacyStringField: legacyStringField,
+    mapLegacyEntityToV3Entity: mapLegacyEntityToV3Entity,
     applyPresentationDefaults: applyPresentationDefaults,
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,

@@ -88,64 +88,63 @@
     }
   }
 
-  function legacyStateToV3(legacy) {
+  function legacyStateToV3(legacy, loadSource) {
+    var logic = typeof ClientsLogic !== "undefined" ? ClientsLogic : null;
     var urlFilters = readState();
+    var fromUrl = loadSource === "url";
     var view = legacy.view || "all";
     var entity = legacy.entity || "clients";
-    var v3entity = "legal";
-    if (entity === "outlets") {
-      v3entity = urlFilters.v3entity === "orphan_retail" ? "orphan_retail" : "retail";
-    } else if (urlFilters.v3entity === "holdings" || urlFilters.v3entity === "legal") {
-      v3entity = urlFilters.v3entity;
+    var v3entity = logic
+      ? logic.mapLegacyEntityToV3Entity(entity, urlFilters.v3entity)
+      : entity === "outlets"
+        ? "retail"
+        : "legal";
+    var assignment = logic
+      ? logic.v3ResponsibleFromLegacyState(legacy)
+      : { responsibleGuid: "", responsibleKind: "", v3manager: "" };
+    if (
+      fromUrl &&
+      !assignment.responsibleGuid &&
+      urlFilters.responsibleGuid &&
+      !(logic && logic.hasResponsibleSelection(legacy))
+    ) {
+      assignment = {
+        responsibleGuid: urlFilters.responsibleGuid,
+        responsibleKind: urlFilters.responsibleKind || "manager",
+        v3manager: urlFilters.v3manager || urlFilters.responsibleGuid,
+      };
     }
+    var ropEmployee = logic
+      ? logic.legacyStringField(legacy, "ropEmployee", fromUrl ? urlFilters.ropEmployee : "")
+      : legacy.ropEmployee || (fromUrl ? urlFilters.ropEmployee : "") || "";
+    var v3type = logic
+      ? logic.legacyStringField(legacy, "v3type", urlFilters.v3type || "")
+      : fromUrl
+        ? urlFilters.v3type || ""
+        : "";
+    var v3category = logic
+      ? logic.legacyStringField(legacy, "v3category", urlFilters.v3category || "")
+      : fromUrl
+        ? urlFilters.v3category || ""
+        : "";
     return {
       v3entity: v3entity,
       v3view: v3ViewFromLegacyView(view),
-      page: legacy.page || urlFilters.page || 1,
-      q: legacy.q != null ? legacy.q : urlFilters.q || "",
-      closed: urlFilters.closed || "",
-      v3manager: urlFilters.v3manager || "",
-      v3type: urlFilters.v3type || "",
-      v3category: urlFilters.v3category || "",
-      missingManager: legacy.missingManager || urlFilters.missingManager || false,
-      ropEmployee: legacy.ropEmployee || urlFilters.ropEmployee || "",
-      responsibleGuid: urlFilters.responsibleGuid || "",
-      responsibleKind: urlFilters.responsibleKind || "",
+      page: legacy.page != null ? legacy.page : fromUrl ? urlFilters.page || 1 : 1,
+      q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
+      closed: fromUrl ? urlFilters.closed || "" : legacy.closed != null ? legacy.closed : "",
+      v3manager: assignment.v3manager,
+      v3type: v3type,
+      v3category: v3category,
+      missingManager: Boolean(legacy.missingManager) || (fromUrl && urlFilters.missingManager),
+      ropEmployee: ropEmployee,
+      responsibleGuid: assignment.responsibleGuid,
+      responsibleKind: assignment.responsibleKind,
     };
   }
 
-  function mergeFromLegacyState(legacy, v3) {
-    var next = Object.assign({}, legacyStateToV3(legacy), v3 || {});
-    var params = new URLSearchParams(window.location.search);
-    if (params.has("v3view") && !legacy.view) {
-      next.v3view = params.get("v3view") || "all";
-    }
-    if (legacy.ropEmployee) {
-      next.ropEmployee = legacy.ropEmployee;
-    }
-    var kind =
-      normalizeResponsibleKind(legacy.teamKind || legacy.responsibleKind || "") ||
-      next.responsibleKind ||
-      "manager";
-    var responsibleGuid = next.responsibleGuid || "";
-    if (!responsibleGuid) {
-      if (kind === "regional") {
-        responsibleGuid =
-          legacy.regionalManager || legacy.clientRegionalManager || legacy.outletRegionalManager || "";
-      } else if (kind === "hardware") {
-        responsibleGuid =
-          legacy.hardwareManager || legacy.clientHardwareManager || legacy.outletHardwareManager || "";
-      } else {
-        responsibleGuid = legacy.manager || legacy.clientManager || legacy.outletManager || "";
-      }
-    }
-    if (responsibleGuid) {
-      next.responsibleGuid = responsibleGuid;
-      next.responsibleKind = kind;
-      if (kind === "manager" && !next.v3manager) {
-        next.v3manager = responsibleGuid;
-      }
-    }
+  function mergeFromLegacyState(legacy, v3, loadSource) {
+    var next = Object.assign({}, legacyStateToV3(legacy, loadSource), v3 || {});
     if (legacy.unassignedCategory === "v3_missing_manager") {
       next.missingManager = true;
     }
@@ -453,12 +452,30 @@
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
               var href = detailHref(item.guid, detailType, state);
+              var meta = columns
+                .slice(1, 4)
+                .map(function (col) {
+                  var value = v3CellValue(item, col, shell);
+                  if (value === "—") {
+                    return "";
+                  }
+                  return (
+                    '<span class="clients-card__meta">' +
+                    shell.escapeHtml(col.label) +
+                    ": " +
+                    value +
+                    "</span>"
+                  );
+                })
+                .join("");
               return (
                 '<a class="clients-card" href="' +
                 href +
                 '"><span class="clients-card__title">' +
                 shell.escapeHtml(item.name || item.guid) +
-                "</span></a>"
+                "</span>" +
+                meta +
+                "</a>"
               );
             })
             .join("");
@@ -514,7 +531,8 @@
     },
 
     loadOrchestrated: function (ctx, legacyState, replaceHistory, hooks) {
-      var syncedV3 = legacyStateToV3(legacyState);
+      var loadSource = hooks.loadSource || "";
+      var syncedV3 = legacyStateToV3(legacyState, loadSource);
       writeState(syncedV3, replaceHistory);
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);

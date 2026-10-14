@@ -131,8 +131,12 @@
         return entry.inflight;
       }
       entry.status = "loading";
+      var responsiblesPath =
+        deps.useExchangeV3 && deps.useExchangeV3()
+          ? "/api/clients/v3/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles"
+          : "/api/clients/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles";
       entry.inflight = deps.api
-        .apiRequest("/api/clients/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles")
+        .apiRequest(responsiblesPath)
         .then(function (result) {
           if (result.response.status === 200 && result.data) {
             entry.status = "loaded";

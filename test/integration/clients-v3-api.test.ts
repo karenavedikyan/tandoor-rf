@@ -269,6 +269,63 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(res.body.exchangeV3Active, true);
   });
 
+  it("sync-status GET does not finalize expired pending jobs for scoped user", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const managerEmail = "manager-v3-readonly@example.com";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager Readonly",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: M1,
+      confirmedByUserId: manager.id,
+    });
+    await pool.query(
+      `
+        INSERT INTO onec_import_jobs (
+          kind, mode, status, requested_at, expires_at, requested_by_user_id, job_source
+        )
+        VALUES (
+          'regular_update_bundle',
+          'apply',
+          'pending',
+          NOW() - INTERVAL '3 hours',
+          NOW() - INTERVAL '1 hour',
+          $1::uuid,
+          'admin_manual'
+        )
+      `,
+      [manager.id],
+    );
+    const before = await pool.query<{ id: string; status: string; error_code: string | null }>(
+      `SELECT id::text, status, error_code FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await pool.end();
+    await resetPoolForTests();
+
+    const cookie = await login(managerEmail);
+    const app = await loadApp();
+    const res = await request(app).get("/api/clients/sync-status").set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(res.status, 200);
+
+    const poolAfter = new Pool({ connectionString: databaseUrl, max: 1 });
+    const after = await poolAfter.query<{ id: string; status: string; error_code: string | null }>(
+      `SELECT id::text, status, error_code FROM onec_import_jobs WHERE kind = 'regular_update_bundle' ORDER BY requested_at DESC LIMIT 1`,
+    );
+    await poolAfter.end();
+    assert.equal(after.rows[0]?.id, before.rows[0]?.id);
+    assert.equal(after.rows[0]?.status, "pending");
+    assert.equal(after.rows[0]?.error_code, before.rows[0]?.error_code);
+  });
+
   it("sync-status GET does not mutate regular update jobs", async () => {
     await prepareDatabase(databaseUrl);
     await seedV3();

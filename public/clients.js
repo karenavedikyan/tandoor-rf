@@ -384,6 +384,9 @@
         shell: shell,
         logic: logic,
         teamContext: teamContext,
+        useExchangeV3: function () {
+          return exchangeV3Active;
+        },
         usesDirectorLayout: usesDirectorLayout,
         navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
         navigateDirectorResponsible: navigateDirectorResponsible,
@@ -2621,15 +2624,23 @@
   }
 
   function navigateResponsible(state, manager, kind, entityMode) {
+    var guid = manager.employeeGuid;
     var next = {
       view: "teams",
       ropEmployee: state.ropEmployee,
       rop: "",
       portfolio: "",
-      manager: kind === "manager" ? manager.employeeGuid : "",
-      regionalManager: kind === "regional" ? manager.employeeGuid : "",
-      hardwareManager: kind === "hardware" ? manager.employeeGuid : "",
+      manager: kind === "manager" ? guid : "",
+      clientManager: kind === "manager" ? guid : "",
+      outletManager: kind === "manager" ? guid : "",
+      regionalManager: kind === "regional" ? guid : "",
+      clientRegionalManager: kind === "regional" ? guid : "",
+      outletRegionalManager: kind === "regional" ? guid : "",
+      hardwareManager: kind === "hardware" ? guid : "",
+      clientHardwareManager: kind === "hardware" ? guid : "",
+      outletHardwareManager: kind === "hardware" ? guid : "",
       responsibleKind: kind,
+      responsibleGuid: guid,
       entity: entityMode || "clients",
       page: 1,
     };
@@ -3012,15 +3023,23 @@
 
   function navigateDirectorResponsible(ropEmployeeGuid, manager, kind, entityMode) {
     rememberRopName(ropEmployeeGuid);
+    var guid = manager.employeeGuid;
     navigateState({
       view: "teams",
       ropEmployee: ropEmployeeGuid,
       rop: "",
       portfolio: "",
-      manager: kind === "manager" ? manager.employeeGuid : "",
-      regionalManager: kind === "regional" ? manager.employeeGuid : "",
-      hardwareManager: kind === "hardware" ? manager.employeeGuid : "",
+      manager: kind === "manager" ? guid : "",
+      clientManager: kind === "manager" ? guid : "",
+      outletManager: kind === "manager" ? guid : "",
+      regionalManager: kind === "regional" ? guid : "",
+      clientRegionalManager: kind === "regional" ? guid : "",
+      outletRegionalManager: kind === "regional" ? guid : "",
+      hardwareManager: kind === "hardware" ? guid : "",
+      clientHardwareManager: kind === "hardware" ? guid : "",
+      outletHardwareManager: kind === "hardware" ? guid : "",
       responsibleKind: kind,
+      responsibleGuid: guid,
       entity: entityMode || "clients",
       page: 1,
     });
@@ -4178,6 +4197,7 @@
         loadTeamsContext: loadTeamsContext,
         renderTeamsPanel: renderTeamsPanel,
         logic: logic,
+        loadSource: loadSource || "",
         requestId: requestId,
         activeRequestId: activeRequestId,
         getSearchQuery: function () {

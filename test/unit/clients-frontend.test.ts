@@ -16,6 +16,16 @@ const logic = require("../../public/clients-logic.js") as {
   parseLegacyStateFromV3Url: (search: string) => { view: string; entity: string } | null;
   isBareClientsMenuSearch: (search: string) => boolean;
   mergeRoleEntryHref: (roleHref: string, currentSearch: string) => string;
+  v3ResponsibleFromLegacyState: (state: Record<string, string>) => {
+    responsibleGuid: string;
+    responsibleKind: string;
+    v3manager: string;
+  };
+  legacyStringField: (
+    state: Record<string, string>,
+    key: string,
+    urlFallback: string,
+  ) => string;
   buildListQueryString: (state: {
     q: string;
     manager: string;
@@ -228,6 +238,58 @@ describe("clients frontend logic", () => {
     );
     assert.ok(parsed);
     assert.equal(parsed!.view, "all");
+  });
+
+  it("maps new responsible selection from legacy state for v3 API", () => {
+    const firstPick = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      responsibleKind: "manager",
+      regionalManager: "",
+      hardwareManager: "",
+    });
+    assert.equal(firstPick.responsibleGuid, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    assert.equal(firstPick.responsibleKind, "manager");
+    assert.equal(firstPick.v3manager, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+
+    const switchManager = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      responsibleKind: "manager",
+      responsibleGuid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    assert.equal(switchManager.responsibleGuid, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+
+    const regional = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "",
+      regionalManager: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      responsibleKind: "regional",
+    });
+    assert.equal(regional.responsibleGuid, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    assert.equal(regional.responsibleKind, "regional");
+    assert.equal(regional.v3manager, "");
+
+    const cleared = logic.v3ResponsibleFromLegacyState({
+      view: "teams",
+      manager: "",
+      regionalManager: "",
+      hardwareManager: "",
+      responsibleKind: "",
+    });
+    assert.equal(cleared.responsibleGuid, "");
+    assert.equal(cleared.responsibleKind, "");
+  });
+
+  it("clears ropEmployee when legacy state explicitly empty", () => {
+    assert.equal(
+      logic.legacyStringField({ ropEmployee: "" }, "ropEmployee", "old-rop-guid"),
+      "",
+    );
+    assert.equal(
+      logic.legacyStringField({}, "ropEmployee", "old-rop-guid"),
+      "old-rop-guid",
+    );
   });
 
   it("detects bare menu entry and preserves deep-link params on role merge", () => {
