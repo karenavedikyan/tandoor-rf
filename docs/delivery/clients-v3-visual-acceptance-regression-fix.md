@@ -2,7 +2,7 @@
 
 ## Итоговый SHA
 
-**Код и тесты:** см. последний коммит в ветке `cursor/clients-v3-prototype-ui-9e11` (блок после `872d15e`: live navigation token, manifest 30/30, lifecycle browser DB, filter reload token).
+**Код и тесты:** `d05b4b8` (блок после `872d15e` / `e1aaa15`: live navigation token, manifest 30/30, browser DB lifecycle, filter reload token).
 
 База: `e1aaa15` (гонка `loadList`, оркестрация switcher, счётчики команд); документ `872d15e`.
 
