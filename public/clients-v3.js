@@ -163,13 +163,54 @@
       return parseTokenList(legacyVal);
     }
     if (!fromUrl && domFilters) {
-      return (domFilters[multiKey] || []).slice();
+      var domTokens = (domFilters[multiKey] || []).slice();
+      if (domTokens.length) {
+        return domTokens;
+      }
     }
     if (urlFilters[multiKey] && urlFilters[multiKey].length) {
       return urlFilters[multiKey].slice();
     }
     var single = v3FilterFallback(singleKey, legacy, fromUrl, urlFilters, domFilters);
     return parseTokenList(single);
+  }
+
+  function listFilterTokens(state, multiKey, singleKey) {
+    if (Object.prototype.hasOwnProperty.call(state, multiKey)) {
+      return Array.isArray(state[multiKey]) ? state[multiKey].slice() : parseTokenList(state[multiKey]);
+    }
+    if (state[multiKey] && state[multiKey].length) {
+      return state[multiKey].slice();
+    }
+    return parseTokenList(state[singleKey]);
+  }
+
+  function syncV3FilterAliases(state) {
+    if (Object.prototype.hasOwnProperty.call(state, "v3types")) {
+      state.v3type = state.v3types[0] || "";
+    } else if (state.v3types && state.v3types.length) {
+      state.v3type = state.v3types[0];
+    }
+    if (Object.prototype.hasOwnProperty.call(state, "v3categories")) {
+      state.v3category = state.v3categories[0] || "";
+    } else if (state.v3categories && state.v3categories.length) {
+      state.v3category = state.v3categories[0];
+    }
+  }
+
+  function appendTypeCategoryParams(params, state) {
+    var typeTokens = listFilterTokens(state, "v3types", "v3type");
+    if (typeTokens.length > 1) {
+      params.set("typeGuids", joinTokenList(typeTokens));
+    } else if (typeTokens.length === 1) {
+      params.set("typeGuid", typeTokens[0]);
+    }
+    var categoryTokens = listFilterTokens(state, "v3categories", "v3category");
+    if (categoryTokens.length > 1) {
+      params.set("categoryGuids", joinTokenList(categoryTokens));
+    } else if (categoryTokens.length === 1) {
+      params.set("categoryGuid", categoryTokens[0]);
+    }
   }
 
   function mergeListStateForUserAction(patch) {
@@ -188,12 +229,16 @@
           ? url.v3manager || url.responsibleGuid
           : ""
         : dom.v3manager || url.v3manager || "",
-      v3type: dom.v3types?.length ? dom.v3types[0] : dom.v3type || url.v3types?.[0] || url.v3type || "",
-      v3category: dom.v3categories?.length
-        ? dom.v3categories[0]
-        : dom.v3category || url.v3categories?.[0] || url.v3category || "",
-      v3types: dom.v3types?.length ? dom.v3types : url.v3types || parseTokenList(url.v3type),
-      v3categories: dom.v3categories?.length ? dom.v3categories : url.v3categories || parseTokenList(url.v3category),
+      v3types: dom.v3types.length
+        ? dom.v3types.slice()
+        : url.v3types.length
+          ? url.v3types.slice()
+          : parseTokenList(url.v3type),
+      v3categories: dom.v3categories.length
+        ? dom.v3categories.slice()
+        : url.v3categories.length
+          ? url.v3categories.slice()
+          : parseTokenList(url.v3category),
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       responsibleGuid: url.responsibleGuid,
@@ -207,6 +252,7 @@
         }
       });
     }
+    syncV3FilterAliases(next);
     if (next.v3manager) {
       next.responsibleGuid = next.v3manager;
       next.responsibleKind = "manager";
@@ -324,10 +370,16 @@
       v3categories: resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3category", "v3categories"),
       v3type: (function () {
         var types = resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3type", "v3types");
+        if (legacy && Object.prototype.hasOwnProperty.call(legacy, "v3types")) {
+          return types[0] || "";
+        }
         return types[0] || v3type || "";
       })(),
       v3category: (function () {
         var cats = resolveV3MultiFilter(legacy, fromUrl, urlFilters, domFilters, "v3category", "v3categories");
+        if (legacy && Object.prototype.hasOwnProperty.call(legacy, "v3categories")) {
+          return cats[0] || "";
+        }
         return cats[0] || v3category || "";
       })(),
       missingManager: Boolean(legacy.missingManager) || (fromUrl && urlFilters.missingManager),
@@ -363,21 +415,19 @@
     else params.delete("v3manager");
     params.delete("v3type");
     params.delete("typeGuids");
-    if (state.v3types && state.v3types.length > 1) {
-      params.set("typeGuids", joinTokenList(state.v3types));
-    } else if (state.v3types && state.v3types.length === 1) {
-      params.set("v3type", state.v3types[0]);
-    } else if (state.v3type) {
-      params.set("v3type", state.v3type);
-    }
     params.delete("v3category");
     params.delete("categoryGuids");
-    if (state.v3categories && state.v3categories.length > 1) {
-      params.set("categoryGuids", joinTokenList(state.v3categories));
-    } else if (state.v3categories && state.v3categories.length === 1) {
-      params.set("v3category", state.v3categories[0]);
-    } else if (state.v3category) {
-      params.set("v3category", state.v3category);
+    var urlTypeTokens = listFilterTokens(state, "v3types", "v3type");
+    if (urlTypeTokens.length > 1) {
+      params.set("typeGuids", joinTokenList(urlTypeTokens));
+    } else if (urlTypeTokens.length === 1) {
+      params.set("v3type", urlTypeTokens[0]);
+    }
+    var urlCategoryTokens = listFilterTokens(state, "v3categories", "v3category");
+    if (urlCategoryTokens.length > 1) {
+      params.set("categoryGuids", joinTokenList(urlCategoryTokens));
+    } else if (urlCategoryTokens.length === 1) {
+      params.set("v3category", urlCategoryTokens[0]);
     }
     if (state.pageSize && state.pageSize !== 50) {
       params.set("v3pageSize", String(state.pageSize));
@@ -415,12 +465,12 @@
     if (s.q) params.set("q", s.q);
     if (s.closed) params.set("closed", s.closed);
     if (s.v3manager) params.set("v3manager", s.v3manager);
-    if (s.v3types && s.v3types.length > 1) params.set("typeGuids", joinTokenList(s.v3types));
-    else if (s.v3types && s.v3types.length === 1) params.set("v3type", s.v3types[0]);
-    else if (s.v3type) params.set("v3type", s.v3type);
-    if (s.v3categories && s.v3categories.length > 1) params.set("categoryGuids", joinTokenList(s.v3categories));
-    else if (s.v3categories && s.v3categories.length === 1) params.set("v3category", s.v3categories[0]);
-    else if (s.v3category) params.set("v3category", s.v3category);
+    var returnTypeTokens = listFilterTokens(s, "v3types", "v3type");
+    if (returnTypeTokens.length > 1) params.set("typeGuids", joinTokenList(returnTypeTokens));
+    else if (returnTypeTokens.length === 1) params.set("v3type", returnTypeTokens[0]);
+    var returnCategoryTokens = listFilterTokens(s, "v3categories", "v3category");
+    if (returnCategoryTokens.length > 1) params.set("categoryGuids", joinTokenList(returnCategoryTokens));
+    else if (returnCategoryTokens.length === 1) params.set("v3category", returnCategoryTokens[0]);
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
     if (s.responsibleGuid) {
@@ -469,9 +519,8 @@
 
   function syncFilterDom(shell, state, options) {
     fillSelect(shell, document.getElementById("v3-manager-filter"), options.managers, state.v3manager);
-    var types = state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
-    var categories =
-      state.v3categories && state.v3categories.length ? state.v3categories : parseTokenList(state.v3category);
+    var types = listFilterTokens(state, "v3types", "v3type");
+    var categories = listFilterTokens(state, "v3categories", "v3category");
     fillMultiSelect(shell, document.getElementById("v3-type-filter"), options.types, types);
     fillMultiSelect(shell, document.getElementById("v3-category-filter"), options.categories, categories);
     var closedEl = document.getElementById("v3-closed-filter");
@@ -599,16 +648,12 @@
         });
         chips.push({ label: "Менеджер: " + (mgr ? mgr.name : state.v3manager.slice(0, 8)), key: "v3manager" });
       }
-      var typeTokens =
-        state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
+      var typeTokens = listFilterTokens(state, "v3types", "v3type");
       typeTokens.forEach(function (guid) {
         var tp = options && options.types ? (options.types || []).find(function (t) { return t.guid === guid; }) : null;
         chips.push({ label: "Тип: " + (tp ? tp.name : guid), key: "v3type", token: guid });
       });
-      var categoryTokens =
-        state.v3categories && state.v3categories.length
-          ? state.v3categories
-          : parseTokenList(state.v3category);
+      var categoryTokens = listFilterTokens(state, "v3categories", "v3category");
       categoryTokens.forEach(function (guid) {
         var cat =
           options && options.categories
@@ -670,23 +715,16 @@
       state = state || readState();
       var urlState = readState();
       if (!Object.prototype.hasOwnProperty.call(state, "v3types")) {
-        state.v3types =
-          urlState.v3types && urlState.v3types.length
-            ? urlState.v3types.slice()
-            : parseTokenList(state.v3type || urlState.v3type);
+        state.v3types = listFilterTokens(Object.assign({}, urlState, state), "v3types", "v3type");
       }
       if (!Object.prototype.hasOwnProperty.call(state, "v3categories")) {
-        state.v3categories =
-          urlState.v3categories && urlState.v3categories.length
-            ? urlState.v3categories.slice()
-            : parseTokenList(state.v3category || urlState.v3category);
+        state.v3categories = listFilterTokens(
+          Object.assign({}, urlState, state),
+          "v3categories",
+          "v3category",
+        );
       }
-      if (!state.v3type && state.v3types && state.v3types.length) {
-        state.v3type = state.v3types[0];
-      }
-      if (!state.v3category && state.v3categories && state.v3categories.length) {
-        state.v3category = state.v3categories[0];
-      }
+      syncV3FilterAliases(state);
       writeState(state, replaceHistory);
       ctx.showResultsState("loading", "Загрузка списка…", "", "");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
@@ -717,16 +755,7 @@
       if (state.v3manager && !teamAssignment) {
         params.set("managerGuid", state.v3manager);
       }
-      var typeTokens =
-        state.v3types && state.v3types.length ? state.v3types : parseTokenList(state.v3type);
-      if (typeTokens.length > 1) params.set("typeGuids", joinTokenList(typeTokens));
-      else if (typeTokens.length === 1) params.set("typeGuid", typeTokens[0]);
-      var categoryTokens =
-        state.v3categories && state.v3categories.length
-          ? state.v3categories
-          : parseTokenList(state.v3category);
-      if (categoryTokens.length > 1) params.set("categoryGuids", joinTokenList(categoryTokens));
-      else if (categoryTokens.length === 1) params.set("categoryGuid", categoryTokens[0]);
+      appendTypeCategoryParams(params, state);
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
@@ -869,8 +898,7 @@
           next.v3manager = document.getElementById("v3-manager-filter")?.value || "";
           next.v3types = readMultiSelectValues("v3-type-filter");
           next.v3categories = readMultiSelectValues("v3-category-filter");
-          next.v3type = next.v3types[0] || "";
-          next.v3category = next.v3categories[0] || "";
+          syncV3FilterAliases(next);
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
           var teamView = next.v3view === "teams" || next.ropEmployee;
           if (id === "v3-manager-filter" && teamView) {
@@ -917,22 +945,17 @@
       var loadSource = hooks.loadSource || "";
       var syncedV3 = legacyStateToV3(legacyState, loadSource);
       var urlNow = readState();
-      if (
-        !Object.prototype.hasOwnProperty.call(legacyState || {}, "v3types") &&
-        urlNow.v3types &&
-        urlNow.v3types.length
-      ) {
-        syncedV3.v3types = urlNow.v3types.slice();
-        syncedV3.v3type = syncedV3.v3types[0] || syncedV3.v3type || "";
+      if (!Object.prototype.hasOwnProperty.call(legacyState || {}, "v3types")) {
+        if (urlNow.v3types && urlNow.v3types.length) {
+          syncedV3.v3types = urlNow.v3types.slice();
+        }
       }
-      if (
-        !Object.prototype.hasOwnProperty.call(legacyState || {}, "v3categories") &&
-        urlNow.v3categories &&
-        urlNow.v3categories.length
-      ) {
-        syncedV3.v3categories = urlNow.v3categories.slice();
-        syncedV3.v3category = syncedV3.v3categories[0] || syncedV3.v3category || "";
+      if (!Object.prototype.hasOwnProperty.call(legacyState || {}, "v3categories")) {
+        if (urlNow.v3categories && urlNow.v3categories.length) {
+          syncedV3.v3categories = urlNow.v3categories.slice();
+        }
       }
+      syncV3FilterAliases(syncedV3);
       writeState(syncedV3, replaceHistory);
       hooks.showAppShell();
       hooks.updateViewChrome(legacyState);
@@ -1019,6 +1042,9 @@
 
     mergeFromLegacyState: mergeFromLegacyState,
     legacyStateToV3: legacyStateToV3,
+    buildListReturnQuery: buildListReturnQuery,
+    listFilterTokens: listFilterTokens,
+    appendTypeCategoryParams: appendTypeCategoryParams,
   };
 
   function paramsEnsureV3Mode() {

@@ -110,6 +110,140 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForURL(/\/(clients|profile|work)/);
   }
 
+  function parseListFilterGuids(url: string): { types: string[]; categories: string[] } {
+    const u = new URL(url);
+    const typesParam = u.searchParams.get("typeGuids") || u.searchParams.get("v3type") || "";
+    const catsParam = u.searchParams.get("categoryGuids") || u.searchParams.get("v3category") || "";
+    const types = typesParam ? typesParam.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    const categories = catsParam ? catsParam.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    return { types, categories };
+  }
+
+  function parseApiListFilterGuids(apiUrl: string): { types: string[]; categories: string[] } {
+    const u = new URL(apiUrl);
+    const typesParam = u.searchParams.get("typeGuids") || u.searchParams.get("typeGuid") || "";
+    const catsParam = u.searchParams.get("categoryGuids") || u.searchParams.get("categoryGuid") || "";
+    const types = typesParam ? typesParam.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    const categories = catsParam ? catsParam.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    return { types, categories };
+  }
+
+  async function ensureMobileFiltersExpanded(page: Page, viewport: { width: number; height: number }): Promise<void> {
+    if (viewport.width > 400) {
+      return;
+    }
+    const toggle = page.locator("#clients-filters-toggle");
+    if (await toggle.count()) {
+      const expanded = await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").count();
+      if (!expanded) {
+        await toggle.click();
+      }
+    }
+  }
+
+  async function waitForV3FiltersReady(
+    page: Page,
+    viewport?: { width: number; height: number },
+  ): Promise<void> {
+    if (viewport) {
+      await ensureMobileFiltersExpanded(page, viewport);
+    }
+    await page.locator("#v3-filters-wrap:not(.clients-hidden) #v3-type-filter").waitFor({
+      state: "visible",
+      timeout: 30000,
+    });
+  }
+
+  async function readDomMultiselectSets(page: Page): Promise<{ types: string[]; categories: string[] }> {
+    return page.evaluate(
+      `(() => {
+        var typeEl = document.getElementById("v3-type-filter");
+        var catEl = document.getElementById("v3-category-filter");
+        var types = typeEl && typeEl.selectedOptions
+          ? Array.from(typeEl.selectedOptions).map(function (o) { return o.value; })
+          : [];
+        var categories = catEl && catEl.selectedOptions
+          ? Array.from(catEl.selectedOptions).map(function (o) { return o.value; })
+          : [];
+        return { types: types, categories: categories };
+      })()`,
+    ) as Promise<{ types: string[]; categories: string[] }>;
+  }
+
+  async function assertMultiselectSets(
+    page: Page,
+    expected: { types: string[]; categories: string[] },
+    apiUrl?: string,
+  ): Promise<void> {
+    const dom = await readDomMultiselectSets(page);
+    assert.deepEqual(dom.types.sort(), expected.types.slice().sort());
+    assert.deepEqual(dom.categories.sort(), expected.categories.slice().sort());
+    const urlSets = parseListFilterGuids(page.url());
+    assert.deepEqual(urlSets.types.sort(), expected.types.slice().sort());
+    assert.deepEqual(urlSets.categories.sort(), expected.categories.slice().sort());
+    if (apiUrl) {
+      const apiSets = parseApiListFilterGuids(apiUrl);
+      assert.deepEqual(apiSets.types.sort(), expected.types.slice().sort());
+      assert.deepEqual(apiSets.categories.sort(), expected.categories.slice().sort());
+    }
+  }
+
+  async function selectLegalMultiselectFilters(page: Page): Promise<string> {
+    await waitForV3FiltersReady(page);
+    await page.waitForFunction(function () {
+      var typeSel = document.getElementById("v3-type-filter");
+      var catSel = document.getElementById("v3-category-filter");
+      return (
+        typeSel &&
+        catSel &&
+        typeSel.options.length >= 2 &&
+        catSel.options.length >= 2
+      );
+    });
+    const listResp = page.waitForResponse(
+      (res) => {
+        if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+          return false;
+        }
+        const sets = parseApiListFilterGuids(res.url());
+        return (
+          sets.types.includes("t1") &&
+          sets.types.includes("t2") &&
+          sets.categories.includes("c1") &&
+          sets.categories.includes("c2")
+        );
+      },
+      { timeout: 60000 },
+    );
+    const afterTypes = page.waitForResponse(
+      (res) => {
+        if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+          return false;
+        }
+        const sets = parseApiListFilterGuids(res.url());
+        return sets.types.includes("t1") && sets.types.includes("t2");
+      },
+      { timeout: 60000 },
+    );
+    await page.selectOption("#v3-type-filter", ["t1", "t2"]);
+    await afterTypes;
+    await page.selectOption("#v3-category-filter", ["c1", "c2"]);
+    const resp = await listResp;
+    await page.waitForFunction(function () {
+      var params = new URL(window.location.href).searchParams;
+      var typeRaw = params.get("typeGuids") || params.get("v3type") || "";
+      var catRaw = params.get("categoryGuids") || params.get("v3category") || "";
+      return (
+        typeRaw.indexOf("t1") !== -1 &&
+        typeRaw.indexOf("t2") !== -1 &&
+        catRaw.indexOf("c1") !== -1 &&
+        catRaw.indexOf("c2") !== -1
+      );
+    });
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, resp.url());
+    return resp.url();
+  }
+
   async function assertListFilterState(page: Page): Promise<void> {
     const url = new URL(page.url());
     assert.equal(url.searchParams.get("v3mode"), "1");
@@ -212,15 +346,24 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     );
     await page.click('[data-v3entity="legal"]');
     await legalClick;
-    const restoreList = page.waitForResponse(
+    await page.waitForFunction(function () {
+      return document.querySelector('[data-v3entity="legal"].clients-view-switcher__btn--active');
+    });
+    const urlAfterEntityRound = new URL(page.url());
+    assert.equal(urlAfterEntityRound.searchParams.get("v3entity"), "legal");
+    assert.equal(urlAfterEntityRound.searchParams.get("v3type") || "", "");
+    assert.equal(urlAfterEntityRound.searchParams.get("typeGuids") || "", "");
+
+    await waitForV3FiltersReady(page, viewport);
+    const restoreTypeList = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
         res.url().includes("entity=legal") &&
         res.url().includes("typeGuid=t1") &&
         res.status() === 200,
     );
-    await page.goto(listUrl);
-    await restoreList;
+    await page.selectOption("#v3-type-filter", "t1");
+    await restoreTypeList;
     await waitForLegalList(page, true);
     await assertListFilterState(page);
 
@@ -335,10 +478,11 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
         res.url().includes("typeGuids=t1") &&
+        res.url().includes("categoryGuids=c1") &&
         res.status() === 200,
     );
     await page.selectOption("#v3-type-filter", ["t1", "t2"]);
-    await page.selectOption("#v3-category-filter", "c1");
+    await page.selectOption("#v3-category-filter", ["c1", "c2"]);
     await multiList;
     await page
       .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
@@ -348,7 +492,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     const returnParam = decodeURIComponent(new URL(page.url()).searchParams.get("return") || "");
     assert.ok(returnParam.includes("typeGuids=t1"));
-    assert.ok(returnParam.includes("categoryGuids=c1") || returnParam.includes("v3category=c1"));
+    assert.ok(returnParam.includes("categoryGuids=c1"));
     assert.ok(returnParam.includes("q=Legal"));
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/typeGuids=t1/);
@@ -356,7 +500,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.close();
   });
 
-  it("team responsible switch preserves multiselect type filter without reload", async () => {
+  it("team responsible switch preserves dual multiselect filters without reload", async () => {
     await seed();
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");
@@ -379,43 +523,221 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     );
     await page.locator(`button[data-manager="${M1}"][data-responsible-entity="clients"]`).click();
     await listM1;
-    await page.waitForFunction(function () {
-      var sel = document.getElementById("v3-type-filter");
-      return sel && sel.options.length > 0;
-    });
-    const typeFiltered = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/clients/v3/list") &&
-        res.url().includes("typeGuid=t1") &&
-        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
-        res.status() === 200,
-      { timeout: 60000 },
-    );
-    await page.selectOption("#v3-type-filter", "t1");
-    await typeFiltered;
-    await page.locator('#view-switcher [data-view="teams"]').click();
-    await page.waitForSelector(`button[data-manager="${M2}"][data-responsible-entity="clients"]`, {
-      timeout: 60000,
-    });
+    await selectLegalMultiselectFilters(page);
+    const m2Btn = page.locator(`button[data-manager="${M2}"][data-responsible-entity="clients"]`).first();
+    await m2Btn.waitFor({ state: "attached", timeout: 60000 });
     const listM2 = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
         res.url().includes("responsibleGuid=" + encodeURIComponent(M2)) &&
-        res.url().includes("typeGuid=t1") &&
+        res.url().includes("typeGuids=t1") &&
+        res.url().includes("categoryGuids=c1") &&
         res.status() === 200,
       { timeout: 60000 },
     );
-    await page.locator(`button[data-manager="${M2}"][data-responsible-entity="clients"]`).click();
-    await listM2;
+    await page.evaluate(function (managerGuid) {
+      var btn = document.querySelector(
+        'button[data-manager="' + managerGuid + '"][data-responsible-entity="clients"]',
+      );
+      if (btn) {
+        btn.click();
+      }
+    }, M2);
+    const respM2 = await listM2;
+    await page.waitForFunction(function () {
+      var params = new URL(window.location.href).searchParams;
+      var typeRaw = params.get("typeGuids") || params.get("v3type") || "";
+      return typeRaw.indexOf("t1") !== -1 && typeRaw.indexOf("t2") !== -1;
+    });
     await page.waitForFunction(function () {
       var sel = document.getElementById("v3-type-filter");
-      return (
-        sel &&
-        Array.from(sel.selectedOptions).some(function (opt) {
-          return opt.value === "t1";
-        })
-      );
+      if (!sel) {
+        return false;
+      }
+      var selected = Array.from(sel.selectedOptions).map(function (o) {
+        return o.value;
+      });
+      return selected.indexOf("t1") !== -1 && selected.indexOf("t2") !== -1;
     });
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, respM2.url());
+    await page.close();
+  });
+
+  it("multiselect filters persist across responsible kind, card, history and chip clears", async () => {
+    await seed();
+    const page = await browser.newPage();
+    await login(page, "admin-v3-ui@example.com");
+    const initialList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=legal") && res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&page=1&q=Legal", {
+      waitUntil: "networkidle",
+    });
+    await initialList;
+    await selectLegalMultiselectFilters(page);
+    const teamsUrl = new URL(page.url());
+    teamsUrl.pathname = "/clients";
+    teamsUrl.searchParams.set("view", "teams");
+    teamsUrl.searchParams.set("v3view", "teams");
+    teamsUrl.searchParams.set("ropEmployee", ROP);
+    await page.goto(teamsUrl.toString(), { waitUntil: "networkidle" });
+    await page.waitForSelector(`button[data-manager="${M1}"][data-responsible-entity="clients"]`, { timeout: 60000 });
+    const listM1 = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(M1)) &&
+        res.url().includes("typeGuids=t1") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.locator(`button[data-manager="${M1}"][data-responsible-entity="clients"]`).click();
+    const m1Url = (await listM1).url();
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, m1Url);
+
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForSelector(
+      `button[data-manager="${REGIONAL}"][data-responsible-kind="regional"][data-responsible-entity="clients"]`,
+      { timeout: 60000 },
+    );
+    const listRegional = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(REGIONAL)) &&
+        res.url().includes("responsibleKind=regional") &&
+        res.url().includes("typeGuids=t1") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page
+      .locator(
+        `button[data-manager="${REGIONAL}"][data-responsible-kind="regional"][data-responsible-entity="clients"]`,
+      )
+      .click();
+    const regionalUrl = (await listRegional).url();
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, regionalUrl);
+
+    await page.locator('#view-switcher [data-view="teams"]').click();
+    await page.waitForSelector(
+      `button[data-manager="${HARDWARE}"][data-responsible-kind="hardware"][data-responsible-entity="clients"]`,
+      { timeout: 60000 },
+    );
+    const listHardware = page.waitForResponse(
+      (res) =>
+        res.url().includes("responsibleGuid=" + encodeURIComponent(HARDWARE)) &&
+        res.url().includes("responsibleKind=hardware") &&
+        res.url().includes("typeGuids=t1") &&
+        res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page
+      .locator(`button[data-manager="${HARDWARE}"][data-responsible-kind="hardware"][data-responsible-entity="clients"]`)
+      .click();
+    const hardwareUrl = (await listHardware).url();
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, hardwareUrl);
+
+    const listAll = page
+      .waitForResponse(
+        (res) =>
+          res.url().includes("/api/clients/v3/list") &&
+          res.url().includes("entity=legal") &&
+          res.url().includes("typeGuids=t1") &&
+          res.status() === 200,
+        { timeout: 60000 },
+      )
+      .catch(function () {
+        return null;
+      });
+    await page.locator('#view-switcher [data-view="all"]').click();
+    await page.waitForURL(/view=all/, { timeout: 60000 });
+    const allResp = await listAll;
+    if (allResp) {
+      await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, allResp.url());
+    } else {
+      await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] });
+    }
+
+    await page
+      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .first()
+      .click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    const returnParam = decodeURIComponent(new URL(page.url()).searchParams.get("return") || "");
+    assert.ok(returnParam.includes("typeGuids=t1"));
+    assert.ok(returnParam.includes("categoryGuids=c1"));
+
+    const backList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("typeGuids=t1") && res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.click('[data-testid="v3-back-to-list"]');
+    const backUrl = (await backList).url();
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, backUrl);
+
+    await page.goBack();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    const forwardList = page.waitForResponse(
+      (res) => {
+        if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+          return false;
+        }
+        const sets = parseApiListFilterGuids(res.url());
+        return sets.types.includes("t1") && sets.types.includes("t2");
+      },
+      { timeout: 60000 },
+    );
+    await page.goForward();
+    await page.waitForURL(/typeGuids=t1/);
+    const forwardResp = await forwardList.catch(function () {
+      return null;
+    });
+    await page.waitForFunction(function () {
+      var sel = document.getElementById("v3-type-filter");
+      if (!sel) {
+        return false;
+      }
+      var selected = Array.from(sel.selectedOptions).map(function (o) {
+        return o.value;
+      });
+      return selected.indexOf("t1") !== -1 && selected.indexOf("t2") !== -1;
+    });
+    if (forwardResp) {
+      await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, forwardResp.url());
+    } else {
+      await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] });
+    }
+
+    const reloadList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("typeGuids=t1") && res.status() === 200,
+      { timeout: 60000 },
+    );
+    await page.reload();
+    const reloadUrl = await reloadList;
+    await assertMultiselectSets(page, { types: ["t1", "t2"], categories: ["c1", "c2"] }, reloadUrl.url());
+
+    const removeOneChip = page.waitForResponse(
+      (res) => {
+        if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+          return false;
+        }
+        const types = parseApiListFilterGuids(res.url()).types.sort();
+        return types.length === 1 && types[0] === "t2";
+      },
+      { timeout: 60000 },
+    );
+    await page.click('[data-v3-clear-filter="v3type"][data-v3-clear-token="t1"]');
+    const oneChipUrl = (await removeOneChip).url();
+    await assertMultiselectSets(page, { types: ["t2"], categories: ["c1", "c2"] }, oneChipUrl);
+
+    const clearLastTypeChip = page.waitForResponse(
+      (res) => {
+        const u = res.url();
+        return u.includes("/api/clients/v3/list") && !u.includes("typeGuid") && res.status() === 200;
+      },
+      { timeout: 60000 },
+    );
+    await page.click('[data-v3-clear-filter="v3type"][data-v3-clear-token="t2"]');
+    const noTypeUrl = (await clearLastTypeChip).url();
+    await assertMultiselectSets(page, { types: [], categories: ["c1", "c2"] }, noTypeUrl);
+
     await page.close();
   });
 

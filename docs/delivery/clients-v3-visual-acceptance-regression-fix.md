@@ -1,10 +1,35 @@
-# Clients v3 — регрессии multiselect и приёмка — SHA `7687a2d`
+# Clients v3 — multiselect `[]`, browser matrix, приёмка
 
-## Исправленные блокеры
+## SHA и объём
 
-1. **Return из карточки:** `typeGuids` / `categoryGuids` в `LIST_QUERY_KEYS` (`clients-logic.js`); нормализация multiselect в `loadList` / `loadOrchestrated`.
-2. **Смена ответственного:** `resolveV3MultiFilter` + DOM-first при `!fromUrl`; явные `v3types: []` через legacy patch.
-3. **Browser test:** ожидание selectedOptions вместо `options.length > 1`; сценарий multiselect return через UI.
+- **Итоговый SHA:** `6968730` (ветка `cursor/clients-v3-prototype-ui-9e11`, PR #77).
+- **Предыдущие опорные:** `7687a2d` (multiselect return/persistence), `ec00c76` (captures/docs).
+
+## Закрытый дефект: приоритет пустых массивов
+
+**Симптом:** при `v3types: []` / `v3categories: []` в legacy/sync оставались одиночные `v3type`/`v3category`, URL и API уходили с `typeGuid`/`categoryGuid`.
+
+**Правило (единое):**
+
+- Собственное свойство массива (`v3types` / `v3categories`) — финальное значение, включая `[]`.
+- При `[]` alias (`v3type` / `v3category`) пустой; fallback к legacy single только если массива **нет** как own property.
+- Пустой DOM multiselect **не** перекрывает непустой URL (ответственный/teams до sync options).
+- Смена сущности (`v3entity`) **сбрасывает** type/category (несовместимые guid между сущностями).
+
+**Код:** `listFilterTokens`, `syncV3FilterAliases`, `appendTypeCategoryParams`, `legacyStateToV3`, `writeState`, `loadList`, `loadOrchestrated`, `resolveV3MultiFilter`, chips/`mergeListStateForUserAction`.
+
+**Unit:** `test/unit/clients-v3-multiselect-normalization.test.ts` — `[]` без ручного обнуления alias, `[]` со stale alias, legacy single без массива, URL/API/return query.
+
+## Browser: multiselect-сценарии
+
+`test/browser/clients-v3.browser.test.ts` (11 PASS):
+
+- Dual multiselect (t1+t2, c1+c2) в DOM, URL и API.
+- Менеджер A→B (teams, force-safe click compact UI).
+- Менеджер → regional → hardware → all + card → return.
+- Back / Forward / Reload с ожиданием list/options sync.
+- Снятие одного chip и последнего type chip.
+- `runViewportFlow`: без restorative `page.goto` после legal←retail; правило сброса фильтров на entity switch + повторный выбор t1 для card-flow.
 
 ## Тесты (изолированная БД, последовательно)
 
@@ -12,30 +37,32 @@
 |---------|------|
 | `npm run typecheck` | да |
 | `npm run build` | да |
-| `npm test` | 699 |
+| `npm test` | 704 |
 | `node --import tsx --test --test-concurrency=1 test/integration/clients-v3-api.test.ts test/integration/clients-assistant-delegation-presentation.test.ts` | 17 |
-| `node --import tsx --test --test-concurrency=1 test/browser/clients-v3.browser.test.ts` | 10 |
+| `node --import tsx --test --test-concurrency=1 test/browser/clients-v3.browser.test.ts` | 11 |
 | `node --import tsx --test --test-concurrency=1 test/browser/clients-v3-roles-entry.browser.test.ts test/browser/clients-v3-visual-acceptance.browser.test.ts` | 14 |
 
-Дополнительно: `test/helpers/test-db.ts` — `pg_terminate_backend` перед reset (снятие `IMPORT_LOCKED` от зависших прогонов).
+**Итого browser:** 25.
 
-## Визуальная матрица (capture на итоговом SHA, см. `captures-<sha>/`)
+## Визуальная матрица
 
-| Роль | Desktop | Mobile | Каркас/IA | Фильтры multiselect | Return/card | Вердикт vs прототип |
-|------|---------|--------|-----------|---------------------|-------------|---------------------|
-| manager | снято | снято | PARTIAL (H1 OK) | PARTIAL | PASS (unit+browser) | FAIL pixel |
-| assistant | снято | — | PARTIAL | N/A | NOT RUN card | PARTIAL |
-| regional_manager | снято | снято | PARTIAL | PARTIAL | NOT RUN | FAIL |
-| rop | снято | снято | PARTIAL | PARTIAL | NOT RUN | FAIL team cards |
-| director | снято | снято | PARTIAL | PARTIAL | NOT RUN | FAIL |
-| admin | снято | снято | PARTIAL | PARTIAL | field map PASS | FAIL row actions |
+Captures: прогон `clients-v3-visual-acceptance.browser.test.ts` на итоговом SHA (roles-entry + visual-acceptance PASS).
 
-**Общий визуальный PASS:** нет (остаются row actions, field-builder INN/TOP, pixel parity team cards).
+| Роль | Desktop | Mobile | Фильтры multiselect | Return/card | Вердикт vs прототип |
+|------|---------|--------|---------------------|-------------|---------------------|
+| manager | capture | capture | PASS (browser+unit) | PASS | PARTIAL pixel |
+| assistant | capture | — | N/A | PARTIAL | PARTIAL |
+| regional_manager | capture | capture | PARTIAL | NOT RUN deep | FAIL pixel |
+| rop | capture | capture | PARTIAL | NOT RUN deep | FAIL team cards |
+| director | capture | capture | PARTIAL | NOT RUN deep | FAIL pixel |
+| admin | capture | capture | PASS field map | PARTIAL | FAIL row actions |
 
-## Оставшиеся решения владельцу
+**Общий визуальный PASS:** **нет** — без контракта row quick actions и pixel parity team cards/field-builder.
 
-- Перечень разрешённых **row quick actions** (контракт).
+## Блокеры владельца
+
+- Контракт **row quick actions** в таблице списка.
 
 ## Production
 
-Не изменялся (только ветка PR, test DB).
+Не изменялся (ветка PR, `TEST_DATABASE_URL` only).

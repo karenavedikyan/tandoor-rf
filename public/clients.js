@@ -4998,6 +4998,10 @@
               v3entity: entityId,
               page: 1,
               q: searchInput.value.trim(),
+              v3types: [],
+              v3categories: [],
+              v3type: "",
+              v3category: "",
             });
             if (entityId !== "retail" && entityId !== "orphan_retail") {
               v3state.closed = "";
