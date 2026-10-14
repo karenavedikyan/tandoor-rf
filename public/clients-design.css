@@ -215,7 +215,7 @@
 .clients-design-page.clients-role-manager #clients-stat-no-outlets-wrap,
 .clients-design-page.clients-role-regional #clients-stat-no-outlets-wrap,
 .clients-design-page.clients-role-assistant #clients-stat-no-outlets-wrap {
-  display: none;
+  display: none !important;
 }
 
 .clients-design-page .clients-stats-strip--two-cols:not(.clients-stats-strip--incomplete) {
@@ -398,8 +398,16 @@
   gap: 8px;
 }
 
+.clients-design-page #v3-filters-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  align-items: end;
+  gap: 8px;
+}
+
 @media (min-width: 768px) {
-  .clients-design-page #clients-filters-panel {
+  .clients-design-page .clients-toolbar #clients-filters-panel.clients-toolbar__row--filters {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px 10px;
@@ -407,7 +415,7 @@
     width: 100%;
   }
 
-  .clients-design-page #v3-filters-wrap {
+  .clients-design-page #v3-filters-wrap.clients-toolbar__row--filters {
     display: contents;
   }
 
@@ -421,14 +429,6 @@
     min-height: 36px;
     margin-top: 2px;
   }
-}
-
-.clients-design-page #v3-filters-wrap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  width: 100%;
-  align-items: end;
-  gap: 8px;
 }
 
 .clients-design-page #v3-filters-wrap .clients-field {
@@ -958,13 +958,26 @@
     padding-bottom: 16px;
   }
 
+  .clients-design-page .clients-manager-chrome {
+    gap: 6px;
+  }
+
+  .clients-design-page .clients-employee-card {
+    flex: 0 0 auto;
+  }
+
   .clients-design-page .clients-employee-card__scope {
     text-align: left;
     width: 100%;
+    flex: 0 0 auto;
   }
 
   .clients-design-page .clients-role-head {
     margin: 0;
+  }
+
+  .clients-design-page .clients-workspace-nav {
+    margin-top: 0;
   }
 
   .clients-design-page .clients-stats-strip:not(.clients-stats-strip--incomplete) {
