@@ -1,45 +1,45 @@
-# Clients — визуальное соответствие прототипу
+# Clients — визуальное соответствие прототипу (#clients)
 
-PR: https://github.com/karenavedikyan/tandoor-rf/pull/78 (draft), HEAD `5504374`.
+PR: https://github.com/karenavedikyan/tandoor-rf/pull/78 (draft), HEAD `3ffaf82`.
 
-Эталон: [Perplexity prototype](https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c).  
-Сохранённые PNG эталона: store `media/clients-v3-visual-review/prototype/`.  
-Пары «эталон / реализация» для этого PR: store `media/clients-visual-pr/`.
+Эталон: [Perplexity «3. Клиентская база»](https://www.perplexity.ai/computer/a/4f284ecc-6d26-4f4e-9d3d-36b2b7cf314c) (`#clients`, не экран #exchange «28. Клиенты, ТТ и ответственные»).
+
+Скриншоты реализации (#clients): store `media/clients-visual-pr/captures-3ffaf82/`.  
+PNG из `media/clients-v3-visual-review/prototype/` — IA exchange; не использовать как эталон #clients без проверки.
 
 ## Экраны (роли)
 
 | Экран | Desktop light | Desktop dark | Mobile |
 |-------|---------------|--------------|--------|
-| manager — список «Моя база» | parity pass (композиция/KPI/таблица) | **исправлено**: фон content-area и поверхности | **исправлено**: карточки списка, отступы |
-| assistant — баннер замещения | стиль баннера в палитре Golos | dark tokens | mobile spacing |
-| regional — вход + KPI | PARTIAL (заголовки роли OK) | dark tokens | PARTIAL |
-| rop — KPI + «Моя база» / команда | PARTIAL (compact team vs employee cards) | dark tokens | PARTIAL |
-| director — «Все клиенты» / teams grid | PARTIAL | dark tokens | PARTIAL |
-| admin — 1C bar + field map link | PARTIAL (bar layout) | dark tokens | PARTIAL |
+| manager — «Моя база» | KPI band + dense toolbar (search + multiselect + «Сбросить» в одну строку) | content/surface/tables/teams в палитре Golos | плоский список, dividers |
+| assistant — замещение | баннер + compact employee + KPI | dark tokens | spacing списка |
+| regional | как manager (dense filters) | dark tokens | список |
+| rop / director / admin | KPI 3/5 кол., compact teams, employee строка | toolbar/results/KPI/teams контрастнее | teams/list |
+| карточка клиента (v3) | секции, back-link, wrap UUID/SHA | секции + back-link | wrap длинных значений |
 
-## Закрыто в этом PR (только presentation)
+## Закрыто в PR (только CSS + presentation markup v3 list/card)
 
-- Тёмная тема для `.clients-design-page .legacy-content` (палитра как у карточки клиента).
-- Hover строк таблицы через `--rf-row-hover`, без hardcoded `#fafbfc`.
-- Mobile list cards: заголовок — ссылка `.clients-link`, метаданные — отдельные строки `.clients-card__line`.
-- Desktop padding content `24px 28px`, multiselect filters/chips, sticky search на mobile.
-- Ссылки в таблице v3 — класс `.clients-link` (цвет прототипа).
+- **Шапка / KPI:** `clients-role-head` — compact employee + scope (без большой карточки); KPI в `clients-kpi-band` (существующие показатели, без новых расчётов).
+- **Порядок chrome:** manager/regional — `clients-manager-chrome` до view-switcher; 1C update в `clients-page-header`.
+- **Фильтры manager/regional desktop:** `clients-toolbar--dense` — одна строка: поиск, multiselect, «Сбросить», entity/columns; меньше vertical gap; без field-builder/chips exchange.
+- **Teams / dark:** плоский `clients-compact-team-list`, плотные rows; dark — таблицы, KPI band, teams, toolbar/results shell.
+- **Список mobile:** один контейнер, `.clients-link` на заголовках.
+- **Карточка:** `client-card-prototype.css` — секции v3, `client-detail-back`, `overflow-wrap` / `word-break` для dd, pre, code, UUID.
+- **Sidebar dark logo:** `legacy-shell.css` overlay на `.legacy-sidebar__brand`.
 
-## Оставшиеся visual gaps
+## Оставшееся (visual, не блокирует merge по scope)
 
-- Pixel parity KPI/employee card vs прототип (прототип — другой IA: нет отдельной «карточки сотрудника» у manager в эталоне).
-- Фильтры: прототип — field-builder + chip row; реализация — v3 multiselect + chips активных фильтров (визуально ближе, но не 1:1).
-- Row quick actions / декоративные кнопки строки — в прототипе есть, в продукте не показываем.
-- РОП «Моя команда»: compact team vs полноразмерные employee cards прототипа.
-- Admin «По командам» / field map — layout PARTIAL.
+- Pixel-perfect vs live Perplexity без сохранённого reference PNG именно для #clients.
+- Декоративные row actions прототипа — намеренно не показываем.
+- Admin «По командам» / field map — мелкие отличия сетки vs прототип.
 
-## Functional gaps (вне scope PR)
+## Functional (вне scope PR)
 
-- Row actions без API-контракта.
-- Field-builder (INN/TOP/…) и legacy-only поля фильтров.
-- ЛПР на legal entity, публикация `#орк` и прочие R2-контракты.
+- Row actions, field-builder INN/TOP, API/SQL/auth/navigation/1С/Bitrix24.
 
-## Проверки
+## Проверки (HEAD `3ffaf82`)
 
-- `npm run typecheck`, `npm run build`
-- Browser: `clients-v3*.test.ts`, `clients-v3-roles-entry.browser.test.ts`, `clients-v3-visual-acceptance.browser.test.ts` (capture)
+- `npm run typecheck`, `npm run build` — OK
+- `clients-v3-roles-entry.browser.test.ts` — 6/6
+- `clients-v3.browser.test.ts` — 12/12
+- `clients-v3-visual-acceptance.browser.test.ts` — 9/9; captures → `media/clients-visual-pr/captures-3ffaf82/`
