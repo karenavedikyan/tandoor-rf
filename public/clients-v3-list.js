@@ -3,6 +3,28 @@
 
   var DEFAULT_LEGAL_COLS = ["name", "category_name", "legal_name", "manager_name", "rop_name"];
   var DEFAULT_RETAIL_COLS = ["client_name", "store_address", "manager_name", "lpr_name", "club_status"];
+  var DEFAULT_FOCUS_LEGAL_COLS = [
+    "name",
+    "address_line",
+    "category_name",
+    "legal_name",
+    "manager_name",
+    "rop_name",
+    "city",
+    "status_label",
+    "type_name",
+  ];
+  var DEFAULT_FOCUS_RETAIL_COLS = [
+    "client_name",
+    "store_address",
+    "category_name",
+    "manager_name",
+    "lpr_name",
+    "club_status",
+    "city",
+    "rop_name",
+    "club_bonus",
+  ];
 
   var COLUMN_CATALOG = {
     name: { label: "Название клиента", required: true, filterKey: null },
@@ -77,9 +99,18 @@
     return isRetailEntity(v3entity) ? DEFAULT_RETAIL_COLS.slice() : DEFAULT_LEGAL_COLS.slice();
   }
 
-  function columnsStorageKey(userId, v3entity) {
+  function columnsStorageKey(userId, v3entity, mode) {
     var keyEntity = v3entity === "legal_grouped" ? "legal_grouped" : v3entity || "legal_grouped";
-    return "clients-v3-cols:" + (userId || "anon") + ":" + keyEntity;
+    var suffix = mode === "focus" ? ":focus" : "";
+    return "clients-v3-cols:" + (userId || "anon") + ":" + keyEntity + suffix;
+  }
+
+  function primaryColumnId(v3entity) {
+    return isRetailEntity(v3entity) ? "client_name" : "name";
+  }
+
+  function defaultFocusColumnIds(v3entity) {
+    return isRetailEntity(v3entity) ? DEFAULT_FOCUS_RETAIL_COLS.slice() : DEFAULT_FOCUS_LEGAL_COLS.slice();
   }
 
   function parseColumnIds(raw, v3entity) {
@@ -113,9 +144,8 @@
   }
 
   function resolveVisibleColumns(state, userId) {
-    var fromUrl = state.v3cols ? parseColumnIds(state.v3cols, state.v3entity) : null;
-    if (fromUrl) {
-      return fromUrl;
+    if (state.v3cols) {
+      return parseColumnIds(state.v3cols, state.v3entity);
     }
     try {
       var stored = localStorage.getItem(columnsStorageKey(userId, state.v3entity));
@@ -128,12 +158,43 @@
     return defaultColumnIds(state.v3entity);
   }
 
-  function persistColumns(userId, v3entity, ids) {
+  function resolveFocusColumns(state, userId) {
+    if (state.v3focuscols) {
+      return parseColumnIds(state.v3focuscols, state.v3entity);
+    }
     try {
-      localStorage.setItem(columnsStorageKey(userId, v3entity), ids.join(","));
+      var stored = localStorage.getItem(columnsStorageKey(userId, state.v3entity, "focus"));
+      if (stored) {
+        return parseColumnIds(stored, state.v3entity);
+      }
     } catch (_err) {
       /* ignore */
     }
+    return defaultFocusColumnIds(state.v3entity);
+  }
+
+  function persistColumns(userId, v3entity, ids, mode) {
+    try {
+      localStorage.setItem(columnsStorageKey(userId, v3entity, mode), ids.join(","));
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+
+  function mergeColumnOrder(existingIds, catalogIds, primary) {
+    var allowed = new Set(catalogIds);
+    var next = (existingIds || []).filter(function (id) {
+      return allowed.has(id);
+    });
+    if (!next.includes(primary)) {
+      next.unshift(primary);
+    }
+    catalogIds.forEach(function (id) {
+      if (!next.includes(id)) {
+        next.push(id);
+      }
+    });
+    return next;
   }
 
   function legalEntityLinks(item, shell, state) {
@@ -292,53 +353,193 @@
       return;
     }
     options = options || {};
+    var mode = options.mode === "focus" ? "focus" : "normal";
     var catalog = catalogForEntity(v3entity);
-    var gridClass =
-      "clients-columns-picker__grid" + (options.twoColumn ? " clients-columns-picker__grid--two-col" : "");
+    var primary = primaryColumnId(v3entity);
+    var catalogIds = catalog.map(function (c) {
+      return c.id;
+    });
+    var orderedIds = visibleIds.slice();
+    if (!orderedIds.includes(primary)) {
+      orderedIds.unshift(primary);
+    }
+    orderedIds = orderedIds.filter(function (id, index, all) {
+      return catalogIds.includes(id) && all.indexOf(id) === index;
+    });
+    var allSelected = catalogIds.every(function (id) {
+      return orderedIds.includes(id);
+    });
+    var scrollTop = pickerEl.scrollTop || 0;
+    var useReorder = options.reorder !== false;
+    var gridClass = useReorder
+      ? "x6-column-grid x16-columns"
+      : "clients-columns-picker__grid" + (options.twoColumn ? " clients-columns-picker__grid--two-col" : "");
     pickerEl.innerHTML =
       (options.intro
         ? '<p class="clients-columns-picker__intro">' + shell.escapeHtml(options.intro) + "</p>"
         : "") +
+      (useReorder
+        ? '<div class="x16-column-actions">' +
+          '<button type="button" data-v3-columns-all"' +
+          (allSelected ? " disabled" : "") +
+          ">Выбрать все</button>" +
+          '<button type="button" data-v3-columns-default" title="Восстановить стандартный набор и порядок колонок">По умолчанию</button>' +
+          "</div>"
+        : "") +
       '<div class="' +
       gridClass +
       '">' +
-      catalog
-        .map(function (col) {
-          var checked = visibleIds.indexOf(col.id) !== -1;
-          var disabled = col.required;
-          return (
-            '<label class="clients-columns-picker__item' +
-            (disabled ? " clients-columns-picker__item--disabled" : "") +
-            '">' +
-            '<input type="checkbox" data-v3-column-id="' +
-            shell.escapeHtml(col.id) +
-            '"' +
-            (checked ? " checked" : "") +
-            (disabled ? " disabled" : "") +
-            "> " +
-            shell.escapeHtml(col.label) +
-            "</label>"
-          );
-        })
-        .join("") +
+      (useReorder
+        ? catalog
+            .map(function (col) {
+              var index = orderedIds.indexOf(col.id);
+              var checked = index >= 0;
+              var movable = checked && col.id !== primary;
+              return (
+                '<div class="x16-column" data-column-order="' +
+                shell.escapeHtml(col.id) +
+                '" draggable="' +
+                (movable ? "true" : "false") +
+                '"><label><input type="checkbox" data-v3-column-id="' +
+                shell.escapeHtml(col.id) +
+                '"' +
+                (checked ? " checked" : "") +
+                (col.id === primary ? " disabled" : "") +
+                "> " +
+                shell.escapeHtml(col.label) +
+                "</label>" +
+                (movable
+                  ? '<div class="x16-arrows"><button type="button" data-v3-column-up="' +
+                    shell.escapeHtml(col.id) +
+                    '" aria-label="Вверх: ' +
+                    shell.escapeHtml(col.label) +
+                    '"' +
+                    (index === 1 ? " disabled" : "") +
+                    '>↑</button><button type="button" data-v3-column-down="' +
+                    shell.escapeHtml(col.id) +
+                    '" aria-label="Вниз: ' +
+                    shell.escapeHtml(col.label) +
+                    '"' +
+                    (index === orderedIds.length - 1 ? " disabled" : "") +
+                    ">↓</button></div>"
+                  : "") +
+                "</div>"
+              );
+            })
+            .join("")
+        : catalog
+            .map(function (col) {
+              var checked = orderedIds.indexOf(col.id) !== -1;
+              return (
+                '<label class="clients-columns-picker__item' +
+                (col.required ? " clients-columns-picker__item--disabled" : "") +
+                '"><input type="checkbox" data-v3-column-id="' +
+                shell.escapeHtml(col.id) +
+                '"' +
+                (checked ? " checked" : "") +
+                (col.required ? " disabled" : "") +
+                "> " +
+                shell.escapeHtml(col.label) +
+                "</label>"
+              );
+            })
+            .join("")) +
       "</div>";
+
+    function commit(nextIds) {
+      var normalized = mergeColumnOrder(nextIds, catalogIds, primary);
+      persistColumns(userId, v3entity, normalized, mode === "focus" ? "focus" : undefined);
+      onChange(normalized);
+    }
+
+    function reorderColumn(id, targetIndex) {
+      var list = orderedIds.slice();
+      var from = list.indexOf(id);
+      if (from < 1 || targetIndex < 1 || targetIndex >= list.length) {
+        return;
+      }
+      list.splice(from, 1);
+      list.splice(targetIndex, 0, id);
+      commit(list);
+    }
+
     pickerEl.querySelectorAll("input[data-v3-column-id]").forEach(function (input) {
       input.addEventListener("change", function () {
-        var next = catalog
-          .filter(function (col) {
-            if (col.required) {
-              return true;
-            }
-            var box = pickerEl.querySelector('input[data-v3-column-id="' + col.id + '"]');
-            return box && box.checked;
-          })
-          .map(function (col) {
-            return col.id;
+        var id = input.getAttribute("data-v3-column-id") || "";
+        if (id === primary) {
+          return;
+        }
+        var next = orderedIds.slice();
+        if (input.checked) {
+          if (!next.includes(id)) {
+            next.push(id);
+          }
+        } else {
+          next = next.filter(function (x) {
+            return x !== id;
           });
-        persistColumns(userId, v3entity, next);
-        onChange(next);
+        }
+        commit(next);
       });
     });
+
+    if (useReorder) {
+      pickerEl.querySelector("[data-v3-columns-all]")?.addEventListener("click", function () {
+        commit(
+          mergeColumnOrder(
+            [primary].concat(
+              catalogIds.filter(function (id) {
+                return id !== primary;
+              }),
+            ),
+            catalogIds,
+            primary,
+          ),
+        );
+      });
+      pickerEl.querySelector("[data-v3-columns-default]")?.addEventListener("click", function () {
+        commit(mode === "focus" ? defaultFocusColumnIds(v3entity) : defaultColumnIds(v3entity));
+      });
+      pickerEl.querySelectorAll("[data-v3-column-up]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-v3-column-up") || "";
+          reorderColumn(id, orderedIds.indexOf(id) - 1);
+        });
+      });
+      pickerEl.querySelectorAll("[data-v3-column-down]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-v3-column-down") || "";
+          reorderColumn(id, orderedIds.indexOf(id) + 1);
+        });
+      });
+      if (!pickerEl.dataset.dragBound) {
+        pickerEl.dataset.dragBound = "1";
+        pickerEl.addEventListener("dragstart", function (event) {
+          var row = event.target.closest("[data-column-order][draggable=\"true\"]");
+          if (row && event.dataTransfer) {
+            event.dataTransfer.setData("text/plain", row.getAttribute("data-column-order") || "");
+            event.dataTransfer.effectAllowed = "move";
+          }
+        });
+        pickerEl.addEventListener("dragover", function (event) {
+          if (event.target.closest("[data-column-order][draggable=\"true\"]")) {
+            event.preventDefault();
+          }
+        });
+        pickerEl.addEventListener("drop", function (event) {
+          var row = event.target.closest("[data-column-order][draggable=\"true\"]");
+          if (!row || !event.dataTransfer) {
+            return;
+          }
+          event.preventDefault();
+          var draggedId = event.dataTransfer.getData("text/plain");
+          var targetId = row.getAttribute("data-column-order") || "";
+          reorderColumn(draggedId, orderedIds.indexOf(targetId));
+        });
+      }
+    }
+
+    pickerEl.scrollTop = scrollTop;
   }
 
   function syncFilterbar(shell, state, options) {
@@ -426,6 +627,10 @@
   window.ClientsV3List = {
     catalogForEntity: catalogForEntity,
     resolveVisibleColumns: resolveVisibleColumns,
+    resolveFocusColumns: resolveFocusColumns,
+    defaultFocusColumnIds: defaultFocusColumnIds,
+    defaultColumnIds: defaultColumnIds,
+    primaryColumnId: primaryColumnId,
     renderTableHead: renderTableHead,
     renderColumnPicker: renderColumnPicker,
     syncFilterbar: syncFilterbar,

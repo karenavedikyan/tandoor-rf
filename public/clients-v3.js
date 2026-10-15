@@ -97,6 +97,8 @@
       colCity: params.get("colCity") || "",
       colStatus: params.get("colStatus") || "",
       filterOpen: params.get("filterOpen") === "1",
+      v3focus: params.get("v3focus") === "1",
+      v3focuscols: params.get("v3focuscols") || "",
       v3Rules:
         window.ClientsV3FieldRules && window.ClientsV3FieldRules.readRulesFromUrl
           ? window.ClientsV3FieldRules.readRulesFromUrl(search)
@@ -293,6 +295,10 @@
       colStatus: url.colStatus || "",
       v3Rules: url.v3Rules ? url.v3Rules.slice() : [],
       filterOpen: url.filterOpen,
+      v3focus: Object.prototype.hasOwnProperty.call(patch || {}, "v3focus") ? patch.v3focus : url.v3focus,
+      v3focuscols: Object.prototype.hasOwnProperty.call(patch || {}, "v3focuscols")
+        ? patch.v3focuscols
+        : url.v3focuscols || "",
     };
     if (patch) {
       Object.keys(patch).forEach(function (key) {
@@ -477,6 +483,8 @@
       colCity: urlFilters.colCity || "",
       colStatus: urlFilters.colStatus || "",
       filterOpen: urlFilters.filterOpen,
+      v3focus: fromUrl ? urlFilters.v3focus : false,
+      v3focuscols: urlFilters.v3focuscols || "",
       v3Rules: Array.isArray(legacy.v3Rules) ? legacy.v3Rules.slice() : (urlFilters.v3Rules || []).slice(),
     };
   }
@@ -550,6 +558,10 @@
     });
     if (state.filterOpen) params.set("filterOpen", "1");
     else params.delete("filterOpen");
+    if (state.v3focus) params.set("v3focus", "1");
+    else params.delete("v3focus");
+    if (state.v3focuscols) params.set("v3focuscols", state.v3focuscols);
+    else params.delete("v3focuscols");
     if (window.ClientsV3FieldRules) {
       window.ClientsV3FieldRules.appendRulesToParams(params, state);
     }
@@ -594,6 +606,8 @@
       if (s[key]) params.set(key, s[key]);
     });
     if (s.filterOpen) params.set("filterOpen", "1");
+    if (s.v3focus) params.set("v3focus", "1");
+    if (s.v3focuscols) params.set("v3focuscols", s.v3focuscols);
     if (window.ClientsV3FieldRules) {
       window.ClientsV3FieldRules.appendRulesToParams(params, s);
     }
@@ -660,7 +674,10 @@
     if (!listUi) {
       return [{ id: "name", label: "Название" }];
     }
-    var ids = listUi.resolveVisibleColumns(state, userId);
+    var ids =
+      state.v3focus && listUi.resolveFocusColumns
+        ? listUi.resolveFocusColumns(state, userId)
+        : listUi.resolveVisibleColumns(state, userId);
     var catalog = listUi.catalogForEntity(state.v3entity);
     return ids
       .map(function (id) {
@@ -959,7 +976,12 @@
           .getElementById("v3-lktandoor-chrome")
           ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
         document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
+        if (window.ClientsLktandoorFocus) {
+          window.ClientsLktandoorFocus.syncLayout(state);
+          window.ClientsLktandoorFocus.bindGlobal();
+        }
         if (lktandoorActive && ctx.lktandoorContext) {
+          window.__lktandoorListCtx = ctx;
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
           if (ctx.lktandoorContext.rolePresentation && ctx.entitySwitcherEl) {
             window.ClientsV3.mountEntitySwitcher(
@@ -973,7 +995,11 @@
       if (window.ClientsV3List) {
         window.ClientsV3List.applyDensity(!!state.v3dense);
       }
-      ctx.showResultsState("loading", "Загрузка списка…", "", "");
+      if (state.v3focus) {
+        ctx.showResultsContent();
+      } else {
+        ctx.showResultsState("loading", "Загрузка списка…", "", "");
+      }
       ctx.tableBody.setAttribute("aria-busy", "true");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
@@ -1093,7 +1119,14 @@
           }
           var data = result.data || { items: [], total: 0 };
           var items = data.items || [];
-          if (!items.length) {
+          var liveListState = readState();
+          var lktandoorListMode = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+          var focusMode =
+            lktandoorListMode &&
+            liveListState.v3focus &&
+            window.ClientsLktandoorFocus &&
+            window.ClientsLktandoorFocus.isActive(liveListState);
+          if (!items.length && !focusMode) {
             var emptyTitle = state.q ? "Ничего не найдено" : "Нет записей";
             var emptyText = state.q
               ? "По запросу «" + state.q + "» нет совпадений. Измените поиск или снимите фильтры."
@@ -1109,12 +1142,55 @@
             ctx.paginationEl.innerHTML = "";
             return;
           }
+          if (focusMode) {
+            ctx.showResultsContent();
+            var focusCols = resolveVisibleListColumns(liveListState, ctx.currentUserId);
+            if (ctx.formatResultCount) {
+              ctx.formatResultCount(liveListState, data.total || 0);
+            }
+            window.ClientsLktandoorFocus.render(ctx, {
+              state: liveListState,
+              items: items,
+              total: data.total || 0,
+              visibleCols: focusCols,
+              filterOptions: window.__lktandoorFilterOptions || {},
+              detailType: meta.detailEntity,
+              editor: window.__v3FocusEditor || null,
+              onState: function (nextState, editor) {
+                window.__v3FocusEditor = editor || null;
+                if (window.ClientsV3FieldRules) {
+                  window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
+                }
+                writeState(nextState, false);
+                window.ClientsV3.loadList(ctx, nextState, false);
+              },
+            });
+            ctx.tableBody.innerHTML = "";
+            ctx.cardsEl.innerHTML = "";
+            ctx.paginationEl.innerHTML = "";
+            window.__lastV3ListPayload = {
+              items: items,
+              total: data.total || 0,
+              visibleCols: focusCols,
+              filterOptions: window.__lktandoorFilterOptions || {},
+              detailType: meta.detailEntity,
+              onState: function (nextState, editor) {
+                window.__v3FocusEditor = editor || null;
+                if (window.ClientsV3FieldRules) {
+                  window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
+                }
+                writeState(nextState, false);
+                window.ClientsV3.loadList(ctx, nextState, false);
+              },
+            };
+            return;
+          }
           ctx.showResultsContent();
           var detailType = meta.detailEntity;
           var isGroupedList = state.v3entity === "legal_grouped";
           var listUi = window.ClientsV3List;
           var visibleCols = resolveVisibleListColumns(state, ctx.currentUserId);
-          var lktandoorList = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+          var lktandoorList = lktandoorListMode;
           if (listUi && ctx.tableHeadRow) {
             listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
               var patch = { page: 1 };
@@ -1207,6 +1283,21 @@
             },
             totalPages,
           );
+          window.__lastV3ListPayload = {
+            items: items,
+            total: data.total || 0,
+            visibleCols: visibleCols,
+            filterOptions: window.__lktandoorFilterOptions || {},
+            detailType: detailType,
+            onState: function (nextState, editor) {
+              window.__v3FocusEditor = editor || null;
+              if (window.ClientsV3FieldRules) {
+                window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
+              }
+              writeState(nextState, false);
+              window.ClientsV3.loadList(ctx, nextState, false);
+            },
+          };
         });
       return Promise.all([optionsPromise, listPromise]).finally(function () {
         if (!isStaleListLoad()) ctx.tableBody.setAttribute("aria-busy", "false");
@@ -1561,7 +1652,10 @@
         window.ClientsV3.closeLktandoorColumnsDialog(trigger);
         return;
       }
-      var visibleIds = window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
+      var focusMode = Boolean(state.v3focus);
+      var visibleIds = focusMode
+        ? window.ClientsV3List.resolveFocusColumns(state, ctx.currentUserId)
+        : window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
       dialog.innerHTML =
         '<div class="x13-columns-dialog__header">' +
         '<h2 id="v3-lktandoor-columns-title" class="x13-columns-dialog__title">Колонки реестра</h2>' +
@@ -1569,24 +1663,38 @@
         "</div>" +
         '<div class="x13-columns-dialog__body" id="v3-columns-picker-body"></div>';
       var body = dialog.querySelector("#v3-columns-picker-body");
+      var pickerOptions = {
+        reorder: true,
+        mode: focusMode ? "focus" : "normal",
+        intro:
+          "Выберите поля и расположите их в нужном порядке: перетаскивайте выбранные строки или используйте стрелки. Название клиента закреплено первым.",
+      };
+      function onColumnsChange(nextIds) {
+        var nextCols = window.ClientsV3List.columnsParamFromIds(nextIds);
+        var patch = focusMode ? { v3focuscols: nextCols } : { v3cols: nextCols };
+        var merged = mergeListStateForUserAction(Object.assign({ page: readState().page }, patch));
+        writeState(merged, true);
+        if (dialog.open) {
+          window.ClientsV3List.renderColumnPicker(
+            ctx.shell,
+            body,
+            state.v3entity,
+            nextIds,
+            ctx.currentUserId,
+            onColumnsChange,
+            pickerOptions,
+          );
+        }
+        window.ClientsV3.loadList(ctx, merged, false);
+      }
       window.ClientsV3List.renderColumnPicker(
         ctx.shell,
         body,
         state.v3entity,
         visibleIds,
         ctx.currentUserId,
-        function (nextIds) {
-          var nextCols = window.ClientsV3List.columnsParamFromIds(nextIds);
-          window.ClientsV3.loadList(
-            ctx,
-            mergeListStateForUserAction({ v3cols: nextCols, page: readState().page }),
-            true,
-          );
-        },
-        {
-          twoColumn: true,
-          intro: "Отметьте колонки для таблицы. Название клиента всегда отображается.",
-        },
+        onColumnsChange,
+        pickerOptions,
       );
       dialog.querySelector("#v3-columns-done")?.addEventListener("click", function () {
         window.ClientsV3.closeLktandoorColumnsDialog(trigger);
@@ -1627,6 +1735,7 @@
     mergeFromLegacyState: mergeFromLegacyState,
     legacyStateToV3: legacyStateToV3,
     buildListReturnQuery: buildListReturnQuery,
+    detailHref: detailHref,
     listFilterTokens: listFilterTokens,
     appendTypeCategoryParams: appendTypeCategoryParams,
     resetListLoadGenerationForTests: function () {

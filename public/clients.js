@@ -5548,6 +5548,25 @@
   });
   resetFiltersBtn.addEventListener("click", resetFilters);
   document.getElementById("v3-list-reset-filters")?.addEventListener("click", resetFilters);
+  document.getElementById("v3-focus-enter-btn")?.addEventListener("click", function () {
+    if (!exchangeV3Active || !window.ClientsV3 || !lktandoorListActive()) {
+      return;
+    }
+    cancelScheduledLoad();
+    invalidateInFlightRequests();
+    var next = window.ClientsV3.mergeListStateForUserAction({
+      v3focus: true,
+      page: window.ClientsV3.readState().page || 1,
+    });
+    window.ClientsV3.writeState(next, false);
+    var cached = window.__lastV3ListPayload;
+    var focusCtx = buildV3UiContext();
+    if (cached && window.ClientsLktandoorFocus) {
+      focusCtx.showResultsContent();
+      window.ClientsLktandoorFocus.render(focusCtx, Object.assign({}, cached, { state: next }));
+    }
+    window.ClientsV3.loadList(focusCtx, next, false);
+  });
   columnsPickerBtn?.addEventListener("click", function () {
     if (exchangeV3Active && window.ClientsV3 && shouldUseV3List({ view: currentView() })) {
       var v3state = window.ClientsV3.readState();

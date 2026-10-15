@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/clients.css" />
     <link rel="stylesheet" href="/clients-design.css" />
     <link rel="stylesheet" href="/clients-navigation-v13.css" />
+    <link rel="stylesheet" href="/clients-focus.css" />
   </head>
   <body class="legacy-body clients-design-page">
     <div class="legacy-app">
@@ -178,6 +179,14 @@
                   </nav>
                   <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
                     Колонки
+                  </button>
+                  <button
+                    type="button"
+                    class="workspace-button workspace-button--ghost x14-focus-enter clients-hidden"
+                    id="v3-focus-enter-btn"
+                    data-testid="v3-focus-enter"
+                  >
+                    На весь экран
                   </button>
                   <button
                     type="button"
@@ -746,6 +755,7 @@
               <div id="results-panel">
               <div id="results-state" class="clients-hidden" role="status" aria-live="polite"></div>
               <div id="results-content">
+                <div id="v3-focus-host" class="clients-hidden" data-testid="v3-focus-host"></div>
                 <div class="clients-table-wrap">
                   <table class="clients-table" aria-label="Список клиентов">
                     <thead>
@@ -787,6 +797,7 @@
     <script src="/clients-v3-list.js" defer></script>
     <script src="/clients-v3-field-rules.js" defer></script>
     <script src="/clients-lktandoor-list.js" defer></script>
+    <script src="/clients-lktandoor-focus.js" defer></script>
     <script src="/clients-lktandoor-teams.js" defer></script>
     <script src="/clients-v3.js" defer></script>
     <script src="/clients.js" defer></script>
