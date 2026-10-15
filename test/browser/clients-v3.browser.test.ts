@@ -481,6 +481,8 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForSelector('[data-testid="v3-back-to-list"]');
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForSelector("#v3-composition", { timeout: 15000 });
+    await page.click("#pc-tab-data");
+    await page.waitForSelector("#v3-composition a", { timeout: 15000 });
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click('[data-testid="v3-back-to-list"]');
@@ -1235,15 +1237,40 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   it("v3 list URL persists density toggle and column params", async () => {
     const page = await browser.newPage();
     await login(page, testCreds.adminEmail);
+    const listUrl =
+      baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,manager_name,rop_name";
     const listReady = page.waitForResponse(
       (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
     );
-    await page.goto(
-      baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,manager_name,rop_name",
-    );
+    await page.goto(listUrl);
     await listReady;
     assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    assert.match(new URL(page.url()).searchParams.get("v3cols") || "", /manager_name/);
     await page.waitForSelector("#clients-app.clients-v3-dense");
+
+    const reloadList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await reloadList;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+
+    const firstRow = page.locator("#clients-table-body a, #clients-cards a").first();
+    await firstRow.click();
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    const returnQuery = new URL(page.url()).searchParams.get("return") || "";
+    assert.ok(returnQuery.includes("v3dense=1"));
+    assert.ok(returnQuery.includes("v3cols="));
+    const backList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.click('[data-testid="v3-back-to-list"]');
+    await backList;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    assert.match(new URL(page.url()).searchParams.get("v3cols") || "", /manager_name/);
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+
     await page.click("#v3-density-btn");
     await page.waitForFunction(function () {
       return !new URL(window.location.href).searchParams.get("v3dense");

@@ -417,6 +417,14 @@
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
       pageSize: urlFilters.pageSize || 50,
+      v3cols: urlFilters.v3cols || "",
+      v3dense: !!urlFilters.v3dense,
+      city: fromUrl ? urlFilters.city || "" : domFilters?.city || urlFilters.city || "",
+      colManager: urlFilters.colManager || "",
+      colRegional: urlFilters.colRegional || "",
+      colRop: urlFilters.colRop || "",
+      colCity: urlFilters.colCity || "",
+      colStatus: urlFilters.colStatus || "",
     };
   }
 
