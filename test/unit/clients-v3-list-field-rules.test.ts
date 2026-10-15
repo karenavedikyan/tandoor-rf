@@ -34,4 +34,30 @@ describe("parseV3FilterRulesParam", () => {
     assert.ok(parseV3FilterRulesParam(JSON.stringify([{ field: "discountAmount", op: "eq", value: "0" }]), "legal"));
     assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "discountAmount", op: "gte", value: "abc" }]), "legal"), undefined);
   });
+
+  it("accepts legalName for legal and legal_grouped but not retail", () => {
+    const raw = JSON.stringify([{ field: "legalName", op: "contains", value: "Legal" }]);
+    assert.ok(parseV3FilterRulesParam(raw, "legal"));
+    assert.ok(parseV3FilterRulesParam(raw, "legal_grouped"));
+    assert.equal(parseV3FilterRulesParam(raw, "retail"), undefined);
+  });
+
+  it("legalName contains escapes wildcards and uses name_client", () => {
+    const params: unknown[] = [];
+    const { sql } = appendV3FieldRulesSql("", params, "legal", "le", [
+      { field: "legalName", op: "contains", value: "100%_\\" },
+    ]);
+    assert.match(sql, /le\.name_client.*ILIKE/i);
+    assert.match(sql, /ESCAPE '\\'/);
+    assert.equal(params[0], "%100\\%\\_\\\\%");
+  });
+
+  it("legalStatus rules remain separate from legalName", () => {
+    const params: unknown[] = [];
+    const status = appendV3FieldRulesSql("", params, "legal", "le", [
+      { field: "legalStatus", op: "contains", value: "Active" },
+    ]);
+    assert.match(status.sql, /LEGAL_STATUS|status/i);
+    assert.doesNotMatch(status.sql, /name_client/);
+  });
 });

@@ -92,6 +92,13 @@ export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
     ops: ["eq", "contains", "empty", "filled"],
   },
   {
+    id: "legalName",
+    label: "Юрлицо",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
     id: "closed",
     label: "ТТ закрыта",
     entity: ["retail", "orphan_retail"],
@@ -311,6 +318,10 @@ function appendRuleSql(
 
   if (rule.field === "legalStatus" && entity === "legal") {
     return textExpr(LEGAL_STATUS_SQL);
+  }
+
+  if (rule.field === "legalName" && entity === "legal") {
+    return textExpr(`${alias}.name_client`);
   }
 
   if (rule.field === "closed" && entity === "retail") {

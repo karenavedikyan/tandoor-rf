@@ -265,6 +265,32 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("legalName shortcut filters by legal entity name in grouped list", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForList(page);
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = true;
+    });
+    await page.locator(".x6-field-shortcut:not([disabled])").filter({ hasText: "Юрлицо" }).click();
+    assert.equal(await page.locator("#v3-rule-field").inputValue(), "legalName");
+    await page.fill("#v3-rule-value", "Legal Two");
+    await updateList(page, () => page.click("#v3-rule-add"));
+    assert.equal(await rowCount(page), 1);
+    const rowText = await page.locator("#clients-table-body tr").innerText();
+    assert.match(rowText, /Legal Two/);
+    assert.doesNotMatch(rowText, /Legal One/);
+    await page.locator("#clients-table-body tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.goBack());
+    assert.equal(await rowCount(page), 1);
+    assert.ok(page.url().includes("filters="));
+    await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').first().click());
+    assert.ok((await rowCount(page)) >= 2);
+    await page.close();
+  });
+
   it("columns dialog: open, toggle, done, escape, focus restore", async () => {
     const page = await browser.newPage({ viewport: DESKTOP });
     await login(page, "manager-lktandoor-list@example.com");

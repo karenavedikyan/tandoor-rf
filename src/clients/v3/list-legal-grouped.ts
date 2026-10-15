@@ -88,11 +88,21 @@ function appendEligibilityFilters(
   params: unknown[],
   holdingScope: ReturnType<typeof v3HoldingVisibilityScope>,
   context: AccessContext,
-): string {
+): { filterSql: string; memberLegalNameSql: string } {
   let sql = appendCatalogAssignmentFilters({ ...input, categoryGuid: undefined, categoryGuids: undefined }, "le", params);
   sql += appendV3ColumnFilters(input, "legal", params);
   const categoryRules = (input.fieldRules || []).filter(rule => rule.field === "categoryGuid");
-  sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", (input.fieldRules || []).filter(rule => rule.field !== "categoryGuid")).sql;
+  const legalNameRules = (input.fieldRules || []).filter((rule) => rule.field === "legalName");
+  const rulesWithoutCategory = (input.fieldRules || []).filter((rule) => rule.field !== "categoryGuid");
+  const rulesWithoutCategoryAndLegalName = rulesWithoutCategory.filter((rule) => rule.field !== "legalName");
+  sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", rulesWithoutCategoryAndLegalName).sql;
+  let legalNameOnLe = "";
+  if (legalNameRules.length) {
+    const legalNameApplied = appendV3FieldRulesSql("TRUE", params, "legal_grouped", "le", legalNameRules);
+    legalNameOnLe = legalNameApplied.sql === "TRUE" ? "" : legalNameApplied.sql.slice(4);
+    sql += legalNameOnLe;
+  }
+  const memberLegalNameSql = legalNameOnLe.replace(/\ble\./g, "s.");
   const categoryGuids = input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : [];
   if (categoryRules.length || categoryGuids.length) {
     const category = groupedCategoryExpressions(context, "le", params).guid;
@@ -114,7 +124,7 @@ function appendEligibilityFilters(
   if (qPattern) {
     sql += appendGroupedSearch(qPattern, params, holdingScope.clause, holdingScope.params);
   }
-  return sql;
+  return { filterSql: sql, memberLegalNameSql };
 }
 
 export async function countV3LegalGroups(
@@ -153,7 +163,7 @@ export async function listV3LegalGrouped(
 
   const countParams = [...scope.params];
   const territorySql = appendTerritoryAssignmentFilters(input, "le", countParams);
-  const matchSql = appendEligibilityFilters(input, countParams, holdingScope, context);
+  const { filterSql: matchSql, memberLegalNameSql } = appendEligibilityFilters(input, countParams, holdingScope, context);
 
   const groupKey = readableGroupKey(context, countParams);
   const countResult = await query<{ count: string }>(
@@ -180,7 +190,9 @@ export async function listV3LegalGrouped(
 
   const selectParams = [...scope.params];
   const selectTerritory = appendTerritoryAssignmentFilters(input, "le", selectParams);
-  const selectMatch = appendEligibilityFilters(input, selectParams, holdingScope, context);
+  const selectFilters = appendEligibilityFilters(input, selectParams, holdingScope, context);
+  const selectMatch = selectFilters.filterSql;
+  const selectMemberLegalNameSql = selectFilters.memberLegalNameSql;
   const selectGroupKey = readableGroupKey(context, selectParams);
 
   const holdingScopeJoin = v3HoldingVisibilityScope(context, "h");
@@ -230,6 +242,7 @@ export async function listV3LegalGrouped(
         SELECT s.*
         FROM scoped s
         INNER JOIN page_groups pg ON pg.group_key = s.group_key
+        WHERE TRUE${selectMemberLegalNameSql}
       )
       SELECT
         pg.group_key,
