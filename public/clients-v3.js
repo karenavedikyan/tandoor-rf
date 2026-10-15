@@ -799,8 +799,6 @@
       }
       if (state.v3manager && !teamAssignment) {
         params.set("managerGuid", state.v3manager);
-      } else if (teamAssignment && state.v3manager && state.responsibleKind === "manager") {
-        params.set("managerGuid", state.v3manager);
       }
       appendTypeCategoryParams(params, state);
       appendV3ListQueryParams(params, state);
