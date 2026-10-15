@@ -201,3 +201,8 @@
   .client-card-page .client-detail-header__actions{float:none;margin:0 0 12px;}
   .pc-cardhead,.pc-pad{padding:16px;}
 }
+.client-card-page .v3-detail-workspace{margin-top:4px;}
+.client-card-page .v3-detail-stat__value{font-size:14px;font-weight:600;margin-top:6px;}
+.client-card-page .v3-composition-list{margin:8px 0 16px;padding-left:18px;}
+.client-card-page .v3-composition-list li{margin:6px 0;}
+.client-card-page .v3-detail-panel--unavailable .pc-notice{margin-top:0;}

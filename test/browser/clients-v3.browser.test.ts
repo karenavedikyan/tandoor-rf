@@ -442,8 +442,10 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         : page.locator('#clients-table-body a:has-text("Legal One")');
     await link.first().click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
-    await page.waitForSelector("dt:has-text('Тип и категория') + dd:has-text('Type A / Cat A')");
-    await page.waitForSelector("dt:has-text('РОП') + dd:has-text('ROP One')");
+    await page.waitForSelector('[data-testid="v3-detail-card"]');
+    await page.waitForSelector('#pc-panel-overview :text("Type A / Cat A")');
+    await page.locator("#pc-tab-data").click();
+    await page.waitForSelector('#pc-panel-data :text("ROP One")');
 
     const returnParam = new URL(page.url()).searchParams.get("return");
     assert.ok(returnParam && returnParam.includes("v3mode=1"));
@@ -469,7 +471,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         : page.locator('#clients-table-body a:has-text("Legal One")').first();
     await cardLink.click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
-    const holdingNav = page.locator('.client-card-section a[href*="v3Entity=holding"]').first();
+    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
     await holdingNav.waitFor({ state: "visible", timeout: 15000 });
     await holdingNav.click();
     await page.waitForSelector("#v3-composition a", { timeout: 15000 });
