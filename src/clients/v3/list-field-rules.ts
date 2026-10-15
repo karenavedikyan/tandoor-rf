@@ -7,7 +7,7 @@ import {
   LEGAL_CREDIT_LIMIT_SQL,
   LEGAL_DEFER_DAYS_SQL,
   LEGAL_MARKUP_PERCENTAGE_SQL,
-  LEGAL_PAYMENT_TYPE_SQL,
+  legalPaymentTypeSql,
   LEGAL_STATUS_SQL,
   RETAIL_CITY_SQL,
 } from "./list-sql-expressions";
@@ -430,6 +430,9 @@ function appendRuleSql(
   if (rule.field === "groupDisplayName" && entity === "legal") {
     return textExpr(`${alias}.name_client`);
   }
+  if (rule.field === "groupDisplayName") {
+    return sql;
+  }
 
   if (rule.field === "legalAddress" && entity === "legal") {
     return textExpr(LEGAL_ADDRESS_SQL.replace(/\ble\./g, `${alias}.`));
@@ -440,7 +443,7 @@ function appendRuleSql(
   }
 
   if (rule.field === "paymentType" && entity === "legal") {
-    return textExpr(LEGAL_PAYMENT_TYPE_SQL.replace(/\ble\./g, `${alias}.`));
+    return textExpr(legalPaymentTypeSql(alias));
   }
 
   if (rule.field === "markupPercentage" && entity === "legal") {

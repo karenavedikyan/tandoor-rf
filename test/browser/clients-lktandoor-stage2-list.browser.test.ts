@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
-import { closePool, resetPoolForTests } from "../../src/db/pool";
+import { closePool, query, resetPoolForTests } from "../../src/db/pool";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
@@ -110,6 +110,9 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       retailBytes,
       employeesBytes,
     });
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": null}'::jsonb WHERE guid_client = 'b2000000-0000-4000-8000-000000000002'::uuid`,
+    );
   }
 
   async function login(page: Page, email: string) {
@@ -554,6 +557,21 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       1,
       "address column filter must render",
     );
+    const orphanRow = page.locator("#x14-focus-scroll tbody tr").filter({ hasText: "Legal Orphan" });
+    assert.equal(await orphanRow.count(), 1);
+    const orphanText = await orphanRow.innerText();
+    assert.ok(orphanText.includes("Не передано"));
+    assert.ok(!orphanText.includes("Безналичный расчёт"));
+    await updateList(page, async () => {
+      await page.locator('#x14-focus-scroll input[data-focus-col="name"]').fill("SYNTH Holding One");
+      await page.waitForTimeout(220);
+    });
+    assert.equal(await focusRowCount(page), 1);
+    assert.ok((await page.locator("#x14-focus-scroll tbody tr").first().innerText()).includes("SYNTH Holding One"));
+    await updateList(page, async () => {
+      await page.locator('#x14-focus-scroll input[data-focus-col="name"]').fill("");
+      await page.waitForTimeout(220);
+    });
     await updateList(page, async () => {
       await page.fill("#v3-focus-search", "SYNTH");
       await page.waitForTimeout(220);

@@ -9,7 +9,7 @@ import {
   LEGAL_CREDIT_LIMIT_SQL,
   LEGAL_DEFER_DAYS_SQL,
   LEGAL_MARKUP_PERCENTAGE_SQL,
-  LEGAL_PAYMENT_TYPE_SQL,
+  legalPaymentTypeSql,
   LEGAL_STATUS_SQL,
 } from "./list-sql-expressions";
 import {
@@ -18,7 +18,7 @@ import {
   appendV3ColumnFilters,
   type V3ListQuery,
 } from "./list";
-import { appendV3FieldRulesSql } from "./list-field-rules";
+import { appendV3FieldRulesSql, type V3FilterRule } from "./list-field-rules";
 
 const ZERO_HOLDING = "00000000-0000-0000-0000-000000000000";
 
@@ -76,6 +76,61 @@ function distinctOrMissing(expression: string): string {
   return `STRING_AGG(DISTINCT NULLIF(TRIM(${expression}), ''), ', ' ORDER BY NULLIF(TRIM(${expression}), ''))`;
 }
 
+/** Visible grouped-list name for one legal row (matches SELECT name / sort, scoped holding visibility). */
+export function legalGroupedRowDisplayNameSql(leAlias: string, holdingVisibilityClause: string): string {
+  const holdingClauseForGroupKey = holdingVisibilityClause.replace(/_v3gdn\./g, "_v3gh.");
+  const groupKey = v3LegalGroupKeyExpr(leAlias, holdingClauseForGroupKey);
+  return `(CASE
+    WHEN ${groupKey} LIKE 'holding:%' AND EXISTS (
+      SELECT 1 FROM onec_v3_holdings _v3gdn
+      WHERE _v3gdn.guid_holding = ${leAlias}.guid_holding AND (${holdingVisibilityClause})
+    ) THEN NULLIF(TRIM((
+      SELECT _v3gdn.name_holding FROM onec_v3_holdings _v3gdn
+      WHERE _v3gdn.guid_holding = ${leAlias}.guid_holding AND (${holdingVisibilityClause})
+      LIMIT 1
+    )), '')
+    ELSE NULLIF(TRIM(${leAlias}.name_client), '')
+  END)`;
+}
+
+function appendGroupDisplayNameRules(
+  sql: string,
+  params: unknown[],
+  rules: V3FilterRule[],
+  holdingScope: ReturnType<typeof v3HoldingVisibilityScope>,
+): string {
+  if (!rules.length) {
+    return sql;
+  }
+  const scopeStart = params.length + 1;
+  params.push(...holdingScope.params);
+  const holdingClause = renumberScopeClause(holdingScope.clause, scopeStart).replace(/\bh_s\./g, "_v3gdn.");
+  const displayExpr = legalGroupedRowDisplayNameSql("le", holdingClause);
+  let next = sql;
+  for (const rule of rules) {
+    const op = rule.op;
+    const val = rule.value;
+    if (op === "empty") {
+      next += ` AND NULLIF(TRIM(COALESCE(${displayExpr}, '')), '') IS NULL`;
+      continue;
+    }
+    if (op === "filled") {
+      next += ` AND NULLIF(TRIM(COALESCE(${displayExpr}, '')), '') IS NOT NULL`;
+      continue;
+    }
+    if (op === "contains") {
+      params.push(`%${val.replace(/[%_\\]/g, "\\$&")}%`);
+      next += ` AND COALESCE(${displayExpr}, '') ILIKE $${params.length} ESCAPE '\\'`;
+      continue;
+    }
+    if (op === "eq") {
+      params.push(val);
+      next += ` AND COALESCE(${displayExpr}, '') = $${params.length}`;
+    }
+  }
+  return next;
+}
+
 /** The grouped category is the readable holding's category, not a child category. */
 export function groupedCategoryExpressions(context: AccessContext, alias: string, params: unknown[]) {
   const scope = v3HoldingVisibilityScope(context, "_v3cat");
@@ -102,9 +157,13 @@ function appendEligibilityFilters(
   sql += appendV3ColumnFilters(input, "legal", params);
   const categoryRules = (input.fieldRules || []).filter(rule => rule.field === "categoryGuid");
   const legalNameRules = (input.fieldRules || []).filter((rule) => rule.field === "legalName");
+  const groupDisplayNameRules = (input.fieldRules || []).filter((rule) => rule.field === "groupDisplayName");
   const rulesWithoutCategory = (input.fieldRules || []).filter((rule) => rule.field !== "categoryGuid");
-  const rulesWithoutCategoryAndLegalName = rulesWithoutCategory.filter((rule) => rule.field !== "legalName");
+  const rulesWithoutCategoryAndLegalName = rulesWithoutCategory.filter(
+    (rule) => rule.field !== "legalName" && rule.field !== "groupDisplayName",
+  );
   sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", rulesWithoutCategoryAndLegalName).sql;
+  sql = appendGroupDisplayNameRules(sql, params, groupDisplayNameRules, holdingScope);
   let legalNameOnLe = "";
   if (legalNameRules.length) {
     const legalNameApplied = appendV3FieldRulesSql("TRUE", params, "legal_grouped", "le", legalNameRules);
@@ -307,7 +366,6 @@ export async function listV3LegalGrouped(
         MAX(m.guid_holding::text) AS holding_guid,
         ${distinctOrMissing("m.type_category->>'nameType'")} AS type_name,
         ${distinctOrMissing(LEGAL_CONTRACT_NUMBER_SQL.replace(/\ble\./g, "m."))} AS contract_number,
-        ${distinctOrMissing(LEGAL_PAYMENT_TYPE_SQL.replace(/\ble\./g, "m."))} AS payment_type,
         ${distinctOrMissing(LEGAL_DEFER_DAYS_SQL.replace(/\ble\./g, "m."))} AS defer_days,
         ${distinctOrMissing(LEGAL_CREDIT_LIMIT_SQL.replace(/\ble\./g, "m."))} AS credit_limit,
         ${distinctOrMissing("m.discount_amount::text")} AS discount_amount,
@@ -333,6 +391,39 @@ export async function listV3LegalGrouped(
     selectParams,
   );
 
+  async function attachGroupedPaymentTypes(
+    items: Array<{ legal_entities: Array<{ guid: string }>; payment_type?: string | null }>,
+  ): Promise<void> {
+    const guids = items.flatMap((item) =>
+      item.legal_entities
+        .map((entry) => entry.guid ?? (entry as { guid_client?: string }).guid_client)
+        .filter(Boolean),
+    );
+    if (!guids.length) {
+      return;
+    }
+    const payRows = await query<{ guid: string; payment_type: string | null }>(
+      `
+        SELECT le.guid_client::text AS guid, ${legalPaymentTypeSql("le")} AS payment_type
+        FROM onec_v3_legal_entities le
+        WHERE le.guid_client = ANY($1::uuid[])
+      `,
+      [guids],
+    );
+    const byGuid = new Map(
+      payRows.rows.map((entry) => [entry.guid.toLowerCase(), entry.payment_type]),
+    );
+    for (const item of items) {
+      const values = item.legal_entities
+        .map((entry) => {
+          const key = String(entry.guid ?? (entry as { guid_client?: string }).guid_client ?? "").toLowerCase();
+          return byGuid.get(key);
+        })
+        .filter((value): value is string => typeof value === "string" && value.trim() !== "");
+      item.payment_type = values.length ? [...new Set(values)].join("; ") : null;
+    }
+  }
+
   const items = rows.rows.map((row) => {
     const legalEntities = Array.isArray(row.legal_entities)
       ? row.legal_entities
@@ -357,13 +448,14 @@ export async function listV3LegalGrouped(
       hardware_name: row.hardware_name,
       legal_name: legalEntities.map((e: { name: string }) => e.name).join(", "),
       contract_number: row.contract_number,
-      payment_type: row.payment_type,
       defer_days: row.defer_days,
       credit_limit: row.credit_limit,
       discount_amount: row.discount_amount,
       markup_percentage: row.markup_percentage,
     };
   });
+
+  await attachGroupedPaymentTypes(items);
 
   return { total, items };
 }
