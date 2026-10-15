@@ -1207,6 +1207,18 @@
             ctx.showResultsState("error", "Не удалось загрузить команду", "Повторите попытку.", "");
             return;
           }
+          if (
+            hooks.isRopDesignSession &&
+            hooks.isRopDesignSession() &&
+            !legacyState.ropEmployee &&
+            hooks.ropTeamsHomeStatePatch
+          ) {
+            var ropPatch = hooks.ropTeamsHomeStatePatch(legacyState);
+            if (ropPatch) {
+              hooks.navigateState(Object.assign({}, hooks.currentStateFromForm(), legacyState, ropPatch));
+              return;
+            }
+          }
           return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
             if (navigationIsStale()) return;
             hooks.updateViewChrome(legacyState);

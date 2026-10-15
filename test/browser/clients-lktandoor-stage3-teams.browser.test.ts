@@ -6,14 +6,16 @@ import { after, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
-import { linkUserToEmployee } from "../helpers/access-db-fixtures";
+import { addRopTeamMember, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 const TEST_PASSWORD = "StrongPass123!";
 const M1 = "22222222-2222-4222-8222-222222222222";
+const M2 = "33333333-3333-4333-8333-333333333333";
 const HW = "77777777-7777-4777-8777-777777777777";
 const ROP = "55555555-5555-4555-8555-555555555555";
+const LEGAL_TWO_LABEL = "Legal Two";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const SCREENSHOT_DIR =
   process.env.CLIENTS_LKTANDOOR_STAGE3_DIR ??
@@ -53,8 +55,28 @@ async function seed(databaseUrl: string) {
     employeeId: ROP,
     confirmedByUserId: admin.id,
   });
+  const managerUser = await createTestUser({
+    databaseUrl,
+    email: "manager-stage3-teams@example.com",
+    password: TEST_PASSWORD,
+    fullName: "Manager Stage3",
+    role: "manager",
+  });
+  await linkUserToEmployee({
+    databaseUrl,
+    userId: managerUser.id,
+    employeeId: M2,
+    confirmedByUserId: admin.id,
+  });
+  await addRopTeamMember({
+    databaseUrl,
+    ropUserId: ropUser.id,
+    memberUserId: managerUser.id,
+    createdByUserId: admin.id,
+  });
   const employeesBytes = buildEmployeeRosterBytes([
     buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
+    buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
     buildEmployeeRosterEntry(HW, { name_manager: "Hardware One" }),
     buildEmployeeRosterEntry(ROP, { name_manager: "ROP One", post: "Руководитель отдела продаж" }),
   ]);
@@ -175,6 +197,13 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     );
   }
 
+  async function waitForClientRow(page: Page, label: string) {
+    await waitListSettled(page);
+    const row = page.locator("#clients-table-body tr").filter({ hasText: label });
+    await row.first().waitFor({ state: "visible", timeout: 30000 });
+    assert.ok((await row.count()) > 0);
+  }
+
   it("director teams directory shows lktandoor chrome and ROP roster navigation", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await login(page, "director-stage3-teams@example.com");
@@ -255,7 +284,55 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await page.close();
   });
 
-  it("rop territory deep link hides foreign roster and returns to own roster", async () => {
+  it("rop enters own team roster and opens scoped manager clients", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await login(page, "rop-stage3-teams@example.com");
+    await page.goto(baseUrl + "/clients");
+    await page.locator('[data-view="teams"]').click();
+    await page.waitForURL((url) => url.search.includes("view=teams"), { timeout: 30000 });
+    await page.waitForResponse(
+      (res) => res.url().includes("/responsibles") && res.status() === 200,
+      { timeout: 30000 },
+    );
+    assert.ok(page.url().includes("ropEmployee=" + ROP));
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 30000 });
+    assert.equal(await page.locator("[data-toggle-rop]").count(), 0);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-own-roster-desktop-1440.png") });
+
+    const managerRow = page.locator(
+      '.clients-compact-team__member-main[data-manager="' + M2 + '"][data-responsible-kind="manager"]',
+    );
+    await managerRow.first().click();
+    await page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+      { timeout: 30000 },
+    );
+    await waitForClientRow(page, LEGAL_TWO_LABEL);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-territory-desktop-1440.png") });
+
+    await page.locator("#clients-table-body tr a").first().click();
+    await page.waitForURL((url) => /^\/clients\/[^/?#]+/.test(url.pathname), { timeout: 30000 });
+    const cardBack = page.locator('[data-testid="v3-back-to-list"]');
+    await cardBack.waitFor({ state: "visible", timeout: 15000 });
+    await cardBack.click();
+    await page.waitForURL((url) => url.pathname === "/clients" && url.search.includes("responsibleGuid=" + M2), {
+      timeout: 30000,
+    });
+    await waitForClientRow(page, LEGAL_TWO_LABEL);
+
+    await page.locator('[data-testid="v3-lktandoor-back"]').click();
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
+    assert.ok(page.url().includes("ropEmployee=" + ROP));
+    assert.ok(!page.url().includes("responsibleGuid="));
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 30000 });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-own-roster-mobile-390.png") });
+    await page.close();
+  });
+
+  it("rop territory deep link hides foreign roster block", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await login(page, "rop-stage3-teams@example.com");
     const territoryUrl =
@@ -272,20 +349,12 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
       ),
       page.goto(territoryUrl),
     ]);
-    await page.waitForFunction(
-      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") !== "true",
-      undefined,
-      { timeout: 30000 },
-    );
+    await waitListSettled(page);
     assert.equal(await page.locator(".clients-compact-team__member-main").count(), 0);
     assert.equal(await page.locator('[data-testid="clients-team-member-switcher"]').count(), 0);
     await page.locator('[data-testid="v3-lktandoor-back"]').click();
-    await page.waitForFunction(
-      () => !document.querySelector(".clients-compact-team__members--loading"),
-      undefined,
-      { timeout: 30000 },
-    );
-    assert.ok((await page.locator("[data-toggle-rop]").count()) <= 1);
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
+    assert.ok(page.url().includes("ropEmployee=" + ROP));
     await page.close();
   });
 });
