@@ -138,22 +138,164 @@
     return { html: text || emptyNoData(), known: Boolean(text) };
   }
 
-  function formatOtherFields(shell, other) {
-    if (!other || typeof other !== "object") {
-      return { html: emptyFrom1C(), known: false };
+  var OTHER_FIELD_LABELS = {
+    Код: "Код 1С",
+    НаименованиеПолное: "Полное наименование",
+    ЮрФизЛицо: "Юр./физ. лицо",
+    Оптовик_ОГРН: "ОГРН",
+    Оптовик_ОсновнойДоговор: "Основной договор (строка 1С)",
+    Оптовик_ОсновноеСоглашение: "Основное соглашение (строка 1С)",
+    Оптовик_Наличные: "Наличный расчёт",
+    Оптовик_ДопустимаяСуммаЗадолженности: "Допустимая сумма задолженности (лимит 1С)",
+    Оптовик_ДопустимоеЧислоДнейЗадолженности: "Допустимое число дней задолженности (лимит 1С)",
+    Оптовик_КонтролироватьСуммуЗадолженности: "Контролировать сумму задолженности",
+    Оптовик_КонтролироватьЧислоДнейЗадолженности: "Контролировать число дней задолженности",
+    Оптовик_Неблагонадёжный: "Неблагонадёжный",
+    Оптовик_КатегорияТорговойТочкиТандор: "Категория ТТ Tandoor",
+    Оптовик_ТипКлиентаТандор: "Тип клиента Tandoor",
+    Оптовик_ВитринВсегоТандор: "Витрин всего (1С)",
+    Оптовик_ВитринТандорТандор: "Витрин Tandoor (1С)",
+    Оптовик_ЭксклюзивТандор: "Эксклюзив Tandoor",
+    Оптовик_РетроБонус: "Ретро-бонус",
+    Оптовик_ЗапретСамовывоз: "Запрет самовывоза",
+    Оптовик_КрайГород: "Край / город",
+    Оптовик_НаселенныйПункт: "Населённый пункт",
+    БизнесРегион: "Бизнес-регион",
+    Комментарий: "Комментарий",
+  };
+
+  var OTHER_FIELD_GROUPS = {
+    requisites: ["Код", "НаименованиеПолное", "ЮрФизЛицо", "Оптовик_ОГРН"],
+    location: ["Оптовик_КрайГород", "Оптовик_НаселенныйПункт", "БизнесРегион"],
+    contractRefs: ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"],
+    debtControl: [
+      "Оптовик_ДопустимаяСуммаЗадолженности",
+      "Оптовик_ДопустимоеЧислоДнейЗадолженности",
+      "Оптовик_КонтролироватьСуммуЗадолженности",
+      "Оптовик_КонтролироватьЧислоДнейЗадолженности",
+      "Оптовик_Неблагонадёжный",
+      "Оптовик_Наличные",
+    ],
+    vitrine: [
+      "Оптовик_КатегорияТорговойТочкиТандор",
+      "Оптовик_ТипКлиентаТандор",
+      "Оптовик_ВитринВсегоТандор",
+      "Оптовик_ВитринТандорТандор",
+      "Оптовик_ЭксклюзивТандор",
+    ],
+    commercialExtra: ["Оптовик_РетроБонус", "Оптовик_ЗапретСамовывоз"],
+    misc: ["Комментарий"],
+  };
+
+  function otherFieldLabel(key) {
+    return OTHER_FIELD_LABELS[key] || key;
+  }
+
+  function formatOtherFieldScalar(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
     }
-    var keys = Object.keys(other);
-    if (!keys.length) {
-      return { html: emptyNoData(), known: false };
+    if (typeof value === "boolean") {
+      return value ? "Да" : "Нет";
     }
-    return {
-      html: keys
-        .map(function (k) {
-          return esc(shell, k + ": " + other[k]);
+    if (typeof value === "number") {
+      return String(value);
+    }
+    if (typeof value === "string") {
+      return value.trim() || null;
+    }
+    if (Array.isArray(value)) {
+      var parts = value
+        .map(function (item) {
+          return formatOtherFieldScalar(item);
         })
-        .join("<br/>"),
-      known: true,
+        .filter(Boolean);
+      return parts.length ? parts.join(", ") : null;
+    }
+    if (typeof value === "object") {
+      var inner = Object.keys(value)
+        .map(function (k) {
+          var v = formatOtherFieldScalar(value[k]);
+          return v ? k + ": " + v : null;
+        })
+        .filter(Boolean);
+      return inner.length ? inner.join("; ") : null;
+    }
+    return String(value);
+  }
+
+  function renderOtherFieldsFromKeys(shell, other, keys) {
+    if (!other || typeof other !== "object") {
+      return "";
+    }
+    var rows = [];
+    keys.forEach(function (key) {
+      if (!(key in other)) {
+        return;
+      }
+      var text = formatOtherFieldScalar(other[key]);
+      if (text == null) {
+        return;
+      }
+      rows.push(field(otherFieldLabel(key), esc(shell, text), true));
+    });
+    return rows.join("");
+  }
+
+  function renderOtherFieldsByGroup(shell, other) {
+    if (!other || typeof other !== "object" || !Object.keys(other).length) {
+      return "";
+    }
+    var html = "";
+    var groupTitles = {
+      requisites: "Реквизиты (прочие поля 1С)",
+      location: "География и регион",
+      contractRefs: "Ссылки на договор в 1С",
+      debtControl: "Контроль задолженности (лимиты и флаги)",
+      vitrine: "Витрина и классификация Tandoor",
+      commercialExtra: "Доп. коммерческие условия",
+      misc: "Прочее",
     };
+    Object.keys(OTHER_FIELD_GROUPS).forEach(function (groupId) {
+      var body = renderOtherFieldsFromKeys(shell, other, OTHER_FIELD_GROUPS[groupId]);
+      if (body) {
+        html += renderDataGroup(groupTitles[groupId], body);
+      }
+    });
+    var known = new Set(Object.keys(OTHER_FIELD_LABELS));
+    return html;
+  }
+
+  function renderDataGroup(title, innerHtml) {
+    if (!innerHtml) {
+      return "";
+    }
+    return (
+      '<details class="x6-group v3-data-group" open><summary>' +
+      title +
+      "</summary><div class=\"v3-data-group__body\">" +
+      innerHtml +
+      "</div></details>"
+    );
+  }
+
+  function renderRelatedOutletLines(shell, outlets, parentReturn) {
+    if (!outlets.length) {
+      return '<span class="pc-unavailable">В вашей области нет доступных торговых точек этого холдинга.</span>';
+    }
+    return outlets
+      .map(function (row) {
+        return (
+          '<a class="x13-related-line" href="/clients/' +
+          encodeURIComponent(row.guid) +
+          "?v3Entity=retail&return=" +
+          parentReturn +
+          '"><span>' +
+          shell.escapeHtml(row.name || row.guid) +
+          '</span><span class="x13-related-line__arrow" aria-hidden="true">→</span></a>'
+        );
+      })
+      .join("");
   }
 
   function formatLoading(shell, loading) {
@@ -338,7 +480,7 @@
           ? 1
           : null;
     var legalCount =
-      counts.legalEntities != null ? counts.legalEntities : entityType === "legal" ? 1 : null;
+      entityType === "legal" ? 1 : counts.legalEntities != null ? counts.legalEntities : null;
     function kpi(label, value) {
       var display =
         value == null || value === ""
@@ -358,52 +500,12 @@
   function renderRelatedOutletsCard() {
     return (
       card(
-        "Торговые точки территории",
+        "Доступные точки холдинга",
         '<div class="pc-pad" id="v3-related-outlets" data-testid="v3-related-outlets">' +
-          '<span class="pc-unavailable">Загрузка связей по GUID холдинга…</span></div>',
+          '<span class="pc-unavailable">Загрузка точек в вашей области…</span>' +
+          '<p class="pc-label v3-related-outlets-note">Только ТТ холдинга в вашей области видимости, не весь состав.</p></div>',
         "1С / область",
       )
-    );
-  }
-
-  function renderRoleContextBlock(shell, session) {
-    session = session || {};
-    var name = session.displayName || "—";
-    var roleLabel = session.roleLabel || "—";
-    var scope = session.scopeLabel || "—";
-    var initials = name
-      .split(/\s+/)
-      .map(function (part) {
-        return part.charAt(0);
-      })
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-    if (!initials) {
-      initials = "?";
-    }
-    return (
-      '<div class="v3-role-context" data-testid="v3-role-context">' +
-      '<div class="v3-role-context__row">' +
-      '<div class="v3-role-context__main">' +
-      '<span class="v3-role-context__avatar" aria-hidden="true">' +
-      esc(shell, initials) +
-      "</span>" +
-      '<div><div class="v3-role-context__name">' +
-      esc(shell, name) +
-      '</div><div class="pc-label">' +
-      esc(shell, roleLabel) +
-      "</div></div></div>" +
-      '<div class="v3-role-context__scope"><div class="pc-label">Область видимости</div>' +
-      '<div class="pc-value">' +
-      esc(shell, scope) +
-      "</div></div></div>" +
-      '<div class="v3-role-focus"><div class="pc-label">В фокусе роли</div>' +
-      '<div class="v3-role-focus__actions">' +
-      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Работа по клиенту →</button>' +
-      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Планы и результат →</button>' +
-      '<button type="button" class="v3-focus-link" data-card-open="data">Назначения и данные →</button>' +
-      "</div></div></div>"
     );
   }
 
@@ -493,7 +595,7 @@
         : holdingLink && holdingLink.guid
           ? renderRelatedOutletsCard()
           : card(
-              "Торговые точки территории",
+              "Доступные точки холдинга",
               '<div class="pc-pad"><span class="pc-unavailable">Связь с холдингом не передана из 1С — список ТТ недоступен.</span></div>',
               "1С",
             );
@@ -510,53 +612,48 @@
     );
   }
 
-  function renderDataLegal(shell, ent, holdingLink, typeCat) {
-    var holding = formatHoldingLink(shell, holdingLink);
-    var phones = formatTelephones(shell, ent.telephone);
-    var other = formatOtherFields(shell, ent.other_fields);
+  function renderCommercialBlock(shell, ent) {
     var markups = formatMarkups(shell, ent.markups);
     var discountKnown = ent.discount != null && ent.discount !== "";
     var discountAmountKnown = ent.discount_amount != null && ent.discount_amount !== "";
     return (
-      '<div class="pc-grid pc-three">' +
-      card(
-        "Холдинг и ответственность",
-        '<div class="pc-pad">' +
-          field("Клиент / категория", typeCat.html, typeCat.known) +
-          field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
-          field("Холдинг", holding.html, holding.known) +
-          field("Реквизиты", other.html, other.known) +
-          managersFields(shell, ent.managers) +
-          "</div>",
-        "1С / ЛК",
+      field("Скидочная программа", discountKnown ? esc(shell, ent.discount) : emptyNoData(), discountKnown) +
+      field(
+        "Значение скидки",
+        discountAmountKnown ? esc(shell, ent.discount_amount) : emptyNoData(),
+        discountAmountKnown,
       ) +
-      card(
-        "Магазин и доставка",
-        '<div class="pc-pad">' +
-          field("Адрес юрлица", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
-          field("Телефоны", phones.html, phones.known) +
-          field("Торговая точка", emptyFrom1C(), false) +
-          field("Место доставки", emptyFrom1C(), false) +
-          field("Приёмка", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
+      field("Наценки", markups.html, markups.known)
+    );
+  }
+
+  function renderDataLegal(shell, ent, holdingLink, typeCat) {
+    var holding = formatHoldingLink(shell, holdingLink);
+    var phones = formatTelephones(shell, ent.telephone);
+    var other = ent.other_fields || ent.other;
+    var clientBlock =
+      field("Клиент / категория", typeCat.html, typeCat.known) +
+      field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
+      field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
+      field("Телефоны", phones.html, phones.known) +
+      field("Холдинг", holding.html, holding.known);
+    var respBlock = renderResponsibilitySection(shell, ent.managers, "client");
+    return (
+      '<div class="v3-data-sequential">' +
+      renderDataGroup("Клиент и холдинг", clientBlock) +
+      renderDataGroup("Ответственные", respBlock.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "")) +
+      renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
+      renderOtherFieldsByGroup(shell, other) +
+      renderDataGroup(
+        "Торговая точка (уровень юрлица)",
+        field("Доставка, приёмка, ЛПР, Club", emptyFrom1C(), false),
       ) +
-      card(
-        "Расчёты и договор",
-        '<div class="pc-pad">' +
-          field("Скидка", discountKnown ? esc(shell, ent.discount) : emptyNoData(), discountKnown) +
-          field(
-            "Сумма скидки",
-            discountAmountKnown ? esc(shell, ent.discount_amount) : emptyNoData(),
-            discountAmountKnown,
-          ) +
-          field("Наценки", markups.html, markups.known) +
-          field("Бонусные условия", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
+      renderDataGroup(
+        "Доступные точки холдинга",
+        '<div id="v3-data-holding-outlets" data-testid="v3-data-holding-outlets">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
       ) +
-      "</div>" +
-      renderDataFooter(shell)
+      "</div>"
     );
   }
 
@@ -565,51 +662,43 @@
     var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
     var route = addr.direction_of_the_route || addr.directionOfTheRoute;
     var loading = formatLoading(shell, ent.information_loading);
+    var outletBlock =
+      field("Тип и категория", typeCat.html, typeCat.known) +
+      field("Холдинг", holding.html, holding.known) +
+      field(
+        "Адрес магазина",
+        addr.store_address || addr.storeAddress ? esc(shell, addr.store_address || addr.storeAddress) : emptyNoData(),
+        Boolean(addr.store_address || addr.storeAddress),
+      ) +
+      field(
+        "Адрес доставки",
+        addr.delivery_address || addr.deliveryAddress
+          ? esc(shell, addr.delivery_address || addr.deliveryAddress)
+          : emptyNoData(),
+        Boolean(addr.delivery_address || addr.deliveryAddress),
+      ) +
+      field("Маршрут", route ? esc(shell, route) : emptyNoData(), Boolean(route)) +
+      field("Склад", boolLabel(ent.warehouse), ent.warehouse != null) +
+      field("Закрыта", boolLabel(ent.closed), ent.closed != null);
+    var deliveryBlock = field("Приёмка", loading.html, loading.known) + formatContactsFields(shell, ent.contact_information);
+    var lprClub =
+      formatLprBlock(shell, ent.lpr_information) + formatClubFields(shell, ent.additional_information);
+    var stripDetails = function (html) {
+      return html.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "");
+    };
     return (
-      '<div class="pc-grid pc-three">' +
-      card(
-        "Холдинг и ответственность",
-        '<div class="pc-pad">' +
-          field("Тип и категория", typeCat.html, typeCat.known) +
-          field("Холдинг", holding.html, holding.known) +
-          managersFields(shell, ent.managers) +
-          "</div>",
-        "1С",
+      '<div class="v3-data-sequential">' +
+      renderDataGroup("Торговая точка", outletBlock) +
+      renderDataGroup("Ответственные клиента", stripDetails(renderResponsibilitySection(shell, ent.managers, "client"))) +
+      renderDataGroup("Ответственные этой ТТ", stripDetails(renderResponsibilitySection(shell, ent.managers, "outlet"))) +
+      renderDataGroup("Доставка и приёмка", deliveryBlock) +
+      renderDataGroup("Контакты, ЛПР и Club", lprClub) +
+      renderDataGroup(
+        "Доступные точки холдинга",
+        '<div id="v3-data-holding-outlets" data-testid="v3-data-holding-outlets">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
       ) +
-      card(
-        "Магазин и доставка",
-        '<div class="pc-pad">' +
-          field(
-            "Адрес магазина",
-            addr.store_address || addr.storeAddress ? esc(shell, addr.store_address || addr.storeAddress) : emptyNoData(),
-            Boolean(addr.store_address || addr.storeAddress),
-          ) +
-          field(
-            "Адрес доставки",
-            addr.delivery_address || addr.deliveryAddress
-              ? esc(shell, addr.delivery_address || addr.deliveryAddress)
-              : emptyNoData(),
-            Boolean(addr.delivery_address || addr.deliveryAddress),
-          ) +
-          field("Маршрут", route ? esc(shell, route) : emptyNoData(), Boolean(route)) +
-          field("Склад", boolLabel(ent.warehouse), ent.warehouse != null) +
-          field("Закрыта", boolLabel(ent.closed), ent.closed != null) +
-          field("Приёмка", loading.html, loading.known) +
-          formatContactsFields(shell, ent.contact_information) +
-          "</div>",
-        "1С",
-      ) +
-      card(
-        "Расчёты и договор",
-        '<div class="pc-pad">' +
-          formatLprBlock(shell, ent.lpr_information) +
-          formatClubFields(shell, ent.additional_information) +
-          field("Наценки / скидки", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
-      ) +
-      "</div>" +
-      renderDataFooter(shell)
+      "</div>"
     );
   }
 
@@ -775,7 +864,6 @@
 
     return (
       '<div class="pc-workspace v3-detail-workspace x13 x6" data-testid="v3-detail-card">' +
-      renderRoleContextBlock(shell, options.session) +
       '<div class="x13-record-title">' +
       '<span class="pc-tag">' +
       esc(shell, entityKindLabel(entityType)) +
@@ -797,37 +885,29 @@
     shell = shell || { escapeHtml: function (v) { return String(v ?? ""); } };
     var kpis = root.querySelector('[data-testid="v3-overview-kpis"]');
     var host = root.querySelector('[data-testid="v3-related-outlets"]');
-    if (!kpis && !host) return;
+    var dataHost = root.querySelector('[data-testid="v3-data-holding-outlets"]');
     var counts = payload.counts || {};
+    var entityType = payload.entityType || "legal";
     if (kpis && counts.retailOutlets != null) {
       var boxes = kpis.querySelectorAll("b");
       if (boxes[0]) boxes[0].textContent = String(counts.retailOutlets);
-      if (boxes[1] && counts.legalEntities != null) boxes[1].textContent = String(counts.legalEntities);
+      if (boxes[1]) {
+        if (entityType === "legal") {
+          boxes[1].textContent = "1";
+        } else if (counts.legalEntities != null) {
+          boxes[1].textContent = String(counts.legalEntities);
+        }
+      }
     }
-    if (!host) return;
     var outlets = payload.retailOutlets || [];
     var parentReturn = payload.parentReturn || "";
-    if (!outlets.length) {
-      host.innerHTML =
-        '<span class="pc-unavailable">В вашей области нет доступных торговых точек этого холдинга.</span>';
-      return;
+    var linesHtml = renderRelatedOutletLines(shell, outlets, parentReturn);
+    if (host) {
+      host.innerHTML = linesHtml;
     }
-    host.innerHTML =
-      '<ul class="v3-composition-list">' +
-      outlets
-        .map(function (row) {
-          return (
-            "<li><a class=\"clients-link x13-related\" href=\"/clients/" +
-            encodeURIComponent(row.guid) +
-            "?v3Entity=retail&return=" +
-            parentReturn +
-            '">' +
-            shell.escapeHtml(row.name || row.guid) +
-            "</a></li>"
-          );
-        })
-        .join("") +
-      "</ul>";
+    if (dataHost) {
+      dataHost.innerHTML = linesHtml;
+    }
   }
 
   function bindTabs(root, context) {

@@ -117,6 +117,12 @@ describe("lktandoor card parity captures (mocked)", { concurrency: false }, () =
         path: path.join(SCREENSHOT_DIR, `card-overview-${spec.name}.png`),
         fullPage: true,
       });
+      await page.locator("#pc-tab-data").click();
+      await page.waitForSelector("#pc-panel-data:not([hidden])");
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, `card-data-${spec.name}.png`),
+        fullPage: true,
+      });
       await page.locator("#pc-tab-plan").click();
       await page.waitForSelector("#pc-panel-plan:not([hidden])");
       await page.screenshot({

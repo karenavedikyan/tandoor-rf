@@ -156,11 +156,7 @@
           session: buildV3SessionContext(currentUser),
         })
       : "";
-    detailRoot.innerHTML =
-      '<p class="client-detail-back-wrap"><a class="client-detail-back clients-link" href="' +
-      shell.escapeHtml(backHref) +
-      '" data-testid="v3-back-to-list">← К списку</a></p>' +
-      cardHtml;
+    detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
       window.ClientDetailV3.bindTabs(detailRoot, {
         title: title,
@@ -176,6 +172,54 @@
       renderV3Composition(document.getElementById("v3-composition"), payload);
     }
     loadV3HoldingRelated(detailRoot, payload);
+  }
+
+  function renderV3CardChrome(backHref, session) {
+    session = session || {};
+    var parts = ["Мои клиенты"];
+    var returnRaw = new URLSearchParams(window.location.search).get("return");
+    if (returnRaw) {
+      try {
+        var returnSearch = returnRaw.charAt(0) === "?" ? returnRaw : "?" + decodeURIComponent(returnRaw);
+        var state = logic.readStateFromSearch(returnSearch);
+        if (state.view === "teams") {
+          parts = ["Мои РОПы", "Команда", "Клиентская база"];
+        } else if (state.responsibleGuid || state.v3manager) {
+          parts = ["Мои клиенты", "Территория сотрудника"];
+        }
+      } catch (_err) {
+        /* keep default chain */
+      }
+    }
+    parts.push("Карточка");
+    var nav =
+      '<nav aria-label="Путь к карточке">' +
+      parts
+        .map(function (part, index) {
+          var current = index === parts.length - 1;
+          return (
+            "<span" +
+            (current ? ' aria-current="page"' : "") +
+            ">" +
+            shell.escapeHtml(part) +
+            "</span>"
+          );
+        })
+        .join('<i aria-hidden="true">/</i>') +
+      "</nav>";
+    var viewing = session.roleLabel ? shell.escapeHtml(session.roleLabel) : "";
+    if (session.scopeLabel && session.scopeLabel.indexOf("Предпросмотр") >= 0) {
+      viewing = shell.escapeHtml(session.scopeLabel);
+    }
+    return (
+      '<div class="x13-context-nav v3-card-context" data-testid="v3-territory-nav">' +
+      '<a class="client-detail-back x13-back clients-link" href="' +
+      shell.escapeHtml(backHref) +
+      '" data-testid="v3-back-to-list">← Назад</a>' +
+      nav +
+      (viewing ? '<span class="x13-viewing">' + viewing + "</span>" : "") +
+      "</div>"
+    );
   }
 
   function loadV3HoldingRelated(detailRoot, payload) {
@@ -201,7 +245,11 @@
         var legal = result.data.legalEntities || [];
         var retail = result.data.retailOutlets || [];
         window.ClientDetailV3.updateRelatedContext(detailRoot, shell, {
-          counts: { retailOutlets: retail.length, legalEntities: legal.length },
+          entityType: payload.entityType,
+          counts: {
+            retailOutlets: retail.length,
+            legalEntities: payload.entityType === "legal" ? 1 : legal.length,
+          },
           retailOutlets: retail,
           parentReturn: encodeURIComponent(currentDetailReturnParam()),
         });
