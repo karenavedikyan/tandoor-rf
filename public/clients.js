@@ -1426,17 +1426,18 @@
     document.body.classList.toggle("clients-role-rop", Boolean(isRop));
     document.body.classList.toggle("clients-role-director", Boolean(isDirector));
     renderDelegationBanner(presentation);
+    var x13TeamsSurface = document.body.classList.contains("clients-lktandoor-teams");
     if (pageSubtitleEl) {
-      if (config && config.subtitle) {
-        pageSubtitleEl.textContent = config.subtitle;
-        pageSubtitleEl.classList.remove("clients-hidden");
-      } else {
+      if (x13TeamsSurface || !config || !config.subtitle) {
         pageSubtitleEl.textContent = "";
         pageSubtitleEl.classList.add("clients-hidden");
+      } else {
+        pageSubtitleEl.textContent = config.subtitle;
+        pageSubtitleEl.classList.remove("clients-hidden");
       }
     }
     if (managerChromeEl) {
-      managerChromeEl.classList.toggle("clients-hidden", !config);
+      managerChromeEl.classList.toggle("clients-hidden", !config || x13TeamsSurface);
     }
     if (workspaceNavEl) {
       workspaceNavEl.classList.toggle(

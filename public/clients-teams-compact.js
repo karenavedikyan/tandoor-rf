@@ -149,14 +149,21 @@
       return typeof document !== "undefined" && document.body.classList.contains("clients-lktandoor-teams");
     }
 
-    function sumAssignmentCounts(assignments) {
-      var clients = 0;
-      var outlets = 0;
-      (assignments || []).forEach(function (assignment) {
-        clients += Number(assignment.clientCount) || 0;
-        outlets += Number(assignment.outletCount) || 0;
-      });
-      return { clients: clients, outlets: outlets };
+    /** Counts for the same primary kind used when opening territory (not summed across roles). */
+    function primaryTerritoryCounts(assignments) {
+      var primary = primaryAssignment(assignments || []);
+      var kind = primary && primary.kind;
+      var match =
+        (kind &&
+          (assignments || []).find(function (assignment) {
+            return assignment.kind === kind;
+          })) ||
+        primary;
+      return {
+        clients: Number(match && match.clientCount) || 0,
+        outlets: Number(match && match.outletCount) || 0,
+        kind: kind || "manager",
+      };
     }
 
     function assignmentKindSubtitle(employee) {
@@ -207,7 +214,7 @@
       return (
         '<button type="button" class="x13-person" data-open-rop-team="' +
         deps.shell.escapeHtml(summary.employeeGuid) +
-        '"><span class="avatar clients-compact-team__avatar clients-compact-team__avatar--rop">' +
+        '"><span class="avatar avatar--rop">' +
         deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
         '</span><span class="x13-person-info"><strong>' +
         deps.shell.escapeHtml(summary.name || summary.shortId || "РОП") +
@@ -218,10 +225,9 @@
     }
 
     function renderX13EmployeePerson(ropGuid, employee, primaryKind) {
-      var counts = sumAssignmentCounts(employee.assignments);
-      var primary = primaryAssignment(employee.assignments || []);
-      var kind = primaryKind || (primary && primary.kind) || "manager";
-      var metrics = counts.clients + " клиентов · " + counts.outlets + " ТТ";
+      var territory = primaryTerritoryCounts(employee.assignments || []);
+      var kind = primaryKind || territory.kind || "manager";
+      var metrics = territory.clients + " клиентов · " + territory.outlets + " ТТ";
       return (
         '<button type="button" class="x13-person" data-open-territory="clients" data-responsible-kind="' +
         deps.shell.escapeHtml(kind) +
@@ -229,7 +235,7 @@
         deps.shell.escapeHtml(employee.employeeGuid) +
         '" data-rop-employee="' +
         deps.shell.escapeHtml(ropGuid) +
-        '"><span class="avatar clients-compact-team__avatar">' +
+        '"><span class="avatar">' +
         deps.shell.escapeHtml(initialsFromName(employee.name || employee.shortId)) +
         '</span><span class="x13-person-info"><strong>' +
         deps.shell.escapeHtml(employee.name || employee.shortId || employee.employeeGuid) +

@@ -67,7 +67,7 @@
       el.innerHTML =
         '<div><span class="x7-eyebrow">КЛИЕНТЫ И ТЕРРИТОРИИ</span><h2>РОПы и команды</h2><p>Выберите своего РОПа, чтобы открыть его команду</p></div>' +
         (showFieldMap
-          ? '<a class="workspace-button workspace-button--ghost" href="/clients/field-map">Карта полей</a>'
+          ? '<a class="x13-field-map-link link" href="/clients/field-map">Карта полей</a>'
           : "");
       return;
     }
@@ -75,7 +75,7 @@
       el.innerHTML =
         '<div><span class="x7-eyebrow">КЛИЕНТЫ И ТЕРРИТОРИИ</span><h2>Сотрудники команды</h2><p>Выберите сотрудника, чтобы открыть его территорию</p></div>' +
         (showFieldMap
-          ? '<a class="workspace-button workspace-button--ghost" href="/clients/field-map">Карта полей</a>'
+          ? '<a class="x13-field-map-link link" href="/clients/field-map">Карта полей</a>'
           : "");
     }
   }

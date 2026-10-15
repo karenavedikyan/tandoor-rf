@@ -44,19 +44,40 @@ body.clients-lktandoor-teams {
 .clients-lktandoor-teams .x13-back {
   min-height: 40px;
   white-space: nowrap;
-  color: var(--rf-primary-hover);
-  font-weight: 600;
-  text-decoration: none;
-  border: none;
-  background: transparent;
+  padding: 0 14px;
+  border: 1px solid var(--rf-border, var(--line, #e5e7eb));
+  border-radius: 8px;
+  background: var(--color-surface, var(--card, #fff));
+  color: var(--rf-text, var(--ink, #111827));
+  font-weight: 500;
+  font-size: var(--text-sm);
   cursor: pointer;
-  font: inherit;
-  padding: 0;
+  font-family: inherit;
 }
 
 .clients-lktandoor-list .x13-back:hover,
 .clients-lktandoor-teams .x13-back:hover {
+  background: var(--rf-green-soft, #eef4e5);
+}
+
+.clients-lktandoor-teams .x13-section-heading .x13-field-map-link {
+  border: none;
+  background: transparent;
+  color: var(--accent, #527929);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+  padding: 6px;
+  min-height: auto;
+}
+
+.clients-lktandoor-teams .x13-section-heading .x13-field-map-link:hover {
   text-decoration: underline;
+}
+
+body.clients-lktandoor-teams .clients-page-subtitle,
+body.clients-lktandoor-teams .clients-manager-chrome {
+  display: none !important;
 }
 
 .clients-lktandoor-list .x13-viewing,
@@ -538,8 +559,25 @@ body.clients-lktandoor-teams .clients-stats-strip {
 
 .clients-lktandoor-teams .x13-arrow {
   flex-shrink: 0;
-  color: var(--rf-text-muted, #6b7280);
-  font-size: 18px;
+  margin-left: auto;
+  color: var(--accent, #527929);
+  font-size: 22px;
+  padding: 8px;
+  line-height: 1;
+}
+
+.clients-lktandoor-teams .x13-person .avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--green-soft, #eef4e5);
+  color: var(--accent, #527929);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .clients-lktandoor-teams .x13-directory-note {
@@ -720,5 +758,9 @@ body.clients-lktandoor-teams .clients-manager-chrome:not(.clients-hidden) {
   .clients-lktandoor-teams .x13-person .avatar {
     width: 36px;
     height: 36px;
+  }
+
+  .clients-lktandoor-teams .x13-arrow {
+    padding: 4px;
   }
 }
