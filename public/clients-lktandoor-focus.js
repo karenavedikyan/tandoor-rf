@@ -5,6 +5,9 @@
   var scrollStoragePrefix = "clients-v3-focus-scroll:";
 
   var COL_FILTER = {
+    name: { kind: "rule", field: "groupDisplayName", input: "text", op: "contains" },
+    client_name: { kind: "rule", field: "clientName", input: "text", op: "contains" },
+    address_line: { kind: "rule", field: "legalAddress", input: "text", op: "contains" },
     category_name: { kind: "rule", field: "categoryGuid", input: "enum", optionsKey: "categories" },
     legal_name: { kind: "rule", field: "legalName", input: "text", op: "contains" },
     city: { kind: "rule", field: "city", input: "text", op: "contains" },
@@ -18,8 +21,56 @@
     club_bonus: { kind: "rule", field: "clubBonus", input: "text", op: "contains" },
     closed: { kind: "rule", field: "closed", input: "bool" },
     type_name: { kind: "rule", field: "typeGuid", input: "enum", optionsKey: "types" },
-    discountAmount: { kind: "rule", field: "discountAmount", input: "number" },
+    discount_amount: { kind: "rule", field: "discountAmount", input: "number" },
+    defer_days: { kind: "rule", field: "deferDays", input: "number" },
+    credit_limit: { kind: "rule", field: "creditLimit", input: "number" },
+    markup_percentage: { kind: "rule", field: "markupPercentage", input: "text", op: "contains" },
+    contract_number: { kind: "rule", field: "contractNumber", input: "text", op: "contains" },
+    payment_type: { kind: "rule", field: "paymentType", input: "text", op: "contains" },
   };
+
+  function filterControlId(colId, kind, op) {
+    var base = "v3-focus-filter-" + colId;
+    if (kind === "number" && op) {
+      return base + "-" + op;
+    }
+    if (kind) {
+      return base + "-" + kind;
+    }
+    return base;
+  }
+
+  function restoreFilterEditor(editor) {
+    if (!editor) {
+      return;
+    }
+    var restore =
+      (editor.id && document.getElementById(editor.id)) ||
+      (editor.colId
+        ? editor.op
+          ? document.querySelector(
+              '[data-focus-col="' +
+                editor.colId +
+                '"][data-focus-op="' +
+                editor.op +
+                '"]',
+            )
+          : document.querySelector(
+              '[data-focus-col="' +
+                editor.colId +
+                '"][data-focus-kind="' +
+                (editor.kind || "text") +
+                '"]',
+            )
+        : null);
+    if (!restore) {
+      return;
+    }
+    restore.focus({ preventScroll: true });
+    if (typeof editor.position === "number" && restore.setSelectionRange) {
+      restore.setSelectionRange(editor.position, editor.position);
+    }
+  }
 
   function isActive(state) {
     return Boolean(state && state.v3focus);
@@ -65,6 +116,57 @@
   function syncLayout(state) {
     var active = isActive(state);
     document.body.classList.toggle("x14-focus-mode", active);
+    var app = document.querySelector(".legacy-app");
+    if (app) {
+      app.classList.toggle("x14-focus-active", active);
+    }
+    var frame = document.querySelector(".legacy-frame");
+    var content = document.querySelector(".legacy-content");
+    if (frame) {
+      if (active) {
+        if (!frame.dataset.x14MarginSaved) {
+          frame.dataset.x14MarginSaved = "1";
+          frame.dataset.x14MarginLeft = frame.style.marginLeft || "";
+          frame.dataset.x14FrameWidth = frame.style.width || "";
+          frame.dataset.x14FrameMaxWidth = frame.style.maxWidth || "";
+        }
+        frame.style.setProperty("margin-left", "0", "important");
+        frame.style.setProperty("width", "100%", "important");
+        frame.style.setProperty("max-width", "100%", "important");
+      } else if (frame.dataset.x14MarginSaved) {
+        frame.style.removeProperty("margin-left");
+        frame.style.removeProperty("width");
+        frame.style.removeProperty("max-width");
+        if (frame.dataset.x14MarginLeft) {
+          frame.style.marginLeft = frame.dataset.x14MarginLeft;
+        }
+        if (frame.dataset.x14FrameWidth) {
+          frame.style.width = frame.dataset.x14FrameWidth;
+        }
+        if (frame.dataset.x14FrameMaxWidth) {
+          frame.style.maxWidth = frame.dataset.x14FrameMaxWidth;
+        }
+        delete frame.dataset.x14MarginSaved;
+      }
+    }
+    if (content) {
+      if (active) {
+        if (!content.dataset.x14ContentSaved) {
+          content.dataset.x14ContentSaved = "1";
+          content.dataset.x14ContentWidth = content.style.width || "";
+          content.dataset.x14ContentMaxWidth = content.style.maxWidth || "";
+          content.dataset.x14ContentMargin = content.style.margin || "";
+        }
+        content.style.width = "100%";
+        content.style.maxWidth = "none";
+        content.style.margin = "0";
+      } else if (content.dataset.x14ContentSaved) {
+        content.style.width = content.dataset.x14ContentWidth || "";
+        content.style.maxWidth = content.dataset.x14ContentMaxWidth || "";
+        content.style.margin = content.dataset.x14ContentMargin || "";
+        delete content.dataset.x14ContentSaved;
+      }
+    }
     var host = document.getElementById("v3-focus-host");
     var tableWrap = document.querySelector(".clients-table-wrap");
     var cards = document.getElementById("clients-cards");
@@ -122,7 +224,9 @@
     if (spec.kind === "col") {
       var val = colValue(state, spec.key);
       return (
-        '<input type="search" data-focus-col="' +
+        '<input type="search" id="' +
+        filterControlId(col.id, "col") +
+        '" data-focus-col="' +
         shell.escapeHtml(col.id) +
         '" data-focus-kind="col" value="' +
         shell.escapeHtml(val) +
@@ -148,7 +252,9 @@
       if (empty) selected = "empty";
       if (filled) selected = "filled";
       return (
-        '<select data-focus-col="' +
+        '<select id="' +
+        filterControlId(col.id, "bool") +
+        '" data-focus-col="' +
         shell.escapeHtml(col.id) +
         '" data-focus-kind="bool" aria-label="Фильтр: ' +
         shell.escapeHtml(col.label) +
@@ -175,7 +281,9 @@
       });
       var options = (filterOptions && filterOptions[spec.optionsKey]) || [];
       return (
-        '<select data-focus-col="' +
+        '<select id="' +
+        filterControlId(col.id, "enum") +
+        '" data-focus-col="' +
         shell.escapeHtml(col.id) +
         '" data-focus-kind="enum" aria-label="Фильтр: ' +
         shell.escapeHtml(col.label) +
@@ -207,14 +315,18 @@
       });
       return (
         '<div class="x15-range">' +
-        '<input type="number" step="any" inputmode="decimal" data-focus-col="' +
+        '<input type="number" step="any" inputmode="decimal" id="' +
+        filterControlId(col.id, "number", "gte") +
+        '" data-focus-col="' +
         shell.escapeHtml(col.id) +
         '" data-focus-kind="number" data-focus-op="gte" placeholder="От" value="' +
         shell.escapeHtml((gte && gte.value) || "") +
         '" aria-label="Фильтр: ' +
         shell.escapeHtml(col.label) +
         ' от">' +
-        '<input type="number" step="any" inputmode="decimal" data-focus-col="' +
+        '<input type="number" step="any" inputmode="decimal" id="' +
+        filterControlId(col.id, "number", "lte") +
+        '" data-focus-col="' +
         shell.escapeHtml(col.id) +
         '" data-focus-kind="number" data-focus-op="lte" placeholder="До" value="' +
         shell.escapeHtml((lte && lte.value) || "") +
@@ -228,7 +340,9 @@
       return r.op === (spec.op || "contains");
     });
     return (
-      '<input type="search" data-focus-col="' +
+      '<input type="search" id="' +
+      filterControlId(col.id, "text") +
+      '" data-focus-col="' +
       shell.escapeHtml(col.id) +
       '" data-focus-kind="text" value="' +
       shell.escapeHtml((textRule && textRule.value) || "") +
@@ -582,9 +696,10 @@
         var kind = input.getAttribute("data-focus-kind") || "";
         var editor = {
           colId: colId,
+          kind: kind,
           value: input.value,
           op: input.getAttribute("data-focus-op") || "contains",
-          id: input.id,
+          id: input.id || filterControlId(colId, kind, input.getAttribute("data-focus-op") || undefined),
           position: input.selectionStart,
         };
         var apply = function () {
@@ -615,15 +730,7 @@
       }
     });
 
-    if (payload.editor && payload.editor.id) {
-      var restore = document.getElementById(payload.editor.id);
-      if (restore) {
-        restore.focus({ preventScroll: true });
-        if (typeof payload.editor.position === "number" && restore.setSelectionRange) {
-          restore.setSelectionRange(payload.editor.position, payload.editor.position);
-        }
-      }
-    }
+    restoreFilterEditor(payload.editor);
   }
 
   function bindGlobal() {

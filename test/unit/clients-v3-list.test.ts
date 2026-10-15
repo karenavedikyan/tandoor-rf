@@ -50,6 +50,8 @@ describe("clients-v3-list UI helpers", () => {
     assert.equal(ids[0], "name");
     assert.ok(ids.includes("address_line"));
     assert.ok(ids.includes("legal_name"));
+    assert.ok(ids.includes("discount_amount"));
+    assert.ok(!ids.includes("manager_name"));
   });
 
   it("focus column order follows v3focuscols param", () => {

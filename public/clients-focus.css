@@ -41,6 +41,21 @@
 body.x14-focus-mode {
   overflow: hidden;
 }
+body.x14-focus-mode .legacy-app {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+}
+body.x14-focus-mode .legacy-frame,
+body.x14-focus-mode .legacy-app .legacy-frame,
+.legacy-app.x14-focus-active .legacy-frame,
+.legacy-app.x14-focus-active.sidebar-collapsed .legacy-frame {
+  margin-left: 0 !important;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100dvh;
+}
+body.x14-focus-mode .legacy-sidebar,
 body.x14-focus-mode #workspace-sidebar,
 body.x14-focus-mode #workspace-topbar,
 body.x14-focus-mode .clients-page-header,
@@ -49,7 +64,12 @@ body.x14-focus-mode .clients-delegation-banner:not(.clients-hidden) {
 }
 body.x14-focus-mode .legacy-content {
   padding: 0 !important;
-  max-width: none;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+}
+body.x14-focus-mode .legacy-app.sidebar-collapsed .legacy-frame {
+  margin-left: 0 !important;
 }
 body.x14-focus-mode #clients-app.clients-lktandoor-list {
   height: 100dvh;

@@ -8,11 +8,12 @@
     "address_line",
     "category_name",
     "legal_name",
-    "manager_name",
-    "rop_name",
-    "city",
-    "status_label",
-    "type_name",
+    "contract_number",
+    "payment_type",
+    "defer_days",
+    "credit_limit",
+    "discount_amount",
+    "markup_percentage",
   ];
   var DEFAULT_FOCUS_RETAIL_COLS = [
     "client_name",
@@ -45,6 +46,12 @@
     lpr_name: { label: "ФИО ЛПР", filterKey: null },
     club_status: { label: "Club", filterKey: null },
     club_bonus: { label: "Club (бонус)", filterKey: null },
+    contract_number: { label: "Номер договора", filterKey: null },
+    payment_type: { label: "Вид оплаты", filterKey: null },
+    defer_days: { label: "Отсрочка, дней", filterKey: null },
+    credit_limit: { label: "Лимит договора", filterKey: null },
+    discount_amount: { label: "Значение скидки", filterKey: null },
+    markup_percentage: { label: "Значение наценки", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -83,6 +90,12 @@
           "status_label",
           "type_name",
           "holding",
+          "contract_number",
+          "payment_type",
+          "defer_days",
+          "credit_limit",
+          "discount_amount",
+          "markup_percentage",
         ];
     return ids
       .map(function (id) {
@@ -181,7 +194,7 @@
     }
   }
 
-  function mergeColumnOrder(existingIds, catalogIds, primary) {
+  function normalizeColumnOrder(existingIds, catalogIds, primary) {
     var allowed = new Set(catalogIds);
     var next = (existingIds || []).filter(function (id) {
       return allowed.has(id);
@@ -189,6 +202,11 @@
     if (!next.includes(primary)) {
       next.unshift(primary);
     }
+    return next;
+  }
+
+  function mergeColumnOrder(existingIds, catalogIds, primary) {
+    var next = normalizeColumnOrder(existingIds, catalogIds, primary);
     catalogIds.forEach(function (id) {
       if (!next.includes(id)) {
         next.push(id);
@@ -265,6 +283,22 @@
       return structured
         ? shell.escapeHtml(structured)
         : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (
+      colId === "contract_number" ||
+      colId === "payment_type" ||
+      colId === "defer_days" ||
+      colId === "credit_limit" ||
+      colId === "discount_amount" ||
+      colId === "markup_percentage"
+    ) {
+      var commercial = item[colId];
+      if (commercial === 0 || commercial === "0") {
+        return shell.escapeHtml(String(commercial));
+      }
+      return commercial
+        ? shell.escapeHtml(String(commercial))
+        : '<span class="clients-no-data">Не передано</span>';
     }
     var value = item[colId];
     if (!value) {
@@ -363,8 +397,13 @@
     if (!orderedIds.includes(primary)) {
       orderedIds.unshift(primary);
     }
-    orderedIds = orderedIds.filter(function (id, index, all) {
-      return catalogIds.includes(id) && all.indexOf(id) === index;
+    orderedIds = normalizeColumnOrder(orderedIds, catalogIds, primary);
+    pickerEl.__v3ColumnOrder = orderedIds.slice();
+    var pickerOrder = orderedIds.slice();
+    catalogIds.forEach(function (id) {
+      if (!pickerOrder.includes(id)) {
+        pickerOrder.push(id);
+      }
     });
     var allSelected = catalogIds.every(function (id) {
       return orderedIds.includes(id);
@@ -380,18 +419,24 @@
         : "") +
       (useReorder
         ? '<div class="x16-column-actions">' +
-          '<button type="button" data-v3-columns-all"' +
+          '<button type="button" data-v3-columns-all' +
           (allSelected ? " disabled" : "") +
-          ">Выбрать все</button>" +
-          '<button type="button" data-v3-columns-default" title="Восстановить стандартный набор и порядок колонок">По умолчанию</button>' +
+          '>Выбрать все</button>' +
+          '<button type="button" data-v3-columns-default title="Восстановить стандартный набор и порядок колонок">По умолчанию</button>' +
           "</div>"
         : "") +
       '<div class="' +
       gridClass +
       '">' +
       (useReorder
-        ? catalog
-            .map(function (col) {
+        ? pickerOrder
+            .map(function (id) {
+              var col = catalog.find(function (entry) {
+                return entry.id === id;
+              });
+              if (!col) {
+                return "";
+              }
               var index = orderedIds.indexOf(col.id);
               var checked = index >= 0;
               var movable = checked && col.id !== primary;
@@ -446,14 +491,17 @@
             .join("")) +
       "</div>";
 
-    function commit(nextIds) {
-      var normalized = mergeColumnOrder(nextIds, catalogIds, primary);
+    function commit(nextIds, options) {
+      options = options || {};
+      var normalized = options.selectAll
+        ? mergeColumnOrder(nextIds, catalogIds, primary)
+        : normalizeColumnOrder(nextIds, catalogIds, primary);
       persistColumns(userId, v3entity, normalized, mode === "focus" ? "focus" : undefined);
       onChange(normalized);
     }
 
     function reorderColumn(id, targetIndex) {
-      var list = orderedIds.slice();
+      var list = (pickerEl.__v3ColumnOrder || orderedIds).slice();
       var from = list.indexOf(id);
       if (from < 1 || targetIndex < 1 || targetIndex >= list.length) {
         return;
@@ -469,7 +517,7 @@
         if (id === primary) {
           return;
         }
-        var next = orderedIds.slice();
+        var next = (pickerEl.__v3ColumnOrder || orderedIds).slice();
         if (input.checked) {
           if (!next.includes(id)) {
             next.push(id);
@@ -487,14 +535,11 @@
       pickerEl.querySelector("[data-v3-columns-all]")?.addEventListener("click", function () {
         commit(
           mergeColumnOrder(
-            [primary].concat(
-              catalogIds.filter(function (id) {
-                return id !== primary;
-              }),
-            ),
+            (pickerEl.__v3ColumnOrder || orderedIds).slice(),
             catalogIds,
             primary,
           ),
+          { selectAll: true },
         );
       });
       pickerEl.querySelector("[data-v3-columns-default]")?.addEventListener("click", function () {
@@ -503,13 +548,13 @@
       pickerEl.querySelectorAll("[data-v3-column-up]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var id = btn.getAttribute("data-v3-column-up") || "";
-          reorderColumn(id, orderedIds.indexOf(id) - 1);
+          reorderColumn(id, (pickerEl.__v3ColumnOrder || orderedIds).indexOf(id) - 1);
         });
       });
       pickerEl.querySelectorAll("[data-v3-column-down]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var id = btn.getAttribute("data-v3-column-down") || "";
-          reorderColumn(id, orderedIds.indexOf(id) + 1);
+          reorderColumn(id, (pickerEl.__v3ColumnOrder || orderedIds).indexOf(id) + 1);
         });
       });
       if (!pickerEl.dataset.dragBound) {
@@ -534,7 +579,8 @@
           event.preventDefault();
           var draggedId = event.dataTransfer.getData("text/plain");
           var targetId = row.getAttribute("data-column-order") || "";
-          reorderColumn(draggedId, orderedIds.indexOf(targetId));
+          var currentOrder = pickerEl.__v3ColumnOrder || orderedIds;
+          reorderColumn(draggedId, currentOrder.indexOf(targetId));
         });
       }
     }

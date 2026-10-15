@@ -2,7 +2,16 @@ import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
 import { v3CategoryGuidSql, v3CategoryNameSql, v3JsonManagerField } from "./json-paths";
-import { LEGAL_ADDRESS_SQL, LEGAL_CITY_SQL, LEGAL_STATUS_SQL } from "./list-sql-expressions";
+import {
+  LEGAL_ADDRESS_SQL,
+  LEGAL_CITY_SQL,
+  LEGAL_CONTRACT_NUMBER_SQL,
+  LEGAL_CREDIT_LIMIT_SQL,
+  LEGAL_DEFER_DAYS_SQL,
+  LEGAL_MARKUP_PERCENTAGE_SQL,
+  LEGAL_PAYMENT_TYPE_SQL,
+  LEGAL_STATUS_SQL,
+} from "./list-sql-expressions";
 import {
   appendCatalogAssignmentFilters,
   appendTerritoryAssignmentFilters,
@@ -296,7 +305,13 @@ export async function listV3LegalGrouped(
           '[]'::jsonb
         ) AS legal_entities,
         MAX(m.guid_holding::text) AS holding_guid,
-        ${distinctOrMissing("m.type_category->>'nameType'")} AS type_name
+        ${distinctOrMissing("m.type_category->>'nameType'")} AS type_name,
+        ${distinctOrMissing(LEGAL_CONTRACT_NUMBER_SQL.replace(/\ble\./g, "m."))} AS contract_number,
+        ${distinctOrMissing(LEGAL_PAYMENT_TYPE_SQL.replace(/\ble\./g, "m."))} AS payment_type,
+        ${distinctOrMissing(LEGAL_DEFER_DAYS_SQL.replace(/\ble\./g, "m."))} AS defer_days,
+        ${distinctOrMissing(LEGAL_CREDIT_LIMIT_SQL.replace(/\ble\./g, "m."))} AS credit_limit,
+        ${distinctOrMissing("m.discount_amount::text")} AS discount_amount,
+        ${distinctOrMissing(LEGAL_MARKUP_PERCENTAGE_SQL.replace(/\ble\./g, "m."))} AS markup_percentage
       FROM page_groups pg
       INNER JOIN members m ON m.group_key = pg.group_key
       LEFT JOIN onec_v3_holdings h
@@ -341,6 +356,12 @@ export async function listV3LegalGrouped(
       regional_name: row.regional_name,
       hardware_name: row.hardware_name,
       legal_name: legalEntities.map((e: { name: string }) => e.name).join(", "),
+      contract_number: row.contract_number,
+      payment_type: row.payment_type,
+      defer_days: row.defer_days,
+      credit_limit: row.credit_limit,
+      discount_amount: row.discount_amount,
+      markup_percentage: row.markup_percentage,
     };
   });
 

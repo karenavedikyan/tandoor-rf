@@ -146,6 +146,56 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     return page.locator("#x14-focus-scroll tbody tr:not(.x15-empty)").count();
   }
 
+  async function enterFocus(page: Page) {
+    await page.waitForSelector('[data-testid="v3-focus-enter"]:not(.clients-hidden)');
+    const response = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.click('[data-testid="v3-focus-enter"]');
+    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    await response;
+    await page.waitForFunction(() => {
+      const frame = document.querySelector(".legacy-frame");
+      return (
+        document.body.classList.contains("x14-focus-mode") &&
+        frame &&
+        getComputedStyle(frame).marginLeft === "0px"
+      );
+    });
+  }
+
+  async function assertFocusFullWidth(page: Page) {
+    const layout = await page.evaluate(() => {
+      const host = document.getElementById("v3-focus-host");
+      const pane = document.getElementById("x14-focus-scroll");
+      const frame = document.querySelector(".legacy-frame");
+      if (!host || !frame || !pane) {
+        return null;
+      }
+      const hostRect = host.getBoundingClientRect();
+      const paneRect = pane.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      return {
+        focusMode: document.body.classList.contains("x14-focus-mode"),
+        frameMarginLeft: getComputedStyle(frame).marginLeft,
+        hostLeft: hostRect.left,
+        hostWidth: hostRect.width,
+        paneLeft: paneRect.left,
+        paneWidth: paneRect.width,
+        frameLeft: frameRect.left,
+        viewport: window.innerWidth,
+      };
+    });
+    assert.ok(layout, "focus layout nodes missing");
+    assert.ok(layout.focusMode, "body must be in x14 focus mode");
+    assert.equal(layout.frameMarginLeft, "0px", "legacy frame margin must be cleared in focus");
+    assert.ok(layout.paneLeft < 8, `focus table pane should start at viewport edge (left=${layout.paneLeft})`);
+    assert.ok(
+      layout.paneWidth >= layout.viewport * 0.92,
+      `focus table pane should use nearly full width (${layout.paneWidth}/${layout.viewport})`,
+    );
+  }
+
   async function closeMobileSidebar(page: Page) {
     await page.evaluate(() => {
       document.body.classList.remove("legacy-sidebar-open");
@@ -486,30 +536,24 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.close();
   });
 
-  it("fullscreen registry: search, column filter, columns default, exit keeps normal cols", async () => {
+  it("fullscreen registry: real enter, full width, filters, column actions, exit", async () => {
     const page = await browser.newPage({ viewport: DESKTOP });
     await login(page, "manager-lktandoor-list@example.com");
     await waitForList(page);
-    await page.waitForSelector('[data-testid="v3-focus-enter"]:not(.clients-hidden)');
-    await page.evaluate(() => {
-      const next = window.ClientsV3.mergeListStateForUserAction({
-        v3focus: true,
-        page: window.ClientsV3.readState().page || 1,
-      });
-      window.ClientsV3.writeState(next, false);
-      const cached = window.__lastV3ListPayload;
-      if (cached && window.ClientsLktandoorFocus && window.__lktandoorListCtx) {
-        window.__lktandoorListCtx.showResultsContent();
-        window.ClientsLktandoorFocus.render(
-          window.__lktandoorListCtx,
-          Object.assign({}, cached, { state: next }),
-        );
-      }
-      window.ClientsV3.loadList(window.__lktandoorListCtx, next, false);
-    });
-    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    await enterFocus(page);
     assert.equal(new URL(page.url()).searchParams.get("v3focus"), "1");
     assert.ok(await page.locator("body.x14-focus-mode").count());
+    await assertFocusFullWidth(page);
+    assert.equal(
+      await page.locator('#x14-focus-scroll input[data-focus-col="name"]').count(),
+      1,
+      "client name column filter must render",
+    );
+    assert.equal(
+      await page.locator('#x14-focus-scroll input[data-focus-col="address_line"]').count(),
+      1,
+      "address column filter must render",
+    );
     await updateList(page, async () => {
       await page.fill("#v3-focus-search", "SYNTH");
       await page.waitForTimeout(220);
@@ -521,6 +565,20 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       await page.waitForTimeout(220);
     });
     assert.ok((await focusRowCount(page)) >= 1);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "v3-focus-filter-legal_name-text");
+    await page.click("#v3-focus-columns");
+    await page.waitForSelector("#v3-lktandoor-columns-dialog[open]");
+    assert.ok(await page.locator("[data-v3-columns-all]").count());
+    assert.ok(await page.locator("[data-v3-columns-default]").count());
+    const cityToggle = page.locator('#v3-lktandoor-columns-dialog input[data-v3-column-id="city"]');
+    await cityToggle.uncheck();
+    await updateList(page, () => page.locator("[data-v3-columns-default]").click());
+    const colsAfterDefault = await page.evaluate(() =>
+      window.ClientsV3.readState().v3focuscols.split(","),
+    );
+    assert.ok(!colsAfterDefault.includes("city"));
+    assert.ok(colsAfterDefault.includes("discount_amount"));
+    await page.locator("#v3-columns-done").click();
     const nameHeaderIndex = await page.evaluate(() => {
       const headers = Array.from(document.querySelectorAll("#x14-focus-scroll thead th span"));
       return headers.findIndex((el) => el.textContent?.includes("Название клиента"));
@@ -535,16 +593,61 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(await page.locator("body.x14-focus-mode").count(), 0);
     await page.setViewportSize(MOBILE);
     await closeMobileSidebar(page);
-    await page.evaluate(() => {
-      const next = window.ClientsV3.mergeListStateForUserAction({
-        v3focus: true,
-        page: window.ClientsV3.readState().page || 1,
-      });
-      window.ClientsV3.writeState(next, false);
-      window.ClientsV3.loadList(window.__lktandoorListCtx, next, false);
-    });
-    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    await enterFocus(page);
+    await assertFocusFullWidth(page);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "focus-mobile-390.png") });
+    await page.close();
+  });
+
+  it("focus card back link and browser back restore focus state", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    await enterFocus(page);
+    await updateList(page, async () => {
+      await page.fill('#x14-focus-scroll input[data-focus-col="legal_name"]', "Legal");
+      await page.waitForTimeout(220);
+    });
+    await page.click("#v3-focus-columns");
+    await page.waitForSelector("#v3-lktandoor-columns-dialog[open]");
+    await page.locator("[data-v3-columns-default]").click();
+    await page.locator("#v3-columns-done").click();
+    const beforeCard = page.url();
+    assert.ok(beforeCard.includes("v3focus=1"));
+    assert.ok(beforeCard.includes("filters=") || beforeCard.includes("legal"));
+    await page.locator("#x14-focus-scroll tbody tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    const backHref = await page.locator('[data-testid="v3-back-to-list"]').getAttribute("href");
+    assert.ok(backHref?.includes("v3focus=1"), "back link must preserve focus mode");
+    assert.ok(backHref?.includes("v3focuscols="), "back link must preserve focus columns");
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(new URL(page.url()).searchParams.get("v3focus"), "1");
+    assert.ok(new URL(page.url()).searchParams.get("v3focuscols"));
+    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    await updateList(page, () => page.reload());
+    assert.equal(new URL(page.url()).searchParams.get("v3focus"), "1");
+    await page.locator("#x14-focus-scroll tbody tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.goBack());
+    assert.equal(new URL(page.url()).searchParams.get("v3focus"), "1");
+    await page.close();
+  });
+
+  it("normal list columns dialog select-all and default buttons work", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    await page.click("#columns-picker-btn");
+    await page.waitForSelector("#v3-lktandoor-columns-dialog[open]");
+    assert.ok(await page.locator("[data-v3-columns-all]").count());
+    await page.locator("[data-v3-columns-default]").click();
+    const normalCols = await page.evaluate(() => window.ClientsV3.readState().v3cols.split(","));
+    assert.equal(normalCols[0], "name");
+    assert.ok(normalCols.length >= 5);
+    await page.locator("[data-v3-columns-all]").click();
+    const allCols = await page.evaluate(() => window.ClientsV3.readState().v3cols.split(","));
+    assert.ok(allCols.length > normalCols.length);
+    await page.locator("#v3-columns-done").click();
     await page.close();
   });
 
