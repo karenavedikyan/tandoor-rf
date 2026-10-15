@@ -1,23 +1,28 @@
 (function () {
   "use strict";
 
-  var DEFAULT_LEGAL_COLS = ["name", "city", "manager_name", "rop_name", "status_label"];
-  var DEFAULT_RETAIL_COLS = ["name", "city", "manager_name", "rop_name", "closed"];
+  var DEFAULT_LEGAL_COLS = ["name", "category_name", "legal_name", "manager_name", "rop_name"];
+  var DEFAULT_RETAIL_COLS = ["client_name", "store_address", "manager_name", "lpr_name", "club_status"];
 
   var COLUMN_CATALOG = {
-    name: { label: "Название", required: true, filterKey: "q" },
-    city: { label: "Город", filterKey: "colCity" },
+    name: { label: "Название клиента", required: true, filterKey: null },
+    client_name: { label: "Название клиента", required: true, filterKey: null },
+    category_name: { label: "ТОП-категория холдинга", filterKey: null },
+    legal_name: { label: "Юридическое лицо", filterKey: null },
+    city: { label: "Город", filterKey: null },
     address_line: { label: "Адрес", filterKey: null },
-    manager_name: { label: "Менеджер", filterKey: "colManager" },
-    regional_name: { label: "Региональный", filterKey: "colRegional" },
+    manager_name: { label: "Менеджер клиента", filterKey: null },
+    regional_name: { label: "Региональный", filterKey: null },
     hardware_name: { label: "Фурнитура", filterKey: null },
-    rop_name: { label: "РОП", filterKey: "colRop" },
-    status_label: { label: "Статус", filterKey: "colStatus" },
-    closed: { label: "Статус", filterKey: "colStatus" },
+    rop_name: { label: "РОП клиента", filterKey: null },
+    status_label: { label: "Статус", filterKey: null },
+    closed: { label: "Статус ТТ", filterKey: null },
     type_name: { label: "Тип", filterKey: null },
-    category_name: { label: "Категория", filterKey: null },
     holding: { label: "Холдинг", filterKey: null },
-    store_address: { label: "Адрес", filterKey: null },
+    store_address: { label: "Адрес магазина", filterKey: null },
+    lpr_name: { label: "ФИО ЛПР", filterKey: null },
+    club_status: { label: "Club", filterKey: null },
+    club_bonus: { label: "Club (бонус)", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -27,18 +32,30 @@
   function catalogForEntity(v3entity) {
     var retail = isRetailEntity(v3entity);
     var ids = retail
-      ? ["name", "city", "manager_name", "regional_name", "rop_name", "closed", "store_address"]
+      ? [
+          "client_name",
+          "store_address",
+          "manager_name",
+          "lpr_name",
+          "club_status",
+          "city",
+          "category_name",
+          "rop_name",
+          "club_bonus",
+          "closed",
+        ]
       : [
           "name",
+          "category_name",
+          "legal_name",
+          "manager_name",
+          "rop_name",
           "city",
           "address_line",
-          "manager_name",
           "regional_name",
           "hardware_name",
-          "rop_name",
           "status_label",
           "type_name",
-          "category_name",
           "holding",
         ];
     return ids
@@ -61,6 +78,7 @@
   }
 
   function parseColumnIds(raw, v3entity) {
+    var retail = isRetailEntity(v3entity);
     var allowed = new Set(
       catalogForEntity(v3entity).map(function (col) {
         return col.id;
@@ -74,8 +92,14 @@
       .filter(function (id) {
         return id && allowed.has(id);
       });
-    if (!ids.includes("name")) {
-      ids.unshift("name");
+    var primary = retail ? "client_name" : "name";
+    if (retail && ids.includes("name") && !ids.includes("client_name")) {
+      ids = ids.map(function (id) {
+        return id === "name" ? "client_name" : id;
+      });
+    }
+    if (!ids.includes(primary)) {
+      ids.unshift(primary);
     }
     if (!ids.length) {
       return defaultColumnIds(v3entity);
@@ -108,6 +132,24 @@
   }
 
   function cellDisplay(item, colId, shell) {
+    if (colId === "legal_name") {
+      var legal = item.name || item.legal_name;
+      return legal
+        ? shell.escapeHtml(String(legal))
+        : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (colId === "client_name") {
+      var cn = item.client_name || item.holding_name;
+      return cn
+        ? shell.escapeHtml(String(cn))
+        : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (colId === "club_status" || colId === "lpr_name") {
+      var cv = item[colId];
+      return cv
+        ? shell.escapeHtml(String(cv))
+        : '<span class="clients-no-data">Нет данных</span>';
+    }
     if (colId === "holding") {
       if (item.holding_name) {
         return shell.escapeHtml(String(item.holding_name));
@@ -139,7 +181,7 @@
     return state[filterKey] || "";
   }
 
-  function renderTableHead(shell, tableHeadRow, visibleCols, state, onFilterInput) {
+  function renderTableHead(shell, tableHeadRow, visibleCols, state, onFilterInput, skipColumnFilters) {
     if (!tableHeadRow) {
       return;
     }
@@ -148,7 +190,11 @@
         return "<th scope=\"col\">" + shell.escapeHtml(col.label) + "</th>";
       })
       .join("");
-    var filterRow = visibleCols
+    var filterRow = skipColumnFilters
+      ? visibleCols.map(function () {
+          return "<th></th>";
+        }).join("")
+      : visibleCols
       .map(function (col) {
         if (!col.filterKey) {
           return "<th></th>";
@@ -179,6 +225,11 @@
       tableHeadRow.parentElement?.appendChild(filterRowEl);
     }
     filterRowEl.innerHTML = filterRow;
+    if (skipColumnFilters) {
+      filterRowEl.classList.add("clients-hidden");
+      return;
+    }
+    filterRowEl.classList.remove("clients-hidden");
     filterRowEl.querySelectorAll("[data-v3-col-filter]").forEach(function (input) {
       input.addEventListener("change", function () {
         onFilterInput(input.getAttribute("data-v3-col-filter") || "", input.value.trim());

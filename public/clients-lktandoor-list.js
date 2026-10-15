@@ -50,9 +50,9 @@
     if (state.responsibleGuid && ctx.teamContext && ctx.teamContext.managerName) {
       parts.push(ctx.teamContext.managerName);
     }
-    if ((state.v3view === "teams" || state.v3view === "all") && ["director", "admin", "rop"].indexOf(role) !== -1) {
+    if (state.v3view === "teams" && (state.responsibleGuid || state.ropEmployee)) {
       parts.push("Клиентская база");
-    } else if (state.v3view === "all") {
+    } else if (state.v3view === "all" && (state.responsibleGuid || state.ropEmployee)) {
       parts.push("Клиентская база");
     }
     return parts;
@@ -158,36 +158,15 @@
     return n;
   }
 
-  function renderFilterSummary(shell, state) {
+  function renderFilterSummary(shell, state, options, onRemove) {
+    if (window.ClientsV3FieldRules && options) {
+      window.ClientsV3FieldRules.renderChips(shell, state, options, onRemove || function () {});
+      return;
+    }
     var summary = document.getElementById("v3-lktandoor-filter-summary");
-    var chips = document.getElementById("v3-lktandoor-filter-chips");
-    if (!summary) {
-      return;
+    if (summary && state.v3Rules) {
+      summary.textContent = "Фильтры по всем полям · " + (state.v3Rules.length || 0);
     }
-    var count = activeRuleCount(state);
-    summary.textContent = "Фильтры по всем полям · " + count;
-    if (!chips) {
-      return;
-    }
-    var parts = [];
-    if (state.city) {
-      parts.push({ label: "Город: " + state.city, patch: { city: "" } });
-    }
-    var cats = window.ClientsV3.listFilterTokens(state, "v3categories", "v3category");
-    cats.forEach(function (guid) {
-      parts.push({ label: "Категория: " + guid.slice(0, 8), patch: { v3categories: [], v3category: "" } });
-    });
-    chips.innerHTML = parts
-      .map(function (part, index) {
-        return (
-          '<button type="button" class="x6-chip" data-v3-lktandoor-clear="' +
-          index +
-          '">' +
-          shell.escapeHtml(part.label) +
-          " ×</button>"
-        );
-      })
-      .join("");
   }
 
   function syncLayout(active, state) {
@@ -220,14 +199,20 @@
   }
 
   function renderMobileCard(shell, item, visibleCols, href, listUi, state) {
-    var name = item.name || item.guid;
-    var address = item.address_line || item.store_address || item.city || "Адрес не передан";
-    var category = item.category_name || item.type_name || "Категория не передана";
+    var primaryCol = visibleCols[0] || { id: "name" };
+    var name = item[primaryCol.id] || item.client_name || item.name || item.guid;
+    var addressCol = visibleCols.find(function (c) {
+      return c.id === "store_address" || c.id === "address_line";
+    });
+    var address = addressCol
+      ? listUi.cellDisplay(item, addressCol.id, shell).replace(/<[^>]+>/g, "")
+      : item.store_address || item.address_line || item.city || "Адрес не передан";
+    var category = item.category_name || item.type_name || "";
+    var badge = category || "—";
     var extraCols = visibleCols.filter(function (col) {
-      return col.id !== "name" && col.id !== "city" && col.id !== "category_name";
+      return col.id !== primaryCol.id && col.id !== "store_address" && col.id !== "address_line";
     });
     var fieldsHtml = extraCols
-      .slice(0, 4)
       .map(function (col) {
         var val = listUi.cellDisplay(item, col.id, shell).replace(/<[^>]+>/g, "");
         return "<span><small>" + shell.escapeHtml(col.label) + "</small><b>" + val + "</b></span>";
@@ -243,9 +228,9 @@
       '<span class="x13-client-card-address">' +
       shell.escapeHtml(String(address)) +
       "</span>" +
-      '<span class="x7-badge">' +
-      shell.escapeHtml(String(category)) +
-      "</span>" +
+      (badge
+        ? '<span class="x7-badge">' + shell.escapeHtml(String(badge)) + "</span>"
+        : "") +
       (fieldsHtml ? '<span class="x13-mobile-fields">' + fieldsHtml + "</span>" : "") +
       '<span class="x13-open-card">Открыть карточку</span></a>'
     );
@@ -302,7 +287,15 @@
       }
       renderContextNav(shell, state, ctx);
       renderSectionHeading(state, ctx);
-      renderFilterSummary(shell, state);
+      var opts = window.__lktandoorFilterOptions || ctx.filterOptions || { entity: state.v3entity };
+      renderFilterSummary(shell, state, opts, function (index) {
+        var next = window.ClientsV3.readState();
+        var rules = window.ClientsV3FieldRules.parseRulesFromState(next);
+        rules.splice(index, 1);
+        next.v3Rules = rules;
+        window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        window.ClientsV3.loadList(ctx.uiCtx || window.__lktandoorUiCtx, next, false);
+      });
       loadScopeCounts(ctx.api, state).then(function (counts) {
         renderScopeBar(shell, state, counts);
       });

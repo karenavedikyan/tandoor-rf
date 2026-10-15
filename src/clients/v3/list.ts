@@ -9,6 +9,8 @@ import {
   RETAIL_CITY_SQL,
   RETAIL_STATUS_LABEL_SQL,
 } from "./list-sql-expressions";
+import { appendV3FieldRulesSql, type V3FilterRule } from "./list-field-rules";
+import { v3CategoryNameSql, v3TypeNameSql } from "./json-paths";
 
 export type V3ResponsibleKind = "manager" | "regional" | "hardware";
 
@@ -41,6 +43,7 @@ export type V3ListQuery = {
   colRop?: string;
   colCity?: string;
   colStatus?: string;
+  fieldRules?: V3FilterRule[];
 };
 
 function appendTextContainsFilter(
@@ -261,8 +264,10 @@ export async function listV3Entities(
     const scope = v3EntityAssignmentScope(context, "le");
     const params = [...scope.params];
     const search = qPattern ? appendLegalSearch(qPattern, params) : "";
-    const filters =
+    let filters =
       appendAssignmentFilters(input, "le", params) + appendV3ColumnFilters(input, "legal", params);
+    const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "le", input.fieldRules);
+    filters = rulesApplied.sql;
     const countParams = [...params];
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
@@ -300,29 +305,40 @@ export async function listV3Entities(
     input.closed === true ? " AND ro.closed = TRUE" : input.closed === false ? " AND ro.closed = FALSE" : "";
   const params = [...scope.params];
   const search = qPattern ? appendRetailSearch(qPattern, params) : "";
-  const filters =
+  let filters =
     appendAssignmentFilters(input, "ro", params) + appendV3ColumnFilters(input, "retail", params);
+  const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "ro", input.fieldRules);
+  filters = rulesApplied.sql;
+  const holdingJoin = " LEFT JOIN onec_v3_holdings h ON h.guid_holding = ro.guid_holding";
+  const fromSql = `FROM onec_v3_retail_outlets ro${holdingJoin}`;
   const countParams = [...params];
   params.push(input.pageSize, offset);
   const total = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}`,
+    `SELECT COUNT(*)::text AS count ${fromSql} WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}`,
     countParams,
   );
   const rows = await query(
     `
       SELECT ro.guid_store::text AS guid,
+             COALESCE(NULLIF(TRIM(h.name_holding), ''), NULLIF(TRIM(ro.address->>'store_address'), ''), ro.guid_store::text) AS client_name,
              COALESCE(ro.address->>'store_address', ro.guid_store::text) AS name,
              ro.guid_holding::text AS holding_guid,
+             h.name_holding AS holding_name,
              ro.closed,
              ${RETAIL_CITY_SQL} AS city,
              ro.managers->>'nameManager' AS manager_name,
              ro.managers->>'nameRegionalManager' AS regional_name,
              ro.managers->>'nameHardwareManager' AS hardware_name,
              ro.managers->>'nameHeadOfSales' AS rop_name,
-             ro.address->>'store_address' AS store_address
-      FROM onec_v3_retail_outlets ro
+             ro.address->>'store_address' AS store_address,
+             NULLIF(TRIM(ro.lpr_information->>'name'), '') AS lpr_name,
+             NULLIF(TRIM(ro.additional_information->>'status_tandoor_club'), '') AS club_status,
+             NULLIF(TRIM(ro.additional_information->>'bonus_tandoor_club'), '') AS club_bonus,
+             ${v3CategoryNameSql("ro")} AS category_name,
+             ${v3TypeNameSql("ro")} AS type_name
+      ${fromSql}
       WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
-      ORDER BY name ASC
+      ORDER BY ro.address->>'store_address' ASC NULLS LAST, name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params,

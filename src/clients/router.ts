@@ -62,6 +62,7 @@ import {
   v3HoldingCompositionHandler,
   v3OrgStructureHandler,
   v3RopResponsiblesHandler,
+  v3FilterFieldsHandler,
   v3ScopeSummaryHandler,
   v3UnassignedSummaryHandler,
 } from "./v3/handlers";
@@ -94,6 +95,10 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/scope-summary", ...readChain, (req, res, next) => {
     void v3ScopeSummaryHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/filter-fields", ...readChain, (req, res, next) => {
+    void v3FilterFieldsHandler(req, res).catch(next);
   });
 
   router.get("/v3/unassigned-summary", ...readChain, (req, res, next) => {

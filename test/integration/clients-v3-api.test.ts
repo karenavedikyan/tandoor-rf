@@ -407,6 +407,19 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(scopeMgr.status, 200);
     assert.ok(scopeMgr.body.legal <= scopeAdmin.body.legal);
+
+    const rulesRaw = encodeURIComponent(
+      JSON.stringify([
+        { field: "categoryGuid", op: "eq", value: CAT_A },
+        { field: "typeGuid", op: "eq", value: TYPE_A },
+      ]),
+    );
+    const byRules = await request(app)
+      .get(`/api/clients/v3/list?entity=legal&filters=${rulesRaw}&page=1&pageSize=50`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(byRules.status, 200);
+    assert.equal(byRules.body.total, 1);
+    assert.equal(byRules.body.items[0].guid, LEGAL);
   });
 
   it("sync-status exposes exchangeV3Active", async () => {

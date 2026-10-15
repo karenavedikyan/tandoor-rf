@@ -219,6 +219,23 @@
               </div>
               <details id="v3-lktandoor-field-filters" class="x6-filter clients-hidden">
                 <summary id="v3-lktandoor-filter-summary">Фильтры по всем полям · 0</summary>
+                <p class="clients-v3-list-filterbar__hint">Все условия одновременно (AND). GUID сотрудников — только из области списка.</p>
+                <div class="x6-builder clients-v3-rule-builder">
+                  <label class="clients-field">
+                    <span class="clients-field__label">Поле</span>
+                    <select id="v3-rule-field" class="clients-field__select"></select>
+                  </label>
+                  <label class="clients-field">
+                    <span class="clients-field__label">Условие</span>
+                    <select id="v3-rule-op" class="clients-field__select"></select>
+                  </label>
+                  <label class="clients-field">
+                    <span class="clients-field__label">Значение</span>
+                    <span id="v3-rule-value-wrap"><input id="v3-rule-value" class="clients-field__input" type="text" /></span>
+                  </label>
+                  <button type="button" id="v3-rule-add" class="workspace-button workspace-button--primary">Добавить</button>
+                </div>
+                <p id="v3-rule-field-note" class="clients-v3-list-filterbar__hint"></p>
                 <div id="v3-lktandoor-filter-chips" class="x6-chips"></div>
               </details>
               <p id="clients-filters-scope-label" class="clients-filters-scope-label clients-hidden">
@@ -751,6 +768,7 @@
     <script src="/clients-teams-compact.js" defer></script>
     <script src="/clients-onec-teams.js" defer></script>
     <script src="/clients-v3-list.js" defer></script>
+    <script src="/clients-v3-field-rules.js" defer></script>
     <script src="/clients-lktandoor-list.js" defer></script>
     <script src="/clients-v3.js" defer></script>
     <script src="/clients.js" defer></script>

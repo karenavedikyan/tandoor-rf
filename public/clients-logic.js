@@ -128,6 +128,7 @@
     "colCity",
     "colStatus",
     "filterOpen",
+    "filters",
     "v3city",
     "missingManager",
     "responsibleGuid",

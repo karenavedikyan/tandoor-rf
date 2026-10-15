@@ -19,6 +19,7 @@ import {
 import { parseMultiFilterTokenParam } from "./query-params";
 import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
+import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -85,6 +86,11 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     const raw = typeof value === "string" ? value.trim() : "";
     return raw.length > 0 ? raw : undefined;
   };
+  const fieldRules = parseV3FilterRulesParam(req.query.filters, entityRaw as V3ListEntity);
+  if (req.query.filters !== undefined && String(req.query.filters).trim() !== "" && fieldRules === undefined) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый filters."));
+    return;
+  }
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -106,9 +112,23 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     colRop: trimOptional(req.query.colRop),
     colCity: trimOptional(req.query.colCity),
     colStatus: trimOptional(req.query.colStatus),
+    fieldRules: fieldRules ?? [],
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });
+}
+
+export async function v3FilterFieldsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const entityRaw = String(req.query.entity ?? "legal");
+  if (!LIST_ENTITIES.has(entityRaw as V3ListEntity)) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ fields: listFilterFieldsForEntity(entityRaw as V3ListEntity) });
 }
 
 export async function v3ScopeSummaryHandler(req: AccessRequest, res: Response): Promise<void> {

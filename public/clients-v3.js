@@ -92,6 +92,10 @@
       colCity: params.get("colCity") || "",
       colStatus: params.get("colStatus") || "",
       filterOpen: params.get("filterOpen") === "1",
+      v3Rules:
+        window.ClientsV3FieldRules && window.ClientsV3FieldRules.readRulesFromUrl
+          ? window.ClientsV3FieldRules.readRulesFromUrl(search)
+          : [],
     };
   }
 
@@ -212,7 +216,19 @@
     }
   }
 
+  function rulesCoverField(state, fieldId) {
+    if (!state.v3Rules || !state.v3Rules.length) {
+      return false;
+    }
+    return state.v3Rules.some(function (r) {
+      return r.field === fieldId;
+    });
+  }
+
   function appendTypeCategoryParams(params, state) {
+    if (rulesCoverField(state, "typeGuid") || rulesCoverField(state, "categoryGuid")) {
+      return;
+    }
     var typeTokens = listFilterTokens(state, "v3types", "v3type");
     if (typeTokens.length > 1) {
       params.set("typeGuids", joinTokenList(typeTokens));
@@ -266,6 +282,8 @@
       colRop: url.colRop || "",
       colCity: url.colCity || "",
       colStatus: url.colStatus || "",
+      v3Rules: url.v3Rules ? url.v3Rules.slice() : [],
+      filterOpen: url.filterOpen,
     };
     if (patch) {
       Object.keys(patch).forEach(function (key) {
@@ -506,6 +524,9 @@
     });
     if (state.filterOpen) params.set("filterOpen", "1");
     else params.delete("filterOpen");
+    if (window.ClientsV3FieldRules) {
+      window.ClientsV3FieldRules.appendRulesToParams(params, state);
+    }
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -547,6 +568,9 @@
       if (s[key]) params.set(key, s[key]);
     });
     if (s.filterOpen) params.set("filterOpen", "1");
+    if (window.ClientsV3FieldRules) {
+      window.ClientsV3FieldRules.appendRulesToParams(params, s);
+    }
     return "?" + params.toString();
   }
 
@@ -787,6 +811,9 @@
         );
       }
       syncV3FilterAliases(state);
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.mergeRulesFromLegacy(state);
+      }
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
       var legacyState = {
@@ -839,6 +866,9 @@
       }
       appendTypeCategoryParams(params, state);
       appendV3ListQueryParams(params, state);
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.appendRulesToParams(params, state);
+      }
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
@@ -852,6 +882,21 @@
           window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
           if (window.ClientsV3List) {
             window.ClientsV3List.syncFilterbar(shell, liveState, optionsResult.data);
+          }
+          if (window.ClientsV3FieldRules) {
+            var opts = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
+            window.__lktandoorFilterOptions = opts;
+            window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
+              window.ClientsV3FieldRules.renderBuilder(shell, liveState.v3entity, opts);
+              window.ClientsV3FieldRules.renderChips(shell, liveState, opts, function (index) {
+                var next = readState();
+                var rules = window.ClientsV3FieldRules.parseRulesFromState(next);
+                rules.splice(index, 1);
+                next.v3Rules = rules;
+                window.ClientsV3FieldRules.syncLegacyFromRules(next);
+                window.ClientsV3.loadList(ctx, next, false);
+              });
+            });
           }
         }
       });
@@ -903,6 +948,7 @@
           var detailType = meta.detailEntity;
           var listUi = window.ClientsV3List;
           var visibleCols = resolveVisibleListColumns(state, ctx.currentUserId);
+          var lktandoorList = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
           if (listUi && ctx.tableHeadRow) {
             listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
               var patch = { page: 1 };
@@ -914,7 +960,7 @@
                 }
               }
               window.ClientsV3.loadList(ctx, mergeListStateForUserAction(patch), false);
-            });
+            }, !!lktandoorList);
           }
           ctx.tableBody.innerHTML = items
             .map(function (item) {
@@ -922,13 +968,18 @@
               var cells = visibleCols
                 .map(function (col, index) {
                   if (index === 0) {
+                    var titleText =
+                      item[col.id] ||
+                      item.name ||
+                      item.client_name ||
+                      item.guid;
                     return (
                       '<td data-label="' +
                       shell.escapeHtml(col.label) +
                       '"><a class="clients-link" href="' +
                       href +
                       '">' +
-                      shell.escapeHtml(item.name || item.guid) +
+                      shell.escapeHtml(String(titleText)) +
                       "</a></td>"
                     );
                   }
@@ -1206,6 +1257,7 @@
           v3dense: url.v3dense,
           pageSize: url.pageSize,
           filterOpen: false,
+          v3Rules: [],
         },
         true,
       );
@@ -1221,27 +1273,49 @@
       }
       var cityEl = document.getElementById("v3-city-filter");
       cityEl?.addEventListener("change", function () {
-        window.ClientsV3.loadList(
-          currentContext(),
-          mergeListStateForUserAction({ city: cityEl.value || "", page: 1 }),
-          false,
-        );
+        var next = mergeListStateForUserAction({ city: cityEl.value || "", page: 1 });
+        if (window.ClientsV3FieldRules) {
+          var rules = window.ClientsV3FieldRules.parseRulesFromState(next).filter(function (r) {
+            return r.field !== "city";
+          });
+          if (cityEl.value) {
+            rules.push({ field: "city", op: "eq", value: cityEl.value });
+          }
+          next.v3Rules = rules;
+          window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        }
+        window.ClientsV3.loadList(currentContext(), next, false);
       });
       var categoryQuick = document.getElementById("v3-lktandoor-category-filter");
       categoryQuick?.addEventListener("change", function () {
         var guid = categoryQuick.value || "";
-        window.ClientsV3.loadList(
-          currentContext(),
-          mergeListStateForUserAction({
-            v3categories: guid ? [guid] : [],
-            v3category: guid,
-            page: 1,
-          }),
-          false,
-        );
+        var next = mergeListStateForUserAction({
+          v3categories: guid ? [guid] : [],
+          v3category: guid,
+          page: 1,
+        });
+        if (window.ClientsV3FieldRules) {
+          var rules = window.ClientsV3FieldRules.parseRulesFromState(next).filter(function (r) {
+            return r.field !== "categoryGuid";
+          });
+          if (guid) {
+            rules.push({ field: "categoryGuid", op: "eq", value: guid });
+          }
+          next.v3Rules = rules;
+          window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        }
+        window.ClientsV3.loadList(currentContext(), next, false);
       });
       if (window.ClientsLktandoorList) {
         window.ClientsLktandoorList.bindFilterPanel();
+      }
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.bindBuilder(
+          currentContext(),
+          function (nextState) {
+            window.ClientsV3.loadList(currentContext(), nextState, false);
+          },
+        );
       }
       document.getElementById("v3-density-btn")?.addEventListener("click", function () {
         var url = readState();
