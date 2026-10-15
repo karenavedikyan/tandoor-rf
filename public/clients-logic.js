@@ -915,6 +915,34 @@
     return Boolean(v3ResponsibleFromLegacyState(state).responsibleGuid);
   }
 
+  function clearedTeamTerritoryFields() {
+    return {
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      regionalManager: "",
+      clientRegionalManager: "",
+      outletRegionalManager: "",
+      hardwareManager: "",
+      clientHardwareManager: "",
+      outletHardwareManager: "",
+      responsibleGuid: "",
+      responsibleKind: "",
+      teamKind: "",
+      portfolio: "",
+    };
+  }
+
+  function isTeamsRosterView(state) {
+    return (
+      Boolean(state) &&
+      state.view === "teams" &&
+      Boolean(state.ropEmployee) &&
+      !isBranchPortfolioList(state) &&
+      !hasResponsibleSelection(state)
+    );
+  }
+
   function appendAssignmentParams(params, state) {
     var entity = state.entity || "clients";
     var managerSlice = assignmentFilterSliceFromState(
@@ -2258,6 +2286,8 @@
     buildListQueryString: buildListQueryString,
     isBranchPortfolioList: isBranchPortfolioList,
     hasResponsibleSelection: hasResponsibleSelection,
+    clearedTeamTerritoryFields: clearedTeamTerritoryFields,
+    isTeamsRosterView: isTeamsRosterView,
     hasExplicitResponsibleNavigation: hasExplicitResponsibleNavigation,
     formatLoadedInLkLabel: formatLoadedInLkLabel,
     SOURCE_UPDATED_UNKNOWN: SOURCE_UPDATED_UNKNOWN,

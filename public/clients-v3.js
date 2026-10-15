@@ -835,8 +835,36 @@
       var lktandoorActive =
         window.ClientsLktandoorList &&
         window.ClientsLktandoorList.shouldActivate(legacyState, true);
-      if (window.ClientsLktandoorList) {
-        window.ClientsLktandoorList.syncLayout(lktandoorActive, state);
+      if (window.ClientsLktandoorList || window.ClientsLktandoorTeams) {
+        var legacyForTeams = {
+          view: state.v3view === "teams" ? "teams" : "all",
+          ropEmployee: state.ropEmployee,
+          responsibleGuid: state.responsibleGuid,
+          manager: state.v3manager,
+          teamSource: "rop",
+        };
+        var lktandoorTeamsActive =
+          window.ClientsLktandoorTeams &&
+          ctx.lktandoorContext &&
+          ctx.lktandoorContext.rolePresentation &&
+          window.ClientsLktandoorTeams.shouldUse(
+            legacyForTeams,
+            true,
+            ctx.lktandoorContext.rolePresentation,
+            window.ClientsLogic,
+          );
+        if (window.ClientsLktandoorTeams && lktandoorTeamsActive) {
+          window.ClientsLktandoorTeams.syncLayout(lktandoorTeamsActive, legacyForTeams);
+        }
+        if (window.ClientsLktandoorList) {
+          window.ClientsLktandoorList.syncLayout(lktandoorActive, state, {
+            manageChrome: !lktandoorTeamsActive,
+          });
+        }
+        var lktandoorChromeVisible = lktandoorTeamsActive || lktandoorActive;
+        document
+          .getElementById("v3-lktandoor-chrome")
+          ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
         document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
         if (lktandoorActive && ctx.lktandoorContext) {
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
@@ -1178,6 +1206,29 @@
           if (!teamCtx.ok) {
             ctx.showResultsState("error", "Не удалось загрузить команду", "Повторите попытку.", "");
             return;
+          }
+          if (
+            hooks.isRopDesignSession &&
+            hooks.isRopDesignSession() &&
+            !legacyState.ropEmployee &&
+            hooks.ropTeamsHomeStatePatch
+          ) {
+            var ropPatch = hooks.ropTeamsHomeStatePatch(legacyState);
+            if (ropPatch) {
+              hooks.navigateState(Object.assign({}, hooks.currentStateFromForm(), legacyState, ropPatch));
+              return;
+            }
+            if (hooks.ropOwnTeamIdentityReady && !hooks.ropOwnTeamIdentityReady()) {
+              hooks.renderRopOwnTeamIdentityEmpty && hooks.renderRopOwnTeamIdentityEmpty();
+              hooks.updateViewChrome(legacyState);
+              ctx.showResultsState(
+                "empty",
+                "Моя команда недоступна",
+                "Нет подтверждённой привязки к сотруднику 1С для вашего аккаунта РОП.",
+                "",
+              );
+              return;
+            }
           }
           return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
             if (navigationIsStale()) return;

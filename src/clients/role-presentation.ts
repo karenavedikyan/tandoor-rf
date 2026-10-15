@@ -1,4 +1,5 @@
 import type { AccessContext } from "../access/types";
+import { selfRopEmployeeGuidFromContext } from "./self-rop-identity";
 import type { UserRole } from "../shared/user";
 import type { ClientsEntityMode, ClientsViewMode } from "./query";
 
@@ -45,6 +46,8 @@ export type RolePresentation = {
         clientCount: number;
       }
     | null;
+  /** Confirmed 1C ROP employee guid for the logged-in user; ROP role only. */
+  selfRopEmployeeGuid?: string | null;
 };
 
 const MANAGER_FOCUS = [
@@ -218,6 +221,7 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
         showTeamNavigation: true,
         reviewReadOnly: true,
         cardFocusHints: ROP_FOCUS,
+        selfRopEmployeeGuid: selfRopEmployeeGuidFromContext(context),
       };
 
     case "director":

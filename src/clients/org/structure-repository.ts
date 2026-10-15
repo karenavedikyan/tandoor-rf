@@ -6,6 +6,7 @@ import {
   ACTIVE_BASELINE_CLIENT_SQL,
   ACTIVE_BASELINE_OC_SQL,
 } from "../../onec-clients/baseline-active-scope";
+import { selfRopEmployeeGuidFromContext } from "../self-rop-identity";
 import { shortUuidLabel } from "../uuid-param";
 import {
   clientAssignedToRopClause,
@@ -81,6 +82,8 @@ export type OrgStructureOverview = {
   undefinedTeam: OrgUndefinedTeamMember[];
   rosterLoaded: boolean;
   limitationNote: string;
+  /** Logged-in ROP's confirmed 1C employee guid; null for other roles or missing link. */
+  selfRopEmployeeGuid?: string | null;
 };
 
 function assertOrgStructureAccess(context: AccessContext): void {
@@ -531,6 +534,7 @@ export async function getOrgStructureOverview(context: AccessContext): Promise<O
     limitationNote: rosterLoaded
       ? "Структура построена по назначениям 1С и справочнику ОПТ. Отсутствие аккаунта ЛК не скрывает сотрудника."
       : "Справочник ОПТ не загружен: часть признаков roster недоступна, назначения 1С показываются по имеющимся данным.",
+    selfRopEmployeeGuid: selfRopEmployeeGuidFromContext(context),
   };
 }
 

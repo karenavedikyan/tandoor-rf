@@ -8,7 +8,9 @@ import {
   type OrgStructureOverview,
   type OrgRopSummary,
 } from "../org/structure-repository";
+import { selfRopEmployeeGuidFromContext } from "../self-rop-identity";
 import { v3EntityAssignmentScope } from "./access-scope";
+import { readableGroupKey } from "./list-legal-grouped";
 import { v3JsonManagerField } from "./json-paths";
 
 function assertAccess(context: AccessContext): void {
@@ -55,13 +57,16 @@ function teamCountsFromResponsibles(items: OrgResponsibleSummary[]): {
 async function countBranch(context: AccessContext, ropGuid: string): Promise<{ legal: number; retail: number }> {
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
-  const ropIdxLe = leScope.params.length + 1;
+  const leParams = [...leScope.params];
+  const groupKey = readableGroupKey(context, leParams);
+  const ropIdxLe = leParams.length + 1;
+  leParams.push(ropGuid);
   const ropIdxRo = roScope.params.length + 1;
   const [legal, retail] = await Promise.all([
     query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM onec_v3_legal_entities le
+      `SELECT COUNT(DISTINCT ${groupKey})::text AS count FROM onec_v3_legal_entities le
        WHERE (${leScope.clause}) AND ${v3HeadOfSalesClause("le", `$${ropIdxLe}`)}`,
-      [...leScope.params, ropGuid],
+      leParams,
     ),
     query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro
@@ -134,6 +139,7 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     rosterLoaded,
     limitationNote:
       "Структура команд построена по объектам exchange v3 и справочнику ОПТ (без legacy onec_clients).",
+    selfRopEmployeeGuid: selfRopEmployeeGuidFromContext(context),
   };
 }
 
@@ -147,7 +153,9 @@ export async function listV3RopResponsibles(
   }
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
-  const leLen = leScope.params.length;
+  const leParams = [...leScope.params];
+  const legalGroupKey = readableGroupKey(context, leParams);
+  const leLen = leParams.length;
   const roLen = roScope.params.length;
   const roScopeOffset = leLen + 2;
   let roScopeClause = roScope.clause;
@@ -158,7 +166,7 @@ export async function listV3RopResponsibles(
   const ropExLe = leLen + 2;
   const ropRo = leLen + 2 + roLen + 1;
   const ropExRo = leLen + 2 + roLen + 2;
-  const sqlParams = [...leScope.params, ropEmployeeGuid, ropEmployeeGuid, ...roScope.params, ropEmployeeGuid, ropEmployeeGuid];
+  const sqlParams = [...leParams, ropEmployeeGuid, ropEmployeeGuid, ...roScope.params, ropEmployeeGuid, ropEmployeeGuid];
   const linked = new Set(
     (
       await query<{ employee_id: string }>(
@@ -176,7 +184,7 @@ export async function listV3RopResponsibles(
   }>(
     `
       WITH branch_legal AS (
-        SELECT le.* FROM onec_v3_legal_entities le
+        SELECT le.*, ${legalGroupKey} AS group_key FROM onec_v3_legal_entities le
         WHERE (${leScope.clause}) AND ${v3HeadOfSalesClause("le", `$${ropLe}`)}
       ),
       branch_retail AS (
@@ -187,7 +195,7 @@ export async function listV3RopResponsibles(
         SELECT 'manager'::text AS kind,
           lower(${v3JsonManagerField("branch_legal", "guidManager")}) AS employee_guid,
           MAX(${v3JsonManagerField("branch_legal", "nameManager")}) AS name,
-          COUNT(*)::text AS client_count, '0'::text AS outlet_count
+          COUNT(DISTINCT group_key)::text AS client_count, '0'::text AS outlet_count
         FROM branch_legal
         WHERE NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidManager")}), '')::uuid IS DISTINCT FROM $${ropExLe}::uuid
@@ -197,7 +205,7 @@ export async function listV3RopResponsibles(
         SELECT 'regional'::text AS kind,
           lower(${v3JsonManagerField("branch_legal", "guidRegionalManager")}) AS employee_guid,
           MAX(${v3JsonManagerField("branch_legal", "nameRegionalManager")}) AS name,
-          COUNT(*)::text AS client_count, '0'::text AS outlet_count
+          COUNT(DISTINCT group_key)::text AS client_count, '0'::text AS outlet_count
         FROM branch_legal
         WHERE NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidRegionalManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidRegionalManager")}), '')::uuid IS DISTINCT FROM $${ropExLe}::uuid
@@ -207,7 +215,7 @@ export async function listV3RopResponsibles(
         SELECT 'hardware'::text AS kind,
           lower(${v3JsonManagerField("branch_legal", "guidHardwareManager")}) AS employee_guid,
           MAX(${v3JsonManagerField("branch_legal", "nameHardwareManager")}) AS name,
-          COUNT(*)::text AS client_count, '0'::text AS outlet_count
+          COUNT(DISTINCT group_key)::text AS client_count, '0'::text AS outlet_count
         FROM branch_legal
         WHERE NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidHardwareManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("branch_legal", "guidHardwareManager")}), '')::uuid IS DISTINCT FROM $${ropExLe}::uuid
