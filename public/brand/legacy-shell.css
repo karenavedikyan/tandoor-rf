@@ -70,6 +70,26 @@ body.legacy-body {
   max-width: 100%;
 }
 
+[data-theme="dark"] .legacy-sidebar__brand {
+  position: relative;
+}
+
+[data-theme="dark"] .legacy-sidebar__logo--full {
+  opacity: 0;
+}
+
+[data-theme="dark"] .legacy-sidebar__brand::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 9.3125rem;
+  height: 2rem;
+  background: url("/brand/tandoor-logo-light.svg") no-repeat left center / contain;
+  pointer-events: none;
+}
+
 .legacy-sidebar__logo--compact {
   display: none;
   height: 2rem;

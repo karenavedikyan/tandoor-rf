@@ -9,9 +9,23 @@
   --rf-bg:#172019;--rf-surface:#222c25;--rf-text:#ecf0e9;--rf-text-muted:#a7b2a9;
   --rf-border:#39483d;--rf-primary-hover:#a8cb78;--rf-surface-muted:#31422b;
 }
-.client-card-page #client-detail-root {color:var(--rf-text);}
+.client-card-page #client-detail-root {color:var(--rf-text);max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;}
+.client-card-page .legacy-content {box-sizing:border-box;max-width:100%;overflow-x:clip;}
 .client-card-page .legacy-content button {font-family:inherit;}
 .client-card-page #client-detail-root {font-size:14px;line-height:1.45;}
+.client-card-page .client-detail-back-wrap {margin:0 0 10px;}
+.client-card-page .client-detail-back {color:var(--rf-primary-hover);font-weight:600;text-decoration:none;}
+.client-card-page .client-detail-back:hover {text-decoration:underline;text-underline-offset:.15em;}
+.client-card-page h1[data-testid="v3-detail-title"] {font-size:22px;line-height:1.25;margin:0 0 14px;font-weight:600;overflow-wrap:anywhere;word-break:break-word;}
+.client-card-page .client-card-section {margin:0 0 12px;padding:14px 16px;background:var(--rf-surface);border:1px solid var(--rf-border);border-radius:9px;min-width:0;max-width:100%;}
+.client-card-page .client-card-section h2 {margin:0 0 10px;font-size:16px;font-weight:600;line-height:1.3;}
+.client-card-page .client-card-section dl {margin:0;display:grid;gap:10px;}
+.client-card-page .client-card-section dt {font-size:12px;font-weight:600;color:var(--rf-text-muted);margin:0;}
+.client-card-page .client-card-section dd {margin:0;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere;word-break:break-word;min-width:0;max-width:100%;}
+.client-card-page .client-card-section dd:not(:empty){hyphens:auto;}
+.client-card-page #client-detail-root pre,.client-card-page #client-detail-root code{overflow-wrap:anywhere;word-break:break-word;max-width:100%;}
+.client-card-page .client-card-section a {color:var(--rf-primary-hover);font-weight:600;text-decoration:none;}
+.client-card-page .client-card-section a:hover {text-decoration:underline;}
 .client-card-page .client-detail-header {margin-bottom:16px;}
 .client-card-page .client-detail-header h1 {font-size:24px;line-height:1.25;letter-spacing:-.4px;margin:8px 0 5px;overflow-wrap:anywhere;}
 .client-card-page .client-detail-header__actions {float:right;margin:0 0 8px 16px;}
@@ -32,7 +46,9 @@
 .pc-source,.pc-label {font-size:12px;}
 .pc-source {white-space:nowrap;}
 .pc-pad {padding:20px;}
-.pc-field {padding:14px 0;border-bottom:1px solid var(--rf-border);overflow-wrap:anywhere;}
+.pc-field {padding:14px 0;border-bottom:1px solid var(--rf-border);overflow-wrap:anywhere;word-break:break-word;}
+.pc-value,.client-card-page .client-detail-value,.client-card-page .client-detail-uuid{overflow-wrap:anywhere;word-break:break-word;}
+.client-card-page .client-detail-uuid{font-size:12px;line-height:1.4;}
 .pc-field:first-child {padding-top:0;}
 .pc-field:last-child {border-bottom:0;padding-bottom:0;}
 .pc-details {border:1px solid var(--rf-border);border-radius:8px;margin:0 0 12px;overflow:hidden;}

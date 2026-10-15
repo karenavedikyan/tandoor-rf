@@ -52,7 +52,7 @@
       ? window.ClientDetailV3.renderBody(shell, payload.entityType, ent, payload.holdingLink)
       : "";
     var html =
-      '<p><a href="' +
+      '<p class="client-detail-back-wrap"><a class="client-detail-back clients-link" href="' +
       shell.escapeHtml(backHref) +
       '" data-testid="v3-back-to-list">← К списку</a></p>' +
       "<h1 data-testid=\"v3-detail-title\">" +
