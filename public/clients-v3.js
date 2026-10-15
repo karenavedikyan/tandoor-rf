@@ -1525,13 +1525,50 @@
         return;
       }
       var visibleIds = window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
-      pickerEl.innerHTML =
-        '<div class="clients-columns-picker__head">' +
-        '<h3 class="clients-columns-picker__title">Колонки реестра</h3>' +
-        '<button type="button" class="workspace-button workspace-button--primary" id="v3-columns-done">Готово</button>' +
+      window.ClientsV3List.renderColumnPicker(
+        ctx.shell,
+        pickerEl,
+        state.v3entity,
+        visibleIds,
+        ctx.currentUserId,
+        function (nextIds) {
+          var nextCols = window.ClientsV3List.columnsParamFromIds(nextIds);
+          window.ClientsV3.loadList(
+            ctx,
+            mergeListStateForUserAction({ v3cols: nextCols, page: readState().page }),
+            true,
+          );
+        },
+      );
+    },
+
+    closeLktandoorColumnsDialog: function (restoreFocusEl) {
+      var dialog = document.getElementById("v3-lktandoor-columns-dialog");
+      if (dialog && dialog.open) {
+        dialog.close();
+      }
+      var trigger = restoreFocusEl || document.getElementById("columns-picker-btn");
+      trigger?.focus();
+    },
+
+    openLktandoorColumnsDialog: function (ctx, state) {
+      var dialog = document.getElementById("v3-lktandoor-columns-dialog");
+      if (!window.ClientsV3List || !dialog) {
+        return;
+      }
+      var trigger = document.getElementById("columns-picker-btn");
+      if (dialog.open) {
+        window.ClientsV3.closeLktandoorColumnsDialog(trigger);
+        return;
+      }
+      var visibleIds = window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
+      dialog.innerHTML =
+        '<div class="x13-columns-dialog__header">' +
+        '<h2 id="v3-lktandoor-columns-title" class="x13-columns-dialog__title">Колонки реестра</h2>' +
+        '<button type="button" class="x13-columns-dialog__done workspace-button workspace-button--secondary" id="v3-columns-done" data-testid="v3-columns-done">Готово</button>' +
         "</div>" +
-        '<div id="v3-columns-picker-body"></div>';
-      var body = pickerEl.querySelector("#v3-columns-picker-body");
+        '<div class="x13-columns-dialog__body" id="v3-columns-picker-body"></div>';
+      var body = dialog.querySelector("#v3-columns-picker-body");
       window.ClientsV3List.renderColumnPicker(
         ctx.shell,
         body,
@@ -1546,10 +1583,25 @@
             true,
           );
         },
+        {
+          twoColumn: true,
+          intro: "Отметьте колонки для таблицы. Название клиента всегда отображается.",
+        },
       );
-      pickerEl.querySelector("#v3-columns-done")?.addEventListener("click", function () {
-        pickerEl.classList.add("clients-hidden");
+      dialog.querySelector("#v3-columns-done")?.addEventListener("click", function () {
+        window.ClientsV3.closeLktandoorColumnsDialog(trigger);
       });
+      if (!dialog.dataset.bound) {
+        dialog.dataset.bound = "1";
+        dialog.addEventListener("cancel", function (event) {
+          event.preventDefault();
+          window.ClientsV3.closeLktandoorColumnsDialog(document.getElementById("columns-picker-btn"));
+        });
+        dialog.addEventListener("close", function () {
+          document.getElementById("columns-picker-btn")?.focus();
+        });
+      }
+      dialog.showModal();
     },
 
     bindLktandoorListInteractions: function (ctx) {

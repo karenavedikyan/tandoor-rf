@@ -245,6 +245,51 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("columns dialog: open, toggle, done, escape, focus restore", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    const optionalToggle = page.locator(
+      '[data-testid="v3-lktandoor-columns-dialog"] input[data-v3-column-id]:not([disabled])',
+    );
+    if ((await optionalToggle.count()) > 1) {
+      await optionalToggle.nth(1).click();
+    }
+    await page.click('[data-testid="v3-columns-done"]');
+    await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-desktop-1440.png") });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "columns-picker-btn");
+    await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    const mobileDialog = await page.evaluate(() => {
+      const dialog = document.getElementById("v3-lktandoor-columns-dialog");
+      const done = document.getElementById("v3-columns-done");
+      if (!dialog || !done) return null;
+      const dialogRect = dialog.getBoundingClientRect();
+      const doneRect = done.getBoundingClientRect();
+      return {
+        overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+        doneVisible: doneRect.bottom <= window.innerHeight && doneRect.top >= 0,
+        dialogWidth: dialogRect.width,
+        viewport: window.innerWidth,
+      };
+    });
+    assert.ok(mobileDialog);
+    assert.equal(mobileDialog.overflow, false);
+    assert.ok(mobileDialog.doneVisible);
+    assert.ok(mobileDialog.dialogWidth <= mobileDialog.viewport - 20);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-mobile-390.png") });
+    await page.close();
+  });
+
   it("retail columns and typed AND rules", async () => {
     const page = await browser.newPage();
     await login(page, "manager-lktandoor-list@example.com");

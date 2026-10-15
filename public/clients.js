@@ -5551,6 +5551,10 @@
   columnsPickerBtn?.addEventListener("click", function () {
     if (exchangeV3Active && window.ClientsV3 && shouldUseV3List({ view: currentView() })) {
       var v3state = window.ClientsV3.readState();
+      if (lktandoorListActive() && window.ClientsV3.openLktandoorColumnsDialog) {
+        window.ClientsV3.openLktandoorColumnsDialog(buildV3UiContext(), v3state);
+        return;
+      }
       var pickerOpen = columnsPickerEl && !columnsPickerEl.classList.contains("clients-hidden");
       if (pickerOpen) {
         columnsPickerEl.classList.add("clients-hidden");

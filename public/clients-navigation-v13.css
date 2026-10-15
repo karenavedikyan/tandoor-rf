@@ -381,17 +381,93 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   cursor: pointer;
 }
 
-.clients-lktandoor-list .clients-columns-picker__head {
+.clients-lktandoor-list #columns-picker {
+  display: none !important;
+}
+
+.x13-columns-dialog {
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  width: min(800px, calc(100vw - 32px));
+  max-height: 85vh;
+  margin: auto;
+  background: #fff;
+  color: inherit;
+  overflow: hidden;
+}
+
+.x13-columns-dialog::backdrop {
+  background: rgba(17, 24, 39, 0.45);
+}
+
+.x13-columns-dialog__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--rf-border, var(--line));
+  background: #fff;
 }
 
-.clients-lktandoor-list .clients-columns-picker__title {
+.x13-columns-dialog__title {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: var(--text-lg, 18px);
+  font-weight: 600;
+}
+
+.x13-columns-dialog__done {
+  min-height: 40px;
+  background: #fff !important;
+  border: 1px solid var(--rf-border, var(--line)) !important;
+  color: var(--rf-text, #111827) !important;
+  font-weight: 600;
+}
+
+.x13-columns-dialog__body {
+  padding: 16px 20px 20px;
+  background: #f4f5f7;
+  overflow: auto;
+  max-height: calc(85vh - 73px);
+}
+
+.x13-columns-dialog .clients-columns-picker__intro {
+  margin: 0 0 12px;
+  font-size: var(--text-sm, 14px);
+  color: var(--rf-text-muted, #6b7280);
+  line-height: 1.4;
+}
+
+.x13-columns-dialog .clients-columns-picker__grid--two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 24px;
+}
+
+.x13-columns-dialog .clients-columns-picker__item {
+  font-size: var(--text-sm, 14px);
+  min-height: 28px;
+}
+
+@media (max-width: 767px) {
+  .x13-columns-dialog {
+    width: calc(100vw - 24px);
+    max-height: min(85vh, calc(100vh - 24px));
+  }
+
+  .x13-columns-dialog .clients-columns-picker__grid--two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .x13-columns-dialog__header {
+    padding: 14px 16px;
+  }
+
+  .x13-columns-dialog__body {
+    padding: 14px 16px 16px;
+    max-height: calc(85vh - 68px);
+  }
 }
 
 .clients-lktandoor-list .x6-filter summary {

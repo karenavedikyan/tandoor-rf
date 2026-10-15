@@ -287,13 +287,21 @@
     });
   }
 
-  function renderColumnPicker(shell, pickerEl, v3entity, visibleIds, userId, onChange) {
+  function renderColumnPicker(shell, pickerEl, v3entity, visibleIds, userId, onChange, options) {
     if (!pickerEl) {
       return;
     }
+    options = options || {};
     var catalog = catalogForEntity(v3entity);
+    var gridClass =
+      "clients-columns-picker__grid" + (options.twoColumn ? " clients-columns-picker__grid--two-col" : "");
     pickerEl.innerHTML =
-      '<div class="clients-columns-picker__grid">' +
+      (options.intro
+        ? '<p class="clients-columns-picker__intro">' + shell.escapeHtml(options.intro) + "</p>"
+        : "") +
+      '<div class="' +
+      gridClass +
+      '">' +
       catalog
         .map(function (col) {
           var checked = visibleIds.indexOf(col.id) !== -1;
