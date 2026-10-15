@@ -5381,6 +5381,11 @@
               window.ClientsV3.loadList(buildV3UiContext(), next, true);
             });
           }
+          window.__clientsV3ResolveUiContext = function () {
+            cancelScheduledLoad();
+            invalidateInFlightRequests();
+            return buildV3UiContext();
+          };
           window.ClientsV3.bindListChrome(function () {
             return buildV3UiContext();
           });

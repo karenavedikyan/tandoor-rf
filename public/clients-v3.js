@@ -302,11 +302,27 @@
       });
     }
     if (patch && patch.v3entity && patch.v3entity !== url.v3entity) {
-      next.v3Rules = [];
-      next.city = ""; next.closed = "";
-      next.v3types = []; next.v3categories = []; next.v3type = ""; next.v3category = "";
-      next.colManager = ""; next.colRegional = ""; next.colRop = ""; next.colCity = ""; next.colStatus = "";
-      next.v3cols = ""; next.page = 1;
+      var retailLikeEntity = function (id) {
+        return id === "retail" || id === "orphan_retail";
+      };
+      var keepRetailOutletRules =
+        retailLikeEntity(patch.v3entity) && retailLikeEntity(url.v3entity);
+      if (!keepRetailOutletRules) {
+        next.v3Rules = [];
+        next.city = "";
+        next.closed = "";
+        next.v3types = [];
+        next.v3categories = [];
+        next.v3type = "";
+        next.v3category = "";
+        next.colManager = "";
+        next.colRegional = "";
+        next.colRop = "";
+        next.colCity = "";
+        next.colStatus = "";
+        next.v3cols = "";
+      }
+      next.page = 1;
     }
     syncV3FilterAliases(next);
     var teamContext = next.v3view === "teams" || next.ropEmployee;
@@ -767,8 +783,13 @@
                   return;
                 }
                 var entity = btn.getAttribute("data-v3entity");
-                var liveCtx = window.__lktandoorUiCtx;
-                if (!entity || !liveCtx) {
+                if (!entity) {
+                  return;
+                }
+                var resolveCtx = window.__clientsV3ResolveUiContext;
+                var liveCtx =
+                  (typeof resolveCtx === "function" ? resolveCtx() : null) || window.__lktandoorUiCtx;
+                if (!liveCtx) {
                   return;
                 }
                 window.ClientsV3.loadList(
@@ -960,6 +981,7 @@
           ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
         document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
         if (lktandoorActive && ctx.lktandoorContext) {
+          ctx.lktandoorContext.uiCtx = ctx;
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
           if (ctx.lktandoorContext.rolePresentation && ctx.entitySwitcherEl) {
             window.ClientsV3.mountEntitySwitcher(
