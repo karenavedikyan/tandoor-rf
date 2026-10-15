@@ -302,7 +302,7 @@
 
   var FIELD_SHORTCUTS = [
     { label: "ТОП", fieldId: "categoryGuid", op: "filled" },
-    { label: "Юрлицо", fieldId: "legalStatus", op: "contains", entities: ["legal", "legal_grouped"] },
+    { label: "Юрлицо", fieldId: "legalName", op: "contains", entities: ["legal", "legal_grouped"] },
     {
       label: "ИНН",
       unavailable:

@@ -627,6 +627,28 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(categoryGroup.body.total, 1);
     assert.equal(categoryGroup.body.items[0].legal_entities.length, 2);
 
+    const legalNameFilter = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "legalName", op: "contains", value: "Legal Two" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(legalNameFilter.status, 200);
+    assert.equal(legalNameFilter.body.total, 1);
+    assert.equal(legalNameFilter.body.items[0].group_key, `holding:${HOLDING}`);
+    assert.equal(legalNameFilter.body.items[0].legal_entities.length, 1);
+    assert.equal(legalNameFilter.body.items[0].legal_entities[0].guid, LEGAL_TWO);
+    const holdingNameOnly = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "legalName", op: "contains", value: "SYNTH Holding" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(holdingNameOnly.status, 200);
+    assert.equal(holdingNameOnly.body.total, 0);
+
     const scope = await request(app).get("/api/clients/v3/scope-summary").set(headers);
     assert.equal(scope.status, 200);
     assert.equal(scope.body.legal, grouped.body.total);
@@ -674,6 +696,15 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(hiddenSiblingSearch.status, 200);
     assert.equal(hiddenSiblingSearch.body.total, 0);
+    const hiddenLegalName = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "legalName", op: "contains", value: "Legal Two" }]),
+        )}`,
+      )
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(hiddenLegalName.status, 200);
+    assert.equal(hiddenLegalName.body.total, 0);
 
     const siblingAnd = await request(app)
       .get(

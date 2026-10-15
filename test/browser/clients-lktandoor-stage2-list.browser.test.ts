@@ -265,6 +265,41 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("manager legalName: card back, reload, chip remove keeps territory", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    const beforeRows = await rowCount(page);
+    assert.ok(beforeRows >= 1);
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = true;
+    });
+    await page.locator(".x6-field-shortcut:not([disabled])").filter({ hasText: "Юрлицо" }).click();
+    assert.equal(await page.locator("#v3-rule-field").inputValue(), "legalName");
+    await page.fill("#v3-rule-value", "Legal One");
+    await updateList(page, () => page.click("#v3-rule-add"));
+    const filteredRows = await rowCount(page);
+    assert.ok(filteredRows >= 1);
+    const filtersParam = new URL(page.url()).searchParams.get("filters");
+    assert.ok(filtersParam);
+    assert.ok(filtersParam.includes("legalName"));
+    await page.locator("#clients-table-body tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(await rowCount(page), filteredRows);
+    assert.equal(new URL(page.url()).searchParams.get("filters"), filtersParam);
+    await updateList(page, () => page.reload());
+    assert.equal(await rowCount(page), filteredRows);
+    assert.equal(new URL(page.url()).searchParams.get("filters"), filtersParam);
+    await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').first().click());
+    assert.ok((await rowCount(page)) >= filteredRows);
+    assert.ok(!new URL(page.url()).searchParams.get("filters")?.includes("legalName"));
+    assert.ok(page.url().includes("v3mode=1"));
+    assert.ok(page.url().includes("v3entity=legal_grouped"));
+    await page.close();
+  });
+
   it("columns dialog: open, toggle, done, escape, focus restore", async () => {
     const page = await browser.newPage({ viewport: DESKTOP });
     await login(page, "manager-lktandoor-list@example.com");
