@@ -302,11 +302,27 @@
       });
     }
     if (patch && patch.v3entity && patch.v3entity !== url.v3entity) {
-      next.v3Rules = [];
-      next.city = ""; next.closed = "";
-      next.v3types = []; next.v3categories = []; next.v3type = ""; next.v3category = "";
-      next.colManager = ""; next.colRegional = ""; next.colRop = ""; next.colCity = ""; next.colStatus = "";
-      next.v3cols = ""; next.page = 1;
+      var retailLikeEntity = function (id) {
+        return id === "retail" || id === "orphan_retail";
+      };
+      var keepRetailOutletRules =
+        retailLikeEntity(patch.v3entity) && retailLikeEntity(url.v3entity);
+      if (!keepRetailOutletRules) {
+        next.v3Rules = [];
+        next.city = "";
+        next.closed = "";
+        next.v3types = [];
+        next.v3categories = [];
+        next.v3type = "";
+        next.v3category = "";
+        next.colManager = "";
+        next.colRegional = "";
+        next.colRop = "";
+        next.colCity = "";
+        next.colStatus = "";
+        next.v3cols = "";
+      }
+      next.page = 1;
     }
     syncV3FilterAliases(next);
     var teamContext = next.v3view === "teams" || next.ropEmployee;
