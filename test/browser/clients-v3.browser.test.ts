@@ -1040,6 +1040,61 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.close();
   });
 
+  it("keeps the legal manager filter after card return, browser back and reload", async () => {
+    for (const viewport of [DESKTOP, MOBILE]) {
+      const page = await browser.newPage({ viewport });
+      await login(page, testCreds.adminEmail);
+      const expectFilteredList = () => page.waitForResponse(
+        (res) => {
+          const url = new URL(res.url());
+          return url.pathname === "/api/clients/v3/list" &&
+            url.searchParams.get("entity") === "legal" &&
+            url.searchParams.get("managerGuid") === M1 &&
+            res.status() === 200;
+        },
+        { timeout: 15000 },
+      );
+      const assertFilteredList = async (response: Awaited<ReturnType<typeof expectFilteredList>>) => {
+        const body = await response.json() as { items: Array<{ guid: string; name: string }> };
+        assert.ok(body.items.length > 0);
+        assert.ok(body.items.every((item) => item.name !== "Legal Two"));
+        await page.waitForFunction((manager) => {
+          const select = document.getElementById("v3-manager-filter") as HTMLSelectElement | null;
+          return select?.value === manager &&
+            new URL(location.href).searchParams.get("v3manager") === manager;
+        }, M1);
+      };
+      const initial = expectFilteredList();
+      await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3manager=" + M1);
+      await assertFilteredList(await initial);
+      await page.locator("#clients-table-body a:visible, #clients-cards a:visible").first().click();
+      await page.waitForSelector('[data-testid="v3-back-to-list"]');
+      const returned = expectFilteredList();
+      await page.click('[data-testid="v3-back-to-list"]');
+      await assertFilteredList(await returned);
+
+      const reloaded = expectFilteredList();
+      await page.reload();
+      await assertFilteredList(await reloaded);
+      await page.locator("#clients-table-body a:visible, #clients-cards a:visible").first().click();
+      await page.waitForSelector('[data-testid="v3-back-to-list"]');
+      const back = expectFilteredList();
+      await page.goBack();
+      await assertFilteredList(await back);
+      await ensureMobileFiltersExpanded(page, viewport);
+      const cleared = page.waitForResponse((res) => {
+        const url = new URL(res.url());
+        return url.pathname === "/api/clients/v3/list" &&
+          !url.searchParams.has("managerGuid") &&
+          !url.searchParams.has("responsibleGuid") && res.status() === 200;
+      });
+      await page.selectOption("#v3-manager-filter", "");
+      await cleared;
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has("v3manager"));
+      await page.close();
+    }
+  });
+
   it("v3 retail filters persist through search, clear and pagination", async () => {
     const page = await browser.newPage();
     await login(page, "admin-v3-ui@example.com");

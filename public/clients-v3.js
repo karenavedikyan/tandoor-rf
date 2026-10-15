@@ -315,7 +315,15 @@
     var assignment = logic
       ? logic.v3ResponsibleFromLegacyState(legacy)
       : { responsibleGuid: "", responsibleKind: "", v3manager: "" };
-    var explicitResponsible = logic && logic.hasExplicitResponsibleNavigation(legacy);
+    // URL parsing supplies an empty responsibleGuid default even when the
+    // parameter is absent. Only an actual URL selection may clear v3manager;
+    // user-action patches still retain their explicit-clear semantics.
+    var explicitResponsible = logic && (
+      fromUrl
+        ? new URLSearchParams(window.location.search).has("responsibleGuid") ||
+          logic.hasResponsibleSelection(legacy)
+        : logic.hasExplicitResponsibleNavigation(legacy)
+    );
     if (explicitResponsible) {
       if (
         Object.prototype.hasOwnProperty.call(legacy || {}, "responsibleGuid") &&
