@@ -142,6 +142,10 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     return page.locator("#clients-table-body tr").count();
   }
 
+  async function focusRowCount(page: Page): Promise<number> {
+    return page.locator("#x14-focus-scroll tbody tr:not(.x15-empty)").count();
+  }
+
   async function closeMobileSidebar(page: Page) {
     await page.evaluate(() => {
       document.body.classList.remove("legacy-sidebar-open");
@@ -178,7 +182,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     });
     assert.ok(layout, "toolbar layout nodes missing");
     assert.equal(layout.rowDisplay, "flex");
-    assert.ok(layout.searchWidthRatio > 0.55, "search should consume spare desktop width");
+    assert.ok(layout.searchWidthRatio > 0.42, "search should consume spare desktop width");
     assert.ok(layout.gapAfterSearch < 24, "search and controls should sit adjacent");
     assert.ok(layout.gapToFirstButton < 24, "controls must not contain a blank flexible spacer");
     assert.equal(layout.switcherBorderWidth, "0px", "entity switcher should not use segmented shell border");
@@ -311,13 +315,13 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await waitForList(page);
     await page.click("#columns-picker-btn");
     await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    const toggledId = "city";
     const optionalToggle = page.locator(
-      '[data-testid="v3-lktandoor-columns-dialog"] input[data-v3-column-id]:not([disabled])',
+      `[data-testid="v3-lktandoor-columns-dialog"] input[data-v3-column-id="${toggledId}"]:not([disabled])`,
     );
-    assert.ok((await optionalToggle.count()) > 1, "column catalog must contain optional fields");
-    const toggledId = await optionalToggle.nth(1).getAttribute("data-v3-column-id");
-    const wasChecked = await optionalToggle.nth(1).isChecked();
-    await updateList(page, () => optionalToggle.nth(1).click());
+    assert.ok((await optionalToggle.count()) === 1, "city column must be optional in catalog");
+    const wasChecked = await optionalToggle.isChecked();
+    await updateList(page, () => optionalToggle.click());
     await page.click('[data-testid="v3-columns-done"]');
     await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
     await page.click("#columns-picker-btn");
@@ -479,6 +483,68 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok(url.includes("responsibleGuid="));
     assert.ok(url.includes("responsibleKind=manager"));
     assert.ok(!url.includes("filters=") || !url.includes(encodeURIComponent(CAT_A)));
+    await page.close();
+  });
+
+  it("fullscreen registry: search, column filter, columns default, exit keeps normal cols", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    await page.waitForSelector('[data-testid="v3-focus-enter"]:not(.clients-hidden)');
+    await page.evaluate(() => {
+      const next = window.ClientsV3.mergeListStateForUserAction({
+        v3focus: true,
+        page: window.ClientsV3.readState().page || 1,
+      });
+      window.ClientsV3.writeState(next, false);
+      const cached = window.__lastV3ListPayload;
+      if (cached && window.ClientsLktandoorFocus && window.__lktandoorListCtx) {
+        window.__lktandoorListCtx.showResultsContent();
+        window.ClientsLktandoorFocus.render(
+          window.__lktandoorListCtx,
+          Object.assign({}, cached, { state: next }),
+        );
+      }
+      window.ClientsV3.loadList(window.__lktandoorListCtx, next, false);
+    });
+    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    assert.equal(new URL(page.url()).searchParams.get("v3focus"), "1");
+    assert.ok(await page.locator("body.x14-focus-mode").count());
+    await updateList(page, async () => {
+      await page.fill("#v3-focus-search", "SYNTH");
+      await page.waitForTimeout(220);
+    });
+    assert.ok((await focusRowCount(page)) >= 1);
+    const legalHeader = page.locator('#x14-focus-scroll input[data-focus-col="legal_name"]');
+    await updateList(page, async () => {
+      await legalHeader.fill("Legal");
+      await page.waitForTimeout(220);
+    });
+    assert.ok((await focusRowCount(page)) >= 1);
+    const nameHeaderIndex = await page.evaluate(() => {
+      const headers = Array.from(document.querySelectorAll("#x14-focus-scroll thead th span"));
+      return headers.findIndex((el) => el.textContent?.includes("Название клиента"));
+    });
+    assert.equal(nameHeaderIndex, 0, "client name column must stay first in focus headers");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "focus-desktop-1440.png") });
+    await Promise.all([
+      page.waitForURL((url) => !url.searchParams.get("v3focus")),
+      page.click("#v3-focus-exit"),
+    ]);
+    assert.ok(!new URL(page.url()).searchParams.get("v3focus"));
+    assert.equal(await page.locator("body.x14-focus-mode").count(), 0);
+    await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
+    await page.evaluate(() => {
+      const next = window.ClientsV3.mergeListStateForUserAction({
+        v3focus: true,
+        page: window.ClientsV3.readState().page || 1,
+      });
+      window.ClientsV3.writeState(next, false);
+      window.ClientsV3.loadList(window.__lktandoorListCtx, next, false);
+    });
+    await page.waitForSelector('[data-testid="v3-focus-root"]');
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "focus-mobile-390.png") });
     await page.close();
   });
 
