@@ -315,7 +315,7 @@
     },
     { label: "ЛПР", fieldId: "lprName", op: "contains", entities: ["retail", "orphan_retail"] },
     { label: "Бонус Club", fieldId: "clubBonus", op: "contains", entities: ["retail", "orphan_retail"] },
-    { label: "День приёмки", fieldId: "loadingTime", op: "contains", entities: ["retail", "orphan_retail"] },
+    { label: "День приёмки", fieldId: "loadingOnMonday", op: "yes", entities: ["retail", "orphan_retail"] },
   ];
 
   function entityBucket(entity) {

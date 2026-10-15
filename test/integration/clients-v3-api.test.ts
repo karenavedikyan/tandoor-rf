@@ -58,6 +58,100 @@ describe("clients v3 API", { concurrency: false }, () => {
     await closePool();
   });
 
+  function loadRetailWithLoadingDays(): Buffer {
+    const retail = JSON.parse(loadFixture("all_retail.json").toString("utf8"));
+    retail[0].information_loading = { loading_time: "10:00", loading_on_monday: true };
+    retail[1].information_loading = { loading_on_monday: false };
+    retail[3].information_loading = { loading_on_monday: true, loading_on_friday: true };
+    return Buffer.from(JSON.stringify(retail));
+  }
+
+  function loadRetailLoadingDayTrueWinsContract(): Buffer {
+    const retail = JSON.parse(loadFixture("all_retail.json").toString("utf8"));
+    retail[0].information_loading = { loading_on_monday: true, loading_time: "10:00" };
+    retail[1].information_loading = { loading_on_monday: false };
+    retail[2].information_loading = {
+      loadingOnMonday: "true",
+      loading_on_monday: "false",
+      loadingOnTuesday: false,
+      loading_on_wednesday: 1,
+      loadingOnThursday: {},
+    };
+    retail[3].information_loading = { loadingOnMonday: true, loading_on_friday: true, loading_on_monday: false };
+    retail[3].managers = {
+      guid_manager: M2,
+      name_manager: "Manager Two",
+    };
+    return Buffer.from(JSON.stringify(retail));
+  }
+
+  async function seedV3LoadingDayTrueWinsContract(): Promise<void> {
+    const holdings = JSON.parse(loadFixture("all_holding.json").toString("utf8"));
+    const holdingsBytes = Buffer.from(JSON.stringify(holdings));
+    const employeesBytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
+      buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
+      buildEmployeeRosterEntry(ROP, {
+        name_manager: "ROP One",
+        post: "Руководитель отдела продаж",
+      }),
+    ]);
+    const retailBytes = loadRetailLoadingDayTrueWinsContract();
+    const dry = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes,
+      clientsBytes: loadFixture("all_clients.json"),
+      retailBytes,
+      employeesBytes,
+    });
+    assert.equal(dry.status, "SUCCESS");
+    const applied = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry.verificationFingerprint!],
+      holdingsBytes,
+      clientsBytes: loadFixture("all_clients.json"),
+      retailBytes,
+      employeesBytes,
+    });
+    assert.equal(applied.status, "SUCCESS");
+  }
+
+  async function seedV3WithLoadingDays(completeHoldingMembership = false): Promise<void> {
+    const holdings = JSON.parse(loadFixture("all_holding.json").toString("utf8"));
+    if (completeHoldingMembership) {
+      holdings[0].legal_entities.push({ guid_retail: LEGAL_TWO, name_retail: "Legal Two" });
+    }
+    const holdingsBytes = Buffer.from(JSON.stringify(holdings));
+    const employeesBytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
+      buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
+      buildEmployeeRosterEntry(ROP, {
+        name_manager: "ROP One",
+        post: "Руководитель отдела продаж",
+      }),
+    ]);
+    const retailBytes = loadRetailWithLoadingDays();
+    const dry = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes,
+      clientsBytes: loadFixture("all_clients.json"),
+      retailBytes,
+      employeesBytes,
+    });
+    assert.equal(dry.status, "SUCCESS");
+    const applied = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry.verificationFingerprint!],
+      holdingsBytes,
+      clientsBytes: loadFixture("all_clients.json"),
+      retailBytes,
+      employeesBytes,
+    });
+    assert.equal(applied.status, "SUCCESS");
+  }
+
   async function seedV3(completeHoldingMembership = false): Promise<void> {
     const holdings = JSON.parse(loadFixture("all_holding.json").toString("utf8"));
     if (completeHoldingMembership) {
@@ -742,6 +836,184 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(deniedHolding.status, 200);
     assert.ok(deniedHolding.body.items.every((item: { detail_entity: string }) => item.detail_entity === "legal"));
     assert.ok(!JSON.stringify(deniedHolding.body).includes("SYNTH Holding One"));
+  });
+
+  it("retail loading day filters use explicit booleans and keep loadingTime separate", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3WithLoadingDays();
+    await resetPoolForTests();
+    const adminEmail = "admin-v3-loading-day@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Loading Day",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    const headers = { Origin: ORIGIN, Cookie: cookie };
+
+    const mondayYes = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(mondayYes.status, 200);
+    assert.equal(mondayYes.body.total, 2);
+
+    const mondayNo = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "no", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(mondayNo.status, 200);
+    assert.equal(mondayNo.body.total, 1);
+    assert.equal(mondayNo.body.items[0].guid, "c3000000-0000-4000-8000-000000000002");
+
+    const monAndFri = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "loadingOnMonday", op: "yes", value: "" },
+            { field: "loadingOnFriday", op: "yes", value: "" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(monAndFri.status, 200);
+    assert.equal(monAndFri.body.total, 1);
+    assert.equal(monAndFri.body.items[0].guid, "c3000000-0000-4000-8000-000000000004");
+
+    const timeOnly = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingTime", op: "contains", value: "10:00" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(timeOnly.status, 200);
+    assert.equal(timeOnly.body.total, 1);
+    assert.equal(timeOnly.body.items[0].guid, RETAIL);
+
+    const rejectedLegal = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(rejectedLegal.status, 400);
+  });
+
+  it("retail loading day true-wins contract: camel/snake conflict, garbage, orphan, manager scope", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3LoadingDayTrueWinsContract();
+    await resetPoolForTests();
+    const adminEmail = "admin-v3-loading-day-contract@example.com";
+    const adminUser = await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Loading Day Contract",
+      role: "admin",
+    });
+    const managerEmail = "manager-v3-loading-day-contract@example.com";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager Loading Day Contract",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: M1,
+      confirmedByUserId: adminUser.id,
+    });
+    const adminCookie = await login(adminEmail);
+    const mgrCookie = await login(managerEmail);
+    const app = await loadApp();
+    const adminHeaders = { Origin: ORIGIN, Cookie: adminCookie };
+    const mgrHeaders = { Origin: ORIGIN, Cookie: mgrCookie };
+    const CONFLICT = "c3000000-0000-4000-8000-000000000004";
+    const ORPHAN = "c3000000-0000-4000-8000-000000000002";
+    const GARBAGE = "c3000000-0000-4000-8000-000000000003";
+
+    const mondayYes = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&pageSize=50&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]),
+        )}`,
+      )
+      .set(adminHeaders);
+    assert.equal(mondayYes.status, 200);
+    const mondayYesGuids = mondayYes.body.items.map((i: { guid: string }) => i.guid);
+    assert.ok(mondayYesGuids.includes(RETAIL));
+    assert.ok(mondayYesGuids.includes(CONFLICT));
+    assert.ok(!mondayYesGuids.includes(ORPHAN));
+    assert.ok(!mondayYesGuids.includes(GARBAGE));
+
+    const mondayNo = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&pageSize=50&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "no", value: "" }]),
+        )}`,
+      )
+      .set(adminHeaders);
+    assert.equal(mondayNo.status, 200);
+    assert.deepEqual(
+      mondayNo.body.items.map((i: { guid: string }) => i.guid),
+      [ORPHAN],
+    );
+    assert.ok(!mondayNo.body.items.some((i: { guid: string }) => i.guid === CONFLICT));
+
+    const tuesdayNo = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&pageSize=50&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnTuesday", op: "no", value: "" }]),
+        )}`,
+      )
+      .set(adminHeaders);
+    assert.equal(tuesdayNo.status, 200);
+    assert.deepEqual(tuesdayNo.body.items.map((i: { guid: string }) => i.guid), [GARBAGE]);
+
+    const wednesdayYes = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnWednesday", op: "yes", value: "" }]),
+        )}`,
+      )
+      .set(adminHeaders);
+    assert.equal(wednesdayYes.status, 200);
+    assert.equal(wednesdayYes.body.total, 0);
+
+    const orphanMondayNo = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=orphan_retail&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "no", value: "" }]),
+        )}`,
+      )
+      .set(adminHeaders);
+    assert.equal(orphanMondayNo.status, 200);
+    assert.equal(orphanMondayNo.body.total, 1);
+    assert.equal(orphanMondayNo.body.items[0].guid, ORPHAN);
+
+    const mgrMondayYes = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=retail&pageSize=50&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]),
+        )}`,
+      )
+      .set(mgrHeaders);
+    assert.equal(mgrMondayYes.status, 200);
+    assert.ok(!mgrMondayYes.body.items.some((i: { guid: string }) => i.guid === CONFLICT));
+    assert.ok(mgrMondayYes.body.items.some((i: { guid: string }) => i.guid === RETAIL));
   });
 
   it("sync-status uses v3 apply time when legacy import journal is empty", async () => {

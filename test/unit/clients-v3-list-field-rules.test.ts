@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseV3FilterRulesParam, appendV3FieldRulesSql } from "../../src/clients/v3/list-field-rules";
+import {
+  LOADING_DAY_DEFS,
+  parseV3FilterRulesParam,
+  appendV3FieldRulesSql,
+} from "../../src/clients/v3/list-field-rules";
 
 describe("parseV3FilterRulesParam", () => {
   it("accepts AND rules with eq and empty ops", () => {
@@ -70,6 +74,39 @@ describe("parseV3FilterRulesParam", () => {
     assert.match(sql, /le\.name_client.*ILIKE/i);
     assert.match(sql, /ESCAPE '\\'/);
     assert.equal(params[0], "%100\\%\\_\\\\%");
+  });
+
+  it("loading day fields apply to retail only with true-wins yes and guarded no SQL", () => {
+    assert.equal(LOADING_DAY_DEFS.length, 7);
+    for (const day of LOADING_DAY_DEFS) {
+      const yesParams: unknown[] = [];
+      const yes = appendV3FieldRulesSql("", yesParams, "retail", "ro", [
+        { field: day.id, op: "yes", value: "" },
+      ]);
+      assert.match(yes.sql, new RegExp(`${day.snake}.*= 'true'::jsonb`));
+      assert.match(yes.sql, new RegExp(`${day.camel}.*= 'true'::jsonb`));
+      const noParams: unknown[] = [];
+      const no = appendV3FieldRulesSql("", noParams, "retail", "ro", [
+        { field: day.id, op: "no", value: "" },
+      ]);
+      assert.match(no.sql, new RegExp(`${day.snake}.*= 'false'::jsonb`));
+      assert.match(no.sql, /AND NOT/i);
+      assert.match(no.sql, new RegExp(`${day.camel}.*= 'true'::jsonb`));
+    }
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "eq", value: "x" }]), "retail"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "legal"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "legal_grouped"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "holdings"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "orphan_retail")?.length, 1);
+  });
+
+  it("loadingTime filter stays independent from loading day fields", () => {
+    const params: unknown[] = [];
+    const time = appendV3FieldRulesSql("", params, "retail", "ro", [
+      { field: "loadingTime", op: "contains", value: "10:00" },
+    ]);
+    assert.match(time.sql, /loading_time/);
+    assert.doesNotMatch(time.sql, /loading_on_monday/);
   });
 
   it("legalStatus rules remain separate from legalName", () => {

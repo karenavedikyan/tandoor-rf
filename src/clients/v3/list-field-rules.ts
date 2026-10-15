@@ -15,6 +15,39 @@ export type V3FilterRule = {
 const MAX_RULES = 12;
 const FILTER_TOKEN_RE = /^[\w.-]{1,64}$/;
 
+/** Allowlisted retail loading-day keys (matches client-detail-v3 formatLoading). */
+export const LOADING_DAY_DEFS = [
+  { id: "loadingOnMonday", camel: "loadingOnMonday", snake: "loading_on_monday", label: "Приёмка: Понедельник" },
+  { id: "loadingOnTuesday", camel: "loadingOnTuesday", snake: "loading_on_tuesday", label: "Приёмка: Вторник" },
+  { id: "loadingOnWednesday", camel: "loadingOnWednesday", snake: "loading_on_wednesday", label: "Приёмка: Среда" },
+  { id: "loadingOnThursday", camel: "loadingOnThursday", snake: "loading_on_thursday", label: "Приёмка: Четверг" },
+  { id: "loadingOnFriday", camel: "loadingOnFriday", snake: "loading_on_friday", label: "Приёмка: Пятница" },
+  { id: "loadingOnSaturday", camel: "loadingOnSaturday", snake: "loading_on_saturday", label: "Приёмка: Суббота" },
+  { id: "loadingOnSunday", camel: "loadingOnSunday", snake: "loading_on_sunday", label: "Приёмка: Воскресенье" },
+] as const;
+
+function loadingDayDef(fieldId: string) {
+  return LOADING_DAY_DEFS.find((def) => def.id === fieldId);
+}
+
+function loadingDayExplicitTrueSql(alias: string, camel: string, snake: string): string {
+  return `(
+    COALESCE((${alias}.information_loading->'${camel}') = 'true'::jsonb, false)
+    OR COALESCE((${alias}.information_loading->'${snake}') = 'true'::jsonb, false)
+  )`;
+}
+
+/** Explicit jsonb false on a key, and no boolean true on either key (card: any key === true wins). */
+function loadingDayExplicitFalseSql(alias: string, camel: string, snake: string): string {
+  return `(
+    (
+      (${alias}.information_loading->'${camel}') = 'false'::jsonb
+      OR (${alias}.information_loading->'${snake}') = 'false'::jsonb
+    )
+    AND NOT ${loadingDayExplicitTrueSql(alias, camel, snake)}
+  )`;
+}
+
 type FieldKind = "text" | "enum" | "bool" | "guid" | "number";
 
 export type V3FilterFieldDef = {
@@ -140,6 +173,13 @@ export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
     kind: "text",
     ops: ["eq", "contains", "empty", "filled"],
   },
+  ...LOADING_DAY_DEFS.map((day) => ({
+    id: day.id,
+    label: day.label,
+    entity: ["retail", "orphan_retail"] as V3ListEntity[],
+    kind: "bool" as FieldKind,
+    ops: ["yes", "no"] as V3FilterOp[],
+  })),
   {
     id: "missingManager",
     label: "Менеджер не назначен",
@@ -344,6 +384,19 @@ function appendRuleSql(
 
   if (rule.field === "clubBonus" && entity === "retail") {
     return textExpr(`${alias}.additional_information->>'bonus_tandoor_club'`);
+  }
+
+  if (entity === "retail") {
+    const day = loadingDayDef(rule.field);
+    if (day) {
+      if (op === "yes") {
+        return `${sql} AND ${loadingDayExplicitTrueSql(alias, day.camel, day.snake)}`;
+      }
+      if (op === "no") {
+        return `${sql} AND ${loadingDayExplicitFalseSql(alias, day.camel, day.snake)}`;
+      }
+      return sql;
+    }
   }
 
   if (rule.field === "loadingTime" && entity === "retail") {
