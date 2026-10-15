@@ -12,6 +12,7 @@ import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrat
 
 const TEST_PASSWORD = "StrongPass123!";
 const M1 = "22222222-2222-4222-8222-222222222222";
+const HW = "77777777-7777-4777-8777-777777777777";
 const ROP = "55555555-5555-4555-8555-555555555555";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const SCREENSHOT_DIR =
@@ -25,6 +26,19 @@ async function seed(databaseUrl: string) {
     password: TEST_PASSWORD,
     fullName: "Admin Stage3",
     role: "admin",
+  });
+  const director = await createTestUser({
+    databaseUrl,
+    email: "director-stage3-teams@example.com",
+    password: TEST_PASSWORD,
+    fullName: "Director Stage3",
+    role: "director",
+  });
+  await linkUserToEmployee({
+    databaseUrl,
+    userId: director.id,
+    employeeId: ROP,
+    confirmedByUserId: admin.id,
   });
   const manager = await createTestUser({
     databaseUrl,
@@ -41,6 +55,7 @@ async function seed(databaseUrl: string) {
   });
   const employeesBytes = buildEmployeeRosterBytes([
     buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
+    buildEmployeeRosterEntry(HW, { name_manager: "Hardware One" }),
     buildEmployeeRosterEntry(ROP, { name_manager: "ROP One", post: "Руководитель отдела продаж" }),
   ]);
   const dry = await runExchangeV3RegularUpdate({
@@ -103,41 +118,86 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile", { timeout: 30000 });
   }
 
-  it("director: ROP expand, employee territory, back preserves teams context", async () => {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await login(page, "admin-stage3-teams@example.com");
-    await page.goto(baseUrl + "/clients?v3mode=1&v3view=teams&view=teams");
-    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
-    await page.waitForSelector(".clients-compact-team", { timeout: 30000 });
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-director-desktop-1440.png") });
-
-    const ropToggle = page.locator("[data-toggle-rop]").first();
-    await ropToggle.click();
-    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
-    const memberOpen = page.locator(".clients-compact-team__member-main").first();
-    const listWait = page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
-      { timeout: 30000 },
-    );
-    await memberOpen.click();
-    await listWait;
+  async function waitListSettled(page: Page) {
     await page.waitForFunction(
       () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") !== "true",
       undefined,
       { timeout: 30000 },
     );
-    assert.ok(page.url().includes("responsibleGuid="));
-    assert.ok(page.url().includes("ropEmployee="));
-    assert.ok(page.url().includes("v3view=teams"));
+  }
+
+  it("director teams directory shows lktandoor chrome and ROP roster navigation", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await login(page, "director-stage3-teams@example.com");
+    await page.goto(baseUrl + "/clients?v3mode=1&v3view=teams&view=teams");
+    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
+    await page.waitForSelector(".clients-compact-team", { timeout: 30000 });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-directory-desktop-1440.png") });
+
+    await page.locator("[data-toggle-rop]").first().click();
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-roster-desktop-1440.png") });
+
+    const hardwareRow = page.locator(
+      '.clients-compact-team__member-main[data-manager="' + HW + '"][data-responsible-kind="hardware"]',
+    );
+    await hardwareRow.first().click();
+    await page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+      { timeout: 30000 },
+    );
+    await waitListSettled(page);
+    assert.ok(page.url().includes("responsibleGuid=" + HW));
+    assert.equal(await page.locator('[data-testid="clients-team-member-switcher"]').count(), 0);
+    assert.equal(await page.locator(".clients-compact-team__member-main").count(), 0);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-territory-desktop-1440.png") });
 
     await page.locator('[data-testid="v3-lktandoor-back"]').click();
     await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
     assert.ok(!page.url().includes("responsibleGuid="));
+    assert.ok(page.url().includes("ropEmployee="));
+
+    await page.locator('[data-testid="v3-lktandoor-back"]').click();
+    await page.waitForSelector(".clients-compact-team", { timeout: 15000 });
+    assert.ok(!page.url().includes("ropEmployee="));
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await page.waitForSelector(".clients-compact-team", { timeout: 30000 });
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-director-mobile-390.png") });
+    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-directory-mobile-390.png") });
+    await page.close();
+  });
+
+  it("direct load and reload preserve territory vs roster modes", async () => {
+    const territoryUrl =
+      baseUrl +
+      "/clients?view=teams&teamExpand=" +
+      ROP +
+      "&v3mode=1&v3entity=legal_grouped&v3view=teams&page=1&ropEmployee=" +
+      ROP +
+      "&responsibleGuid=" +
+      HW +
+      "&responsibleKind=hardware&teamKind=hardware";
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await login(page, "director-stage3-teams@example.com");
+    await page.goto(territoryUrl);
+    await waitListSettled(page);
+    assert.equal(await page.locator(".clients-compact-team__member-main").count(), 0);
+    await page.reload();
+    await waitListSettled(page);
+    assert.equal(await page.locator(".clients-compact-team__member-main").count(), 0);
+
+    await page.goto(
+      baseUrl +
+        "/clients?v3mode=1&v3view=teams&view=teams&ropEmployee=" +
+        ROP +
+        "&teamExpand=" +
+        ROP,
+    );
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
+    assert.ok(!page.url().includes("responsibleGuid="));
+    await page.reload();
+    await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
     await page.close();
   });
 });

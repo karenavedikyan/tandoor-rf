@@ -2949,7 +2949,13 @@
       if (window.ClientsLktandoorTeams) {
         window.ClientsLktandoorTeams.syncLayout(lktandoorTeamsActive, state);
       }
-      window.ClientsLktandoorList.syncLayout(lktandoorActive, v3StateForChrome);
+      window.ClientsLktandoorList.syncLayout(lktandoorActive, v3StateForChrome, {
+        manageChrome: !lktandoorTeamsActive,
+      });
+      var lktandoorChromeVisible = lktandoorTeamsActive || lktandoorActive;
+      document
+        .getElementById("v3-lktandoor-chrome")
+        ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
       document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
       if (lktandoorTeamsActive || lktandoorActive) {
         managerChromeEl?.classList.add("clients-hidden");
@@ -3461,6 +3467,9 @@
   }
 
   function shouldShowTeamsMemberSwitcher(state) {
+    if (exchangeV3Active) {
+      return false;
+    }
     return (
       state.view === "teams" &&
       Boolean(state.ropEmployee) &&
@@ -3471,22 +3480,24 @@
   }
 
   function renderTeamsPanel(state) {
-    if (state.view !== "teams" || logic.isBranchPortfolioList(state)) {
+    function clearTeamsPanelMarkup() {
+      compactTeamsRenderToken += 1;
       teamsPanelEl.innerHTML = "";
       teamsPanelEl.removeAttribute("data-onec-teams-ready");
       teamsPanelEl.__onecOverviewHtml = "";
       onecTeamsOverviewRenderSignature = "";
+    }
+    if (state.view !== "teams" || logic.isBranchPortfolioList(state)) {
+      clearTeamsPanelMarkup();
       return Promise.resolve();
     }
     if (shouldShowTeamsMemberSwitcher(state)) {
+      clearTeamsPanelMarkup();
       renderTeamsMemberSwitcher(state);
       return Promise.resolve();
     }
     if (logic.hasResponsibleSelection(state)) {
-      teamsPanelEl.innerHTML = "";
-      teamsPanelEl.removeAttribute("data-onec-teams-ready");
-      teamsPanelEl.__onecOverviewHtml = "";
-      onecTeamsOverviewRenderSignature = "";
+      clearTeamsPanelMarkup();
       return Promise.resolve();
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
@@ -3882,7 +3893,18 @@
   function navigateState(nextState) {
     cancelScheduledLoad();
     invalidateInFlightRequests();
-    loadList(Object.assign({}, currentStateFromForm(), nextState), false);
+    var merged = Object.assign({}, currentStateFromForm(), nextState);
+    if (
+      merged.view === "teams" &&
+      (logic.hasResponsibleSelection(merged) || logic.isBranchPortfolioList(merged))
+    ) {
+      compactTeamsRenderToken += 1;
+      teamsPanelEl.innerHTML = "";
+      teamsPanelEl.removeAttribute("data-onec-teams-ready");
+      teamsPanelEl.__onecOverviewHtml = "";
+      onecTeamsOverviewRenderSignature = "";
+    }
+    loadList(merged, false);
   }
 
   function syncTeamContextFromOrgStructure(data, ropEmployeeGuid) {
@@ -4217,24 +4239,46 @@
         logic: logic,
         onBack: function (v3State) {
           var urlTeam = logic.readStateFromSearch(window.location.search);
+          var clearTerritory = logic.clearedTeamTerritoryFields
+            ? logic.clearedTeamTerritoryFields()
+            : {
+                manager: "",
+                clientManager: "",
+                outletManager: "",
+                regionalManager: "",
+                clientRegionalManager: "",
+                outletRegionalManager: "",
+                hardwareManager: "",
+                clientHardwareManager: "",
+                outletHardwareManager: "",
+                responsibleGuid: "",
+                responsibleKind: "",
+                teamKind: "",
+                portfolio: "",
+              };
           if (v3State.responsibleGuid) {
-            navigateState({
-              view: "teams",
-              ropEmployee: v3State.ropEmployee || "",
-              teamExpand: v3State.ropEmployee ? [v3State.ropEmployee] : urlTeam.teamExpand || [],
-              manager: "",
-              clientManager: "",
-              responsibleGuid: "",
-              responsibleKind: "",
-              page: 1,
-            });
+            navigateState(
+              Object.assign({}, clearTerritory, {
+                view: "teams",
+                ropEmployee: v3State.ropEmployee || "",
+                teamExpand: v3State.ropEmployee ? [v3State.ropEmployee] : urlTeam.teamExpand || [],
+                page: 1,
+              }),
+            );
             return;
           }
           if (v3State.ropEmployee) {
-            navigateState({ view: "teams", ropEmployee: "", teamExpand: urlTeam.teamExpand || [], page: 1 });
+            navigateState(
+              Object.assign({}, clearTerritory, {
+                view: "teams",
+                ropEmployee: "",
+                teamExpand: urlTeam.teamExpand || [],
+                page: 1,
+              }),
+            );
             return;
           }
-          navigateState({ view: "teams", page: 1 });
+          navigateState(Object.assign({}, clearTerritory, { view: "teams", page: 1 }));
         },
       },
       renderPagination: function (v3state, totalPages) {

@@ -169,7 +169,8 @@
     }
   }
 
-  function syncLayout(active, state) {
+  function syncLayout(active, state, options) {
+    options = options || {};
     document.body.classList.toggle("clients-lktandoor-mode", active);
     var app = document.getElementById("clients-app");
     var chrome = document.getElementById("v3-lktandoor-chrome");
@@ -182,7 +183,9 @@
       app.classList.toggle("clients-lktandoor-list", active);
       app.classList.toggle("x13", active);
     }
-    chrome?.classList.toggle("clients-hidden", !active);
+    if (options.manageChrome !== false) {
+      chrome?.classList.toggle("clients-hidden", !active);
+    }
     panel?.classList.toggle("clients-hidden", !active);
     if (active) {
       managerChrome?.classList.add("clients-hidden");
@@ -260,7 +263,15 @@
     if ((state.view || "all") === "completeness") {
       return false;
     }
-    if ((state.view || "all") === "teams" && !state.ropEmployee && !state.responsibleGuid) {
+    var teamsView =
+      (state.view || "all") === "teams" || state.v3view === "teams";
+    if (teamsView && window.ClientsLogic && window.ClientsLogic.isTeamsRosterView) {
+      var rosterProbe = Object.assign({ view: "teams" }, state);
+      if (window.ClientsLogic.isTeamsRosterView(rosterProbe)) {
+        return false;
+      }
+    }
+    if (teamsView && !state.ropEmployee && !state.responsibleGuid && !state.v3manager) {
       return false;
     }
     if (window.ClientsLktandoorTeams && window.ClientsLktandoorTeams.isTeamsDirectory(state)) {

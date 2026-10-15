@@ -835,8 +835,36 @@
       var lktandoorActive =
         window.ClientsLktandoorList &&
         window.ClientsLktandoorList.shouldActivate(legacyState, true);
-      if (window.ClientsLktandoorList) {
-        window.ClientsLktandoorList.syncLayout(lktandoorActive, state);
+      if (window.ClientsLktandoorList || window.ClientsLktandoorTeams) {
+        var legacyForTeams = {
+          view: state.v3view === "teams" ? "teams" : "all",
+          ropEmployee: state.ropEmployee,
+          responsibleGuid: state.responsibleGuid,
+          manager: state.v3manager,
+          teamSource: "rop",
+        };
+        var lktandoorTeamsActive =
+          window.ClientsLktandoorTeams &&
+          ctx.lktandoorContext &&
+          ctx.lktandoorContext.rolePresentation &&
+          window.ClientsLktandoorTeams.shouldUse(
+            legacyForTeams,
+            true,
+            ctx.lktandoorContext.rolePresentation,
+            window.ClientsLogic,
+          );
+        if (window.ClientsLktandoorTeams && lktandoorTeamsActive) {
+          window.ClientsLktandoorTeams.syncLayout(lktandoorTeamsActive, legacyForTeams);
+        }
+        if (window.ClientsLktandoorList) {
+          window.ClientsLktandoorList.syncLayout(lktandoorActive, state, {
+            manageChrome: !lktandoorTeamsActive,
+          });
+        }
+        var lktandoorChromeVisible = lktandoorTeamsActive || lktandoorActive;
+        document
+          .getElementById("v3-lktandoor-chrome")
+          ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
         document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
         if (lktandoorActive && ctx.lktandoorContext) {
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);

@@ -47,7 +47,10 @@
     if (logic && logic.isBranchPortfolioList && logic.isBranchPortfolioList(state)) {
       return false;
     }
-    return isTeamsDirectory(state) || isTerritoryList(state, logic) || Boolean(state.ropEmployee);
+    if (logic && logic.isTeamsRosterView && logic.isTeamsRosterView(state)) {
+      return true;
+    }
+    return isTeamsDirectory(state) || isTerritoryList(state, logic);
   }
 
   function renderSectionHeading(shell, state, rolePresentation, logic) {
