@@ -34,6 +34,24 @@
     return "Моя клиентская база";
   }
 
+  function roleViewingLabel(presentation) {
+    if (!presentation) {
+      return "";
+    }
+    switch (presentation.businessRole) {
+      case "director":
+        return "Директор";
+      case "admin":
+        return "Администратор";
+      case "rop":
+        return "РОП";
+      case "manager":
+        return "Менеджер";
+      default:
+        return "";
+    }
+  }
+
   function contextParts(state, ctx) {
     var role = ctx.rolePresentation && ctx.rolePresentation.businessRole;
     var parts = [];
@@ -50,9 +68,9 @@
     if (state.responsibleGuid && ctx.teamContext && ctx.teamContext.managerName) {
       parts.push(ctx.teamContext.managerName);
     }
-    if (state.v3view === "teams" && (state.responsibleGuid || state.ropEmployee)) {
+    if (state.responsibleGuid) {
       parts.push("Клиентская база");
-    } else if (state.v3view === "all" && (state.responsibleGuid || state.ropEmployee)) {
+    } else if (state.v3view === "all" && state.ropEmployee) {
       parts.push("Клиентская база");
     }
     return parts;
@@ -79,11 +97,6 @@
     if (!el) {
       return;
     }
-    if (isTeamsDirectoryNav(state, ctx)) {
-      el.innerHTML = "";
-      el.classList.add("clients-hidden");
-      return;
-    }
     el.classList.remove("clients-hidden");
     var parts = contextParts(state, ctx);
     var legacyProbe = {
@@ -92,16 +105,23 @@
       manager: state.v3manager || "",
       responsibleGuid: state.responsibleGuid || "",
     };
+    var role = ctx.rolePresentation && ctx.rolePresentation.businessRole;
+    var isDirectory = isTeamsDirectoryNav(state, ctx);
     var showBack =
-      Boolean(state.responsibleGuid || state.ropEmployee) ||
-      (ctx.logic && ctx.logic.hasResponsibleSelection(legacyProbe));
+      !isDirectory &&
+      (Boolean(state.responsibleGuid) ||
+        (Boolean(state.ropEmployee) && role !== "rop") ||
+        (ctx.logic && ctx.logic.hasResponsibleSelection(legacyProbe)));
     var trail = parts
       .map(function (label, index) {
         var current = index === parts.length - 1 ? ' aria-current="page"' : "";
         return "<span" + current + ">" + shell.escapeHtml(label) + "</span>";
       })
       .join('<i aria-hidden="true">/</i>');
-    var viewing = state.responsibleGuid ? "Просмотр территории сотрудника" : "";
+    var viewing = roleViewingLabel(ctx.rolePresentation);
+    if (state.responsibleGuid) {
+      viewing = viewing ? viewing + " · Просмотр территории сотрудника" : "Просмотр территории сотрудника";
+    }
     el.innerHTML =
       (showBack
         ? '<button type="button" class="x13-back" id="v3-lktandoor-back" data-testid="v3-lktandoor-back">← Назад</button>'

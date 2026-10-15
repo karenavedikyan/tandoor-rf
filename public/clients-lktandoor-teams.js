@@ -61,14 +61,22 @@
     if (isTerritoryList(state, logic)) {
       return;
     }
+    var role = businessRole(rolePresentation);
+    var showFieldMap = role === "admin" || role === "director";
     if (isTeamsDirectory(state)) {
       el.innerHTML =
-        '<div><span class="x7-eyebrow">КОМАНДЫ И ТЕРРИТОРИИ</span><h2>Структура отдела ОПТ</h2><p>РОПы, сотрудники и переход в клиентскую базу выбранной территории</p></div>';
+        '<div><span class="x7-eyebrow">КЛИЕНТЫ И ТЕРРИТОРИИ</span><h2>РОПы и команды</h2><p>Выберите своего РОПа, чтобы открыть его команду</p></div>' +
+        (showFieldMap
+          ? '<a class="x13-field-map-link link" href="/clients/field-map">Карта полей</a>'
+          : "");
       return;
     }
-    if (state.ropEmployee && !state.responsibleGuid) {
+    if (state.ropEmployee && !state.responsibleGuid && !state.manager) {
       el.innerHTML =
-        '<div><span class="x7-eyebrow">КОМАНДА РОП</span><h2>Состав команды</h2><p>Выберите сотрудника или откройте клиентов и ТТ по типу назначения</p></div>';
+        '<div><span class="x7-eyebrow">КЛИЕНТЫ И ТЕРРИТОРИИ</span><h2>Сотрудники команды</h2><p>Выберите сотрудника, чтобы открыть его территорию</p></div>' +
+        (showFieldMap
+          ? '<a class="x13-field-map-link link" href="/clients/field-map">Карта полей</a>'
+          : "");
     }
   }
 

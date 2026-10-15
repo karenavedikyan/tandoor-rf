@@ -392,7 +392,12 @@
         },
         usesDirectorLayout: usesDirectorLayout,
         navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
+        navigateDirectorOpenTeam: navigateDirectorOpenTeam,
         navigateDirectorResponsible: navigateDirectorResponsible,
+        isAdminSession: function () {
+          return rolePresentation && rolePresentation.businessRole === "admin";
+        },
+        isRopSession: isRopDesignSession,
         navigateRopBranchPortfolio: navigateRopBranchPortfolio,
         navigateResponsible: navigateResponsible,
         renderOrgBadge: renderOrgBadge,
@@ -1421,17 +1426,18 @@
     document.body.classList.toggle("clients-role-rop", Boolean(isRop));
     document.body.classList.toggle("clients-role-director", Boolean(isDirector));
     renderDelegationBanner(presentation);
+    var x13TeamsSurface = document.body.classList.contains("clients-lktandoor-teams");
     if (pageSubtitleEl) {
-      if (config && config.subtitle) {
-        pageSubtitleEl.textContent = config.subtitle;
-        pageSubtitleEl.classList.remove("clients-hidden");
-      } else {
+      if (x13TeamsSurface || !config || !config.subtitle) {
         pageSubtitleEl.textContent = "";
         pageSubtitleEl.classList.add("clients-hidden");
+      } else {
+        pageSubtitleEl.textContent = config.subtitle;
+        pageSubtitleEl.classList.remove("clients-hidden");
       }
     }
     if (managerChromeEl) {
-      managerChromeEl.classList.toggle("clients-hidden", !config);
+      managerChromeEl.classList.toggle("clients-hidden", !config || x13TeamsSurface);
     }
     if (workspaceNavEl) {
       workspaceNavEl.classList.toggle(
@@ -2983,7 +2989,16 @@
     }
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
-    if (usesDirectorLayout()) {
+    var lktandoorTeamsChrome =
+      window.ClientsLktandoorTeams &&
+      window.ClientsLktandoorTeams.shouldUse(state, exchangeV3Active, rolePresentation, logic);
+    if (lktandoorTeamsChrome) {
+      viewSwitcherEl.classList.add("clients-hidden");
+      document.getElementById("clients-manager-chrome")?.classList.add("clients-hidden");
+    } else if (rolePresentation) {
+      viewSwitcherEl.classList.toggle("clients-hidden", !rolePresentation.showViewSwitcher);
+    }
+    if (!lktandoorTeamsChrome && usesDirectorLayout()) {
       loadDirectorStats();
       mountDirectorStatLinks();
     } else if (isRopDesignSession() && isTeams) {
@@ -3233,6 +3248,30 @@
     if (match) {
       teamContext.ropName = match.name || teamContext.ropName;
     }
+  }
+
+  function navigateDirectorOpenTeam(ropEmployeeGuid) {
+    rememberRopName(ropEmployeeGuid);
+    navigateState({
+      view: "teams",
+      ropEmployee: ropEmployeeGuid,
+      teamExpand: [ropEmployeeGuid],
+      rop: "",
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      regionalManager: "",
+      clientRegionalManager: "",
+      outletRegionalManager: "",
+      hardwareManager: "",
+      clientHardwareManager: "",
+      outletHardwareManager: "",
+      portfolio: "",
+      responsibleGuid: "",
+      responsibleKind: "",
+      entity: "clients",
+      page: 1,
+    });
   }
 
   function navigateDirectorBranchPortfolio(ropEmployeeGuid, portfolio) {
