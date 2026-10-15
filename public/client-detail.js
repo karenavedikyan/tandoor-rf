@@ -37,90 +37,143 @@
     return returnQuery ? "/clients" + returnQuery : "/clients?v3mode=1";
   }
 
+  function v3DetailTitle(payload) {
+    var ent = payload.entity || {};
+    if (payload.entityType === "legal") {
+      return ent.name_client || ent.name || "Юрлицо";
+    }
+    if (payload.entityType === "holding") {
+      return ent.name || "Холдинг";
+    }
+    var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
+    return addr.store_address || addr.storeAddress || ent.name || "Торговая точка";
+  }
+
+  function renderV3Composition(host, payload) {
+    if (!host || !payload.entity || !payload.entity.guid) {
+      return;
+    }
+    host.innerHTML = "Загрузка состава…";
+    api
+      .apiRequest("/api/clients/v3/holdings/" + encodeURIComponent(payload.entity.guid) + "/composition")
+      .then(function (result) {
+        if (!host.isConnected) return;
+        if (!result.response.ok || !result.data) {
+          host.innerHTML =
+            '<p class="clients-error">Не удалось загрузить состав.</p>' +
+            '<button type="button" class="workspace-button workspace-button--secondary" id="v3-composition-retry">Повторить</button>';
+          document.getElementById("v3-composition-retry")?.addEventListener("click", function () {
+            renderV3Composition(host, payload);
+          });
+          return;
+        }
+        var legal = result.data.legalEntities || [];
+        var retail = result.data.retailOutlets || [];
+        var parentReturn = currentDetailReturnParam();
+        host.innerHTML =
+          (legal.length
+            ? "<h3 class=\"pc-label\">Юрлица</h3><ul class=\"v3-composition-list\">" +
+              legal
+                .map(function (row) {
+                  return (
+                    "<li><a class=\"clients-link\" href=\"/clients/" +
+                    encodeURIComponent(row.guid) +
+                    "?v3Entity=legal&return=" +
+                    parentReturn +
+                    '">' +
+                    shell.escapeHtml(row.name) +
+                    "</a></li>"
+                  );
+                })
+                .join("") +
+              "</ul>"
+            : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>') +
+          (retail.length
+            ? "<h3 class=\"pc-label\">Торговые точки</h3><ul class=\"v3-composition-list\">" +
+              retail
+                .map(function (row) {
+                  return (
+                    "<li><a class=\"clients-link\" href=\"/clients/" +
+                    encodeURIComponent(row.guid) +
+                    "?v3Entity=retail&return=" +
+                    parentReturn +
+                    '">' +
+                    shell.escapeHtml(row.name) +
+                    "</a></li>"
+                  );
+                })
+                .join("") +
+              "</ul>"
+            : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>');
+      })
+      .catch(function () {
+        if (host.isConnected) {
+          host.innerHTML = '<p class="clients-error">Ошибка сети при загрузке состава.</p>';
+        }
+      });
+  }
+
+  function buildV3SessionContext(user) {
+    if (!user) {
+      return {
+        displayName: "—",
+        roleLabel: "—",
+        scopeLabel: "Область видимости по текущей сессии",
+      };
+    }
+    var displayName = user.fullName || user.email || "Пользователь";
+    var roleKey = user.role || "user";
+    var roleNames = {
+      admin: "Администратор",
+      manager: "Менеджер",
+      marketer: "Маркетолог",
+      coordinator: "Координатор",
+    };
+    var roleLabel = roleNames[roleKey] || String(roleKey);
+    var scopeByRole = {
+      admin: "Вся база и административные действия",
+      manager: "Клиенты и точки по вашим назначениям 1С",
+      marketer: "Маркетинговый просмотр",
+      coordinator: "Команда и назначения по доступу",
+    };
+    var scopeLabel = scopeByRole[roleKey] || "Область видимости по текущей сессии";
+    if (user.preview && user.preview.active && user.preview.targetUser) {
+      displayName = user.preview.targetUser.fullName || displayName;
+      roleLabel = "Предпросмотр · " + (user.preview.targetUser.role || roleLabel);
+      scopeLabel = "Режим предпросмотра сотрудника";
+    }
+    return { displayName: displayName, roleLabel: roleLabel, scopeLabel: scopeLabel };
+  }
+
   function renderV3Detail(payload) {
     hideAllPanels();
     detailEl.classList.remove("clients-hidden");
     var backHref = resolveV3BackHref();
     var ent = payload.entity || {};
-    var title =
-      ent.name ||
-      ent.name_client ||
-      (ent.address && ent.address.store_address) ||
-      payload.entityType ||
-      "Объект";
-    var body = window.ClientDetailV3
-      ? window.ClientDetailV3.renderBody(shell, payload.entityType, ent, payload.holdingLink)
+    var title = v3DetailTitle(payload);
+    var cardHtml = window.ClientDetailV3
+      ? window.ClientDetailV3.renderCard(shell, payload.entityType, ent, payload.holdingLink, {
+          session: buildV3SessionContext(currentUser),
+        })
       : "";
-    var html =
+    detailRoot.innerHTML =
       '<p class="client-detail-back-wrap"><a class="client-detail-back clients-link" href="' +
       shell.escapeHtml(backHref) +
       '" data-testid="v3-back-to-list">← К списку</a></p>' +
-      "<h1 data-testid=\"v3-detail-title\">" +
-      shell.escapeHtml(String(title)) +
-      "</h1>" +
-      body;
-    if (payload.entityType === "holding") {
-      html +=
-        '<div id="v3-composition" class="client-card-section" data-holding-guid="' +
-        shell.escapeHtml(ent.guid) +
-        '">Загрузка состава…</div>';
+      cardHtml;
+    if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
+      window.ClientDetailV3.bindTabs(detailRoot, {
+        title: title,
+        entityLabel:
+          payload.entityType === "holding"
+            ? "Холдинг"
+            : payload.entityType === "legal"
+              ? "Юрлицо"
+              : "Торговая точка",
+      });
     }
-    detailRoot.innerHTML = html;
     if (payload.entityType === "holding" && ent.guid) {
-      api
-        .apiRequest("/api/clients/v3/holdings/" + encodeURIComponent(ent.guid) + "/composition")
-        .then(function (result) {
-          var host = document.getElementById("v3-composition");
-          if (!host) return;
-          if (!result.response.ok || !result.data) {
-            host.innerHTML =
-              '<p class="clients-error">Не удалось загрузить состав.</p>' +
-              '<button type="button" class="workspace-button workspace-button--secondary" id="v3-composition-retry">Повторить</button>';
-            document.getElementById("v3-composition-retry")?.addEventListener("click", function () {
-              renderV3Detail(payload);
-            });
-            return;
-          }
-          var legal = result.data.legalEntities || [];
-          var retail = result.data.retailOutlets || [];
-          var parentReturn = currentDetailReturnParam();
-          host.innerHTML =
-            "<h2>Юрлица</h2><ul>" +
-            legal
-              .map(function (row) {
-                return (
-                  "<li><a href=\"/clients/" +
-                  encodeURIComponent(row.guid) +
-                  "?v3Entity=legal&return=" +
-                  parentReturn +
-                  '">' +
-                  shell.escapeHtml(row.name) +
-                  "</a></li>"
-                );
-              })
-              .join("") +
-            "</ul><h2>Торговые точки</h2><ul>" +
-            retail
-              .map(function (row) {
-                return (
-                  "<li><a href=\"/clients/" +
-                  encodeURIComponent(row.guid) +
-                  "?v3Entity=retail&return=" +
-                  parentReturn +
-                  '">' +
-                  shell.escapeHtml(row.name) +
-                  "</a></li>"
-                );
-              })
-              .join("") +
-            "</ul>";
-        })
-        .catch(function () {
-          var host = document.getElementById("v3-composition");
-          if (host) {
-            host.innerHTML = '<p class="clients-error">Ошибка сети при загрузке состава.</p>';
-          }
-        });
+      renderV3Composition(document.getElementById("v3-composition"), payload);
     }
   }
 
