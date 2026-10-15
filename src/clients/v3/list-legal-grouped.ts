@@ -163,7 +163,7 @@ export async function listV3LegalGrouped(
 
   const countParams = [...scope.params];
   const territorySql = appendTerritoryAssignmentFilters(input, "le", countParams);
-  const { filterSql: matchSql, memberLegalNameSql } = appendEligibilityFilters(input, countParams, holdingScope, context);
+  const { filterSql: matchSql } = appendEligibilityFilters(input, countParams, holdingScope, context);
 
   const groupKey = readableGroupKey(context, countParams);
   const countResult = await query<{ count: string }>(

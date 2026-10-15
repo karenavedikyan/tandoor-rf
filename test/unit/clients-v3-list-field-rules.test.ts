@@ -35,11 +35,31 @@ describe("parseV3FilterRulesParam", () => {
     assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "discountAmount", op: "gte", value: "abc" }]), "legal"), undefined);
   });
 
-  it("accepts legalName for legal and legal_grouped but not retail", () => {
+  it("accepts legalName for legal and legal_grouped but not retail or orphan_retail", () => {
     const raw = JSON.stringify([{ field: "legalName", op: "contains", value: "Legal" }]);
     assert.ok(parseV3FilterRulesParam(raw, "legal"));
     assert.ok(parseV3FilterRulesParam(raw, "legal_grouped"));
     assert.equal(parseV3FilterRulesParam(raw, "retail"), undefined);
+    assert.equal(parseV3FilterRulesParam(raw, "orphan_retail"), undefined);
+  });
+
+  it("legalName eq empty and filled build name_client SQL", () => {
+    const eqParams: unknown[] = [];
+    const eq = appendV3FieldRulesSql("", eqParams, "legal", "le", [
+      { field: "legalName", op: "eq", value: "Legal One" },
+    ]);
+    assert.match(eq.sql, /le\.name_client.*= \$1/);
+    assert.equal(eqParams[0], "Legal One");
+    const emptyParams: unknown[] = [];
+    const empty = appendV3FieldRulesSql("", emptyParams, "legal", "le", [
+      { field: "legalName", op: "empty", value: "" },
+    ]);
+    assert.match(empty.sql, /le\.name_client.*IS NULL/i);
+    const filledParams: unknown[] = [];
+    const filled = appendV3FieldRulesSql("", filledParams, "legal", "le", [
+      { field: "legalName", op: "filled", value: "" },
+    ]);
+    assert.match(filled.sql, /le\.name_client.*IS NOT NULL/i);
   });
 
   it("legalName contains escapes wildcards and uses name_client", () => {
