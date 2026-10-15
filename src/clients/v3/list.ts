@@ -28,7 +28,104 @@ export type V3ListQuery = {
   responsibleGuid?: string;
   responsibleKind?: V3ResponsibleKind;
   ropBranchGuid?: string;
+  city?: string;
+  colManager?: string;
+  colRegional?: string;
+  colRop?: string;
+  colCity?: string;
+  colStatus?: string;
 };
+
+function appendTextContainsFilter(
+  sql: string,
+  params: unknown[],
+  expression: string,
+  raw: string | undefined,
+): string {
+  const value = raw?.trim();
+  if (!value) {
+    return sql;
+  }
+  params.push(`%${value.replace(/[%_\\]/g, "\\$&")}%`);
+  return `${sql} AND ${expression} ILIKE $${params.length} ESCAPE '\\'`;
+}
+
+function appendCityFilter(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
+  const city = input.city?.trim();
+  if (!city) {
+    return "";
+  }
+  params.push(city);
+  if (entity === "legal") {
+    return ` AND NULLIF(TRIM(le.address), '') = $${params.length}`;
+  }
+  return ` AND COALESCE(NULLIF(TRIM(ro.address->>'city'), ''), NULLIF(TRIM(ro.address->>'store_address'), '')) = $${params.length}`;
+}
+
+function appendV3ColumnFilters(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
+  let sql = appendCityFilter(input, entity, params);
+  if (entity === "legal") {
+    sql = appendTextContainsFilter(
+      sql,
+      params,
+      `COALESCE(le.managers->>'nameManager', '')`,
+      input.colManager,
+    );
+    sql = appendTextContainsFilter(
+      sql,
+      params,
+      `COALESCE(le.managers->>'nameRegionalManager', '')`,
+      input.colRegional,
+    );
+    sql = appendTextContainsFilter(
+      sql,
+      params,
+      `COALESCE(le.managers->>'nameHeadOfSales', '')`,
+      input.colRop,
+    );
+    sql = appendTextContainsFilter(sql, params, `COALESCE(NULLIF(TRIM(le.address), ''), '')`, input.colCity);
+    sql = appendTextContainsFilter(
+      sql,
+      params,
+      `COALESCE(le.type_category->>'nameType', le.type_category->>'nameCategory', '')`,
+      input.colStatus,
+    );
+    return sql;
+  }
+  sql = appendTextContainsFilter(
+    sql,
+    params,
+    `COALESCE(ro.managers->>'nameManager', '')`,
+    input.colManager,
+  );
+  sql = appendTextContainsFilter(
+    sql,
+    params,
+    `COALESCE(ro.managers->>'nameRegionalManager', '')`,
+    input.colRegional,
+  );
+  sql = appendTextContainsFilter(
+    sql,
+    params,
+    `COALESCE(ro.managers->>'nameHeadOfSales', '')`,
+    input.colRop,
+  );
+  sql = appendTextContainsFilter(
+    sql,
+    params,
+    `COALESCE(NULLIF(TRIM(ro.address->>'city'), ''), NULLIF(TRIM(ro.address->>'store_address'), ''), '')`,
+    input.colCity,
+  );
+  if (input.colStatus?.trim()) {
+    const statusNeedle = input.colStatus.trim().toLowerCase();
+    if (statusNeedle.includes("закр")) {
+      sql += " AND ro.closed = TRUE";
+    } else if (statusNeedle.includes("откр")) {
+      sql += " AND ro.closed = FALSE";
+    }
+  }
+  return sql;
+}
 
 function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknown[]): string {
   if (!input.ropBranchGuid) {
@@ -130,7 +227,8 @@ export async function listV3Entities(
     const scope = v3EntityAssignmentScope(context, "le");
     const params = [...scope.params];
     const search = qPattern ? ` AND le.name_client ILIKE $${params.push(qPattern)} ESCAPE '\\'` : "";
-    const filters = appendAssignmentFilters(input, "le", params);
+    const filters =
+      appendAssignmentFilters(input, "le", params) + appendV3ColumnFilters(input, "legal", params);
     const countParams = [...params];
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
@@ -143,10 +241,12 @@ export async function listV3Entities(
                le.name_client AS name,
                le.guid_holding::text AS holding_guid,
                le.name_holding AS holding_name,
+               NULLIF(TRIM(le.address), '') AS city,
                le.managers->>'nameManager' AS manager_name,
                le.managers->>'nameRegionalManager' AS regional_name,
                le.managers->>'nameHardwareManager' AS hardware_name,
-               le.managers->>'nameHeadOfSales' AS rop_name
+               le.managers->>'nameHeadOfSales' AS rop_name,
+               COALESCE(le.type_category->>'nameType', le.type_category->>'nameCategory', '') AS status_label
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
         ORDER BY le.name_client ASC
@@ -165,7 +265,8 @@ export async function listV3Entities(
   const search = qPattern
     ? ` AND COALESCE(ro.address->>'store_address', '') ILIKE $${params.push(qPattern)} ESCAPE '\\'`
     : "";
-  const filters = appendAssignmentFilters(input, "ro", params);
+  const filters =
+    appendAssignmentFilters(input, "ro", params) + appendV3ColumnFilters(input, "retail", params);
   const countParams = [...params];
   params.push(input.pageSize, offset);
   const total = await query<{ count: string }>(
@@ -178,6 +279,7 @@ export async function listV3Entities(
              COALESCE(ro.address->>'store_address', ro.guid_store::text) AS name,
              ro.guid_holding::text AS holding_guid,
              ro.closed,
+             COALESCE(NULLIF(TRIM(ro.address->>'city'), ''), NULLIF(TRIM(ro.address->>'store_address'), '')) AS city,
              ro.managers->>'nameManager' AS manager_name,
              ro.managers->>'nameRegionalManager' AS regional_name,
              ro.managers->>'nameHardwareManager' AS hardware_name,

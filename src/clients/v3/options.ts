@@ -18,6 +18,7 @@ export type V3FilterOptions = {
   managers: Array<{ guid: string; name: string; count: number }>;
   types: Array<{ guid: string; name: string; count: number }>;
   categories: Array<{ guid: string; name: string; count: number }>;
+  cities: Array<{ value: string; count: number }>;
 };
 
 function scopeForEntity(context: AccessContext, entity: V3ListEntity, alias: string): V3ScopeSql {
@@ -33,7 +34,12 @@ async function loadDistinctFromTable(
   alias: string,
   scope: V3ScopeSql,
   orphanOnly: boolean,
-): Promise<{ managers: V3FilterOptions["managers"]; types: V3FilterOptions["types"]; categories: V3FilterOptions["categories"] }> {
+): Promise<{
+  managers: V3FilterOptions["managers"];
+  types: V3FilterOptions["types"];
+  categories: V3FilterOptions["categories"];
+  cities: V3FilterOptions["cities"];
+}> {
   const orphanSql = orphanOnly ? ` AND ${alias}.guid_holding IS NULL` : "";
   const baseWhere = `(${scope.clause})${orphanSql}`;
   const managers = await query<{ guid: string; name: string; count: string }>(
@@ -78,6 +84,25 @@ async function loadDistinctFromTable(
     `,
     scope.params,
   );
+  let cities: { rows: Array<{ value: string; count: string }> } = { rows: [] };
+  if (alias === "le" || alias === "ro") {
+    const cityExpression =
+      alias === "le"
+        ? `NULLIF(TRIM(${alias}.address), '')`
+        : `COALESCE(NULLIF(TRIM(${alias}.address->>'city'), ''), NULLIF(TRIM(${alias}.address->>'store_address'), ''))`;
+    cities = await query<{ value: string; count: string }>(
+      `
+        SELECT ${cityExpression} AS value, COUNT(*)::text AS count
+        FROM ${table} AS ${alias}
+        WHERE ${baseWhere}
+          AND ${cityExpression} IS NOT NULL
+        GROUP BY 1
+        ORDER BY value ASC
+        LIMIT 80
+      `,
+      scope.params,
+    );
+  }
   return {
     managers: managers.rows.map((r) => ({
       guid: r.guid,
@@ -92,6 +117,10 @@ async function loadDistinctFromTable(
     categories: categories.rows.map((r) => ({
       guid: r.guid,
       name: r.name || r.guid.slice(0, 8),
+      count: Number(r.count),
+    })),
+    cities: cities.rows.map((r) => ({
+      value: r.value,
       count: Number(r.count),
     })),
   };

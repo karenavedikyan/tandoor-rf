@@ -153,7 +153,7 @@
                     class="clients-field__input"
                     type="search"
                     autocomplete="off"
-                    placeholder="Название, холдинг, менеджер, адрес или телефон"
+                    placeholder="Клиент, ТТ, код, адрес или сотрудник"
                   />
                 </label>
                 <div class="clients-toolbar__controls-row">
@@ -168,7 +168,23 @@
                   <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
                     Колонки
                   </button>
+                  <button
+                    type="button"
+                    class="workspace-button workspace-button--ghost clients-v3-density-btn clients-hidden"
+                    id="v3-density-btn"
+                  >
+                    Обычно
+                  </button>
                 </div>
+              </div>
+              <div id="v3-list-filterbar" class="clients-v3-list-filterbar clients-hidden" aria-label="Быстрые фильтры списка">
+                <label class="clients-field clients-field--inline">
+                  <span class="clients-field__label">Город</span>
+                  <select id="v3-city-filter" class="clients-field__select">
+                    <option value="">Все города</option>
+                  </select>
+                </label>
+                <p class="clients-v3-list-filterbar__hint">Сброс сохраняет выбранную команду и сотрудника</p>
               </div>
               <button
                 type="button"
@@ -708,6 +724,7 @@
     <script src="/clients-shell.js" defer></script>
     <script src="/clients-teams-compact.js" defer></script>
     <script src="/clients-onec-teams.js" defer></script>
+    <script src="/clients-v3-list.js" defer></script>
     <script src="/clients-v3.js" defer></script>
     <script src="/clients.js" defer></script>
   </body>
