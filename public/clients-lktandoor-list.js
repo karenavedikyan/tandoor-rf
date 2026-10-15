@@ -58,23 +58,50 @@
     return parts;
   }
 
+  function isTeamsDirectoryNav(state, ctx) {
+    var legacyProbe = {
+      view: "teams",
+      ropEmployee: state.ropEmployee || "",
+      manager: state.v3manager || "",
+      responsibleGuid: state.responsibleGuid || "",
+    };
+    return (
+      (state.v3view === "teams" || state.view === "teams") &&
+      !state.ropEmployee &&
+      !state.responsibleGuid &&
+      !state.v3manager &&
+      !(ctx.logic && ctx.logic.hasResponsibleSelection(legacyProbe))
+    );
+  }
+
   function renderContextNav(shell, state, ctx) {
     var el = document.getElementById("v3-lktandoor-context-nav");
     if (!el) {
       return;
     }
+    if (isTeamsDirectoryNav(state, ctx)) {
+      el.innerHTML = "";
+      el.classList.add("clients-hidden");
+      return;
+    }
+    el.classList.remove("clients-hidden");
     var parts = contextParts(state, ctx);
+    var legacyProbe = {
+      view: "teams",
+      ropEmployee: state.ropEmployee || "",
+      manager: state.v3manager || "",
+      responsibleGuid: state.responsibleGuid || "",
+    };
     var showBack =
       Boolean(state.responsibleGuid || state.ropEmployee) ||
-      state.v3view === "teams" ||
-      (ctx.logic && ctx.logic.hasResponsibleSelection({ view: "teams", ropEmployee: state.ropEmployee, manager: state.v3manager, responsibleGuid: state.responsibleGuid }));
+      (ctx.logic && ctx.logic.hasResponsibleSelection(legacyProbe));
     var trail = parts
       .map(function (label, index) {
         var current = index === parts.length - 1 ? ' aria-current="page"' : "";
         return "<span" + current + ">" + shell.escapeHtml(label) + "</span>";
       })
       .join('<i aria-hidden="true">/</i>');
-    var viewing = state.responsibleGuid ? "Просмотр территории сотрудника" : ctx.rolePresentation && ctx.rolePresentation.roleLabel;
+    var viewing = state.responsibleGuid ? "Просмотр территории сотрудника" : "";
     el.innerHTML =
       (showBack
         ? '<button type="button" class="x13-back" id="v3-lktandoor-back" data-testid="v3-lktandoor-back">← Назад</button>'

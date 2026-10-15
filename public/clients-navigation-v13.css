@@ -1,5 +1,6 @@
 /* Lktandoor list/card density — Tandoor RF tokens (light + dark). */
-.clients-lktandoor-list.x13 {
+.clients-lktandoor-list.x13,
+body.clients-lktandoor-teams {
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -8,7 +9,8 @@
   font-size: var(--text-base);
 }
 
-.clients-lktandoor-list .x13-context-nav {
+.clients-lktandoor-list .x13-context-nav,
+.clients-lktandoor-teams .x13-context-nav {
   display: flex;
   gap: 16px;
   align-items: center;
@@ -16,7 +18,8 @@
   margin-bottom: 20px;
 }
 
-.clients-lktandoor-list .x13-context-nav nav {
+.clients-lktandoor-list .x13-context-nav nav,
+.clients-lktandoor-teams .x13-context-nav nav {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -25,17 +28,20 @@
   font-size: var(--text-sm);
 }
 
-.clients-lktandoor-list .x13-context-nav nav i {
+.clients-lktandoor-list .x13-context-nav nav i,
+.clients-lktandoor-teams .x13-context-nav nav i {
   font-style: normal;
   opacity: 0.55;
 }
 
-.clients-lktandoor-list .x13-context-nav [aria-current="page"] {
+.clients-lktandoor-list .x13-context-nav [aria-current="page"],
+.clients-lktandoor-teams .x13-context-nav [aria-current="page"] {
   color: var(--rf-text, var(--ink));
   font-weight: 600;
 }
 
-.clients-lktandoor-list .x13-back {
+.clients-lktandoor-list .x13-back,
+.clients-lktandoor-teams .x13-back {
   min-height: 40px;
   white-space: nowrap;
   color: var(--rf-primary-hover);
@@ -48,17 +54,20 @@
   padding: 0;
 }
 
-.clients-lktandoor-list .x13-back:hover {
+.clients-lktandoor-list .x13-back:hover,
+.clients-lktandoor-teams .x13-back:hover {
   text-decoration: underline;
 }
 
-.clients-lktandoor-list .x13-viewing {
+.clients-lktandoor-list .x13-viewing,
+.clients-lktandoor-teams .x13-viewing {
   margin-left: auto;
   color: var(--rf-text-muted, var(--muted));
   font-size: var(--text-xs);
 }
 
-.clients-lktandoor-list .x13-section-heading {
+.clients-lktandoor-list .x13-section-heading,
+.clients-lktandoor-teams .x13-section-heading {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -66,19 +75,22 @@
   margin-bottom: 18px;
 }
 
-.clients-lktandoor-list .x13-section-heading h2 {
+.clients-lktandoor-list .x13-section-heading h2,
+.clients-lktandoor-teams .x13-section-heading h2 {
   font-size: var(--text-xl);
   margin: 7px 0;
   line-height: 1.25;
 }
 
-.clients-lktandoor-list .x13-section-heading p {
+.clients-lktandoor-list .x13-section-heading p,
+.clients-lktandoor-teams .x13-section-heading p {
   color: var(--rf-text-muted, var(--muted));
   margin: 0;
   line-height: 1.5;
 }
 
-.clients-lktandoor-list .x7-eyebrow {
+.clients-lktandoor-list .x7-eyebrow,
+.clients-lktandoor-teams .x7-eyebrow {
   font-size: var(--text-xs);
   letter-spacing: 0.06em;
   color: var(--rf-text-muted, var(--muted));
@@ -354,11 +366,14 @@
   .clients-lktandoor-list .x13-quick-filters > p { font-size:12px; overflow-wrap:anywhere; }
   .clients-lktandoor-list .x6-builder { grid-template-columns:minmax(0,1fr); }
   .clients-lktandoor-list .x13-section-heading .x7-eyebrow,
-  .clients-lktandoor-list .x13-section-heading p {
+  .clients-lktandoor-list .x13-section-heading p,
+  .clients-lktandoor-teams .x13-section-heading .x7-eyebrow,
+  .clients-lktandoor-teams .x13-section-heading p {
     display: none;
   }
 
-  .clients-lktandoor-list .x13-section-heading h2 {
+  .clients-lktandoor-list .x13-section-heading h2,
+  .clients-lktandoor-teams .x13-section-heading h2 {
     font-size: 18px;
     margin: 0 0 8px;
   }
@@ -392,7 +407,8 @@
     width: 100%;
   }
 
-  .clients-lktandoor-list .x13-context-nav {
+  .clients-lktandoor-list .x13-context-nav,
+  .clients-lktandoor-teams .x13-context-nav {
     gap: 10px;
     margin-bottom: 14px;
   }
@@ -415,6 +431,14 @@
   .clients-lktandoor-list .clients-lktandoor-list-panel .clients-cards:not(.x13-mobile-list) {
     display: none;
   }
+}
+
+body.clients-lktandoor-teams .clients-page-title {
+  display: none;
+}
+
+body.clients-lktandoor-teams .clients-manager-chrome:not(.clients-hidden) {
+  margin-bottom: 12px;
 }
 
 .clients-lktandoor-teams .x14-teams-panel {
@@ -479,13 +503,44 @@
   justify-content: flex-end;
 }
 
+.clients-lktandoor-teams .clients-compact-team__columns-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 56px;
+  gap: 8px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  color: var(--rf-text-muted, #6b7280);
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.clients-lktandoor-teams .clients-compact-team__columns-head span:not(:first-child) {
+  text-align: right;
+}
+
 .clients-lktandoor-teams .clients-compact-team__member {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) 88px 56px;
   gap: 8px;
   align-items: start;
-  padding: 8px 0;
+  padding: 10px 0;
   border-top: 1px solid var(--color-border, #eee);
+}
+
+.clients-lktandoor-teams .clients-compact-team__member-main {
+  grid-column: 1;
+}
+
+.clients-lktandoor-teams .clients-compact-team__member-counts {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: 88px 56px;
+  gap: 8px;
+  justify-items: end;
+  align-items: start;
+  font-size: var(--text-sm, 13px);
 }
 
 .clients-lktandoor-teams .clients-compact-team__member-main {

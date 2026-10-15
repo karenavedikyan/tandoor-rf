@@ -388,7 +388,12 @@
       if (!rows) {
         return '<div class="clients-compact-team__members clients-compact-team__members--empty">Нет сотрудников по текущему фильтру.</div>';
       }
-      return '<div class="clients-compact-team__members" tabindex="0">' + rows + "</div>";
+      var columnHead =
+        typeof document !== "undefined" && document.body.classList.contains("clients-lktandoor-teams")
+          ? '<div class="clients-compact-team__columns-head" aria-hidden="true">' +
+            "<span>Сотрудник</span><span>Клиенты</span><span>ТТ</span></div>"
+          : "";
+      return columnHead + '<div class="clients-compact-team__members" tabindex="0">' + rows + "</div>";
     }
 
     function renderRopRow(summary, teamUi, entry, options) {

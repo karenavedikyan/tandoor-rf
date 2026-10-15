@@ -2957,8 +2957,13 @@
         .getElementById("v3-lktandoor-chrome")
         ?.classList.toggle("clients-hidden", !lktandoorChromeVisible);
       document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
+      document
+        .getElementById("v3-lktandoor-scope-bar")
+        ?.classList.toggle("clients-hidden", !lktandoorActive);
       if (lktandoorTeamsActive || lktandoorActive) {
-        managerChromeEl?.classList.add("clients-hidden");
+        if (lktandoorActive) {
+          managerChromeEl?.classList.add("clients-hidden");
+        }
         var lkCtx = buildV3UiContext();
         lkCtx.lktandoorContext.uiCtx = lkCtx;
         if (lktandoorTeamsActive && window.ClientsLktandoorTeams) {
