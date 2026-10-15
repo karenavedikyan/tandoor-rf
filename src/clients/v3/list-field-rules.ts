@@ -32,15 +32,19 @@ function loadingDayDef(fieldId: string) {
 
 function loadingDayExplicitTrueSql(alias: string, camel: string, snake: string): string {
   return `(
-    ${alias}.information_loading->'${camel}' = 'true'::jsonb
-    OR ${alias}.information_loading->'${snake}' = 'true'::jsonb
+    COALESCE((${alias}.information_loading->'${camel}') = 'true'::jsonb, false)
+    OR COALESCE((${alias}.information_loading->'${snake}') = 'true'::jsonb, false)
   )`;
 }
 
+/** Explicit jsonb false on a key, and no boolean true on either key (card: any key === true wins). */
 function loadingDayExplicitFalseSql(alias: string, camel: string, snake: string): string {
   return `(
-    ${alias}.information_loading->'${camel}' = 'false'::jsonb
-    OR ${alias}.information_loading->'${snake}' = 'false'::jsonb
+    (
+      (${alias}.information_loading->'${camel}') = 'false'::jsonb
+      OR (${alias}.information_loading->'${snake}') = 'false'::jsonb
+    )
+    AND NOT ${loadingDayExplicitTrueSql(alias, camel, snake)}
   )`;
 }
 

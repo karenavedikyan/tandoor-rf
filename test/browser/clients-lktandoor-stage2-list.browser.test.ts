@@ -372,6 +372,11 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(filtered, 2);
     const filtersParam = new URL(page.url()).searchParams.get("filters");
     assert.ok(filtersParam?.includes("loadingOnMonday"));
+    const mondayChip = page.locator('[data-testid="v3-rule-chip"]').first();
+    const mondayChipText = await mondayChip.innerText();
+    assert.ok(mondayChipText.includes("Приёмка: Понедельник"));
+    assert.ok(mondayChipText.includes("Да"));
+    assert.ok(!mondayChipText.includes("loadingOnMonday"));
     await page.locator("#clients-table-body tr a.clients-link").first().click();
     await page.waitForURL(/\/clients\//);
     await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
@@ -381,6 +386,20 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(await rowCount(page), filtered);
     await page.setViewportSize(MOBILE);
     await closeMobileSidebar(page);
+    assert.equal(await rowCount(page), filtered);
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = true;
+    });
+    await page.locator("#v3-rule-field").waitFor({ state: "visible" });
+    await page.selectOption("#v3-rule-field", "loadingOnFriday");
+    await page.selectOption("#v3-rule-op", "yes");
+    await updateList(page, () => page.click("#v3-rule-add"));
+    const fridayChip = page.locator('[data-testid="v3-rule-chip"]').filter({ hasText: "Приёмка: Пятница" });
+    assert.ok(await fridayChip.count());
+    assert.ok((await fridayChip.first().innerText()).includes("Да"));
+    assert.equal(await rowCount(page), 1);
+    await updateList(page, () => fridayChip.first().click());
     assert.equal(await rowCount(page), filtered);
     await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').first().click());
     assert.ok((await rowCount(page)) > filtered);

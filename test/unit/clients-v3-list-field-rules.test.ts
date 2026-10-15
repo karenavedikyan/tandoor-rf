@@ -76,20 +76,27 @@ describe("parseV3FilterRulesParam", () => {
     assert.equal(params[0], "%100\\%\\_\\\\%");
   });
 
-  it("loading day fields apply to retail only with explicit jsonb true/false", () => {
+  it("loading day fields apply to retail only with true-wins yes and guarded no SQL", () => {
     assert.equal(LOADING_DAY_DEFS.length, 7);
-    const yesParams: unknown[] = [];
-    const yes = appendV3FieldRulesSql("", yesParams, "retail", "ro", [
-      { field: "loadingOnMonday", op: "yes", value: "" },
-    ]);
-    assert.match(yes.sql, /loading_on_monday.*= 'true'::jsonb/);
-    assert.match(yes.sql, /loadingOnMonday.*= 'true'::jsonb/);
-    const noParams: unknown[] = [];
-    const no = appendV3FieldRulesSql("", noParams, "retail", "ro", [
-      { field: "loadingOnFriday", op: "no", value: "" },
-    ]);
-    assert.match(no.sql, /loading_on_friday.*= 'false'::jsonb/);
+    for (const day of LOADING_DAY_DEFS) {
+      const yesParams: unknown[] = [];
+      const yes = appendV3FieldRulesSql("", yesParams, "retail", "ro", [
+        { field: day.id, op: "yes", value: "" },
+      ]);
+      assert.match(yes.sql, new RegExp(`${day.snake}.*= 'true'::jsonb`));
+      assert.match(yes.sql, new RegExp(`${day.camel}.*= 'true'::jsonb`));
+      const noParams: unknown[] = [];
+      const no = appendV3FieldRulesSql("", noParams, "retail", "ro", [
+        { field: day.id, op: "no", value: "" },
+      ]);
+      assert.match(no.sql, new RegExp(`${day.snake}.*= 'false'::jsonb`));
+      assert.match(no.sql, /AND NOT/i);
+      assert.match(no.sql, new RegExp(`${day.camel}.*= 'true'::jsonb`));
+    }
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "eq", value: "x" }]), "retail"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "legal"), undefined);
     assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "legal_grouped"), undefined);
+    assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "holdings"), undefined);
     assert.equal(parseV3FilterRulesParam(JSON.stringify([{ field: "loadingOnMonday", op: "yes", value: "" }]), "orphan_retail")?.length, 1);
   });
 
