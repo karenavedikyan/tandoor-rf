@@ -122,7 +122,10 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     );
     await page.waitForSelector('[data-testid="v3-detail-card"]', { timeout: 30000 });
     await page.waitForSelector("#pc-panel-overview:not([hidden])");
+    await page.waitForSelector('[data-testid="v3-role-context"]');
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Type A \/ Cat A/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Точки и контакты/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Отгрузки \/ план/);
     assert.match(await page.content(), /Не подключено/);
     assert.doesNotMatch(await page.content(), /hidden-sha-value/);
     assert.doesNotMatch(await page.content(), /SHA/i);
@@ -136,6 +139,9 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.waitForSelector("#pc-panel-data:not([hidden])");
     assert.match(await page.locator("#pc-panel-data").innerText(), /ROP One/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Холдинг и ответственность/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Магазин и доставка/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Расчёты и договор/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Особенности работы/);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "impl-legal-data-desktop-1440.png"),
@@ -153,7 +159,6 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
       path: path.join(SCREENSHOT_DIR, "impl-legal-data-mobile-390.png"),
       fullPage: true,
     });
-
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForURL(/\/clients\?/);
     assert.match(page.url(), /q=Legal/);

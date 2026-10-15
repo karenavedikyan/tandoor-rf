@@ -292,7 +292,7 @@
   }
 
   function overviewStats() {
-    var labels = ["Заказы", "Выручка", "Долг", "Задачи"];
+    var labels = ["Отгрузки / план", "Дистрибуция МК", "Просрочка", "Рекламации"];
     return (
       '<div class="pc-stats v3-detail-stats" aria-label="Показатели">' +
       labels
@@ -315,32 +315,126 @@
     );
   }
 
-  function renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat) {
+  function renderRoleContextBlock(shell, session) {
+    session = session || {};
+    var name = session.displayName || "—";
+    var roleLabel = session.roleLabel || "—";
+    var scope = session.scopeLabel || "—";
+    var initials = name
+      .split(/\s+/)
+      .map(function (part) {
+        return part.charAt(0);
+      })
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+    if (!initials) {
+      initials = "?";
+    }
+    return (
+      '<div class="v3-role-context" data-testid="v3-role-context">' +
+      '<div class="v3-role-context__row">' +
+      '<div class="v3-role-context__main">' +
+      '<span class="v3-role-context__avatar" aria-hidden="true">' +
+      esc(shell, initials) +
+      "</span>" +
+      '<div><div class="v3-role-context__name">' +
+      esc(shell, name) +
+      '</div><div class="pc-label">' +
+      esc(shell, roleLabel) +
+      "</div></div></div>" +
+      '<div class="v3-role-context__scope"><div class="pc-label">Область видимости</div>' +
+      '<div class="pc-value">' +
+      esc(shell, scope) +
+      "</div></div></div>" +
+      '<div class="v3-role-focus"><div class="pc-label">В фокусе роли</div>' +
+      '<div class="v3-role-focus__actions">' +
+      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Работа по клиенту →</button>' +
+      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Планы и результат →</button>' +
+      '<button type="button" class="v3-focus-link" data-card-open="data">Назначения и данные →</button>' +
+      "</div></div></div>"
+    );
+  }
+
+  function entityMetaLine(shell, entityType, ent, holdingLink, typeCat) {
+    var parts = [];
+    parts.push(esc(shell, entityKindLabel(entityType)));
+    if (typeCat.known) {
+      parts.push(typeCat.html);
+    }
+    if (holdingLink && holdingLink.name) {
+      parts.push(esc(shell, holdingLink.name));
+    }
+    var managers = normalizeManagers(ent.managers);
+    if (managers && managers.nameManager) {
+      parts.push("Менеджер: " + esc(shell, managers.nameManager));
+    }
+    if (managers && managers.nameRegionalManager) {
+      parts.push("Региональный: " + esc(shell, managers.nameRegionalManager));
+    }
+    if (!parts.length) {
+      return "";
+    }
+    return '<div class="pc-meta v3-entity-meta">' + parts.join(" · ") + "</div>";
+  }
+
+  function renderPointsAndContactsCard(shell, entityType, ent, holdingLink, typeCat) {
     var holding = formatHoldingLink(shell, holdingLink);
     var phones = formatTelephones(shell, ent.telephone);
-    var summaryFields = '<div class="pc-pad">';
-    summaryFields += field("Тип объекта", esc(shell, entityKindLabel(entityType)), true);
-    summaryFields += field("Тип и категория", typeCat.html, typeCat.known);
+    var body = '<div class="pc-pad">';
+    body += field("Тип и категория", typeCat.html, typeCat.known);
     if (entityType === "legal") {
-      summaryFields += field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address));
-      summaryFields += field("Телефоны", phones.html, phones.known);
-      summaryFields += field("Холдинг", holding.html, holding.known);
+      body += field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address));
+      body += field("Телефоны", phones.html, phones.known);
+      body += field("Холдинг", holding.html, holding.known);
+      body += field("Торговые точки", emptyFrom1C(), false);
     } else if (entityType === "retail") {
       var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
-      summaryFields += field(
+      body += field(
         "Адрес магазина",
         addr.store_address || addr.storeAddress ? esc(shell, addr.store_address || addr.storeAddress) : emptyNoData(),
         Boolean(addr.store_address || addr.storeAddress),
       );
-      summaryFields += field("Холдинг", holding.html, holding.known);
+      body += field(
+        "Адрес доставки",
+        addr.delivery_address || addr.deliveryAddress
+          ? esc(shell, addr.delivery_address || addr.deliveryAddress)
+          : emptyNoData(),
+        Boolean(addr.delivery_address || addr.deliveryAddress),
+      );
+      body += field("Холдинг", holding.html, holding.known);
+      body += formatContactsFields(shell, ent.contact_information);
     } else {
-      summaryFields += field("Розничная сеть", boolLabel(ent.retail_chain), ent.retail_chain != null);
-      summaryFields += field("Группа холдинга", boolLabel(ent.holding_group), ent.holding_group != null);
+      body += field("Название", ent.name ? esc(shell, ent.name) : emptyNoData(), Boolean(ent.name));
+      body += field("Розничная сеть", boolLabel(ent.retail_chain), ent.retail_chain != null);
+      body += field("Группа холдинга", boolLabel(ent.holding_group), ent.holding_group != null);
     }
-    summaryFields +=
-      '<button type="button" class="pc-link" data-card-open="data">Все данные и паспорт →</button></div>';
+    body += '<button type="button" class="pc-link" data-card-open="data">Все данные и паспорт →</button></div>';
+    return card("Точки и контакты", body, "1С / осмотр");
+  }
 
+  function renderDataFooter(shell) {
     return (
+      '<div class="pc-grid pc-equal v3-data-footer">' +
+      card(
+        "Особенности работы",
+        '<div class="pc-pad"><span class="pc-unavailable">Условия и особенности работы не переданы в текущем обмене v3.</span></div>',
+        "1С",
+      ) +
+      card(
+        "Качество данных",
+        '<div class="pc-pad"><span class="pc-tag">Частично из обмена v3</span>' +
+          '<p class="pc-unavailable">Полная оценка качества карточки недоступна без модулей проверки.</p></div>',
+        "ЛК",
+      ) +
+      "</div>"
+    );
+  }
+
+  function renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat, session) {
+    return (
+      renderRoleContextBlock(shell, session) +
+      entityMetaLine(shell, entityType, ent, holdingLink, typeCat) +
       freshnessMeta(shell, ent) +
       overviewNotice() +
       overviewStats() +
@@ -350,7 +444,7 @@
         '<div class="pc-pad"><span class="pc-unavailable">Битрикс24 не подключён к v3-карточке.</span></div>',
         "Битрикс24",
       ) +
-      card("Сводка из 1С", summaryFields, "1С") +
+      renderPointsAndContactsCard(shell, entityType, ent, holdingLink, typeCat) +
       "</div>"
     );
   }
@@ -367,24 +461,27 @@
       card(
         "Холдинг и ответственность",
         '<div class="pc-pad">' +
+          field("Клиент / категория", typeCat.html, typeCat.known) +
           field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
-          field("Тип и категория", typeCat.html, typeCat.known) +
           field("Холдинг", holding.html, holding.known) +
+          field("Реквизиты", other.html, other.known) +
           managersFields(shell, ent.managers) +
           "</div>",
-        "1С",
+        "1С / ЛК",
       ) +
       card(
-        "Реквизиты и контакты",
+        "Магазин и доставка",
         '<div class="pc-pad">' +
-          field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
+          field("Адрес юрлица", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
           field("Телефоны", phones.html, phones.known) +
-          field("Реквизиты", other.html, other.known) +
+          field("Торговая точка", emptyFrom1C(), false) +
+          field("Место доставки", emptyFrom1C(), false) +
+          field("Приёмка", emptyFrom1C(), false) +
           "</div>",
         "1С",
       ) +
       card(
-        "Условия и расчёты",
+        "Расчёты и договор",
         '<div class="pc-pad">' +
           field("Скидка", discountKnown ? esc(shell, ent.discount) : emptyNoData(), discountKnown) +
           field(
@@ -393,10 +490,12 @@
             discountAmountKnown,
           ) +
           field("Наценки", markups.html, markups.known) +
+          field("Бонусные условия", emptyFrom1C(), false) +
           "</div>",
         "1С",
       ) +
-      "</div>"
+      "</div>" +
+      renderDataFooter(shell)
     );
   }
 
@@ -435,19 +534,21 @@
           field("Склад", boolLabel(ent.warehouse), ent.warehouse != null) +
           field("Закрыта", boolLabel(ent.closed), ent.closed != null) +
           field("Приёмка", loading.html, loading.known) +
+          formatContactsFields(shell, ent.contact_information) +
           "</div>",
         "1С",
       ) +
       card(
-        "Контакты, ЛПР и клуб",
+        "Расчёты и договор",
         '<div class="pc-pad">' +
-          formatContactsFields(shell, ent.contact_information) +
           formatLprBlock(shell, ent.lpr_information) +
           formatClubFields(shell, ent.additional_information) +
+          field("Наценки / скидки", emptyFrom1C(), false) +
           "</div>",
         "1С",
       ) +
-      "</div>"
+      "</div>" +
+      renderDataFooter(shell)
     );
   }
 
@@ -455,24 +556,42 @@
     return (
       '<div class="pc-grid pc-three">' +
       card(
-        "Холдинг",
+        "Холдинг и ответственность",
         '<div class="pc-pad">' +
           field("Название", esc(shell, ent.name), Boolean(ent.name)) +
           field("Тип и категория", typeCat.html, typeCat.known) +
           field("Розничная сеть", boolLabel(ent.retail_chain), ent.retail_chain != null) +
           field("Группа холдинга", boolLabel(ent.holding_group), ent.holding_group != null) +
+          managersFields(shell, ent.managers) +
+          "</div>",
+        "1С / ЛК",
+      ) +
+      card(
+        "Магазин и доставка",
+        '<div class="pc-pad">' +
+          field("Состав холдинга", "См. блок ниже", true) +
+          field("Торговая точка", emptyFrom1C(), false) +
+          field("Место доставки", emptyFrom1C(), false) +
           "</div>",
         "1С",
       ) +
-      card("Ответственные", '<div class="pc-pad">' + managersFields(shell, ent.managers) + "</div>", "1С") +
       card(
-        "Состав",
+        "Расчёты и договор",
+        '<div class="pc-pad">' +
+          field("Договор и оплата", emptyFrom1C(), false) +
+          field("Наценки / скидки", emptyFrom1C(), false) +
+          "</div>",
+        "1С",
+      ) +
+      "</div>" +
+      card(
+        "Состав холдинга",
         '<div class="pc-pad" id="v3-composition" data-holding-guid="' +
           esc(shell, ent.guid || "") +
           '">Загрузка состава…</div>',
         "1С",
       ) +
-      "</div>"
+      renderDataFooter(shell)
     );
   }
 
@@ -516,10 +635,11 @@
     );
   }
 
-  function renderCard(shell, entityType, ent, holdingLink) {
+  function renderCard(shell, entityType, ent, holdingLink, options) {
+    options = options || {};
     var typeCat = formatTypeCategory(shell, ent.type_category);
     var title = resolveTitle(entityType, ent);
-    var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat);
+    var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat, options.session);
     var dataHtml =
       entityType === "holding"
         ? renderDataHolding(shell, ent, typeCat)

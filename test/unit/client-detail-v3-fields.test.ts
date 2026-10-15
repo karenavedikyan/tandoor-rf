@@ -47,6 +47,11 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Manager One/);
     assert.match(html, /ROP One/);
     assert.match(html, /Holding One/);
+    assert.match(html, /Отгрузки \/ план/);
+    assert.match(html, /Точки и контакты/);
+    assert.match(html, /v3-role-context/);
+    assert.match(html, /Особенности работы/);
+    assert.match(html, /Качество данных/);
     assert.match(html, /Не подключено/);
     assert.doesNotMatch(html, /SHA/i);
     assert.doesNotMatch(html, /abc123sha/);
@@ -77,6 +82,6 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(retailHtml, /Gold/);
     assert.match(retailHtml, /Ivan LPR/);
     assert.match(retailHtml, /Магазин и доставка/);
-    assert.match(retailHtml, /Контакты, ЛПР и клуб/);
+    assert.match(retailHtml, /Расчёты и договор/);
   });
 });

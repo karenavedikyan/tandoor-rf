@@ -113,6 +113,38 @@
       });
   }
 
+  function buildV3SessionContext(user) {
+    if (!user) {
+      return {
+        displayName: "—",
+        roleLabel: "—",
+        scopeLabel: "Область видимости по текущей сессии",
+      };
+    }
+    var displayName = user.fullName || user.email || "Пользователь";
+    var roleKey = user.role || "user";
+    var roleNames = {
+      admin: "Администратор",
+      manager: "Менеджер",
+      marketer: "Маркетолог",
+      coordinator: "Координатор",
+    };
+    var roleLabel = roleNames[roleKey] || String(roleKey);
+    var scopeByRole = {
+      admin: "Вся база и административные действия",
+      manager: "Клиенты и точки по вашим назначениям 1С",
+      marketer: "Маркетинговый просмотр",
+      coordinator: "Команда и назначения по доступу",
+    };
+    var scopeLabel = scopeByRole[roleKey] || "Область видимости по текущей сессии";
+    if (user.preview && user.preview.active && user.preview.targetUser) {
+      displayName = user.preview.targetUser.fullName || displayName;
+      roleLabel = "Предпросмотр · " + (user.preview.targetUser.role || roleLabel);
+      scopeLabel = "Режим предпросмотра сотрудника";
+    }
+    return { displayName: displayName, roleLabel: roleLabel, scopeLabel: scopeLabel };
+  }
+
   function renderV3Detail(payload) {
     hideAllPanels();
     detailEl.classList.remove("clients-hidden");
@@ -120,7 +152,9 @@
     var ent = payload.entity || {};
     var title = v3DetailTitle(payload);
     var cardHtml = window.ClientDetailV3
-      ? window.ClientDetailV3.renderCard(shell, payload.entityType, ent, payload.holdingLink)
+      ? window.ClientDetailV3.renderCard(shell, payload.entityType, ent, payload.holdingLink, {
+          session: buildV3SessionContext(currentUser),
+        })
       : "";
     detailRoot.innerHTML =
       '<p class="client-detail-back-wrap"><a class="client-detail-back clients-link" href="' +
