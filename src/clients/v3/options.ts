@@ -13,6 +13,7 @@ import {
   v3TypeGuidSql,
   v3TypeNameSql,
 } from "./json-paths";
+import { LEGAL_CITY_SQL, RETAIL_CITY_SQL } from "./list-sql-expressions";
 
 export type V3FilterOptions = {
   managers: Array<{ guid: string; name: string; count: number }>;
@@ -86,10 +87,7 @@ async function loadDistinctFromTable(
   );
   let cities: { rows: Array<{ value: string; count: string }> } = { rows: [] };
   if (alias === "le" || alias === "ro") {
-    const cityExpression =
-      alias === "le"
-        ? `NULLIF(TRIM(${alias}.address), '')`
-        : `COALESCE(NULLIF(TRIM(${alias}.address->>'city'), ''), NULLIF(TRIM(${alias}.address->>'store_address'), ''))`;
+    const cityExpression = alias === "le" ? LEGAL_CITY_SQL : RETAIL_CITY_SQL;
     cities = await query<{ value: string; count: string }>(
       `
         SELECT ${cityExpression} AS value, COUNT(*)::text AS count

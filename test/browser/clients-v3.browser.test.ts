@@ -474,6 +474,8 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
     await holdingNav.waitFor({ state: "visible", timeout: 15000 });
     await holdingNav.click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.click("#pc-tab-data");
     await page.waitForSelector("#v3-composition a", { timeout: 15000 });
     await page.locator("#v3-composition a").first().click();
     await page.waitForSelector('[data-testid="v3-back-to-list"]');
@@ -1227,6 +1229,25 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const finalUrl = new URL(page.url());
     assert.equal(finalUrl.searchParams.get("v3manager") || "", "");
     assert.equal(finalUrl.searchParams.get("closed") || "", "");
+    await page.close();
+  });
+
+  it("v3 list URL persists density toggle and column params", async () => {
+    const page = await browser.newPage();
+    await login(page, testCreds.adminEmail);
+    const listReady = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.goto(
+      baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,manager_name,rop_name",
+    );
+    await listReady;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+    await page.click("#v3-density-btn");
+    await page.waitForFunction(function () {
+      return !new URL(window.location.href).searchParams.get("v3dense");
+    });
     await page.close();
   });
 

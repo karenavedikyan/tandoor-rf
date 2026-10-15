@@ -5091,6 +5091,12 @@
               v3categories: [],
               v3type: "",
               v3category: "",
+              city: "",
+              colManager: "",
+              colRegional: "",
+              colRop: "",
+              colCity: "",
+              colStatus: "",
             });
             if (entityId !== "retail" && entityId !== "orphan_retail") {
               v3state.closed = "";

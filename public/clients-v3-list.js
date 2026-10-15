@@ -7,12 +7,15 @@
   var COLUMN_CATALOG = {
     name: { label: "Название", required: true, filterKey: null },
     city: { label: "Город", filterKey: "colCity" },
+    address_line: { label: "Адрес", filterKey: null },
     manager_name: { label: "Менеджер", filterKey: "colManager" },
     regional_name: { label: "Региональный", filterKey: "colRegional" },
     hardware_name: { label: "Фурнитура", filterKey: null },
     rop_name: { label: "РОП", filterKey: "colRop" },
     status_label: { label: "Статус", filterKey: "colStatus" },
     closed: { label: "Статус", filterKey: "colStatus" },
+    type_name: { label: "Тип", filterKey: null },
+    category_name: { label: "Категория", filterKey: null },
     holding: { label: "Холдинг", filterKey: null },
     store_address: { label: "Адрес", filterKey: null },
   };
@@ -25,7 +28,19 @@
     var retail = isRetailEntity(v3entity);
     var ids = retail
       ? ["name", "city", "manager_name", "regional_name", "rop_name", "closed", "store_address"]
-      : ["name", "city", "manager_name", "regional_name", "hardware_name", "rop_name", "status_label", "holding"];
+      : [
+          "name",
+          "city",
+          "address_line",
+          "manager_name",
+          "regional_name",
+          "hardware_name",
+          "rop_name",
+          "status_label",
+          "type_name",
+          "category_name",
+          "holding",
+        ];
     return ids
       .map(function (id) {
         var meta = COLUMN_CATALOG[id];
@@ -104,13 +119,15 @@
       if (item.closed === false) return "Открыта";
       return "—";
     }
-    if (colId === "status_label") {
-      var status = item.status_label ? String(item.status_label) : "";
-      return status ? shell.escapeHtml(status) : "—";
+    if (colId === "status_label" || colId === "city") {
+      var structured = item[colId] ? String(item[colId]) : "";
+      return structured
+        ? shell.escapeHtml(structured)
+        : '<span class="clients-no-data">Нет данных</span>';
     }
     var value = item[colId];
     if (!value) {
-      return '<span class="clients-no-data">—</span>';
+      return '<span class="clients-no-data">Нет данных</span>';
     }
     return shell.escapeHtml(String(value));
   }
@@ -239,7 +256,16 @@
         ")</option>";
     });
     citySelect.innerHTML = html;
-    bar.classList.toggle("clients-hidden", isRetailEntity(state.v3entity) && cities.length === 0);
+    var isLegal = state.v3entity === "legal" || state.v3entity === "holdings";
+    citySelect.disabled = isLegal && cities.length === 0;
+    var hint = bar.querySelector(".clients-v3-list-filterbar__hint");
+    if (hint) {
+      hint.textContent =
+        isLegal && cities.length === 0
+          ? "Город для клиентов — только из структурированных полей 1С; фильтр недоступен, пока данных нет."
+          : "Сброс сохраняет выбранную команду и сотрудника";
+    }
+    bar.classList.remove("clients-hidden");
   }
 
   function applyDensity(dense) {

@@ -274,10 +274,19 @@
       });
     }
     syncV3FilterAliases(next);
-    if (next.v3manager) {
+    var teamContext = next.v3view === "teams" || next.ropEmployee;
+    if (teamContext && next.v3manager) {
       next.responsibleGuid = next.v3manager;
       next.responsibleKind = "manager";
-    } else if (patch && Object.prototype.hasOwnProperty.call(patch, "v3manager") && !patch.v3manager) {
+    } else if (
+      teamContext &&
+      patch &&
+      Object.prototype.hasOwnProperty.call(patch, "v3manager") &&
+      !patch.v3manager
+    ) {
+      next.responsibleGuid = "";
+      next.responsibleKind = "";
+    } else if (!teamContext && patch && Object.prototype.hasOwnProperty.call(patch, "v3manager")) {
       next.responsibleGuid = "";
       next.responsibleKind = "";
     }
@@ -784,11 +793,13 @@
       }
       var teamAssignment =
         isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
-      if (state.responsibleGuid && state.responsibleKind) {
+      if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
       }
       if (state.v3manager && !teamAssignment) {
+        params.set("managerGuid", state.v3manager);
+      } else if (teamAssignment && state.v3manager && state.responsibleKind === "manager") {
         params.set("managerGuid", state.v3manager);
       }
       appendTypeCategoryParams(params, state);
@@ -950,10 +961,15 @@
           syncV3FilterAliases(next);
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
           var teamView = next.v3view === "teams" || next.ropEmployee;
-          if (id === "v3-manager-filter" && teamView) {
-            if (next.v3manager) {
-              next.responsibleGuid = next.v3manager;
-              next.responsibleKind = "manager";
+          if (id === "v3-manager-filter") {
+            if (teamView) {
+              if (next.v3manager) {
+                next.responsibleGuid = next.v3manager;
+                next.responsibleKind = "manager";
+              } else {
+                next.responsibleGuid = "";
+                next.responsibleKind = "";
+              }
             } else {
               next.responsibleGuid = "";
               next.responsibleKind = "";
@@ -1112,8 +1128,9 @@
 
     resetFilters: function (ctx) {
       var url = readState();
+      var teamScope = url.v3view === "teams" || url.ropEmployee;
       var keepManager =
-        url.responsibleGuid && url.responsibleKind === "manager" ? url.responsibleGuid : "";
+        teamScope && url.responsibleGuid && url.responsibleKind === "manager" ? url.responsibleGuid : "";
       window.ClientsV3.loadList(
         ctx,
         {
@@ -1129,8 +1146,8 @@
           v3view: url.v3view,
           missingManager: false,
           ropEmployee: url.ropEmployee,
-          responsibleGuid: url.responsibleGuid,
-          responsibleKind: url.responsibleKind,
+          responsibleGuid: teamScope ? url.responsibleGuid : "",
+          responsibleKind: teamScope ? url.responsibleKind : "",
           city: "",
           colManager: "",
           colRegional: "",
