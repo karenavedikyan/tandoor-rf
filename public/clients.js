@@ -5084,9 +5084,9 @@
               window.ClientsV3.loadList(buildV3UiContext(), next, true);
             });
           }
-          window.ClientsV3.bindListChrome(
-            Object.assign(buildV3UiContext(), { currentUserId: currentUser && currentUser.id }),
-          );
+          window.ClientsV3.bindListChrome(function () {
+            return buildV3UiContext();
+          });
           window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
             cancelScheduledLoad();
             invalidateInFlightRequests();

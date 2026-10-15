@@ -2095,6 +2095,11 @@
     align-items: stretch;
   }
 
+  .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-field--search {
+    flex: 0 1 auto;
+    width: 100%;
+  }
+
   .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-toolbar__controls-row {
     width: 100%;
     justify-content: flex-start;
@@ -2103,6 +2108,15 @@
   .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-entity-switcher {
     flex: 1 1 100%;
     width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-toolbar__search-row,
+  .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-toolbar__controls-row,
+  .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-v3-list-filterbar {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .clients-design-page .clients-toolbar.clients-toolbar--v3-compact .clients-v3-density-btn,

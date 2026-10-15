@@ -1181,10 +1181,13 @@
         return;
       }
       window.__clientsV3ListChromeBound = true;
+      function currentContext() {
+        return typeof ctx === "function" ? ctx() : ctx;
+      }
       var cityEl = document.getElementById("v3-city-filter");
       cityEl?.addEventListener("change", function () {
         window.ClientsV3.loadList(
-          ctx,
+          currentContext(),
           mergeListStateForUserAction({ city: cityEl.value || "", page: 1 }),
           false,
         );
@@ -1192,7 +1195,7 @@
       document.getElementById("v3-density-btn")?.addEventListener("click", function () {
         var url = readState();
         window.ClientsV3.loadList(
-          ctx,
+          currentContext(),
           mergeListStateForUserAction({ v3dense: !url.v3dense, page: url.page }),
           true,
         );

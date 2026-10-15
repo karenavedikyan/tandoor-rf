@@ -132,9 +132,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   }
 
   async function ensureMobileFiltersExpanded(page: Page, viewport: { width: number; height: number }): Promise<void> {
-    if (viewport.width > 400) {
-      return;
-    }
     const toggle = page.locator("#clients-filters-toggle");
     if (await toggle.count()) {
       const expanded = await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").count();
@@ -148,9 +145,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     page: Page,
     viewport?: { width: number; height: number },
   ): Promise<void> {
-    if (viewport) {
-      await ensureMobileFiltersExpanded(page, viewport);
-    }
+    await ensureMobileFiltersExpanded(page, viewport || page.viewportSize() || DESKTOP);
     await page.locator("#v3-filters-wrap:not(.clients-hidden) #v3-type-filter").waitFor({
       state: "visible",
       timeout: 30000,
@@ -546,6 +541,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       var sel = document.getElementById("v3-type-filter");
       return sel && sel.options.length >= 2;
     });
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     const multiList = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
@@ -1077,6 +1073,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
         res.status() === 200,
     );
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     await page.selectOption("#v3-manager-filter", M1);
     await managerList;
 
@@ -1204,6 +1201,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.equal(new URL(page.url()).searchParams.get("page"), "2");
     assert.equal(new URL(page.url()).searchParams.get("v3manager"), M1);
 
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     await page.waitForSelector("#v3-manager-filter", { timeout: 20000 });
     const clearManagerList = page.waitForResponse(
       (res) => {
@@ -1275,6 +1273,14 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.waitForFunction(function () {
       return !new URL(window.location.href).searchParams.get("v3dense");
     });
+    await page.setViewportSize(MOBILE);
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("#clients-cards a");
+    const mobileOverflow = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      content: document.documentElement.scrollWidth,
+    }));
+    assert.ok(mobileOverflow.content <= mobileOverflow.viewport + 1, JSON.stringify(mobileOverflow));
     await page.close();
   });
 
