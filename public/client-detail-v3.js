@@ -279,6 +279,32 @@
     );
   }
 
+  function encodedDetailReturnParam() {
+    return encodeURIComponent(window.location.pathname + window.location.search);
+  }
+
+  function outletRetailHref(outletGuid, parentReturnEncoded) {
+    return (
+      "/clients/" +
+      encodeURIComponent(outletGuid) +
+      "?v3Entity=retail&return=" +
+      (parentReturnEncoded || encodedDetailReturnParam())
+    );
+  }
+
+  function refreshRelatedOutletReturnLinks(root) {
+    if (!root) {
+      return;
+    }
+    var parentReturn = encodedDetailReturnParam();
+    root.querySelectorAll("a.x13-related-line[data-outlet-guid]").forEach(function (anchor) {
+      var guid = anchor.getAttribute("data-outlet-guid");
+      if (guid) {
+        anchor.href = outletRetailHref(guid, parentReturn);
+      }
+    });
+  }
+
   function renderRelatedOutletLines(shell, outlets, parentReturn) {
     if (!outlets.length) {
       return '<span class="pc-unavailable">В вашей области нет доступных торговых точек этого холдинга.</span>';
@@ -286,10 +312,10 @@
     return outlets
       .map(function (row) {
         return (
-          '<a class="x13-related-line" href="/clients/' +
-          encodeURIComponent(row.guid) +
-          "?v3Entity=retail&return=" +
-          parentReturn +
+          '<a class="x13-related-line" data-outlet-guid="' +
+          shell.escapeHtml(row.guid) +
+          '" href="' +
+          outletRetailHref(row.guid, parentReturn) +
           '"><span>' +
           shell.escapeHtml(row.name || row.guid) +
           '</span><span class="x13-related-line__arrow" aria-hidden="true">→</span></a>'
@@ -908,6 +934,7 @@
     if (dataHost) {
       dataHost.innerHTML = linesHtml;
     }
+    refreshRelatedOutletReturnLinks(root);
   }
 
   function bindTabs(root, context) {
@@ -936,6 +963,7 @@
         }
       });
       writeCardTabQuery(id);
+      refreshRelatedOutletReturnLinks(root);
       if (titleEl) {
         titleEl.textContent = id === "data" ? "Данные и условия клиента · " + baseTitle : baseTitle;
       }

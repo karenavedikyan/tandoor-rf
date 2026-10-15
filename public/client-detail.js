@@ -26,11 +26,19 @@
 
   function resolveV3BackHref() {
     var raw = new URLSearchParams(window.location.search).get("return");
-    if (typeof raw === "string" && raw.startsWith("/clients")) {
-      try {
-        return decodeURIComponent(raw);
-      } catch (_err) {
+    if (typeof raw === "string" && raw !== "") {
+      // URLSearchParams already decoded the outer return value; do not decodeURIComponent
+      // the whole string or nested query inside return= will break (e.g. &v3manager=).
+      if (raw.startsWith("/clients")) {
         return raw;
+      }
+      try {
+        var decoded = decodeURIComponent(raw);
+        if (decoded.startsWith("/clients")) {
+          return decoded;
+        }
+      } catch (_err) {
+        /* ignore */
       }
     }
     var returnQuery = parseReturnQuery();
@@ -251,7 +259,7 @@
             legalEntities: payload.entityType === "legal" ? 1 : legal.length,
           },
           retailOutlets: retail,
-          parentReturn: encodeURIComponent(currentDetailReturnParam()),
+          parentReturn: currentDetailReturnParam(),
         });
       })
       .catch(function () {
