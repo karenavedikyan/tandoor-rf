@@ -274,6 +274,52 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     assert.ok(page.url().includes("responsibleGuid=" + HW));
     assert.equal(await page.locator('[data-testid="clients-team-member-switcher"]').count(), 0);
     assert.equal(await page.locator(".x13-person").count(), 0);
+    await page.waitForFunction(
+      () => {
+        const title = document.getElementById("v3-lktandoor-scope-title");
+        const nav = document.getElementById("v3-lktandoor-context-nav");
+        if (!title || !nav) return false;
+        const titleText = title.textContent || "";
+        return titleText.includes("Территория:") && titleText.includes("Бойко") && !titleText.includes("Вся база");
+      },
+      undefined,
+      { timeout: 30000 },
+    );
+    const territoryReturnUrl = page.url();
+    await page.locator("#clients-table-body tr a").first().click();
+    await page.waitForURL((url) => /^\/clients\/[^/?#]+/.test(url.pathname), { timeout: 30000 });
+    await page.locator('[data-testid="v3-back-to-list"]').click();
+    await page.waitForURL((url) => url.pathname === "/clients" && url.search.includes("responsibleGuid=" + HW), {
+      timeout: 30000,
+    });
+    await waitListSettled(page);
+    await page.waitForFunction(
+      () => {
+        const title = document.getElementById("v3-lktandoor-scope-title");
+        const nav = document.getElementById("v3-lktandoor-context-nav");
+        if (!title || !nav) return false;
+        const titleText = title.textContent || "";
+        const navText = nav.textContent || "";
+        return (
+          titleText.includes("Территория:") &&
+          titleText.includes("Бойко") &&
+          navText.includes("Бойко") &&
+          !titleText.includes("Вся база")
+        );
+      },
+      undefined,
+      { timeout: 30000 },
+    );
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "teams-territory-after-card-back-1440.png"),
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "teams-territory-after-card-back-390.png"),
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(territoryReturnUrl);
+    await waitListSettled(page);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-territory-desktop-1440.png") });
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -317,9 +363,25 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await page.goto(territoryUrl);
     await waitListSettled(page);
     assert.equal(await page.locator(".x13-person").count(), 0);
+    await page.waitForFunction(
+      () => {
+        const title = document.getElementById("v3-lktandoor-scope-title");
+        return Boolean(title && (title.textContent || "").includes("Территория:"));
+      },
+      undefined,
+      { timeout: 30000 },
+    );
     await page.reload();
     await waitListSettled(page);
     assert.equal(await page.locator(".x13-person").count(), 0);
+    await page.waitForFunction(
+      () => {
+        const title = document.getElementById("v3-lktandoor-scope-title");
+        return Boolean(title && (title.textContent || "").includes("Территория:"));
+      },
+      undefined,
+      { timeout: 30000 },
+    );
 
     await page.goto(
       baseUrl +

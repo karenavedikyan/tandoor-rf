@@ -651,6 +651,8 @@
     }
     if (v3mode && params.has("v3view")) {
       view = legacyViewFromV3View(params.get("v3view") || "all");
+    } else if (v3mode && params.get("ropEmployee") && params.get("responsibleGuid")) {
+      view = "teams";
     }
     if (v3mode && params.has("v3entity")) {
       entity = legacyEntityFromV3Entity(params.get("v3entity") || "legal");
@@ -909,10 +911,22 @@
   }
 
   function hasResponsibleSelection(state) {
-    if (!state || state.view !== "teams" || !state.ropEmployee) {
+    if (!state || !state.ropEmployee) {
       return false;
     }
-    return Boolean(v3ResponsibleFromLegacyState(state).responsibleGuid);
+    if (!Boolean(v3ResponsibleFromLegacyState(state).responsibleGuid)) {
+      return false;
+    }
+    if (state.view === "teams") {
+      return true;
+    }
+    if (typeof window !== "undefined") {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get("v3mode") === "1" && params.get("responsibleGuid")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function clearedTeamTerritoryFields() {

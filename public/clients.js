@@ -4017,6 +4017,30 @@
     loadList(merged, false);
   }
 
+  function navigationRopEmployeeGuid() {
+    var urlState = logic.readStateFromSearch(window.location.search);
+    return urlState.ropEmployee || currentStateFromForm().ropEmployee || "";
+  }
+
+  function applyTerritoryDisplayFromManagers(legacyState) {
+    if (
+      !legacyState ||
+      !legacyState.responsibleGuid ||
+      !window.ClientsLktandoorList ||
+      !window.ClientsLktandoorList.syncTerritoryDisplayContext
+    ) {
+      return;
+    }
+    var v3State = window.ClientsV3 ? window.ClientsV3.readState() : legacyState;
+    window.ClientsLktandoorList.syncTerritoryDisplayContext(
+      Object.assign({}, v3State, {
+        responsibleGuid: legacyState.responsibleGuid || v3State.responsibleGuid,
+        ropEmployee: legacyState.ropEmployee || v3State.ropEmployee,
+      }),
+      { teamContext: teamContext },
+    );
+  }
+
   function syncTeamContextFromOrgStructure(data, ropEmployeeGuid) {
     teamContext.director = data.director || null;
     teamContext.rops = data.rops || [];
@@ -4084,10 +4108,15 @@
           }),
         );
       } else if (state.ropEmployee && !logic.isBranchPortfolioList(state)) {
+        var v3TeamsRop = state.ropEmployee;
         v3Requests.push(
           api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
+            var liveRop = navigationRopEmployeeGuid();
+            if (liveRop && liveRop !== v3TeamsRop) {
+              return result.response.status === 200;
+            }
             if (result.response.status === 200 && result.data) {
-              syncTeamContextFromOrgStructure(result.data, state.ropEmployee);
+              syncTeamContextFromOrgStructure(result.data, v3TeamsRop);
             } else {
               teamContext.loadError = true;
             }
@@ -4098,8 +4127,13 @@
               "/api/clients/v3/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
             )
             .then(function (result) {
+              var liveRop = navigationRopEmployeeGuid();
+              if (liveRop && liveRop !== v3TeamsRop) {
+                return result.response.status === 200;
+              }
               if (result.response.status === 200 && result.data) {
                 teamContext.managers = result.data.items || [];
+                applyTerritoryDisplayFromManagers(state);
               } else {
                 teamContext.loadError = true;
               }
@@ -4164,10 +4198,15 @@
         }),
       );
     } else if (state.ropEmployee && !logic.isBranchPortfolioList(state)) {
+      var legacyTeamsRop = state.ropEmployee;
       requests.push(
         api.apiRequest("/api/clients/org-structure").then(function (result) {
+          var liveRop = navigationRopEmployeeGuid();
+          if (liveRop && liveRop !== legacyTeamsRop) {
+            return result.response.status === 200;
+          }
           if (result.response.status === 200 && result.data) {
-            syncTeamContextFromOrgStructure(result.data, state.ropEmployee);
+            syncTeamContextFromOrgStructure(result.data, legacyTeamsRop);
           } else {
             teamContext.loadError = true;
           }
@@ -4178,8 +4217,13 @@
             "/api/clients/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
           )
           .then(function (result) {
+            var liveRop = navigationRopEmployeeGuid();
+            if (liveRop && liveRop !== legacyTeamsRop) {
+              return result.response.status === 200;
+            }
             if (result.response.status === 200 && result.data) {
               teamContext.managers = result.data.items || [];
+              applyTerritoryDisplayFromManagers(state);
             } else {
               teamContext.loadError = true;
             }

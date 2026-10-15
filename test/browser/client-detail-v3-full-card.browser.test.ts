@@ -203,6 +203,64 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.close();
   });
 
+  it("holding overview KPIs reflect authorized composition totals", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.route("**/api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/api/clients/v3/detail") {
+        await route.fulfill(
+          jsonResponse(200, {
+            entity: { guid: HOLDING, name: "SYNTH Holding One" },
+            entityType: "holding",
+          }),
+        );
+        return;
+      }
+      if (url.pathname === "/api/clients/v3/holdings/" + HOLDING + "/composition") {
+        await route.fulfill(
+          jsonResponse(200, {
+            access: "visible",
+            holdingGuid: HOLDING,
+            legalEntities: [{ guid: LEGAL, name: "Legal One" }],
+            retailOutlets: [
+              { guid: RETAIL, name: "Store One" },
+              { guid: "c3000000-0000-4000-8000-000000000002", name: "Store Two" },
+            ],
+          }),
+        );
+        return;
+      }
+      const mock = resolveMockResponse(url, { role: "admin" }, { listCalls: 0, catalogProductsCalls: 0 });
+      if (mock) {
+        await route.fulfill(mock);
+        return;
+      }
+      await route.fulfill(jsonResponse(404, { error: "not mocked" }));
+    });
+    await page.goto(baseUrl + "/clients/" + HOLDING + "?v3Entity=holding", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-testid="v3-overview-kpis"]', { timeout: 30000 });
+    await page.waitForFunction(
+      () => {
+        const kpis = document.querySelector('[data-testid="v3-overview-kpis"]');
+        if (!kpis) return false;
+        const text = kpis.textContent || "";
+        return text.includes("2") && text.includes("1") && !text.includes("—");
+      },
+      undefined,
+      { timeout: 30000 },
+    );
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "impl-holding-overview-kpi-desktop-1440.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "impl-holding-overview-kpi-mobile-390.png"),
+      fullPage: true,
+    });
+    await page.close();
+  });
+
   it("unavailable module tab shows explicit message", async () => {
     const page = await browser.newPage();
     await installMocks(page, legalDetailPayload());

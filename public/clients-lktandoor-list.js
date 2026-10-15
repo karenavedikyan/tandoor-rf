@@ -20,10 +20,39 @@
     return params;
   }
 
+  function guidEquals(a, b) {
+    return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+  }
+
+  function resolveManagerDisplayName(state, ctx) {
+    if (!state.responsibleGuid || !ctx || !ctx.teamContext) {
+      return "";
+    }
+    var tc = ctx.teamContext;
+    var match = (tc.managers || []).find(function (item) {
+      return guidEquals(item.employeeGuid, state.responsibleGuid);
+    });
+    if (match) {
+      return match.name || match.shortId || match.employeeGuid || "";
+    }
+    return tc.managerName || "";
+  }
+
+  function syncTerritoryDisplayContext(state, ctx) {
+    if (!ctx || !ctx.teamContext || !state.responsibleGuid) {
+      return;
+    }
+    var resolved = resolveManagerDisplayName(state, ctx);
+    if (resolved) {
+      ctx.teamContext.managerName = resolved;
+    }
+  }
+
   function scopeTitle(state, ctx) {
     var role = ctx.rolePresentation && ctx.rolePresentation.businessRole;
-    if (state.responsibleGuid && ctx.teamContext && ctx.teamContext.managerName) {
-      return "Территория: " + ctx.teamContext.managerName;
+    var managerLabel = resolveManagerDisplayName(state, ctx);
+    if (state.responsibleGuid && managerLabel) {
+      return "Территория: " + managerLabel;
     }
     if (state.ropEmployee && ctx.teamContext && ctx.teamContext.ropName && !state.responsibleGuid) {
       return "Территория команды: " + ctx.teamContext.ropName;
@@ -65,8 +94,9 @@
     if (state.ropEmployee && role !== "rop" && ctx.teamContext && ctx.teamContext.ropName) {
       parts.push(ctx.teamContext.ropName);
     }
-    if (state.responsibleGuid && ctx.teamContext && ctx.teamContext.managerName) {
-      parts.push(ctx.teamContext.managerName);
+    var managerLabel = resolveManagerDisplayName(state, ctx);
+    if (state.responsibleGuid && managerLabel) {
+      parts.push(managerLabel);
     }
     if (state.responsibleGuid) {
       parts.push("Клиентская база");
@@ -311,7 +341,9 @@
       return false;
     }
     var teamsView =
-      (state.view || "all") === "teams" || state.v3view === "teams";
+      (state.view || "all") === "teams" ||
+      state.v3view === "teams" ||
+      Boolean(state.ropEmployee && state.responsibleGuid);
     if (teamsView && window.ClientsLogic && window.ClientsLogic.isTeamsRosterView) {
       var rosterProbe = Object.assign({ view: "teams" }, state);
       if (window.ClientsLogic.isTeamsRosterView(rosterProbe)) {
@@ -340,7 +372,10 @@
     renderMobileCard: renderMobileCard,
     loadScopeCounts: loadScopeCounts,
     scopeTitle: scopeTitle,
+    resolveManagerDisplayName: resolveManagerDisplayName,
+    syncTerritoryDisplayContext: syncTerritoryDisplayContext,
     refreshChrome: function (shell, state, ctx) {
+      syncTerritoryDisplayContext(state, ctx);
       window.__lktandoorUiCtx = ctx.uiCtx;
       window.__lktandoorScopeTitle = scopeTitle(state, ctx);
       var titleEl = document.getElementById("v3-lktandoor-scope-title");
@@ -358,10 +393,18 @@
         window.ClientsV3FieldRules.syncLegacyFromRules(next);
         window.ClientsV3.loadList(ctx.uiCtx || window.__lktandoorUiCtx, next, false);
       });
+      var territoryKey = territoryParamsFromState(state).toString();
       loadScopeCounts(ctx.api, state).then(function (counts) {
         var current = window.ClientsV3.readState();
-        if (territoryParamsFromState(current).toString() !== territoryParamsFromState(state).toString()) return;
-        renderScopeBar(shell, state, counts);
+        if (territoryParamsFromState(current).toString() !== territoryKey) return;
+        syncTerritoryDisplayContext(current, ctx);
+        window.__lktandoorScopeTitle = scopeTitle(current, ctx);
+        renderScopeBar(shell, current, counts);
+        var titleElLate = document.getElementById("v3-lktandoor-scope-title");
+        if (titleElLate && window.__lktandoorScopeTitle) {
+          titleElLate.textContent = window.__lktandoorScopeTitle;
+        }
+        renderContextNav(shell, current, ctx);
       });
     },
     bindFilterPanel: function () {

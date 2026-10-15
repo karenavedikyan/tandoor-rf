@@ -93,75 +93,148 @@
       "/composition" + (selection.toString() ? "?" + selection.toString() : "");
   }
 
-  function renderV3Composition(host, payload) {
-    if (!host || !payload.entity || !payload.entity.guid) {
+  function compositionRowsFromPayload(data) {
+    if (!data || data.access === "unknown" || data.access === "withheld") {
+      return null;
+    }
+    return {
+      legal: data.legalEntities || data.legal_entities || [],
+      retail: data.retailOutlets || data.retail_outlets || [],
+    };
+  }
+
+  function renderV3CompositionLists(host, legal, retail) {
+    if (!host) {
       return;
     }
-    host.innerHTML = "Загрузка состава…";
+    var parentReturn = currentDetailReturnParam();
+    host.innerHTML =
+      (legal.length
+        ? "<h3 class=\"pc-label\">Юрлица</h3><ul class=\"v3-composition-list\">" +
+          legal
+            .map(function (row) {
+              return (
+                "<li><a class=\"clients-link\" href=\"/clients/" +
+                encodeURIComponent(row.guid) +
+                "?v3Entity=legal&return=" +
+                parentReturn +
+                '">' +
+                shell.escapeHtml(row.name) +
+                "</a></li>"
+              );
+            })
+            .join("") +
+          "</ul>"
+        : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>') +
+      (retail.length
+        ? "<h3 class=\"pc-label\">Торговые точки</h3><ul class=\"v3-composition-list\">" +
+          retail
+            .map(function (row) {
+              return (
+                "<li><a class=\"clients-link\" href=\"/clients/" +
+                encodeURIComponent(row.guid) +
+                "?v3Entity=retail&return=" +
+                parentReturn +
+                '">' +
+                shell.escapeHtml(row.name) +
+                "</a></li>"
+              );
+            })
+            .join("") +
+          "</ul>"
+        : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>');
+  }
+
+  function applyV3CompositionContext(detailRoot, payload, rows) {
+    if (!detailRoot || !rows || !window.ClientDetailV3 || !window.ClientDetailV3.updateRelatedContext) {
+      return;
+    }
+    window.ClientDetailV3.updateRelatedContext(detailRoot, shell, {
+      entityType: payload.entityType,
+      counts: {
+        retailOutlets: rows.retail.length,
+        legalEntities: payload.entityType === "legal" ? 1 : rows.legal.length,
+      },
+      retailOutlets: rows.retail,
+      parentReturn: currentDetailReturnParam(),
+    });
+  }
+
+  function loadV3Composition(detailRoot, payload, options) {
+    options = options || {};
+    var holdingGuid =
+      payload.entityType === "holding"
+        ? payload.entity && payload.entity.guid
+        : payload.holdingLink && payload.holdingLink.guid;
+    if (!holdingGuid) {
+      return;
+    }
+    var compositionHost = options.compositionHost || null;
+    if (compositionHost) {
+      compositionHost.innerHTML = "Загрузка состава…";
+    }
     var compositionUrl;
     try {
-      compositionUrl = v3CompositionUrl(payload.entity.guid);
+      compositionUrl = v3CompositionUrl(holdingGuid);
     } catch (_err) {
-      host.textContent = "Некорректная выбранная территория.";
+      if (compositionHost) {
+        compositionHost.textContent = "Некорректная выбранная территория.";
+      }
+      if (options.onTerritoryError) {
+        options.onTerritoryError("Некорректная выбранная территория.");
+      }
       return;
     }
     api
       .apiRequest(compositionUrl)
       .then(function (result) {
-        if (!host.isConnected) return;
-        if (!result.response.ok || !result.data) {
-          host.innerHTML =
-            '<p class="clients-error">Не удалось загрузить состав.</p>' +
-            '<button type="button" class="workspace-button workspace-button--secondary" id="v3-composition-retry">Повторить</button>';
-          document.getElementById("v3-composition-retry")?.addEventListener("click", function () {
-            renderV3Composition(host, payload);
-          });
+        if (detailRoot && !detailRoot.isConnected) {
           return;
         }
-        var legal = result.data.legalEntities || [];
-        var retail = result.data.retailOutlets || [];
-        var parentReturn = currentDetailReturnParam();
-        host.innerHTML =
-          (legal.length
-            ? "<h3 class=\"pc-label\">Юрлица</h3><ul class=\"v3-composition-list\">" +
-              legal
-                .map(function (row) {
-                  return (
-                    "<li><a class=\"clients-link\" href=\"/clients/" +
-                    encodeURIComponent(row.guid) +
-                    "?v3Entity=legal&return=" +
-                    parentReturn +
-                    '">' +
-                    shell.escapeHtml(row.name) +
-                    "</a></li>"
-                  );
-                })
-                .join("") +
-              "</ul>"
-            : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>') +
-          (retail.length
-            ? "<h3 class=\"pc-label\">Торговые точки</h3><ul class=\"v3-composition-list\">" +
-              retail
-                .map(function (row) {
-                  return (
-                    "<li><a class=\"clients-link\" href=\"/clients/" +
-                    encodeURIComponent(row.guid) +
-                    "?v3Entity=retail&return=" +
-                    parentReturn +
-                    '">' +
-                    shell.escapeHtml(row.name) +
-                    "</a></li>"
-                  );
-                })
-                .join("") +
-              "</ul>"
-            : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>');
+        if (compositionHost && !compositionHost.isConnected) {
+          return;
+        }
+        if (!result.response.ok || !result.data) {
+          if (compositionHost) {
+            compositionHost.innerHTML =
+              '<p class="clients-error">Не удалось загрузить состав.</p>' +
+              '<button type="button" class="workspace-button workspace-button--secondary" id="v3-composition-retry">Повторить</button>';
+            document.getElementById("v3-composition-retry")?.addEventListener("click", function () {
+              loadV3Composition(detailRoot, payload, options);
+            });
+          }
+          if (options.onLoadError) {
+            options.onLoadError("Не удалось загрузить торговые точки холдинга.");
+          }
+          return;
+        }
+        var rows = compositionRowsFromPayload(result.data);
+        if (!rows) {
+          if (options.onLoadError) {
+            options.onLoadError("Состав холдинга недоступен в вашей области.");
+          }
+          return;
+        }
+        if (compositionHost) {
+          renderV3CompositionLists(compositionHost, rows.legal, rows.retail);
+        }
+        applyV3CompositionContext(detailRoot, payload, rows);
       })
       .catch(function () {
-        if (host.isConnected) {
-          host.innerHTML = '<p class="clients-error">Ошибка сети при загрузке состава.</p>';
+        if (compositionHost && compositionHost.isConnected) {
+          compositionHost.innerHTML = '<p class="clients-error">Ошибка сети при загрузке состава.</p>';
+        }
+        if (options.onLoadError) {
+          options.onLoadError("Ошибка сети при загрузке ТТ.");
         }
       });
+  }
+
+  function renderV3Composition(host, payload) {
+    if (!host || !payload.entity || !payload.entity.guid) {
+      return;
+    }
+    loadV3Composition(document.getElementById("client-detail-root"), payload, { compositionHost: host });
   }
 
   function buildV3SessionContext(user) {
@@ -220,9 +293,12 @@
       });
     }
     if (payload.entityType === "holding" && ent.guid) {
-      renderV3Composition(document.getElementById("v3-composition"), payload);
+      loadV3Composition(detailRoot, payload, {
+        compositionHost: document.getElementById("v3-composition"),
+      });
+    } else {
+      loadV3HoldingRelated(detailRoot, payload);
     }
-    loadV3HoldingRelated(detailRoot, payload);
   }
 
   function renderV3CardChrome(backHref, session) {
@@ -277,7 +353,7 @@
     if (!detailRoot || !window.ClientDetailV3 || !window.ClientDetailV3.updateRelatedContext) {
       return;
     }
-    if (payload.entityType === "holding" || !payload.holdingLink || !payload.holdingLink.guid) {
+    if (!payload.holdingLink || !payload.holdingLink.guid) {
       var emptyHost = detailRoot.querySelector('[data-testid="v3-data-holding-outlets"]');
       if (emptyHost) emptyHost.textContent = "Связь с холдингом не передана из 1С.";
       return;
@@ -287,37 +363,10 @@
       detailRoot.querySelectorAll('[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"]')
         .forEach(function (host) { host.textContent = message; });
     }
-    var compositionUrl;
-    try {
-      compositionUrl = v3CompositionUrl(payload.holdingLink.guid);
-    } catch (_err) {
-      showRelatedError("Некорректная выбранная территория.");
-      return;
-    }
-    api
-      .apiRequest(
-        compositionUrl,
-      )
-      .then(function (result) {
-        if (!detailRoot.isConnected || !result.response.ok || !result.data) {
-          showRelatedError("Не удалось загрузить торговые точки холдинга.");
-          return;
-        }
-        var legal = result.data.legalEntities || [];
-        var retail = result.data.retailOutlets || [];
-        window.ClientDetailV3.updateRelatedContext(detailRoot, shell, {
-          entityType: payload.entityType,
-          counts: {
-            retailOutlets: retail.length,
-            legalEntities: payload.entityType === "legal" ? 1 : legal.length,
-          },
-          retailOutlets: retail,
-          parentReturn: currentDetailReturnParam(),
-        });
-      })
-      .catch(function () {
-        showRelatedError("Ошибка сети при загрузке ТТ.");
-      });
+    loadV3Composition(detailRoot, payload, {
+      onTerritoryError: showRelatedError,
+      onLoadError: showRelatedError,
+    });
   }
 
   function clientGuidFromPath() {
