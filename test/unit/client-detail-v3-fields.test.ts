@@ -50,6 +50,11 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Отгрузки \/ план/);
     assert.match(html, /Точки и контакты/);
     assert.match(html, /v3-role-context/);
+    assert.equal((html.match(/data-testid="v3-role-context"/g) || []).length, 1);
+    assert.ok(
+      html.indexOf('data-testid="v3-role-context"') < html.indexOf('id="pc-panel-overview"'),
+      "session context belongs to the shared card shell, not a tab panel",
+    );
     assert.match(html, /Особенности работы/);
     assert.match(html, /Качество данных/);
     assert.match(html, /Не подключено/);

@@ -137,6 +137,12 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
 
     await page.locator("#pc-tab-data").click();
     await page.waitForSelector("#pc-panel-data:not([hidden])");
+    assert.equal(await page.locator('[data-testid="v3-role-context"]').count(), 1);
+    assert.ok(await page.locator('[data-testid="v3-role-context"]').isVisible());
+    assert.equal(
+      await page.locator('[data-testid="v3-detail-title"]').innerText(),
+      "Данные и условия клиента · Legal One",
+    );
     assert.match(await page.locator("#pc-panel-data").innerText(), /ROP One/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Холдинг и ответственность/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Магазин и доставка/);
@@ -155,6 +161,12 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
       fullPage: true,
     });
     await page.locator("#pc-tab-data").click();
+    assert.ok(await page.locator('[data-testid="v3-role-context"]').isVisible());
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      true,
+      "mobile card has no page-level horizontal overflow",
+    );
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "impl-legal-data-mobile-390.png"),
       fullPage: true,

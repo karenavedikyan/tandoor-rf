@@ -431,9 +431,8 @@
     );
   }
 
-  function renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat, session) {
+  function renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat) {
     return (
-      renderRoleContextBlock(shell, session) +
       entityMetaLine(shell, entityType, ent, holdingLink, typeCat) +
       freshnessMeta(shell, ent) +
       overviewNotice() +
@@ -639,7 +638,7 @@
     options = options || {};
     var typeCat = formatTypeCategory(shell, ent.type_category);
     var title = resolveTitle(entityType, ent);
-    var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat, options.session);
+    var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat);
     var dataHtml =
       entityType === "holding"
         ? renderDataHolding(shell, ent, typeCat)
@@ -670,6 +669,7 @@
       esc(shell, entityKindLabel(entityType) + " · обзор из обмена 1С") +
       "</p></header>" +
       renderTabsMarkup() +
+      renderRoleContextBlock(shell, options.session) +
       panels +
       "</div>"
     );
@@ -700,7 +700,7 @@
         }
       });
       if (titleEl) {
-        titleEl.textContent = id === "data" ? "Данные и условия" : baseTitle;
+        titleEl.textContent = id === "data" ? "Данные и условия клиента · " + baseTitle : baseTitle;
       }
       if (subtitleEl) {
         subtitleEl.textContent =
