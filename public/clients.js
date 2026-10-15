@@ -1761,7 +1761,7 @@
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(presentation, currentUser, currentStateFromForm());
     if (exchangeV3Active && window.ClientsV3 && entitySwitcherEl && presentation.allowedV3Entities) {
-      window.ClientsV3.mountEntitySwitcher(entitySwitcherEl, presentation.allowedV3Entities.slice());
+      mountV3EntitySwitcher(presentation.allowedV3Entities.slice());
     }
   }
 
@@ -2964,7 +2964,7 @@
       rolePresentation.allowedV3Entities &&
       showEntityNav
     ) {
-      window.ClientsV3.mountEntitySwitcher(entitySwitcherEl, rolePresentation.allowedV3Entities.slice());
+      mountV3EntitySwitcher(rolePresentation.allowedV3Entities.slice());
     }
     document.body.classList.toggle("clients-teams-surface", Boolean(isTeamsSurface));
     if (incompleteStatsCompactEl) {
@@ -4337,6 +4337,19 @@
     return "Найдено " + n + " " + noun;
   }
 
+  function lktandoorListActive() {
+    return document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+  }
+
+  function mountV3EntitySwitcher(allowedIds) {
+    if (!exchangeV3Active || !window.ClientsV3 || !entitySwitcherEl) {
+      return;
+    }
+    window.ClientsV3.mountEntitySwitcher(entitySwitcherEl, allowedIds, {
+      lktandoor: lktandoorListActive(),
+    });
+  }
+
   function refreshV3ListChrome(v3State, entityMeta) {
     if (rolePresentation && pageTitleEl) {
       pageTitleEl.textContent = rolePresentation.pageTitle || "Клиенты";
@@ -4383,9 +4396,16 @@
       },
       refreshListChrome: refreshV3ListChrome,
       formatResultCount: function (state, total) {
-        if (resultCountEl) {
-          resultCountEl.textContent = formatV3ResultCount(state.v3entity, total);
+        if (!resultCountEl) {
+          return;
         }
+        if (lktandoorListActive() && window.ClientsLktandoorList && window.ClientsLktandoorList.formatResultCountLine) {
+          resultCountEl.textContent = window.ClientsLktandoorList.formatResultCountLine(state, total);
+          resultCountEl.classList.add("x6-count-line");
+          return;
+        }
+        resultCountEl.classList.remove("x6-count-line");
+        resultCountEl.textContent = formatV3ResultCount(state.v3entity, total);
       },
       showResultsState: showResultsState,
       showResultsContent: showResultsContent,
@@ -5302,12 +5322,12 @@
         applyPortfolioDesignChrome(rolePresentation, currentUser, initialState);
         applyStateToForm(initialState);
         if (exchangeV3Active && window.ClientsV3) {
-          window.ClientsV3.mountEntitySwitcher(
-            entitySwitcherEl,
+          mountV3EntitySwitcher(
             rolePresentation && rolePresentation.allowedV3Entities
               ? rolePresentation.allowedV3Entities.slice()
               : null,
           );
+          window.ClientsV3.bindLktandoorListInteractions(buildV3UiContext());
           if (v3FilterChipsEl && !v3FilterChipsEl.dataset.bound) {
             v3FilterChipsEl.dataset.bound = "1";
             v3FilterChipsEl.addEventListener("click", function (event) {

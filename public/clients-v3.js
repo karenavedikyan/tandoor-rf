@@ -699,19 +699,97 @@
       return new URLSearchParams(search || window.location.search).get("v3mode") === "1";
     },
 
-    mountEntitySwitcher: function (entitySwitcherEl, allowedIds) {
+    mountEntitySwitcher: function (entitySwitcherEl, allowedIds, options) {
       if (!entitySwitcherEl) {
         return;
       }
+      options = options || {};
       var allowed =
         allowedIds && allowedIds.length
           ? allowedIds
           : ENTITIES.map(function (e) {
               return e.id;
             });
+      var lktandoor =
+        options.lktandoor ||
+        document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+      var primaryIds = ["legal_grouped", "retail"];
       var visible = ENTITIES.filter(function (e) {
         return allowed.indexOf(e.id) !== -1;
       });
+      var secondaryNav = document.getElementById("v3-lktandoor-secondary-entities");
+      if (lktandoor) {
+        var primary = visible.filter(function (e) {
+          return primaryIds.indexOf(e.id) !== -1;
+        });
+        var secondary = visible.filter(function (e) {
+          return primaryIds.indexOf(e.id) === -1;
+        });
+        if (!primary.length) {
+          entitySwitcherEl.classList.add("clients-hidden");
+          entitySwitcherEl.innerHTML = "";
+        } else {
+          entitySwitcherEl.classList.remove("clients-hidden");
+          entitySwitcherEl.classList.add("clients-entity-switcher--primary");
+          entitySwitcherEl.innerHTML = primary
+            .map(function (e) {
+              return (
+                '<button type="button" class="clients-view-switcher__btn" data-v3entity="' +
+                e.id +
+                '">' +
+                e.label +
+                "</button>"
+              );
+            })
+            .join("");
+        }
+        if (secondaryNav) {
+          if (secondary.length) {
+            secondaryNav.classList.remove("clients-hidden");
+            secondaryNav.innerHTML =
+              '<span class="x13-secondary-entities__label">Другие реестры:</span>' +
+              secondary
+                .map(function (e) {
+                  return (
+                    '<button type="button" class="x13-secondary-entities__btn" data-v3entity="' +
+                    e.id +
+                    '">' +
+                    e.label +
+                    "</button>"
+                  );
+                })
+                .join("");
+            if (!secondaryNav.dataset.bound) {
+              secondaryNav.dataset.bound = "1";
+              secondaryNav.addEventListener("click", function (event) {
+                var btn = event.target.closest("[data-v3entity]");
+                if (!btn) {
+                  return;
+                }
+                var entity = btn.getAttribute("data-v3entity");
+                var liveCtx = window.__lktandoorUiCtx;
+                if (!entity || !liveCtx) {
+                  return;
+                }
+                window.ClientsV3.loadList(
+                  liveCtx,
+                  mergeListStateForUserAction({ v3entity: entity, page: 1 }),
+                  true,
+                );
+              });
+            }
+          } else {
+            secondaryNav.classList.add("clients-hidden");
+            secondaryNav.innerHTML = "";
+          }
+        }
+        return;
+      }
+      if (secondaryNav) {
+        secondaryNav.classList.add("clients-hidden");
+        secondaryNav.innerHTML = "";
+      }
+      entitySwitcherEl.classList.remove("clients-entity-switcher--primary");
       if (!visible.length) {
         entitySwitcherEl.classList.add("clients-hidden");
         entitySwitcherEl.innerHTML = "";
@@ -883,6 +961,13 @@
         document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
         if (lktandoorActive && ctx.lktandoorContext) {
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
+          if (ctx.lktandoorContext.rolePresentation && ctx.entitySwitcherEl) {
+            window.ClientsV3.mountEntitySwitcher(
+              ctx.entitySwitcherEl,
+              ctx.lktandoorContext.rolePresentation.allowedV3Entities || [],
+              { lktandoor: true },
+            );
+          }
         }
       }
       if (window.ClientsV3List) {
@@ -892,6 +977,9 @@
       ctx.tableBody.setAttribute("aria-busy", "true");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
+      });
+      document.querySelectorAll("#v3-lktandoor-secondary-entities [data-v3entity]").forEach(function (btn) {
+        btn.classList.toggle("x13-secondary-entities__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
       });
       var meta = entityMeta(state.v3entity);
       if (ctx.refreshListChrome) {
@@ -947,6 +1035,24 @@
             window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
               if (isStaleListLoad()) return;
               window.ClientsV3FieldRules.renderBuilder(shell, liveState.v3entity, opts);
+              if (window.ClientsV3FieldRules.renderFieldShortcuts) {
+                window.ClientsV3FieldRules.renderFieldShortcuts(shell, liveState.v3entity, function (fieldId, op) {
+                  var fieldSelect = document.getElementById("v3-rule-field");
+                  var opSelect = document.getElementById("v3-rule-op");
+                  if (fieldSelect) {
+                    fieldSelect.value = fieldId;
+                    fieldSelect.dispatchEvent(new Event("change"));
+                  }
+                  if (opSelect && op) {
+                    opSelect.value = op;
+                    opSelect.dispatchEvent(new Event("change"));
+                  }
+                  var details = document.getElementById("v3-lktandoor-field-filters");
+                  if (details) {
+                    details.open = true;
+                  }
+                });
+              }
               window.ClientsV3FieldRules.renderChips(shell, liveState, opts, function (index) {
                 var next = readState();
                 var rules = window.ClientsV3FieldRules.parseRulesFromState(next);
@@ -1419,9 +1525,16 @@
         return;
       }
       var visibleIds = window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
+      pickerEl.innerHTML =
+        '<div class="clients-columns-picker__head">' +
+        '<h3 class="clients-columns-picker__title">Колонки реестра</h3>' +
+        '<button type="button" class="workspace-button workspace-button--primary" id="v3-columns-done">Готово</button>' +
+        "</div>" +
+        '<div id="v3-columns-picker-body"></div>';
+      var body = pickerEl.querySelector("#v3-columns-picker-body");
       window.ClientsV3List.renderColumnPicker(
         ctx.shell,
-        pickerEl,
+        body,
         state.v3entity,
         visibleIds,
         ctx.currentUserId,
@@ -1434,6 +1547,29 @@
           );
         },
       );
+      pickerEl.querySelector("#v3-columns-done")?.addEventListener("click", function () {
+        pickerEl.classList.add("clients-hidden");
+      });
+    },
+
+    bindLktandoorListInteractions: function (ctx) {
+      if (window.__lktandoorListInteractionsBound) {
+        return;
+      }
+      window.__lktandoorListInteractionsBound = true;
+      document.getElementById("clients-app")?.addEventListener("click", function (event) {
+        var card = event.target.closest(".x13-client-card[data-list-href]");
+        if (!card) {
+          return;
+        }
+        if (event.target.closest("a")) {
+          return;
+        }
+        var href = card.getAttribute("data-list-href");
+        if (href) {
+          window.location.assign(href);
+        }
+      });
     },
 
     mergeFromLegacyState: mergeFromLegacyState,

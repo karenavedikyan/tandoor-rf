@@ -300,6 +300,83 @@
     refreshValue();
   }
 
+  var FIELD_SHORTCUTS = [
+    { label: "ТОП", fieldId: "categoryGuid", op: "filled" },
+    { label: "Юрлицо", fieldId: "legalStatus", op: "contains", entities: ["legal", "legal_grouped"] },
+    {
+      label: "ИНН",
+      unavailable:
+        "ИНН не входит в allowlist фильтров списка v3 (нет безопасного поля SQL). Запрос к 1С — см. docs/delivery/f3-counterparty-source-blocker.md.",
+    },
+    {
+      label: "Договор",
+      unavailable:
+        "Договор не поддержан в контракте фильтров списка v3. Запрос к 1С — см. docs/delivery/f4-contract-source-blocker.md.",
+    },
+    { label: "ЛПР", fieldId: "lprName", op: "contains", entities: ["retail", "orphan_retail"] },
+    { label: "Бонус Club", fieldId: "clubBonus", op: "contains", entities: ["retail", "orphan_retail"] },
+    { label: "День приёмки", fieldId: "loadingTime", op: "contains", entities: ["retail", "orphan_retail"] },
+  ];
+
+  function entityBucket(entity) {
+    if (entity === "legal_grouped" || entity === "holdings") {
+      return "legal_grouped";
+    }
+    if (entity === "legal") {
+      return "legal";
+    }
+    return entity;
+  }
+
+  function shortcutEnabled(shortcut, entity, fields) {
+    if (shortcut.unavailable) {
+      return false;
+    }
+    if (shortcut.entities && shortcut.entities.indexOf(entityBucket(entity)) === -1) {
+      return false;
+    }
+    return (fields || []).some(function (f) {
+      return f.id === shortcut.fieldId;
+    });
+  }
+
+  function renderFieldShortcuts(shell, entity, onSelect) {
+    var host = document.getElementById("v3-lktandoor-field-shortcuts");
+    if (!host) {
+      return;
+    }
+    var fields = fieldsCache[entity] || fieldsCache.legal_grouped || [];
+    host.innerHTML = FIELD_SHORTCUTS.map(function (shortcut) {
+      var enabled = shortcutEnabled(shortcut, entity, fields);
+      var title = shortcut.unavailable || "";
+      if (!enabled && !title && shortcut.entities) {
+        title = "Недоступно для текущего реестра";
+      }
+      return (
+        '<button type="button" class="x6-field-shortcut' +
+        (enabled ? "" : " x6-field-shortcut--disabled") +
+        '" data-v3-field-shortcut="' +
+        esc(shortcut.fieldId || "") +
+        '" data-v3-field-op="' +
+        esc(shortcut.op || "contains") +
+        '"' +
+        (enabled ? "" : " disabled") +
+        (title ? ' title="' + esc(title) + '"' : "") +
+        ">" +
+        esc(shortcut.label) +
+        "</button>"
+      );
+    }).join("");
+    host.querySelectorAll("[data-v3-field-shortcut]").forEach(function (btn) {
+      if (btn.disabled) {
+        return;
+      }
+      btn.addEventListener("click", function () {
+        onSelect(btn.getAttribute("data-v3-field-shortcut") || "", btn.getAttribute("data-v3-field-op") || "contains");
+      });
+    });
+  }
+
   window.ClientsV3FieldRules = {
     parseRulesFromState: parseRulesFromState,
     serializeRules: serializeRules,
@@ -308,6 +385,7 @@
     renderChips: renderChips,
     loadFields: loadFields,
     renderBuilder: renderBuilder,
+    renderFieldShortcuts: renderFieldShortcuts,
     appendRulesToParams: function (params, state) {
       var rules = parseRulesFromState(state);
       if (rules.length) {

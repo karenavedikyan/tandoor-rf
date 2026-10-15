@@ -19,7 +19,7 @@ const CAT_A = "c1";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const SCREENSHOT_DIR =
   process.env.CLIENTS_LKTANDOOR_STAGE2_DIR ??
-  "/cursor/stores/self/media/clients-lktandoor-stage2-list";
+  "/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/clients-lktandoor-stage2-list-v2";
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
@@ -137,6 +137,14 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     return page.locator("#clients-table-body tr").count();
   }
 
+  async function closeMobileSidebar(page: Page) {
+    await page.evaluate(() => {
+      document.body.classList.remove("legacy-sidebar-open");
+      const backdrop = document.getElementById("legacy-backdrop");
+      if (backdrop) backdrop.setAttribute("hidden", "hidden");
+    });
+  }
+
   it("manager: category filter, chip remove, card back retains URL", async () => {
     const page = await browser.newPage();
     await login(page, "manager-lktandoor-list@example.com");
@@ -167,14 +175,27 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok(page.url().includes("v3mode=1"));
     assert.ok(page.url().includes("v3entity=legal_grouped"));
     await page.setViewportSize(DESKTOP);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-desktop-1440.png") });
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = true;
+    });
+    await page.waitForSelector(".x6-field-shortcuts .x6-field-shortcut", { state: "visible" });
+    assert.ok(await page.locator(".x6-field-shortcut--disabled").filter({ hasText: "ИНН" }).count());
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-list-desktop-1440.png") });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-filters-desktop-1440.png") });
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await rowCount(page), before);
     assert.ok(await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().isVisible());
-    await page.locator("#v3-lktandoor-field-filters summary").click();
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-mobile-cold-390.png") });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-toolbar-390.png") });
+    await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().click();
+    await page.waitForURL(/\/clients\//);
+    await page.goBack();
+    await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-card-390.png") });
     await page.close();
   });
 
@@ -203,12 +224,30 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(await rowCount(page), 1);
     assert.equal(new URL(page.url()).searchParams.get("closed"), null);
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await rowCount(page), 1);
     assert.equal(JSON.parse(new URL(page.url()).searchParams.get("filters")!).length, 1);
     await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-retail-mobile-390.png") });
+    await page.close();
+  });
+
+  it("admin primary entity switcher shows secondary registries separately", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForList(page);
+    assert.equal(await page.locator(".clients-entity-switcher--primary [data-v3entity]").count(), 2);
+    await page.waitForSelector('#v3-lktandoor-secondary-entities [data-v3entity="holdings"]');
+    const holdingsList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=holdings&view=all&v3view=all");
+    await holdingsList;
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "holdings");
+    await page.waitForSelector("#clients-table-body tr");
     await page.close();
   });
 
@@ -257,7 +296,9 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
     assert.equal(await rowCount(page), 1);
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     const card = page.locator('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await card.count(), 1);
     assert.ok((await card.innerText()).includes("Legal One, Legal Two"));

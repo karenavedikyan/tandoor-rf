@@ -279,6 +279,43 @@
     }
   }
 
+  function formatResultCountLine(state, matchedTotal) {
+    var matched = Number(matchedTotal) || 0;
+    var scope = window.__lktandoorScopeCounts || {};
+    var entity = state.v3entity || "legal_grouped";
+    var inScope =
+      entity === "retail" || entity === "orphan_retail"
+        ? scope.retail
+        : scope.legal;
+    var noun =
+      entity === "retail" || entity === "orphan_retail"
+        ? "торговых точек"
+        : entity === "holdings"
+          ? "холдингов"
+          : "клиентов";
+    if (typeof inScope === "number" && inScope >= 0) {
+      return "Совпало " + matched + " из " + inScope + " " + noun + " в выбранной территории";
+    }
+    return "Совпало " + matched + " " + noun + " в выбранной территории";
+  }
+
+  function plainCellText(listUi, item, colId, shell, state, grouped) {
+    if (!listUi) {
+      return "—";
+    }
+    if (colId === "legal_name" && grouped) {
+      var legals = item.legal_entities;
+      if (legals && legals.length) {
+        return legals
+          .map(function (entry) {
+            return entry.name || entry.guid;
+          })
+          .join(", ");
+      }
+    }
+    return listUi.cellDisplay(item, colId, shell, state, grouped).replace(/<[^>]+>/g, "").trim() || "—";
+  }
+
   function renderMobileCard(shell, item, visibleCols, href, listUi, state) {
     var primaryCol = visibleCols[0] || { id: "name" };
     var name = item[primaryCol.id] || item.client_name || item.name || item.guid;
@@ -293,15 +330,16 @@
     var extraCols = visibleCols.filter(function (col) {
       return col.id !== primaryCol.id && col.id !== "store_address" && col.id !== "address_line";
     });
+    var grouped = state && state.v3entity === "legal_grouped";
     var fieldsHtml = extraCols
       .map(function (col) {
-        var val = listUi.cellDisplay(item, col.id, shell).replace(/<[^>]+>/g, "");
-        return "<span><small>" + shell.escapeHtml(col.label) + "</small><b>" + val + "</b></span>";
+        var val = plainCellText(listUi, item, col.id, shell, state, grouped);
+        return "<span><small>" + shell.escapeHtml(col.label) + "</small><b>" + shell.escapeHtml(val) + "</b></span>";
       })
       .join("");
     return (
-      '<a class="x13-client-card" href="' +
-      href +
+      '<article class="x13-client-card" tabindex="0" role="link" data-list-href="' +
+      shell.escapeHtml(href) +
       '" data-testid="v3-lktandoor-mobile-card">' +
       '<span class="x13-client-card-title"><strong>' +
       shell.escapeHtml(name) +
@@ -313,7 +351,7 @@
         ? '<span class="x7-badge">' + shell.escapeHtml(String(badge)) + "</span>"
         : "") +
       (fieldsHtml ? '<span class="x13-mobile-fields">' + fieldsHtml + "</span>" : "") +
-      '<span class="x13-open-card">Открыть карточку</span></a>'
+      '<span class="x13-open-card">Открыть карточку клиента</span></article>'
     );
   }
 
@@ -371,6 +409,7 @@
     renderFilterSummary: renderFilterSummary,
     renderMobileCard: renderMobileCard,
     loadScopeCounts: loadScopeCounts,
+    formatResultCountLine: formatResultCountLine,
     scopeTitle: scopeTitle,
     resolveManagerDisplayName: resolveManagerDisplayName,
     syncTerritoryDisplayContext: syncTerritoryDisplayContext,

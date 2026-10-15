@@ -225,7 +225,13 @@
     }
     var labelRow = visibleCols
       .map(function (col) {
-        return "<th scope=\"col\">" + shell.escapeHtml(col.label) + "</th>";
+        return (
+          '<th scope="col" class="x13-col x13-col-' +
+          shell.escapeHtml(col.id) +
+          '">' +
+          shell.escapeHtml(col.label) +
+          "</th>"
+        );
       })
       .join("");
     var filterRow = skipColumnFilters
@@ -373,10 +379,15 @@
     citySelect.disabled = isLegal && cities.length === 0;
     var hint = bar.querySelector(".clients-v3-list-filterbar__hint");
     if (hint) {
-      hint.textContent =
-        isLegal && cities.length === 0
-          ? "Город для клиентов — только из структурированных полей 1С; фильтр недоступен, пока данных нет."
-          : "Сброс сохраняет выбранную команду и сотрудника";
+      var lktandoor = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+      if (lktandoor) {
+        hint.textContent = "Только выбранная территория. Сброс не меняет область списка.";
+      } else {
+        hint.textContent =
+          isLegal && cities.length === 0
+            ? "Город для клиентов — только из структурированных полей 1С; фильтр недоступен, пока данных нет."
+            : "Сброс сохраняет выбранную команду и сотрудника";
+      }
     }
     bar.classList.remove("clients-hidden");
   }
