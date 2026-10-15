@@ -2956,7 +2956,7 @@
         var lkCtx = buildV3UiContext();
         lkCtx.lktandoorContext.uiCtx = lkCtx;
         if (lktandoorTeamsActive && window.ClientsLktandoorTeams) {
-          window.ClientsLktandoorTeams.renderSectionHeading(shell, state, rolePresentation);
+          window.ClientsLktandoorTeams.renderSectionHeading(shell, state, rolePresentation, logic);
           window.ClientsLktandoorList.renderContextNav(shell, v3StateForChrome, lkCtx.lktandoorContext);
         }
         if (lktandoorActive) {
