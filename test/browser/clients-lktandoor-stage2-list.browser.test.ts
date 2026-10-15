@@ -88,12 +88,17 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       name_retail: "Legal Two",
     });
     const holdingsBytes = Buffer.from(JSON.stringify(holdings));
+    const retail = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json"), "utf8"));
+    retail[0].information_loading = { loading_time: "10:00", loading_on_monday: true };
+    retail[1].information_loading = { loading_on_monday: false };
+    retail[3].information_loading = { loading_on_monday: true, loading_on_friday: true };
+    const retailBytes = Buffer.from(JSON.stringify(retail));
     const dry = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
       argv: ["--dry-run"],
       holdingsBytes,
       clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
-      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      retailBytes,
       employeesBytes,
     });
     assert.equal(dry.status, "SUCCESS");
@@ -102,7 +107,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       argv: ["--apply", "--expected-fingerprint", dry.verificationFingerprint!],
       holdingsBytes,
       clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
-      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      retailBytes,
       employeesBytes,
     });
   }
@@ -348,6 +353,39 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok(mobileDialog.doneVisible);
     assert.ok(mobileDialog.dialogWidth <= mobileDialog.viewport - 20);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-mobile-390.png") });
+    await page.close();
+  });
+
+  it("manager loading day shortcut: back, reload, chip remove on retail", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    const initial = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 200);
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=retail");
+    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)');
+    await initial;
+    await page.locator("#v3-lktandoor-field-filters summary").click();
+    await page.locator(".x6-field-shortcut").filter({ hasText: "День приёмки" }).click();
+    assert.equal(await page.locator("#v3-rule-field").inputValue(), "loadingOnMonday");
+    assert.equal(await page.locator("#v3-rule-op").inputValue(), "yes");
+    await updateList(page, () => page.click("#v3-rule-add"));
+    const filtered = await rowCount(page);
+    assert.equal(filtered, 2);
+    const filtersParam = new URL(page.url()).searchParams.get("filters");
+    assert.ok(filtersParam?.includes("loadingOnMonday"));
+    await page.locator("#clients-table-body tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(await rowCount(page), filtered);
+    assert.equal(new URL(page.url()).searchParams.get("filters"), filtersParam);
+    await updateList(page, () => page.reload());
+    assert.equal(await rowCount(page), filtered);
+    await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
+    assert.equal(await rowCount(page), filtered);
+    await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').first().click());
+    assert.ok((await rowCount(page)) > filtered);
+    assert.ok(!new URL(page.url()).searchParams.get("filters")?.includes("loadingOnMonday"));
+    assert.ok(page.url().includes("v3entity=retail"));
     await page.close();
   });
 
