@@ -805,7 +805,13 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
 
   .clients-lktandoor-list .x13-quick-filters {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .clients-lktandoor-list .x13-quick-filters label,
+  .clients-lktandoor-list .x13-quick-filters select {
+    min-width: 0;
     width: 100%;
   }
 

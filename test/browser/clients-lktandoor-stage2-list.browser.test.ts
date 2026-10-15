@@ -247,6 +247,16 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(mobileToolbar.overflow, false, "mobile list should not overflow horizontally");
     assert.equal(mobileToolbar.resetAndNoteShareRow, true, "reset and territory note should share the second filter row");
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-toolbar-390.png") });
+    await page.setViewportSize({ width: 320, height: 844 });
+    const narrowFieldsFit = await page.locator(".x13-quick-filters select").evaluateAll((fields) =>
+      fields.every((field) => {
+        const bounds = field.getBoundingClientRect();
+        const parent = field.parentElement!.getBoundingClientRect();
+        return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1 && bounds.right <= window.innerWidth - 16;
+      }),
+    );
+    assert.equal(narrowFieldsFit, true, "quick filters must not overlap or clip on narrow phones");
+    await page.setViewportSize(MOBILE);
     await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().click();
     await page.waitForURL(/\/clients\//);
     await page.goBack();
