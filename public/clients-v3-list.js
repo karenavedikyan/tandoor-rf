@@ -225,7 +225,13 @@
     }
     var labelRow = visibleCols
       .map(function (col) {
-        return "<th scope=\"col\">" + shell.escapeHtml(col.label) + "</th>";
+        return (
+          '<th scope="col" class="x13-col x13-col-' +
+          shell.escapeHtml(col.id) +
+          '">' +
+          shell.escapeHtml(col.label) +
+          "</th>"
+        );
       })
       .join("");
     var filterRow = skipColumnFilters
@@ -281,13 +287,21 @@
     });
   }
 
-  function renderColumnPicker(shell, pickerEl, v3entity, visibleIds, userId, onChange) {
+  function renderColumnPicker(shell, pickerEl, v3entity, visibleIds, userId, onChange, options) {
     if (!pickerEl) {
       return;
     }
+    options = options || {};
     var catalog = catalogForEntity(v3entity);
+    var gridClass =
+      "clients-columns-picker__grid" + (options.twoColumn ? " clients-columns-picker__grid--two-col" : "");
     pickerEl.innerHTML =
-      '<div class="clients-columns-picker__grid">' +
+      (options.intro
+        ? '<p class="clients-columns-picker__intro">' + shell.escapeHtml(options.intro) + "</p>"
+        : "") +
+      '<div class="' +
+      gridClass +
+      '">' +
       catalog
         .map(function (col) {
           var checked = visibleIds.indexOf(col.id) !== -1;
@@ -373,10 +387,15 @@
     citySelect.disabled = isLegal && cities.length === 0;
     var hint = bar.querySelector(".clients-v3-list-filterbar__hint");
     if (hint) {
-      hint.textContent =
-        isLegal && cities.length === 0
-          ? "Город для клиентов — только из структурированных полей 1С; фильтр недоступен, пока данных нет."
-          : "Сброс сохраняет выбранную команду и сотрудника";
+      var lktandoor = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+      if (lktandoor) {
+        hint.textContent = "Только выбранная территория";
+      } else {
+        hint.textContent =
+          isLegal && cities.length === 0
+            ? "Город для клиентов — только из структурированных полей 1С; фильтр недоступен, пока данных нет."
+            : "Сброс сохраняет выбранную команду и сотрудника";
+      }
     }
     bar.classList.remove("clients-hidden");
   }

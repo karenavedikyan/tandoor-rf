@@ -19,7 +19,7 @@ const CAT_A = "c1";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const SCREENSHOT_DIR =
   process.env.CLIENTS_LKTANDOOR_STAGE2_DIR ??
-  "/cursor/stores/self/media/clients-lktandoor-stage2-list";
+  "/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/clients-lktandoor-stage2-list-v2";
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
@@ -137,6 +137,49 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     return page.locator("#clients-table-body tr").count();
   }
 
+  async function closeMobileSidebar(page: Page) {
+    await page.evaluate(() => {
+      document.body.classList.remove("legacy-sidebar-open");
+      const backdrop = document.getElementById("legacy-backdrop");
+      if (backdrop) backdrop.setAttribute("hidden", "hidden");
+    });
+  }
+
+  async function assertDesktopToolbarLayout(page: Page) {
+    const layout = await page.evaluate(() => {
+      const row = document.querySelector(".clients-lktandoor-list .clients-toolbar__search-row");
+      const search = document.querySelector("#search-input");
+      const switcher = document.querySelector(".clients-entity-switcher--primary");
+      const shortcut = document.querySelector(".x6-field-shortcut");
+      if (!row || !search || !switcher) {
+        return null;
+      }
+      const rowRect = row.getBoundingClientRect();
+      const searchRect = search.getBoundingClientRect();
+      const controls = row.querySelector(".clients-toolbar__controls-row");
+      const controlsRect = controls?.getBoundingClientRect();
+      const firstButton = switcher.querySelector("button")?.getBoundingClientRect();
+      const switcherStyle = getComputedStyle(switcher);
+      const shortcutRadius = shortcut ? getComputedStyle(shortcut).borderRadius : "";
+      return {
+        searchWidthRatio: searchRect.width / rowRect.width,
+        gapAfterSearch: controlsRect ? controlsRect.left - searchRect.right : 999,
+        gapToFirstButton: firstButton ? firstButton.left - searchRect.right : 999,
+        switcherBorderWidth: switcherStyle.borderWidth,
+        switcherBackground: switcherStyle.backgroundColor,
+        shortcutRadius,
+        rowDisplay: getComputedStyle(row).display,
+      };
+    });
+    assert.ok(layout, "toolbar layout nodes missing");
+    assert.equal(layout.rowDisplay, "flex");
+    assert.ok(layout.searchWidthRatio > 0.55, "search should consume spare desktop width");
+    assert.ok(layout.gapAfterSearch < 24, "search and controls should sit adjacent");
+    assert.ok(layout.gapToFirstButton < 24, "controls must not contain a blank flexible spacer");
+    assert.equal(layout.switcherBorderWidth, "0px", "entity switcher should not use segmented shell border");
+    assert.ok(!layout.shortcutRadius.includes("999"), "shortcuts should be rectangular");
+  }
+
   it("manager: category filter, chip remove, card back retains URL", async () => {
     const page = await browser.newPage();
     await login(page, "manager-lktandoor-list@example.com");
@@ -167,14 +210,109 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok(page.url().includes("v3mode=1"));
     assert.ok(page.url().includes("v3entity=legal_grouped"));
     await page.setViewportSize(DESKTOP);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-desktop-1440.png") });
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = false;
+    });
+    await assertDesktopToolbarLayout(page);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-list-desktop-1440.png") });
+    await page.locator("#v3-lktandoor-field-filters summary").click();
+    await page.waitForSelector(".x6-field-shortcuts .x6-field-shortcut", { state: "visible" });
+    assert.ok(await page.locator(".x6-field-shortcut--disabled").filter({ hasText: "ИНН" }).count());
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-filters-desktop-1440.png") });
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await rowCount(page), before);
     assert.ok(await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().isVisible());
-    await page.locator("#v3-lktandoor-field-filters summary").click();
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-mobile-cold-390.png") });
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = false;
+    });
+    const mobileToolbar = await page.evaluate(() => {
+      const row = document.querySelector(".clients-lktandoor-list .clients-toolbar__controls-row");
+      const buttons = row ? row.querySelectorAll("button, .clients-view-switcher__btn").length : 0;
+      const overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
+      const reset = document.getElementById("v3-list-reset-filters")?.getBoundingClientRect();
+      const note = document.querySelector(".x13-territory-note")?.getBoundingClientRect();
+      return {
+        buttons,
+        overflow,
+        resetAndNoteShareRow: !!reset && !!note && Math.abs((reset.top + reset.height / 2) - (note.top + note.height / 2)) < 12,
+      };
+    });
+    assert.ok(mobileToolbar.buttons >= 3, "mobile toolbar should show three controls");
+    assert.equal(mobileToolbar.overflow, false, "mobile list should not overflow horizontally");
+    assert.equal(mobileToolbar.resetAndNoteShareRow, true, "reset and territory note should share the second filter row");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-toolbar-390.png") });
+    await page.setViewportSize({ width: 320, height: 844 });
+    const narrowFieldsFit = await page.locator(".x13-quick-filters select").evaluateAll((fields) =>
+      fields.every((field) => {
+        const bounds = field.getBoundingClientRect();
+        const parent = field.parentElement!.getBoundingClientRect();
+        return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1 && bounds.right <= window.innerWidth - 16;
+      }),
+    );
+    assert.equal(narrowFieldsFit, true, "quick filters must not overlap or clip on narrow phones");
+    await page.setViewportSize(MOBILE);
+    await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().click();
+    await page.waitForURL(/\/clients\//);
+    await page.goBack();
+    await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-card-390.png") });
+    await page.close();
+  });
+
+  it("columns dialog: open, toggle, done, escape, focus restore", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "manager-lktandoor-list@example.com");
+    await waitForList(page);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    const optionalToggle = page.locator(
+      '[data-testid="v3-lktandoor-columns-dialog"] input[data-v3-column-id]:not([disabled])',
+    );
+    assert.ok((await optionalToggle.count()) > 1, "column catalog must contain optional fields");
+    const toggledId = await optionalToggle.nth(1).getAttribute("data-v3-column-id");
+    const wasChecked = await optionalToggle.nth(1).isChecked();
+    await updateList(page, () => optionalToggle.nth(1).click());
+    await page.click('[data-testid="v3-columns-done"]');
+    await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    assert.equal(
+      await page.locator(`#v3-lktandoor-columns-dialog input[data-v3-column-id="${toggledId}"]`).isChecked(),
+      !wasChecked,
+      "selected columns must survive modal close/reopen",
+    );
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-desktop-1440.png") });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "columns-picker-btn");
+    await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
+    await page.click("#columns-picker-btn");
+    await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    const mobileDialog = await page.evaluate(() => {
+      const dialog = document.getElementById("v3-lktandoor-columns-dialog");
+      const done = document.getElementById("v3-columns-done");
+      if (!dialog || !done) return null;
+      const dialogRect = dialog.getBoundingClientRect();
+      const doneRect = done.getBoundingClientRect();
+      return {
+        overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+        doneVisible: doneRect.bottom <= window.innerHeight && doneRect.top >= 0,
+        dialogWidth: dialogRect.width,
+        viewport: window.innerWidth,
+      };
+    });
+    assert.ok(mobileDialog);
+    assert.equal(mobileDialog.overflow, false);
+    assert.ok(mobileDialog.doneVisible);
+    assert.ok(mobileDialog.dialogWidth <= mobileDialog.viewport - 20);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-mobile-390.png") });
     await page.close();
   });
 
@@ -203,12 +341,30 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(await rowCount(page), 1);
     assert.equal(new URL(page.url()).searchParams.get("closed"), null);
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await rowCount(page), 1);
     assert.equal(JSON.parse(new URL(page.url()).searchParams.get("filters")!).length, 1);
     await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-retail-mobile-390.png") });
+    await page.close();
+  });
+
+  it("admin primary entity switcher shows secondary registries separately", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForList(page);
+    assert.equal(await page.locator(".clients-entity-switcher--primary [data-v3entity]").count(), 2);
+    await page.waitForSelector('#v3-lktandoor-secondary-entities [data-v3entity="holdings"]');
+    const holdingsList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=holdings&view=all&v3view=all");
+    await holdingsList;
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "holdings");
+    await page.waitForSelector("#clients-table-body tr");
     await page.close();
   });
 
@@ -257,7 +413,9 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
     assert.equal(await rowCount(page), 1);
     await page.setViewportSize(MOBILE);
+    await closeMobileSidebar(page);
     await updateList(page, () => page.reload());
+    await closeMobileSidebar(page);
     const card = page.locator('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await card.count(), 1);
     assert.ok((await card.innerText()).includes("Legal One, Legal Two"));

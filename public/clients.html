@@ -164,7 +164,7 @@
                     class="clients-field__input"
                     type="search"
                     autocomplete="off"
-                    placeholder="Клиент, ТТ, код, адрес, сотрудник"
+                    placeholder="Клиент, адрес, контакт, ответственный…"
                   />
                 </label>
                 <div class="clients-toolbar__controls-row">
@@ -214,15 +214,23 @@
                 <button
                   type="button"
                   id="v3-list-reset-filters"
-                  class="workspace-button workspace-button--ghost clients-v3-list-reset clients-hidden"
+                  class="x13-reset-link clients-v3-list-reset clients-hidden"
                 >
                   Сбросить фильтры
                 </button>
-                <p class="clients-v3-list-filterbar__hint">Сброс сохраняет выбранную команду и сотрудника</p>
+                <p class="clients-v3-list-filterbar__hint x13-territory-note">Только выбранная территория</p>
               </div>
+              <nav
+                id="v3-lktandoor-secondary-entities"
+                class="x13-secondary-entities clients-hidden"
+                aria-label="Дополнительные реестры"
+              ></nav>
               <details id="v3-lktandoor-field-filters" class="x6-filter clients-hidden">
                 <summary id="v3-lktandoor-filter-summary">Фильтры по всем полям · 0</summary>
-                <p class="clients-v3-list-filterbar__hint">Все условия одновременно (AND). GUID сотрудников — только из области списка.</p>
+                <div id="v3-lktandoor-field-shortcuts" class="x6-field-shortcuts" aria-label="Быстрый выбор поля"></div>
+                <p class="clients-v3-list-filterbar__hint x6-filter-and-note">
+                  Все условия одновременно (AND). Доступны только поля из каталога фильтров v3; правила не расширяют территорию.
+                </p>
                 <div class="x6-builder clients-v3-rule-builder">
                   <label class="clients-field">
                     <span class="clients-field__label">Поле</span>
@@ -725,13 +733,13 @@
             </div>
 
             <div class="clients-results-shell">
-              <div class="clients-results-shell__head">
-                <div class="clients-results-shell__title-row">
+              <div class="clients-results-shell__head x13-results-head">
+                <div class="clients-results-shell__title-row x13-results-strip">
                   <h2 class="clients-results-shell__title clients-hidden" id="clients-results-title">Мои клиенты</h2>
-                  <p id="result-count" class="clients-results-shell__count">Найдено 0 клиентов</p>
-                </div>
-                <div class="clients-sync-block">
-                  <p id="sync-status" class="clients-sync"></p>
+                  <p id="result-count" class="clients-results-shell__count x6-count-line" data-testid="v3-lktandoor-result-count">
+                    Найдено 0 клиентов
+                  </p>
+                  <p id="sync-status" class="clients-sync clients-sync--secondary" data-testid="v3-lktandoor-sync-note"></p>
                 </div>
               </div>
               <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
@@ -764,6 +772,12 @@
         </main>
       </div>
     </div>
+    <dialog
+      id="v3-lktandoor-columns-dialog"
+      class="x13-columns-dialog"
+      aria-labelledby="v3-lktandoor-columns-title"
+      data-testid="v3-lktandoor-columns-dialog"
+    ></dialog>
     <script src="/common.js" defer></script>
     <script src="/clients-logic.js" defer></script>
     <script src="/brand/shell-icons.js" defer></script>
