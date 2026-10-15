@@ -170,6 +170,7 @@
   }
 
   function syncLayout(active, state) {
+    document.body.classList.toggle("clients-lktandoor-mode", active);
     var app = document.getElementById("clients-app");
     var chrome = document.getElementById("v3-lktandoor-chrome");
     var panel = document.getElementById("v3-lktandoor-list-panel");
@@ -242,9 +243,9 @@
     if (key === scopeCountsCacheKey && window.__lktandoorScopeCounts) {
       return Promise.resolve(window.__lktandoorScopeCounts);
     }
-    scopeCountsCacheKey = key;
     return api.apiRequest("/api/clients/v3/scope-summary?" + params.toString()).then(function (result) {
       if (result.response.ok && result.data) {
+        scopeCountsCacheKey = key;
         window.__lktandoorScopeCounts = result.data;
         return result.data;
       }
@@ -297,6 +298,8 @@
         window.ClientsV3.loadList(ctx.uiCtx || window.__lktandoorUiCtx, next, false);
       });
       loadScopeCounts(ctx.api, state).then(function (counts) {
+        var current = window.ClientsV3.readState();
+        if (territoryParamsFromState(current).toString() !== territoryParamsFromState(state).toString()) return;
         renderScopeBar(shell, state, counts);
       });
     },

@@ -2,6 +2,11 @@
   "use strict";
 
   var fieldsCache = {};
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
 
   function parseRulesFromState(state) {
     if (state.v3Rules && Array.isArray(state.v3Rules)) {
@@ -28,15 +33,10 @@
     state.v3type = typ ? typ.value : "";
     state.v3types = typ ? [typ.value] : [];
     var cityRule = rules.find(function (r) {
-      return r.field === "city" && (r.op === "eq" || r.op === "contains") && r.value;
+      return r.field === "city" && r.op === "eq" && r.value;
     });
     state.city = cityRule ? cityRule.value : "";
-    var mgr = rules.find(function (r) {
-      return r.field === "managerGuid" && r.op === "eq" && r.value;
-    });
-    if (mgr && !state.responsibleGuid) {
-      state.v3manager = mgr.value;
-    }
+    // Manager selection is territory state, not an alias of a removable rule.
     var closedYes = rules.some(function (r) {
       return r.field === "closed" && r.op === "yes";
     });
@@ -45,11 +45,7 @@
     });
     if (closedYes) state.closed = "true";
     else if (closedNo) state.closed = "false";
-    else if (!rules.some(function (r) {
-      return r.field === "closed";
-    })) {
-      /* keep existing closed if no rule */
-    }
+    else state.closed = "";
     state.missingManager = rules.some(function (r) {
       return r.field === "missingManager" && r.op === "yes";
     });
@@ -67,7 +63,12 @@
       }
       rules.push({ field: field, op: "eq", value: value });
     }
-    upsertEq("city", state.city || "");
+    if (!rules.some(function (r) { return r.field === "city"; })) {
+      upsertEq("city", state.city || "");
+    }
+    if (!rules.some(function (r) { return r.field === "closed"; }) && state.closed) {
+      rules.push({ field: "closed", op: state.closed === "true" ? "yes" : "no", value: "" });
+    }
     var cats = state.v3categories && state.v3categories.length ? state.v3categories : state.v3category ? [state.v3category] : [];
     if (cats[0]) {
       upsertEq("categoryGuid", cats[0]);
@@ -106,6 +107,10 @@
   function valueLabel(fieldId, value, options) {
     if (!value) {
       return "";
+    }
+    if (options.staff && options.staff[fieldId]) {
+      var employee = options.staff[fieldId].find(function (entry) { return entry.guid === value; });
+      if (employee) return employee.name;
     }
     if (fieldId === "categoryGuid" && options.categories) {
       var cat = options.categories.find(function (c) {
@@ -205,13 +210,13 @@
       (options.categories || []).forEach(function (c) {
         catHtml +=
           '<option value="' +
-          c.guid +
+          esc(c.guid) +
           '"' +
           (currentValue === c.guid ? " selected" : "") +
           ">" +
-          c.guid +
+          esc(c.guid) +
           " · " +
-          c.name +
+          esc(c.name) +
           "</option>";
       });
       wrap.innerHTML = catHtml + "</select>";
@@ -222,13 +227,13 @@
       (options.types || []).forEach(function (t) {
         typeHtml +=
           '<option value="' +
-          t.guid +
+          esc(t.guid) +
           '"' +
           (currentValue === t.guid ? " selected" : "") +
           ">" +
-          t.guid +
+          esc(t.guid) +
           " · " +
-          t.name +
+          esc(t.name) +
           "</option>";
       });
       wrap.innerHTML = typeHtml + "</select>";
@@ -236,22 +241,22 @@
     }
     if (fieldDef.kind === "guid") {
       var mgrHtml = '<select id="v3-rule-value" class="clients-field__select"><option value="">—</option>';
-      (options.managers || []).forEach(function (m) {
+      ((options.staff && options.staff[fieldDef.id]) || options.managers || []).forEach(function (m) {
         mgrHtml +=
           '<option value="' +
-          m.guid +
+          esc(m.guid) +
           '"' +
           (currentValue === m.guid ? " selected" : "") +
           ">" +
-          m.name +
+          esc(m.name) +
           "</option>";
       });
       wrap.innerHTML = mgrHtml + "</select>";
       return;
     }
     wrap.innerHTML =
-      '<input id="v3-rule-value" class="clients-field__input" type="text" value="' +
-      (currentValue || "").replace(/"/g, "&quot;") +
+      '<input id="v3-rule-value" class="clients-field__input" type="' + (fieldDef.kind === "number" ? "number" : "text") + '" step="any" value="' +
+      esc(currentValue || "") +
       '">';
   }
 

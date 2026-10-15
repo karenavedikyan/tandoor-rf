@@ -292,6 +292,13 @@
         }
       });
     }
+    if (patch && patch.v3entity && patch.v3entity !== url.v3entity) {
+      next.v3Rules = [];
+      next.city = ""; next.closed = "";
+      next.v3types = []; next.v3categories = []; next.v3type = ""; next.v3category = "";
+      next.colManager = ""; next.colRegional = ""; next.colRop = ""; next.colCity = ""; next.colStatus = "";
+      next.v3cols = ""; next.page = 1;
+    }
     syncV3FilterAliases(next);
     var teamContext = next.v3view === "teams" || next.ropEmployee;
     if (teamContext && next.v3manager) {
@@ -452,6 +459,8 @@
       colRop: urlFilters.colRop || "",
       colCity: urlFilters.colCity || "",
       colStatus: urlFilters.colStatus || "",
+      filterOpen: urlFilters.filterOpen,
+      v3Rules: Array.isArray(legacy.v3Rules) ? legacy.v3Rules.slice() : (urlFilters.v3Rules || []).slice(),
     };
   }
 
@@ -871,7 +880,10 @@
       }
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
-        "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
+        "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
+        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid"].map(function (key) {
+          return params.has(key) ? "&" + key + "=" + encodeURIComponent(params.get(key)) : "";
+        }).join(""),
       ).then(function (optionsResult) {
         if (isStaleListLoad()) {
           return;
@@ -887,6 +899,7 @@
             var opts = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
             window.__lktandoorFilterOptions = opts;
             window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
+              if (isStaleListLoad()) return;
               window.ClientsV3FieldRules.renderBuilder(shell, liveState.v3entity, opts);
               window.ClientsV3FieldRules.renderChips(shell, liveState, opts, function (index) {
                 var next = readState();

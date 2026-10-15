@@ -29,6 +29,8 @@ export type V3FilterFieldDef = {
 };
 
 export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
+  { id: "discountAmount", label: "Значение скидки", entity: ["legal"], kind: "number", ops: ["eq", "gte", "lte", "empty", "filled"] },
+  { id: "warehouse", label: "Склад", entity: ["retail", "orphan_retail"], kind: "bool", ops: ["yes", "no"] },
   {
     id: "categoryGuid",
     label: "Категория (GUID)",
@@ -180,6 +182,7 @@ export function parseV3FilterRulesParam(raw: unknown, entity: V3ListEntity): V3F
   if (!Array.isArray(parsed)) {
     return undefined;
   }
+  if (parsed.length > MAX_RULES) return undefined;
   const rules: V3FilterRule[] = [];
   for (const item of parsed) {
     if (!item || typeof item !== "object") {
@@ -199,6 +202,7 @@ export function parseV3FilterRulesParam(raw: unknown, entity: V3ListEntity): V3F
     if (!value.trim()) {
       return undefined;
     }
+    if (def.kind === "number" && (!/^-?\d+(\.\d+)?$/.test(value.trim()) || !Number.isFinite(Number(value)))) return undefined;
     if (def.kind === "guid" || field.endsWith("Guid")) {
       const guid = value.trim().toLowerCase();
       if (!isValidUuidParam(guid) && field !== "categoryGuid" && field !== "typeGuid") {
@@ -230,6 +234,14 @@ function appendRuleSql(
   }
   const op = rule.op;
   const val = rule.value;
+  if (rule.field === "discountAmount") {
+    if (op === "empty") return `${sql} AND ${alias}.discount_amount IS NULL`;
+    if (op === "filled") return `${sql} AND ${alias}.discount_amount IS NOT NULL`;
+    const operator = op === "gte" ? ">=" : op === "lte" ? "<=" : "=";
+    params.push(val);
+    return `${sql} AND ${alias}.discount_amount ${operator} $${params.length}::numeric`;
+  }
+  if (rule.field === "warehouse") return `${sql} AND ${alias}.warehouse = ${op === "yes" ? "TRUE" : "FALSE"}`;
 
   const textExpr = (expression: string): string => {
     if (op === "empty") {
@@ -279,7 +291,7 @@ function appendRuleSql(
     const expr = v3JsonManagerField(alias, "guidRegionalManager");
     return applyGuidRule(sql, params, expr, op, val);
   }
-  if (rule.field === "hardwareGuid" && entity === "legal") {
+  if (rule.field === "hardwareGuid") {
     const expr = v3JsonManagerField(alias, "guidHardwareManager");
     return applyGuidRule(sql, params, expr, op, val);
   }

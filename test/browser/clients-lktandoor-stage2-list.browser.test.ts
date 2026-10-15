@@ -110,12 +110,21 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
   }
 
   async function waitForList(page: Page) {
-    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal");
-    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
-    await page.waitForResponse(
+    const response = page.waitForResponse(
       (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
       { timeout: 30000 },
     );
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal");
+    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
+    await response;
+    await page.waitForSelector("#clients-table-body tr a");
+  }
+
+  async function updateList(page: Page, action: () => Promise<unknown>) {
+    const response = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 200);
+    await action();
+    await response;
+    await page.waitForFunction(() => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") !== "true");
   }
 
   async function rowCount(page: Page): Promise<number> {
@@ -128,22 +137,18 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await waitForList(page);
     const before = await rowCount(page);
     assert.ok(before >= 2);
-    await page.selectOption("#v3-lktandoor-category-filter", CAT_A);
-    await page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("filters="),
-      { timeout: 15000 },
-    );
+    await updateList(page, () => page.selectOption("#v3-lktandoor-category-filter", CAT_A));
     const narrowed = await rowCount(page);
     assert.ok(narrowed < before);
     assert.ok(page.url().includes("filters=") || page.url().includes("v3category="));
-    await page.locator("#v3-lktandoor-field-filters").evaluate((el: HTMLDetailsElement) => {
-      el.open = true;
-    });
-    await page.locator('[data-testid="v3-rule-chip"]').first().click();
-    await page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && !res.url().includes(encodeURIComponent(CAT_A)),
-      { timeout: 15000 },
-    );
+    await updateList(page, () => page.reload());
+    assert.equal(await rowCount(page), narrowed);
+    await page.locator("#clients-table-body tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.goBack());
+    assert.equal(await rowCount(page), narrowed);
+    await page.locator("#v3-lktandoor-field-filters summary").click();
+    await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').first().click());
     assert.equal(await rowCount(page), before);
     const href = await page.locator("#clients-table-body tr a.clients-link").first().getAttribute("href");
     assert.ok(href);
@@ -153,31 +158,48 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.waitForSelector("#clients-table-body tr");
     assert.ok(page.url().includes("v3mode=1"));
     await page.setViewportSize(DESKTOP);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-desktop-1440.png"), fullPage: true });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-desktop-1440.png") });
     await page.setViewportSize(MOBILE);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-mobile-cold-390.png"), fullPage: true });
+    await updateList(page, () => page.reload());
+    await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
+    assert.equal(await rowCount(page), before);
+    assert.ok(await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().isVisible());
+    await page.locator("#v3-lktandoor-field-filters summary").click();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-mobile-cold-390.png") });
     await page.close();
   });
 
   it("retail columns and typed AND rules", async () => {
     const page = await browser.newPage();
     await login(page, "manager-lktandoor-list@example.com");
+    const initial = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 200);
     await page.goto(baseUrl + "/clients?v3mode=1&v3entity=retail");
     await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)');
-    await page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 200);
+    await initial;
+    await page.waitForSelector("#clients-table-body tr a");
     const text = await page.locator("#clients-table-body").innerText();
     assert.ok(text.includes("SYNTH Holding One") || text.includes("Retail Cat"));
-    await page.locator("#v3-lktandoor-field-filters").evaluate((el: HTMLDetailsElement) => {
-      el.open = true;
-    });
+    await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.selectOption("#v3-rule-field", "lprName");
     await page.selectOption("#v3-rule-op", "contains");
     await page.fill("#v3-rule-value", "Ivan");
-    await page.click("#v3-rule-add");
-    await page.waitForResponse((res) => res.url().includes("filters="));
+    await updateList(page, () => page.click("#v3-rule-add"));
     assert.equal(await rowCount(page), 1);
+    await page.selectOption("#v3-rule-field", "closed");
+    await page.selectOption("#v3-rule-op", "yes");
+    await updateList(page, () => page.click("#v3-rule-add"));
+    assert.equal(await rowCount(page), 0);
+    assert.equal(JSON.parse(new URL(page.url()).searchParams.get("filters")!).length, 2);
+    await updateList(page, () => page.locator('[data-testid="v3-rule-chip"]').last().click());
+    assert.equal(await rowCount(page), 1);
+    assert.equal(new URL(page.url()).searchParams.get("closed"), null);
     await page.setViewportSize(MOBILE);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-retail-mobile-390.png"), fullPage: true });
+    await updateList(page, () => page.reload());
+    await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
+    assert.equal(await rowCount(page), 1);
+    assert.equal(JSON.parse(new URL(page.url()).searchParams.get("filters")!).length, 1);
+    await page.locator("#v3-lktandoor-field-filters summary").click();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-retail-mobile-390.png") });
     await page.close();
   });
 
@@ -193,10 +215,8 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       "&responsibleKind=manager&teamKind=manager";
     await page.goto(territoryUrl);
     await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
-    await page.selectOption("#v3-lktandoor-category-filter", CAT_A);
-    await page.waitForResponse((res) => res.url().includes("/api/clients/v3/list"));
-    await page.click("#v3-list-reset-filters");
-    await page.waitForResponse((res) => res.url().includes("/api/clients/v3/list"));
+    await updateList(page, () => page.selectOption("#v3-lktandoor-category-filter", CAT_A));
+    await updateList(page, () => page.click("#v3-list-reset-filters"));
     const url = page.url();
     assert.ok(url.includes("ropEmployee="));
     assert.ok(url.includes("responsibleGuid="));

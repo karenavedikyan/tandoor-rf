@@ -302,6 +302,24 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.ok(
       options.body.categories.some((c: { guid: string; name: string }) => c.guid === CAT_A && c.name === "Cat A"),
     );
+    const territoryOptions = await request(app)
+      .get(`/api/clients/v3/options?entity=legal&responsibleGuid=${M1}&responsibleKind=manager`)
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(territoryOptions.status, 200);
+    assert.deepEqual(territoryOptions.body.staff.managerGuid.map((m: { guid: string }) => m.guid), [M1]);
+    const invalidTerritory = await request(app)
+      .get("/api/clients/v3/options?entity=legal&responsibleGuid=invalid&responsibleKind=manager")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(invalidTerritory.status, 400);
+    for (const [entity, rule] of [
+      ["legal", { field: "discountAmount", op: "gte", value: "0" }],
+      ["retail", { field: "warehouse", op: "no", value: "" }],
+    ] as const) {
+      const filtered = await request(app)
+        .get(`/api/clients/v3/list?entity=${entity}&filters=${encodeURIComponent(JSON.stringify([rule]))}`)
+        .set({ Origin: ORIGIN, Cookie: cookie });
+      assert.equal(filtered.status, 200);
+    }
 
     const byType = await request(app)
       .get(`/api/clients/v3/list?entity=legal&typeGuid=${TYPE_A}&page=1&pageSize=50`)

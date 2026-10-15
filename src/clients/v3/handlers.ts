@@ -161,7 +161,24 @@ export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response)
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
     return;
   }
-  const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity);
+  const rawKind = String(req.query.responsibleKind ?? "");
+  const kind = ["manager", "regional", "hardware"].includes(rawKind) ? rawKind as V3ResponsibleKind : undefined;
+  for (const key of ["managerGuid", "responsibleGuid", "ropBranchGuid"] as const) {
+    if (req.query[key] !== undefined && !parseGuidParam(req.query[key])) {
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимая территория."));
+      return;
+    }
+  }
+  if (req.query.responsibleGuid && !kind) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleKind."));
+    return;
+  }
+  const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity, {
+    managerGuid: parseGuidParam(req.query.managerGuid) ?? undefined,
+    responsibleGuid: parseGuidParam(req.query.responsibleGuid) ?? undefined,
+    responsibleKind: kind,
+    ropBranchGuid: parseGuidParam(req.query.ropBranchGuid) ?? undefined,
+  });
   setNoStore(res);
   res.json(options);
 }

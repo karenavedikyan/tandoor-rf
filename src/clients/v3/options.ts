@@ -6,6 +6,7 @@ import {
   type V3ScopeSql,
 } from "./access-scope";
 import type { V3ListEntity } from "./list";
+import { appendAssignmentFilters, type V3ListQuery } from "./list";
 import {
   v3CategoryGuidSql,
   v3CategoryNameSql,
@@ -20,6 +21,7 @@ export type V3FilterOptions = {
   types: Array<{ guid: string; name: string; count: number }>;
   categories: Array<{ guid: string; name: string; count: number }>;
   cities: Array<{ value: string; count: number }>;
+  staff: Record<string, Array<{ guid: string; name: string; count: number }>>;
 };
 
 function scopeForEntity(context: AccessContext, entity: V3ListEntity, alias: string): V3ScopeSql {
@@ -35,14 +37,19 @@ async function loadDistinctFromTable(
   alias: string,
   scope: V3ScopeSql,
   orphanOnly: boolean,
+  territory?: Partial<V3ListQuery>,
 ): Promise<{
   managers: V3FilterOptions["managers"];
   types: V3FilterOptions["types"];
   categories: V3FilterOptions["categories"];
   cities: V3FilterOptions["cities"];
+  staff: V3FilterOptions["staff"];
 }> {
   const orphanSql = orphanOnly ? ` AND ${alias}.guid_holding IS NULL` : "";
-  const baseWhere = `(${scope.clause})${orphanSql}`;
+  const params = [...scope.params];
+  const territorySql = alias === "h" ? "" : appendAssignmentFilters({ entity: alias === "le" ? "legal" : "retail", page: 1, pageSize: 1, q: "", ...territory }, alias, params);
+  scope = { ...scope, params };
+  const baseWhere = `(${scope.clause})${orphanSql}${territorySql}`;
   const managers = await query<{ guid: string; name: string; count: string }>(
     `
       SELECT
@@ -101,7 +108,25 @@ async function loadDistinctFromTable(
       scope.params,
     );
   }
+  const staff: V3FilterOptions["staff"] = {};
+  const staffFields = [
+    ["managerGuid", "guidManager", "nameManager"],
+    ["regionalGuid", "guidRegionalManager", "nameRegionalManager"],
+    ["hardwareGuid", "guidHardwareManager", "nameHardwareManager"],
+    ["ropGuid", "guidHeadOfSales", "nameHeadOfSales"],
+  ] as const;
+  for (const [id, guidKey, nameKey] of staffFields) {
+    const rows = await query<{ guid: string; name: string; count: string }>(
+      `SELECT LOWER(TRIM(${v3JsonManagerField(alias, guidKey)})) AS guid,
+       MAX(COALESCE(${v3JsonManagerField(alias, nameKey)}, '')) AS name, COUNT(*)::text AS count
+       FROM ${table} AS ${alias} WHERE ${baseWhere}
+       AND NULLIF(TRIM(${v3JsonManagerField(alias, guidKey)}), '') IS NOT NULL GROUP BY 1 ORDER BY name`,
+      params,
+    );
+    staff[id] = rows.rows.map(r => ({ guid:r.guid, name:r.name || r.guid, count:Number(r.count) }));
+  }
   return {
+    staff,
     managers: managers.rows.map((r) => ({
       guid: r.guid,
       name: r.name || r.guid.slice(0, 8),
@@ -127,6 +152,7 @@ async function loadDistinctFromTable(
 export async function loadV3FilterOptions(
   context: AccessContext,
   entity: V3ListEntity,
+  territory?: Partial<V3ListQuery>,
 ): Promise<V3FilterOptions> {
   if (entity === "holdings") {
     const scope = scopeForEntity(context, entity, "h");
@@ -134,8 +160,8 @@ export async function loadV3FilterOptions(
   }
   if (entity === "legal") {
     const scope = scopeForEntity(context, entity, "le");
-    return loadDistinctFromTable("onec_v3_legal_entities", "le", scope, false);
+    return loadDistinctFromTable("onec_v3_legal_entities", "le", scope, false, territory);
   }
   const scope = scopeForEntity(context, entity, "ro");
-  return loadDistinctFromTable("onec_v3_retail_outlets", "ro", scope, entity === "orphan_retail");
+  return loadDistinctFromTable("onec_v3_retail_outlets", "ro", scope, entity === "orphan_retail", territory);
 }

@@ -38,6 +38,7 @@ function loadClientsV3(search: string): ClientsV3Api {
   const logicPath = path.join(process.cwd(), "public/clients-logic.js");
   const v3Path = path.join(process.cwd(), "public/clients-v3.js");
   window.eval(fs.readFileSync(logicPath, "utf8"));
+  window.eval(fs.readFileSync(path.join(process.cwd(), "public/clients-v3-field-rules.js"), "utf8"));
   window.eval(fs.readFileSync(v3Path, "utf8"));
   const g = window as unknown as Window & { ClientsV3?: ClientsV3Api };
   assert.ok(g.ClientsV3);
@@ -45,6 +46,15 @@ function loadClientsV3(search: string): ClientsV3Api {
 }
 
 describe("clients v3 multiselect normalization", () => {
+  it("restores field rules on initial load and honors an explicit empty rule array", () => {
+    const rules = [{ field: "lprName", op: "contains", value: "Ivan" }];
+    const search = "?v3mode=1&v3entity=retail&filters=" + encodeURIComponent(JSON.stringify(rules));
+    const v3 = loadClientsV3(search);
+    const state = v3.legacyStateToV3(logic.readStateFromSearch(search), "url") as Record<string, unknown>;
+    assert.deepEqual(state.v3Rules, rules);
+    const cleared = v3.legacyStateToV3({ v3Rules: [] }, "") as Record<string, unknown>;
+    assert.deepEqual(cleared.v3Rules, []);
+  });
   it("restores the manager from a real parsed list URL without treating defaults as a clear", () => {
     const search = "?v3mode=1&v3entity=legal&view=all&v3manager=manager-one&v3dense=1";
     const v3 = loadClientsV3(search);
