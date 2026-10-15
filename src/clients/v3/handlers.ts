@@ -18,6 +18,7 @@ import {
 } from "./detail";
 import { parseMultiFilterTokenParam } from "./query-params";
 import { getV3FieldCatalog } from "./field-catalog";
+import { loadV3ScopeSummary } from "./scope-summary";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -108,6 +109,27 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });
+}
+
+export async function v3ScopeSummaryHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const responsibleKindRaw = String(req.query.responsibleKind ?? "");
+  const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
+    ? (responsibleKindRaw as V3ResponsibleKind)
+    : undefined;
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const managerGuid = parseGuidParam(req.query.managerGuid);
+  const summary = await loadV3ScopeSummary(req.accessContext!, {
+    ropBranchGuid: ropBranchGuid ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind,
+    managerGuid: managerGuid ?? undefined,
+  });
+  setNoStore(res);
+  res.json(summary);
 }
 
 export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response): Promise<void> {

@@ -259,6 +259,27 @@
         ")</option>";
     });
     citySelect.innerHTML = html;
+    var categorySelect = document.getElementById("v3-lktandoor-category-filter");
+    if (categorySelect && options && options.categories) {
+      var catHtml = '<option value="">Все категории</option>';
+      var selectedCats = [];
+      if (state.v3categories && state.v3categories.length) {
+        selectedCats = state.v3categories.slice();
+      } else if (state.v3category) {
+        selectedCats = [state.v3category];
+      }
+      (options.categories || []).forEach(function (entry) {
+        catHtml +=
+          '<option value="' +
+          shell.escapeHtml(entry.guid) +
+          '"' +
+          (selectedCats.indexOf(entry.guid) !== -1 ? " selected" : "") +
+          ">" +
+          shell.escapeHtml(entry.name + " (" + entry.count + ")") +
+          "</option>";
+      });
+      categorySelect.innerHTML = catHtml;
+    }
     var isLegal = state.v3entity === "legal" || state.v3entity === "holdings";
     citySelect.disabled = isLegal && cities.length === 0;
     var hint = bar.querySelector(".clients-v3-list-filterbar__hint");

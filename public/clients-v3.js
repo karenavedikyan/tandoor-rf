@@ -91,6 +91,7 @@
       colRop: params.get("colRop") || "",
       colCity: params.get("colCity") || "",
       colStatus: params.get("colStatus") || "",
+      filterOpen: params.get("filterOpen") === "1",
     };
   }
 
@@ -503,6 +504,8 @@
       if (state[key]) params.set(key, state[key]);
       else params.delete(key);
     });
+    if (state.filterOpen) params.set("filterOpen", "1");
+    else params.delete("filterOpen");
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -543,6 +546,7 @@
     ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
       if (s[key]) params.set(key, s[key]);
     });
+    if (s.filterOpen) params.set("filterOpen", "1");
     return "?" + params.toString();
   }
 
@@ -785,6 +789,21 @@
       syncV3FilterAliases(state);
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
+      var legacyState = {
+        view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
+        ropEmployee: state.ropEmployee,
+        responsibleGuid: state.responsibleGuid,
+      };
+      var lktandoorActive =
+        window.ClientsLktandoorList &&
+        window.ClientsLktandoorList.shouldActivate(legacyState, true);
+      if (window.ClientsLktandoorList) {
+        window.ClientsLktandoorList.syncLayout(lktandoorActive, state);
+        document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
+        if (lktandoorActive && ctx.lktandoorContext) {
+          window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
+        }
+      }
       if (window.ClientsV3List) {
         window.ClientsV3List.applyDensity(!!state.v3dense);
       }
@@ -925,9 +944,16 @@
               return "<tr>" + cells + "</tr>";
             })
             .join("");
+          var useLktandoorMobile =
+            window.ClientsLktandoorList && document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+          ctx.cardsEl.className = useLktandoorMobile ? "clients-cards x13-mobile-list" : "clients-cards";
+          ctx.tableBody.closest(".clients-table-wrap")?.classList.toggle("x13-desktop-list", !!useLktandoorMobile);
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
               var href = detailHref(item.guid, detailType, state);
+              if (useLktandoorMobile && window.ClientsLktandoorList) {
+                return window.ClientsLktandoorList.renderMobileCard(shell, item, visibleCols, href, listUi, state);
+              }
               var metaLine = listUi ? listUi.mobileMetaLine(item, visibleCols, shell) : "";
               return (
                 '<article class="clients-card">' +
@@ -1179,6 +1205,7 @@
           v3cols: url.v3cols,
           v3dense: url.v3dense,
           pageSize: url.pageSize,
+          filterOpen: false,
         },
         true,
       );
@@ -1200,6 +1227,22 @@
           false,
         );
       });
+      var categoryQuick = document.getElementById("v3-lktandoor-category-filter");
+      categoryQuick?.addEventListener("change", function () {
+        var guid = categoryQuick.value || "";
+        window.ClientsV3.loadList(
+          currentContext(),
+          mergeListStateForUserAction({
+            v3categories: guid ? [guid] : [],
+            v3category: guid,
+            page: 1,
+          }),
+          false,
+        );
+      });
+      if (window.ClientsLktandoorList) {
+        window.ClientsLktandoorList.bindFilterPanel();
+      }
       document.getElementById("v3-density-btn")?.addEventListener("click", function () {
         var url = readState();
         window.ClientsV3.loadList(

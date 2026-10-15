@@ -127,6 +127,8 @@
     "colRop",
     "colCity",
     "colStatus",
+    "filterOpen",
+    "v3city",
     "missingManager",
     "responsibleGuid",
     "ropBranchGuid",

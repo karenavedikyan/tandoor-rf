@@ -394,6 +394,19 @@ describe("clients v3 API", { concurrency: false }, () => {
       .get("/api/clients/v3/field-catalog")
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(catalogManager.status, 403);
+
+    const scopeAdmin = await request(app)
+      .get("/api/clients/v3/scope-summary")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(scopeAdmin.status, 200);
+    assert.ok(scopeAdmin.body.legal >= 1);
+    assert.ok(scopeAdmin.body.retail >= 1);
+
+    const scopeMgr = await request(app)
+      .get("/api/clients/v3/scope-summary")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(scopeMgr.status, 200);
+    assert.ok(scopeMgr.body.legal <= scopeAdmin.body.legal);
   });
 
   it("sync-status exposes exchangeV3Active", async () => {

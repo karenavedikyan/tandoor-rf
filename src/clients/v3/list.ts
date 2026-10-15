@@ -154,7 +154,7 @@ function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknow
   return ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = $${params.length}::uuid`;
 }
 
-function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+export function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
   const teamScoped =
     Boolean(input.ropBranchGuid) ||
