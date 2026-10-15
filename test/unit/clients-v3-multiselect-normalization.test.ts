@@ -3,6 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+
+const logic = createRequire(import.meta.url)("../../public/clients-logic.js") as {
+  readStateFromSearch: (search: string) => Record<string, unknown>;
+};
 
 type ClientsV3Api = {
   legacyStateToV3: (
@@ -40,6 +45,32 @@ function loadClientsV3(search: string): ClientsV3Api {
 }
 
 describe("clients v3 multiselect normalization", () => {
+  it("restores the manager from a real parsed list URL without treating defaults as a clear", () => {
+    const search = "?v3mode=1&v3entity=legal&view=all&v3manager=manager-one&v3dense=1";
+    const v3 = loadClientsV3(search);
+    const legacy = logic.readStateFromSearch(search);
+    assert.equal(legacy.responsibleGuid, "");
+    const state = v3.legacyStateToV3(legacy, "url") as Record<string, unknown>;
+    assert.equal(state.v3manager, "manager-one");
+    assert.ok(v3.buildListReturnQuery(state).includes("v3manager=manager-one"));
+  });
+
+  it("still honors an explicit user action clearing responsible navigation", () => {
+    const v3 = loadClientsV3("?v3mode=1&v3entity=legal&view=all&v3manager=manager-one");
+    const state = v3.legacyStateToV3(
+      { view: "all", entity: "clients", responsibleGuid: "", responsibleKind: "" },
+      "",
+    ) as Record<string, unknown>;
+    assert.equal(state.v3manager, "");
+  });
+
+  it("still honors an explicitly empty responsibleGuid in the URL", () => {
+    const search = "?v3mode=1&v3entity=legal&view=all&v3manager=manager-one&responsibleGuid=";
+    const v3 = loadClientsV3(search);
+    const state = v3.legacyStateToV3(logic.readStateFromSearch(search), "url") as Record<string, unknown>;
+    assert.equal(state.v3manager, "");
+  });
+
   it("explicit empty arrays clear aliases without manual alias reset", () => {
     const v3 = loadClientsV3("?v3mode=1&v3entity=legal&v3type=t1&v3category=c1");
     const state = v3.legacyStateToV3({ v3types: [], v3categories: [] }, "");
