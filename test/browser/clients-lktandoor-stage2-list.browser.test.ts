@@ -158,11 +158,13 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       const searchRect = search.getBoundingClientRect();
       const controls = row.querySelector(".clients-toolbar__controls-row");
       const controlsRect = controls?.getBoundingClientRect();
+      const firstButton = switcher.querySelector("button")?.getBoundingClientRect();
       const switcherStyle = getComputedStyle(switcher);
       const shortcutRadius = shortcut ? getComputedStyle(shortcut).borderRadius : "";
       return {
         searchWidthRatio: searchRect.width / rowRect.width,
         gapAfterSearch: controlsRect ? controlsRect.left - searchRect.right : 999,
+        gapToFirstButton: firstButton ? firstButton.left - searchRect.right : 999,
         switcherBorderWidth: switcherStyle.borderWidth,
         switcherBackground: switcherStyle.backgroundColor,
         shortcutRadius,
@@ -171,8 +173,9 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     });
     assert.ok(layout, "toolbar layout nodes missing");
     assert.equal(layout.rowDisplay, "flex");
-    assert.ok(layout.searchWidthRatio > 0.35, "search should consume spare desktop width");
+    assert.ok(layout.searchWidthRatio > 0.55, "search should consume spare desktop width");
     assert.ok(layout.gapAfterSearch < 24, "search and controls should sit adjacent");
+    assert.ok(layout.gapToFirstButton < 24, "controls must not contain a blank flexible spacer");
     assert.equal(layout.switcherBorderWidth, "0px", "entity switcher should not use segmented shell border");
     assert.ok(!layout.shortcutRadius.includes("999"), "shortcuts should be rectangular");
   }
@@ -232,10 +235,17 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       const row = document.querySelector(".clients-lktandoor-list .clients-toolbar__controls-row");
       const buttons = row ? row.querySelectorAll("button, .clients-view-switcher__btn").length : 0;
       const overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
-      return { buttons, overflow };
+      const reset = document.getElementById("v3-list-reset-filters")?.getBoundingClientRect();
+      const note = document.querySelector(".x13-territory-note")?.getBoundingClientRect();
+      return {
+        buttons,
+        overflow,
+        resetAndNoteShareRow: !!reset && !!note && Math.abs((reset.top + reset.height / 2) - (note.top + note.height / 2)) < 12,
+      };
     });
     assert.ok(mobileToolbar.buttons >= 3, "mobile toolbar should show three controls");
     assert.equal(mobileToolbar.overflow, false, "mobile list should not overflow horizontally");
+    assert.equal(mobileToolbar.resetAndNoteShareRow, true, "reset and territory note should share the second filter row");
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-toolbar-390.png") });
     await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().click();
     await page.waitForURL(/\/clients\//);
@@ -254,13 +264,19 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     const optionalToggle = page.locator(
       '[data-testid="v3-lktandoor-columns-dialog"] input[data-v3-column-id]:not([disabled])',
     );
-    if ((await optionalToggle.count()) > 1) {
-      await optionalToggle.nth(1).click();
-    }
+    assert.ok((await optionalToggle.count()) > 1, "column catalog must contain optional fields");
+    const toggledId = await optionalToggle.nth(1).getAttribute("data-v3-column-id");
+    const wasChecked = await optionalToggle.nth(1).isChecked();
+    await updateList(page, () => optionalToggle.nth(1).click());
     await page.click('[data-testid="v3-columns-done"]');
     await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);
     await page.click("#columns-picker-btn");
     await page.waitForFunction(() => document.getElementById("v3-lktandoor-columns-dialog")?.open === true);
+    assert.equal(
+      await page.locator(`#v3-lktandoor-columns-dialog input[data-v3-column-id="${toggledId}"]`).isChecked(),
+      !wasChecked,
+      "selected columns must survive modal close/reopen",
+    );
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-columns-desktop-1440.png") });
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("v3-lktandoor-columns-dialog")?.open);

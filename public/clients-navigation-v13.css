@@ -128,7 +128,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   padding: 16px 20px;
   border: 1px solid var(--rf-border, var(--line));
   border-radius: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .clients-lktandoor-list .x6-scopebar b {
@@ -442,12 +442,14 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 .x13-columns-dialog .clients-columns-picker__grid--two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px 24px;
+  gap: 0 16px;
 }
 
 .x13-columns-dialog .clients-columns-picker__item {
   font-size: var(--text-sm, 14px);
   min-height: 28px;
+  padding: 12px 6px;
+  border-bottom: 1px solid var(--rf-border, #e5e7eb);
 }
 
 @media (max-width: 767px) {
@@ -618,9 +620,10 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
   border-bottom: 1px solid var(--rf-border, var(--line));
   width: 100%;
   box-sizing: border-box;
+  background: var(--rf-surface, #fff);
 }
 
-.clients-lktandoor-list .clients-toolbar__search-row .clients-field--search {
+.clients-design-page .clients-lktandoor-list .clients-toolbar.clients-toolbar--v3-compact .clients-toolbar__search-row .clients-field--search {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
@@ -638,7 +641,7 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
   border: 0;
 }
 
-.clients-lktandoor-list .clients-toolbar__controls-row {
+.clients-design-page .clients-lktandoor-list .clients-toolbar.clients-toolbar--v3-compact .clients-toolbar__controls-row {
   flex: 0 0 auto;
   display: flex;
   align-items: stretch;
@@ -680,7 +683,8 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
   white-space: nowrap;
 }
 
-.clients-lktandoor-list .x13-quick-filters {
+.clients-design-page .clients-lktandoor-list .clients-toolbar.clients-toolbar--v3-compact .x13-quick-filters {
+  padding: 0 16px 14px;
   border-bottom: 1px solid var(--rf-border, var(--line));
 }
 
@@ -755,7 +759,19 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
 
   .clients-lktandoor-list .x13-quick-filters .x13-reset-link,
   .clients-lktandoor-list .x13-quick-filters .x13-territory-note {
-    grid-column: 1 / -1;
+    grid-column: auto;
+  }
+
+  .clients-design-page .clients-lktandoor-list .clients-toolbar.clients-toolbar--v3-compact .x13-quick-filters .x13-reset-link {
+    grid-column: 1;
+    width: auto;
+    justify-self: start;
+  }
+
+  .clients-design-page .clients-lktandoor-list .clients-toolbar.clients-toolbar--v3-compact .x13-quick-filters .x13-territory-note {
+    grid-column: 2;
+    text-align: right;
+    align-self: center;
   }
 
   .clients-lktandoor-list .clients-sync--secondary {

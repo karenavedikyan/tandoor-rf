@@ -4306,7 +4306,7 @@
   function renderSyncStatus(data) {
     var formatted = logic.formatSyncStatusParts(data);
     syncStatusEl.textContent = formatted.text + formatted.appendWarning;
-    syncStatusEl.className = "clients-sync" + (formatted.warning ? " clients-sync--warning" : "");
+    syncStatusEl.classList.toggle("clients-sync--warning", Boolean(formatted.warning));
   }
 
   function loadSyncStatus() {
