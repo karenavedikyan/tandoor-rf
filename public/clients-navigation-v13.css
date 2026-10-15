@@ -416,3 +416,114 @@
     display: none;
   }
 }
+
+.clients-lktandoor-teams .x14-teams-panel {
+  margin: 0 0 16px;
+}
+
+.clients-lktandoor-teams .clients-compact-team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clients-lktandoor-teams .clients-compact-team {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 12px;
+  background: var(--color-surface, #fff);
+  padding: 10px 12px;
+}
+
+.clients-lktandoor-teams .clients-compact-team__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.clients-lktandoor-teams .clients-compact-team__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.clients-lktandoor-teams .clients-compact-team__avatar--rop {
+  width: 40px;
+  height: 40px;
+}
+
+.clients-lktandoor-teams .clients-compact-team__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.clients-lktandoor-teams .clients-compact-team__name {
+  font-weight: 600;
+  text-align: left;
+}
+
+.clients-lktandoor-teams .clients-compact-team__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.clients-lktandoor-teams .clients-compact-team__member {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid var(--color-border, #eee);
+}
+
+.clients-lktandoor-teams .clients-compact-team__member-main {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.clients-lktandoor-teams .clients-compact-team__member-main:hover .clients-compact-team__member-name {
+  text-decoration: underline;
+}
+
+.clients-lktandoor-teams .clients-compact-team-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 640px) {
+  .clients-lktandoor-teams .clients-compact-team__row {
+    grid-template-columns: auto 1fr;
+  }
+  .clients-lktandoor-teams .clients-compact-team__metrics {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+  .clients-lktandoor-teams .clients-compact-team-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .clients-lktandoor-teams .clients-compact-team__member {
+    grid-template-columns: 1fr;
+  }
+}

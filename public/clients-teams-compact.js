@@ -20,6 +20,33 @@
       .toLowerCase();
   }
 
+  function initialsFromName(name) {
+    var parts = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!parts.length) {
+      return "?";
+    }
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function primaryAssignment(assignments) {
+    var order = ["manager", "regional", "hardware"];
+    for (var i = 0; i < order.length; i += 1) {
+      var hit = assignments.find(function (assignment) {
+        return assignment.kind === order[i];
+      });
+      if (hit) {
+        return hit;
+      }
+    }
+    return assignments[0];
+  }
+
   function mergeResponsiblesByEmployee(items) {
     var map = Object.create(null);
     (items || []).forEach(function (item) {
@@ -304,11 +331,21 @@
         (employee.rosterInOpt === false
           ? '<span class="clients-compact-team__badge">Вне справочника ОПТ</span>'
           : "");
+      var primary = primaryAssignment(assignments);
       return (
         '<div class="clients-compact-team__member" data-employee-guid="' +
         deps.shell.escapeHtml(employee.employeeGuid) +
         '">' +
-        '<div class="clients-compact-team__member-main">' +
+        '<button type="button" class="clients-compact-team__member-main" data-open-territory="clients" data-responsible-kind="' +
+        deps.shell.escapeHtml(primary.kind) +
+        '" data-manager="' +
+        deps.shell.escapeHtml(employee.employeeGuid) +
+        '" data-rop-employee="' +
+        deps.shell.escapeHtml(ropGuid) +
+        '">' +
+        '<span class="clients-compact-team__avatar" aria-hidden="true">' +
+        deps.shell.escapeHtml(initialsFromName(employee.name || employee.shortId)) +
+        "</span>" +
         '<span class="clients-compact-team__member-name">' +
         deps.shell.escapeHtml(employee.name || employee.shortId || employee.employeeGuid) +
         "</span>" +
@@ -316,7 +353,7 @@
         kindTags +
         badges +
         "</span>" +
-        "</div>" +
+        "</button>" +
         '<div class="clients-compact-team__member-counts">' +
         renderAssignmentLinks(ropGuid, employee, null, assignments) +
         "</div>" +
@@ -390,6 +427,9 @@
           '<span class="clients-compact-team__chevron" aria-hidden="true"></span>' +
           "</button>" +
           '<div class="clients-compact-team__identity">' +
+          '<span class="clients-compact-team__avatar clients-compact-team__avatar--rop" aria-hidden="true">' +
+          deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
+          "</span>" +
           '<button type="button" class="clients-compact-team__name" data-toggle-rop="' +
           deps.shell.escapeHtml(ropGuid) +
           '">' +
@@ -606,6 +646,26 @@
             deps.navigateDirectorBranchPortfolio(ropGuid, portfolio);
           } else {
             deps.navigateRopBranchPortfolio(state, portfolio);
+          }
+        });
+      });
+      container.querySelectorAll("[data-open-territory]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var ropGuid = btn.getAttribute("data-rop-employee") || state.ropEmployee;
+          var managerGuid = btn.getAttribute("data-manager");
+          var kind = btn.getAttribute("data-responsible-kind") || "manager";
+          var entityMode = btn.getAttribute("data-open-territory") || "clients";
+          var entry = cacheEntry(ropGuid);
+          var match = (entry.items || []).find(function (item) {
+            return item.employeeGuid === managerGuid && item.kind === kind;
+          });
+          if (!match) {
+            match = { employeeGuid: managerGuid, name: "", kind: kind };
+          }
+          if (deps.usesDirectorLayout()) {
+            deps.navigateDirectorResponsible(ropGuid, match, kind, entityMode);
+          } else {
+            deps.navigateResponsible(state, match, kind, entityMode);
           }
         });
       });

@@ -2942,14 +2942,26 @@
     renderBreadcrumbs(state);
     if (window.ClientsLktandoorList && window.ClientsV3) {
       var v3StateForChrome = window.ClientsV3.readState();
+      var lktandoorTeamsActive =
+        window.ClientsLktandoorTeams &&
+        window.ClientsLktandoorTeams.shouldUse(state, exchangeV3Active, rolePresentation, logic);
       var lktandoorActive = window.ClientsLktandoorList.shouldActivate(state, exchangeV3Active);
+      if (window.ClientsLktandoorTeams) {
+        window.ClientsLktandoorTeams.syncLayout(lktandoorTeamsActive, state);
+      }
       window.ClientsLktandoorList.syncLayout(lktandoorActive, v3StateForChrome);
       document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
-      if (lktandoorActive) {
+      if (lktandoorTeamsActive || lktandoorActive) {
         managerChromeEl?.classList.add("clients-hidden");
         var lkCtx = buildV3UiContext();
         lkCtx.lktandoorContext.uiCtx = lkCtx;
-        window.ClientsLktandoorList.refreshChrome(shell, v3StateForChrome, lkCtx.lktandoorContext);
+        if (lktandoorTeamsActive && window.ClientsLktandoorTeams) {
+          window.ClientsLktandoorTeams.renderSectionHeading(shell, state, rolePresentation);
+          window.ClientsLktandoorList.renderContextNav(shell, v3StateForChrome, lkCtx.lktandoorContext);
+        }
+        if (lktandoorActive) {
+          window.ClientsLktandoorList.refreshChrome(shell, v3StateForChrome, lkCtx.lktandoorContext);
+        }
       }
     }
   }
@@ -3271,9 +3283,13 @@
                 shell.escapeHtml(initialsFromName(displayName)) +
                 "</span>" +
                 '<div class="clients-team-member-row__text">' +
-                '<span class="clients-team-member-row__name">' +
+                '<button type="button" class="clients-team-member-row__name clients-team-member-row__open" data-responsible-entity="clients" data-responsible-kind="' +
+                shell.escapeHtml(manager.kind) +
+                '" data-manager="' +
+                shell.escapeHtml(manager.employeeGuid) +
+                '">' +
                 shell.escapeHtml(displayName) +
-                "</span>" +
+                "</button>" +
                 '<span class="clients-team-member-row__kind">' +
                 shell.escapeHtml(RESPONSIBLE_KIND_LABELS[manager.kind] || manager.kind) +
                 "</span>" +
@@ -3474,7 +3490,7 @@
       return Promise.resolve();
     }
     if ((isRopDesignSession() || usesDirectorLayout()) && state.ropEmployee && !usesOnecTeamSource(state)) {
-      if (usesDirectorLayout() && !isRopDesignSession()) {
+      if (usesDirectorLayout() && !isRopDesignSession() && !exchangeV3Active) {
         return renderDirectorRopTeamCard(state);
       }
       return renderCompactRopTeamPanel(state);
@@ -4200,10 +4216,12 @@
         teamContext: teamContext,
         logic: logic,
         onBack: function (v3State) {
+          var urlTeam = logic.readStateFromSearch(window.location.search);
           if (v3State.responsibleGuid) {
             navigateState({
               view: "teams",
               ropEmployee: v3State.ropEmployee || "",
+              teamExpand: v3State.ropEmployee ? [v3State.ropEmployee] : urlTeam.teamExpand || [],
               manager: "",
               clientManager: "",
               responsibleGuid: "",
@@ -4213,10 +4231,10 @@
             return;
           }
           if (v3State.ropEmployee) {
-            navigateState({ view: "teams", ropEmployee: "", page: 1 });
+            navigateState({ view: "teams", ropEmployee: "", teamExpand: urlTeam.teamExpand || [], page: 1 });
             return;
           }
-          navigateState({ view: "all", page: 1 });
+          navigateState({ view: "teams", page: 1 });
         },
       },
       renderPagination: function (v3state, totalPages) {

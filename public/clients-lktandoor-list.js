@@ -263,6 +263,9 @@
     if ((state.view || "all") === "teams" && !state.ropEmployee && !state.responsibleGuid) {
       return false;
     }
+    if (window.ClientsLktandoorTeams && window.ClientsLktandoorTeams.isTeamsDirectory(state)) {
+      return false;
+    }
     if ((state.view || "all") === "review" && !state.unassignedCategory && !state.manager) {
       return false;
     }
