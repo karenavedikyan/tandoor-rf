@@ -47,8 +47,10 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Manager One/);
     assert.match(html, /ROP One/);
     assert.match(html, /Holding One/);
-    assert.match(html, /Отгрузки \/ план/);
+    assert.match(html, /Торговые точки/);
+    assert.match(html, /Юридические лица/);
     assert.match(html, /Точки и контакты/);
+    assert.match(html, /GUID:/);
     assert.match(html, /v3-role-context/);
     assert.equal((html.match(/data-testid="v3-role-context"/g) || []).length, 1);
     assert.ok(

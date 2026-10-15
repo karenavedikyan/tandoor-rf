@@ -175,6 +175,43 @@
     if (payload.entityType === "holding" && ent.guid) {
       renderV3Composition(document.getElementById("v3-composition"), payload);
     }
+    loadV3HoldingRelated(detailRoot, payload);
+  }
+
+  function loadV3HoldingRelated(detailRoot, payload) {
+    if (!detailRoot || !window.ClientDetailV3 || !window.ClientDetailV3.updateRelatedContext) {
+      return;
+    }
+    if (payload.entityType === "holding" || !payload.holdingLink || !payload.holdingLink.guid) {
+      return;
+    }
+    api
+      .apiRequest(
+        "/api/clients/v3/holdings/" + encodeURIComponent(payload.holdingLink.guid) + "/composition",
+      )
+      .then(function (result) {
+        if (!detailRoot.isConnected || !result.response.ok || !result.data) {
+          var host = detailRoot.querySelector('[data-testid="v3-related-outlets"]');
+          if (host) {
+            host.innerHTML =
+              '<span class="pc-unavailable">Не удалось загрузить торговые точки холдинга.</span>';
+          }
+          return;
+        }
+        var legal = result.data.legalEntities || [];
+        var retail = result.data.retailOutlets || [];
+        window.ClientDetailV3.updateRelatedContext(detailRoot, shell, {
+          counts: { retailOutlets: retail.length, legalEntities: legal.length },
+          retailOutlets: retail,
+          parentReturn: encodeURIComponent(currentDetailReturnParam()),
+        });
+      })
+      .catch(function () {
+        var host = detailRoot.querySelector('[data-testid="v3-related-outlets"]');
+        if (host && detailRoot.isConnected) {
+          host.innerHTML = '<span class="pc-unavailable">Ошибка сети при загрузке ТТ.</span>';
+        }
+      });
   }
 
   function clientGuidFromPath() {

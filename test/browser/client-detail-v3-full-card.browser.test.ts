@@ -125,8 +125,8 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.waitForSelector('[data-testid="v3-role-context"]');
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Type A \/ Cat A/);
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Точки и контакты/);
-    assert.match(await page.locator("#pc-panel-overview").innerText(), /Отгрузки \/ план/);
-    assert.match(await page.content(), /Не подключено/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Торговые точки/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Ответственные клиента/);
     assert.doesNotMatch(await page.content(), /hidden-sha-value/);
     assert.doesNotMatch(await page.content(), /SHA/i);
 
