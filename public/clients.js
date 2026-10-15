@@ -2940,6 +2940,18 @@
     updateActiveFiltersBadge(state);
     updateMobileFiltersCollapse(state);
     renderBreadcrumbs(state);
+    if (window.ClientsLktandoorList && window.ClientsV3) {
+      var v3StateForChrome = window.ClientsV3.readState();
+      var lktandoorActive = window.ClientsLktandoorList.shouldActivate(state, exchangeV3Active);
+      window.ClientsLktandoorList.syncLayout(lktandoorActive, v3StateForChrome);
+      document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
+      if (lktandoorActive) {
+        managerChromeEl?.classList.add("clients-hidden");
+        var lkCtx = buildV3UiContext();
+        lkCtx.lktandoorContext.uiCtx = lkCtx;
+        window.ClientsLktandoorList.refreshChrome(shell, v3StateForChrome, lkCtx.lktandoorContext);
+      }
+    }
   }
 
   function updateMobileFiltersCollapse(state) {
@@ -4133,7 +4145,7 @@
         rolePresentation &&
         rolePresentation.allowedV3Entities &&
         rolePresentation.allowedV3Entities.length > 1;
-      if (multiEntity && entityMeta && v3State.v3entity !== "legal") {
+      if (multiEntity && entityMeta && v3State.v3entity !== "legal" && v3State.v3entity !== "legal_grouped") {
         subtitleEl.textContent = "Список: " + entityMeta.label;
         subtitleEl.classList.remove("clients-hidden");
       } else if (role === "assistant" && rolePresentation.delegationContext) {
@@ -4182,6 +4194,31 @@
       pageTitleEl: pageTitleEl,
       entitySwitcherEl: entitySwitcherEl,
       nextListFetchSignal: nextListFetchSignal,
+      lktandoorContext: {
+        api: api,
+        rolePresentation: rolePresentation,
+        teamContext: teamContext,
+        logic: logic,
+        onBack: function (v3State) {
+          if (v3State.responsibleGuid) {
+            navigateState({
+              view: "teams",
+              ropEmployee: v3State.ropEmployee || "",
+              manager: "",
+              clientManager: "",
+              responsibleGuid: "",
+              responsibleKind: "",
+              page: 1,
+            });
+            return;
+          }
+          if (v3State.ropEmployee) {
+            navigateState({ view: "teams", ropEmployee: "", page: 1 });
+            return;
+          }
+          navigateState({ view: "all", page: 1 });
+        },
+      },
       renderPagination: function (v3state, totalPages) {
         if (totalPages <= 1) {
           paginationEl.innerHTML = "";

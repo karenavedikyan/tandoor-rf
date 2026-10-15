@@ -9,6 +9,8 @@ import {
   RETAIL_CITY_SQL,
   RETAIL_STATUS_LABEL_SQL,
 } from "./list-sql-expressions";
+import { appendV3FieldRulesSql, type V3FilterRule } from "./list-field-rules";
+import { v3CategoryNameSql, v3TypeNameSql } from "./json-paths";
 
 export type V3ResponsibleKind = "manager" | "regional" | "hardware";
 
@@ -18,7 +20,7 @@ function responsibleGuidField(kind: V3ResponsibleKind): keyof import("./json-pat
   return "guidManager";
 }
 
-export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
+export type V3ListEntity = "holdings" | "legal" | "legal_grouped" | "retail" | "orphan_retail";
 
 export type V3ListQuery = {
   entity: V3ListEntity;
@@ -41,6 +43,7 @@ export type V3ListQuery = {
   colRop?: string;
   colCity?: string;
   colStatus?: string;
+  fieldRules?: V3FilterRule[];
 };
 
 function appendTextContainsFilter(
@@ -95,7 +98,7 @@ function appendRetailSearch(qPattern: string, params: unknown[]): string {
   )`;
 }
 
-function appendV3ColumnFilters(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
+export function appendV3ColumnFilters(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
   let sql = appendCityFilter(input, entity, params);
   if (entity === "legal") {
     sql = appendTextContainsFilter(
@@ -154,7 +157,8 @@ function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknow
   return ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = $${params.length}::uuid`;
 }
 
-function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+/** Selected employee / ROP territory only (no type, category, or missing-manager narrowing). */
+export function appendTerritoryAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
   const teamScoped =
     Boolean(input.ropBranchGuid) ||
@@ -177,6 +181,12 @@ function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unkn
     params.push(guidFilter);
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
   }
+  sql += appendRopBranchFilter(input, alias, params);
+  return sql;
+}
+
+export function appendCatalogAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+  let sql = "";
   const typeGuids =
     input.typeGuids && input.typeGuids.length > 0
       ? input.typeGuids
@@ -214,8 +224,11 @@ function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unkn
   if (input.missingManager) {
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
   }
-  sql += appendRopBranchFilter(input, alias, params);
   return sql;
+}
+
+export function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+  return appendTerritoryAssignmentFilters(input, alias, params) + appendCatalogAssignmentFilters(input, alias, params);
 }
 
 export async function isExchangeV3Active(): Promise<boolean> {
@@ -257,12 +270,19 @@ export async function listV3Entities(
     return { total: Number(total.rows[0]?.count ?? 0), items: rows.rows };
   }
 
+  if (input.entity === "legal_grouped") {
+    const { listV3LegalGrouped } = await import("./list-legal-grouped");
+    return listV3LegalGrouped(context, input);
+  }
+
   if (input.entity === "legal") {
     const scope = v3EntityAssignmentScope(context, "le");
     const params = [...scope.params];
     const search = qPattern ? appendLegalSearch(qPattern, params) : "";
-    const filters =
+    let filters =
       appendAssignmentFilters(input, "le", params) + appendV3ColumnFilters(input, "legal", params);
+    const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "le", input.fieldRules);
+    filters = rulesApplied.sql;
     const countParams = [...params];
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
@@ -300,29 +320,40 @@ export async function listV3Entities(
     input.closed === true ? " AND ro.closed = TRUE" : input.closed === false ? " AND ro.closed = FALSE" : "";
   const params = [...scope.params];
   const search = qPattern ? appendRetailSearch(qPattern, params) : "";
-  const filters =
+  let filters =
     appendAssignmentFilters(input, "ro", params) + appendV3ColumnFilters(input, "retail", params);
+  const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "ro", input.fieldRules);
+  filters = rulesApplied.sql;
+  const holdingJoin = " LEFT JOIN onec_v3_holdings h ON h.guid_holding = ro.guid_holding";
+  const fromSql = `FROM onec_v3_retail_outlets ro${holdingJoin}`;
   const countParams = [...params];
   params.push(input.pageSize, offset);
   const total = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM onec_v3_retail_outlets ro WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}`,
+    `SELECT COUNT(*)::text AS count ${fromSql} WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}`,
     countParams,
   );
   const rows = await query(
     `
       SELECT ro.guid_store::text AS guid,
+             COALESCE(NULLIF(TRIM(h.name_holding), ''), NULLIF(TRIM(ro.address->>'store_address'), ''), ro.guid_store::text) AS client_name,
              COALESCE(ro.address->>'store_address', ro.guid_store::text) AS name,
              ro.guid_holding::text AS holding_guid,
+             h.name_holding AS holding_name,
              ro.closed,
              ${RETAIL_CITY_SQL} AS city,
              ro.managers->>'nameManager' AS manager_name,
              ro.managers->>'nameRegionalManager' AS regional_name,
              ro.managers->>'nameHardwareManager' AS hardware_name,
              ro.managers->>'nameHeadOfSales' AS rop_name,
-             ro.address->>'store_address' AS store_address
-      FROM onec_v3_retail_outlets ro
+             ro.address->>'store_address' AS store_address,
+             NULLIF(TRIM(ro.lpr_information->>'name'), '') AS lpr_name,
+             NULLIF(TRIM(ro.additional_information->>'status_tandoor_club'), '') AS club_status,
+             NULLIF(TRIM(ro.additional_information->>'bonus_tandoor_club'), '') AS club_bonus,
+             ${v3CategoryNameSql("ro")} AS category_name,
+             ${v3TypeNameSql("ro")} AS type_name
+      ${fromSql}
       WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
-      ORDER BY name ASC
+      ORDER BY ro.address->>'store_address' ASC NULLS LAST, name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params,

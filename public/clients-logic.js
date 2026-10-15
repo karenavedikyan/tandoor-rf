@@ -127,6 +127,9 @@
     "colRop",
     "colCity",
     "colStatus",
+    "filterOpen",
+    "filters",
+    "v3city",
     "missingManager",
     "responsibleGuid",
     "ropBranchGuid",
@@ -858,10 +861,10 @@
     if (entity === "outlets") {
       return urlV3Entity === "orphan_retail" ? "orphan_retail" : "retail";
     }
-    if (urlV3Entity === "holdings" || urlV3Entity === "legal") {
+    if (urlV3Entity === "holdings" || urlV3Entity === "legal" || urlV3Entity === "legal_grouped") {
       return urlV3Entity;
     }
-    return "legal";
+    return "legal_grouped";
   }
 
   function applyPresentationDefaults(state, presentation, search) {

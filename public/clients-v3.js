@@ -7,7 +7,8 @@
 
   var ENTITIES = [
     { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
-    { id: "legal", label: "Клиенты", detailEntity: "legal", listNoun: "клиентов" },
+    { id: "legal_grouped", label: "Клиенты", detailEntity: "holding", listNoun: "клиентов" },
+    { id: "legal", label: "Юрлица", detailEntity: "legal", listNoun: "юрлиц" },
     { id: "retail", label: "Торговые точки", detailEntity: "retail", listNoun: "торговых точек" },
     { id: "orphan_retail", label: "ТТ без холдинга", detailEntity: "retail", listNoun: "торговых точек" },
   ];
@@ -55,9 +56,9 @@
 
   function readState(search) {
     var params = new URLSearchParams(search || window.location.search);
-    var entity = params.get("v3entity") || "legal";
+    var entity = params.get("v3entity") || "legal_grouped";
     if (!ENTITIES.some(function (e) { return e.id === entity; })) {
-      entity = "legal";
+      entity = "legal_grouped";
     }
     var responsibleKind =
       normalizeResponsibleKind(params.get("responsibleKind") || "") ||
@@ -91,6 +92,11 @@
       colRop: params.get("colRop") || "",
       colCity: params.get("colCity") || "",
       colStatus: params.get("colStatus") || "",
+      filterOpen: params.get("filterOpen") === "1",
+      v3Rules:
+        window.ClientsV3FieldRules && window.ClientsV3FieldRules.readRulesFromUrl
+          ? window.ClientsV3FieldRules.readRulesFromUrl(search)
+          : [],
     };
   }
 
@@ -108,6 +114,7 @@
 
   function legacyEntityFromV3Entity(v3entity) {
     if (v3entity === "retail" || v3entity === "orphan_retail") return "outlets";
+    if (v3entity === "legal_grouped" || v3entity === "legal" || v3entity === "holdings") return "clients";
     return "clients";
   }
 
@@ -211,7 +218,19 @@
     }
   }
 
+  function rulesCoverField(state, fieldId) {
+    if (!state.v3Rules || !state.v3Rules.length) {
+      return false;
+    }
+    return state.v3Rules.some(function (r) {
+      return r.field === fieldId;
+    });
+  }
+
   function appendTypeCategoryParams(params, state) {
+    if (rulesCoverField(state, "typeGuid") || rulesCoverField(state, "categoryGuid")) {
+      return;
+    }
     var typeTokens = listFilterTokens(state, "v3types", "v3type");
     if (typeTokens.length > 1) {
       params.set("typeGuids", joinTokenList(typeTokens));
@@ -265,6 +284,8 @@
       colRop: url.colRop || "",
       colCity: url.colCity || "",
       colStatus: url.colStatus || "",
+      v3Rules: url.v3Rules ? url.v3Rules.slice() : [],
+      filterOpen: url.filterOpen,
     };
     if (patch) {
       Object.keys(patch).forEach(function (key) {
@@ -272,6 +293,13 @@
           next[key] = patch[key];
         }
       });
+    }
+    if (patch && patch.v3entity && patch.v3entity !== url.v3entity) {
+      next.v3Rules = [];
+      next.city = ""; next.closed = "";
+      next.v3types = []; next.v3categories = []; next.v3type = ""; next.v3category = "";
+      next.colManager = ""; next.colRegional = ""; next.colRop = ""; next.colCity = ""; next.colStatus = "";
+      next.v3cols = ""; next.page = 1;
     }
     syncV3FilterAliases(next);
     var teamContext = next.v3view === "teams" || next.ropEmployee;
@@ -433,6 +461,8 @@
       colRop: urlFilters.colRop || "",
       colCity: urlFilters.colCity || "",
       colStatus: urlFilters.colStatus || "",
+      filterOpen: urlFilters.filterOpen,
+      v3Rules: Array.isArray(legacy.v3Rules) ? legacy.v3Rules.slice() : (urlFilters.v3Rules || []).slice(),
     };
   }
 
@@ -503,6 +533,11 @@
       if (state[key]) params.set(key, state[key]);
       else params.delete(key);
     });
+    if (state.filterOpen) params.set("filterOpen", "1");
+    else params.delete("filterOpen");
+    if (window.ClientsV3FieldRules) {
+      window.ClientsV3FieldRules.appendRulesToParams(params, state);
+    }
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -543,6 +578,10 @@
     ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
       if (s[key]) params.set(key, s[key]);
     });
+    if (s.filterOpen) params.set("filterOpen", "1");
+    if (window.ClientsV3FieldRules) {
+      window.ClientsV3FieldRules.appendRulesToParams(params, s);
+    }
     return "?" + params.toString();
   }
 
@@ -783,12 +822,31 @@
         );
       }
       syncV3FilterAliases(state);
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.mergeRulesFromLegacy(state);
+      }
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
+      var legacyState = {
+        view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
+        ropEmployee: state.ropEmployee,
+        responsibleGuid: state.responsibleGuid,
+      };
+      var lktandoorActive =
+        window.ClientsLktandoorList &&
+        window.ClientsLktandoorList.shouldActivate(legacyState, true);
+      if (window.ClientsLktandoorList) {
+        window.ClientsLktandoorList.syncLayout(lktandoorActive, state);
+        document.getElementById("v3-lktandoor-field-filters")?.classList.toggle("clients-hidden", !lktandoorActive);
+        if (lktandoorActive && ctx.lktandoorContext) {
+          window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
+        }
+      }
       if (window.ClientsV3List) {
         window.ClientsV3List.applyDensity(!!state.v3dense);
       }
       ctx.showResultsState("loading", "Загрузка списка…", "", "");
+      ctx.tableBody.setAttribute("aria-busy", "true");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
       });
@@ -820,9 +878,15 @@
       }
       appendTypeCategoryParams(params, state);
       appendV3ListQueryParams(params, state);
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.appendRulesToParams(params, state);
+      }
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
-        "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
+        "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
+        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid"].map(function (key) {
+          return params.has(key) ? "&" + key + "=" + encodeURIComponent(params.get(key)) : "";
+        }).join(""),
       ).then(function (optionsResult) {
         if (isStaleListLoad()) {
           return;
@@ -833,6 +897,22 @@
           window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
           if (window.ClientsV3List) {
             window.ClientsV3List.syncFilterbar(shell, liveState, optionsResult.data);
+          }
+          if (window.ClientsV3FieldRules) {
+            var opts = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
+            window.__lktandoorFilterOptions = opts;
+            window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
+              if (isStaleListLoad()) return;
+              window.ClientsV3FieldRules.renderBuilder(shell, liveState.v3entity, opts);
+              window.ClientsV3FieldRules.renderChips(shell, liveState, opts, function (index) {
+                var next = readState();
+                var rules = window.ClientsV3FieldRules.parseRulesFromState(next);
+                rules.splice(index, 1);
+                next.v3Rules = rules;
+                window.ClientsV3FieldRules.syncLegacyFromRules(next);
+                window.ClientsV3.loadList(ctx, next, false);
+              });
+            });
           }
         }
       });
@@ -882,8 +962,10 @@
           }
           ctx.showResultsContent();
           var detailType = meta.detailEntity;
+          var isGroupedList = state.v3entity === "legal_grouped";
           var listUi = window.ClientsV3List;
           var visibleCols = resolveVisibleListColumns(state, ctx.currentUserId);
+          var lktandoorList = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
           if (listUi && ctx.tableHeadRow) {
             listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
               var patch = { page: 1 };
@@ -895,21 +977,27 @@
                 }
               }
               window.ClientsV3.loadList(ctx, mergeListStateForUserAction(patch), false);
-            });
+            }, !!lktandoorList);
           }
           ctx.tableBody.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, state);
+              var rowDetail = item.detail_entity || detailType;
+              var href = detailHref(item.guid, rowDetail, state);
               var cells = visibleCols
                 .map(function (col, index) {
                   if (index === 0) {
+                    var titleText =
+                      item[col.id] ||
+                      item.name ||
+                      item.client_name ||
+                      item.guid;
                     return (
                       '<td data-label="' +
                       shell.escapeHtml(col.label) +
                       '"><a class="clients-link" href="' +
                       href +
                       '">' +
-                      shell.escapeHtml(item.name || item.guid) +
+                      shell.escapeHtml(String(titleText)) +
                       "</a></td>"
                     );
                   }
@@ -917,7 +1005,7 @@
                     '<td data-label="' +
                     shell.escapeHtml(col.label) +
                     '">' +
-                    (listUi ? listUi.cellDisplay(item, col.id, shell) : "—") +
+                    (listUi ? listUi.cellDisplay(item, col.id, shell, state, isGroupedList) : "—") +
                     "</td>"
                   );
                 })
@@ -925,9 +1013,17 @@
               return "<tr>" + cells + "</tr>";
             })
             .join("");
+          var useLktandoorMobile =
+            window.ClientsLktandoorList && document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+          ctx.cardsEl.className = useLktandoorMobile ? "clients-cards x13-mobile-list" : "clients-cards";
+          ctx.tableBody.closest(".clients-table-wrap")?.classList.toggle("x13-desktop-list", !!useLktandoorMobile);
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, state);
+              var rowDetail = item.detail_entity || detailType;
+              var href = detailHref(item.guid, rowDetail, state);
+              if (useLktandoorMobile && window.ClientsLktandoorList) {
+                return window.ClientsLktandoorList.renderMobileCard(shell, item, visibleCols, href, listUi, state);
+              }
               var metaLine = listUi ? listUi.mobileMetaLine(item, visibleCols, shell) : "";
               return (
                 '<article class="clients-card">' +
@@ -963,7 +1059,9 @@
             totalPages,
           );
         });
-      return Promise.all([optionsPromise, listPromise]);
+      return Promise.all([optionsPromise, listPromise]).finally(function () {
+        if (!isStaleListLoad()) ctx.tableBody.setAttribute("aria-busy", "false");
+      });
     },
 
     bindFilters: function (ctx, reload) {
@@ -1179,6 +1277,8 @@
           v3cols: url.v3cols,
           v3dense: url.v3dense,
           pageSize: url.pageSize,
+          filterOpen: false,
+          v3Rules: [],
         },
         true,
       );
@@ -1194,12 +1294,50 @@
       }
       var cityEl = document.getElementById("v3-city-filter");
       cityEl?.addEventListener("change", function () {
-        window.ClientsV3.loadList(
-          currentContext(),
-          mergeListStateForUserAction({ city: cityEl.value || "", page: 1 }),
-          false,
-        );
+        var next = mergeListStateForUserAction({ city: cityEl.value || "", page: 1 });
+        if (window.ClientsV3FieldRules) {
+          var rules = window.ClientsV3FieldRules.parseRulesFromState(next).filter(function (r) {
+            return r.field !== "city";
+          });
+          if (cityEl.value) {
+            rules.push({ field: "city", op: "eq", value: cityEl.value });
+          }
+          next.v3Rules = rules;
+          window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        }
+        window.ClientsV3.loadList(currentContext(), next, false);
       });
+      var categoryQuick = document.getElementById("v3-lktandoor-category-filter");
+      categoryQuick?.addEventListener("change", function () {
+        var guid = categoryQuick.value || "";
+        var next = mergeListStateForUserAction({
+          v3categories: guid ? [guid] : [],
+          v3category: guid,
+          page: 1,
+        });
+        if (window.ClientsV3FieldRules) {
+          var rules = window.ClientsV3FieldRules.parseRulesFromState(next).filter(function (r) {
+            return r.field !== "categoryGuid";
+          });
+          if (guid) {
+            rules.push({ field: "categoryGuid", op: "eq", value: guid });
+          }
+          next.v3Rules = rules;
+          window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        }
+        window.ClientsV3.loadList(currentContext(), next, false);
+      });
+      if (window.ClientsLktandoorList) {
+        window.ClientsLktandoorList.bindFilterPanel();
+      }
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.bindBuilder(
+          currentContext(),
+          function (nextState) {
+            window.ClientsV3.loadList(currentContext(), nextState, false);
+          },
+        );
+      }
       document.getElementById("v3-density-btn")?.addEventListener("click", function () {
         var url = readState();
         window.ClientsV3.loadList(

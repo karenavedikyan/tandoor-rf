@@ -18,8 +18,10 @@ import {
 } from "./detail";
 import { parseMultiFilterTokenParam } from "./query-params";
 import { getV3FieldCatalog } from "./field-catalog";
+import { loadV3ScopeSummary } from "./scope-summary";
+import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 
-const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "retail", "orphan_retail"]);
+const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
 
 async function requireV3Active(res: Response): Promise<boolean> {
@@ -84,6 +86,11 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     const raw = typeof value === "string" ? value.trim() : "";
     return raw.length > 0 ? raw : undefined;
   };
+  const fieldRules = parseV3FilterRulesParam(req.query.filters, entityRaw as V3ListEntity);
+  if (req.query.filters !== undefined && String(req.query.filters).trim() !== "" && fieldRules === undefined) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый filters."));
+    return;
+  }
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -105,9 +112,44 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     colRop: trimOptional(req.query.colRop),
     colCity: trimOptional(req.query.colCity),
     colStatus: trimOptional(req.query.colStatus),
+    fieldRules: fieldRules ?? [],
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });
+}
+
+export async function v3FilterFieldsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const entityRaw = String(req.query.entity ?? "legal");
+  if (!LIST_ENTITIES.has(entityRaw as V3ListEntity)) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ fields: listFilterFieldsForEntity(entityRaw as V3ListEntity) });
+}
+
+export async function v3ScopeSummaryHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const responsibleKindRaw = String(req.query.responsibleKind ?? "");
+  const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
+    ? (responsibleKindRaw as V3ResponsibleKind)
+    : undefined;
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const managerGuid = parseGuidParam(req.query.managerGuid);
+  const summary = await loadV3ScopeSummary(req.accessContext!, {
+    ropBranchGuid: ropBranchGuid ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind,
+    managerGuid: managerGuid ?? undefined,
+  });
+  setNoStore(res);
+  res.json(summary);
 }
 
 export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -119,7 +161,24 @@ export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response)
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
     return;
   }
-  const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity);
+  const rawKind = String(req.query.responsibleKind ?? "");
+  const kind = ["manager", "regional", "hardware"].includes(rawKind) ? rawKind as V3ResponsibleKind : undefined;
+  for (const key of ["managerGuid", "responsibleGuid", "ropBranchGuid"] as const) {
+    if (req.query[key] !== undefined && !parseGuidParam(req.query[key])) {
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимая территория."));
+      return;
+    }
+  }
+  if (req.query.responsibleGuid && !kind) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleKind."));
+    return;
+  }
+  const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity, {
+    managerGuid: parseGuidParam(req.query.managerGuid) ?? undefined,
+    responsibleGuid: parseGuidParam(req.query.responsibleGuid) ?? undefined,
+    responsibleKind: kind,
+    ropBranchGuid: parseGuidParam(req.query.ropBranchGuid) ?? undefined,
+  });
   setNoStore(res);
   res.json(options);
 }
