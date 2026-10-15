@@ -142,6 +142,50 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     return page.locator("#clients-table-body tr").count();
   }
 
+  async function waitForListEntity(page: Page, entity: string, url: string) {
+    const response = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.status() === 200 &&
+        new URL(res.url()).searchParams.get("entity") === entity,
+      { timeout: 30000 },
+    );
+    await page.goto(url);
+    await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
+    await response;
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
+  }
+
+  async function clickSecondaryEntity(page: Page, entityId: string) {
+    const response = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.status() === 200 &&
+        new URL(res.url()).searchParams.get("entity") === entityId,
+    );
+    await page.locator(`#v3-lktandoor-secondary-entities [data-v3entity="${entityId}"]`).click();
+    await response;
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
+  }
+
+  async function clickPrimaryEntity(page: Page, entityId: string) {
+    const response = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.status() === 200 &&
+        new URL(res.url()).searchParams.get("entity") === entityId,
+    );
+    await page.locator(`.clients-entity-switcher--primary [data-v3entity="${entityId}"]`).click();
+    await response;
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
+  }
+
   async function closeMobileSidebar(page: Page) {
     await page.evaluate(() => {
       document.body.classList.remove("legacy-sidebar-open");
@@ -441,6 +485,80 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.equal(JSON.parse(new URL(page.url()).searchParams.get("filters")!).length, 1);
     await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-retail-mobile-390.png") });
+    await page.close();
+  });
+
+  it("secondary registry navigates orphan retail with live UI context", async () => {
+    const retailUrl =
+      baseUrl +
+      "/clients?v3mode=1&v3entity=retail&view=all&page=1&filterOpen=1&v3manager=" +
+      encodeURIComponent(M1);
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForListEntity(page, "retail", retailUrl);
+    const retailRows = await rowCount(page);
+    assert.ok(retailRows >= 2);
+    await page.waitForSelector("#v3-lktandoor-field-filters[open]");
+    await clickSecondaryEntity(page, "orphan_retail");
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
+    assert.equal(new URL(page.url()).searchParams.get("page"), "1");
+    assert.ok(new URL(page.url()).searchParams.get("v3manager") === M1);
+    assert.ok(
+      await page.locator('#v3-lktandoor-secondary-entities [data-v3entity="orphan_retail"]').evaluate(
+        (el) => el.classList.contains("x13-secondary-entities__btn--active"),
+      ),
+    );
+    const orphanRows = await rowCount(page);
+    assert.ok(orphanRows >= 1);
+    assert.ok(orphanRows < retailRows);
+    assert.ok((await page.locator("#clients-table-body").innerText()).includes("Orphan Store"));
+    await clickPrimaryEntity(page, "retail");
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "retail");
+    assert.equal(await rowCount(page), retailRows);
+    await page.close();
+
+    const groupedPage = await browser.newPage({ viewport: DESKTOP });
+    await login(groupedPage, "admin-lktandoor-list@example.com");
+    await waitForList(groupedPage);
+    await clickSecondaryEntity(groupedPage, "orphan_retail");
+    assert.equal(new URL(groupedPage.url()).searchParams.get("v3entity"), "orphan_retail");
+    await groupedPage.close();
+
+    const adminPage = await browser.newPage({ viewport: MOBILE });
+    await login(adminPage, "admin-lktandoor-list@example.com");
+    await waitForListEntity(
+      adminPage,
+      "retail",
+      baseUrl + "/clients?v3mode=1&v3entity=retail&view=all&page=1&filterOpen=1",
+    );
+    await closeMobileSidebar(adminPage);
+    await updateList(adminPage, () => adminPage.reload());
+    await closeMobileSidebar(adminPage);
+    await clickSecondaryEntity(adminPage, "orphan_retail");
+    assert.equal(new URL(adminPage.url()).searchParams.get("v3entity"), "orphan_retail");
+    await clickSecondaryEntity(adminPage, "holdings");
+    assert.equal(new URL(adminPage.url()).searchParams.get("v3entity"), "holdings");
+    await adminPage.close();
+  });
+
+  it("orphan retail list keeps context through card back and reload", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForListEntity(page, "retail", baseUrl + "/clients?v3mode=1&v3entity=retail&view=all&page=1");
+    await clickSecondaryEntity(page, "orphan_retail");
+    const filtersBefore = new URL(page.url()).searchParams.get("filters");
+    const orphanRows = await rowCount(page);
+    await page.locator("#clients-table-body tr a.clients-link").first().click();
+    await page.waitForURL(/\/clients\//);
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
+    assert.equal(await rowCount(page), orphanRows);
+    assert.equal(new URL(page.url()).searchParams.get("filters"), filtersBefore);
+    await updateList(page, () => page.reload());
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
+    assert.equal(await rowCount(page), orphanRows);
+    await clickPrimaryEntity(page, "retail");
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "retail");
     await page.close();
   });
 

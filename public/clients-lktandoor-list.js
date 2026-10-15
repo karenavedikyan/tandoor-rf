@@ -414,7 +414,9 @@
     syncTerritoryDisplayContext: syncTerritoryDisplayContext,
     refreshChrome: function (shell, state, ctx) {
       syncTerritoryDisplayContext(state, ctx);
-      window.__lktandoorUiCtx = ctx.uiCtx;
+      if (ctx.uiCtx) {
+        window.__lktandoorUiCtx = ctx.uiCtx;
+      }
       window.__lktandoorScopeTitle = scopeTitle(state, ctx);
       var titleEl = document.getElementById("v3-lktandoor-scope-title");
       if (titleEl) {
