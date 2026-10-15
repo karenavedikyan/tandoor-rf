@@ -7,6 +7,7 @@ import {
 } from "./access-scope";
 import type { V3ListEntity } from "./list";
 import { appendAssignmentFilters, type V3ListQuery } from "./list";
+import { groupedCategoryExpressions, readableGroupKey } from "./list-legal-grouped";
 import {
   v3CategoryGuidSql,
   v3CategoryNameSql,
@@ -160,7 +161,24 @@ export async function loadV3FilterOptions(
   }
   if (entity === "legal" || entity === "legal_grouped") {
     const scope = scopeForEntity(context, "legal", "le");
-    return loadDistinctFromTable("onec_v3_legal_entities", "le", scope, false, territory);
+    const result = await loadDistinctFromTable("onec_v3_legal_entities", "le", scope, false, territory);
+    if (entity === "legal_grouped") {
+      const params = [...scope.params];
+      const territorySql = appendAssignmentFilters({ entity, page: 1, pageSize: 1, q: "", ...territory }, "le", params);
+      const category = groupedCategoryExpressions(context, "le", params);
+      const groupKey = readableGroupKey(context, params);
+      const rows = await query<{ guid: string; name: string; count: string }>(
+        `WITH readable AS (
+          SELECT ${groupKey} AS group_key, ${category.guid} AS guid, ${category.name} AS name
+          FROM onec_v3_legal_entities le WHERE (${scope.clause})${territorySql}
+        )
+        SELECT guid, MAX(name) AS name, COUNT(DISTINCT group_key)::text AS count FROM readable
+        WHERE NULLIF(TRIM(guid), '') IS NOT NULL GROUP BY guid ORDER BY name`,
+        params,
+      );
+      result.categories = rows.rows.map(row => ({ guid: row.guid, name: row.name || row.guid, count: Number(row.count) }));
+    }
+    return result;
   }
   const scope = scopeForEntity(context, entity, "ro");
   return loadDistinctFromTable("onec_v3_retail_outlets", "ro", scope, entity === "orphan_retail", territory);

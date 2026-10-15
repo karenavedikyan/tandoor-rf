@@ -71,9 +71,9 @@ const DIRECTOR_FOCUS = [
   "Назначения и данные",
 ] as const;
 
-const ALL_V3_ENTITIES = ["holdings", "legal", "retail", "orphan_retail"] as const satisfies readonly V3ListEntity[];
-const MANAGER_V3_ENTITIES = ["legal", "retail"] as const satisfies readonly V3ListEntity[];
-const ASSISTANT_V3_ENTITIES = ["legal"] as const satisfies readonly V3ListEntity[];
+const ALL_V3_ENTITIES = ["holdings", "legal_grouped", "retail", "orphan_retail"] as const satisfies readonly V3ListEntity[];
+const MANAGER_V3_ENTITIES = ["legal_grouped", "retail"] as const satisfies readonly V3ListEntity[];
+const ASSISTANT_V3_ENTITIES = ["legal_grouped"] as const satisfies readonly V3ListEntity[];
 
 export function canUseReviewNavigation(context: AccessContext): boolean {
   return context.role === "admin" || (context.role === "director" && context.fullClientBase);
@@ -87,8 +87,8 @@ export function canUseCompletenessNavigation(context: AccessContext): boolean {
   return canUseReviewNavigation(context);
 }
 
-export function v3EntityFromLegacyEntity(entity: ClientsEntityMode): "holdings" | "legal" | "retail" | "orphan_retail" {
-  return entity === "outlets" ? "retail" : "legal";
+export function v3EntityFromLegacyEntity(entity: ClientsEntityMode): V3ListEntity {
+  return entity === "outlets" ? "retail" : "legal_grouped";
 }
 
 export function v3ViewFromLegacyView(view: ClientsViewMode): "all" | "teams" | "unassigned" {

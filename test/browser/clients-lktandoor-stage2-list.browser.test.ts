@@ -82,10 +82,16 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
       buildEmployeeRosterEntry(ROP, { name_manager: "ROP One", post: "РОП" }),
     ]);
+    const holdings = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json"), "utf8"));
+    holdings[0].legal_entities.push({
+      guid_retail: "b2000000-0000-4000-8000-000000000004",
+      name_retail: "Legal Two",
+    });
+    const holdingsBytes = Buffer.from(JSON.stringify(holdings));
     const dry = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
       argv: ["--dry-run"],
-      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      holdingsBytes,
       clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
       retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
       employeesBytes,
@@ -94,7 +100,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
       argv: ["--apply", "--expected-fingerprint", dry.verificationFingerprint!],
-      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      holdingsBytes,
       clientsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json")),
       retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
       employeesBytes,
@@ -114,7 +120,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
       { timeout: 30000 },
     );
-    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal_grouped");
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal_grouped&view=all&v3view=all");
     await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
     await response;
     await page.waitForSelector("#clients-table-body tr a");
@@ -124,7 +130,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     const response = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 200);
     await action();
     await response;
-    await page.waitForFunction(() => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") !== "true");
+    await page.waitForFunction(() => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false");
   }
 
   async function rowCount(page: Page): Promise<number> {
@@ -225,6 +231,41 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok(url.includes("responsibleGuid="));
     assert.ok(url.includes("responsibleKind=manager"));
     assert.ok(!url.includes("filters=") || !url.includes(encodeURIComponent(CAT_A)));
+    await page.close();
+  });
+
+  it("grouped client opens holding and legal cards and restores the same filtered list", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await login(page, "admin-lktandoor-list@example.com");
+    await waitForList(page);
+    const holdingRow = page.locator("#clients-table-body tr").filter({ hasText: "SYNTH Holding One" });
+    assert.equal(await holdingRow.count(), 1);
+    assert.ok((await holdingRow.innerText()).includes("Legal One"));
+    assert.ok((await holdingRow.innerText()).includes("Legal Two"));
+    await updateList(page, () => page.selectOption("#v3-lktandoor-category-filter", CAT_A));
+    assert.equal(await rowCount(page), 1);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "grouped-clients-desktop-1440.png") });
+    await page.locator("#clients-table-body tr td").first().locator("a").click();
+    await page.waitForURL(url => url.searchParams.get("v3Entity") === "holding");
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(await rowCount(page), 1);
+    assert.ok(page.url().includes("v3entity=legal_grouped"));
+    await page.locator("#clients-table-body a.clients-link--secondary").filter({ hasText: "Legal Two" }).click();
+    await page.waitForURL(url => url.searchParams.get("v3Entity") === "legal");
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assert.equal(await rowCount(page), 1);
+    await page.setViewportSize(MOBILE);
+    await updateList(page, () => page.reload());
+    const card = page.locator('[data-testid="v3-lktandoor-mobile-card"]');
+    assert.equal(await card.count(), 1);
+    assert.ok((await card.innerText()).includes("Legal One, Legal Two"));
+    assert.ok(await card.isVisible());
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "grouped-clients-mobile-390.png") });
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "grouped-clients-mobile-details-390.png") });
     await page.close();
   });
 });

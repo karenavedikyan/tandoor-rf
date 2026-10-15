@@ -846,6 +846,7 @@
         window.ClientsV3List.applyDensity(!!state.v3dense);
       }
       ctx.showResultsState("loading", "Загрузка списка…", "", "");
+      ctx.tableBody.setAttribute("aria-busy", "true");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
       });
@@ -1058,7 +1059,9 @@
             totalPages,
           );
         });
-      return Promise.all([optionsPromise, listPromise]);
+      return Promise.all([optionsPromise, listPromise]).finally(function () {
+        if (!isStaleListLoad()) ctx.tableBody.setAttribute("aria-busy", "false");
+      });
     },
 
     bindFilters: function (ctx, reload) {

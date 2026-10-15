@@ -1,10 +1,8 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
-import { v3CategoryNameSql, v3JsonManagerField } from "./json-paths";
-import {
-  LEGAL_ADDRESS_SQL,
-} from "./list-sql-expressions";
+import { v3CategoryGuidSql, v3CategoryNameSql, v3JsonManagerField } from "./json-paths";
+import { LEGAL_ADDRESS_SQL, LEGAL_CITY_SQL, LEGAL_STATUS_SQL } from "./list-sql-expressions";
 import {
   appendCatalogAssignmentFilters,
   appendTerritoryAssignmentFilters,
@@ -13,18 +11,24 @@ import {
 } from "./list";
 import { appendV3FieldRulesSql } from "./list-field-rules";
 
-const MISSING_GROUP_FIELD = "Не передано из 1С";
 const ZERO_HOLDING = "00000000-0000-0000-0000-000000000000";
 
-export function v3LegalGroupKeyExpr(leAlias: string): string {
+export function v3LegalGroupKeyExpr(leAlias: string, holdingVisibilityClause = "TRUE"): string {
   return `(CASE
     WHEN COALESCE(${leAlias}.membership_conflict, false) = true THEN 'legal:' || ${leAlias}.guid_client::text
     WHEN ${leAlias}.guid_holding IS NULL OR ${leAlias}.guid_holding = '${ZERO_HOLDING}'::uuid THEN 'legal:' || ${leAlias}.guid_client::text
     WHEN NOT EXISTS (
-      SELECT 1 FROM onec_v3_holdings _v3gh WHERE _v3gh.guid_holding = ${leAlias}.guid_holding
+      SELECT 1 FROM onec_v3_holdings _v3gh WHERE _v3gh.guid_holding = ${leAlias}.guid_holding AND (${holdingVisibilityClause})
     ) THEN 'legal:' || ${leAlias}.guid_client::text
     ELSE 'holding:' || ${leAlias}.guid_holding::text
   END)`;
+}
+
+export function readableGroupKey(context: AccessContext, params: unknown[]): string {
+  const holdingScope = v3HoldingVisibilityScope(context, "_v3gh");
+  const clause = renumberScopeClause(holdingScope.clause, params.length + 1);
+  params.push(...holdingScope.params);
+  return v3LegalGroupKeyExpr("le", clause);
 }
 
 function renumberScopeClause(clause: string, startIndex: number): string {
@@ -50,7 +54,6 @@ function appendGroupedSearch(
     COALESCE(le.managers->>'nameHeadOfSales', '') ILIKE ${p} ESCAPE '\\' OR
     COALESCE(le.managers->>'nameHardwareManager', '') ILIKE ${p} ESCAPE '\\' OR
     COALESCE(le.other_fields->>'Код', '') ILIKE ${p} ESCAPE '\\' OR
-    COALESCE(le.name_holding, '') ILIKE ${p} ESCAPE '\\' OR
     EXISTS (
       SELECT 1 FROM onec_v3_holdings h_s
       WHERE h_s.guid_holding = le.guid_holding
@@ -61,21 +64,51 @@ function appendGroupedSearch(
 }
 
 function distinctOrMissing(expression: string): string {
-  return `CASE
-    WHEN COUNT(DISTINCT ${expression}) FILTER (WHERE NULLIF(TRIM(COALESCE(${expression}, '')), '') IS NOT NULL) > 1
-      THEN '${MISSING_GROUP_FIELD}'
-    ELSE MAX(${expression})
-  END`;
+  return `STRING_AGG(DISTINCT NULLIF(TRIM(${expression}), ''), ', ' ORDER BY NULLIF(TRIM(${expression}), ''))`;
+}
+
+/** The grouped category is the readable holding's category, not a child category. */
+export function groupedCategoryExpressions(context: AccessContext, alias: string, params: unknown[]) {
+  const scope = v3HoldingVisibilityScope(context, "_v3cat");
+  const clause = renumberScopeClause(scope.clause, params.length + 1);
+  params.push(...scope.params);
+  const expression = (field: "guid" | "name") => `(CASE
+    WHEN ${v3LegalGroupKeyExpr(alias, clause.replace(/\b_v3cat\./g, "_v3gh."))} LIKE 'holding:%' THEN (
+      SELECT ${field === "guid" ? v3CategoryGuidSql("_v3cat") : v3CategoryNameSql("_v3cat")}
+      FROM onec_v3_holdings _v3cat
+      WHERE _v3cat.guid_holding = ${alias}.guid_holding AND (${clause})
+    )
+    ELSE ${field === "guid" ? v3CategoryGuidSql(alias) : v3CategoryNameSql(alias)}
+  END)`;
+  return { guid: expression("guid"), name: expression("name") };
 }
 
 function appendEligibilityFilters(
   input: V3ListQuery,
   params: unknown[],
   holdingScope: ReturnType<typeof v3HoldingVisibilityScope>,
+  context: AccessContext,
 ): string {
-  let sql = appendCatalogAssignmentFilters(input, "le", params);
+  let sql = appendCatalogAssignmentFilters({ ...input, categoryGuid: undefined, categoryGuids: undefined }, "le", params);
   sql += appendV3ColumnFilters(input, "legal", params);
-  sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", input.fieldRules).sql;
+  const categoryRules = (input.fieldRules || []).filter(rule => rule.field === "categoryGuid");
+  sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", (input.fieldRules || []).filter(rule => rule.field !== "categoryGuid")).sql;
+  const categoryGuids = input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : [];
+  if (categoryRules.length || categoryGuids.length) {
+    const category = groupedCategoryExpressions(context, "le", params).guid;
+    if (categoryGuids.length) {
+      params.push(categoryGuids);
+      sql += ` AND ${category} = ANY($${params.length}::text[])`;
+    }
+    for (const rule of categoryRules) {
+      if (rule.op === "empty" || rule.op === "filled") {
+        sql += ` AND NULLIF(TRIM(${category}), '') IS ${rule.op === "filled" ? "NOT " : ""}NULL`;
+      } else {
+        params.push(rule.value);
+        sql += ` AND ${category} = $${params.length}`;
+      }
+    }
+  }
   const q = input.q.trim();
   const qPattern = q.length > 0 ? `%${q.replace(/[%_\\]/g, "\\$&")}%` : null;
   if (qPattern) {
@@ -95,7 +128,7 @@ export async function countV3LegalGroups(
     "le",
     params,
   );
-  const groupKey = v3LegalGroupKeyExpr("le");
+  const groupKey = readableGroupKey(context, params);
   const result = await query<{ count: string }>(
     `
       SELECT COUNT(*)::text AS count FROM (
@@ -116,13 +149,13 @@ export async function listV3LegalGrouped(
   const offset = (input.page - 1) * input.pageSize;
 
   const scope = v3EntityAssignmentScope(context, "le");
-  const holdingScope = v3HoldingVisibilityScope(context, "h_vis");
+  const holdingScope = v3HoldingVisibilityScope(context, "h_s");
 
   const countParams = [...scope.params];
   const territorySql = appendTerritoryAssignmentFilters(input, "le", countParams);
-  const matchSql = appendEligibilityFilters(input, countParams, holdingScope);
+  const matchSql = appendEligibilityFilters(input, countParams, holdingScope, context);
 
-  const groupKey = v3LegalGroupKeyExpr("le");
+  const groupKey = readableGroupKey(context, countParams);
   const countResult = await query<{ count: string }>(
     `
       WITH scoped AS (
@@ -147,7 +180,8 @@ export async function listV3LegalGrouped(
 
   const selectParams = [...scope.params];
   const selectTerritory = appendTerritoryAssignmentFilters(input, "le", selectParams);
-  const selectMatch = appendEligibilityFilters(input, selectParams, holdingScope);
+  const selectMatch = appendEligibilityFilters(input, selectParams, holdingScope, context);
+  const selectGroupKey = readableGroupKey(context, selectParams);
 
   const holdingScopeJoin = v3HoldingVisibilityScope(context, "h");
   selectParams.push(...holdingScopeJoin.params);
@@ -160,7 +194,7 @@ export async function listV3LegalGrouped(
   const rows = await query(
     `
       WITH scoped AS (
-        SELECT le.*, ${groupKey} AS group_key
+        SELECT le.*, ${selectGroupKey} AS group_key
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${selectTerritory}
       ),
@@ -178,13 +212,13 @@ export async function listV3LegalGrouped(
             WHEN eg.group_key LIKE 'holding:%' THEN (
               SELECT COALESCE(
                 NULLIF(TRIM(MAX(h_pg.name_holding)), ''),
-                NULLIF(TRIM(MAX(s.name_holding)), ''),
+                NULLIF(TRIM(MAX(s.name_client)), ''),
                 eg.group_key
               )
               FROM scoped s
               LEFT JOIN onec_v3_holdings h_pg
-                ON h_pg.guid_holding = substring(eg.group_key from 9)::uuid
-                AND (${holdingVisibleClause})
+                ON h_pg.guid_holding = CASE WHEN eg.group_key LIKE 'holding:%' THEN substring(eg.group_key from 9)::uuid END
+                AND (${holdingVisibleClause.replace(/\bh\./g, "h_pg.")})
               WHERE s.group_key = eg.group_key
             )
             ELSE (SELECT MAX(s.name_client) FROM scoped s WHERE s.group_key = eg.group_key)
@@ -212,11 +246,12 @@ export async function listV3LegalGrouped(
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
             THEN MAX(h.name_holding)
-          ELSE MAX(m.name_client)
+          ELSE ${distinctOrMissing("m.name_client")}
         END AS name,
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
-            THEN COALESCE(NULLIF(TRIM(MAX(${v3CategoryNameSql("h")})), ''), ${distinctOrMissing(v3CategoryNameSql("m"))})
+            THEN NULLIF(TRIM(MAX(${v3CategoryNameSql("h")})), '')
+          WHEN pg.group_key LIKE 'holding:%' THEN NULL
           ELSE ${distinctOrMissing(v3CategoryNameSql("m"))}
         END AS category_name,
         CASE
@@ -235,6 +270,11 @@ export async function listV3LegalGrouped(
             )
           ELSE ${distinctOrMissing(`m.managers->>'nameHeadOfSales'`)}
         END AS rop_name,
+        ${distinctOrMissing(LEGAL_ADDRESS_SQL.replace(/\ble\./g, "m."))} AS address_line,
+        ${distinctOrMissing(LEGAL_CITY_SQL.replace(/\ble\./g, "m."))} AS city,
+        ${distinctOrMissing(LEGAL_STATUS_SQL.replace(/\ble\./g, "m."))} AS status_label,
+        ${distinctOrMissing("m.managers->>'nameRegionalManager'")} AS regional_name,
+        ${distinctOrMissing("m.managers->>'nameHardwareManager'")} AS hardware_name,
         COALESCE(
           jsonb_agg(
             jsonb_build_object('guid', m.guid_client::text, 'name', m.name_client)
@@ -243,19 +283,19 @@ export async function listV3LegalGrouped(
           '[]'::jsonb
         ) AS legal_entities,
         MAX(m.guid_holding::text) AS holding_guid,
-        MAX(m.type_category->>'nameType') AS type_name
+        ${distinctOrMissing("m.type_category->>'nameType'")} AS type_name
       FROM page_groups pg
       INNER JOIN members m ON m.group_key = pg.group_key
       LEFT JOIN onec_v3_holdings h
         ON pg.group_key LIKE 'holding:%'
-        AND h.guid_holding = substring(pg.group_key from 9)::uuid
+        AND h.guid_holding = CASE WHEN pg.group_key LIKE 'holding:%' THEN substring(pg.group_key from 9)::uuid END
         AND (${holdingVisibleClause})
       GROUP BY pg.group_key
       ORDER BY
         lower(CASE
           WHEN pg.group_key LIKE 'holding:%' THEN COALESCE(
             NULLIF(TRIM(MAX(h.name_holding)), ''),
-            NULLIF(TRIM(MAX(m.name_holding)), ''),
+            NULLIF(TRIM(MAX(m.name_client)), ''),
             pg.group_key
           )
           ELSE MAX(m.name_client)
@@ -282,6 +322,11 @@ export async function listV3LegalGrouped(
       legal_entities: legalEntities,
       holding_guid: row.holding_guid,
       type_name: row.type_name,
+      address_line: row.address_line,
+      city: row.city,
+      status_label: row.status_label,
+      regional_name: row.regional_name,
+      hardware_name: row.hardware_name,
       legal_name: legalEntities.map((e: { name: string }) => e.name).join(", "),
     };
   });

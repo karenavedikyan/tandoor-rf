@@ -5,7 +5,7 @@ import { after, before, describe, it } from "node:test";
 import request from "supertest";
 import { closePool, resetPoolForTests, query } from "../../src/db/pool";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
-import { linkUserToEmployee } from "../helpers/access-db-fixtures";
+import { denyClientAccess, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
@@ -58,7 +58,12 @@ describe("clients v3 API", { concurrency: false }, () => {
     await closePool();
   });
 
-  async function seedV3(): Promise<void> {
+  async function seedV3(completeHoldingMembership = false): Promise<void> {
+    const holdings = JSON.parse(loadFixture("all_holding.json").toString("utf8"));
+    if (completeHoldingMembership) {
+      holdings[0].legal_entities.push({ guid_retail: LEGAL_TWO, name_retail: "Legal Two" });
+    }
+    const holdingsBytes = Buffer.from(JSON.stringify(holdings));
     const employeesBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
       buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
@@ -70,7 +75,7 @@ describe("clients v3 API", { concurrency: false }, () => {
     const dry = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
       argv: ["--dry-run"],
-      holdingsBytes: loadFixture("all_holding.json"),
+      holdingsBytes,
       clientsBytes: loadFixture("all_clients.json"),
       retailBytes: loadFixture("all_retail.json"),
       employeesBytes,
@@ -79,7 +84,7 @@ describe("clients v3 API", { concurrency: false }, () => {
     const applied = await runExchangeV3RegularUpdate({
       env: { ...process.env, DATABASE_URL: databaseUrl },
       argv: ["--apply", "--expected-fingerprint", dry.verificationFingerprint!],
-      holdingsBytes: loadFixture("all_holding.json"),
+      holdingsBytes,
       clientsBytes: loadFixture("all_clients.json"),
       retailBytes: loadFixture("all_retail.json"),
       employeesBytes,
@@ -568,9 +573,9 @@ describe("clients v3 API", { concurrency: false }, () => {
 
   it("legal_grouped merges holding members, excludes foreign legals, and keeps flat legal API", async () => {
     await prepareDatabase(databaseUrl);
-    await seedV3();
+    await seedV3(true);
     const adminEmail = "admin-v3-grouped@example.com";
-    await createTestUser({
+    const groupedAdmin = await createTestUser({
       databaseUrl,
       email: adminEmail,
       password: TEST_PASSWORD,
@@ -601,6 +606,26 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.ok(legalGuids.includes(LEGAL));
     assert.ok(legalGuids.includes(LEGAL_TWO));
     assert.equal(legalGuids.length, 2);
+    assert.ok(grouped.body.items.some((item: { group_key: string }) => item.group_key === "legal:b2000000-0000-4000-8000-000000000002"));
+    const firstPage = await request(app).get("/api/clients/v3/list?entity=legal_grouped&page=1&pageSize=1").set(headers);
+    const secondPage = await request(app).get("/api/clients/v3/list?entity=legal_grouped&page=2&pageSize=1").set(headers);
+    assert.equal(firstPage.status, 200);
+    assert.equal(secondPage.status, 200);
+    assert.equal(firstPage.body.total, grouped.body.total);
+    assert.equal(secondPage.body.total, grouped.body.total);
+    assert.notEqual(firstPage.body.items[0].group_key, secondPage.body.items[0].group_key);
+    const groupedOptions = await request(app).get("/api/clients/v3/options?entity=legal_grouped").set(headers);
+    assert.equal(groupedOptions.status, 200);
+    assert.ok(!groupedOptions.body.categories.some((item: { guid: string }) => item.guid === "c3"));
+    const categoryMismatch = await request(app)
+      .get("/api/clients/v3/list?entity=legal_grouped&categoryGuid=c3").set(headers);
+    assert.equal(categoryMismatch.status, 200);
+    assert.equal(categoryMismatch.body.total, 0);
+    const categoryGroup = await request(app)
+      .get(`/api/clients/v3/list?entity=legal_grouped&categoryGuid=${CAT_A}`).set(headers);
+    assert.equal(categoryGroup.status, 200);
+    assert.equal(categoryGroup.body.total, 1);
+    assert.equal(categoryGroup.body.items[0].legal_entities.length, 2);
 
     const scope = await request(app).get("/api/clients/v3/scope-summary").set(headers);
     assert.equal(scope.status, 200);
@@ -638,6 +663,17 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.ok(mgrHolding);
     assert.equal(mgrHolding.legal_entities.length, 1);
     assert.equal(mgrHolding.legal_entities[0].guid, LEGAL);
+    const selected = await request(app)
+      .get(`/api/clients/v3/list?entity=legal_grouped&responsibleGuid=${M1}&responsibleKind=manager`).set(headers);
+    assert.equal(selected.status, 200);
+    assert.equal(selected.body.total, mgrGrouped.body.total);
+    assert.deepEqual(selected.body.items.map((item: { legal_entities: unknown[] }) => item.legal_entities),
+      mgrGrouped.body.items.map((item: { legal_entities: unknown[] }) => item.legal_entities));
+    const hiddenSiblingSearch = await request(app)
+      .get("/api/clients/v3/list?entity=legal_grouped&q=Legal+Two")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(hiddenSiblingSearch.status, 200);
+    assert.equal(hiddenSiblingSearch.body.total, 0);
 
     const siblingAnd = await request(app)
       .get(
@@ -658,6 +694,23 @@ describe("clients v3 API", { concurrency: false }, () => {
     );
     assert.ok(narrowed);
     assert.equal(narrowed.legal_entities.length, 2);
+    await denyClientAccess({ databaseUrl, userId: groupedAdmin.id, scopeType: "client", objectId: LEGAL_TWO, deniedByUserId: groupedAdmin.id });
+    const deniedSibling = await request(app).get("/api/clients/v3/list?entity=legal_grouped").set(headers);
+    assert.equal(deniedSibling.status, 200);
+    assert.ok(!JSON.stringify(deniedSibling.body).includes("Legal Two"));
+    const deniedSearch = await request(app).get("/api/clients/v3/list?entity=legal_grouped&q=Legal+Two").set(headers);
+    assert.equal(deniedSearch.status, 200);
+    assert.equal(deniedSearch.body.total, 0);
+    const deniedOptions = await request(app).get("/api/clients/v3/options?entity=legal_grouped").set(headers);
+    assert.equal(deniedOptions.status, 200);
+    assert.ok(!deniedOptions.body.staff.hardwareGuid.some((item: { guid: string }) => item.guid === "77777777-7777-4777-8777-777777777777"));
+    await denyClientAccess({ databaseUrl, userId: manager.id, scopeType: "client", objectId: HOLDING, deniedByUserId: adminUser.id });
+    const deniedHolding = await request(app)
+      .get("/api/clients/v3/list?entity=legal_grouped")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(deniedHolding.status, 200);
+    assert.ok(deniedHolding.body.items.every((item: { detail_entity: string }) => item.detail_entity === "legal"));
+    assert.ok(!JSON.stringify(deniedHolding.body).includes("SYNTH Holding One"));
   });
 
   it("sync-status uses v3 apply time when legacy import journal is empty", async () => {
