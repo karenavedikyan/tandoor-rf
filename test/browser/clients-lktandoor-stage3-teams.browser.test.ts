@@ -373,4 +373,56 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     assert.ok(page.url().includes("ropEmployee=" + ROP));
     await page.close();
   });
+
+  it("rop missing self identity shows controlled empty state without roster requests", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+    const responsiblesUrls: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/responsibles")) {
+        responsiblesUrls.push(req.url());
+      }
+    });
+    await page.route("**/api/clients/presentation", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { presentation?: { selfRopEmployeeGuid?: string | null } };
+      if (body.presentation) {
+        body.presentation.selfRopEmployeeGuid = null;
+      }
+      await route.fulfill({
+        status: response.status(),
+        headers: response.headers(),
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    });
+    await page.route("**/api/clients/v3/org-structure", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { selfRopEmployeeGuid?: string | null };
+      body.selfRopEmployeeGuid = null;
+      await route.fulfill({
+        status: response.status(),
+        headers: response.headers(),
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    });
+    await login(page, "rop-stage3-teams@example.com");
+    await page.goto(baseUrl + "/clients");
+    await page.locator('[data-view="teams"]').click();
+    await page.waitForURL((url) => url.search.includes("view=teams"), { timeout: 30000 });
+    await page.waitForFunction(
+      () =>
+        document.querySelector(".clients-compact-team--empty") !== null ||
+        /нет подтверждённой привязки/i.test(document.body.textContent || ""),
+      undefined,
+      { timeout: 15000 },
+    );
+    assert.ok(!page.url().includes("ropEmployee="));
+    assert.equal(responsiblesUrls.length, 0);
+    assert.equal(await page.locator(".clients-compact-team__members--loading").count(), 0);
+    assert.equal(pageErrors.length, 0, pageErrors.join("; "));
+    await page.close();
+  });
 });

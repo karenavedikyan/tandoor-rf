@@ -3539,14 +3539,15 @@
     );
   }
 
+  function clearTeamsPanelMarkup() {
+    compactTeamsRenderToken += 1;
+    teamsPanelEl.innerHTML = "";
+    teamsPanelEl.removeAttribute("data-onec-teams-ready");
+    teamsPanelEl.__onecOverviewHtml = "";
+    onecTeamsOverviewRenderSignature = "";
+  }
+
   function renderTeamsPanel(state) {
-    function clearTeamsPanelMarkup() {
-      compactTeamsRenderToken += 1;
-      teamsPanelEl.innerHTML = "";
-      teamsPanelEl.removeAttribute("data-onec-teams-ready");
-      teamsPanelEl.__onecOverviewHtml = "";
-      onecTeamsOverviewRenderSignature = "";
-    }
     if (state.view !== "teams" || logic.isBranchPortfolioList(state)) {
       clearTeamsPanelMarkup();
       return Promise.resolve();
