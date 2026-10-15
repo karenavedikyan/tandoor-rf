@@ -392,7 +392,12 @@
         },
         usesDirectorLayout: usesDirectorLayout,
         navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
+        navigateDirectorOpenTeam: navigateDirectorOpenTeam,
         navigateDirectorResponsible: navigateDirectorResponsible,
+        isAdminSession: function () {
+          return rolePresentation && rolePresentation.businessRole === "admin";
+        },
+        isRopSession: isRopDesignSession,
         navigateRopBranchPortfolio: navigateRopBranchPortfolio,
         navigateResponsible: navigateResponsible,
         renderOrgBadge: renderOrgBadge,
@@ -2983,7 +2988,16 @@
     }
     updateDesignViewSwitcherLabels();
     applyPortfolioDesignChrome(rolePresentation, currentUser, state);
-    if (usesDirectorLayout()) {
+    var lktandoorTeamsChrome =
+      window.ClientsLktandoorTeams &&
+      window.ClientsLktandoorTeams.shouldUse(state, exchangeV3Active, rolePresentation, logic);
+    if (lktandoorTeamsChrome) {
+      viewSwitcherEl.classList.add("clients-hidden");
+      document.getElementById("clients-manager-chrome")?.classList.add("clients-hidden");
+    } else if (rolePresentation) {
+      viewSwitcherEl.classList.toggle("clients-hidden", !rolePresentation.showViewSwitcher);
+    }
+    if (!lktandoorTeamsChrome && usesDirectorLayout()) {
       loadDirectorStats();
       mountDirectorStatLinks();
     } else if (isRopDesignSession() && isTeams) {
@@ -3233,6 +3247,30 @@
     if (match) {
       teamContext.ropName = match.name || teamContext.ropName;
     }
+  }
+
+  function navigateDirectorOpenTeam(ropEmployeeGuid) {
+    rememberRopName(ropEmployeeGuid);
+    navigateState({
+      view: "teams",
+      ropEmployee: ropEmployeeGuid,
+      teamExpand: [ropEmployeeGuid],
+      rop: "",
+      manager: "",
+      clientManager: "",
+      outletManager: "",
+      regionalManager: "",
+      clientRegionalManager: "",
+      outletRegionalManager: "",
+      hardwareManager: "",
+      clientHardwareManager: "",
+      outletHardwareManager: "",
+      portfolio: "",
+      responsibleGuid: "",
+      responsibleKind: "",
+      entity: "clients",
+      page: 1,
+    });
   }
 
   function navigateDirectorBranchPortfolio(ropEmployeeGuid, portfolio) {

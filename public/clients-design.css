@@ -68,16 +68,38 @@
 
 .clients-design-page .clients-header-actions.clients-onec-update {
   flex: 0 1 auto;
-  max-width: min(100%, 28rem);
+  max-width: min(100%, 20rem);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.clients-design-page .clients-onec-update-details__summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--rf-text-muted, #6b7280);
+  user-select: none;
+}
+
+.clients-design-page .clients-onec-update-details__summary::-webkit-details-marker {
+  display: none;
+}
+
+.clients-design-page .clients-onec-update-details__body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px 8px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.clients-design-page .clients-onec-update-details:not([open]) .clients-onec-update-details__body {
+  display: none;
 }
 
 .clients-design-page .clients-header-actions .clients-onec-update__button,

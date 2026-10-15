@@ -145,6 +145,161 @@
       };
     }
 
+    function isX13TeamsSurface() {
+      return typeof document !== "undefined" && document.body.classList.contains("clients-lktandoor-teams");
+    }
+
+    function sumAssignmentCounts(assignments) {
+      var clients = 0;
+      var outlets = 0;
+      (assignments || []).forEach(function (assignment) {
+        clients += Number(assignment.clientCount) || 0;
+        outlets += Number(assignment.outletCount) || 0;
+      });
+      return { clients: clients, outlets: outlets };
+    }
+
+    function assignmentKindSubtitle(employee) {
+      var kinds = (employee.assignments || [])
+        .map(function (assignment) {
+          return KIND_LABELS[assignment.kind] || assignment.kind;
+        })
+        .filter(function (value, index, list) {
+          return list.indexOf(value) === index;
+        });
+      var line = kinds.join(" · ");
+      if (employee.hasLinkedAccount === false) {
+        line = line ? line + " · Нет аккаунта ЛК" : "Нет аккаунта ЛК";
+      }
+      return line;
+    }
+
+    function renderX13DirectoryCard(toolsTitle, toolsHint, searchPlaceholder, searchAria, searchValue, bodyHtml, noteHtml) {
+      return (
+        '<section class="card x13-directory clients-x13-directory">' +
+        '<div class="x13-directory-tools">' +
+        "<div><h2>" +
+        deps.shell.escapeHtml(toolsTitle) +
+        "</h2><p>" +
+        deps.shell.escapeHtml(toolsHint) +
+        '</p></div><input type="search" class="clients-field__input clients-x13-directory-search" id="clients-team-search-input" aria-label="' +
+        deps.shell.escapeHtml(searchAria) +
+        '" placeholder="' +
+        deps.shell.escapeHtml(searchPlaceholder) +
+        '" value="' +
+        deps.shell.escapeHtml(searchValue || "") +
+        '" autocomplete="off" /></div>' +
+        '<div class="x13-people">' +
+        bodyHtml +
+        "</div></section>" +
+        (noteHtml || "")
+      );
+    }
+
+    function renderX13RopPerson(summary) {
+      var metrics =
+        String(summary.teamMemberCount ?? "—") +
+        " сотрудников · " +
+        String(summary.uniqueClientCount ?? "—") +
+        " клиентов · " +
+        String(summary.uniqueOutletCount ?? "—") +
+        " ТТ";
+      return (
+        '<button type="button" class="x13-person" data-open-rop-team="' +
+        deps.shell.escapeHtml(summary.employeeGuid) +
+        '"><span class="avatar clients-compact-team__avatar clients-compact-team__avatar--rop">' +
+        deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
+        '</span><span class="x13-person-info"><strong>' +
+        deps.shell.escapeHtml(summary.name || summary.shortId || "РОП") +
+        '</strong><small>РОП</small><span>' +
+        deps.shell.escapeHtml(metrics) +
+        '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
+      );
+    }
+
+    function renderX13EmployeePerson(ropGuid, employee, primaryKind) {
+      var counts = sumAssignmentCounts(employee.assignments);
+      var primary = primaryAssignment(employee.assignments || []);
+      var kind = primaryKind || (primary && primary.kind) || "manager";
+      var metrics = counts.clients + " клиентов · " + counts.outlets + " ТТ";
+      return (
+        '<button type="button" class="x13-person" data-open-territory="clients" data-responsible-kind="' +
+        deps.shell.escapeHtml(kind) +
+        '" data-manager="' +
+        deps.shell.escapeHtml(employee.employeeGuid) +
+        '" data-rop-employee="' +
+        deps.shell.escapeHtml(ropGuid) +
+        '"><span class="avatar clients-compact-team__avatar">' +
+        deps.shell.escapeHtml(initialsFromName(employee.name || employee.shortId)) +
+        '</span><span class="x13-person-info"><strong>' +
+        deps.shell.escapeHtml(employee.name || employee.shortId || employee.employeeGuid) +
+        "</strong><small>" +
+        deps.shell.escapeHtml(assignmentKindSubtitle(employee)) +
+        '</small><span>' +
+        deps.shell.escapeHtml(metrics) +
+        '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
+      );
+    }
+
+    function renderOverviewX13(state, context) {
+      var teamUi = readTeamUi(state);
+      var rops = (context.rops || []).filter(function (rop) {
+        return ropMatchesQuery(rop, teamUi.query);
+      });
+      var rows = rops.map(renderX13RopPerson).join("");
+      var emptyHtml = rows ? rows : '<div class="x6-empty">РОПы не найдены. Измените поиск.</div>';
+      var cardTitle = deps.isAdminSession && deps.isAdminSession() ? "РОПы и команды" : "Мои РОПы";
+      return renderX13DirectoryCard(
+        cardTitle,
+        "Выберите РОПа, затем сотрудника его команды.",
+        "Найти РОПа…",
+        "Поиск РОПа",
+        state.teamQ || "",
+        emptyHtml,
+        "",
+      );
+    }
+
+    function renderStaffX13(state, context) {
+      var summary = context.ropSummary;
+      if (!summary) {
+        return '<p class="clients-compact-team__empty">Команда недоступна.</p>';
+      }
+      var teamUi = readTeamUi(state);
+      var entry = cacheEntry(summary.employeeGuid);
+      if (entry.status === "loading" || entry.status === "idle") {
+        return '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка состава…</div>';
+      }
+      if (entry.status === "error") {
+        return (
+          '<div class="clients-compact-team__members clients-compact-team__members--error"><p class="clients-compact-team__error">' +
+          deps.shell.escapeHtml(entry.error || "Ошибка загрузки") +
+          '</p><button type="button" class="workspace-button workspace-button--ghost clients-compact-team__retry" data-retry-rop="' +
+          deps.shell.escapeHtml(summary.employeeGuid) +
+          '">Повторить</button></div>'
+        );
+      }
+      var visible = visibleEmployees(entry.items, summary, Object.assign({}, teamUi, { kind: "" }));
+      var rows = visible
+        .map(function (employee) {
+          return renderX13EmployeePerson(summary.employeeGuid, employee);
+        })
+        .join("");
+      var bodyHtml = rows || '<div class="x6-empty">Сотрудники не найдены. Измените поиск.</div>';
+      var ropLabel = summary.name || summary.shortId || "Моя команда";
+      var note =
+        '<p class="x13-directory-note">Клиенты с несколькими ответственными могут встречаться у нескольких сотрудников. Общий итог команды считается без повторов.</p>';
+      return renderX13DirectoryCard(
+        "Сотрудники · " + ropLabel,
+        "Откройте территорию сотрудника: тот же список, который видит он.",
+        "Найти сотрудника…",
+        "Поиск сотрудника",
+        state.teamQ || "",
+        bodyHtml,
+        note,
+      );
+    }
+
     function isExpanded(teamUi, ropGuid) {
       return teamUi.expanded.indexOf(ropGuid) !== -1;
     }
@@ -537,6 +692,9 @@
     }
 
     function renderOverview(state, context) {
+      if (isX13TeamsSurface()) {
+        return renderOverviewX13(state, context);
+      }
       var teamUi = readTeamUi(state);
       var loadSummary = summarizeSearchLoad(context.rops || [], teamUi);
       var searchBanner = renderSearchLoadBanner(loadSummary);
@@ -576,6 +734,9 @@
     }
 
     function renderRopPanel(state, context) {
+      if (isX13TeamsSurface()) {
+        return renderStaffX13(state, context);
+      }
       var summary = context.ropSummary;
       if (!summary) {
         return '<p class="clients-compact-team__empty">Команда недоступна.</p>';
@@ -626,10 +787,41 @@
         );
       }
 
+      container.querySelectorAll("[data-open-rop-team]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var ropGuid = btn.getAttribute("data-open-rop-team");
+          if (!ropGuid) {
+            return;
+          }
+          if (deps.usesDirectorLayout() && deps.navigateDirectorOpenTeam) {
+            deps.navigateDirectorOpenTeam(ropGuid);
+            return;
+          }
+          if (deps.isRopSession && deps.isRopSession()) {
+            callbacks.navigate({
+              view: "teams",
+              ropEmployee: ropGuid,
+              teamExpand: [ropGuid],
+              portfolio: "",
+              responsibleGuid: "",
+              responsibleKind: "",
+              page: 1,
+            });
+            return;
+          }
+          callbacks.navigate({ ropEmployee: ropGuid, teamExpand: [ropGuid], portfolio: "" });
+        });
+      });
       container.querySelectorAll("[data-toggle-rop]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var ropGuid = btn.getAttribute("data-toggle-rop");
           if (!ropGuid) {
+            return;
+          }
+          if (isX13TeamsSurface()) {
+            if (deps.usesDirectorLayout() && deps.navigateDirectorOpenTeam) {
+              deps.navigateDirectorOpenTeam(ropGuid);
+            }
             return;
           }
           var teamUi = readTeamUi(readStateFromLocation());
@@ -740,6 +932,14 @@
     }
 
     function prepareAndRenderOverview(state, context, container, callbacks) {
+      if (isX13TeamsSurface()) {
+        container.innerHTML = renderOverviewX13(state, context);
+        bindEvents(container, state, callbacks);
+        if (callbacks.restoreSearchFocus) {
+          callbacks.restoreSearchFocus();
+        }
+        return Promise.resolve();
+      }
       var teamUi = readTeamUi(state);
       var isStale = callbacks.isStale || function () {
         return false;

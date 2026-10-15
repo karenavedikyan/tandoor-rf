@@ -23,28 +23,31 @@
                 <h1 class="clients-page-title" id="clients-page-title">Клиенты</h1>
                 <p id="clients-page-subtitle" class="clients-page-subtitle clients-hidden"></p>
               </div>
-              <div
+              <details
                 id="onec-update-panel"
-                class="clients-onec-update clients-admin-onec-bar clients-header-actions clients-hidden"
+                class="clients-onec-update clients-onec-update-details clients-admin-onec-bar clients-header-actions clients-hidden"
                 aria-live="polite"
               >
-                <button
-                  type="button"
-                  id="onec-update-button"
-                  class="workspace-button workspace-button--primary clients-onec-update__button"
-                  data-testid="onec-update-button"
-                >
-                  Обновить из 1С
-                </button>
-                <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
-                <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
-                <a
-                  href="/clients/field-map"
-                  id="clients-field-map-link"
-                  class="workspace-button workspace-button--ghost clients-onec-update__field-map clients-hidden"
-                  >Карта полей и источников</a
-                >
-              </div>
+                <summary class="clients-onec-update-details__summary">Обмен 1С</summary>
+                <div class="clients-onec-update-details__body">
+                  <button
+                    type="button"
+                    id="onec-update-button"
+                    class="workspace-button workspace-button--secondary clients-onec-update__button"
+                    data-testid="onec-update-button"
+                  >
+                    Обновить из 1С
+                  </button>
+                  <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
+                  <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
+                  <a
+                    href="/clients/field-map"
+                    id="clients-field-map-link"
+                    class="workspace-button workspace-button--ghost clients-onec-update__field-map clients-hidden"
+                    >Карта полей и источников</a
+                  >
+                </div>
+              </details>
             </div>
           </header>
 
