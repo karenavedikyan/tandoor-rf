@@ -542,23 +542,158 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
   });
 
   it("orphan retail list keeps context through card back and reload", async () => {
+    const assertListScopeAndRules = (listUrl: URL) => {
+      assert.equal((listUrl.searchParams.get("managerGuid") || "").toLowerCase(), M1.toLowerCase());
+      const filters = listUrl.searchParams.get("filters");
+      assert.ok(filters);
+      const rules = JSON.parse(filters) as Array<{ field: string; op: string }>;
+      assert.ok(rules.some((rule) => rule.field === "loadingOnMonday" && rule.op === "no"));
+    };
+    const assertListSearchAndScope = (listUrl: URL) => {
+      assert.equal(listUrl.searchParams.get("q"), "Orphan");
+      assert.equal((listUrl.searchParams.get("managerGuid") || "").toLowerCase(), M1.toLowerCase());
+    };
+    const assertListContext = (listUrl: URL) => {
+      assertListSearchAndScope(listUrl);
+      assertListScopeAndRules(listUrl);
+    };
+    const assertUrlScopeAndRules = (pageUrl: URL) => {
+      assert.equal((pageUrl.searchParams.get("v3manager") || "").toLowerCase(), M1.toLowerCase());
+      const filters = pageUrl.searchParams.get("filters");
+      assert.ok(filters);
+      const rules = JSON.parse(filters) as Array<{ field: string; op: string }>;
+      assert.ok(rules.some((rule) => rule.field === "loadingOnMonday" && rule.op === "no"));
+    };
+    const assertUrlSearchAndScope = (pageUrl: URL) => {
+      assert.equal(pageUrl.searchParams.get("q"), "Orphan");
+      assert.equal((pageUrl.searchParams.get("v3manager") || "").toLowerCase(), M1.toLowerCase());
+    };
+    const assertUrlContext = (pageUrl: URL) => {
+      assertUrlSearchAndScope(pageUrl);
+      assertUrlScopeAndRules(pageUrl);
+    };
     const page = await browser.newPage({ viewport: DESKTOP });
     await login(page, "admin-lktandoor-list@example.com");
-    await waitForListEntity(page, "retail", baseUrl + "/clients?v3mode=1&v3entity=retail&view=all&page=1");
-    await clickSecondaryEntity(page, "orphan_retail");
-    const filtersBefore = new URL(page.url()).searchParams.get("filters");
-    const orphanRows = await rowCount(page);
+    await waitForListEntity(
+      page,
+      "retail",
+      baseUrl +
+        "/clients?v3mode=1&v3entity=retail&view=all&page=1&v3manager=" +
+        encodeURIComponent(M1),
+    );
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = true;
+    });
+    await page.selectOption("#v3-rule-field", "loadingOnMonday");
+    await page.selectOption("#v3-rule-op", "no");
+    const filterList = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return u.searchParams.get("entity") === "retail" && u.searchParams.get("filters")?.includes("loadingOnMonday") === true;
+    });
+    await page.click("#v3-rule-add");
+    const filterRes = await filterList;
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
+    assertListScopeAndRules(new URL(filterRes.url()));
+    assertUrlScopeAndRules(new URL(page.url()));
+    const searchList = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return (
+        u.searchParams.get("entity") === "retail" &&
+        u.searchParams.get("q") === "Orphan" &&
+        u.searchParams.get("filters")?.includes("loadingOnMonday") === true
+      );
+    });
+    await page.fill("#search-input", "Orphan");
+    await page.locator("#search-input").dispatchEvent("input", { bubbles: true });
+    assertListContext(new URL((await searchList).url()));
+    assertUrlContext(new URL(page.url()));
+
+    const orphanSwitch = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return (
+        u.searchParams.get("entity") === "orphan_retail" &&
+        u.searchParams.get("q") === "Orphan" &&
+        u.searchParams.get("filters")?.includes("loadingOnMonday") === true
+      );
+    });
+    await page.locator('#v3-lktandoor-secondary-entities [data-v3entity="orphan_retail"]').click();
+    assertListContext(new URL((await orphanSwitch).url()));
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
+    assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
+    assertUrlContext(new URL(page.url()));
+    assert.equal(await rowCount(page), 1);
+    assert.ok((await page.locator("#clients-table-body").innerText()).includes("Orphan Store"));
+
     await page.locator("#clients-table-body tr a.clients-link").first().click();
     await page.waitForURL(/\/clients\//);
+    const backList = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return (
+        u.searchParams.get("entity") === "orphan_retail" &&
+        u.searchParams.get("q") === "Orphan" &&
+        u.searchParams.get("filters")?.includes("loadingOnMonday") === true
+      );
+    });
     await updateList(page, () => page.locator('[data-testid="v3-back-to-list"]').click());
+    assertListContext(new URL((await backList).url()));
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
     assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
-    assert.equal(await rowCount(page), orphanRows);
-    assert.equal(new URL(page.url()).searchParams.get("filters"), filtersBefore);
+    assert.equal(await rowCount(page), 1);
+    assertUrlContext(new URL(page.url()));
+
+    const reloadList = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return (
+        u.searchParams.get("entity") === "orphan_retail" &&
+        u.searchParams.get("q") === "Orphan" &&
+        u.searchParams.get("filters")?.includes("loadingOnMonday") === true
+      );
+    });
     await updateList(page, () => page.reload());
+    assertListContext(new URL((await reloadList).url()));
+    assertUrlContext(new URL(page.url()));
     assert.equal(new URL(page.url()).searchParams.get("v3entity"), "orphan_retail");
-    assert.equal(await rowCount(page), orphanRows);
-    await clickPrimaryEntity(page, "retail");
+
+    const retailBack = page.waitForResponse((res) => {
+      if (!res.url().includes("/api/clients/v3/list") || res.status() !== 200) {
+        return false;
+      }
+      const u = new URL(res.url());
+      return (
+        u.searchParams.get("entity") === "retail" &&
+        u.searchParams.get("q") === "Orphan" &&
+        u.searchParams.get("filters")?.includes("loadingOnMonday") === true
+      );
+    });
+    await page.locator('.clients-entity-switcher--primary [data-v3entity="retail"]').click();
+    assertListContext(new URL((await retailBack).url()));
+    await page.waitForFunction(
+      () => document.querySelector("#clients-table-body")?.getAttribute("aria-busy") === "false",
+    );
     assert.equal(new URL(page.url()).searchParams.get("v3entity"), "retail");
+    assertUrlContext(new URL(page.url()));
     await page.close();
   });
 
