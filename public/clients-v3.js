@@ -68,6 +68,10 @@
     if (!responsibleGuid && responsibleKind === "manager") {
       responsibleGuid = params.get("v3manager") || "";
     }
+    var v3view = params.get("v3view") || "all";
+    if (v3view === "all" && params.get("ropEmployee") && responsibleGuid) {
+      v3view = "teams";
+    }
     return {
       v3entity: entity,
       page: Math.max(1, Number(params.get("page") || "1")),
@@ -78,7 +82,7 @@
       v3category: params.get("v3category") || "",
       v3types: parseTokenList(params.get("typeGuids") || params.get("v3type") || ""),
       v3categories: parseTokenList(params.get("categoryGuids") || params.get("v3category") || ""),
-      v3view: params.get("v3view") || "all",
+      v3view: v3view,
       missingManager: params.get("missingManager") === "1",
       ropEmployee: params.get("ropEmployee") || "",
       responsibleGuid: responsibleGuid,
@@ -120,6 +124,9 @@
 
   function syncLegacyListParams(params, state) {
     var v3view = state.v3view || "all";
+    if (v3view === "all" && state.ropEmployee && state.responsibleGuid) {
+      v3view = "teams";
+    }
     var legacyView = legacyViewFromV3View(v3view);
     params.set("view", legacyView);
     if (v3view !== "all") {
@@ -327,6 +334,14 @@
     var domFilters = loadSource === "url" ? null : readFiltersFromDom();
     var fromUrl = loadSource === "url";
     var view = legacy.view || "all";
+    if (
+      view !== "teams" &&
+      fromUrl &&
+      urlFilters.ropEmployee &&
+      urlFilters.responsibleGuid
+    ) {
+      view = "teams";
+    }
     var entity = legacy.entity || "clients";
     var v3entity = logic
       ? logic.mapLegacyEntityToV3Entity(entity, urlFilters.v3entity)
