@@ -325,8 +325,7 @@
     var address = addressCol
       ? listUi.cellDisplay(item, addressCol.id, shell).replace(/<[^>]+>/g, "")
       : item.store_address || item.address_line || item.city || "Адрес не передан";
-    var category = item.category_name || item.type_name || "";
-    var badge = category || "—";
+    var category = (item.category_name || item.type_name || "").trim();
     var extraCols = visibleCols.filter(function (col) {
       return col.id !== primaryCol.id && col.id !== "store_address" && col.id !== "address_line";
     });
@@ -347,8 +346,8 @@
       '<span class="x13-client-card-address">' +
       shell.escapeHtml(String(address)) +
       "</span>" +
-      (badge
-        ? '<span class="x7-badge">' + shell.escapeHtml(String(badge)) + "</span>"
+      (category
+        ? '<span class="x7-badge">' + shell.escapeHtml(String(category)) + "</span>"
         : "") +
       (fieldsHtml ? '<span class="x13-mobile-fields">' + fieldsHtml + "</span>" : "") +
       '<span class="x13-open-card">Открыть карточку клиента</span></article>'

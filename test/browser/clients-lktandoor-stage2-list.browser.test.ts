@@ -145,6 +145,38 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     });
   }
 
+  async function assertDesktopToolbarLayout(page: Page) {
+    const layout = await page.evaluate(() => {
+      const row = document.querySelector(".clients-lktandoor-list .clients-toolbar__search-row");
+      const search = document.querySelector("#search-input");
+      const switcher = document.querySelector(".clients-entity-switcher--primary");
+      const shortcut = document.querySelector(".x6-field-shortcut");
+      if (!row || !search || !switcher) {
+        return null;
+      }
+      const rowRect = row.getBoundingClientRect();
+      const searchRect = search.getBoundingClientRect();
+      const controls = row.querySelector(".clients-toolbar__controls-row");
+      const controlsRect = controls?.getBoundingClientRect();
+      const switcherStyle = getComputedStyle(switcher);
+      const shortcutRadius = shortcut ? getComputedStyle(shortcut).borderRadius : "";
+      return {
+        searchWidthRatio: searchRect.width / rowRect.width,
+        gapAfterSearch: controlsRect ? controlsRect.left - searchRect.right : 999,
+        switcherBorderWidth: switcherStyle.borderWidth,
+        switcherBackground: switcherStyle.backgroundColor,
+        shortcutRadius,
+        rowDisplay: getComputedStyle(row).display,
+      };
+    });
+    assert.ok(layout, "toolbar layout nodes missing");
+    assert.equal(layout.rowDisplay, "flex");
+    assert.ok(layout.searchWidthRatio > 0.35, "search should consume spare desktop width");
+    assert.ok(layout.gapAfterSearch < 24, "search and controls should sit adjacent");
+    assert.equal(layout.switcherBorderWidth, "0px", "entity switcher should not use segmented shell border");
+    assert.ok(!layout.shortcutRadius.includes("999"), "shortcuts should be rectangular");
+  }
+
   it("manager: category filter, chip remove, card back retains URL", async () => {
     const page = await browser.newPage();
     await login(page, "manager-lktandoor-list@example.com");
@@ -177,11 +209,13 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.setViewportSize(DESKTOP);
     await page.evaluate(() => {
       const details = document.getElementById("v3-lktandoor-field-filters");
-      if (details) details.open = true;
+      if (details) details.open = false;
     });
+    await assertDesktopToolbarLayout(page);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-list-desktop-1440.png") });
+    await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.waitForSelector(".x6-field-shortcuts .x6-field-shortcut", { state: "visible" });
     assert.ok(await page.locator(".x6-field-shortcut--disabled").filter({ hasText: "ИНН" }).count());
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-list-desktop-1440.png") });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-filters-desktop-1440.png") });
     await page.setViewportSize(MOBILE);
     await closeMobileSidebar(page);
@@ -190,6 +224,18 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.waitForSelector('[data-testid="v3-lktandoor-mobile-card"]');
     assert.equal(await rowCount(page), before);
     assert.ok(await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().isVisible());
+    await page.evaluate(() => {
+      const details = document.getElementById("v3-lktandoor-field-filters");
+      if (details) details.open = false;
+    });
+    const mobileToolbar = await page.evaluate(() => {
+      const row = document.querySelector(".clients-lktandoor-list .clients-toolbar__controls-row");
+      const buttons = row ? row.querySelectorAll("button, .clients-view-switcher__btn").length : 0;
+      const overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
+      return { buttons, overflow };
+    });
+    assert.ok(mobileToolbar.buttons >= 3, "mobile toolbar should show three controls");
+    assert.equal(mobileToolbar.overflow, false, "mobile list should not overflow horizontally");
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-mobile-toolbar-390.png") });
     await page.locator('[data-testid="v3-lktandoor-mobile-card"]').first().click();
     await page.waitForURL(/\/clients\//);

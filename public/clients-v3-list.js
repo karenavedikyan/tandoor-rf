@@ -381,7 +381,7 @@
     if (hint) {
       var lktandoor = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
       if (lktandoor) {
-        hint.textContent = "Только выбранная территория. Сброс не меняет область списка.";
+        hint.textContent = "Только выбранная территория";
       } else {
         hint.textContent =
           isLegal && cities.length === 0

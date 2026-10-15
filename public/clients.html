@@ -218,9 +218,7 @@
                 >
                   Сбросить фильтры
                 </button>
-                <p class="clients-v3-list-filterbar__hint x13-territory-note">
-                  Только выбранная территория. Сброс не меняет область списка.
-                </p>
+                <p class="clients-v3-list-filterbar__hint x13-territory-note">Только выбранная территория</p>
               </div>
               <nav
                 id="v3-lktandoor-secondary-entities"
@@ -231,7 +229,7 @@
                 <summary id="v3-lktandoor-filter-summary">Фильтры по всем полям · 0</summary>
                 <div id="v3-lktandoor-field-shortcuts" class="x6-field-shortcuts" aria-label="Быстрый выбор поля"></div>
                 <p class="clients-v3-list-filterbar__hint x6-filter-and-note">
-                  Все условия одновременно (AND). Правила снимаются чипами ниже и не расширяют территорию.
+                  Все условия одновременно (AND). Доступны только поля из каталога фильтров v3; правила не расширяют территорию.
                 </p>
                 <div class="x6-builder clients-v3-rule-builder">
                   <label class="clients-field">
@@ -735,13 +733,13 @@
             </div>
 
             <div class="clients-results-shell">
-              <div class="clients-results-shell__head">
-                <div class="clients-results-shell__title-row">
+              <div class="clients-results-shell__head x13-results-head">
+                <div class="clients-results-shell__title-row x13-results-strip">
                   <h2 class="clients-results-shell__title clients-hidden" id="clients-results-title">Мои клиенты</h2>
-                  <p id="result-count" class="clients-results-shell__count x6-count-line">Найдено 0 клиентов</p>
-                </div>
-                <div class="clients-sync-block clients-sync-block--compact">
-                  <p id="sync-status" class="clients-sync clients-sync--secondary"></p>
+                  <p id="result-count" class="clients-results-shell__count x6-count-line" data-testid="v3-lktandoor-result-count">
+                    Найдено 0 клиентов
+                  </p>
+                  <p id="sync-status" class="clients-sync clients-sync--secondary" data-testid="v3-lktandoor-sync-note"></p>
                 </div>
               </div>
               <div id="columns-picker" class="clients-columns-picker clients-hidden" role="dialog" aria-label="Выбор колонок"></div>
