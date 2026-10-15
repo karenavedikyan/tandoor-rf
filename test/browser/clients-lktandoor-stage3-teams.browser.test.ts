@@ -15,6 +15,7 @@ const M1 = "22222222-2222-4222-8222-222222222222";
 const M2 = "33333333-3333-4333-8333-333333333333";
 const HW = "77777777-7777-4777-8777-777777777777";
 const ROP = "55555555-5555-4555-8555-555555555555";
+const ROP_FOREIGN = "66666666-6666-4666-8666-666666666666";
 const LEGAL_TWO_LABEL = "Legal Two";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const SCREENSHOT_DIR =
@@ -75,6 +76,10 @@ async function seed(databaseUrl: string) {
     createdByUserId: admin.id,
   });
   const employeesBytes = buildEmployeeRosterBytes([
+    buildEmployeeRosterEntry(ROP_FOREIGN, {
+      name_manager: "ROP Foreign First",
+      post: "Руководитель отдела продаж",
+    }),
     buildEmployeeRosterEntry(M1, { name_manager: "Manager One" }),
     buildEmployeeRosterEntry(M2, { name_manager: "Manager Two" }),
     buildEmployeeRosterEntry(HW, { name_manager: "Hardware One" }),
@@ -211,7 +216,7 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await waitTeamsDirectoryReady(page);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-directory-desktop-1440.png") });
 
-    await page.locator("[data-toggle-rop]").first().click();
+    await page.locator('.clients-compact-team__toggle[data-toggle-rop="' + ROP + '"]').click();
     await page.waitForSelector(".clients-compact-team__member-main", { timeout: 15000 });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-roster-desktop-1440.png") });
 
@@ -290,11 +295,22 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await page.goto(baseUrl + "/clients");
     await page.locator('[data-view="teams"]').click();
     await page.waitForURL((url) => url.search.includes("view=teams"), { timeout: 30000 });
+    const orgOverview = await page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/org-structure") && res.status() === 200,
+      { timeout: 30000 },
+    );
+    const overviewBody = (await orgOverview.json()) as {
+      rops: { employeeGuid: string }[];
+      selfRopEmployeeGuid?: string;
+    };
+    assert.equal(overviewBody.rops[0]?.employeeGuid, ROP_FOREIGN, "foreign ROP must stay first in API roster");
+    assert.equal(overviewBody.selfRopEmployeeGuid, ROP);
     await page.waitForResponse(
       (res) => res.url().includes("/responsibles") && res.status() === 200,
       { timeout: 30000 },
     );
     assert.ok(page.url().includes("ropEmployee=" + ROP));
+    assert.ok(!page.url().includes("ropEmployee=" + ROP_FOREIGN));
     await page.waitForSelector(".clients-compact-team__member-main", { timeout: 30000 });
     assert.equal(await page.locator("[data-toggle-rop]").count(), 0);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "teams-rop-own-roster-desktop-1440.png") });

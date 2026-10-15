@@ -8,6 +8,7 @@ import {
   type OrgStructureOverview,
   type OrgRopSummary,
 } from "../org/structure-repository";
+import { selfRopEmployeeGuidFromContext } from "../self-rop-identity";
 import { v3EntityAssignmentScope } from "./access-scope";
 import { readableGroupKey } from "./list-legal-grouped";
 import { v3JsonManagerField } from "./json-paths";
@@ -138,6 +139,7 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     rosterLoaded,
     limitationNote:
       "Структура команд построена по объектам exchange v3 и справочнику ОПТ (без legacy onec_clients).",
+    selfRopEmployeeGuid: selfRopEmployeeGuidFromContext(context),
   };
 }
 

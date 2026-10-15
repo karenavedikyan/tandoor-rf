@@ -332,6 +332,7 @@
     undefinedTeam: [],
     managers: [],
     ropSummary: null,
+    selfRopEmployeeGuid: "",
     ropName: "",
     managerName: "",
     limitationNote: "",
@@ -878,20 +879,29 @@
     if (!isRopDesignSession()) {
       return "";
     }
-    if (teamContext.ropSummary && teamContext.ropSummary.employeeGuid) {
-      return teamContext.ropSummary.employeeGuid;
+    if (teamContext.selfRopEmployeeGuid) {
+      return teamContext.selfRopEmployeeGuid;
     }
-    var rops = teamContext.rops || [];
-    var linked = rops.filter(function (item) {
-      return item.hasLinkedAccount;
-    });
-    if (linked.length === 1) {
-      return linked[0].employeeGuid;
-    }
-    if (rops.length === 1) {
-      return rops[0].employeeGuid;
+    if (rolePresentation && rolePresentation.selfRopEmployeeGuid) {
+      return rolePresentation.selfRopEmployeeGuid;
     }
     return "";
+  }
+
+  function ropOwnTeamIdentityReady() {
+    return Boolean(resolveRopOwnBranchGuid());
+  }
+
+  function renderRopOwnTeamIdentityEmpty(container) {
+    var target = container || teamsPanelEl;
+    if (!target) {
+      return;
+    }
+    clearTeamsPanelMarkup();
+    target.innerHTML =
+      '<div class="clients-compact-team clients-compact-team--empty">' +
+      '<p class="clients-phone-muted">Моя команда недоступна: нет подтверждённой привязки к сотруднику 1С для вашего аккаунта РОП.</p>' +
+      "</div>";
   }
 
   function ropTeamsHomeStatePatch(state) {
@@ -1716,6 +1726,9 @@
 
   function applyRoleChrome(presentation) {
     rolePresentation = presentation;
+    if (presentation && presentation.selfRopEmployeeGuid) {
+      teamContext.selfRopEmployeeGuid = presentation.selfRopEmployeeGuid;
+    }
     applyOnecUpdatePanelVisibility();
     if (!presentation) {
       return;
@@ -3562,6 +3575,10 @@
       return;
     }
     if (isRopDesignSession() && !state.ropEmployee) {
+      if (!ropOwnTeamIdentityReady()) {
+        renderRopOwnTeamIdentityEmpty();
+        return Promise.resolve();
+      }
       clearTeamsPanelMarkup();
       teamsPanelEl.innerHTML =
         '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка моей команды…</div>';
@@ -3966,14 +3983,26 @@
     teamContext.undefinedTeam = data.undefinedTeam || [];
     teamContext.limitationNote = data.limitationNote || "";
     teamContext.loadError = false;
-    var match = ropEmployeeGuid
+    if (data.selfRopEmployeeGuid) {
+      teamContext.selfRopEmployeeGuid = data.selfRopEmployeeGuid;
+    }
+    var summaryGuid = ropEmployeeGuid || "";
+    if (!summaryGuid && isRopDesignSession()) {
+      summaryGuid = resolveRopOwnBranchGuid();
+    }
+    var match = summaryGuid
       ? (data.rops || []).find(function (item) {
-          return item.employeeGuid === ropEmployeeGuid;
+          return item.employeeGuid === summaryGuid;
         })
-      : (data.rops || [])[0];
+      : null;
     if (match) {
       teamContext.ropSummary = match;
       teamContext.ropName = match.name || teamContext.ropName;
+    } else if (isRopDesignSession() && summaryGuid) {
+      teamContext.ropSummary = null;
+      teamContext.ropName = "";
+    } else if (!summaryGuid) {
+      teamContext.ropSummary = null;
     }
   }
 
@@ -4631,6 +4660,8 @@
         currentStateFromForm: currentStateFromForm,
         isRopDesignSession: isRopDesignSession,
         resolveRopOwnBranchGuid: resolveRopOwnBranchGuid,
+        ropOwnTeamIdentityReady: ropOwnTeamIdentityReady,
+        renderRopOwnTeamIdentityEmpty: renderRopOwnTeamIdentityEmpty,
         ropTeamsHomeStatePatch: ropTeamsHomeStatePatch,
         reloadFromV3Filters: function (nextV3) {
           cancelScheduledLoad();
@@ -4700,6 +4731,18 @@
           var ropHomePatch = ropTeamsHomeStatePatch(state);
           if (ropHomePatch) {
             loadList(Object.assign({}, state, ropHomePatch), replaceHistory);
+            return;
+          }
+          if (!ropOwnTeamIdentityReady()) {
+            updateViewChrome(state);
+            renderRopOwnTeamIdentityEmpty();
+            showResultsState(
+              "empty",
+              "Моя команда недоступна",
+              "Нет подтверждённой привязки к сотруднику 1С для вашего аккаунта РОП.",
+              "",
+            );
+            resultCountEl.textContent = "";
             return;
           }
         }

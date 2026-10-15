@@ -1218,6 +1218,17 @@
               hooks.navigateState(Object.assign({}, hooks.currentStateFromForm(), legacyState, ropPatch));
               return;
             }
+            if (hooks.ropOwnTeamIdentityReady && !hooks.ropOwnTeamIdentityReady()) {
+              hooks.renderRopOwnTeamIdentityEmpty && hooks.renderRopOwnTeamIdentityEmpty();
+              hooks.updateViewChrome(legacyState);
+              ctx.showResultsState(
+                "empty",
+                "Моя команда недоступна",
+                "Нет подтверждённой привязки к сотруднику 1С для вашего аккаунта РОП.",
+                "",
+              );
+              return;
+            }
           }
           return Promise.resolve(hooks.renderTeamsPanel(legacyState)).then(function () {
             if (navigationIsStale()) return;
