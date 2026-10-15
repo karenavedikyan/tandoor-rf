@@ -190,6 +190,19 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.close();
   });
 
+  it("retail without holding stops related loading and does not copy outlet assignments to client", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installMocks(page, { ...retailDetailPayload(), holdingLink: null });
+    await page.goto(baseUrl + "/clients/" + RETAIL + "?v3Entity=retail&cardTab=data", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForSelector("#pc-panel-data:not([hidden])");
+    assert.match(await page.locator('[data-testid="v3-data-holding-outlets"]').innerText(), /Связь с холдингом не передана/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Назначения клиента отдельно не переданы/);
+    assert.doesNotMatch(await page.locator('[data-testid="v3-data-holding-outlets"]').innerText(), /Загрузка/);
+    await page.close();
+  });
+
   it("unavailable module tab shows explicit message", async () => {
     const page = await browser.newPage();
     await installMocks(page, legalDetailPayload());

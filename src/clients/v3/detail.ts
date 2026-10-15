@@ -1,5 +1,6 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
+import { v3JsonManagerField } from "./json-paths";
 import {
   v3EntityAssignmentScope,
   v3HoldingMemberLegalScope,
@@ -11,6 +12,33 @@ import {
 export type V3DetailEntity = "holding" | "legal" | "retail";
 
 export type V3EntityAccess = "visible" | "withheld" | "unknown";
+
+export type V3CompositionTerritory = {
+  responsibleGuid?: string;
+  responsibleKind?: "manager" | "regional" | "hardware";
+  ropBranchGuid?: string;
+};
+
+/** Additional selected-territory restriction; never replaces session access/denials. */
+export function v3CompositionTerritorySql(
+  alias: string,
+  territory: V3CompositionTerritory,
+  params: unknown[],
+): string {
+  let sql = "";
+  if (territory.responsibleGuid) {
+    const field = territory.responsibleKind === "regional"
+      ? "guidRegionalManager"
+      : territory.responsibleKind === "hardware" ? "guidHardwareManager" : "guidManager";
+    params.push(territory.responsibleGuid);
+    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, field)}, '')), '')::uuid = $${params.length}::uuid`;
+  }
+  if (territory.ropBranchGuid) {
+    params.push(territory.ropBranchGuid);
+    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = $${params.length}::uuid`;
+  }
+  return sql;
+}
 
 function tableForEntity(entity: V3DetailEntity): {
   table: string;
@@ -156,7 +184,11 @@ export async function getV3RetailDetail(context: AccessContext, guid: string) {
   return { access: "visible" as const, entity: row.rows[0], holdingLink };
 }
 
-export async function getV3HoldingComposition(context: AccessContext, holdingGuid: string) {
+export async function getV3HoldingComposition(
+  context: AccessContext,
+  holdingGuid: string,
+  territory: V3CompositionTerritory = {},
+) {
   const access = await resolveV3EntityAccess(context, "holding", holdingGuid);
   if (access !== "visible") {
     return { access };
@@ -166,17 +198,19 @@ export async function getV3HoldingComposition(context: AccessContext, holdingGui
   const retailScope = v3HoldingMemberRetailScope(context, "ro");
   const legalParams = [...legalScope.params, holdingGuid];
   const legalHoldingParam = legalParams.length;
+  const legalTerritory = v3CompositionTerritorySql("le", territory, legalParams);
   const legal = await query(
     `
       SELECT le.guid_client::text AS guid, le.name_client AS name, le.type_category
       FROM onec_v3_legal_entities le
-      WHERE le.guid_holding = $${legalHoldingParam}::uuid AND (${legalScope.clause})
+      WHERE le.guid_holding = $${legalHoldingParam}::uuid AND (${legalScope.clause})${legalTerritory}
       ORDER BY le.name_client ASC
     `,
     legalParams,
   );
   const retailParams = [...retailScope.params, holdingGuid];
   const retailHoldingParam = retailParams.length;
+  const retailTerritory = v3CompositionTerritorySql("ro", territory, retailParams);
   const retail = await query(
     `
       SELECT ro.guid_store::text AS guid,
@@ -184,7 +218,7 @@ export async function getV3HoldingComposition(context: AccessContext, holdingGui
              ro.closed,
              ro.type_category
       FROM onec_v3_retail_outlets ro
-      WHERE ro.guid_holding = $${retailHoldingParam}::uuid AND (${retailScope.clause})
+      WHERE ro.guid_holding = $${retailHoldingParam}::uuid AND (${retailScope.clause})${retailTerritory}
       ORDER BY name ASC
     `,
     retailParams,

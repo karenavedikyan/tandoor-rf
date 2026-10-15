@@ -39,7 +39,7 @@ describe("v3 card holding outlets respect scoped composition", { concurrency: fa
     });
   });
 
-  async function openLegalCard(page: import("playwright").Page, outletGuids: string[]) {
+  async function openLegalCard(page: import("playwright").Page, outletGuids: string[], directorPortfolio = false) {
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
       if (url.pathname === "/api/clients/v3/detail") {
@@ -59,12 +59,19 @@ describe("v3 card holding outlets respect scoped composition", { concurrency: fa
         return;
       }
       if (url.pathname === `/api/clients/v3/holdings/${HOLDING}/composition`) {
+        if (directorPortfolio) {
+          assert.equal(url.searchParams.get("responsibleGuid"), SYNTHETIC_MANAGER_A);
+          assert.equal(url.searchParams.get("responsibleKind"), "manager");
+        }
+        const selectedOutlets = directorPortfolio
+          ? outletGuids.filter((guid) => guid === OUTLET_A)
+          : outletGuids;
         await route.fulfill(
           jsonResponse(200, {
             access: "visible",
             holdingGuid: HOLDING,
             legalEntities: [{ guid: LEGAL, name: "Южный дом" }, { guid: "other-legal", name: "Other" }],
-            retailOutlets: outletGuids.map(function (guid, i) {
+            retailOutlets: selectedOutlets.map(function (guid, i) {
               return { guid: guid, name: "Outlet " + (i + 1) };
             }),
           }),
@@ -72,7 +79,10 @@ describe("v3 card holding outlets respect scoped composition", { concurrency: fa
         return;
       }
       if (url.pathname === "/api/auth/me") {
-        await route.fulfill(jsonResponse(200, { user: { role: "manager", fullName: "Manager A" } }));
+        await route.fulfill(jsonResponse(200, { user: {
+          role: directorPortfolio ? "director" : "manager",
+          fullName: directorPortfolio ? "Director" : "Manager A",
+        } }));
         return;
       }
       await route.fulfill(jsonResponse(404, { error: "not mocked" }));
@@ -102,6 +112,17 @@ describe("v3 card holding outlets respect scoped composition", { concurrency: fa
     var kpis = await page.locator('[data-testid="v3-overview-kpis"] b').allTextContents();
     assert.equal(kpis[0], "2");
     assert.equal(kpis[1], "1");
+    await page.close();
+  });
+
+  it("director entering employee A requests narrowed composition, not employee B", async () => {
+    const page = await browser.newPage();
+    await openLegalCard(page, [OUTLET_A, OUTLET_B], true);
+    const links = page.locator('[data-testid="v3-related-outlets"] a.x13-related-line');
+    assert.equal(await links.count(), 1);
+    assert.match(await links.first().getAttribute("href") || "", new RegExp(OUTLET_A));
+    assert.doesNotMatch(await page.locator('[data-testid="v3-related-outlets"]').innerHTML(), new RegExp(OUTLET_B));
+    assert.equal((await page.locator('[data-testid="v3-overview-kpis"] b').allTextContents())[0], "1");
     await page.close();
   });
 

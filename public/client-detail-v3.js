@@ -715,7 +715,7 @@
     return (
       '<div class="v3-data-sequential">' +
       renderDataGroup("Торговая точка", outletBlock) +
-      renderDataGroup("Ответственные клиента", stripDetails(renderResponsibilitySection(shell, ent.managers, "client"))) +
+      renderDataGroup("Ответственные клиента", '<p class="pc-unavailable">Назначения клиента отдельно не переданы в карточке этой ТТ.</p>') +
       renderDataGroup("Ответственные этой ТТ", stripDetails(renderResponsibilitySection(shell, ent.managers, "outlet"))) +
       renderDataGroup("Доставка и приёмка", deliveryBlock) +
       renderDataGroup("Контакты, ЛПР и Club", lprClub) +

@@ -57,13 +57,56 @@
     return addr.store_address || addr.storeAddress || ent.name || "Торговая точка";
   }
 
+  function v3CompositionUrl(holdingGuid) {
+    var search = window.location.search;
+    var selection = new URLSearchParams();
+    for (var depth = 0; depth < 12; depth += 1) {
+      var params = new URLSearchParams(search);
+      var responsible = params.get("responsibleGuid") || params.get("v3manager");
+      var rop = params.get("ropEmployee") || params.get("ropBranchGuid");
+      if (responsible || rop) {
+        var kind = params.get("responsibleKind") || params.get("teamKind") || "manager";
+        if (["manager", "regional", "hardware"].indexOf(kind) < 0) {
+          throw new Error("Invalid selected territory");
+        }
+        if (responsible) {
+          selection.set("responsibleGuid", responsible);
+          selection.set("responsibleKind", kind);
+        }
+        if (rop) selection.set("ropBranchGuid", rop);
+        break;
+      }
+      var parent = params.get("return");
+      if (!parent) break;
+      if (parent.charAt(0) === "?") {
+        search = parent;
+      } else if (/^\/clients(?:\/|\?|$)/.test(parent)) {
+        search = new URL(parent, window.location.origin).search;
+      } else if (parent.indexOf("=") >= 0 && parent.charAt(0) !== "/") {
+        search = "?" + parent;
+      } else {
+        throw new Error("Invalid territory return");
+      }
+      if (depth === 11) throw new Error("Territory return is too deep");
+    }
+    return "/api/clients/v3/holdings/" + encodeURIComponent(holdingGuid) +
+      "/composition" + (selection.toString() ? "?" + selection.toString() : "");
+  }
+
   function renderV3Composition(host, payload) {
     if (!host || !payload.entity || !payload.entity.guid) {
       return;
     }
     host.innerHTML = "Загрузка состава…";
+    var compositionUrl;
+    try {
+      compositionUrl = v3CompositionUrl(payload.entity.guid);
+    } catch (_err) {
+      host.textContent = "Некорректная выбранная территория.";
+      return;
+    }
     api
-      .apiRequest("/api/clients/v3/holdings/" + encodeURIComponent(payload.entity.guid) + "/composition")
+      .apiRequest(compositionUrl)
       .then(function (result) {
         if (!host.isConnected) return;
         if (!result.response.ok || !result.data) {
@@ -235,19 +278,29 @@
       return;
     }
     if (payload.entityType === "holding" || !payload.holdingLink || !payload.holdingLink.guid) {
+      var emptyHost = detailRoot.querySelector('[data-testid="v3-data-holding-outlets"]');
+      if (emptyHost) emptyHost.textContent = "Связь с холдингом не передана из 1С.";
+      return;
+    }
+    function showRelatedError(message) {
+      if (!detailRoot.isConnected) return;
+      detailRoot.querySelectorAll('[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"]')
+        .forEach(function (host) { host.textContent = message; });
+    }
+    var compositionUrl;
+    try {
+      compositionUrl = v3CompositionUrl(payload.holdingLink.guid);
+    } catch (_err) {
+      showRelatedError("Некорректная выбранная территория.");
       return;
     }
     api
       .apiRequest(
-        "/api/clients/v3/holdings/" + encodeURIComponent(payload.holdingLink.guid) + "/composition",
+        compositionUrl,
       )
       .then(function (result) {
         if (!detailRoot.isConnected || !result.response.ok || !result.data) {
-          var host = detailRoot.querySelector('[data-testid="v3-related-outlets"]');
-          if (host) {
-            host.innerHTML =
-              '<span class="pc-unavailable">Не удалось загрузить торговые точки холдинга.</span>';
-          }
+          showRelatedError("Не удалось загрузить торговые точки холдинга.");
           return;
         }
         var legal = result.data.legalEntities || [];
@@ -263,10 +316,7 @@
         });
       })
       .catch(function () {
-        var host = detailRoot.querySelector('[data-testid="v3-related-outlets"]');
-        if (host && detailRoot.isConnected) {
-          host.innerHTML = '<span class="pc-unavailable">Ошибка сети при загрузке ТТ.</span>';
-        }
+        showRelatedError("Ошибка сети при загрузке ТТ.");
       });
   }
 
