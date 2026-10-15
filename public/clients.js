@@ -2913,6 +2913,11 @@
         !usesDirectorLayout() || !isTeamsSurface,
       );
     }
+    var showV3CompactToolbar =
+      v3UiActive && shouldUseV3List(state) && !isRopTeamHome && !isDirectorTeamsSurface;
+    document
+      .querySelector(".clients-toolbar")
+      ?.classList.toggle("clients-toolbar--v3-compact", showV3CompactToolbar);
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
@@ -2961,7 +2966,9 @@
         (state.view || "all") === "teams" &&
         (branchList || responsibleList));
     document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
-    if (!collapseMobileFilters && filtersPanelEl) {
+    var v3CompactDesktop =
+      exchangeV3Active && shouldUseV3List(state) && !collapseMobileFilters;
+    if (!collapseMobileFilters && filtersPanelEl && !v3CompactDesktop) {
       filtersPanelEl.classList.add("clients-filters-panel--expanded");
     }
   }
@@ -5243,6 +5250,7 @@
     switchEntity(btn.getAttribute("data-entity"));
   });
   resetFiltersBtn.addEventListener("click", resetFilters);
+  document.getElementById("v3-list-reset-filters")?.addEventListener("click", resetFilters);
   columnsPickerBtn?.addEventListener("click", function () {
     if (exchangeV3Active && window.ClientsV3 && shouldUseV3List({ view: currentView() })) {
       var v3state = window.ClientsV3.readState();

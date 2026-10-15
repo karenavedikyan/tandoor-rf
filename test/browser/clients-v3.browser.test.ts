@@ -480,7 +480,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await page.locator("#v3-composition a").first().click();
     await page.waitForSelector('[data-testid="v3-back-to-list"]');
     await page.click('[data-testid="v3-back-to-list"]');
-    await page.waitForSelector("#v3-composition", { timeout: 15000 });
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click("#pc-tab-data");
     await page.waitForSelector("#v3-composition a", { timeout: 15000 });
     await page.click('[data-testid="v3-back-to-list"]');

@@ -5,7 +5,7 @@
   var DEFAULT_RETAIL_COLS = ["name", "city", "manager_name", "rop_name", "closed"];
 
   var COLUMN_CATALOG = {
-    name: { label: "Название", required: true, filterKey: null },
+    name: { label: "Название", required: true, filterKey: "q" },
     city: { label: "Город", filterKey: "colCity" },
     address_line: { label: "Адрес", filterKey: null },
     manager_name: { label: "Менеджер", filterKey: "colManager" },
@@ -154,13 +154,16 @@
           return "<th></th>";
         }
         var val = filterValueFromState(state, col.filterKey);
+        var placeholder = col.filterKey === "q" ? "Название…" : "Фильтр…";
         return (
           '<th class="clients-v3-col-filter">' +
           '<input type="search" class="clients-field__input clients-v3-col-filter__input" data-v3-col-filter="' +
           shell.escapeHtml(col.filterKey) +
           '" value="' +
           shell.escapeHtml(val) +
-          '" placeholder="Фильтр…" aria-label="Фильтр: ' +
+          '" placeholder="' +
+          shell.escapeHtml(placeholder) +
+          '" aria-label="Фильтр: ' +
           shell.escapeHtml(col.label) +
           '">' +
           "</th>"

@@ -4,7 +4,6 @@
 export const LEGAL_CITY_SQL = `NULLIF(TRIM(COALESCE(
   le.other_fields->>'Оптовик_КрайГород',
   le.other_fields->>'Оптовик_НаселенныйПункт',
-  le.other_fields->>'БизнесРегион',
   ''
 )), '')`;
 

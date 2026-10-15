@@ -130,6 +130,17 @@ describe("clients frontend logic", () => {
       "?v3mode=1&v3entity=legal&typeGuids=t1,t2&categoryGuids=c1&page=2&q=Legal&view=all",
     );
     assert.equal(logic.parseReturnQuery("?return=" + encodeURIComponent("?typeGuids=t1&evil=1")), "");
+    const listChromeReturn = encodeURIComponent(
+      "?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,city,manager_name&city=Moscow&colManager=Ivan&colCity=Mo&page=1",
+    );
+    assert.equal(
+      logic.parseReturnQuery("?return=" + listChromeReturn),
+      "?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,city,manager_name&city=Moscow&colManager=Ivan&colCity=Mo&page=1",
+    );
+    assert.equal(
+      logic.parseReturnQuery("?return=" + encodeURIComponent("?v3dense=1&openRedirect=https%3A%2F%2Fevil.test")),
+      "",
+    );
   });
 
   it("invalidates stale list responses", () => {

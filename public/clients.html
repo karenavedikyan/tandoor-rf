@@ -175,6 +175,16 @@
                   >
                     Обычно
                   </button>
+                  <button
+                    type="button"
+                    id="clients-filters-toggle"
+                    class="clients-filters-toggle clients-filters-toggle--inline"
+                    aria-expanded="false"
+                    aria-controls="clients-filters-panel"
+                  >
+                    Фильтры
+                    <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
+                  </button>
                 </div>
               </div>
               <div id="v3-list-filterbar" class="clients-v3-list-filterbar clients-hidden" aria-label="Быстрые фильтры списка">
@@ -184,18 +194,15 @@
                     <option value="">Все города</option>
                   </select>
                 </label>
+                <button
+                  type="button"
+                  id="v3-list-reset-filters"
+                  class="workspace-button workspace-button--ghost clients-v3-list-reset clients-hidden"
+                >
+                  Сбросить
+                </button>
                 <p class="clients-v3-list-filterbar__hint">Сброс сохраняет выбранную команду и сотрудника</p>
               </div>
-              <button
-                type="button"
-                id="clients-filters-toggle"
-                class="clients-filters-toggle"
-                aria-expanded="false"
-                aria-controls="clients-filters-panel"
-              >
-                Фильтры
-                <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
-              </button>
               <p id="clients-filters-scope-label" class="clients-filters-scope-label clients-hidden">
                 Моя закреплённая область
               </p>

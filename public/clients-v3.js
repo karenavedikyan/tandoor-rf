@@ -615,8 +615,10 @@
   function toggleV3ListChrome(show) {
     var bar = document.getElementById("v3-list-filterbar");
     var densityBtn = document.getElementById("v3-density-btn");
+    var v3ResetBtn = document.getElementById("v3-list-reset-filters");
     bar?.classList.toggle("clients-hidden", !show);
     densityBtn?.classList.toggle("clients-hidden", !show);
+    v3ResetBtn?.classList.toggle("clients-hidden", !show);
   }
 
   function detailHref(guid, detailEntity, state) {
@@ -878,6 +880,12 @@
             listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
               var patch = { page: 1 };
               patch[filterKey] = value;
+              if (filterKey === "q") {
+                var searchEl = document.getElementById("search-input");
+                if (searchEl) {
+                  searchEl.value = value;
+                }
+              }
               window.ClientsV3.loadList(ctx, mergeListStateForUserAction(patch), false);
             });
           }
