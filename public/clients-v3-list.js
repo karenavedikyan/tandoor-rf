@@ -29,6 +29,10 @@
     return v3entity === "retail" || v3entity === "orphan_retail";
   }
 
+  function isLegalLikeEntity(v3entity) {
+    return v3entity === "legal" || v3entity === "legal_grouped" || v3entity === "holdings";
+  }
+
   function catalogForEntity(v3entity) {
     var retail = isRetailEntity(v3entity);
     var ids = retail
@@ -74,7 +78,8 @@
   }
 
   function columnsStorageKey(userId, v3entity) {
-    return "clients-v3-cols:" + (userId || "anon") + ":" + (v3entity || "legal");
+    var keyEntity = v3entity === "legal_grouped" ? "legal_grouped" : v3entity || "legal_grouped";
+    return "clients-v3-cols:" + (userId || "anon") + ":" + keyEntity;
   }
 
   function parseColumnIds(raw, v3entity) {
@@ -131,9 +136,42 @@
     }
   }
 
-  function cellDisplay(item, colId, shell) {
+  function legalEntityLinks(item, shell, state) {
+    var legals = item.legal_entities;
+    if (!legals || !legals.length) {
+      return null;
+    }
+    var returnQuery =
+      window.ClientsV3 && window.ClientsV3.buildListReturnQuery
+        ? window.ClientsV3.buildListReturnQuery(state || {})
+        : "";
+    return legals
+      .map(function (entry) {
+        var href =
+          "/clients/" +
+          encodeURIComponent(entry.guid) +
+          "?v3Entity=legal&return=" +
+          encodeURIComponent(returnQuery);
+        return (
+          '<a class="clients-link clients-link--secondary" href="' +
+          href +
+          '">' +
+          shell.escapeHtml(String(entry.name || entry.guid)) +
+          "</a>"
+        );
+      })
+      .join(", ");
+  }
+
+  function cellDisplay(item, colId, shell, state, grouped) {
     if (colId === "legal_name") {
-      var legal = item.name || item.legal_name;
+      if (grouped) {
+        var links = legalEntityLinks(item, shell, state);
+        if (links) {
+          return links;
+        }
+      }
+      var legal = item.legal_name || item.name;
       return legal
         ? shell.escapeHtml(String(legal))
         : '<span class="clients-no-data">Нет данных</span>';
@@ -331,7 +369,7 @@
       });
       categorySelect.innerHTML = catHtml;
     }
-    var isLegal = state.v3entity === "legal" || state.v3entity === "holdings";
+    var isLegal = isLegalLikeEntity(state.v3entity);
     citySelect.disabled = isLegal && cities.length === 0;
     var hint = bar.querySelector(".clients-v3-list-filterbar__hint");
     if (hint) {

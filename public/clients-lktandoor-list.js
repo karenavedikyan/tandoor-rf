@@ -114,7 +114,7 @@
     var legal = counts && typeof counts.legal === "number" ? counts.legal : "—";
     var retail = counts && typeof counts.retail === "number" ? counts.retail : "—";
     var entity = state.v3entity || "legal";
-    var isLegal = entity === "legal" || entity === "holdings";
+    var isLegal = entity === "legal" || entity === "legal_grouped" || entity === "holdings";
     el.innerHTML =
       "<div><b id=\"v3-lktandoor-scope-title\"></b><span>Только записи этой территории. Поиск и фильтры не расширяют область.</span></div>" +
       '<div class="x6-scopebar__counts">' +
@@ -138,7 +138,7 @@
         if (!nextEntity || !window.ClientsV3) {
           return;
         }
-        var patch = { v3entity: nextEntity === "retail" ? "retail" : "legal", page: 1 };
+        var patch = { v3entity: nextEntity === "retail" ? "retail" : "legal_grouped", page: 1 };
         window.ClientsV3.loadList(window.__lktandoorUiCtx, window.ClientsV3.mergeListStateForUserAction(patch), false);
       });
     });

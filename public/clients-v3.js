@@ -7,7 +7,8 @@
 
   var ENTITIES = [
     { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
-    { id: "legal", label: "Клиенты", detailEntity: "legal", listNoun: "клиентов" },
+    { id: "legal_grouped", label: "Клиенты", detailEntity: "holding", listNoun: "клиентов" },
+    { id: "legal", label: "Юрлица", detailEntity: "legal", listNoun: "юрлиц" },
     { id: "retail", label: "Торговые точки", detailEntity: "retail", listNoun: "торговых точек" },
     { id: "orphan_retail", label: "ТТ без холдинга", detailEntity: "retail", listNoun: "торговых точек" },
   ];
@@ -55,9 +56,9 @@
 
   function readState(search) {
     var params = new URLSearchParams(search || window.location.search);
-    var entity = params.get("v3entity") || "legal";
+    var entity = params.get("v3entity") || "legal_grouped";
     if (!ENTITIES.some(function (e) { return e.id === entity; })) {
-      entity = "legal";
+      entity = "legal_grouped";
     }
     var responsibleKind =
       normalizeResponsibleKind(params.get("responsibleKind") || "") ||
@@ -113,6 +114,7 @@
 
   function legacyEntityFromV3Entity(v3entity) {
     if (v3entity === "retail" || v3entity === "orphan_retail") return "outlets";
+    if (v3entity === "legal_grouped" || v3entity === "legal" || v3entity === "holdings") return "clients";
     return "clients";
   }
 
@@ -959,6 +961,7 @@
           }
           ctx.showResultsContent();
           var detailType = meta.detailEntity;
+          var isGroupedList = state.v3entity === "legal_grouped";
           var listUi = window.ClientsV3List;
           var visibleCols = resolveVisibleListColumns(state, ctx.currentUserId);
           var lktandoorList = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
@@ -977,7 +980,8 @@
           }
           ctx.tableBody.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, state);
+              var rowDetail = item.detail_entity || detailType;
+              var href = detailHref(item.guid, rowDetail, state);
               var cells = visibleCols
                 .map(function (col, index) {
                   if (index === 0) {
@@ -1000,7 +1004,7 @@
                     '<td data-label="' +
                     shell.escapeHtml(col.label) +
                     '">' +
-                    (listUi ? listUi.cellDisplay(item, col.id, shell) : "—") +
+                    (listUi ? listUi.cellDisplay(item, col.id, shell, state, isGroupedList) : "—") +
                     "</td>"
                   );
                 })
@@ -1014,7 +1018,8 @@
           ctx.tableBody.closest(".clients-table-wrap")?.classList.toggle("x13-desktop-list", !!useLktandoorMobile);
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
-              var href = detailHref(item.guid, detailType, state);
+              var rowDetail = item.detail_entity || detailType;
+              var href = detailHref(item.guid, rowDetail, state);
               if (useLktandoorMobile && window.ClientsLktandoorList) {
                 return window.ClientsLktandoorList.renderMobileCard(shell, item, visibleCols, href, listUi, state);
               }

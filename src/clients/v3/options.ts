@@ -28,7 +28,7 @@ function scopeForEntity(context: AccessContext, entity: V3ListEntity, alias: str
   if (entity === "holdings") {
     return v3HoldingVisibilityScope(context, alias);
   }
-  const kind = entity === "legal" ? "legal" : "retail";
+  const kind = entity === "legal" || entity === "legal_grouped" ? "legal" : "retail";
   return v3EntityAssignmentScope(context, alias, kind);
 }
 
@@ -158,8 +158,8 @@ export async function loadV3FilterOptions(
     const scope = scopeForEntity(context, entity, "h");
     return loadDistinctFromTable("onec_v3_holdings", "h", scope, false);
   }
-  if (entity === "legal") {
-    const scope = scopeForEntity(context, entity, "le");
+  if (entity === "legal" || entity === "legal_grouped") {
+    const scope = scopeForEntity(context, "legal", "le");
     return loadDistinctFromTable("onec_v3_legal_entities", "le", scope, false, territory);
   }
   const scope = scopeForEntity(context, entity, "ro");

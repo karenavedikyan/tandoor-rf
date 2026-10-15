@@ -152,8 +152,12 @@ export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
 ];
 
 function fieldAppliesToEntity(def: V3FilterFieldDef, entity: V3ListEntity): boolean {
+  const legalLike = entity === "legal" || entity === "legal_grouped";
   if (def.entity === "both") {
-    return entity === "legal" || entity === "retail" || entity === "orphan_retail";
+    return legalLike || entity === "retail" || entity === "orphan_retail";
+  }
+  if (legalLike && def.entity.includes("legal")) {
+    return true;
   }
   return def.entity.includes(entity);
 }
@@ -376,7 +380,7 @@ export function appendV3FieldRulesSql(
   if (!rules?.length || entity === "holdings") {
     return { sql: inputSql, needsHoldingJoin: false };
   }
-  const kind = entity === "legal" ? "legal" : "retail";
+  const kind = entity === "legal" || entity === "legal_grouped" ? "legal" : "retail";
   let sql = inputSql;
   const joinHolding = { joined: false };
   for (const rule of rules) {

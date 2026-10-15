@@ -23,6 +23,7 @@ const CAT_A = "c1";
 const TYPE_B = "t2";
 const CAT_B = "c2";
 const LEGAL_UNASSIGNED = "b2000000-0000-4000-8000-000000000003";
+const LEGAL_TWO = "b2000000-0000-4000-8000-000000000004";
 
 function loadFixture(name: string): Buffer {
   return fs.readFileSync(path.join(FIXTURE_DIR, name));
@@ -563,6 +564,100 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(after.rows[0]?.id, before.rows[0]?.id);
     assert.equal(after.rows[0]?.status, before.rows[0]?.status);
     assert.equal(after.rows[0]?.finished_at, before.rows[0]?.finished_at);
+  });
+
+  it("legal_grouped merges holding members, excludes foreign legals, and keeps flat legal API", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const adminEmail = "admin-v3-grouped@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Grouped",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    const headers = { Origin: ORIGIN, Cookie: cookie };
+
+    const flat = await request(app).get("/api/clients/v3/list?entity=legal&page=1&pageSize=50").set(headers);
+    assert.equal(flat.status, 200);
+    assert.ok(flat.body.total >= 4);
+
+    const grouped = await request(app)
+      .get("/api/clients/v3/list?entity=legal_grouped&page=1&pageSize=50")
+      .set(headers);
+    assert.equal(grouped.status, 200);
+    assert.ok(grouped.body.total < flat.body.total);
+    const holdingRow = grouped.body.items.find(
+      (i: { group_key: string }) => i.group_key === `holding:${HOLDING}`,
+    );
+    assert.ok(holdingRow, "expected holding-backed group row");
+    assert.equal(holdingRow.detail_entity, "holding");
+    assert.equal(holdingRow.guid, HOLDING);
+    assert.equal(holdingRow.name, "SYNTH Holding One");
+    const legalGuids = (holdingRow.legal_entities as Array<{ guid: string }>).map((e) => e.guid);
+    assert.ok(legalGuids.includes(LEGAL));
+    assert.ok(legalGuids.includes(LEGAL_TWO));
+    assert.equal(legalGuids.length, 2);
+
+    const scope = await request(app).get("/api/clients/v3/scope-summary").set(headers);
+    assert.equal(scope.status, 200);
+    assert.equal(scope.body.legal, grouped.body.total);
+
+    const managerEmail = "manager-v3-grouped@example.com";
+    const adminUser = await createTestUser({
+      databaseUrl,
+      email: "admin-v3-grouped-link@example.com",
+      password: TEST_PASSWORD,
+      fullName: "Admin Link",
+      role: "admin",
+    });
+    const manager = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager Grouped",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: M1,
+      confirmedByUserId: adminUser.id,
+    });
+    const mgrCookie = await login(managerEmail);
+    const mgrGrouped = await request(app)
+      .get("/api/clients/v3/list?entity=legal_grouped&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(mgrGrouped.status, 200);
+    const mgrHolding = mgrGrouped.body.items.find(
+      (i: { group_key: string }) => i.group_key === `holding:${HOLDING}`,
+    );
+    assert.ok(mgrHolding);
+    assert.equal(mgrHolding.legal_entities.length, 1);
+    assert.equal(mgrHolding.legal_entities[0].guid, LEGAL);
+
+    const siblingAnd = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&typeGuid=${TYPE_A}&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "managerGuid", op: "eq", value: M2 }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(siblingAnd.status, 200);
+    assert.equal(siblingAnd.body.total, 0);
+
+    const typeOnly = await request(app)
+      .get(`/api/clients/v3/list?entity=legal_grouped&typeGuid=${TYPE_A}&page=1&pageSize=50`)
+      .set(headers);
+    assert.equal(typeOnly.status, 200);
+    const narrowed = typeOnly.body.items.find(
+      (i: { group_key: string }) => i.group_key === `holding:${HOLDING}`,
+    );
+    assert.ok(narrowed);
+    assert.equal(narrowed.legal_entities.length, 2);
   });
 
   it("sync-status uses v3 apply time when legacy import journal is empty", async () => {

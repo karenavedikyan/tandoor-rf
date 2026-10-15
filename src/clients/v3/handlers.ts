@@ -21,7 +21,7 @@ import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 
-const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "retail", "orphan_retail"]);
+const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
 
 async function requireV3Active(res: Response): Promise<boolean> {

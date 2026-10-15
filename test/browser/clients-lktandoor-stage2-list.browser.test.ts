@@ -114,7 +114,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
       (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
       { timeout: 30000 },
     );
-    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal");
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal_grouped");
     await page.waitForSelector('[data-testid="v3-lktandoor-chrome"]:not(.clients-hidden)', { timeout: 30000 });
     await response;
     await page.waitForSelector("#clients-table-body tr a");
@@ -137,6 +137,8 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await waitForList(page);
     const before = await rowCount(page);
     assert.ok(before >= 2);
+    const bodyText = await page.locator("#clients-table-body").innerText();
+    assert.match(bodyText, /SYNTH Holding One/);
     await updateList(page, () => page.selectOption("#v3-lktandoor-category-filter", CAT_A));
     const narrowed = await rowCount(page);
     assert.ok(narrowed < before);
@@ -157,6 +159,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.goBack();
     await page.waitForSelector("#clients-table-body tr");
     assert.ok(page.url().includes("v3mode=1"));
+    assert.ok(page.url().includes("v3entity=legal_grouped"));
     await page.setViewportSize(DESKTOP);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-legal-desktop-1440.png") });
     await page.setViewportSize(MOBILE);

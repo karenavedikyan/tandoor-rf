@@ -11,7 +11,7 @@ export type BusinessClientsRole =
   | "assistant"
   | "other";
 
-export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
+export type V3ListEntity = "holdings" | "legal" | "legal_grouped" | "retail" | "orphan_retail";
 
 export type RolePresentation = {
   businessRole: BusinessClientsRole;

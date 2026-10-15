@@ -1,6 +1,7 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope } from "./access-scope";
+import { countV3LegalGroups } from "./list-legal-grouped";
 import { appendAssignmentFilters, type V3ListQuery, type V3ResponsibleKind } from "./list";
 
 export type V3TerritoryQuery = {
@@ -47,7 +48,7 @@ export async function loadV3ScopeSummary(
   territory: V3TerritoryQuery,
 ): Promise<{ legal: number; retail: number }> {
   const [legal, retail] = await Promise.all([
-    countInScope(context, "onec_v3_legal_entities", "le", "legal", false, territory),
+    countV3LegalGroups(context, territory),
     countInScope(context, "onec_v3_retail_outlets", "ro", "retail", false, territory),
   ]);
   return { legal, retail };

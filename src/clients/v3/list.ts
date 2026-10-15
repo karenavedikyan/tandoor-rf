@@ -20,7 +20,7 @@ function responsibleGuidField(kind: V3ResponsibleKind): keyof import("./json-pat
   return "guidManager";
 }
 
-export type V3ListEntity = "holdings" | "legal" | "retail" | "orphan_retail";
+export type V3ListEntity = "holdings" | "legal" | "legal_grouped" | "retail" | "orphan_retail";
 
 export type V3ListQuery = {
   entity: V3ListEntity;
@@ -98,7 +98,7 @@ function appendRetailSearch(qPattern: string, params: unknown[]): string {
   )`;
 }
 
-function appendV3ColumnFilters(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
+export function appendV3ColumnFilters(input: V3ListQuery, entity: "legal" | "retail", params: unknown[]): string {
   let sql = appendCityFilter(input, entity, params);
   if (entity === "legal") {
     sql = appendTextContainsFilter(
@@ -157,7 +157,8 @@ function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknow
   return ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = $${params.length}::uuid`;
 }
 
-export function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+/** Selected employee / ROP territory only (no type, category, or missing-manager narrowing). */
+export function appendTerritoryAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
   const teamScoped =
     Boolean(input.ropBranchGuid) ||
@@ -180,6 +181,12 @@ export function appendAssignmentFilters(input: V3ListQuery, alias: string, param
     params.push(guidFilter);
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
   }
+  sql += appendRopBranchFilter(input, alias, params);
+  return sql;
+}
+
+export function appendCatalogAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+  let sql = "";
   const typeGuids =
     input.typeGuids && input.typeGuids.length > 0
       ? input.typeGuids
@@ -217,8 +224,11 @@ export function appendAssignmentFilters(input: V3ListQuery, alias: string, param
   if (input.missingManager) {
     sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '') IS NULL`;
   }
-  sql += appendRopBranchFilter(input, alias, params);
   return sql;
+}
+
+export function appendAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
+  return appendTerritoryAssignmentFilters(input, alias, params) + appendCatalogAssignmentFilters(input, alias, params);
 }
 
 export async function isExchangeV3Active(): Promise<boolean> {
@@ -258,6 +268,11 @@ export async function listV3Entities(
       params,
     );
     return { total: Number(total.rows[0]?.count ?? 0), items: rows.rows };
+  }
+
+  if (input.entity === "legal_grouped") {
+    const { listV3LegalGrouped } = await import("./list-legal-grouped");
+    return listV3LegalGrouped(context, input);
   }
 
   if (input.entity === "legal") {

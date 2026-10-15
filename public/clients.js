@@ -4145,7 +4145,7 @@
         rolePresentation &&
         rolePresentation.allowedV3Entities &&
         rolePresentation.allowedV3Entities.length > 1;
-      if (multiEntity && entityMeta && v3State.v3entity !== "legal") {
+      if (multiEntity && entityMeta && v3State.v3entity !== "legal" && v3State.v3entity !== "legal_grouped") {
         subtitleEl.textContent = "Список: " + entityMeta.label;
         subtitleEl.classList.remove("clients-hidden");
       } else if (role === "assistant" && rolePresentation.delegationContext) {
