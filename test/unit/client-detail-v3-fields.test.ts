@@ -47,20 +47,39 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Manager One/);
     assert.match(html, /ROP One/);
     assert.match(html, /Holding One/);
-    assert.match(html, /Отгрузки \/ план/);
+    assert.match(html, /Торговые точки/);
+    assert.match(html, /Юридические лица/);
     assert.match(html, /Точки и контакты/);
-    assert.match(html, /v3-role-context/);
-    assert.equal((html.match(/data-testid="v3-role-context"/g) || []).length, 1);
-    assert.ok(
-      html.indexOf('data-testid="v3-role-context"') < html.indexOf('id="pc-panel-overview"'),
-      "session context belongs to the shared card shell, not a tab panel",
-    );
-    assert.match(html, /Особенности работы/);
-    assert.match(html, /Качество данных/);
+    assert.match(html, /GUID:/);
+    assert.match(html, /v3-data-sequential/);
+    assert.match(html, /Клиент и холдинг/);
+    assert.doesNotMatch(html, /v3-role-context/);
     assert.match(html, /Не подключено/);
     assert.doesNotMatch(html, /SHA/i);
     assert.doesNotMatch(html, /abc123sha/);
     assert.doesNotMatch(html, /guidType/);
+  });
+
+  it("renders other_fields without object toString", () => {
+    const ClientDetailV3 = loadV3();
+    const shell = { escapeHtml: (v: string) => v };
+    const html = ClientDetailV3.renderCard(
+      shell,
+      "legal",
+      {
+        name_client: "Legal",
+        type_category: { name_type: "T", name_category: "C" },
+        other_fields: {
+          Код: "001",
+          Оптовик_РетроБонус: "10%",
+          nested: { flag: true },
+        },
+      },
+      null,
+    );
+    assert.doesNotMatch(html, /\[object Object\]/);
+    assert.match(html, /Ретро-бонус/);
+    assert.match(html, /10%/);
   });
 
   it("renders retail passport groups with route and club", () => {
@@ -86,7 +105,7 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(retailHtml, /Retail Type \/ Retail Cat/);
     assert.match(retailHtml, /Gold/);
     assert.match(retailHtml, /Ivan LPR/);
-    assert.match(retailHtml, /Магазин и доставка/);
-    assert.match(retailHtml, /Расчёты и договор/);
+    assert.match(retailHtml, /Доставка и приёмка/);
+    assert.match(retailHtml, /Контакты, ЛПР и Club/);
   });
 });

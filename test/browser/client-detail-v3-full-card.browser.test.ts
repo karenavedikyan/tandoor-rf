@@ -122,11 +122,11 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     );
     await page.waitForSelector('[data-testid="v3-detail-card"]', { timeout: 30000 });
     await page.waitForSelector("#pc-panel-overview:not([hidden])");
-    await page.waitForSelector('[data-testid="v3-role-context"]');
+    await page.waitForSelector('[data-testid="v3-territory-nav"]');
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Type A \/ Cat A/);
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Точки и контакты/);
-    assert.match(await page.locator("#pc-panel-overview").innerText(), /Отгрузки \/ план/);
-    assert.match(await page.content(), /Не подключено/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Торговые точки/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /Ответственные клиента/);
     assert.doesNotMatch(await page.content(), /hidden-sha-value/);
     assert.doesNotMatch(await page.content(), /SHA/i);
 
@@ -137,17 +137,16 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
 
     await page.locator("#pc-tab-data").click();
     await page.waitForSelector("#pc-panel-data:not([hidden])");
-    assert.equal(await page.locator('[data-testid="v3-role-context"]').count(), 1);
-    assert.ok(await page.locator('[data-testid="v3-role-context"]').isVisible());
+    assert.equal(await page.locator('[data-testid="v3-territory-nav"]').count(), 1);
+    assert.ok(await page.locator('[data-testid="v3-territory-nav"]').isVisible());
     assert.equal(
       await page.locator('[data-testid="v3-detail-title"]').innerText(),
       "Данные и условия клиента · Legal One",
     );
     assert.match(await page.locator("#pc-panel-data").innerText(), /ROP One/);
-    assert.match(await page.locator("#pc-panel-data").innerText(), /Холдинг и ответственность/);
-    assert.match(await page.locator("#pc-panel-data").innerText(), /Магазин и доставка/);
-    assert.match(await page.locator("#pc-panel-data").innerText(), /Расчёты и договор/);
-    assert.match(await page.locator("#pc-panel-data").innerText(), /Особенности работы/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Клиент и холдинг/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Коммерческие условия/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Доступные точки холдинга/);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "impl-legal-data-desktop-1440.png"),
@@ -161,7 +160,7 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
       fullPage: true,
     });
     await page.locator("#pc-tab-data").click();
-    assert.ok(await page.locator('[data-testid="v3-role-context"]').isVisible());
+    assert.ok(await page.locator('[data-testid="v3-territory-nav"]').isVisible());
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       true,
@@ -185,9 +184,22 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.locator("#pc-tab-data").click();
     await page.waitForSelector("#pc-panel-data:not([hidden])");
     const text = await page.locator("#pc-panel-data").innerText();
-    assert.match(text, /Магазин и доставка/);
+    assert.match(text, /Доставка и приёмка/);
     assert.match(text, /Route North/);
     assert.match(text, /Ivan LPR/);
+    await page.close();
+  });
+
+  it("retail without holding stops related loading and does not copy outlet assignments to client", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installMocks(page, { ...retailDetailPayload(), holdingLink: null });
+    await page.goto(baseUrl + "/clients/" + RETAIL + "?v3Entity=retail&cardTab=data", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForSelector("#pc-panel-data:not([hidden])");
+    assert.match(await page.locator('[data-testid="v3-data-holding-outlets"]').innerText(), /Связь с холдингом не передана/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /Назначения клиента отдельно не переданы/);
+    assert.doesNotMatch(await page.locator('[data-testid="v3-data-holding-outlets"]').innerText(), /Загрузка/);
     await page.close();
   });
 

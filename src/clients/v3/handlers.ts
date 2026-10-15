@@ -224,7 +224,24 @@ export async function v3HoldingCompositionHandler(req: AccessRequest, res: Respo
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный guid холдинга."));
     return;
   }
-  const composition = await getV3HoldingComposition(req.accessContext!, guid);
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const kindRaw = req.query.responsibleKind ?? "manager";
+  if (
+    (req.query.responsibleGuid !== undefined && !responsibleGuid) ||
+    (req.query.ropBranchGuid !== undefined && !ropBranchGuid) ||
+    typeof kindRaw !== "string" ||
+    !["manager", "regional", "hardware"].includes(kindRaw)
+  ) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректная выбранная территория."));
+    return;
+  }
+  const composition = await getV3HoldingComposition(req.accessContext!, guid, {
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind: kindRaw as V3ResponsibleKind,
+    ropBranchGuid: ropBranchGuid ?? undefined,
+  });
   if (composition.access === "unknown" || composition.access === "withheld") {
     notFoundForAccess(res);
     return;

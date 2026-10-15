@@ -83,7 +83,20 @@
       nameRegionalManager: managers.nameRegionalManager || managers.name_regional_manager || "",
       nameHardwareManager: managers.nameHardwareManager || managers.name_hardware_manager || "",
       nameHeadOfSales: managers.nameHeadOfSales || managers.name_head_of_the_sales_department || "",
+      guidManager: managers.guidManager || managers.guid_manager || "",
+      guidRegionalManager: managers.guidRegionalManager || managers.guid_regional_manager || "",
+      guidHardwareManager: managers.guidHardwareManager || managers.guid_hardware_manager || "",
+      guidHeadOfSales: managers.guidHeadOfSales || managers.guid_head_of_the_sales_department || "",
     };
+  }
+
+  function typeCategoryPlain(typeCat) {
+    if (!typeCat || !typeCat.known) {
+      return "Не передано";
+    }
+    return String(typeCat.html || "")
+      .replace(/<[^>]+>/g, "")
+      .trim() || "Не передано";
   }
 
   function formatTypeCategory(shell, tc) {
@@ -125,22 +138,190 @@
     return { html: text || emptyNoData(), known: Boolean(text) };
   }
 
-  function formatOtherFields(shell, other) {
-    if (!other || typeof other !== "object") {
-      return { html: emptyFrom1C(), known: false };
+  var OTHER_FIELD_LABELS = {
+    Код: "Код 1С",
+    НаименованиеПолное: "Полное наименование",
+    ЮрФизЛицо: "Юр./физ. лицо",
+    Оптовик_ОГРН: "ОГРН",
+    Оптовик_ОсновнойДоговор: "Основной договор (строка 1С)",
+    Оптовик_ОсновноеСоглашение: "Основное соглашение (строка 1С)",
+    Оптовик_Наличные: "Наличный расчёт",
+    Оптовик_ДопустимаяСуммаЗадолженности: "Допустимая сумма задолженности (лимит 1С)",
+    Оптовик_ДопустимоеЧислоДнейЗадолженности: "Допустимое число дней задолженности (лимит 1С)",
+    Оптовик_КонтролироватьСуммуЗадолженности: "Контролировать сумму задолженности",
+    Оптовик_КонтролироватьЧислоДнейЗадолженности: "Контролировать число дней задолженности",
+    Оптовик_Неблагонадёжный: "Неблагонадёжный",
+    Оптовик_КатегорияТорговойТочкиТандор: "Категория ТТ Tandoor",
+    Оптовик_ТипКлиентаТандор: "Тип клиента Tandoor",
+    Оптовик_ВитринВсегоТандор: "Витрин всего (1С)",
+    Оптовик_ВитринТандорТандор: "Витрин Tandoor (1С)",
+    Оптовик_ЭксклюзивТандор: "Эксклюзив Tandoor",
+    Оптовик_РетроБонус: "Ретро-бонус",
+    Оптовик_ЗапретСамовывоз: "Запрет самовывоза",
+    Оптовик_КрайГород: "Край / город",
+    Оптовик_НаселенныйПункт: "Населённый пункт",
+    БизнесРегион: "Бизнес-регион",
+    Комментарий: "Комментарий",
+  };
+
+  var OTHER_FIELD_GROUPS = {
+    requisites: ["Код", "НаименованиеПолное", "ЮрФизЛицо", "Оптовик_ОГРН"],
+    location: ["Оптовик_КрайГород", "Оптовик_НаселенныйПункт", "БизнесРегион"],
+    contractRefs: ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"],
+    debtControl: [
+      "Оптовик_ДопустимаяСуммаЗадолженности",
+      "Оптовик_ДопустимоеЧислоДнейЗадолженности",
+      "Оптовик_КонтролироватьСуммуЗадолженности",
+      "Оптовик_КонтролироватьЧислоДнейЗадолженности",
+      "Оптовик_Неблагонадёжный",
+      "Оптовик_Наличные",
+    ],
+    vitrine: [
+      "Оптовик_КатегорияТорговойТочкиТандор",
+      "Оптовик_ТипКлиентаТандор",
+      "Оптовик_ВитринВсегоТандор",
+      "Оптовик_ВитринТандорТандор",
+      "Оптовик_ЭксклюзивТандор",
+    ],
+    commercialExtra: ["Оптовик_РетроБонус", "Оптовик_ЗапретСамовывоз"],
+    misc: ["Комментарий"],
+  };
+
+  function otherFieldLabel(key) {
+    return OTHER_FIELD_LABELS[key] || key;
+  }
+
+  function formatOtherFieldScalar(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
     }
-    var keys = Object.keys(other);
-    if (!keys.length) {
-      return { html: emptyNoData(), known: false };
+    if (typeof value === "boolean") {
+      return value ? "Да" : "Нет";
     }
-    return {
-      html: keys
-        .map(function (k) {
-          return esc(shell, k + ": " + other[k]);
+    if (typeof value === "number") {
+      return String(value);
+    }
+    if (typeof value === "string") {
+      return value.trim() || null;
+    }
+    if (Array.isArray(value)) {
+      var parts = value
+        .map(function (item) {
+          return formatOtherFieldScalar(item);
         })
-        .join("<br/>"),
-      known: true,
+        .filter(Boolean);
+      return parts.length ? parts.join(", ") : null;
+    }
+    if (typeof value === "object") {
+      var inner = Object.keys(value)
+        .map(function (k) {
+          var v = formatOtherFieldScalar(value[k]);
+          return v ? k + ": " + v : null;
+        })
+        .filter(Boolean);
+      return inner.length ? inner.join("; ") : null;
+    }
+    return String(value);
+  }
+
+  function renderOtherFieldsFromKeys(shell, other, keys) {
+    if (!other || typeof other !== "object") {
+      return "";
+    }
+    var rows = [];
+    keys.forEach(function (key) {
+      if (!(key in other)) {
+        return;
+      }
+      var text = formatOtherFieldScalar(other[key]);
+      if (text == null) {
+        return;
+      }
+      rows.push(field(otherFieldLabel(key), esc(shell, text), true));
+    });
+    return rows.join("");
+  }
+
+  function renderOtherFieldsByGroup(shell, other) {
+    if (!other || typeof other !== "object" || !Object.keys(other).length) {
+      return "";
+    }
+    var html = "";
+    var groupTitles = {
+      requisites: "Реквизиты (прочие поля 1С)",
+      location: "География и регион",
+      contractRefs: "Ссылки на договор в 1С",
+      debtControl: "Контроль задолженности (лимиты и флаги)",
+      vitrine: "Витрина и классификация Tandoor",
+      commercialExtra: "Доп. коммерческие условия",
+      misc: "Прочее",
     };
+    Object.keys(OTHER_FIELD_GROUPS).forEach(function (groupId) {
+      var body = renderOtherFieldsFromKeys(shell, other, OTHER_FIELD_GROUPS[groupId]);
+      if (body) {
+        html += renderDataGroup(groupTitles[groupId], body);
+      }
+    });
+    var known = new Set(Object.keys(OTHER_FIELD_LABELS));
+    return html;
+  }
+
+  function renderDataGroup(title, innerHtml) {
+    if (!innerHtml) {
+      return "";
+    }
+    return (
+      '<details class="x6-group v3-data-group" open><summary>' +
+      title +
+      "</summary><div class=\"v3-data-group__body\">" +
+      innerHtml +
+      "</div></details>"
+    );
+  }
+
+  function encodedDetailReturnParam() {
+    return encodeURIComponent(window.location.pathname + window.location.search);
+  }
+
+  function outletRetailHref(outletGuid, parentReturnEncoded) {
+    return (
+      "/clients/" +
+      encodeURIComponent(outletGuid) +
+      "?v3Entity=retail&return=" +
+      (parentReturnEncoded || encodedDetailReturnParam())
+    );
+  }
+
+  function refreshRelatedOutletReturnLinks(root) {
+    if (!root) {
+      return;
+    }
+    var parentReturn = encodedDetailReturnParam();
+    root.querySelectorAll("a.x13-related-line[data-outlet-guid]").forEach(function (anchor) {
+      var guid = anchor.getAttribute("data-outlet-guid");
+      if (guid) {
+        anchor.href = outletRetailHref(guid, parentReturn);
+      }
+    });
+  }
+
+  function renderRelatedOutletLines(shell, outlets, parentReturn) {
+    if (!outlets.length) {
+      return '<span class="pc-unavailable">В вашей области нет доступных торговых точек этого холдинга.</span>';
+    }
+    return outlets
+      .map(function (row) {
+        return (
+          '<a class="x13-related-line" data-outlet-guid="' +
+          shell.escapeHtml(row.guid) +
+          '" href="' +
+          outletRetailHref(row.guid, parentReturn) +
+          '"><span>' +
+          shell.escapeHtml(row.name || row.guid) +
+          '</span><span class="x13-related-line__arrow" aria-hidden="true">→</span></a>'
+        );
+      })
+      .join("");
   }
 
   function formatLoading(shell, loading) {
@@ -231,23 +412,48 @@
   }
 
   function managersFields(shell, managersRaw) {
+    return renderResponsibilitySection(shell, managersRaw, "client");
+  }
+
+  function assignmentRow(shell, label, name, guid) {
+    var nameHtml = name ? esc(shell, name) : '<span class="pc-unavailable">Не назначен в 1С</span>';
+    var guidText = guid ? esc(shell, guid) : "не назначен";
+    return (
+      '<div class="x6-assignment">' +
+      "<span>" +
+      esc(shell, label) +
+      "</span><strong>" +
+      nameHtml +
+      '</strong><code class="client-detail-uuid">GUID: ' +
+      guidText +
+      "</code></div>"
+    );
+  }
+
+  function renderResponsibilitySection(shell, managersRaw, scopeLabel) {
     var managers = normalizeManagers(managersRaw);
+    var title = scopeLabel === "outlet" ? "Ответственные этой ТТ" : "Ответственные клиента";
     if (!managers) {
       return (
-        field("Менеджер", emptyFrom1C(), false) +
-        field("Региональный менеджер", emptyFrom1C(), false) +
-        field("Менеджер фурнитуры", emptyFrom1C(), false) +
-        field("РОП", emptyFrom1C(), false)
+        '<details class="x6-group v3-responsibilities" open><summary>' +
+        esc(shell, title) +
+        "</summary>" +
+        assignmentRow(shell, "Менеджер", "", "") +
+        assignmentRow(shell, "Региональный", "", "") +
+        assignmentRow(shell, "По фурнитуре", "", "") +
+        assignmentRow(shell, "РОП", "", "") +
+        "</details>"
       );
     }
-    function mgr(label, value) {
-      return field(label, value ? esc(shell, value) : emptyNoData(), Boolean(value));
-    }
     return (
-      mgr("Менеджер", managers.nameManager) +
-      mgr("Региональный менеджер", managers.nameRegionalManager) +
-      mgr("Менеджер фурнитуры", managers.nameHardwareManager) +
-      mgr("РОП", managers.nameHeadOfSales)
+      '<details class="x6-group v3-responsibilities" open><summary>' +
+      esc(shell, title) +
+      "</summary>" +
+      assignmentRow(shell, "Менеджер", managers.nameManager, managers.guidManager) +
+      assignmentRow(shell, "Региональный", managers.nameRegionalManager, managers.guidRegionalManager) +
+      assignmentRow(shell, "По фурнитуре", managers.nameHardwareManager, managers.guidHardwareManager) +
+      assignmentRow(shell, "РОП", managers.nameHeadOfSales, managers.guidHeadOfSales) +
+      "</details>"
     );
   }
 
@@ -291,68 +497,41 @@
     );
   }
 
-  function overviewStats() {
-    var labels = ["Отгрузки / план", "Дистрибуция МК", "Просрочка", "Рекламации"];
+  function overviewKpis(shell, entityType, typeCat, counts) {
+    counts = counts || {};
+    var retailCount =
+      counts.retailOutlets != null
+        ? counts.retailOutlets
+        : entityType === "retail"
+          ? 1
+          : null;
+    var legalCount =
+      entityType === "legal" ? 1 : counts.legalEntities != null ? counts.legalEntities : null;
+    function kpi(label, value) {
+      var display =
+        value == null || value === ""
+          ? '<span class="pc-unavailable">—</span>'
+          : esc(shell, String(value));
+      return '<div><span class="pc-label">' + esc(shell, label) + "</span><b>" + display + "</b></div>";
+    }
     return (
-      '<div class="pc-stats v3-detail-stats" aria-label="Показатели">' +
-      labels
-        .map(function (label) {
-          return (
-            '<div class="pc-stat"><div class="pc-label">' +
-            label +
-            '</div><div class="pc-unavailable v3-detail-stat__value">Не подключено</div></div>'
-          );
-        })
-        .join("") +
+      '<div class="x13-kpis v3-overview-kpis" aria-label="Сводка из 1С" data-testid="v3-overview-kpis">' +
+      kpi("Торговые точки", retailCount) +
+      kpi("Юридические лица", legalCount) +
+      kpi("Категория", typeCategoryPlain(typeCat)) +
       "</div>"
     );
   }
 
-  function overviewNotice() {
+  function renderRelatedOutletsCard() {
     return (
-      '<div class="pc-notice"><strong>Карточка v3 из обмена 1С</strong>' +
-      "<p>Показаны только подтверждённые поля текущего обмена. Отсутствие показателя не означает нулевое значение.</p></div>"
-    );
-  }
-
-  function renderRoleContextBlock(shell, session) {
-    session = session || {};
-    var name = session.displayName || "—";
-    var roleLabel = session.roleLabel || "—";
-    var scope = session.scopeLabel || "—";
-    var initials = name
-      .split(/\s+/)
-      .map(function (part) {
-        return part.charAt(0);
-      })
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-    if (!initials) {
-      initials = "?";
-    }
-    return (
-      '<div class="v3-role-context" data-testid="v3-role-context">' +
-      '<div class="v3-role-context__row">' +
-      '<div class="v3-role-context__main">' +
-      '<span class="v3-role-context__avatar" aria-hidden="true">' +
-      esc(shell, initials) +
-      "</span>" +
-      '<div><div class="v3-role-context__name">' +
-      esc(shell, name) +
-      '</div><div class="pc-label">' +
-      esc(shell, roleLabel) +
-      "</div></div></div>" +
-      '<div class="v3-role-context__scope"><div class="pc-label">Область видимости</div>' +
-      '<div class="pc-value">' +
-      esc(shell, scope) +
-      "</div></div></div>" +
-      '<div class="v3-role-focus"><div class="pc-label">В фокусе роли</div>' +
-      '<div class="v3-role-focus__actions">' +
-      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Работа по клиенту →</button>' +
-      '<button type="button" class="v3-focus-link" disabled title="Раздел не подключён в v3-карточке">Планы и результат →</button>' +
-      '<button type="button" class="v3-focus-link" data-card-open="data">Назначения и данные →</button>' +
-      "</div></div></div>"
+      card(
+        "Доступные точки холдинга",
+        '<div class="pc-pad" id="v3-related-outlets" data-testid="v3-related-outlets">' +
+          '<span class="pc-unavailable">Загрузка точек в вашей области…</span>' +
+          '<p class="pc-label v3-related-outlets-note">Только ТТ холдинга в вашей области видимости, не весь состав.</p></div>',
+        "1С / область",
+      )
     );
   }
 
@@ -432,69 +611,75 @@
   }
 
   function renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat) {
+    var relatedCard =
+      entityType === "holding"
+        ? card(
+            "Состав холдинга",
+            '<div class="pc-pad"><p class="pc-unavailable">Юрлица и ТТ — на вкладке «Данные» и в блоке состава ниже.</p></div>',
+            "1С",
+          )
+        : holdingLink && holdingLink.guid
+          ? renderRelatedOutletsCard()
+          : card(
+              "Доступные точки холдинга",
+              '<div class="pc-pad"><span class="pc-unavailable">Связь с холдингом не передана из 1С — список ТТ недоступен.</span></div>',
+              "1С",
+            );
     return (
-      entityMetaLine(shell, entityType, ent, holdingLink, typeCat) +
       freshnessMeta(shell, ent) +
-      overviewNotice() +
-      overviewStats() +
-      '<div class="pc-grid pc-two">' +
-      card(
-        "Следующие действия",
-        '<div class="pc-pad"><span class="pc-unavailable">Битрикс24 не подключён к v3-карточке.</span></div>',
-        "Битрикс24",
-      ) +
+      overviewKpis(shell, entityType, typeCat, {}) +
+      '<div class="x6-responsibilities v3-responsibilities-wrap">' +
+      renderResponsibilitySection(shell, ent.managers, entityType === "retail" ? "outlet" : "client") +
+      "</div>" +
+      '<div class="x13-card-grid">' +
       renderPointsAndContactsCard(shell, entityType, ent, holdingLink, typeCat) +
+      relatedCard +
       "</div>"
+    );
+  }
+
+  function renderCommercialBlock(shell, ent) {
+    var markups = formatMarkups(shell, ent.markups);
+    var discountKnown = ent.discount != null && ent.discount !== "";
+    var discountAmountKnown = ent.discount_amount != null && ent.discount_amount !== "";
+    return (
+      field("Скидочная программа", discountKnown ? esc(shell, ent.discount) : emptyNoData(), discountKnown) +
+      field(
+        "Значение скидки",
+        discountAmountKnown ? esc(shell, ent.discount_amount) : emptyNoData(),
+        discountAmountKnown,
+      ) +
+      field("Наценки", markups.html, markups.known)
     );
   }
 
   function renderDataLegal(shell, ent, holdingLink, typeCat) {
     var holding = formatHoldingLink(shell, holdingLink);
     var phones = formatTelephones(shell, ent.telephone);
-    var other = formatOtherFields(shell, ent.other_fields);
-    var markups = formatMarkups(shell, ent.markups);
-    var discountKnown = ent.discount != null && ent.discount !== "";
-    var discountAmountKnown = ent.discount_amount != null && ent.discount_amount !== "";
+    var other = ent.other_fields || ent.other;
+    var clientBlock =
+      field("Клиент / категория", typeCat.html, typeCat.known) +
+      field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
+      field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
+      field("Телефоны", phones.html, phones.known) +
+      field("Холдинг", holding.html, holding.known);
+    var respBlock = renderResponsibilitySection(shell, ent.managers, "client");
     return (
-      '<div class="pc-grid pc-three">' +
-      card(
-        "Холдинг и ответственность",
-        '<div class="pc-pad">' +
-          field("Клиент / категория", typeCat.html, typeCat.known) +
-          field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
-          field("Холдинг", holding.html, holding.known) +
-          field("Реквизиты", other.html, other.known) +
-          managersFields(shell, ent.managers) +
-          "</div>",
-        "1С / ЛК",
+      '<div class="v3-data-sequential">' +
+      renderDataGroup("Клиент и холдинг", clientBlock) +
+      renderDataGroup("Ответственные", respBlock.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "")) +
+      renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
+      renderOtherFieldsByGroup(shell, other) +
+      renderDataGroup(
+        "Торговая точка (уровень юрлица)",
+        field("Доставка, приёмка, ЛПР, Club", emptyFrom1C(), false),
       ) +
-      card(
-        "Магазин и доставка",
-        '<div class="pc-pad">' +
-          field("Адрес юрлица", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
-          field("Телефоны", phones.html, phones.known) +
-          field("Торговая точка", emptyFrom1C(), false) +
-          field("Место доставки", emptyFrom1C(), false) +
-          field("Приёмка", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
+      renderDataGroup(
+        "Доступные точки холдинга",
+        '<div id="v3-data-holding-outlets" data-testid="v3-data-holding-outlets">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
       ) +
-      card(
-        "Расчёты и договор",
-        '<div class="pc-pad">' +
-          field("Скидка", discountKnown ? esc(shell, ent.discount) : emptyNoData(), discountKnown) +
-          field(
-            "Сумма скидки",
-            discountAmountKnown ? esc(shell, ent.discount_amount) : emptyNoData(),
-            discountAmountKnown,
-          ) +
-          field("Наценки", markups.html, markups.known) +
-          field("Бонусные условия", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
-      ) +
-      "</div>" +
-      renderDataFooter(shell)
+      "</div>"
     );
   }
 
@@ -503,51 +688,43 @@
     var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
     var route = addr.direction_of_the_route || addr.directionOfTheRoute;
     var loading = formatLoading(shell, ent.information_loading);
+    var outletBlock =
+      field("Тип и категория", typeCat.html, typeCat.known) +
+      field("Холдинг", holding.html, holding.known) +
+      field(
+        "Адрес магазина",
+        addr.store_address || addr.storeAddress ? esc(shell, addr.store_address || addr.storeAddress) : emptyNoData(),
+        Boolean(addr.store_address || addr.storeAddress),
+      ) +
+      field(
+        "Адрес доставки",
+        addr.delivery_address || addr.deliveryAddress
+          ? esc(shell, addr.delivery_address || addr.deliveryAddress)
+          : emptyNoData(),
+        Boolean(addr.delivery_address || addr.deliveryAddress),
+      ) +
+      field("Маршрут", route ? esc(shell, route) : emptyNoData(), Boolean(route)) +
+      field("Склад", boolLabel(ent.warehouse), ent.warehouse != null) +
+      field("Закрыта", boolLabel(ent.closed), ent.closed != null);
+    var deliveryBlock = field("Приёмка", loading.html, loading.known) + formatContactsFields(shell, ent.contact_information);
+    var lprClub =
+      formatLprBlock(shell, ent.lpr_information) + formatClubFields(shell, ent.additional_information);
+    var stripDetails = function (html) {
+      return html.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "");
+    };
     return (
-      '<div class="pc-grid pc-three">' +
-      card(
-        "Холдинг и ответственность",
-        '<div class="pc-pad">' +
-          field("Тип и категория", typeCat.html, typeCat.known) +
-          field("Холдинг", holding.html, holding.known) +
-          managersFields(shell, ent.managers) +
-          "</div>",
-        "1С",
+      '<div class="v3-data-sequential">' +
+      renderDataGroup("Торговая точка", outletBlock) +
+      renderDataGroup("Ответственные клиента", '<p class="pc-unavailable">Назначения клиента отдельно не переданы в карточке этой ТТ.</p>') +
+      renderDataGroup("Ответственные этой ТТ", stripDetails(renderResponsibilitySection(shell, ent.managers, "outlet"))) +
+      renderDataGroup("Доставка и приёмка", deliveryBlock) +
+      renderDataGroup("Контакты, ЛПР и Club", lprClub) +
+      renderDataGroup(
+        "Доступные точки холдинга",
+        '<div id="v3-data-holding-outlets" data-testid="v3-data-holding-outlets">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
       ) +
-      card(
-        "Магазин и доставка",
-        '<div class="pc-pad">' +
-          field(
-            "Адрес магазина",
-            addr.store_address || addr.storeAddress ? esc(shell, addr.store_address || addr.storeAddress) : emptyNoData(),
-            Boolean(addr.store_address || addr.storeAddress),
-          ) +
-          field(
-            "Адрес доставки",
-            addr.delivery_address || addr.deliveryAddress
-              ? esc(shell, addr.delivery_address || addr.deliveryAddress)
-              : emptyNoData(),
-            Boolean(addr.delivery_address || addr.deliveryAddress),
-          ) +
-          field("Маршрут", route ? esc(shell, route) : emptyNoData(), Boolean(route)) +
-          field("Склад", boolLabel(ent.warehouse), ent.warehouse != null) +
-          field("Закрыта", boolLabel(ent.closed), ent.closed != null) +
-          field("Приёмка", loading.html, loading.known) +
-          formatContactsFields(shell, ent.contact_information) +
-          "</div>",
-        "1С",
-      ) +
-      card(
-        "Расчёты и договор",
-        '<div class="pc-pad">' +
-          formatLprBlock(shell, ent.lpr_information) +
-          formatClubFields(shell, ent.additional_information) +
-          field("Наценки / скидки", emptyFrom1C(), false) +
-          "</div>",
-        "1С",
-      ) +
-      "</div>" +
-      renderDataFooter(shell)
+      "</div>"
     );
   }
 
@@ -594,48 +771,80 @@
     );
   }
 
-  function renderUnavailablePanel(id, label) {
+  function renderUnavailablePanel(id, label, visible) {
     return (
       '<section id="pc-panel-' +
       id +
       '" class="v3-detail-panel v3-detail-panel--unavailable" role="tabpanel" aria-labelledby="pc-tab-' +
       id +
-      '" hidden>' +
-      '<div class="pc-notice"><strong>' +
+      '"' +
+      (visible ? "" : " hidden") +
+      ">" +
+      '<section class="card pad x13-demo-section x13-empty-section">' +
+      "<header><div><span class=\"pc-tag\">Не подключено к ЛК</span><h3>" +
       label +
-      "</strong>" +
+      "</h3></div></header>" +
       '<p class="pc-unavailable">' +
       (UNAVAILABLE_SECTION_COPY[id] || "Раздел недоступен в v3-карточке.") +
-      "</p></div></section>"
+      "</p>" +
+      '<p class="pc-label">Демонстрационные суммы и заказы из прототипа здесь не показываются.</p></section></section>'
     );
   }
 
-  function renderTabsMarkup() {
+  function renderTabsMarkup(initialTab) {
+    initialTab = initialTab || "overview";
     return (
-      '<div class="pc-tabs" role="tablist" aria-label="Разделы карточки">' +
+      '<nav class="x13-card-tabs pc-tabs" role="tablist" aria-label="Разделы карточки">' +
       TABS.map(function (t, i) {
+        var selected = initialTab === t[0];
         return (
-          '<button type="button" role="tab" id="pc-tab-' +
+          '<button type="button" role="tab" class="' +
+          (selected ? "selected" : "") +
+          '" id="pc-tab-' +
           t[0] +
           '" data-card-tab="' +
           t[0] +
           '" aria-controls="pc-panel-' +
           t[0] +
           '" aria-selected="' +
-          (!i) +
+          selected +
           '" tabindex="' +
-          (i ? -1 : 0) +
+          (selected ? 0 : -1) +
           '">' +
           t[1] +
           "</button>"
         );
       }).join("") +
-      "</div>"
+      "</nav>"
     );
+  }
+
+  function readInitialCardTab() {
+    try {
+      var tab = new URLSearchParams(root.location.search).get("cardTab") || "overview";
+      return TABS.some(function (t) { return t[0] === tab; }) ? tab : "overview";
+    } catch (_err) {
+      return "overview";
+    }
+  }
+
+  function writeCardTabQuery(tab) {
+    try {
+      var url = new URL(root.location.href);
+      if (!tab || tab === "overview") {
+        url.searchParams.delete("cardTab");
+      } else {
+        url.searchParams.set("cardTab", tab);
+      }
+      root.history.replaceState(null, "", url.pathname + url.search);
+    } catch (_err) {
+      /* ignore */
+    }
   }
 
   function renderCard(shell, entityType, ent, holdingLink, options) {
     options = options || {};
+    var initialTab = options.initialTab || readInitialCardTab();
     var typeCat = formatTypeCategory(shell, ent.type_category);
     var title = resolveTitle(entityType, ent);
     var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat);
@@ -646,33 +855,86 @@
           ? renderDataLegal(shell, ent, holdingLink, typeCat)
           : renderDataRetail(shell, ent, holdingLink, typeCat);
 
+    function panelVisibility(tabId) {
+      return initialTab === tabId ? "" : " hidden";
+    }
+
     var panels =
-      '<section id="pc-panel-overview" class="v3-detail-panel" role="tabpanel" aria-labelledby="pc-tab-overview">' +
+      '<section id="pc-panel-overview" class="v3-detail-panel" role="tabpanel" aria-labelledby="pc-tab-overview"' +
+      panelVisibility("overview") +
+      ">" +
       overviewHtml +
       "</section>" +
-      '<section id="pc-panel-data" class="v3-detail-panel" role="tabpanel" aria-labelledby="pc-tab-data" hidden>' +
+      '<section id="pc-panel-data" class="v3-detail-panel" role="tabpanel" aria-labelledby="pc-tab-data"' +
+      panelVisibility("data") +
+      ">" +
       dataHtml +
       "</section>";
 
     TABS.forEach(function (t) {
       if (t[2]) return;
-      panels += renderUnavailablePanel(t[0], t[1]);
+      panels += renderUnavailablePanel(t[0], t[1], initialTab === t[0]);
     });
 
+    var subtitleParts = [entityKindLabel(entityType)];
+    if (typeCat.known) {
+      subtitleParts.push(typeCategoryPlain(typeCat));
+    }
+    var addrLine = "";
+    if (entityType === "retail") {
+      var addr = ent.address && typeof ent.address === "object" ? ent.address : {};
+      addrLine = addr.store_address || addr.storeAddress || "";
+    } else if (entityType === "legal") {
+      addrLine = ent.address ? String(ent.address) : "";
+    }
+
     return (
-      '<div class="pc-workspace v3-detail-workspace" data-testid="v3-detail-card">' +
-      '<header class="client-detail-header">' +
+      '<div class="pc-workspace v3-detail-workspace x13 x6" data-testid="v3-detail-card">' +
+      '<div class="x13-record-title">' +
+      '<span class="pc-tag">' +
+      esc(shell, entityKindLabel(entityType)) +
+      "</span>" +
       '<h1 data-testid="v3-detail-title">' +
       esc(shell, title) +
       "</h1>" +
       '<p class="pc-subtitle v3-detail-subtitle" data-testid="v3-detail-subtitle">' +
-      esc(shell, entityKindLabel(entityType) + " · обзор из обмена 1С") +
-      "</p></header>" +
-      renderTabsMarkup() +
-      renderRoleContextBlock(shell, options.session) +
+      esc(shell, addrLine || subtitleParts.join(" · ")) +
+      "</p></div>" +
+      renderTabsMarkup(initialTab) +
       panels +
       "</div>"
     );
+  }
+
+  function updateRelatedContext(root, shell, payload) {
+    if (!root) return;
+    shell = shell || { escapeHtml: function (v) { return String(v ?? ""); } };
+    var kpis = root.querySelector('[data-testid="v3-overview-kpis"]');
+    var host = root.querySelector('[data-testid="v3-related-outlets"]');
+    var dataHost = root.querySelector('[data-testid="v3-data-holding-outlets"]');
+    var counts = payload.counts || {};
+    var entityType = payload.entityType || "legal";
+    if (kpis && counts.retailOutlets != null) {
+      var boxes = kpis.querySelectorAll("b");
+      if (boxes[0]) boxes[0].textContent = String(counts.retailOutlets);
+      if (boxes[1]) {
+        if (entityType === "legal") {
+          boxes[1].textContent = "1";
+        } else if (counts.legalEntities != null) {
+          boxes[1].textContent = String(counts.legalEntities);
+        }
+      }
+    }
+    var outlets = payload.retailOutlets || [];
+    var parentReturn = payload.parentReturn || "";
+    var linesHtml = renderRelatedOutletLines(shell, outlets, parentReturn);
+    if (host) {
+      host.innerHTML = linesHtml;
+    }
+    if (dataHost) {
+      dataHost.innerHTML = linesHtml;
+    }
+    refreshRelatedOutletReturnLinks(root);
   }
 
   function bindTabs(root, context) {
@@ -693,12 +955,15 @@
         var selected = id === tabId;
         btn.setAttribute("aria-selected", String(selected));
         btn.tabIndex = selected ? 0 : -1;
+        btn.classList.toggle("selected", selected);
         panel.hidden = !selected;
         if (selected && focus) {
           btn.focus();
           btn.scrollIntoView({ block: "nearest", inline: "nearest" });
         }
       });
+      writeCardTabQuery(id);
+      refreshRelatedOutletReturnLinks(root);
       if (titleEl) {
         titleEl.textContent = id === "data" ? "Данные и условия клиента · " + baseTitle : baseTitle;
       }
@@ -731,11 +996,17 @@
         select(btn.getAttribute("data-card-open") || "data", true);
       });
     });
+
+    var initialTab = readInitialCardTab();
+    if (initialTab !== "overview") {
+      select(initialTab, false);
+    }
   }
 
   root.ClientDetailV3 = {
     renderCard: renderCard,
     bindTabs: bindTabs,
+    updateRelatedContext: updateRelatedContext,
     /** @deprecated use renderCard */
     renderBody: function (shell, entityType, ent, holdingLink) {
       return renderCard(shell, entityType, ent, holdingLink);

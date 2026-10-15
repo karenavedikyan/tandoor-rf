@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import request from "supertest";
-import { closePool, resetPoolForTests } from "../../src/db/pool";
+import { closePool, resetPoolForTests, query } from "../../src/db/pool";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
@@ -85,6 +85,41 @@ describe("clients v3 API", { concurrency: false }, () => {
     });
     assert.equal(applied.status, "SUCCESS");
   }
+
+  it("wide session composition is narrowed to the selected employee and rejects invalid selectors", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    await resetPoolForTests();
+    await query(
+      `UPDATE onec_v3_retail_outlets
+       SET managers = jsonb_set(managers, '{guidManager}', to_jsonb($1::text))
+       WHERE guid_store IN (
+         'c3000000-0000-4000-8000-000000000003'::uuid,
+         'c3000000-0000-4000-8000-000000000004'::uuid
+       )`,
+      [M2],
+    );
+    const email = "admin-card-territory@example.test";
+    await createTestUser({ databaseUrl, email, password: TEST_PASSWORD, fullName: "Card Test", role: "admin" });
+    const cookie = await login(email);
+    const app = await loadApp();
+    const path = `/api/clients/v3/holdings/${HOLDING}/composition`;
+    const headers = { Origin: ORIGIN, Cookie: cookie };
+    const wide = await request(app).get(path).set(headers);
+    assert.equal(wide.status, 200);
+    assert.equal(wide.body.retailOutlets.length, 3);
+    const selected = await request(app).get(`${path}?responsibleGuid=${M1}&responsibleKind=manager`).set(headers);
+    assert.equal(selected.status, 200);
+    assert.deepEqual(selected.body.retailOutlets.map((r: { guid: string }) => r.guid), [RETAIL]);
+    const other = await request(app).get(`${path}?responsibleGuid=${M2}&responsibleKind=manager`).set(headers);
+    assert.equal(other.status, 200);
+    assert.equal(other.body.retailOutlets.length, 2);
+    const invalid = await request(app).get(`${path}?responsibleGuid=invalid`).set(headers);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.retailOutlets, undefined);
+    const invalidKind = await request(app).get(`${path}?responsibleGuid=${M1}&responsibleKind=admin`).set(headers);
+    assert.equal(invalidKind.status, 400);
+  });
 
   it("manager sees scoped v3 list; foreign detail returns 404", async () => {
     await prepareDatabase(databaseUrl);

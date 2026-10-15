@@ -26,11 +26,19 @@
 
   function resolveV3BackHref() {
     var raw = new URLSearchParams(window.location.search).get("return");
-    if (typeof raw === "string" && raw.startsWith("/clients")) {
-      try {
-        return decodeURIComponent(raw);
-      } catch (_err) {
+    if (typeof raw === "string" && raw !== "") {
+      // URLSearchParams already decoded the outer return value; do not decodeURIComponent
+      // the whole string or nested query inside return= will break (e.g. &v3manager=).
+      if (raw.startsWith("/clients")) {
         return raw;
+      }
+      try {
+        var decoded = decodeURIComponent(raw);
+        if (decoded.startsWith("/clients")) {
+          return decoded;
+        }
+      } catch (_err) {
+        /* ignore */
       }
     }
     var returnQuery = parseReturnQuery();
@@ -49,13 +57,56 @@
     return addr.store_address || addr.storeAddress || ent.name || "Торговая точка";
   }
 
+  function v3CompositionUrl(holdingGuid) {
+    var search = window.location.search;
+    var selection = new URLSearchParams();
+    for (var depth = 0; depth < 12; depth += 1) {
+      var params = new URLSearchParams(search);
+      var responsible = params.get("responsibleGuid") || params.get("v3manager");
+      var rop = params.get("ropEmployee") || params.get("ropBranchGuid");
+      if (responsible || rop) {
+        var kind = params.get("responsibleKind") || params.get("teamKind") || "manager";
+        if (["manager", "regional", "hardware"].indexOf(kind) < 0) {
+          throw new Error("Invalid selected territory");
+        }
+        if (responsible) {
+          selection.set("responsibleGuid", responsible);
+          selection.set("responsibleKind", kind);
+        }
+        if (rop) selection.set("ropBranchGuid", rop);
+        break;
+      }
+      var parent = params.get("return");
+      if (!parent) break;
+      if (parent.charAt(0) === "?") {
+        search = parent;
+      } else if (/^\/clients(?:\/|\?|$)/.test(parent)) {
+        search = new URL(parent, window.location.origin).search;
+      } else if (parent.indexOf("=") >= 0 && parent.charAt(0) !== "/") {
+        search = "?" + parent;
+      } else {
+        throw new Error("Invalid territory return");
+      }
+      if (depth === 11) throw new Error("Territory return is too deep");
+    }
+    return "/api/clients/v3/holdings/" + encodeURIComponent(holdingGuid) +
+      "/composition" + (selection.toString() ? "?" + selection.toString() : "");
+  }
+
   function renderV3Composition(host, payload) {
     if (!host || !payload.entity || !payload.entity.guid) {
       return;
     }
     host.innerHTML = "Загрузка состава…";
+    var compositionUrl;
+    try {
+      compositionUrl = v3CompositionUrl(payload.entity.guid);
+    } catch (_err) {
+      host.textContent = "Некорректная выбранная территория.";
+      return;
+    }
     api
-      .apiRequest("/api/clients/v3/holdings/" + encodeURIComponent(payload.entity.guid) + "/composition")
+      .apiRequest(compositionUrl)
       .then(function (result) {
         if (!host.isConnected) return;
         if (!result.response.ok || !result.data) {
@@ -156,11 +207,7 @@
           session: buildV3SessionContext(currentUser),
         })
       : "";
-    detailRoot.innerHTML =
-      '<p class="client-detail-back-wrap"><a class="client-detail-back clients-link" href="' +
-      shell.escapeHtml(backHref) +
-      '" data-testid="v3-back-to-list">← К списку</a></p>' +
-      cardHtml;
+    detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
       window.ClientDetailV3.bindTabs(detailRoot, {
         title: title,
@@ -175,6 +222,102 @@
     if (payload.entityType === "holding" && ent.guid) {
       renderV3Composition(document.getElementById("v3-composition"), payload);
     }
+    loadV3HoldingRelated(detailRoot, payload);
+  }
+
+  function renderV3CardChrome(backHref, session) {
+    session = session || {};
+    var parts = ["Мои клиенты"];
+    var returnRaw = new URLSearchParams(window.location.search).get("return");
+    if (returnRaw) {
+      try {
+        var returnSearch = returnRaw.charAt(0) === "?" ? returnRaw : "?" + decodeURIComponent(returnRaw);
+        var state = logic.readStateFromSearch(returnSearch);
+        if (state.view === "teams") {
+          parts = ["Мои РОПы", "Команда", "Клиентская база"];
+        } else if (state.responsibleGuid || state.v3manager) {
+          parts = ["Мои клиенты", "Территория сотрудника"];
+        }
+      } catch (_err) {
+        /* keep default chain */
+      }
+    }
+    parts.push("Карточка");
+    var nav =
+      '<nav aria-label="Путь к карточке">' +
+      parts
+        .map(function (part, index) {
+          var current = index === parts.length - 1;
+          return (
+            "<span" +
+            (current ? ' aria-current="page"' : "") +
+            ">" +
+            shell.escapeHtml(part) +
+            "</span>"
+          );
+        })
+        .join('<i aria-hidden="true">/</i>') +
+      "</nav>";
+    var viewing = session.roleLabel ? shell.escapeHtml(session.roleLabel) : "";
+    if (session.scopeLabel && session.scopeLabel.indexOf("Предпросмотр") >= 0) {
+      viewing = shell.escapeHtml(session.scopeLabel);
+    }
+    return (
+      '<div class="x13-context-nav v3-card-context" data-testid="v3-territory-nav">' +
+      '<a class="client-detail-back x13-back clients-link" href="' +
+      shell.escapeHtml(backHref) +
+      '" data-testid="v3-back-to-list">← Назад</a>' +
+      nav +
+      (viewing ? '<span class="x13-viewing">' + viewing + "</span>" : "") +
+      "</div>"
+    );
+  }
+
+  function loadV3HoldingRelated(detailRoot, payload) {
+    if (!detailRoot || !window.ClientDetailV3 || !window.ClientDetailV3.updateRelatedContext) {
+      return;
+    }
+    if (payload.entityType === "holding" || !payload.holdingLink || !payload.holdingLink.guid) {
+      var emptyHost = detailRoot.querySelector('[data-testid="v3-data-holding-outlets"]');
+      if (emptyHost) emptyHost.textContent = "Связь с холдингом не передана из 1С.";
+      return;
+    }
+    function showRelatedError(message) {
+      if (!detailRoot.isConnected) return;
+      detailRoot.querySelectorAll('[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"]')
+        .forEach(function (host) { host.textContent = message; });
+    }
+    var compositionUrl;
+    try {
+      compositionUrl = v3CompositionUrl(payload.holdingLink.guid);
+    } catch (_err) {
+      showRelatedError("Некорректная выбранная территория.");
+      return;
+    }
+    api
+      .apiRequest(
+        compositionUrl,
+      )
+      .then(function (result) {
+        if (!detailRoot.isConnected || !result.response.ok || !result.data) {
+          showRelatedError("Не удалось загрузить торговые точки холдинга.");
+          return;
+        }
+        var legal = result.data.legalEntities || [];
+        var retail = result.data.retailOutlets || [];
+        window.ClientDetailV3.updateRelatedContext(detailRoot, shell, {
+          entityType: payload.entityType,
+          counts: {
+            retailOutlets: retail.length,
+            legalEntities: payload.entityType === "legal" ? 1 : legal.length,
+          },
+          retailOutlets: retail,
+          parentReturn: currentDetailReturnParam(),
+        });
+      })
+      .catch(function () {
+        showRelatedError("Ошибка сети при загрузке ТТ.");
+      });
   }
 
   function clientGuidFromPath() {
