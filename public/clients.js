@@ -2913,6 +2913,11 @@
         !usesDirectorLayout() || !isTeamsSurface,
       );
     }
+    var showV3CompactToolbar =
+      v3UiActive && shouldUseV3List(state) && !isRopTeamHome && !isDirectorTeamsSurface;
+    document
+      .querySelector(".clients-toolbar")
+      ?.classList.toggle("clients-toolbar--v3-compact", showV3CompactToolbar);
     document
       .querySelector(".clients-toolbar")
       ?.classList.toggle("clients-hidden", isRopTeamHome || isDirectorTeamsSurface);
@@ -2961,7 +2966,9 @@
         (state.view || "all") === "teams" &&
         (branchList || responsibleList));
     document.body.classList.toggle("clients-mobile-filters-collapsed", Boolean(collapseMobileFilters));
-    if (!collapseMobileFilters && filtersPanelEl) {
+    var v3CompactDesktop =
+      exchangeV3Active && shouldUseV3List(state) && !collapseMobileFilters;
+    if (!collapseMobileFilters && filtersPanelEl && !v3CompactDesktop) {
       filtersPanelEl.classList.add("clients-filters-panel--expanded");
     }
   }
@@ -4150,6 +4157,7 @@
       api: api,
       shell: shell,
       rolePresentation: rolePresentation,
+      currentUserId: currentUser && currentUser.id,
       navigationRequestId: navId,
       isNavigationCurrent: function () {
         return navId === activeRequestId;
@@ -5065,6 +5073,8 @@
                 }
               } else if (key === "closed") {
                 patch.closed = "";
+              } else if (key === "city") {
+                patch.city = "";
               } else {
                 return;
               }
@@ -5074,6 +5084,9 @@
               window.ClientsV3.loadList(buildV3UiContext(), next, true);
             });
           }
+          window.ClientsV3.bindListChrome(function () {
+            return buildV3UiContext();
+          });
           window.ClientsV3.bindEntitySwitcher(entitySwitcherEl, function (entityId) {
             cancelScheduledLoad();
             invalidateInFlightRequests();
@@ -5085,6 +5098,12 @@
               v3categories: [],
               v3type: "",
               v3category: "",
+              city: "",
+              colManager: "",
+              colRegional: "",
+              colRop: "",
+              colCity: "",
+              colStatus: "",
             });
             if (entityId !== "retail" && entityId !== "orphan_retail") {
               v3state.closed = "";
@@ -5231,7 +5250,19 @@
     switchEntity(btn.getAttribute("data-entity"));
   });
   resetFiltersBtn.addEventListener("click", resetFilters);
+  document.getElementById("v3-list-reset-filters")?.addEventListener("click", resetFilters);
   columnsPickerBtn?.addEventListener("click", function () {
+    if (exchangeV3Active && window.ClientsV3 && shouldUseV3List({ view: currentView() })) {
+      var v3state = window.ClientsV3.readState();
+      var pickerOpen = columnsPickerEl && !columnsPickerEl.classList.contains("clients-hidden");
+      if (pickerOpen) {
+        columnsPickerEl.classList.add("clients-hidden");
+        return;
+      }
+      window.ClientsV3.renderV3ColumnPicker(buildV3UiContext(), columnsPickerEl, v3state);
+      columnsPickerEl?.classList.remove("clients-hidden");
+      return;
+    }
     toggleColumnPicker(currentStateFromForm());
   });
   filtersToggleBtn?.addEventListener("click", function () {

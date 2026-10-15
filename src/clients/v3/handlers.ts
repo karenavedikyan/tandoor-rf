@@ -80,6 +80,10 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     : undefined;
   const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
   const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const trimOptional = (value: unknown): string | undefined => {
+    const raw = typeof value === "string" ? value.trim() : "";
+    return raw.length > 0 ? raw : undefined;
+  };
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -95,6 +99,12 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     typeGuids: typeGuids && typeGuids.length > 1 ? typeGuids : undefined,
     categoryGuids: categoryGuids && categoryGuids.length > 1 ? categoryGuids : undefined,
     missingManager: missingManager || undefined,
+    city: trimOptional(req.query.city),
+    colManager: trimOptional(req.query.colManager),
+    colRegional: trimOptional(req.query.colRegional),
+    colRop: trimOptional(req.query.colRop),
+    colCity: trimOptional(req.query.colCity),
+    colStatus: trimOptional(req.query.colStatus),
   });
   setNoStore(res);
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });

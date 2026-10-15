@@ -153,7 +153,7 @@
                     class="clients-field__input"
                     type="search"
                     autocomplete="off"
-                    placeholder="Название, холдинг, менеджер, адрес или телефон"
+                    placeholder="Клиент, ТТ, код, адрес, сотрудник"
                   />
                 </label>
                 <div class="clients-toolbar__controls-row">
@@ -168,18 +168,41 @@
                   <button type="button" class="workspace-button workspace-button--ghost clients-columns-btn" id="columns-picker-btn">
                     Колонки
                   </button>
+                  <button
+                    type="button"
+                    class="workspace-button workspace-button--ghost clients-v3-density-btn clients-hidden"
+                    id="v3-density-btn"
+                  >
+                    Обычно
+                  </button>
+                  <button
+                    type="button"
+                    id="clients-filters-toggle"
+                    class="clients-filters-toggle clients-filters-toggle--inline"
+                    aria-expanded="false"
+                    aria-controls="clients-filters-panel"
+                  >
+                    Фильтры
+                    <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
+                  </button>
                 </div>
               </div>
-              <button
-                type="button"
-                id="clients-filters-toggle"
-                class="clients-filters-toggle"
-                aria-expanded="false"
-                aria-controls="clients-filters-panel"
-              >
-                Фильтры
-                <span id="clients-filters-active-count" class="clients-filters-toggle__count clients-hidden"></span>
-              </button>
+              <div id="v3-list-filterbar" class="clients-v3-list-filterbar clients-hidden" aria-label="Быстрые фильтры списка">
+                <label class="clients-field clients-field--inline">
+                  <span class="clients-field__label">Город</span>
+                  <select id="v3-city-filter" class="clients-field__select">
+                    <option value="">Все города</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  id="v3-list-reset-filters"
+                  class="workspace-button workspace-button--ghost clients-v3-list-reset clients-hidden"
+                >
+                  Сбросить
+                </button>
+                <p class="clients-v3-list-filterbar__hint">Сброс сохраняет выбранную команду и сотрудника</p>
+              </div>
               <p id="clients-filters-scope-label" class="clients-filters-scope-label clients-hidden">
                 Моя закреплённая область
               </p>
@@ -708,6 +731,7 @@
     <script src="/clients-shell.js" defer></script>
     <script src="/clients-teams-compact.js" defer></script>
     <script src="/clients-onec-teams.js" defer></script>
+    <script src="/clients-v3-list.js" defer></script>
     <script src="/clients-v3.js" defer></script>
     <script src="/clients.js" defer></script>
   </body>

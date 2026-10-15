@@ -132,9 +132,6 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
   }
 
   async function ensureMobileFiltersExpanded(page: Page, viewport: { width: number; height: number }): Promise<void> {
-    if (viewport.width > 400) {
-      return;
-    }
     const toggle = page.locator("#clients-filters-toggle");
     if (await toggle.count()) {
       const expanded = await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").count();
@@ -148,9 +145,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     page: Page,
     viewport?: { width: number; height: number },
   ): Promise<void> {
-    if (viewport) {
-      await ensureMobileFiltersExpanded(page, viewport);
-    }
+    await ensureMobileFiltersExpanded(page, viewport || page.viewportSize() || DESKTOP);
     await page.locator("#v3-filters-wrap:not(.clients-hidden) #v3-type-filter").waitFor({
       state: "visible",
       timeout: 30000,
@@ -474,11 +469,15 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
     await holdingNav.waitFor({ state: "visible", timeout: 15000 });
     await holdingNav.click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.click("#pc-tab-data");
     await page.waitForSelector("#v3-composition a", { timeout: 15000 });
     await page.locator("#v3-composition a").first().click();
     await page.waitForSelector('[data-testid="v3-back-to-list"]');
     await page.click('[data-testid="v3-back-to-list"]');
-    await page.waitForSelector("#v3-composition", { timeout: 15000 });
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.click("#pc-tab-data");
+    await page.waitForSelector("#v3-composition a", { timeout: 15000 });
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click('[data-testid="v3-back-to-list"]');
@@ -542,6 +541,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       var sel = document.getElementById("v3-type-filter");
       return sel && sel.options.length >= 2;
     });
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     const multiList = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/list") &&
@@ -1073,6 +1073,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
         res.url().includes("managerGuid=" + encodeURIComponent(M1)) &&
         res.status() === 200,
     );
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     await page.selectOption("#v3-manager-filter", M1);
     await managerList;
 
@@ -1200,6 +1201,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     assert.equal(new URL(page.url()).searchParams.get("page"), "2");
     assert.equal(new URL(page.url()).searchParams.get("v3manager"), M1);
 
+    await ensureMobileFiltersExpanded(page, page.viewportSize() || DESKTOP);
     await page.waitForSelector("#v3-manager-filter", { timeout: 20000 });
     const clearManagerList = page.waitForResponse(
       (res) => {
@@ -1227,6 +1229,58 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const finalUrl = new URL(page.url());
     assert.equal(finalUrl.searchParams.get("v3manager") || "", "");
     assert.equal(finalUrl.searchParams.get("closed") || "", "");
+    await page.close();
+  });
+
+  it("v3 list URL persists density toggle and column params", async () => {
+    const page = await browser.newPage();
+    await login(page, testCreds.adminEmail);
+    const listUrl =
+      baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,manager_name,rop_name";
+    const listReady = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.goto(listUrl);
+    await listReady;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    assert.match(new URL(page.url()).searchParams.get("v3cols") || "", /manager_name/);
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+
+    const reloadList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await reloadList;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+
+    const firstRow = page.locator("#clients-table-body a, #clients-cards a").first();
+    await firstRow.click();
+    await page.waitForSelector('[data-testid="v3-back-to-list"]');
+    const returnQuery = new URL(page.url()).searchParams.get("return") || "";
+    assert.ok(returnQuery.includes("v3dense=1"));
+    assert.ok(returnQuery.includes("v3cols="));
+    const backList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await page.click('[data-testid="v3-back-to-list"]');
+    await backList;
+    assert.equal(new URL(page.url()).searchParams.get("v3dense"), "1");
+    assert.match(new URL(page.url()).searchParams.get("v3cols") || "", /manager_name/);
+    await page.waitForSelector("#clients-app.clients-v3-dense");
+
+    await page.click("#v3-density-btn");
+    await page.waitForFunction(function () {
+      return !new URL(window.location.href).searchParams.get("v3dense");
+    });
+    await page.setViewportSize(MOBILE);
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("#clients-cards a");
+    const mobileOverflow = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      content: document.documentElement.scrollWidth,
+    }));
+    assert.ok(mobileOverflow.content <= mobileOverflow.viewport + 1, JSON.stringify(mobileOverflow));
     await page.close();
   });
 

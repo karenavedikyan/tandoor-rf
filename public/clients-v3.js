@@ -83,6 +83,14 @@
       responsibleGuid: responsibleGuid,
       responsibleKind: responsibleGuid ? responsibleKind : "",
       pageSize: Math.min(100, Math.max(1, Number(params.get("v3pageSize") || "50") || 50)),
+      v3cols: params.get("v3cols") || "",
+      v3dense: params.get("v3dense") === "1",
+      city: params.get("v3city") || "",
+      colManager: params.get("colManager") || "",
+      colRegional: params.get("colRegional") || "",
+      colRop: params.get("colRop") || "",
+      colCity: params.get("colCity") || "",
+      colStatus: params.get("colStatus") || "",
     };
   }
 
@@ -145,6 +153,7 @@
       v3types: types,
       v3categories: categories,
       closed: document.getElementById("v3-closed-filter")?.value || "",
+      city: document.getElementById("v3-city-filter")?.value || "",
     };
   }
 
@@ -248,6 +257,14 @@
       responsibleGuid: url.responsibleGuid,
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,
+      v3cols: url.v3cols || "",
+      v3dense: url.v3dense,
+      city: dom.city || url.city || "",
+      colManager: url.colManager || "",
+      colRegional: url.colRegional || "",
+      colRop: url.colRop || "",
+      colCity: url.colCity || "",
+      colStatus: url.colStatus || "",
     };
     if (patch) {
       Object.keys(patch).forEach(function (key) {
@@ -257,10 +274,19 @@
       });
     }
     syncV3FilterAliases(next);
-    if (next.v3manager) {
+    var teamContext = next.v3view === "teams" || next.ropEmployee;
+    if (teamContext && next.v3manager) {
       next.responsibleGuid = next.v3manager;
       next.responsibleKind = "manager";
-    } else if (patch && Object.prototype.hasOwnProperty.call(patch, "v3manager") && !patch.v3manager) {
+    } else if (
+      teamContext &&
+      patch &&
+      Object.prototype.hasOwnProperty.call(patch, "v3manager") &&
+      !patch.v3manager
+    ) {
+      next.responsibleGuid = "";
+      next.responsibleKind = "";
+    } else if (!teamContext && patch && Object.prototype.hasOwnProperty.call(patch, "v3manager")) {
       next.responsibleGuid = "";
       next.responsibleKind = "";
     }
@@ -391,6 +417,14 @@
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
       pageSize: urlFilters.pageSize || 50,
+      v3cols: urlFilters.v3cols || "",
+      v3dense: !!urlFilters.v3dense,
+      city: fromUrl ? urlFilters.city || "" : domFilters?.city || urlFilters.city || "",
+      colManager: urlFilters.colManager || "",
+      colRegional: urlFilters.colRegional || "",
+      colRop: urlFilters.colRop || "",
+      colCity: urlFilters.colCity || "",
+      colStatus: urlFilters.colStatus || "",
     };
   }
 
@@ -451,6 +485,16 @@
       params.delete("responsibleKind");
       params.delete("teamKind");
     }
+    if (state.v3cols) params.set("v3cols", state.v3cols);
+    else params.delete("v3cols");
+    if (state.v3dense) params.set("v3dense", "1");
+    else params.delete("v3dense");
+    if (state.city) params.set("v3city", state.city);
+    else params.delete("v3city");
+    ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
+      if (state[key]) params.set(key, state[key]);
+      else params.delete(key);
+    });
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -485,6 +529,12 @@
     if (s.pageSize && s.pageSize !== 50) {
       params.set("v3pageSize", String(s.pageSize));
     }
+    if (s.v3cols) params.set("v3cols", s.v3cols);
+    if (s.v3dense) params.set("v3dense", "1");
+    if (s.city) params.set("v3city", s.city);
+    ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
+      if (s[key]) params.set(key, s[key]);
+    });
     return "?" + params.toString();
   }
 
@@ -534,59 +584,41 @@
     closedWrap?.classList.toggle("clients-hidden", !isRetail);
   }
 
-  function v3ListColumns(presentation, v3entity) {
-    var role = presentation && presentation.businessRole;
-    if (role === "regional_manager" && (v3entity === "retail" || v3entity === "orphan_retail")) {
-      return [
-        { id: "name", label: "Торговая точка" },
-        { id: "store_address", label: "Адрес магазина" },
-        { id: "manager_name", label: "Менеджер ТТ" },
-        { id: "regional_name", label: "Региональный ТТ" },
-        { id: "rop_name", label: "РОП ТТ" },
-      ];
-    }
-    if (role === "manager" || role === "assistant") {
-      return [
-        { id: "name", label: "Название клиента" },
-        { id: "manager_name", label: "Менеджер клиента" },
-        { id: "regional_name", label: "Региональный клиента" },
-        { id: "hardware_name", label: "По фурнитуре клиента" },
-        { id: "rop_name", label: "РОП клиента" },
-      ];
-    }
-    if (v3entity === "retail" || v3entity === "orphan_retail") {
-      return [
-        { id: "name", label: "Торговая точка" },
-        { id: "store_address", label: "Адрес" },
-        { id: "manager_name", label: "Менеджер" },
-        { id: "regional_name", label: "Региональный" },
-        { id: "rop_name", label: "РОП" },
-        { id: "closed", label: "Статус" },
-      ];
-    }
-    return [
-      { id: "name", label: "Название" },
-      { id: "holding", label: "Холдинг" },
-      { id: "manager_name", label: "Менеджер" },
-      { id: "regional_name", label: "Региональный" },
-      { id: "rop_name", label: "РОП" },
-    ];
+  function appendV3ListQueryParams(params, state) {
+    if (state.city) params.set("city", state.city);
+    if (state.colManager) params.set("colManager", state.colManager);
+    if (state.colRegional) params.set("colRegional", state.colRegional);
+    if (state.colRop) params.set("colRop", state.colRop);
+    if (state.colCity) params.set("colCity", state.colCity);
+    if (state.colStatus) params.set("colStatus", state.colStatus);
   }
 
-  function v3CellValue(item, col, shell) {
-    if (col.id === "holding") {
-      if (item.holding_name) {
-        return shell.escapeHtml(String(item.holding_name));
-      }
-      return item.holding_guid ? shell.escapeHtml(item.holding_guid.slice(0, 8) + "…") : "—";
+  function resolveVisibleListColumns(state, userId) {
+    var listUi = window.ClientsV3List;
+    if (!listUi) {
+      return [{ id: "name", label: "Название" }];
     }
-    if (col.id === "closed") {
-      if (item.closed === true) return "Закрыта";
-      if (item.closed === false) return "Открыта";
-      return "—";
-    }
-    var value = item[col.id];
-    return value ? shell.escapeHtml(String(value)) : "—";
+    var ids = listUi.resolveVisibleColumns(state, userId);
+    var catalog = listUi.catalogForEntity(state.v3entity);
+    return ids
+      .map(function (id) {
+        for (var i = 0; i < catalog.length; i += 1) {
+          if (catalog[i].id === id) {
+            return catalog[i];
+          }
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  function toggleV3ListChrome(show) {
+    var bar = document.getElementById("v3-list-filterbar");
+    var densityBtn = document.getElementById("v3-density-btn");
+    var v3ResetBtn = document.getElementById("v3-list-reset-filters");
+    bar?.classList.toggle("clients-hidden", !show);
+    densityBtn?.classList.toggle("clients-hidden", !show);
+    v3ResetBtn?.classList.toggle("clients-hidden", !show);
   }
 
   function detailHref(guid, detailEntity, state) {
@@ -672,6 +704,9 @@
       } else if (state.closed === "false") {
         chips.push({ label: "ТТ: открыта", key: "closed" });
       }
+      if (state.city) {
+        chips.push({ label: "Город: " + state.city, key: "city" });
+      }
       if (!chips.length) {
         wrap.classList.add("clients-hidden");
         wrap.innerHTML = "";
@@ -741,6 +776,10 @@
       }
       syncV3FilterAliases(state);
       writeState(state, replaceHistory);
+      toggleV3ListChrome(true);
+      if (window.ClientsV3List) {
+        window.ClientsV3List.applyDensity(!!state.v3dense);
+      }
       ctx.showResultsState("loading", "Загрузка списка…", "", "");
       ctx.entitySwitcherEl?.querySelectorAll("[data-v3entity]").forEach(function (btn) {
         btn.classList.toggle("clients-view-switcher__btn--active", btn.getAttribute("data-v3entity") === state.v3entity);
@@ -762,8 +801,9 @@
       if (state.ropEmployee) {
         params.set("ropBranchGuid", state.ropEmployee);
       }
-      var teamAssignment = isV3TeamAssignment(state);
-      if (teamAssignment) {
+      var teamAssignment =
+        isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
+      if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
       }
@@ -771,6 +811,7 @@
         params.set("managerGuid", state.v3manager);
       }
       appendTypeCategoryParams(params, state);
+      appendV3ListQueryParams(params, state);
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity),
@@ -782,6 +823,9 @@
           var liveState = readState();
           syncFilterDom(shell, liveState, optionsResult.data);
           window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
+          if (window.ClientsV3List) {
+            window.ClientsV3List.syncFilterbar(shell, liveState, optionsResult.data);
+          }
         }
       });
       var listPromise = api
@@ -830,27 +874,44 @@
           }
           ctx.showResultsContent();
           var detailType = meta.detailEntity;
-          var columns = v3ListColumns(ctx.rolePresentation, state.v3entity);
-          ctx.tableHeadRow.innerHTML = columns
-            .map(function (col) {
-              return "<th>" + shell.escapeHtml(col.label) + "</th>";
-            })
-            .join("");
+          var listUi = window.ClientsV3List;
+          var visibleCols = resolveVisibleListColumns(state, ctx.currentUserId);
+          if (listUi && ctx.tableHeadRow) {
+            listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
+              var patch = { page: 1 };
+              patch[filterKey] = value;
+              if (filterKey === "q") {
+                var searchEl = document.getElementById("search-input");
+                if (searchEl) {
+                  searchEl.value = value;
+                }
+              }
+              window.ClientsV3.loadList(ctx, mergeListStateForUserAction(patch), false);
+            });
+          }
           ctx.tableBody.innerHTML = items
             .map(function (item) {
               var href = detailHref(item.guid, detailType, state);
-              var cells = columns
+              var cells = visibleCols
                 .map(function (col, index) {
                   if (index === 0) {
                     return (
-                      '<td><a class="clients-link" href="' +
+                      '<td data-label="' +
+                      shell.escapeHtml(col.label) +
+                      '"><a class="clients-link" href="' +
                       href +
                       '">' +
                       shell.escapeHtml(item.name || item.guid) +
                       "</a></td>"
                     );
                   }
-                  return "<td>" + v3CellValue(item, col, shell) + "</td>";
+                  return (
+                    '<td data-label="' +
+                    shell.escapeHtml(col.label) +
+                    '">' +
+                    (listUi ? listUi.cellDisplay(item, col.id, shell) : "—") +
+                    "</td>"
+                  );
                 })
                 .join("");
               return "<tr>" + cells + "</tr>";
@@ -859,22 +920,7 @@
           ctx.cardsEl.innerHTML = items
             .map(function (item) {
               var href = detailHref(item.guid, detailType, state);
-              var meta = columns
-                .slice(1, 4)
-                .map(function (col) {
-                  var value = v3CellValue(item, col, shell);
-                  if (value === "—") {
-                    return "";
-                  }
-                  return (
-                    '<p class="clients-card__line"><span class="clients-card__meta">' +
-                    shell.escapeHtml(col.label) +
-                    ": " +
-                    value +
-                    "</span></p>"
-                  );
-                })
-                .join("");
+              var metaLine = listUi ? listUi.mobileMetaLine(item, visibleCols, shell) : "";
               return (
                 '<article class="clients-card">' +
                 '<h2 class="clients-card__title"><a class="clients-link" href="' +
@@ -882,7 +928,11 @@
                 '">' +
                 shell.escapeHtml(item.name || item.guid) +
                 "</a></h2>" +
-                meta +
+                (metaLine
+                  ? '<p class="clients-card__line"><span class="clients-card__meta">' +
+                    shell.escapeHtml(metaLine) +
+                    "</span></p>"
+                  : "") +
                 "</article>"
               );
             })
@@ -925,10 +975,15 @@
           syncV3FilterAliases(next);
           next.closed = document.getElementById("v3-closed-filter")?.value || "";
           var teamView = next.v3view === "teams" || next.ropEmployee;
-          if (id === "v3-manager-filter" && teamView) {
-            if (next.v3manager) {
-              next.responsibleGuid = next.v3manager;
-              next.responsibleKind = "manager";
+          if (id === "v3-manager-filter") {
+            if (teamView) {
+              if (next.v3manager) {
+                next.responsibleGuid = next.v3manager;
+                next.responsibleKind = "manager";
+              } else {
+                next.responsibleGuid = "";
+                next.responsibleKind = "";
+              }
             } else {
               next.responsibleGuid = "";
               next.responsibleKind = "";
@@ -1086,26 +1141,86 @@
     },
 
     resetFilters: function (ctx) {
-      var entity = readState().v3entity;
+      var url = readState();
+      var teamScope = url.v3view === "teams" || url.ropEmployee;
+      var keepManager =
+        teamScope && url.responsibleGuid && url.responsibleKind === "manager" ? url.responsibleGuid : "";
       window.ClientsV3.loadList(
         ctx,
         {
-          v3entity: entity,
+          v3entity: url.v3entity,
           page: 1,
           q: "",
           closed: "",
-          v3manager: "",
+          v3manager: keepManager,
           v3type: "",
           v3category: "",
           v3types: [],
           v3categories: [],
-          v3view: readState().v3view,
+          v3view: url.v3view,
           missingManager: false,
-          ropEmployee: readState().ropEmployee,
-          responsibleGuid: "",
-          responsibleKind: "",
+          ropEmployee: url.ropEmployee,
+          responsibleGuid: teamScope ? url.responsibleGuid : "",
+          responsibleKind: teamScope ? url.responsibleKind : "",
+          city: "",
+          colManager: "",
+          colRegional: "",
+          colRop: "",
+          colCity: "",
+          colStatus: "",
+          v3cols: url.v3cols,
+          v3dense: url.v3dense,
+          pageSize: url.pageSize,
         },
         true,
+      );
+    },
+
+    bindListChrome: function (ctx) {
+      if (window.__clientsV3ListChromeBound) {
+        return;
+      }
+      window.__clientsV3ListChromeBound = true;
+      function currentContext() {
+        return typeof ctx === "function" ? ctx() : ctx;
+      }
+      var cityEl = document.getElementById("v3-city-filter");
+      cityEl?.addEventListener("change", function () {
+        window.ClientsV3.loadList(
+          currentContext(),
+          mergeListStateForUserAction({ city: cityEl.value || "", page: 1 }),
+          false,
+        );
+      });
+      document.getElementById("v3-density-btn")?.addEventListener("click", function () {
+        var url = readState();
+        window.ClientsV3.loadList(
+          currentContext(),
+          mergeListStateForUserAction({ v3dense: !url.v3dense, page: url.page }),
+          true,
+        );
+      });
+    },
+
+    renderV3ColumnPicker: function (ctx, pickerEl, state) {
+      if (!window.ClientsV3List || !pickerEl) {
+        return;
+      }
+      var visibleIds = window.ClientsV3List.resolveVisibleColumns(state, ctx.currentUserId);
+      window.ClientsV3List.renderColumnPicker(
+        ctx.shell,
+        pickerEl,
+        state.v3entity,
+        visibleIds,
+        ctx.currentUserId,
+        function (nextIds) {
+          var nextCols = window.ClientsV3List.columnsParamFromIds(nextIds);
+          window.ClientsV3.loadList(
+            ctx,
+            mergeListStateForUserAction({ v3cols: nextCols, page: readState().page }),
+            true,
+          );
+        },
       );
     },
 

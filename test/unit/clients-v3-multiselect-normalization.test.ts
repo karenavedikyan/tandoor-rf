@@ -104,4 +104,21 @@ describe("clients v3 multiselect normalization", () => {
     const tokens = v3.listFilterTokens({ v3types: [], v3type: "t1" }, "v3types", "v3type");
     assert.deepEqual(tokens, []);
   });
+
+  it("legacyStateToV3 keeps list chrome fields from URL on initial load", () => {
+    const search =
+      "?v3mode=1&v3entity=legal&view=all&v3dense=1&v3cols=name,rop_name&v3city=Moscow&colManager=Ivan";
+    const v3 = loadClientsV3(search);
+    const state = v3.legacyStateToV3({ view: "all", entity: "clients", page: 1 }, "url") as Record<
+      string,
+      unknown
+    >;
+    assert.equal(state.v3dense, true);
+    assert.equal(state.v3cols, "name,rop_name");
+    assert.equal(state.city, "Moscow");
+    assert.equal(state.colManager, "Ivan");
+    const returnQuery = v3.buildListReturnQuery(state);
+    assert.ok(returnQuery.includes("v3dense=1"));
+    assert.ok(returnQuery.includes("v3cols=name"));
+  });
 });

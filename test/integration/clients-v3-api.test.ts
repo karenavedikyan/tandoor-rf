@@ -173,6 +173,78 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(withheld.status, 404);
   });
 
+  it("legal city/status fields and retail colStatus narrowing", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3();
+    const adminEmail = "admin-v3-list-stage2@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Stage2",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+
+    const legalList = await request(app)
+      .get("/api/clients/v3/list?entity=legal&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(legalList.status, 200);
+    const legalOne = legalList.body.items.find((i: { guid: string }) => i.guid === LEGAL);
+    assert.ok(legalOne);
+    assert.ok(!legalOne.city);
+    assert.match(String(legalOne.address_line ?? ""), /SYNTH address/);
+    assert.ok(!legalOne.status_label);
+    assert.equal(legalOne.type_name, "Type A");
+    assert.equal(legalOne.category_name, "Cat A");
+
+    const legalOptions = await request(app)
+      .get("/api/clients/v3/options?entity=legal")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(legalOptions.status, 200);
+    assert.deepEqual(legalOptions.body.cities ?? [], []);
+
+    const searchByManager = await request(app)
+      .get("/api/clients/v3/list?entity=legal&q=Manager+One&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(searchByManager.status, 200);
+    assert.ok(searchByManager.body.items.some((i: { guid: string }) => i.guid === LEGAL));
+
+    const searchByCode = await request(app)
+      .get("/api/clients/v3/list?entity=legal&q=SYNTH-001&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(searchByCode.status, 200);
+    assert.ok(searchByCode.body.items.some((i: { guid: string }) => i.guid === LEGAL));
+
+    const retailUnknownStatus = await request(app)
+      .get("/api/clients/v3/list?entity=retail&colStatus=unknown-status-token&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(retailUnknownStatus.status, 200);
+    assert.equal(retailUnknownStatus.body.total, 0);
+
+    const managerEmail = "manager-v3-search-scope@example.com";
+    const manager = await createTestUser({
+      databaseUrl,
+      email: managerEmail,
+      password: TEST_PASSWORD,
+      fullName: "Manager Search",
+      role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: manager.id,
+      employeeId: M1,
+      confirmedByUserId: manager.id,
+    });
+    const mgrCookie = await login(managerEmail);
+    const foreignSearch = await request(app)
+      .get("/api/clients/v3/list?entity=legal&q=Legal+Two&page=1&pageSize=50")
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(foreignSearch.status, 200);
+    assert.equal(foreignSearch.body.total, 0);
+  });
+
   it("returns scoped v3 filter options and missingManager list filter", async () => {
     await prepareDatabase(databaseUrl);
     await seedV3();
