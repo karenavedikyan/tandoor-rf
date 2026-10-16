@@ -1,4 +1,9 @@
 import type { PoolClient } from "pg";
+import {
+  applyAuthoritativeWholesaleOrgSnapshot,
+  authoritativeOrgSnapshotEnabled,
+  validateAuthoritativeOrgRoster,
+} from "../onec-clients/roster-authoritative-org";
 import { upsertWholesaleEmployeeRoster } from "../onec-clients/roster-upsert";
 import type { V3ValidatedBundle } from "./types";
 import { bootstrapBitrixLabelsForV3Domain } from "./bitrix-bootstrap";
@@ -137,7 +142,15 @@ export async function writeV3BundleToClient(
     );
   }
 
-  await upsertWholesaleEmployeeRoster(client, bundle.employeeRoster);
+  if (authoritativeOrgSnapshotEnabled()) {
+    const validation = validateAuthoritativeOrgRoster(bundle.employeeRoster);
+    if (!validation.ok) {
+      throw new Error(`AUTHORITATIVE_ORG_SNAPSHOT: ${validation.code}: ${validation.message}`);
+    }
+    await applyAuthoritativeWholesaleOrgSnapshot(client, bundle.employeeRoster);
+  } else {
+    await upsertWholesaleEmployeeRoster(client, bundle.employeeRoster);
+  }
 
   await bootstrapBitrixLabelsForV3Domain(client, null);
 

@@ -25,6 +25,8 @@
     "onec-regular-update:local": "node --env-file=.env dist/cli/onec-regular-update.js",
     "onec-exchange-v3-target-db-identity": "node dist/cli/onec-exchange-v3-target-db-identity.js",
     "onec-exchange-v3-target-db-identity:local": "node --env-file=.env dist/cli/onec-exchange-v3-target-db-identity.js",
+    "onec-wholesale-org-rebuild": "node dist/cli/onec-wholesale-org-rebuild.js",
+    "onec-wholesale-org-rebuild:local": "node --env-file=.env dist/cli/onec-wholesale-org-rebuild.js",
     "onec-exchange-v3-clean-start-observe": "node dist/cli/onec-exchange-v3-clean-start-observe.js",
     "onec-exchange-v3-clean-start-observe:local": "node --env-file=.env dist/cli/onec-exchange-v3-clean-start-observe.js",
     "onec-nightly-exchange-tick": "node dist/cli/onec-nightly-exchange-tick.js",

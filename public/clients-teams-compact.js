@@ -227,14 +227,23 @@
         " клиентов · " +
         String(summary.uniqueOutletCount ?? "—") +
         " ТТ";
+      var teamGuidAttr = summary.teamGuid
+        ? ' data-team-guid="' + deps.shell.escapeHtml(summary.teamGuid) + '"'
+        : "";
+      var roleLabel = summary.teamName ? "Команда" : "РОП";
+      var displayName = summary.teamName || summary.name || summary.shortId || "Команда";
       return (
         '<button type="button" class="x13-person" data-open-rop-team="' +
         deps.shell.escapeHtml(summary.employeeGuid) +
-        '"><span class="avatar avatar--rop">' +
+        '"' +
+        teamGuidAttr +
+        '><span class="avatar avatar--rop">' +
         deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
         '</span><span class="x13-person-info"><strong>' +
-        deps.shell.escapeHtml(summary.name || summary.shortId || "РОП") +
-        '</strong><small>РОП</small><span>' +
+        deps.shell.escapeHtml(displayName) +
+        '</strong><small>' +
+        deps.shell.escapeHtml(roleLabel) +
+        "</small><span>" +
         deps.shell.escapeHtml(metrics) +
         '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
       );
@@ -327,8 +336,9 @@
       return teamUi.expanded.indexOf(ropGuid) !== -1;
     }
 
-    function ensureResponsibles(ropGuid) {
-      var entry = cacheEntry(ropGuid);
+    function ensureResponsibles(ropGuid, teamGuid) {
+      var cacheKey = teamGuid ? ropGuid + ":" + teamGuid : ropGuid;
+      var entry = cacheEntry(cacheKey);
       if (entry.status === "loaded") {
         return Promise.resolve(entry);
       }
@@ -338,7 +348,10 @@
       entry.status = "loading";
       var responsiblesPath =
         deps.useExchangeV3 && deps.useExchangeV3()
-          ? "/api/clients/v3/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles"
+          ? "/api/clients/v3/org-structure/" +
+            encodeURIComponent(ropGuid) +
+            "/responsibles" +
+            (teamGuid ? "?teamGuid=" + encodeURIComponent(teamGuid) : "")
           : "/api/clients/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles";
       entry.inflight = deps.api
         .apiRequest(responsiblesPath)
@@ -834,7 +847,13 @@
             });
             return;
           }
-          callbacks.navigate({ ropEmployee: ropGuid, teamExpand: [ropGuid], portfolio: "" });
+          var teamGuid = btn.getAttribute("data-team-guid") || "";
+          callbacks.navigate({
+            ropEmployee: ropGuid,
+            orgTeamGuid: teamGuid,
+            teamExpand: [ropGuid],
+            portfolio: "",
+          });
         });
       });
       container.querySelectorAll("[data-toggle-rop]").forEach(function (btn) {
@@ -1037,7 +1056,7 @@
         if (isStale()) {
           return;
         }
-        return ensureResponsibles(summary.employeeGuid).then(function () {
+        return ensureResponsibles(summary.employeeGuid, summary.teamGuid).then(function () {
           if (isStale()) {
             return;
           }
