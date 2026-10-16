@@ -174,7 +174,7 @@
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
     var workspaceLink = showAccessWorkspace
-      ? navLink("/access", "Замещение", "profile", active, "access-workspace")
+      ? navLink("/access", "Замещение", "substitution", active, "access-workspace")
       : "";
     var adminLink = showAdminAccess
       ? navLink("/admin/access", "Настройка доступа", "profile", active, "admin-access")
@@ -182,13 +182,12 @@
     var serviceLinks = adminLink + navLink("/profile", "Мой профиль", "profile", active, "profile");
     return (
       '<aside class="legacy-sidebar" id="legacy-sidebar" aria-label="Основная навигация">' +
-      '<div class="legacy-sidebar__head">' +
-      '<span class="legacy-sidebar__head-spacer" aria-hidden="true"></span>' +
+      '<nav class="legacy-sidebar__nav">' +
+      '<div class="legacy-sidebar__collapse-wrap">' +
       '<button type="button" class="legacy-sidebar__collapse" id="legacy-sidebar-collapse" aria-label="Свернуть меню" aria-pressed="false">' +
       (ICONS.collapse || "") +
       "</button>" +
       "</div>" +
-      '<nav class="legacy-sidebar__nav">' +
       workLink +
       clientsLink +
       workspaceLink +
