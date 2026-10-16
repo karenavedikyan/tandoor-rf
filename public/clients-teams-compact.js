@@ -181,6 +181,22 @@
       return line;
     }
 
+    function renderX13Director(director) {
+      if (!director) {
+        return "";
+      }
+      return (
+        '<div class="clients-team-director clients-onec-team-director clients-x13-director">' +
+        "<strong>" +
+        deps.shell.escapeHtml(director.name) +
+        "</strong> · директор" +
+        (director.hasLinkedAccount ? "" : '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>') +
+        '<p class="clients-phone-muted">' +
+        deps.shell.escapeHtml(director.note || "") +
+        "</p></div>"
+      );
+    }
+
     function renderX13DirectoryCard(toolsTitle, toolsHint, searchPlaceholder, searchAria, searchValue, bodyHtml, noteHtml) {
       return (
         '<section class="card x13-directory clients-x13-directory">' +
@@ -211,14 +227,23 @@
         " клиентов · " +
         String(summary.uniqueOutletCount ?? "—") +
         " ТТ";
+      var teamGuidAttr = summary.teamGuid
+        ? ' data-team-guid="' + deps.shell.escapeHtml(summary.teamGuid) + '"'
+        : "";
+      var roleLabel = summary.teamName ? "Команда" : "РОП";
+      var displayName = summary.teamName || summary.name || summary.shortId || "Команда";
       return (
         '<button type="button" class="x13-person" data-open-rop-team="' +
         deps.shell.escapeHtml(summary.employeeGuid) +
-        '"><span class="avatar avatar--rop">' +
+        '"' +
+        teamGuidAttr +
+        '><span class="avatar avatar--rop">' +
         deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
         '</span><span class="x13-person-info"><strong>' +
-        deps.shell.escapeHtml(summary.name || summary.shortId || "РОП") +
-        '</strong><small>РОП</small><span>' +
+        deps.shell.escapeHtml(displayName) +
+        '</strong><small>' +
+        deps.shell.escapeHtml(roleLabel) +
+        "</small><span>" +
         deps.shell.escapeHtml(metrics) +
         '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
       );
@@ -255,13 +280,14 @@
       var rows = rops.map(renderX13RopPerson).join("");
       var emptyHtml = rows ? rows : '<div class="x6-empty">РОПы не найдены. Измените поиск.</div>';
       var cardTitle = deps.isAdminSession && deps.isAdminSession() ? "РОПы и команды" : "Мои РОПы";
+      var bodyHtml = renderX13Director(context.director) + (rows || emptyHtml);
       return renderX13DirectoryCard(
         cardTitle,
         "Выберите РОПа, затем сотрудника его команды.",
         "Найти РОПа…",
         "Поиск РОПа",
         state.teamQ || "",
-        emptyHtml,
+        bodyHtml,
         "",
       );
     }
@@ -310,8 +336,9 @@
       return teamUi.expanded.indexOf(ropGuid) !== -1;
     }
 
-    function ensureResponsibles(ropGuid) {
-      var entry = cacheEntry(ropGuid);
+    function ensureResponsibles(ropGuid, teamGuid) {
+      var cacheKey = teamGuid ? ropGuid + ":" + teamGuid : ropGuid;
+      var entry = cacheEntry(cacheKey);
       if (entry.status === "loaded") {
         return Promise.resolve(entry);
       }
@@ -321,7 +348,10 @@
       entry.status = "loading";
       var responsiblesPath =
         deps.useExchangeV3 && deps.useExchangeV3()
-          ? "/api/clients/v3/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles"
+          ? "/api/clients/v3/org-structure/" +
+            encodeURIComponent(ropGuid) +
+            "/responsibles" +
+            (teamGuid ? "?teamGuid=" + encodeURIComponent(teamGuid) : "")
           : "/api/clients/org-structure/" + encodeURIComponent(ropGuid) + "/responsibles";
       entry.inflight = deps.api
         .apiRequest(responsiblesPath)
@@ -727,10 +757,12 @@
         context.limitationNote && !teamUi.query && !teamUi.kind
           ? '<p class="clients-compact-team__note">' + deps.shell.escapeHtml(context.limitationNote) + "</p>"
           : "";
+      var directorHtml = renderX13Director(context.director);
       return (
         renderToolbar(state, teamUi, { showCollapseAll: true }) +
         searchBanner +
         noteHtml +
+        directorHtml +
         '<div class="clients-compact-team-list">' +
         rows +
         emptyHtml +
@@ -815,7 +847,13 @@
             });
             return;
           }
-          callbacks.navigate({ ropEmployee: ropGuid, teamExpand: [ropGuid], portfolio: "" });
+          var teamGuid = btn.getAttribute("data-team-guid") || "";
+          callbacks.navigate({
+            ropEmployee: ropGuid,
+            orgTeamGuid: teamGuid,
+            teamExpand: [ropGuid],
+            portfolio: "",
+          });
         });
       });
       container.querySelectorAll("[data-toggle-rop]").forEach(function (btn) {
@@ -1018,7 +1056,7 @@
         if (isStale()) {
           return;
         }
-        return ensureResponsibles(summary.employeeGuid).then(function () {
+        return ensureResponsibles(summary.employeeGuid, summary.teamGuid).then(function () {
           if (isStale()) {
             return;
           }

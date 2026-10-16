@@ -1,10 +1,11 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { shortUuidLabel } from "../uuid-param";
-import { ROSTER_ROP_POST_LABEL } from "../org/constants";
+import { ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL } from "../org/constants";
 import {
   OrgStructureAccessError,
   type OrgResponsibleSummary,
+  type OrgDirectorSummary,
   type OrgStructureOverview,
   type OrgRopSummary,
 } from "../org/structure-repository";
@@ -30,6 +31,30 @@ function v3HeadOfSalesClause(alias: string, ropParam: string): string {
   return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = ${ropParam}::uuid`;
 }
 
+async function loadV3DirectorSummary(linked: Set<string>): Promise<OrgDirectorSummary | null> {
+  const result = await query<{ guid_manager: string; name_manager: string; post: string | null }>(
+    `
+      SELECT guid_manager::text, name_manager, post
+      FROM onec_wholesale_employee_roster
+      WHERE lower(guid_manager::text) = $1
+      LIMIT 1
+    `,
+    [ORG_DIRECTOR_EMPLOYEE_GUID],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    employeeGuid: ORG_DIRECTOR_EMPLOYEE_GUID,
+    name: row.name_manager,
+    shortId: shortUuidLabel(ORG_DIRECTOR_EMPLOYEE_GUID),
+    rosterPost: row.post,
+    hasLinkedAccount: linked.has(ORG_DIRECTOR_EMPLOYEE_GUID),
+    note: "Организационная роль директора задаётся по GUID 1С и не дублируется в списке РОП.",
+  };
+}
+
 function teamCountsFromResponsibles(items: OrgResponsibleSummary[]): {
   managerCount: number;
   regionalCount: number;
@@ -52,6 +77,125 @@ function teamCountsFromResponsibles(items: OrgResponsibleSummary[]): {
     regionalCount: regionals.size,
     teamMemberCount: allMembers.size,
   };
+}
+
+async function wholesaleTeamGroupsLoaded(): Promise<boolean> {
+  const count = Number(
+    (await query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM onec_wholesale_team_groups`)).rows[0]
+      ?.count ?? 0,
+  );
+  return count > 0;
+}
+
+async function countTeamMembersForGroup(teamGuid: string, leaderGuid: string): Promise<number> {
+  const result = await query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM onec_wholesale_employee_team_memberships m
+      WHERE m.guid_team = $1::uuid
+        AND lower(m.guid_manager::text) <> lower($2::text)
+    `,
+    [teamGuid, leaderGuid],
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+async function buildV3OrgOverviewFromTeamGroups(
+  context: AccessContext,
+  linked: Set<string>,
+  director: OrgStructureOverview["director"],
+): Promise<OrgRopSummary[]> {
+  const groups = await query<{
+    guid_team: string;
+    name_team: string | null;
+    guid_team_leader: string | null;
+    name_team_leader: string | null;
+  }>(
+    `
+      SELECT
+        guid_team::text,
+        name_team,
+        guid_team_leader::text,
+        name_team_leader
+      FROM onec_wholesale_team_groups
+      ORDER BY COALESCE(name_team, ''), guid_team ASC
+    `,
+  );
+  const rops: OrgRopSummary[] = [];
+  for (const group of groups.rows) {
+    const leaderGuid = group.guid_team_leader;
+    if (!leaderGuid || leaderGuid.toLowerCase() === ORG_DIRECTOR_EMPLOYEE_GUID) {
+      continue;
+    }
+    const teamMemberCount = await countTeamMembersForGroup(group.guid_team, leaderGuid);
+    const counts = await countBranch(context, leaderGuid);
+    const hasPortfolio = counts.legal + counts.retail > 0;
+    rops.push({
+      employeeGuid: leaderGuid,
+      name: group.name_team || group.name_team_leader || shortUuidLabel(leaderGuid),
+      shortId: shortUuidLabel(leaderGuid),
+      rosterPost: null,
+      hasLinkedAccount: linked.has(leaderGuid.toLowerCase()),
+      hasAssignedPortfolio: hasPortfolio,
+      portfolioNote: hasPortfolio ? null : "Нет объектов v3 в ветке команды",
+      managerCount: teamMemberCount,
+      regionalCount: 0,
+      teamMemberCount,
+      uniqueClientCount: counts.legal,
+      uniqueOutletCount: counts.retail,
+      parentClientCount: 0,
+      sources: ["roster"],
+      teamGuid: group.guid_team,
+      teamName: group.name_team,
+    });
+  }
+  return rops;
+}
+
+async function listV3RosterTeamResponsibles(
+  context: AccessContext,
+  leaderGuid: string,
+  teamGuid?: string | null,
+): Promise<OrgResponsibleSummary[]> {
+  const linked = new Set(
+    (
+      await query<{ employee_id: string }>(
+        `SELECT employee_id::text FROM user_onec_employee_links WHERE revoked_at IS NULL`,
+      )
+    ).rows.map((r) => r.employee_id.toLowerCase()),
+  );
+  const rows = await query<{ employee_guid: string; name: string | null }>(
+    teamGuid
+      ? `
+        SELECT lower(m.guid_manager::text) AS employee_guid, r.name_manager AS name
+        FROM onec_wholesale_employee_team_memberships m
+        JOIN onec_wholesale_employee_roster r ON r.guid_manager = m.guid_manager
+        WHERE m.guid_team = $1::uuid
+          AND lower(m.guid_manager::text) <> lower($2::text)
+        ORDER BY r.name_manager ASC NULLS LAST, m.guid_manager ASC
+      `
+      : `
+        SELECT lower(m.guid_manager::text) AS employee_guid, r.name_manager AS name
+        FROM onec_wholesale_team_groups g
+        JOIN onec_wholesale_employee_team_memberships m ON m.guid_team = g.guid_team
+        JOIN onec_wholesale_employee_roster r ON r.guid_manager = m.guid_manager
+        WHERE lower(g.guid_team_leader::text) = lower($1::text)
+          AND lower(m.guid_manager::text) <> lower($1::text)
+        GROUP BY lower(m.guid_manager::text), r.name_manager
+        ORDER BY r.name_manager ASC NULLS LAST, lower(m.guid_manager::text) ASC
+      `,
+    teamGuid ? [teamGuid, leaderGuid] : [leaderGuid],
+  );
+  return rows.rows.map((row) => ({
+    kind: "manager" as const,
+    employeeGuid: row.employee_guid,
+    name: row.name || row.employee_guid.slice(0, 8),
+    shortId: shortUuidLabel(row.employee_guid),
+    hasLinkedAccount: linked.has(row.employee_guid.toLowerCase()),
+    rosterInOpt: true,
+    clientCount: 0,
+    outletCount: 0,
+  }));
 }
 
 async function countBranch(context: AccessContext, ropGuid: string): Promise<{ legal: number; retail: number }> {
@@ -98,11 +242,30 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     ).rows.map((r) => r.employee_id.toLowerCase()),
   );
   const rosterRops = await query<{ guid_manager: string; name_manager: string; post: string | null }>(
-    `SELECT guid_manager::text, name_manager, post FROM onec_wholesale_employee_roster WHERE post = $1`,
-    [ROSTER_ROP_POST_LABEL],
+    `SELECT guid_manager::text, name_manager, post
+     FROM onec_wholesale_employee_roster
+     WHERE post = $1 AND lower(guid_manager::text) <> $2`,
+    [ROSTER_ROP_POST_LABEL, ORG_DIRECTOR_EMPLOYEE_GUID],
   );
+  const director =
+    context.role === "admin" || context.fullClientBase ? await loadV3DirectorSummary(linked) : null;
+  if (rosterLoaded && (await wholesaleTeamGroupsLoaded())) {
+    const rops = await buildV3OrgOverviewFromTeamGroups(context, linked, director);
+    return {
+      director,
+      rops,
+      undefinedTeam: [],
+      rosterLoaded,
+      limitationNote:
+        "Структура команд построена по группам all_employees (team[]), без фильтра только по должности РОП.",
+      selfRopEmployeeGuid: selfRopEmployeeGuidFromContext(context),
+    };
+  }
   const rops: OrgRopSummary[] = [];
   for (const row of rosterRops.rows) {
+    if (row.guid_manager.toLowerCase() === ORG_DIRECTOR_EMPLOYEE_GUID) {
+      continue;
+    }
     const counts = await countBranch(context, row.guid_manager);
     const hasPortfolio = counts.legal + counts.retail > 0;
     let managerCount = 0;
@@ -133,7 +296,7 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     });
   }
   return {
-    director: null,
+    director,
     rops,
     undefinedTeam: [],
     rosterLoaded,
@@ -146,10 +309,14 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
 export async function listV3RopResponsibles(
   context: AccessContext,
   ropEmployeeGuid: string,
+  options?: { teamGuid?: string | null },
 ): Promise<OrgResponsibleSummary[]> {
   assertAccess(context);
   if (context.role === "rop" && context.employeeId?.toLowerCase() !== ropEmployeeGuid.toLowerCase()) {
     throw new OrgStructureAccessError("Нет доступа к ветке РОП.", "FORBIDDEN");
+  }
+  if (await wholesaleTeamGroupsLoaded()) {
+    return listV3RosterTeamResponsibles(context, ropEmployeeGuid, options?.teamGuid);
   }
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");

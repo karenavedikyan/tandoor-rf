@@ -683,6 +683,7 @@
       phone: params.get("phone") || "all",
       rop: params.get("rop") || "",
       ropEmployee: legacyRop,
+      orgTeamGuid: params.get("orgTeamGuid") || "",
       clientRopEmployee: params.get("clientRopEmployee") || (entity === "clients" ? legacyRop : ""),
       outletRopEmployee: params.get("outletRopEmployee") || (entity === "outlets" ? legacyRop : ""),
       unassignedCategory: params.get("unassignedCategory") || "",
@@ -1151,6 +1152,7 @@
     if (state.outletStatus && state.outletStatus !== "all") params.set("outletStatus", state.outletStatus);
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
     if (state.portfolio) params.set("portfolio", state.portfolio);
+    if (state.orgTeamGuid) params.set("orgTeamGuid", state.orgTeamGuid);
     if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
     if (state.teamSource === "onec") params.set("teamSource", "onec");
     if (state.onecTeam) params.set("onecTeam", state.onecTeam);

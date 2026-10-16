@@ -85,6 +85,7 @@
       v3view: v3view,
       missingManager: params.get("missingManager") === "1",
       ropEmployee: params.get("ropEmployee") || "",
+      orgTeamGuid: params.get("orgTeamGuid") || "",
       responsibleGuid: responsibleGuid,
       responsibleKind: responsibleGuid ? responsibleKind : "",
       pageSize: Math.min(100, Math.max(1, Number(params.get("v3pageSize") || "50") || 50)),
@@ -471,6 +472,12 @@
       })(),
       missingManager: Boolean(legacy.missingManager) || (fromUrl && urlFilters.missingManager),
       ropEmployee: ropEmployee,
+      orgTeamGuid:
+        legacy && Object.prototype.hasOwnProperty.call(legacy, "orgTeamGuid")
+          ? legacy.orgTeamGuid || ""
+          : fromUrl
+            ? urlFilters.orgTeamGuid || ""
+            : "",
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
       pageSize: urlFilters.pageSize || 50,
@@ -537,6 +544,8 @@
     else params.delete("missingManager");
     if (state.ropEmployee) params.set("ropEmployee", state.ropEmployee);
     else params.delete("ropEmployee");
+    if (state.orgTeamGuid) params.set("orgTeamGuid", state.orgTeamGuid);
+    else params.delete("orgTeamGuid");
     if (state.responsibleGuid) {
       params.set("responsibleGuid", state.responsibleGuid);
       params.set("responsibleKind", state.responsibleKind || "manager");
@@ -591,6 +600,7 @@
     else if (returnCategoryTokens.length === 1) params.set("v3category", returnCategoryTokens[0]);
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
+    if (s.orgTeamGuid) params.set("orgTeamGuid", s.orgTeamGuid);
     if (s.responsibleGuid) {
       params.set("responsibleGuid", s.responsibleGuid);
       params.set("responsibleKind", s.responsibleKind || "manager");
