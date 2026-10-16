@@ -86,8 +86,8 @@
     });
     document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
       var next = theme === "dark" ? "Светлая тема" : "Тёмная тема";
-      btn.textContent = next;
       btn.setAttribute("aria-label", "Переключить на " + next.toLowerCase());
+      btn.innerHTML = theme === "dark" ? ICONS.themeLight || "" : ICONS.themeDark || "";
     });
   }
 
@@ -97,15 +97,44 @@
     applyTheme(next);
   }
 
-  function logoMarkup() {
+  function logoImgMarkup(className) {
     var theme = readTheme();
     var src =
       theme === "dark" ? "/brand/tandoor-logo-light.svg" : "/brand/tandoor-logo-official.svg";
     return (
-      '<img class="legacy-sidebar__logo legacy-sidebar__logo--full" data-legacy-logo-full src="' +
+      '<img class="' +
+      className +
+      '" data-legacy-logo-full src="' +
       src +
-      '" width="149" height="42" alt="Tandoor" />' +
-      '<img class="legacy-sidebar__logo legacy-sidebar__logo--compact" src="/brand/tandoor-triangle-mark.svg" width="32" height="32" alt="Tandoor" />'
+      '" width="142" height="40" alt="Tandoor" />'
+    );
+  }
+
+  function userInitials(user) {
+    if (!user || !user.fullName) {
+      return "?";
+    }
+    var parts = String(user.fullName).trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+      return "?";
+    }
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  }
+
+  function headerBrandMarkup(homeHref) {
+    return (
+      '<a class="legacy-topbar__brand" href="' +
+      escapeHtml(homeHref || "/clients") +
+      '" aria-label="Tandoor — личный кабинет">' +
+      logoImgMarkup("legacy-topbar__logo") +
+      '<span class="legacy-topbar__titles">' +
+      '<span class="legacy-topbar__title">ЛИЧНЫЙ КАБИНЕТ</span>' +
+      '<span class="legacy-topbar__subtitle">СОТРУДНИКА · RF</span>' +
+      "</span>" +
+      "</a>"
     );
   }
 
@@ -145,32 +174,28 @@
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
     var workspaceLink = showAccessWorkspace
-      ? navLink("/access", "Замещения", "profile", active, "access-workspace")
+      ? navLink("/access", "Замещение", "substitution", active, "access-workspace")
       : "";
     var adminLink = showAdminAccess
       ? navLink("/admin/access", "Настройка доступа", "profile", active, "admin-access")
       : "";
+    var serviceLinks = adminLink + navLink("/profile", "Мой профиль", "profile", active, "profile");
     return (
       '<aside class="legacy-sidebar" id="legacy-sidebar" aria-label="Основная навигация">' +
-      '<div class="legacy-sidebar__head">' +
-      '<a class="legacy-sidebar__brand" href="' +
-      (showClients ? "/clients" : "/profile") +
-      '" aria-label="Tandoor tandoor-rf">' +
-      logoMarkup() +
-      '<span class="legacy-sidebar__project">tandoor-rf</span>' +
-      "</a>" +
+      '<nav class="legacy-sidebar__nav">' +
+      '<div class="legacy-sidebar__collapse-wrap">' +
       '<button type="button" class="legacy-sidebar__collapse" id="legacy-sidebar-collapse" aria-label="Свернуть меню" aria-pressed="false">' +
       (ICONS.collapse || "") +
       "</button>" +
       "</div>" +
-      '<nav class="legacy-sidebar__nav">' +
-      clientsLink +
       workLink +
+      clientsLink +
       workspaceLink +
-      adminLink +
-      navLink("/profile", "Мой профиль", "profile", active, "profile") +
       "</nav>" +
       '<div class="legacy-sidebar__footer">' +
+      (serviceLinks
+        ? '<p class="legacy-sidebar__footer-label">Служебное</p>' + serviceLinks
+        : "") +
       '<button type="button" class="legacy-nav-link" id="legacy-logout" aria-label="Выйти" title="Выйти">' +
       '<span class="legacy-nav-link__icon">' +
       (ICONS.logout || "") +
@@ -183,16 +208,40 @@
     );
   }
 
-  function renderTopbar() {
+  function renderTopbar(showClients, user) {
+    var homeHref = showClients ? "/clients" : "/profile";
+    var initials = userInitials(user);
+    var profileLabel =
+      user && user.fullName ? escapeHtml(String(user.fullName)) : "Мой профиль";
     return (
       '<header class="legacy-topbar" id="legacy-topbar">' +
       '<button type="button" class="legacy-topbar__menu" id="legacy-menu-toggle" aria-expanded="false" aria-controls="legacy-sidebar" aria-label="Открыть меню">' +
       (ICONS.menu || "") +
       "</button>" +
+      headerBrandMarkup(homeHref) +
       '<span class="legacy-topbar__spacer"></span>' +
+      '<div class="legacy-topbar__actions">' +
       '<button type="button" class="legacy-topbar__theme" data-theme-toggle aria-label="Переключить тему"></button>' +
+      '<a class="legacy-topbar__user" href="/profile" aria-label="' +
+      profileLabel +
+      '" title="' +
+      profileLabel +
+      '">' +
+      '<span class="legacy-topbar__avatar" aria-hidden="true">' +
+      escapeHtml(initials) +
+      "</span>" +
+      "</a>" +
+      "</div>" +
       "</header>"
     );
+  }
+
+  function ensureTopbarPlacement() {
+    var topbarMount = document.getElementById("workspace-topbar");
+    var app = document.querySelector(".legacy-app");
+    if (topbarMount && app && topbarMount.parentElement !== app) {
+      app.insertBefore(topbarMount, app.firstChild);
+    }
   }
 
   function setLogoutStatus(message, kind) {
@@ -601,7 +650,8 @@
       );
     }
     if (topbarMount) {
-      topbarMount.innerHTML = renderTopbar();
+      topbarMount.innerHTML = renderTopbar(showClients, actorUser);
+      ensureTopbarPlacement();
     }
     applyTheme(readTheme());
     bindLogout();

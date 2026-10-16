@@ -140,9 +140,12 @@ describe("legacy shell DOM", () => {
   it("renders sidebar navigation with SVG icons for admin workspace", () => {
     const { shell } = loadBrowserModules(true);
     const { document } = mountShellDom(shell, true, true);
+    assert.ok(document.querySelector('a[href="/work"] svg.legacy-icon'));
     assert.ok(document.querySelector('a[href="/clients"] svg.legacy-icon'));
     assert.ok(document.querySelector('a[href="/profile"] svg.legacy-icon'));
     assert.ok(document.getElementById("legacy-logout"));
+    assert.ok(document.querySelector(".legacy-topbar__brand img[data-legacy-logo-full]"));
+    assert.doesNotMatch(document.body.innerHTML, /tandoor-rf/);
     assert.doesNotMatch(document.body.innerHTML, /👥|👤|⎋/);
   });
 
@@ -150,8 +153,10 @@ describe("legacy shell DOM", () => {
     const { shell } = loadBrowserModules(true);
     const { document } = mountShellDom(shell, true, false);
     const navLinks = Array.from(document.querySelectorAll(".legacy-sidebar__nav a"));
-    assert.equal(navLinks.length, 1);
-    assert.equal(navLinks[0]?.getAttribute("href"), "/profile");
+    assert.equal(navLinks.length, 0);
+    const profileLink = document.querySelector('.legacy-sidebar__footer a[href="/profile"]');
+    assert.ok(profileLink);
+    assert.equal(document.querySelector('a[href="/clients"]'), null);
   });
 
   it("toggles theme via data-theme on documentElement", () => {
@@ -263,11 +268,11 @@ describe("legacy shell DOM", () => {
     assert.ok(sidebar.classList.contains("is-open"));
     const visibleText = sidebar.querySelector(".legacy-nav-link__text") as HTMLElement;
     assert.notEqual(visibleText.getAttribute("aria-hidden"), "true");
-    assert.ok((visibleText.textContent || "").includes("Клиенты"));
-    assert.ok(sidebar.querySelector(".legacy-sidebar__logo--full"));
+    assert.ok((visibleText.textContent || "").includes("Моя работа"));
+    assert.ok(document.querySelector(".legacy-topbar__logo"));
   });
 
-  it("applies desktop compact brand with triangle mark only on desktop", () => {
+  it("keeps header logo visible when desktop sidebar is collapsed", () => {
     const { shell } = loadBrowserModules(true);
     const { document, window } = mountShellDom(shell, true, true);
     window.localStorage.setItem("tandoor-rf-sidebar-collapsed", "true");
@@ -277,12 +282,8 @@ describe("legacy shell DOM", () => {
 
     assert.ok(app.classList.contains("sidebar-collapsed"));
     assert.ok(sidebar.classList.contains("is-collapsed"));
-    const compactLogo = document.querySelector(".legacy-sidebar__logo--compact") as HTMLImageElement;
-    const fullLogo = document.querySelector(".legacy-sidebar__logo--full") as HTMLImageElement;
-    assert.ok(compactLogo);
-    assert.ok(fullLogo);
-    assert.match(compactLogo.getAttribute("src") || "", /tandoor-triangle-mark\.svg/);
-    assert.equal(compactLogo.getAttribute("width"), "32");
+    assert.ok(document.querySelector(".legacy-topbar__logo"));
+    assert.equal(document.querySelectorAll(".legacy-sidebar__nav a").length, 2);
     assert.equal(collapseBtnHiddenOnMobile(document), false);
   });
 

@@ -51,6 +51,7 @@ body.x14-focus-mode .legacy-app .legacy-frame,
 .legacy-app.x14-focus-active .legacy-frame,
 .legacy-app.x14-focus-active.sidebar-collapsed .legacy-frame {
   margin-left: 0 !important;
+  margin-top: 0 !important;
   width: 100%;
   max-width: 100%;
   min-height: 100dvh;
