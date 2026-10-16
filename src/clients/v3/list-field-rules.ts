@@ -1,6 +1,17 @@
 import { isValidUuidParam } from "../uuid-param";
 import { v3CategoryGuidSql, v3JsonManagerField, v3TypeGuidSql } from "./json-paths";
-import { LEGAL_CITY_SQL, LEGAL_STATUS_SQL, RETAIL_CITY_SQL } from "./list-sql-expressions";
+import {
+  LEGAL_ADDRESS_SQL,
+  LEGAL_CITY_SQL,
+  LEGAL_CONTRACT_NUMBER_SQL,
+  LEGAL_CREDIT_LIMIT_SQL,
+  LEGAL_DEFER_DAYS_SQL,
+  LEGAL_MARKUP_PERCENTAGE_SQL,
+  legalInnSql,
+  legalPaymentTypeSql,
+  LEGAL_STATUS_SQL,
+  RETAIL_CITY_SQL,
+} from "./list-sql-expressions";
 import type { V3ListEntity } from "./list";
 import type { V3ResponsibleKind } from "./list";
 
@@ -63,6 +74,29 @@ export type V3FilterFieldDef = {
 
 export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
   { id: "discountAmount", label: "Значение скидки", entity: ["legal"], kind: "number", ops: ["eq", "gte", "lte", "empty", "filled"] },
+  { id: "deferDays", label: "Отсрочка, дней", entity: ["legal"], kind: "number", ops: ["eq", "gte", "lte", "empty", "filled"] },
+  { id: "creditLimit", label: "Лимит договора", entity: ["legal"], kind: "number", ops: ["eq", "gte", "lte", "empty", "filled"] },
+  {
+    id: "markupPercentage",
+    label: "Значение наценки",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "contractNumber",
+    label: "Номер договора",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "paymentType",
+    label: "Вид оплаты",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
   { id: "warehouse", label: "Склад", entity: ["retail", "orphan_retail"], kind: "bool", ops: ["yes", "no"] },
   {
     id: "categoryGuid",
@@ -127,6 +161,27 @@ export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
   {
     id: "legalName",
     label: "Юрлицо",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "inn",
+    label: "ИНН",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "groupDisplayName",
+    label: "Название клиента",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "legalAddress",
+    label: "Адрес клиента",
     entity: ["legal"],
     kind: "text",
     ops: ["contains", "eq", "empty", "filled"],
@@ -292,6 +347,22 @@ function appendRuleSql(
     params.push(val);
     return `${sql} AND ${alias}.discount_amount ${operator} $${params.length}::numeric`;
   }
+  if (rule.field === "deferDays") {
+    const expr = LEGAL_DEFER_DAYS_SQL.replace(/\ble\./g, `${alias}.`);
+    if (op === "empty") return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '') IS NULL`;
+    if (op === "filled") return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '') IS NOT NULL`;
+    params.push(val);
+    const operator = op === "gte" ? ">=" : op === "lte" ? "<=" : "=";
+    return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '')::numeric ${operator} $${params.length}::numeric`;
+  }
+  if (rule.field === "creditLimit") {
+    const expr = LEGAL_CREDIT_LIMIT_SQL.replace(/\ble\./g, `${alias}.`);
+    if (op === "empty") return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '') IS NULL`;
+    if (op === "filled") return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '') IS NOT NULL`;
+    params.push(val);
+    const operator = op === "gte" ? ">=" : op === "lte" ? "<=" : "=";
+    return `${sql} AND NULLIF(TRIM(COALESCE(${expr}, '')), '')::numeric ${operator} $${params.length}::numeric`;
+  }
   if (rule.field === "warehouse") return `${sql} AND ${alias}.warehouse = ${op === "yes" ? "TRUE" : "FALSE"}`;
 
   const textExpr = (expression: string): string => {
@@ -362,6 +433,33 @@ function appendRuleSql(
 
   if (rule.field === "legalName" && entity === "legal") {
     return textExpr(`${alias}.name_client`);
+  }
+
+  if (rule.field === "inn" && entity === "legal") {
+    return textExpr(legalInnSql(alias));
+  }
+
+  if (rule.field === "groupDisplayName" && entity === "legal") {
+    return textExpr(`${alias}.name_client`);
+  }
+  if (rule.field === "groupDisplayName") {
+    return sql;
+  }
+
+  if (rule.field === "legalAddress" && entity === "legal") {
+    return textExpr(LEGAL_ADDRESS_SQL.replace(/\ble\./g, `${alias}.`));
+  }
+
+  if (rule.field === "contractNumber" && entity === "legal") {
+    return textExpr(LEGAL_CONTRACT_NUMBER_SQL.replace(/\ble\./g, `${alias}.`));
+  }
+
+  if (rule.field === "paymentType" && entity === "legal") {
+    return textExpr(legalPaymentTypeSql(alias));
+  }
+
+  if (rule.field === "markupPercentage" && entity === "legal") {
+    return textExpr(LEGAL_MARKUP_PERCENTAGE_SQL.replace(/\ble\./g, `${alias}.`));
   }
 
   if (rule.field === "closed" && entity === "retail") {

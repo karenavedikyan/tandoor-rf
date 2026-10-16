@@ -114,6 +114,8 @@ export async function getV3LegalDetail(context: AccessContext, guid: string) {
     `
       SELECT le.guid_client::text AS guid,
              le.name_client AS name,
+             le.inn,
+             le.kpp,
              le.guid_holding::text AS holding_guid,
              le.name_holding AS holding_name,
              le.type_category,
@@ -201,7 +203,7 @@ export async function getV3HoldingComposition(
   const legalTerritory = v3CompositionTerritorySql("le", territory, legalParams);
   const legal = await query(
     `
-      SELECT le.guid_client::text AS guid, le.name_client AS name, le.type_category
+      SELECT le.guid_client::text AS guid, le.name_client AS name, le.inn, le.kpp, le.type_category
       FROM onec_v3_legal_entities le
       WHERE le.guid_holding = $${legalHoldingParam}::uuid AND (${legalScope.clause})${legalTerritory}
       ORDER BY le.name_client ASC

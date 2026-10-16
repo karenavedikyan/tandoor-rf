@@ -277,6 +277,10 @@
     if (details && state && state.filterOpen) {
       details.open = true;
     }
+    var focusEnter = document.getElementById("v3-focus-enter-btn");
+    if (focusEnter) {
+      focusEnter.classList.toggle("clients-hidden", !active || Boolean(state && state.v3focus));
+    }
   }
 
   function formatResultCountLine(state, matchedTotal) {

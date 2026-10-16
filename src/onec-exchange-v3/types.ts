@@ -32,6 +32,8 @@ export type V3ValidatedHolding = {
 export type V3ValidatedLegal = {
   guidClient: string;
   nameClient: string;
+  inn: string | null;
+  kpp: string | null;
   guidHolding: string | null;
   nameHolding: string | null;
   typeCategory: V3TypeCategory;

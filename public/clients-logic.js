@@ -133,6 +133,8 @@
     "missingManager",
     "responsibleGuid",
     "ropBranchGuid",
+    "v3focus",
+    "v3focuscols",
   ];
 
   var FIELD_FILTER_EMPTY_OPTIONS = [

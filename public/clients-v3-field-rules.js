@@ -303,11 +303,7 @@
   var FIELD_SHORTCUTS = [
     { label: "ТОП", fieldId: "categoryGuid", op: "filled" },
     { label: "Юрлицо", fieldId: "legalName", op: "contains", entities: ["legal", "legal_grouped"] },
-    {
-      label: "ИНН",
-      unavailable:
-        "ИНН не входит в allowlist фильтров списка v3 (нет безопасного поля SQL). Запрос к 1С — см. docs/delivery/f3-counterparty-source-blocker.md.",
-    },
+    { label: "ИНН", fieldId: "inn", op: "contains", entities: ["legal", "legal_grouped"] },
     {
       label: "Договор",
       unavailable:

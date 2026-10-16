@@ -1,0 +1,774 @@
+(function () {
+  "use strict";
+
+  var filterTimer = null;
+  var scrollStoragePrefix = "clients-v3-focus-scroll:";
+
+  var COL_FILTER = {
+    name: { kind: "rule", field: "groupDisplayName", input: "text", op: "contains" },
+    client_name: { kind: "rule", field: "clientName", input: "text", op: "contains" },
+    address_line: { kind: "rule", field: "legalAddress", input: "text", op: "contains" },
+    category_name: { kind: "rule", field: "categoryGuid", input: "enum", optionsKey: "categories" },
+    legal_name: { kind: "rule", field: "legalName", input: "text", op: "contains" },
+    city: { kind: "rule", field: "city", input: "text", op: "contains" },
+    manager_name: { kind: "col", key: "colManager", input: "text" },
+    regional_name: { kind: "col", key: "colRegional", input: "text" },
+    rop_name: { kind: "col", key: "colRop", input: "text" },
+    status_label: { kind: "col", key: "colStatus", input: "text" },
+    store_address: { kind: "rule", field: "storeAddress", input: "text", op: "contains" },
+    lpr_name: { kind: "rule", field: "lprName", input: "text", op: "contains" },
+    club_status: { kind: "rule", field: "clubStatus", input: "text", op: "contains" },
+    club_bonus: { kind: "rule", field: "clubBonus", input: "text", op: "contains" },
+    closed: { kind: "rule", field: "closed", input: "bool" },
+    type_name: { kind: "rule", field: "typeGuid", input: "enum", optionsKey: "types" },
+    discount_amount: { kind: "rule", field: "discountAmount", input: "number" },
+    defer_days: { kind: "rule", field: "deferDays", input: "number" },
+    credit_limit: { kind: "rule", field: "creditLimit", input: "number" },
+    markup_percentage: { kind: "rule", field: "markupPercentage", input: "text", op: "contains" },
+    contract_number: { kind: "rule", field: "contractNumber", input: "text", op: "contains" },
+    payment_type: { kind: "rule", field: "paymentType", input: "text", op: "contains" },
+    inn: { kind: "rule", field: "inn", input: "text", op: "contains" },
+  };
+
+  function filterControlId(colId, kind, op) {
+    var base = "v3-focus-filter-" + colId;
+    if (kind === "number" && op) {
+      return base + "-" + op;
+    }
+    if (kind) {
+      return base + "-" + kind;
+    }
+    return base;
+  }
+
+  function restoreFilterEditor(editor) {
+    if (!editor) {
+      return;
+    }
+    var restore =
+      (editor.id && document.getElementById(editor.id)) ||
+      (editor.colId
+        ? editor.op
+          ? document.querySelector(
+              '[data-focus-col="' +
+                editor.colId +
+                '"][data-focus-op="' +
+                editor.op +
+                '"]',
+            )
+          : document.querySelector(
+              '[data-focus-col="' +
+                editor.colId +
+                '"][data-focus-kind="' +
+                (editor.kind || "text") +
+                '"]',
+            )
+        : null);
+    if (!restore) {
+      return;
+    }
+    restore.focus({ preventScroll: true });
+    if (typeof editor.position === "number" && restore.setSelectionRange) {
+      restore.setSelectionRange(editor.position, editor.position);
+    }
+  }
+
+  function isActive(state) {
+    return Boolean(state && state.v3focus);
+  }
+
+  function scrollKey(state) {
+    return (
+      scrollStoragePrefix +
+      (state.v3entity || "") +
+      ":" +
+      (state.responsibleGuid || state.v3manager || "") +
+      ":" +
+      (state.ropEmployee || "")
+    );
+  }
+
+  function readScroll(state) {
+    try {
+      var raw = sessionStorage.getItem(scrollKey(state));
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch (_err) {
+      /* ignore */
+    }
+    return { top: 0, left: 0 };
+  }
+
+  function writeScroll(state, pane) {
+    if (!pane) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(
+        scrollKey(state),
+        JSON.stringify({ top: pane.scrollTop, left: pane.scrollLeft }),
+      );
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+
+  function syncLayout(state) {
+    var active = isActive(state);
+    document.body.classList.toggle("x14-focus-mode", active);
+    var app = document.querySelector(".legacy-app");
+    if (app) {
+      app.classList.toggle("x14-focus-active", active);
+    }
+    var frame = document.querySelector(".legacy-frame");
+    var content = document.querySelector(".legacy-content");
+    if (frame) {
+      if (active) {
+        if (!frame.dataset.x14MarginSaved) {
+          frame.dataset.x14MarginSaved = "1";
+          frame.dataset.x14MarginLeft = frame.style.marginLeft || "";
+          frame.dataset.x14FrameWidth = frame.style.width || "";
+          frame.dataset.x14FrameMaxWidth = frame.style.maxWidth || "";
+        }
+        frame.style.setProperty("margin-left", "0", "important");
+        frame.style.setProperty("width", "100%", "important");
+        frame.style.setProperty("max-width", "100%", "important");
+      } else if (frame.dataset.x14MarginSaved) {
+        frame.style.removeProperty("margin-left");
+        frame.style.removeProperty("width");
+        frame.style.removeProperty("max-width");
+        if (frame.dataset.x14MarginLeft) {
+          frame.style.marginLeft = frame.dataset.x14MarginLeft;
+        }
+        if (frame.dataset.x14FrameWidth) {
+          frame.style.width = frame.dataset.x14FrameWidth;
+        }
+        if (frame.dataset.x14FrameMaxWidth) {
+          frame.style.maxWidth = frame.dataset.x14FrameMaxWidth;
+        }
+        delete frame.dataset.x14MarginSaved;
+      }
+    }
+    if (content) {
+      if (active) {
+        if (!content.dataset.x14ContentSaved) {
+          content.dataset.x14ContentSaved = "1";
+          content.dataset.x14ContentWidth = content.style.width || "";
+          content.dataset.x14ContentMaxWidth = content.style.maxWidth || "";
+          content.dataset.x14ContentMargin = content.style.margin || "";
+        }
+        content.style.width = "100%";
+        content.style.maxWidth = "none";
+        content.style.margin = "0";
+      } else if (content.dataset.x14ContentSaved) {
+        content.style.width = content.dataset.x14ContentWidth || "";
+        content.style.maxWidth = content.dataset.x14ContentMaxWidth || "";
+        content.style.margin = content.dataset.x14ContentMargin || "";
+        delete content.dataset.x14ContentSaved;
+      }
+    }
+    var host = document.getElementById("v3-focus-host");
+    var tableWrap = document.querySelector(".clients-table-wrap");
+    var cards = document.getElementById("clients-cards");
+    var pagination = document.getElementById("pagination");
+    if (host) {
+      host.classList.toggle("clients-hidden", !active);
+    }
+    if (tableWrap) {
+      tableWrap.classList.toggle("clients-hidden", active);
+    }
+    if (cards) {
+      cards.classList.toggle("clients-hidden", active);
+    }
+    if (pagination) {
+      pagination.classList.toggle("clients-hidden", active);
+    }
+  }
+
+  function rulesForField(state, field) {
+    return (state.v3Rules || []).filter(function (r) {
+      return r.field === field;
+    });
+  }
+
+  function colValue(state, key) {
+    return state[key] || "";
+  }
+
+  function hasColFilter(state, colId) {
+    var spec = COL_FILTER[colId];
+    if (!spec) {
+      return false;
+    }
+    if (spec.kind === "col") {
+      return Boolean(colValue(state, spec.key));
+    }
+    if (spec.input === "number") {
+      return rulesForField(state, spec.field).some(function (r) {
+        return r.op === "gte" || r.op === "lte" || r.op === "eq";
+      });
+    }
+    if (spec.input === "bool") {
+      return rulesForField(state, spec.field).length > 0;
+    }
+    return rulesForField(state, spec.field).some(function (r) {
+      return r.op === spec.op || r.op === "eq" || r.op === "contains";
+    });
+  }
+
+  function renderFilterControl(shell, col, state, filterOptions) {
+    var spec = COL_FILTER[col.id];
+    if (!spec) {
+      return "";
+    }
+    if (spec.kind === "col") {
+      var val = colValue(state, spec.key);
+      return (
+        '<input type="search" id="' +
+        filterControlId(col.id, "col") +
+        '" data-focus-col="' +
+        shell.escapeHtml(col.id) +
+        '" data-focus-kind="col" value="' +
+        shell.escapeHtml(val) +
+        '" placeholder="Содержит…" aria-label="Фильтр: ' +
+        shell.escapeHtml(col.label) +
+        '">'
+      );
+    }
+    if (spec.input === "bool") {
+      var yes = rulesForField(state, spec.field).some(function (r) {
+        return r.op === "yes";
+      });
+      var no = rulesForField(state, spec.field).some(function (r) {
+        return r.op === "no";
+      });
+      var selected = yes ? "yes" : no ? "no" : "";
+      var empty = rulesForField(state, spec.field).some(function (r) {
+        return r.op === "empty";
+      });
+      var filled = rulesForField(state, spec.field).some(function (r) {
+        return r.op === "filled";
+      });
+      if (empty) selected = "empty";
+      if (filled) selected = "filled";
+      return (
+        '<select id="' +
+        filterControlId(col.id, "bool") +
+        '" data-focus-col="' +
+        shell.escapeHtml(col.id) +
+        '" data-focus-kind="bool" aria-label="Фильтр: ' +
+        shell.escapeHtml(col.label) +
+        '">' +
+        '<option value="">Все</option>' +
+        '<option value="yes"' +
+        (selected === "yes" ? " selected" : "") +
+        ">Да</option>" +
+        '<option value="no"' +
+        (selected === "no" ? " selected" : "") +
+        ">Нет</option>" +
+        '<option value="empty"' +
+        (selected === "empty" ? " selected" : "") +
+        ">Не передано</option>" +
+        '<option value="filled"' +
+        (selected === "filled" ? " selected" : "") +
+        ">Передано</option>" +
+        "</select>"
+      );
+    }
+    if (spec.input === "enum") {
+      var eq = rulesForField(state, spec.field).find(function (r) {
+        return r.op === "eq";
+      });
+      var options = (filterOptions && filterOptions[spec.optionsKey]) || [];
+      return (
+        '<select id="' +
+        filterControlId(col.id, "enum") +
+        '" data-focus-col="' +
+        shell.escapeHtml(col.id) +
+        '" data-focus-kind="enum" aria-label="Фильтр: ' +
+        shell.escapeHtml(col.label) +
+        '"><option value="">Все</option>' +
+        options
+          .map(function (entry) {
+            var value = entry.guid || entry.value || "";
+            var label = entry.name || entry.value || value;
+            return (
+              '<option value="' +
+              shell.escapeHtml(value) +
+              '"' +
+              (eq && eq.value === value ? " selected" : "") +
+              ">" +
+              shell.escapeHtml(String(label)) +
+              "</option>"
+            );
+          })
+          .join("") +
+        "</select>"
+      );
+    }
+    if (spec.input === "number") {
+      var gte = rulesForField(state, spec.field).find(function (r) {
+        return r.op === "gte";
+      });
+      var lte = rulesForField(state, spec.field).find(function (r) {
+        return r.op === "lte";
+      });
+      return (
+        '<div class="x15-range">' +
+        '<input type="number" step="any" inputmode="decimal" id="' +
+        filterControlId(col.id, "number", "gte") +
+        '" data-focus-col="' +
+        shell.escapeHtml(col.id) +
+        '" data-focus-kind="number" data-focus-op="gte" placeholder="От" value="' +
+        shell.escapeHtml((gte && gte.value) || "") +
+        '" aria-label="Фильтр: ' +
+        shell.escapeHtml(col.label) +
+        ' от">' +
+        '<input type="number" step="any" inputmode="decimal" id="' +
+        filterControlId(col.id, "number", "lte") +
+        '" data-focus-col="' +
+        shell.escapeHtml(col.id) +
+        '" data-focus-kind="number" data-focus-op="lte" placeholder="До" value="' +
+        shell.escapeHtml((lte && lte.value) || "") +
+        '" aria-label="Фильтр: ' +
+        shell.escapeHtml(col.label) +
+        ' до">' +
+        "</div>"
+      );
+    }
+    var textRule = rulesForField(state, spec.field).find(function (r) {
+      return r.op === (spec.op || "contains");
+    });
+    return (
+      '<input type="search" id="' +
+      filterControlId(col.id, "text") +
+      '" data-focus-col="' +
+      shell.escapeHtml(col.id) +
+      '" data-focus-kind="text" value="' +
+      shell.escapeHtml((textRule && textRule.value) || "") +
+      '" placeholder="Содержит…" aria-label="Фильтр: ' +
+      shell.escapeHtml(col.label) +
+      '">'
+    );
+  }
+
+  function renderHeader(shell, col, state, filterOptions) {
+    var filtered = hasColFilter(state, col.id);
+    var control = renderFilterControl(shell, col, state, filterOptions);
+    return (
+      '<th scope="col" class="' +
+      (filtered ? "x15-filtered" : "") +
+      '"><div class="x15-col-heading"><span>' +
+      shell.escapeHtml(col.label) +
+      "</span>" +
+      (filtered
+        ? '<button type="button" class="x15-clear-field" data-focus-clear-col="' +
+          shell.escapeHtml(col.id) +
+          '" aria-label="Сбросить фильтр: ' +
+          shell.escapeHtml(col.label) +
+          '" title="Сбросить условия по колонке">×</button>'
+        : "") +
+      "</div>" +
+      control +
+      "</th>"
+    );
+  }
+
+  function activeFilterCount(state) {
+    var n = state.q ? 1 : 0;
+    n += (state.v3Rules || []).length;
+    ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
+      if (state[key]) {
+        n += 1;
+      }
+    });
+    return n;
+  }
+
+  function applyColClear(state, colId) {
+    var spec = COL_FILTER[colId];
+    if (!spec) {
+      return state;
+    }
+    var next = Object.assign({}, state);
+    if (spec.kind === "col") {
+      next[spec.key] = "";
+      return next;
+    }
+    next.v3Rules = (next.v3Rules || []).filter(function (r) {
+      return r.field !== spec.field;
+    });
+    if (spec.field === "closed") {
+      next.closed = "";
+    }
+    if (spec.field === "categoryGuid") {
+      next.v3category = "";
+      next.v3categories = [];
+    }
+    if (spec.field === "typeGuid") {
+      next.v3type = "";
+      next.v3types = [];
+    }
+    if (spec.field === "city") {
+      next.city = "";
+    }
+    return next;
+  }
+
+  function applyEditor(state, editor) {
+    var spec = COL_FILTER[editor.colId];
+    if (!spec) {
+      return state;
+    }
+    var next = Object.assign({}, state);
+    next.v3Rules = (next.v3Rules || []).slice();
+    if (spec.kind === "col") {
+      next[spec.key] = editor.value || "";
+      return next;
+    }
+    next.v3Rules = next.v3Rules.filter(function (r) {
+      if (r.field !== spec.field) {
+        return true;
+      }
+      if (spec.input === "number") {
+        return r.op !== editor.op;
+      }
+      if (spec.input === "bool") {
+        return false;
+      }
+      return r.op !== (spec.op || "contains") && r.op !== "eq";
+    });
+    if (spec.input === "bool") {
+      if (editor.value === "yes" || editor.value === "no" || editor.value === "empty" || editor.value === "filled") {
+        next.v3Rules.push({ field: spec.field, op: editor.value, value: "" });
+      }
+      if (spec.field === "closed") {
+        if (editor.value === "yes") next.closed = "true";
+        else if (editor.value === "no") next.closed = "false";
+        else next.closed = "";
+      }
+      return next;
+    }
+    if (spec.input === "enum") {
+      if (editor.value) {
+        next.v3Rules.push({ field: spec.field, op: "eq", value: editor.value });
+      }
+      if (spec.field === "categoryGuid") {
+        next.v3category = editor.value || "";
+        next.v3categories = editor.value ? [editor.value] : [];
+      }
+      if (spec.field === "typeGuid") {
+        next.v3type = editor.value || "";
+        next.v3types = editor.value ? [editor.value] : [];
+      }
+      return next;
+    }
+    if (spec.input === "number") {
+      var trimmed = String(editor.value || "").trim();
+      if (trimmed !== "" && trimmed !== "-") {
+        next.v3Rules.push({ field: spec.field, op: editor.op, value: trimmed });
+      }
+      return next;
+    }
+    var text = String(editor.value || "").trim();
+    if (text) {
+      next.v3Rules.push({ field: spec.field, op: spec.op || "contains", value: text });
+    }
+    if (spec.field === "city") {
+      next.city = text;
+    }
+    return next;
+  }
+
+  function render(ctx, payload) {
+    if (!ctx || !ctx.shell) {
+      return;
+    }
+    var shell = ctx.shell;
+    var state = payload.state;
+    var items = payload.items || [];
+    var total = payload.total || 0;
+    var visibleCols = payload.visibleCols || [];
+    var filterOptions = payload.filterOptions || {};
+    var host = document.getElementById("v3-focus-host");
+    if (!host) {
+      return;
+    }
+    syncLayout(state);
+    var scroll = readScroll(state);
+    var matched = total;
+    var countLine =
+      window.ClientsLktandoorList && window.ClientsLktandoorList.formatResultCountLine
+        ? window.ClientsLktandoorList.formatResultCountLine(state, matched)
+        : "Совпало " + matched;
+    var tableMin = 200 + Math.max(0, visibleCols.length - 1) * 120;
+    var isGrouped = state.v3entity === "legal_grouped";
+    var listUi = window.ClientsV3List;
+    var detailType = payload.detailType || "legal";
+    var filterCount = activeFilterCount(state);
+    host.innerHTML =
+      '<div class="x14-focus" data-testid="v3-focus-root">' +
+      '<div class="x14-focusbar">' +
+      '<label class="x15-search"><input id="v3-focus-search" type="search" autocomplete="off" aria-label="Поиск в полноэкранном реестре" placeholder="Поиск по клиентам, адресам, контактам…" value="' +
+      shell.escapeHtml(state.q || "") +
+      '"></label>' +
+      '<span role="status">' +
+      shell.escapeHtml(countLine) +
+      "</span>" +
+      (filterCount
+        ? '<button type="button" class="workspace-button workspace-button--ghost x15-reset" id="v3-focus-reset">Сбросить' +
+          (filterCount > 1 ? " · " + filterCount : "") +
+          "</button>"
+        : "") +
+      '<button type="button" class="workspace-button workspace-button--ghost" id="v3-focus-columns">Колонки</button>' +
+      '<button type="button" class="workspace-button workspace-button--primary" id="v3-focus-exit">Выйти <kbd>Esc</kbd></button>' +
+      "</div>" +
+      '<div class="x14-focus-scroll" id="x14-focus-scroll" role="region" aria-label="Полнооконный список клиентов" tabindex="0">' +
+      '<table aria-label="Клиентская база" style="--focus-table-min:' +
+      tableMin +
+      'px"><thead><tr>' +
+      visibleCols.map(function (col) {
+        return renderHeader(shell, col, state, filterOptions);
+      }).join("") +
+      "</tr></thead><tbody>" +
+      (items.length
+        ? items
+            .map(function (item) {
+              var rowDetail = item.detail_entity || detailType;
+              var href =
+                window.ClientsV3 && window.ClientsV3.detailHref
+                  ? window.ClientsV3.detailHref(item.guid, rowDetail, state)
+                  : "/clients/" + encodeURIComponent(item.guid);
+              return (
+                "<tr>" +
+                visibleCols
+                  .map(function (col, index) {
+                    var cellHtml = listUi ? listUi.cellDisplay(item, col.id, shell, state, isGrouped) : "—";
+                    if (index === 0) {
+                      if (cellHtml.indexOf("<a ") !== -1) {
+                        return '<td><span class="x14-cell-content">' + cellHtml + "</span></td>";
+                      }
+                      return (
+                        '<td><a class="clients-link x14-cell-content" href="' +
+                        shell.escapeHtml(href) +
+                        '">' +
+                        cellHtml.replace(/<[^>]+>/g, "") +
+                        "</a></td>"
+                      );
+                    }
+                    return '<td><span class="x14-cell-content">' + cellHtml + "</span></td>";
+                  })
+                  .join("") +
+                "</tr>"
+              );
+            })
+            .join("")
+        : '<tr class="x15-empty"><td colspan="' +
+          visibleCols.length +
+          '"><h3>Нет совпадений</h3><p>Измените поиск или условия в заголовках колонок.</p>' +
+          (filterCount
+            ? '<button type="button" class="workspace-button workspace-button--ghost" id="v3-focus-reset-empty">Сбросить поиск и фильтры</button>'
+            : "") +
+          "</td></tr>") +
+      "</tbody></table></div>" +
+      '<div class="x14-focus-pagination" id="v3-focus-pagination"></div></div>';
+
+    var pane = document.getElementById("x14-focus-scroll");
+    if (pane) {
+      pane.scrollTop = scroll.top || 0;
+      pane.scrollLeft = scroll.left || 0;
+      pane.addEventListener(
+        "scroll",
+        function () {
+          writeScroll(state, pane);
+        },
+        { passive: true },
+      );
+    }
+
+    function reload(nextState, editor) {
+      writeScroll(state, pane);
+      payload.onState(nextState, editor);
+    }
+
+    var pageSize = state.pageSize || 50;
+    var totalPages = Math.max(1, Math.ceil(total / pageSize));
+    var pagEl = document.getElementById("v3-focus-pagination");
+    if (pagEl) {
+      if (totalPages <= 1) {
+        pagEl.innerHTML = "";
+      } else {
+        var prevDisabled = state.page <= 1;
+        var nextDisabled = state.page >= totalPages;
+        pagEl.innerHTML =
+          '<button type="button" class="workspace-button workspace-button--secondary" id="v3-focus-page-prev"' +
+          (prevDisabled ? " disabled" : "") +
+          ">Назад</button><span>Страница " +
+          state.page +
+          " из " +
+          totalPages +
+          '</span><button type="button" class="workspace-button workspace-button--secondary" id="v3-focus-page-next"' +
+          (nextDisabled ? " disabled" : "") +
+          ">Вперёд</button>";
+        document.getElementById("v3-focus-page-prev")?.addEventListener("click", function () {
+          if (state.page <= 1) {
+            return;
+          }
+          writeScroll(state, pane);
+          reload(window.ClientsV3.mergeListStateForUserAction({ page: state.page - 1 }), null);
+        });
+        document.getElementById("v3-focus-page-next")?.addEventListener("click", function () {
+          if (state.page >= totalPages) {
+            return;
+          }
+          writeScroll(state, pane);
+          reload(window.ClientsV3.mergeListStateForUserAction({ page: state.page + 1 }), null);
+        });
+      }
+    }
+
+    document.getElementById("v3-focus-exit")?.addEventListener("click", function () {
+      writeScroll(state, pane);
+      reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
+    });
+    document.getElementById("v3-focus-columns")?.addEventListener("click", function () {
+      if (window.ClientsV3 && window.ClientsV3.openLktandoorColumnsDialog) {
+        var liveCtx = window.__lktandoorListCtx || window.__lktandoorUiCtx || ctx;
+        var liveState = window.ClientsV3.readState();
+        window.ClientsV3.openLktandoorColumnsDialog(liveCtx, liveState);
+      }
+    });
+    function resetAll() {
+      var next = window.ClientsV3.mergeListStateForUserAction({
+        q: "",
+        page: 1,
+        v3Rules: [],
+        city: "",
+        closed: "",
+        colManager: "",
+        colRegional: "",
+        colRop: "",
+        colCity: "",
+        colStatus: "",
+        v3types: [],
+        v3categories: [],
+        v3type: "",
+        v3category: "",
+      });
+      var mainSearch = document.getElementById("search-input");
+      if (mainSearch) {
+        mainSearch.value = "";
+      }
+      reload(next, null);
+    }
+    document.getElementById("v3-focus-reset")?.addEventListener("click", resetAll);
+    document.getElementById("v3-focus-reset-empty")?.addEventListener("click", resetAll);
+
+    var searchEl = document.getElementById("v3-focus-search");
+    if (searchEl) {
+      searchEl.addEventListener("input", function () {
+        var el = searchEl;
+        var caret = el.selectionStart;
+        clearTimeout(filterTimer);
+        filterTimer = setTimeout(function () {
+          var main = document.getElementById("search-input");
+          if (main) {
+            main.value = el.value;
+          }
+          reload(
+            window.ClientsV3.mergeListStateForUserAction({ q: el.value.trim(), page: 1 }),
+            { id: "v3-focus-search", position: caret },
+          );
+        }, 180);
+      });
+    }
+
+    host.querySelectorAll("[data-focus-clear-col]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var colId = btn.getAttribute("data-focus-clear-col") || "";
+        reload(applyColClear(window.ClientsV3.readState(), colId), null);
+      });
+    });
+
+    host.querySelectorAll("[data-focus-col]").forEach(function (input) {
+      function onEdit(immediate) {
+        var colId = input.getAttribute("data-focus-col") || "";
+        var kind = input.getAttribute("data-focus-kind") || "";
+        var editor = {
+          colId: colId,
+          kind: kind,
+          value: input.value,
+          op: input.getAttribute("data-focus-op") || "contains",
+          id: input.id || filterControlId(colId, kind, input.getAttribute("data-focus-op") || undefined),
+          position: input.selectionStart,
+        };
+        var apply = function () {
+          var live = window.ClientsV3.readState();
+          var next = applyEditor(live, editor);
+          next.page = 1;
+          if (window.ClientsV3FieldRules) {
+            window.ClientsV3FieldRules.syncLegacyFromRules(next);
+          }
+          reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+        };
+        if (immediate || kind === "enum" || kind === "bool") {
+          clearTimeout(filterTimer);
+          apply();
+          return;
+        }
+        clearTimeout(filterTimer);
+        filterTimer = setTimeout(apply, 180);
+      }
+      if (input.tagName === "SELECT") {
+        input.addEventListener("change", function () {
+          onEdit(true);
+        });
+      } else {
+        input.addEventListener("input", function () {
+          onEdit(false);
+        });
+      }
+    });
+
+    restoreFilterEditor(payload.editor);
+  }
+
+  function bindGlobal() {
+    if (window.__lktandoorFocusBound) {
+      return;
+    }
+    window.__lktandoorFocusBound = true;
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      var dialog = document.getElementById("v3-lktandoor-columns-dialog");
+      if (dialog && dialog.open) {
+        event.preventDefault();
+        window.ClientsV3?.closeLktandoorColumnsDialog();
+        return;
+      }
+      var state = window.ClientsV3?.readState();
+      if (state && state.v3focus) {
+        event.preventDefault();
+        writeScroll(state, document.getElementById("x14-focus-scroll"));
+        window.ClientsV3.loadList(
+          window.__lktandoorUiCtx,
+          window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
+          true,
+        );
+      }
+    });
+  }
+
+  window.ClientsLktandoorFocus = {
+    isActive: isActive,
+    syncLayout: syncLayout,
+    render: render,
+    bindGlobal: bindGlobal,
+    captureScroll: function (state) {
+      writeScroll(state, document.getElementById("x14-focus-scroll"));
+    },
+  };
+})();

@@ -93,13 +93,13 @@ export const V3_FIELD_CATALOG: readonly V3FieldCatalogRow[] = [
     notes: null,
   },
   {
-    id: "inn_code1c",
-    prototypeLabel: "ИНН / code1c / TOP",
-    jsonSource: "other / extended",
-    v3Storage: "—",
-    listFilter: "—",
-    cardSection: "—",
-    notes: "Не подтверждено в exchange v3 fixtures; legacy filters скрыты в v3 UI",
+    id: "inn",
+    prototypeLabel: "ИНН",
+    jsonSource: "inn (корень записи юрлица в all_clients.json)",
+    v3Storage: "onec_v3_legal_entities.inn",
+    listFilter: "inn (contains/eq/empty/filled)",
+    cardSection: "Юрлицо → реквизиты",
+    notes: "Строка, ведущие нули сохраняются; kpp — отдельное поле kpp, только карточка",
   },
 ] as const;
 

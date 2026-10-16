@@ -4,6 +4,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import request from "supertest";
 import { closePool, resetPoolForTests, query } from "../../src/db/pool";
+import { legalPaymentTypeSql } from "../../src/clients/v3/list-sql-expressions";
 import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
 import { denyClientAccess, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { buildEmployeeRosterBytes, buildEmployeeRosterEntry } from "../helpers/onec-clients-employee-roster-fixtures";
@@ -16,6 +17,7 @@ const M2 = "33333333-3333-4333-8333-333333333333";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const HOLDING = "a1000000-0000-4000-8000-000000000001";
 const LEGAL = "b2000000-0000-4000-8000-000000000001";
+const LEGAL_ORPHAN = "b2000000-0000-4000-8000-000000000002";
 const RETAIL = "c3000000-0000-4000-8000-000000000001";
 const ROP = "55555555-5555-4555-8555-555555555555";
 const TYPE_A = "t1";
@@ -743,6 +745,111 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(holdingNameOnly.status, 200);
     assert.equal(holdingNameOnly.body.total, 0);
 
+    const groupDisplayHolding = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "groupDisplayName", op: "contains", value: "SYNTH Holding One" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(groupDisplayHolding.status, 200);
+    assert.equal(groupDisplayHolding.body.total, 1);
+    assert.equal(groupDisplayHolding.body.items[0].name, "SYNTH Holding One");
+
+    const groupDisplayOrphan = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "groupDisplayName", op: "eq", value: "Legal Orphan" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(groupDisplayOrphan.status, 200);
+    assert.equal(groupDisplayOrphan.body.total, 1);
+    assert.equal(groupDisplayOrphan.body.items[0].name, "Legal Orphan");
+
+    const groupDisplayWithLegalName = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "groupDisplayName", op: "contains", value: "SYNTH Holding One" },
+            { field: "legalName", op: "contains", value: "Legal One" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(groupDisplayWithLegalName.status, 200);
+    assert.equal(groupDisplayWithLegalName.body.total, 1);
+    assert.equal(groupDisplayWithLegalName.body.items[0].legal_entities.length, 1);
+
+    const innContainsLeading = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "contains", value: "0123456789" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innContainsLeading.status, 200);
+    assert.equal(innContainsLeading.body.total, 1);
+    assert.equal(innContainsLeading.body.items[0].group_key, `holding:${HOLDING}`);
+    assert.match(String(innContainsLeading.body.items[0].inn || ""), /0123456789/);
+
+    const innEq = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "eq", value: "9988776655" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innEq.status, 200);
+    assert.equal(innEq.body.total, 1);
+    assert.equal(innEq.body.items[0].legal_entities.length, 2);
+    assert.ok(String(innEq.body.items[0].inn || "").includes("9988776655"));
+
+    const innAndLegalName = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "inn", op: "eq", value: "0123456789" },
+            { field: "legalName", op: "eq", value: "Legal One" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innAndLegalName.status, 200);
+    assert.equal(innAndLegalName.body.total, 1);
+
+    const innMismatchChild = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "inn", op: "eq", value: "0123456789" },
+            { field: "legalName", op: "eq", value: "Legal Two" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innMismatchChild.status, 200);
+    assert.equal(innMismatchChild.body.total, 0);
+
+    const innEmpty = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "empty", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innEmpty.status, 200);
+    assert.ok(
+      innEmpty.body.items.some((i: { group_key: string }) => i.group_key === `legal:${LEGAL_ORPHAN}`),
+    );
+
+    const legalDetail = await request(app)
+      .get(`/api/clients/v3/detail?entity=legal&guid=${LEGAL}`)
+      .set(headers);
+    assert.equal(legalDetail.status, 200);
+    assert.equal(legalDetail.body.entity.inn, "0123456789");
+    assert.equal(legalDetail.body.entity.kpp, "770701001");
+
     const scope = await request(app).get("/api/clients/v3/scope-summary").set(headers);
     assert.equal(scope.status, 200);
     assert.equal(scope.body.legal, grouped.body.total);
@@ -799,6 +906,15 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(hiddenLegalName.status, 200);
     assert.equal(hiddenLegalName.body.total, 0);
+    const hiddenInn = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "eq", value: "9988776655" }]),
+        )}`,
+      )
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(hiddenInn.status, 200);
+    assert.equal(hiddenInn.body.total, 0);
 
     const siblingAnd = await request(app)
       .get(
@@ -1014,6 +1130,116 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(mgrMondayYes.status, 200);
     assert.ok(!mgrMondayYes.body.items.some((i: { guid: string }) => i.guid === CONFLICT));
     assert.ok(mgrMondayYes.body.items.some((i: { guid: string }) => i.guid === RETAIL));
+  });
+
+  it("legal payment_type null-safe and filter-aligned with list payload", async () => {
+    await prepareDatabase(databaseUrl);
+    await seedV3(true);
+    const adminEmail = "admin-v3-payment@example.com";
+    await createTestUser({
+      databaseUrl,
+      email: adminEmail,
+      password: TEST_PASSWORD,
+      fullName: "Admin Payment",
+      role: "admin",
+    });
+    const cookie = await login(adminEmail);
+    const app = await loadApp();
+    const headers = { Origin: ORIGIN, Cookie: cookie };
+    const orphanGuid = "b2000000-0000-4000-8000-000000000002";
+
+    async function listGroupedPayment() {
+      const res = await request(app)
+        .get("/api/clients/v3/list?entity=legal_grouped&page=1&pageSize=50")
+        .set(headers);
+      assert.equal(res.status, 200);
+      const row = res.body.items.find(
+        (i: { group_key: string }) => i.group_key === `legal:${orphanGuid}`,
+      ) as { payment_type?: string | null } | undefined;
+      assert.ok(row, "expected Legal Orphan grouped row");
+      return row;
+    }
+
+    await query(`UPDATE onec_v3_legal_entities SET other_fields = '{}'::jsonb WHERE guid_client = $1::uuid`, [
+      orphanGuid,
+    ]);
+    assert.equal((await listGroupedPayment())?.payment_type ?? null, null);
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": null}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal((await listGroupedPayment())?.payment_type ?? null, null);
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": ""}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal((await listGroupedPayment())?.payment_type ?? null, null);
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": "maybe"}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal((await listGroupedPayment())?.payment_type ?? null, null);
+
+    const emptyFilter = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "paymentType", op: "empty", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(emptyFilter.status, 200);
+    assert.ok(
+      emptyFilter.body.items.some((i: { group_key: string }) => i.group_key === `legal:${orphanGuid}`),
+    );
+
+    const bankFilterMissing = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "paymentType", op: "eq", value: "Безналичный расчёт" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(bankFilterMissing.status, 200);
+    assert.ok(
+      !bankFilterMissing.body.items.some((i: { group_key: string }) => i.group_key === `legal:${orphanGuid}`),
+    );
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": false}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    const rawFalse = await query(
+      `SELECT ${legalPaymentTypeSql("le")} AS pt FROM onec_v3_legal_entities le WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal(rawFalse.rows[0]?.pt, "Безналичный расчёт");
+    const bankFilterHas = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "paymentType", op: "eq", value: "Безналичный расчёт" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(bankFilterHas.status, 200);
+    assert.ok(
+      bankFilterHas.body.items.some((i: { group_key: string }) => i.group_key === `legal:${orphanGuid}`),
+    );
+    assert.equal((await listGroupedPayment()).payment_type ?? null, "Безналичный расчёт");
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": true}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal((await listGroupedPayment()).payment_type, "Наличный расчёт");
+
+    await query(
+      `UPDATE onec_v3_legal_entities SET other_fields = '{"Оптовик_Наличные": "Да"}'::jsonb WHERE guid_client = $1::uuid`,
+      [orphanGuid],
+    );
+    assert.equal((await listGroupedPayment()).payment_type, "Наличный расчёт");
   });
 
   it("sync-status uses v3 apply time when legacy import journal is empty", async () => {

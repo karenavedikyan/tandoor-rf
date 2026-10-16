@@ -11,6 +11,9 @@ describe("clients-v3-list UI helpers", () => {
     vm.runInNewContext(source, { window, document: { getElementById: () => null } });
     return window.ClientsV3List as {
       resolveVisibleColumns: (state: { v3entity: string; v3cols?: string }, userId: string) => string[];
+      resolveFocusColumns: (state: { v3entity: string; v3focuscols?: string }, userId: string) => string[];
+      defaultFocusColumnIds: (entity: string) => string[];
+      primaryColumnId: (entity: string) => string;
       catalogForEntity: (entity: string) => Array<{ id: string; required?: boolean }>;
       applyDensity: (dense: boolean) => void;
       columnsParamFromIds: (ids: string[]) => string;
@@ -39,5 +42,24 @@ describe("clients-v3-list UI helpers", () => {
     const ui = loadListUi();
     const catalog = ui.catalogForEntity("retail");
     assert.ok(catalog.some((c) => c.id === "closed"));
+  });
+
+  it("focus defaults keep client name first for legal_grouped", () => {
+    const ui = loadListUi();
+    const ids = ui.resolveFocusColumns({ v3entity: "legal_grouped" }, "user-1");
+    assert.equal(ids[0], "name");
+    assert.ok(ids.includes("address_line"));
+    assert.ok(ids.includes("legal_name"));
+    assert.ok(ids.includes("discount_amount"));
+    assert.ok(!ids.includes("manager_name"));
+  });
+
+  it("focus column order follows v3focuscols param", () => {
+    const ui = loadListUi();
+    const ids = ui.resolveFocusColumns(
+      { v3entity: "legal_grouped", v3focuscols: "name,city,legal_name" },
+      "user-1",
+    );
+    assert.equal(ids.join(","), "name,city,legal_name");
   });
 });

@@ -74,18 +74,20 @@ export async function writeV3BundleToClient(
     await client.query(
       `
         INSERT INTO onec_v3_legal_entities (
-          guid_client, name_client, guid_holding, name_holding, type_category, managers,
+          guid_client, name_client, inn, kpp, guid_holding, name_holding, type_category, managers,
           address, telephone, discount, discount_amount, markups, other_fields,
           membership_conflict, diagnostics, last_source_sha256, last_imported_at
         ) VALUES (
-          $1::uuid, $2, $3::uuid, $4, $5::jsonb, $6::jsonb,
-          $7, $8::jsonb, $9, $10, $11::jsonb, $12::jsonb,
-          $13, '[]'::jsonb, $14, NOW()
+          $1::uuid, $2, $3, $4, $5::uuid, $6, $7::jsonb, $8::jsonb,
+          $9, $10::jsonb, $11, $12, $13::jsonb, $14::jsonb,
+          $15, '[]'::jsonb, $16, NOW()
         )
       `,
       [
         legal.guidClient,
         legal.nameClient,
+        legal.inn,
+        legal.kpp,
         legal.guidHolding,
         legal.nameHolding,
         JSON.stringify(legal.typeCategory),

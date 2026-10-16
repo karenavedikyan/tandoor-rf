@@ -17,9 +17,11 @@ describe("parseV3FilterRulesParam", () => {
     assert.equal(rules!.length, 2);
   });
 
-  it("rejects unknown field", () => {
-    const raw = JSON.stringify([{ field: "inn", op: "eq", value: "123" }]);
-    assert.equal(parseV3FilterRulesParam(raw, "legal"), undefined);
+  it("accepts inn filter on legal and legal_grouped", () => {
+    const raw = JSON.stringify([{ field: "inn", op: "eq", value: "0123456789" }]);
+    assert.ok(parseV3FilterRulesParam(raw, "legal"));
+    assert.ok(parseV3FilterRulesParam(raw, "legal_grouped"));
+    assert.equal(parseV3FilterRulesParam(raw, "retail"), undefined);
   });
 
   it("rejects invalid JSON", () => {
@@ -45,6 +47,15 @@ describe("parseV3FilterRulesParam", () => {
     assert.ok(parseV3FilterRulesParam(raw, "legal_grouped"));
     assert.equal(parseV3FilterRulesParam(raw, "retail"), undefined);
     assert.equal(parseV3FilterRulesParam(raw, "orphan_retail"), undefined);
+  });
+
+  it("inn filter uses inn column SQL", () => {
+    const params: unknown[] = [];
+    const result = appendV3FieldRulesSql("", params, "legal", "le", [
+      { field: "inn", op: "contains", value: "0123" },
+    ]);
+    assert.match(result.sql, /\ble\.inn\b/);
+    assert.equal(params.length, 1);
   });
 
   it("legalName eq empty and filled build name_client SQL", () => {

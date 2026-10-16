@@ -4,6 +4,7 @@ import {
   readBoolean,
   readNumber,
   readObject,
+  readOptionalRootExchangeString,
   readString,
   readStringArray,
 } from "./normalize";
@@ -100,6 +101,8 @@ export function parseLegalRecord(raw: unknown, errors: string[]): V3ValidatedLeg
   return {
     guidClient,
     nameClient: readString(row.name_client),
+    inn: readOptionalRootExchangeString(row.inn),
+    kpp: readOptionalRootExchangeString(row.kpp),
     guidHolding: normalizeOptionalUuid(row.guid_holding),
     nameHolding: readString(row.name_holding) || null,
     typeCategory: parseTypeCategory(row.type_category),
