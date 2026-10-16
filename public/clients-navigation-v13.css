@@ -1047,6 +1047,11 @@ body.clients-lktandoor-teams .clients-stats-strip {
   font-weight: 600;
 }
 
+.clients-lktandoor-teams .clients-x13-director {
+  margin: 0 0 1rem;
+  padding: 0 0.25rem;
+}
+
 .clients-lktandoor-teams .x13-directory-note {
   font-size: var(--text-xs, 12px);
   line-height: 1.5;

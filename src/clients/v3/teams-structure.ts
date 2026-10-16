@@ -1,10 +1,11 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { shortUuidLabel } from "../uuid-param";
-import { ROSTER_ROP_POST_LABEL } from "../org/constants";
+import { ORG_DIRECTOR_EMPLOYEE_GUID, ROSTER_ROP_POST_LABEL } from "../org/constants";
 import {
   OrgStructureAccessError,
   type OrgResponsibleSummary,
+  type OrgDirectorSummary,
   type OrgStructureOverview,
   type OrgRopSummary,
 } from "../org/structure-repository";
@@ -28,6 +29,30 @@ function assertAccess(context: AccessContext): void {
 
 function v3HeadOfSalesClause(alias: string, ropParam: string): string {
   return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHeadOfSales")}, '')), '')::uuid = ${ropParam}::uuid`;
+}
+
+async function loadV3DirectorSummary(linked: Set<string>): Promise<OrgDirectorSummary | null> {
+  const result = await query<{ guid_manager: string; name_manager: string; post: string | null }>(
+    `
+      SELECT guid_manager::text, name_manager, post
+      FROM onec_wholesale_employee_roster
+      WHERE lower(guid_manager::text) = $1
+      LIMIT 1
+    `,
+    [ORG_DIRECTOR_EMPLOYEE_GUID],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    employeeGuid: ORG_DIRECTOR_EMPLOYEE_GUID,
+    name: row.name_manager,
+    shortId: shortUuidLabel(ORG_DIRECTOR_EMPLOYEE_GUID),
+    rosterPost: row.post,
+    hasLinkedAccount: linked.has(ORG_DIRECTOR_EMPLOYEE_GUID),
+    note: "Организационная роль директора задаётся по GUID 1С и не дублируется в списке РОП.",
+  };
 }
 
 function teamCountsFromResponsibles(items: OrgResponsibleSummary[]): {
@@ -98,11 +123,18 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     ).rows.map((r) => r.employee_id.toLowerCase()),
   );
   const rosterRops = await query<{ guid_manager: string; name_manager: string; post: string | null }>(
-    `SELECT guid_manager::text, name_manager, post FROM onec_wholesale_employee_roster WHERE post = $1`,
-    [ROSTER_ROP_POST_LABEL],
+    `SELECT guid_manager::text, name_manager, post
+     FROM onec_wholesale_employee_roster
+     WHERE post = $1 AND lower(guid_manager::text) <> $2`,
+    [ROSTER_ROP_POST_LABEL, ORG_DIRECTOR_EMPLOYEE_GUID],
   );
+  const director =
+    context.role === "admin" || context.fullClientBase ? await loadV3DirectorSummary(linked) : null;
   const rops: OrgRopSummary[] = [];
   for (const row of rosterRops.rows) {
+    if (row.guid_manager.toLowerCase() === ORG_DIRECTOR_EMPLOYEE_GUID) {
+      continue;
+    }
     const counts = await countBranch(context, row.guid_manager);
     const hasPortfolio = counts.legal + counts.retail > 0;
     let managerCount = 0;
@@ -133,7 +165,7 @@ export async function getV3OrgStructureOverview(context: AccessContext): Promise
     });
   }
   return {
-    director: null,
+    director,
     rops,
     undefinedTeam: [],
     rosterLoaded,

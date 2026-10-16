@@ -181,6 +181,22 @@
       return line;
     }
 
+    function renderX13Director(director) {
+      if (!director) {
+        return "";
+      }
+      return (
+        '<div class="clients-team-director clients-onec-team-director clients-x13-director">' +
+        "<strong>" +
+        deps.shell.escapeHtml(director.name) +
+        "</strong> · директор" +
+        (director.hasLinkedAccount ? "" : '<span class="clients-compact-team__badge">Нет аккаунта ЛК</span>') +
+        '<p class="clients-phone-muted">' +
+        deps.shell.escapeHtml(director.note || "") +
+        "</p></div>"
+      );
+    }
+
     function renderX13DirectoryCard(toolsTitle, toolsHint, searchPlaceholder, searchAria, searchValue, bodyHtml, noteHtml) {
       return (
         '<section class="card x13-directory clients-x13-directory">' +
@@ -255,13 +271,14 @@
       var rows = rops.map(renderX13RopPerson).join("");
       var emptyHtml = rows ? rows : '<div class="x6-empty">РОПы не найдены. Измените поиск.</div>';
       var cardTitle = deps.isAdminSession && deps.isAdminSession() ? "РОПы и команды" : "Мои РОПы";
+      var bodyHtml = renderX13Director(context.director) + (rows || emptyHtml);
       return renderX13DirectoryCard(
         cardTitle,
         "Выберите РОПа, затем сотрудника его команды.",
         "Найти РОПа…",
         "Поиск РОПа",
         state.teamQ || "",
-        emptyHtml,
+        bodyHtml,
         "",
       );
     }
@@ -727,10 +744,12 @@
         context.limitationNote && !teamUi.query && !teamUi.kind
           ? '<p class="clients-compact-team__note">' + deps.shell.escapeHtml(context.limitationNote) + "</p>"
           : "";
+      var directorHtml = renderX13Director(context.director);
       return (
         renderToolbar(state, teamUi, { showCollapseAll: true }) +
         searchBanner +
         noteHtml +
+        directorHtml +
         '<div class="clients-compact-team-list">' +
         rows +
         emptyHtml +
