@@ -13,6 +13,25 @@
     ["plan", "План", false],
   ];
 
+  function visibleTabs() {
+    return TABS.filter(function (t) {
+      return t[2];
+    });
+  }
+
+  function isConnectedTab(tabId) {
+    return visibleTabs().some(function (t) {
+      return t[0] === tabId;
+    });
+  }
+
+  function resolveCardTab(tabId) {
+    if (!tabId || !isConnectedTab(tabId)) {
+      return "overview";
+    }
+    return tabId;
+  }
+
   var UNAVAILABLE_SECTION_COPY = {
     work: "Задачи и работа с клиентом доступны в полной карточке с подключённым Битрикс24.",
     showcase: "Витрина и каталог не подключены к v3-карточке.",
@@ -802,10 +821,11 @@
   }
 
   function renderTabsMarkup(initialTab) {
-    initialTab = initialTab || "overview";
+    initialTab = resolveCardTab(initialTab || "overview");
+    var tabs = visibleTabs();
     return (
       '<nav class="x13-card-tabs pc-tabs" role="tablist" aria-label="Разделы карточки">' +
-      TABS.map(function (t, i) {
+      tabs.map(function (t, i) {
         var selected = initialTab === t[0];
         return (
           '<button type="button" role="tab" class="' +
@@ -832,7 +852,7 @@
   function readInitialCardTab() {
     try {
       var tab = new URLSearchParams(root.location.search).get("cardTab") || "overview";
-      return TABS.some(function (t) { return t[0] === tab; }) ? tab : "overview";
+      return resolveCardTab(tab);
     } catch (_err) {
       return "overview";
     }
@@ -854,7 +874,15 @@
 
   function renderCard(shell, entityType, ent, holdingLink, options) {
     options = options || {};
-    var initialTab = options.initialTab || readInitialCardTab();
+    var initialTab = resolveCardTab(options.initialTab || readInitialCardTab());
+    try {
+      var requestedTab = new URLSearchParams(root.location.search).get("cardTab");
+      if (requestedTab && requestedTab !== initialTab) {
+        writeCardTabQuery(initialTab);
+      }
+    } catch (_sanitizeErr) {
+      /* ignore */
+    }
     var typeCat = formatTypeCategory(shell, ent.type_category);
     var title = resolveTitle(entityType, ent);
     var overviewHtml = renderOverviewPanel(shell, entityType, ent, holdingLink, typeCat);
@@ -880,11 +908,6 @@
       ">" +
       dataHtml +
       "</section>";
-
-    TABS.forEach(function (t) {
-      if (t[2]) return;
-      panels += renderUnavailablePanel(t[0], t[1], initialTab === t[0]);
-    });
 
     var subtitleParts = [entityKindLabel(entityType)];
     if (typeCat.known) {
@@ -956,8 +979,11 @@
     var baseTitle = (context && context.title) || (titleEl && titleEl.textContent) || "";
     var entityLabel = (context && context.entityLabel) || "";
 
+    var tabs = visibleTabs();
+
     function select(id, focus) {
-      TABS.forEach(function (t) {
+      id = resolveCardTab(id);
+      tabs.forEach(function (t) {
         var tabId = t[0];
         var btn = workspace.querySelector("#pc-tab-" + tabId);
         var panel = workspace.querySelector("#pc-panel-" + tabId);
@@ -991,13 +1017,13 @@
       });
       btn.addEventListener("keydown", function (event) {
         var next;
-        if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
-        if (event.key === "ArrowLeft") next = (index + TABS.length - 1) % TABS.length;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
         if (event.key === "Home") next = 0;
-        if (event.key === "End") next = TABS.length - 1;
+        if (event.key === "End") next = tabs.length - 1;
         if (next !== undefined) {
           event.preventDefault();
-          select(TABS[next][0], true);
+          select(tabs[next][0], true);
         }
       });
     });
@@ -1017,9 +1043,22 @@
     renderCard: renderCard,
     bindTabs: bindTabs,
     updateRelatedContext: updateRelatedContext,
+    visibleTabs: visibleTabs,
+    resolveCardTab: resolveCardTab,
+    readInitialCardTab: readInitialCardTab,
+    renderTabsMarkup: renderTabsMarkup,
     /** @deprecated use renderCard */
     renderBody: function (shell, entityType, ent, holdingLink) {
       return renderCard(shell, entityType, ent, holdingLink);
     },
   };
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      visibleTabs: visibleTabs,
+      resolveCardTab: resolveCardTab,
+      readInitialCardTab: readInitialCardTab,
+      renderTabsMarkup: renderTabsMarkup,
+    };
+  }
 })(typeof window !== "undefined" ? window : globalThis);
