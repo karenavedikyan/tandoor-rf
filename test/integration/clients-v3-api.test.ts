@@ -906,6 +906,15 @@ describe("clients v3 API", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, Cookie: mgrCookie });
     assert.equal(hiddenLegalName.status, 200);
     assert.equal(hiddenLegalName.body.total, 0);
+    const hiddenInn = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "eq", value: "9988776655" }]),
+        )}`,
+      )
+      .set({ Origin: ORIGIN, Cookie: mgrCookie });
+    assert.equal(hiddenInn.status, 200);
+    assert.equal(hiddenInn.body.total, 0);
 
     const siblingAnd = await request(app)
       .get(
