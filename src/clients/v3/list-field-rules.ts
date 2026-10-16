@@ -7,6 +7,7 @@ import {
   LEGAL_CREDIT_LIMIT_SQL,
   LEGAL_DEFER_DAYS_SQL,
   LEGAL_MARKUP_PERCENTAGE_SQL,
+  legalInnSql,
   legalPaymentTypeSql,
   LEGAL_STATUS_SQL,
   RETAIL_CITY_SQL,
@@ -160,6 +161,13 @@ export const V3_LIST_FILTER_FIELDS: readonly V3FilterFieldDef[] = [
   {
     id: "legalName",
     label: "Юрлицо",
+    entity: ["legal"],
+    kind: "text",
+    ops: ["contains", "eq", "empty", "filled"],
+  },
+  {
+    id: "inn",
+    label: "ИНН",
     entity: ["legal"],
     kind: "text",
     ops: ["contains", "eq", "empty", "filled"],
@@ -425,6 +433,10 @@ function appendRuleSql(
 
   if (rule.field === "legalName" && entity === "legal") {
     return textExpr(`${alias}.name_client`);
+  }
+
+  if (rule.field === "inn" && entity === "legal") {
+    return textExpr(legalInnSql(alias));
   }
 
   if (rule.field === "groupDisplayName" && entity === "legal") {

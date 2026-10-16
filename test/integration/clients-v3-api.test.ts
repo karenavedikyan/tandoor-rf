@@ -17,6 +17,7 @@ const M2 = "33333333-3333-4333-8333-333333333333";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 const HOLDING = "a1000000-0000-4000-8000-000000000001";
 const LEGAL = "b2000000-0000-4000-8000-000000000001";
+const LEGAL_ORPHAN = "b2000000-0000-4000-8000-000000000002";
 const RETAIL = "c3000000-0000-4000-8000-000000000001";
 const ROP = "55555555-5555-4555-8555-555555555555";
 const TYPE_A = "t1";
@@ -779,6 +780,75 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(groupDisplayWithLegalName.status, 200);
     assert.equal(groupDisplayWithLegalName.body.total, 1);
     assert.equal(groupDisplayWithLegalName.body.items[0].legal_entities.length, 1);
+
+    const innContainsLeading = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "contains", value: "0123456789" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innContainsLeading.status, 200);
+    assert.equal(innContainsLeading.body.total, 1);
+    assert.equal(innContainsLeading.body.items[0].group_key, `holding:${HOLDING}`);
+    assert.match(String(innContainsLeading.body.items[0].inn || ""), /0123456789/);
+
+    const innEq = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "eq", value: "9988776655" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innEq.status, 200);
+    assert.equal(innEq.body.total, 1);
+    assert.equal(innEq.body.items[0].legal_entities.length, 2);
+    assert.ok(String(innEq.body.items[0].inn || "").includes("9988776655"));
+
+    const innAndLegalName = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "inn", op: "eq", value: "0123456789" },
+            { field: "legalName", op: "eq", value: "Legal One" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innAndLegalName.status, 200);
+    assert.equal(innAndLegalName.body.total, 1);
+
+    const innMismatchChild = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([
+            { field: "inn", op: "eq", value: "0123456789" },
+            { field: "legalName", op: "eq", value: "Legal Two" },
+          ]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innMismatchChild.status, 200);
+    assert.equal(innMismatchChild.body.total, 0);
+
+    const innEmpty = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal_grouped&filters=${encodeURIComponent(
+          JSON.stringify([{ field: "inn", op: "empty", value: "" }]),
+        )}`,
+      )
+      .set(headers);
+    assert.equal(innEmpty.status, 200);
+    assert.ok(
+      innEmpty.body.items.some((i: { group_key: string }) => i.group_key === `legal:${LEGAL_ORPHAN}`),
+    );
+
+    const legalDetail = await request(app)
+      .get(`/api/clients/v3/detail?entity=legal&guid=${LEGAL}`)
+      .set(headers);
+    assert.equal(legalDetail.status, 200);
+    assert.equal(legalDetail.body.entity.inn, "0123456789");
+    assert.equal(legalDetail.body.entity.kpp, "770701001");
 
     const scope = await request(app).get("/api/clients/v3/scope-summary").set(headers);
     assert.equal(scope.status, 200);

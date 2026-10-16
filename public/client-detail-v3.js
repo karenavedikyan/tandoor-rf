@@ -660,6 +660,16 @@
     var clientBlock =
       field("Клиент / категория", typeCat.html, typeCat.known) +
       field("Название", esc(shell, ent.name_client || ent.name), Boolean(ent.name_client || ent.name)) +
+      field(
+        "ИНН",
+        ent.inn ? esc(shell, String(ent.inn)) : emptyNoData(),
+        Boolean(ent.inn && String(ent.inn).trim()),
+      ) +
+      field(
+        "КПП",
+        ent.kpp ? esc(shell, String(ent.kpp)) : emptyNoData(),
+        Boolean(ent.kpp && String(ent.kpp).trim()),
+      ) +
       field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
       field("Телефоны", phones.html, phones.known) +
       field("Холдинг", holding.html, holding.known);

@@ -16,6 +16,11 @@ export const LEGAL_STATUS_SQL = `NULLIF(TRIM(COALESCE(
 
 export const LEGAL_ADDRESS_SQL = `NULLIF(TRIM(le.address), '')`;
 
+/** Root exchange inn (column), not other_fields. */
+export function legalInnSql(alias = "le"): string {
+  return `NULLIF(TRIM(${alias}.inn), '')`;
+}
+
 export const RETAIL_CITY_SQL = `NULLIF(TRIM(ro.address->>'city'), '')`;
 
 export const RETAIL_STATUS_LABEL_SQL = `(CASE WHEN ro.closed THEN 'Закрыта' ELSE 'Открыта' END)`;

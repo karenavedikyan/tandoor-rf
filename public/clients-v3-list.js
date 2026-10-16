@@ -14,6 +14,7 @@
     "credit_limit",
     "discount_amount",
     "markup_percentage",
+    "inn",
   ];
   var DEFAULT_FOCUS_RETAIL_COLS = [
     "client_name",
@@ -52,6 +53,7 @@
     credit_limit: { label: "Лимит договора", filterKey: null },
     discount_amount: { label: "Значение скидки", filterKey: null },
     markup_percentage: { label: "Значение наценки", filterKey: null },
+    inn: { label: "ИНН", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -96,6 +98,7 @@
           "credit_limit",
           "discount_amount",
           "markup_percentage",
+          "inn",
         ];
     return ids
       .map(function (id) {
@@ -287,6 +290,7 @@
     if (
       colId === "contract_number" ||
       colId === "payment_type" ||
+      colId === "inn" ||
       colId === "defer_days" ||
       colId === "credit_limit" ||
       colId === "discount_amount" ||

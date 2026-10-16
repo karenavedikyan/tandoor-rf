@@ -40,6 +40,21 @@ export function readString(raw: unknown): string {
   return raw;
 }
 
+/** Root exchange string (inn/kpp): trim; empty/null/undefined → null; number → decimal string without invented leading zeros. */
+export function readOptionalRootExchangeString(raw: unknown): string | null {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Number.isInteger(raw) ? String(raw) : String(raw);
+  }
+  return null;
+}
+
 export function readBoolean(raw: unknown): boolean {
   if (raw === true || raw === "true" || raw === "Да") {
     return true;

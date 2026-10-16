@@ -2,6 +2,8 @@
   {
     "guid_client": "b2000000-0000-4000-8000-000000000001",
     "name_client": "Legal One",
+    "inn": "0123456789",
+    "kpp": "770701001",
     "guid_holding": "a1000000-0000-4000-8000-000000000001",
     "name_holding": "SYNTH Holding One",
     "type_category": {
@@ -28,6 +30,8 @@
   {
     "guid_client": "b2000000-0000-4000-8000-000000000002",
     "name_client": "Legal Orphan",
+    "inn": "",
+    "kpp": "",
     "guid_holding": "",
     "name_holding": "",
     "type_category": {},
@@ -63,6 +67,8 @@
   {
     "guid_client": "b2000000-0000-4000-8000-000000000004",
     "name_client": "Legal Two",
+    "inn": "9988776655",
+    "kpp": "",
     "guid_holding": "a1000000-0000-4000-8000-000000000001",
     "name_holding": "SYNTH Holding One",
     "type_category": {

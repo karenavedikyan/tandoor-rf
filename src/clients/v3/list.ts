@@ -5,6 +5,7 @@ import { v3CategoryGuidSql, v3JsonManagerField, v3TypeGuidSql } from "./json-pat
 import {
   LEGAL_ADDRESS_SQL,
   LEGAL_CITY_SQL,
+  legalInnSql,
   LEGAL_STATUS_SQL,
   RETAIL_CITY_SQL,
   RETAIL_STATUS_LABEL_SQL,
@@ -303,7 +304,8 @@ export async function listV3Entities(
                le.managers->>'nameHeadOfSales' AS rop_name,
                ${LEGAL_STATUS_SQL} AS status_label,
                le.type_category->>'nameType' AS type_name,
-               le.type_category->>'nameCategory' AS category_name
+               le.type_category->>'nameCategory' AS category_name,
+               ${legalInnSql("le")} AS inn
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
         ORDER BY le.name_client ASC

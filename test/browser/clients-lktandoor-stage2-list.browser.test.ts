@@ -280,7 +280,7 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-list-desktop-1440.png") });
     await page.locator("#v3-lktandoor-field-filters summary").click();
     await page.waitForSelector(".x6-field-shortcuts .x6-field-shortcut", { state: "visible" });
-    assert.ok(await page.locator(".x6-field-shortcut--disabled").filter({ hasText: "ИНН" }).count());
+    assert.ok(await page.locator(".x6-field-shortcut:not([disabled])").filter({ hasText: "ИНН" }).count());
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "impl-filters-desktop-1440.png") });
     await page.setViewportSize(MOBILE);
     await closeMobileSidebar(page);
@@ -570,6 +570,16 @@ describe("lktandoor stage2 list UI", { concurrency: false }, () => {
     assert.ok((await page.locator("#x14-focus-scroll tbody tr").first().innerText()).includes("SYNTH Holding One"));
     await updateList(page, async () => {
       await page.locator('#x14-focus-scroll input[data-focus-col="name"]').fill("");
+      await page.waitForTimeout(220);
+    });
+    await updateList(page, async () => {
+      await page.locator('#x14-focus-scroll input[data-focus-col="inn"]').fill("0123456789");
+      await page.waitForTimeout(220);
+    });
+    assert.equal(await focusRowCount(page), 1);
+    assert.ok((await page.locator("#x14-focus-scroll tbody tr").first().innerText()).includes("0123456789"));
+    await updateList(page, async () => {
+      await page.locator('#x14-focus-scroll input[data-focus-col="inn"]').fill("");
       await page.waitForTimeout(220);
     });
     await updateList(page, async () => {

@@ -120,6 +120,12 @@
                 parentReturn +
                 '">' +
                 shell.escapeHtml(row.name) +
+                (row.inn
+                  ? ' <span class="pc-label">ИНН ' + shell.escapeHtml(String(row.inn)) + "</span>"
+                  : "") +
+                (row.kpp
+                  ? ' <span class="pc-label">КПП ' + shell.escapeHtml(String(row.kpp)) + "</span>"
+                  : "") +
                 "</a></li>"
               );
             })

@@ -369,7 +369,8 @@ export async function listV3LegalGrouped(
         ${distinctOrMissing(LEGAL_DEFER_DAYS_SQL.replace(/\ble\./g, "m."))} AS defer_days,
         ${distinctOrMissing(LEGAL_CREDIT_LIMIT_SQL.replace(/\ble\./g, "m."))} AS credit_limit,
         ${distinctOrMissing("m.discount_amount::text")} AS discount_amount,
-        ${distinctOrMissing(LEGAL_MARKUP_PERCENTAGE_SQL.replace(/\ble\./g, "m."))} AS markup_percentage
+        ${distinctOrMissing(LEGAL_MARKUP_PERCENTAGE_SQL.replace(/\ble\./g, "m."))} AS markup_percentage,
+        ${distinctOrMissing("NULLIF(TRIM(m.inn), '')")} AS inn
       FROM page_groups pg
       INNER JOIN members m ON m.group_key = pg.group_key
       LEFT JOIN onec_v3_holdings h
@@ -452,6 +453,7 @@ export async function listV3LegalGrouped(
       credit_limit: row.credit_limit,
       discount_amount: row.discount_amount,
       markup_percentage: row.markup_percentage,
+      inn: row.inn,
     };
   });
 

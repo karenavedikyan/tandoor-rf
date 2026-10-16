@@ -147,4 +147,109 @@ describe("exchange v3 import", { concurrency: false }, () => {
     assert.equal(countsAfter.rows[0]?.l, 3);
     await pool.end();
   });
+
+  it("stores root inn/kpp and replaces values on full regular apply", async () => {
+    const employeesBytes = buildEmployeeRosterBytes([
+      buildEmployeeRosterEntry(MANAGER, { name_manager: "Manager One" }),
+    ]);
+    const clientsV1 = loadFixture("all_clients.json");
+    const dry1 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV1,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(dry1.status, "SUCCESS");
+    const applied1 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry1.verificationFingerprint!],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV1,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(applied1.status, "SUCCESS");
+
+    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    const row1 = await pool.query<{ inn: string | null; kpp: string | null }>(
+      `SELECT inn, kpp FROM onec_v3_legal_entities WHERE guid_client = $1::uuid`,
+      [LEGAL_ONE],
+    );
+    assert.equal(row1.rows[0]?.inn, "0123456789");
+    assert.equal(row1.rows[0]?.kpp, "770701001");
+    const unassigned = await pool.query<{ inn: string | null }>(
+      `SELECT inn FROM onec_v3_legal_entities WHERE guid_client = $1::uuid`,
+      [LEGAL_UNASSIGNED],
+    );
+    assert.equal(unassigned.rows[0]?.inn, null);
+
+    const clientsParsed = JSON.parse(clientsV1.toString("utf8")) as Array<Record<string, unknown>>;
+    const legalOne = clientsParsed.find((r) => r.guid_client === LEGAL_ONE);
+    assert.ok(legalOne);
+    legalOne!.inn = "7707083893";
+    legalOne!.kpp = "";
+    const clientsV2 = Buffer.from(JSON.stringify(clientsParsed));
+    const dry2 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV2,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(dry2.status, "SUCCESS");
+    const applied2 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry2.verificationFingerprint!],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV2,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(applied2.status, "SUCCESS");
+    const row2 = await pool.query<{ inn: string | null; kpp: string | null }>(
+      `SELECT inn, kpp FROM onec_v3_legal_entities WHERE guid_client = $1::uuid`,
+      [LEGAL_ONE],
+    );
+    assert.equal(row2.rows[0]?.inn, "7707083893");
+    assert.equal(row2.rows[0]?.kpp, null);
+
+    legalOne!.inn = "";
+    const clientsV3 = Buffer.from(JSON.stringify(clientsParsed));
+    const dry3 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV3,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    const applied3 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry3.verificationFingerprint!],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV3,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(applied3.status, "SUCCESS");
+    const row3 = await pool.query<{ inn: string | null }>(
+      `SELECT inn FROM onec_v3_legal_entities WHERE guid_client = $1::uuid`,
+      [LEGAL_ONE],
+    );
+    assert.equal(row3.rows[0]?.inn, null);
+
+    const dup = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dry3.verificationFingerprint!],
+      holdingsBytes: loadFixture("all_holding.json"),
+      clientsBytes: clientsV3,
+      retailBytes: loadFixture("all_retail.json"),
+      employeesBytes,
+    });
+    assert.equal(dup.status, "NO_CHANGES");
+    await pool.end();
+  });
 });

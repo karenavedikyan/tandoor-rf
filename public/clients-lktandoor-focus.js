@@ -27,6 +27,7 @@
     markup_percentage: { kind: "rule", field: "markupPercentage", input: "text", op: "contains" },
     contract_number: { kind: "rule", field: "contractNumber", input: "text", op: "contains" },
     payment_type: { kind: "rule", field: "paymentType", input: "text", op: "contains" },
+    inn: { kind: "rule", field: "inn", input: "text", op: "contains" },
   };
 
   function filterControlId(colId, kind, op) {
