@@ -17,6 +17,7 @@ type Item = {
 const compact = (
   globalThis as typeof globalThis & {
     ClientsTeamsCompact: {
+      responsiblesCacheKey: (ropGuid: string, teamGuid?: string | null) => string;
       mergeResponsiblesByEmployee: (items: unknown[]) => Array<{ assignments: unknown[] }>;
       visibleEmployees: (items: Item[], summary: Summary, teamUi: TeamUi) => Array<{ name: string }>;
       shouldShowRopWithItems: (summary: Summary, teamUi: TeamUi, items: Item[]) => boolean;
@@ -54,6 +55,17 @@ const ROP_B_TEAM: Item[] = [
     outletCount: 0,
   },
 ];
+
+describe("clients teams compact responsibles cache key", () => {
+  it("uses leader-only key without teamGuid and leader:team when scoped", () => {
+    assert.equal(compact.responsiblesCacheKey("leader-a"), "leader-a");
+    assert.equal(compact.responsiblesCacheKey("leader-a", "team-1"), "leader-a:team-1");
+    assert.notEqual(
+      compact.responsiblesCacheKey("leader-a", "team-1"),
+      compact.responsiblesCacheKey("leader-a", "team-2"),
+    );
+  });
+});
 
 describe("clients teams compact merge", () => {
   it("merges multiple assignment kinds for one employee", () => {
