@@ -4041,7 +4041,7 @@
     );
   }
 
-  function syncTeamContextFromOrgStructure(data, ropEmployeeGuid) {
+  function syncTeamContextFromOrgStructure(data, ropEmployeeGuid, orgTeamGuid) {
     teamContext.director = data.director || null;
     teamContext.rops = data.rops || [];
     teamContext.undefinedTeam = data.undefinedTeam || [];
@@ -4054,9 +4054,16 @@
     if (!summaryGuid && isRopDesignSession()) {
       summaryGuid = resolveRopOwnBranchGuid();
     }
+    var teamGuidFilter = orgTeamGuid || "";
     var match = summaryGuid
       ? (data.rops || []).find(function (item) {
-          return item.employeeGuid === summaryGuid;
+          if (item.employeeGuid !== summaryGuid) {
+            return false;
+          }
+          if (teamGuidFilter && item.teamGuid && item.teamGuid !== teamGuidFilter) {
+            return false;
+          }
+          return true;
         })
       : null;
     if (match) {
@@ -4109,6 +4116,7 @@
         );
       } else if (state.ropEmployee && !logic.isBranchPortfolioList(state)) {
         var v3TeamsRop = state.ropEmployee;
+        var v3OrgTeamGuid = state.orgTeamGuid || "";
         v3Requests.push(
           api.apiRequest("/api/clients/v3/org-structure").then(function (result) {
             var liveRop = navigationRopEmployeeGuid();
@@ -4116,7 +4124,7 @@
               return result.response.status === 200;
             }
             if (result.response.status === 200 && result.data) {
-              syncTeamContextFromOrgStructure(result.data, v3TeamsRop);
+              syncTeamContextFromOrgStructure(result.data, v3TeamsRop, v3OrgTeamGuid);
             } else {
               teamContext.loadError = true;
             }
@@ -4124,7 +4132,10 @@
           }),
           api
             .apiRequest(
-              "/api/clients/v3/org-structure/" + encodeURIComponent(state.ropEmployee) + "/responsibles",
+              "/api/clients/v3/org-structure/" +
+                encodeURIComponent(state.ropEmployee) +
+                "/responsibles" +
+                (v3OrgTeamGuid ? "?teamGuid=" + encodeURIComponent(v3OrgTeamGuid) : ""),
             )
             .then(function (result) {
               var liveRop = navigationRopEmployeeGuid();

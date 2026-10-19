@@ -55,6 +55,9 @@ export type OrgRopSummary = {
   /** Parent clients of outlet-only assignments (not directly assigned to this ROP). */
   parentClientCount: number;
   sources: Array<"roster" | "assignment">;
+  /** Present when org overview is built from wholesale team groups (all_employees team[]). */
+  teamGuid?: string;
+  teamName?: string | null;
 };
 
 export type OrgResponsibleSummary = {

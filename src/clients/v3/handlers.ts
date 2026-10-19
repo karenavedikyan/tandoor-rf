@@ -211,7 +211,8 @@ export async function v3RopResponsiblesHandler(req: AccessRequest, res: Response
     return;
   }
   try {
-    const items = await listV3RopResponsibles(req.accessContext!, ropGuid);
+    const teamGuid = parseGuidParam(req.query.teamGuid);
+    const items = await listV3RopResponsibles(req.accessContext!, ropGuid, { teamGuid });
     setNoStore(res);
     res.json({ items });
   } catch (error) {
