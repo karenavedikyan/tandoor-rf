@@ -283,6 +283,7 @@
           : parseTokenList(url.v3category),
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
+      orgTeamGuid: url.orgTeamGuid,
       responsibleGuid: url.responsibleGuid,
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,

@@ -838,14 +838,16 @@
           if (!ropGuid) {
             return;
           }
+          var teamGuid = btn.getAttribute("data-team-guid") || "";
           if (deps.usesDirectorLayout() && deps.navigateDirectorOpenTeam) {
-            deps.navigateDirectorOpenTeam(ropGuid);
+            deps.navigateDirectorOpenTeam(ropGuid, teamGuid);
             return;
           }
           if (deps.isRopSession && deps.isRopSession()) {
             callbacks.navigate({
               view: "teams",
               ropEmployee: ropGuid,
+              orgTeamGuid: teamGuid,
               teamExpand: [ropGuid],
               portfolio: "",
               responsibleGuid: "",
@@ -854,7 +856,6 @@
             });
             return;
           }
-          var teamGuid = btn.getAttribute("data-team-guid") || "";
           callbacks.navigate({
             ropEmployee: ropGuid,
             orgTeamGuid: teamGuid,

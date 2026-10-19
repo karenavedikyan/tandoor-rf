@@ -158,6 +158,7 @@ describe("v3 team group staff list UI", { concurrency: false }, () => {
     await page.goto(`${baseUrl}/clients?view=teams&v3mode=1&v3entity=legal_grouped&v3view=teams`);
     await page.waitForSelector('[data-team-guid="' + TEAM_A + '"]', { timeout: 30000 });
     await openTeamGroup(page, TEAM_A);
+    assert.match(page.url(), new RegExp("orgTeamGuid=" + encodeURIComponent(TEAM_A)));
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_A + '"]').count(), 1);
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_B + '"]').count(), 0);
 
