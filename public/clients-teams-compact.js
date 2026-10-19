@@ -123,14 +123,19 @@
     return visibleEmployees(items, summary, teamUi).length > 0;
   }
 
+  function responsiblesCacheKey(ropGuid, teamGuid) {
+    return teamGuid ? String(ropGuid) + ":" + String(teamGuid) : String(ropGuid);
+  }
+
   function createCompactTeams(deps) {
     var cache = Object.create(null);
 
-    function cacheEntry(ropGuid) {
-      if (!cache[ropGuid]) {
-        cache[ropGuid] = { status: "idle", items: [], error: null, inflight: null };
+    function cacheEntry(ropGuid, teamGuid) {
+      var key = responsiblesCacheKey(ropGuid, teamGuid);
+      if (!cache[key]) {
+        cache[key] = { status: "idle", items: [], error: null, inflight: null };
       }
-      return cache[ropGuid];
+      return cache[key];
     }
 
     function resetCache() {
@@ -298,7 +303,7 @@
         return '<p class="clients-compact-team__empty">Команда недоступна.</p>';
       }
       var teamUi = readTeamUi(state);
-      var entry = cacheEntry(summary.employeeGuid);
+      var entry = cacheEntry(summary.employeeGuid, summary.teamGuid);
       if (entry.status === "loading" || entry.status === "idle") {
         return '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка состава…</div>';
       }
@@ -308,6 +313,9 @@
           deps.shell.escapeHtml(entry.error || "Ошибка загрузки") +
           '</p><button type="button" class="workspace-button workspace-button--ghost clients-compact-team__retry" data-retry-rop="' +
           deps.shell.escapeHtml(summary.employeeGuid) +
+          (summary.teamGuid
+            ? '" data-retry-team-guid="' + deps.shell.escapeHtml(summary.teamGuid)
+            : "") +
           '">Повторить</button></div>'
         );
       }
@@ -337,8 +345,7 @@
     }
 
     function ensureResponsibles(ropGuid, teamGuid) {
-      var cacheKey = teamGuid ? ropGuid + ":" + teamGuid : ropGuid;
-      var entry = cacheEntry(cacheKey);
+      var entry = cacheEntry(ropGuid, teamGuid);
       if (entry.status === "loaded") {
         return Promise.resolve(entry);
       }
@@ -831,14 +838,16 @@
           if (!ropGuid) {
             return;
           }
+          var teamGuid = btn.getAttribute("data-team-guid") || "";
           if (deps.usesDirectorLayout() && deps.navigateDirectorOpenTeam) {
-            deps.navigateDirectorOpenTeam(ropGuid);
+            deps.navigateDirectorOpenTeam(ropGuid, teamGuid);
             return;
           }
           if (deps.isRopSession && deps.isRopSession()) {
             callbacks.navigate({
               view: "teams",
               ropEmployee: ropGuid,
+              orgTeamGuid: teamGuid,
               teamExpand: [ropGuid],
               portfolio: "",
               responsibleGuid: "",
@@ -847,7 +856,6 @@
             });
             return;
           }
-          var teamGuid = btn.getAttribute("data-team-guid") || "";
           callbacks.navigate({
             ropEmployee: ropGuid,
             orgTeamGuid: teamGuid,
@@ -896,7 +904,7 @@
           var managerGuid = btn.getAttribute("data-manager");
           var kind = btn.getAttribute("data-responsible-kind") || "manager";
           var entityMode = btn.getAttribute("data-open-territory") || "clients";
-          var entry = cacheEntry(ropGuid);
+          var entry = cacheEntry(ropGuid, state.orgTeamGuid || null);
           var match = (entry.items || []).find(function (item) {
             return item.employeeGuid === managerGuid && item.kind === kind;
           });
@@ -916,7 +924,7 @@
           var managerGuid = btn.getAttribute("data-manager");
           var kind = btn.getAttribute("data-responsible-kind") || "manager";
           var entityMode = btn.getAttribute("data-responsible-entity") || "clients";
-          var entry = cacheEntry(ropGuid);
+          var entry = cacheEntry(ropGuid, state.orgTeamGuid || null);
           var match = (entry.items || []).find(function (item) {
             return item.employeeGuid === managerGuid && item.kind === kind;
           });
@@ -936,7 +944,8 @@
           if (!ropGuid) {
             return;
           }
-          cacheEntry(ropGuid).status = "idle";
+          var retryTeamGuid = btn.getAttribute("data-retry-team-guid") || null;
+          cacheEntry(ropGuid, retryTeamGuid).status = "idle";
           callbacks.refresh();
         });
       });
@@ -1081,6 +1090,7 @@
 
   root.ClientsTeamsCompact = {
     create: createCompactTeams,
+    responsiblesCacheKey: responsiblesCacheKey,
     mergeResponsiblesByEmployee: mergeResponsiblesByEmployee,
     normalizeText: normalizeText,
     ropMatchesQuery: ropMatchesQuery,

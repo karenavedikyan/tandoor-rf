@@ -1053,6 +1053,7 @@
       phone: phoneFilter.value || "all",
       rop: appEl.dataset.rop || "",
       ropEmployee: appEl.dataset.ropEmployee || "",
+      orgTeamGuid: readStateFromUrl().orgTeamGuid || appEl.dataset.orgTeamGuid || "",
       unassignedCategory: unassignedFilter.value || "",
       reviewState: reviewStateFilter.value || "",
       reviewDecision: reviewDecisionFilter.value || "",
@@ -1205,6 +1206,7 @@
     appEl.dataset.entity = nextEntity;
     appEl.dataset.rop = state.rop || "";
     appEl.dataset.ropEmployee = state.ropEmployee || "";
+    appEl.dataset.orgTeamGuid = state.orgTeamGuid || "";
     appEl.dataset.portfolio = state.portfolio || "";
     appEl.dataset.responsibleKind = state.responsibleKind || "";
     appEl.dataset.hardwareManager = state.hardwareManager || "";
@@ -3250,11 +3252,12 @@
     }
   }
 
-  function navigateDirectorOpenTeam(ropEmployeeGuid) {
+  function navigateDirectorOpenTeam(ropEmployeeGuid, orgTeamGuid) {
     rememberRopName(ropEmployeeGuid);
     navigateState({
       view: "teams",
       ropEmployee: ropEmployeeGuid,
+      orgTeamGuid: orgTeamGuid || "",
       teamExpand: [ropEmployeeGuid],
       rop: "",
       manager: "",
@@ -3276,9 +3279,11 @@
 
   function navigateDirectorBranchPortfolio(ropEmployeeGuid, portfolio) {
     rememberRopName(ropEmployeeGuid);
+    var teamScope = readStateFromUrl();
     navigateState({
       view: "teams",
       ropEmployee: ropEmployeeGuid,
+      orgTeamGuid: teamScope.orgTeamGuid || "",
       rop: "",
       manager: "",
       regionalManager: "",
@@ -3293,9 +3298,11 @@
   function navigateDirectorResponsible(ropEmployeeGuid, manager, kind, entityMode) {
     rememberRopName(ropEmployeeGuid);
     var guid = manager.employeeGuid;
+    var teamScope = readStateFromUrl();
     navigateState({
       view: "teams",
       ropEmployee: ropEmployeeGuid,
+      orgTeamGuid: teamScope.orgTeamGuid || "",
       rop: "",
       portfolio: "",
       manager: kind === "manager" ? guid : "",
@@ -4060,8 +4067,10 @@
           if (item.employeeGuid !== summaryGuid) {
             return false;
           }
-          if (teamGuidFilter && item.teamGuid && item.teamGuid !== teamGuidFilter) {
-            return false;
+          if (teamGuidFilter) {
+            if (!item.teamGuid || item.teamGuid.toLowerCase() !== teamGuidFilter.toLowerCase()) {
+              return false;
+            }
           }
           return true;
         })
@@ -4069,6 +4078,9 @@
     if (match) {
       teamContext.ropSummary = match;
       teamContext.ropName = match.name || teamContext.ropName;
+    } else if (summaryGuid && teamGuidFilter) {
+      teamContext.ropSummary = null;
+      teamContext.ropName = "";
     } else if (isRopDesignSession() && summaryGuid) {
       teamContext.ropSummary = null;
       teamContext.ropName = "";
@@ -4458,6 +4470,7 @@
               Object.assign({}, clearTerritory, {
                 view: "teams",
                 ropEmployee: v3State.ropEmployee || "",
+                orgTeamGuid: v3State.orgTeamGuid || urlTeam.orgTeamGuid || "",
                 teamExpand: v3State.ropEmployee ? [v3State.ropEmployee] : urlTeam.teamExpand || [],
                 page: 1,
               }),
@@ -4469,6 +4482,7 @@
               Object.assign({}, clearTerritory, {
                 view: "teams",
                 ropEmployee: "",
+                orgTeamGuid: "",
                 teamExpand: urlTeam.teamExpand || [],
                 page: 1,
               }),
