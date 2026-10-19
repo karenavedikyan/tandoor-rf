@@ -75,8 +75,12 @@ async function countTable(pool: Pool, table: string): Promise<number> {
   return Number(row.rows[0]?.count ?? 0);
 }
 
-async function fingerprintUsersLinks(pool: Pool): Promise<string> {
-  const parts = await Promise.all([countTable(pool, "users"), countTable(pool, "user_onec_employee_links")]);
+async function fingerprintUsersLinksGrants(pool: Pool): Promise<string> {
+  const parts = await Promise.all([
+    countTable(pool, "users"),
+    countTable(pool, "user_onec_employee_links"),
+    countTable(pool, "access_grants"),
+  ]);
   return parts.join("|");
 }
 
@@ -97,16 +101,6 @@ describe("authoritative wholesale org rebuild", { concurrency: false }, () => {
       if (!parsed.ok) return;
       await client.query("BEGIN");
       await upsertWholesaleEmployeeRoster(client, parsed.roster);
-      await client.query(
-        `INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader, imported_at)
-         VALUES ($1::uuid, 'Legacy Team', $2::uuid, 'Legacy Leader', NOW())`,
-        [TEAM_OLD, LEADER],
-      );
-      await client.query(
-        `INSERT INTO onec_wholesale_employee_team_memberships (guid_manager, guid_team, name_team, imported_at)
-         VALUES ($1::uuid, $2::uuid, 'Legacy Team', NOW()), ($3::uuid, $2::uuid, 'Legacy Team', NOW())`,
-        [MEMBER, TEAM_OLD, LEADER],
-      );
       await client.query("COMMIT");
     } finally {
       client.release();
@@ -119,7 +113,19 @@ describe("authoritative wholesale org rebuild", { concurrency: false }, () => {
       password: "StrongPass123!",
       fullName: "Ghost Linked",
     });
-    await linkUserToEmployee({ databaseUrl, userId: user.id, employeeGuid: GHOST });
+    const admin = await createTestUser({
+      databaseUrl,
+      email: "admin-authoritative-org@example.test",
+      password: "StrongPass123!",
+      fullName: "Admin Authoritative Org",
+      role: "admin",
+    });
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: user.id,
+      employeeId: GHOST,
+      confirmedByUserId: admin.id,
+    });
   });
 
   after(async () => {
@@ -128,7 +134,7 @@ describe("authoritative wholesale org rebuild", { concurrency: false }, () => {
 
   it("dry-run then apply replaces org projection and preserves links", async () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
-    const beforeFp = await fingerprintUsersLinks(pool);
+    const beforeFp = await fingerprintUsersLinksGrants(pool);
     await pool.end();
 
     const rosterV1 = authoritativeSnapshotV1();
@@ -183,7 +189,7 @@ describe("authoritative wholesale org rebuild", { concurrency: false }, () => {
     );
     assert.equal(ghostMemberships.rowCount, 0);
 
-    const afterFp = await fingerprintUsersLinks(verifyPool);
+    const afterFp = await fingerprintUsersLinksGrants(verifyPool);
     await verifyPool.end();
     assert.equal(afterFp, beforeFp);
   });

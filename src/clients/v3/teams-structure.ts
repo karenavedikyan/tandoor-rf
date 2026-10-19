@@ -152,11 +152,46 @@ async function buildV3OrgOverviewFromTeamGroups(
   return rops;
 }
 
+async function resolveTeamGroupLeaderBinding(
+  teamGuid: string,
+  leaderGuid: string,
+): Promise<"ok" | "missing" | "leader_mismatch"> {
+  const result = await query<{ guid_team_leader: string | null }>(
+    `
+      SELECT guid_team_leader::text
+      FROM onec_wholesale_team_groups
+      WHERE guid_team = $1::uuid
+      LIMIT 1
+    `,
+    [teamGuid],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return "missing";
+  }
+  if (!row.guid_team_leader || row.guid_team_leader.toLowerCase() !== leaderGuid.toLowerCase()) {
+    return "leader_mismatch";
+  }
+  return "ok";
+}
+
 async function listV3RosterTeamResponsibles(
   context: AccessContext,
   leaderGuid: string,
   teamGuid?: string | null,
 ): Promise<OrgResponsibleSummary[]> {
+  if (teamGuid) {
+    const binding = await resolveTeamGroupLeaderBinding(teamGuid, leaderGuid);
+    if (binding === "missing") {
+      return [];
+    }
+    if (binding === "leader_mismatch") {
+      throw new OrgStructureAccessError(
+        "Запрошенная группа не относится к указанному руководителю.",
+        "FORBIDDEN",
+      );
+    }
+  }
   const linked = new Set(
     (
       await query<{ employee_id: string }>(
