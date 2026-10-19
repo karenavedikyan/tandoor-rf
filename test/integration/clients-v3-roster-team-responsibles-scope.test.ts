@@ -83,6 +83,7 @@ function orgRosterBytes() {
 describe("v3 roster team responsibles teamGuid scope", { concurrency: false }, () => {
   let databaseUrl = "";
   let adminUserId = "";
+  let ropLeaderAUserId = "";
 
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
@@ -98,6 +99,21 @@ describe("v3 roster team responsibles teamGuid scope", { concurrency: false }, (
       role: "admin",
     });
     adminUserId = admin.id;
+
+    const ropLeaderA = await createTestUser({
+      databaseUrl,
+      email: "rop-a-scope@example.test",
+      password: "StrongPass123!",
+      fullName: "ROP Leader A",
+      role: "rop",
+    });
+    ropLeaderAUserId = ropLeaderA.id;
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: ropLeaderAUserId,
+      employeeId: LEADER_A,
+      confirmedByUserId: adminUserId,
+    });
 
     const parsed = parseWholesaleEmployeeRosterBytes(orgRosterBytes());
     assert.equal(parsed.ok, true);
@@ -151,20 +167,7 @@ describe("v3 roster team responsibles teamGuid scope", { concurrency: false }, (
   });
 
   it("forbids rop impersonation of another leader branch", async () => {
-    const ropUser = await createTestUser({
-      databaseUrl,
-      email: "rop-a-scope@example.test",
-      password: "StrongPass123!",
-      fullName: "ROP A",
-      role: "rop",
-    });
-    await linkUserToEmployee({
-      databaseUrl,
-      userId: ropUser.id,
-      employeeId: LEADER_A,
-      confirmedByUserId: adminUserId,
-    });
-    const ctx = ropContext(ropUser.id, LEADER_A);
+    const ctx = ropContext(ropLeaderAUserId, LEADER_A);
     await assert.rejects(
       () => listV3RopResponsibles(ctx, LEADER_B, { teamGuid: TEAM_B }),
       (error: unknown) => {
@@ -176,20 +179,7 @@ describe("v3 roster team responsibles teamGuid scope", { concurrency: false }, (
   });
 
   it("forbids rop own guid with foreign teamGuid", async () => {
-    const ropUser = await createTestUser({
-      databaseUrl,
-      email: "rop-a-foreign-team@example.test",
-      password: "StrongPass123!",
-      fullName: "ROP A Foreign Team",
-      role: "rop",
-    });
-    await linkUserToEmployee({
-      databaseUrl,
-      userId: ropUser.id,
-      employeeId: LEADER_A,
-      confirmedByUserId: adminUserId,
-    });
-    const ctx = ropContext(ropUser.id, LEADER_A);
+    const ctx = ropContext(ropLeaderAUserId, LEADER_A);
     await assert.rejects(
       () => listV3RopResponsibles(ctx, LEADER_A, { teamGuid: TEAM_B }),
       (error: unknown) => error instanceof OrgStructureAccessError && error.code === "FORBIDDEN",
