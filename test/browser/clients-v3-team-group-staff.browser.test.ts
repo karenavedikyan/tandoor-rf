@@ -138,7 +138,7 @@ describe("v3 team group staff list UI", { concurrency: false }, () => {
     });
   }
 
-  async function openTeamGroup(page: Page, teamGuid: string) {
+  async function openTeamGroup(page: Page, teamGuid: string, expectedMemberGuid: string) {
     const responsibles = page.waitForResponse(
       (res) => res.url().includes("/responsibles") && res.url().includes("teamGuid=" + encodeURIComponent(teamGuid)),
       { timeout: 30000 },
@@ -146,8 +146,13 @@ describe("v3 team group staff list UI", { concurrency: false }, () => {
     await page.locator('[data-open-rop-team="' + LEADER + '"][data-team-guid="' + teamGuid + '"]').click();
     await responsibles;
     await page.waitForFunction(
-      () => !document.querySelector(".clients-compact-team__members--loading"),
-      undefined,
+      ({ memberGuid }) => {
+        if (document.querySelector(".clients-compact-team__members--loading")) {
+          return false;
+        }
+        return document.querySelector('.x13-person[data-manager="' + memberGuid + '"]') !== null;
+      },
+      { memberGuid: expectedMemberGuid },
       { timeout: 30000 },
     );
   }
@@ -157,14 +162,15 @@ describe("v3 team group staff list UI", { concurrency: false }, () => {
     await login(page);
     await page.goto(`${baseUrl}/clients?view=teams&v3mode=1&v3entity=legal_grouped&v3view=teams`);
     await page.waitForSelector('[data-team-guid="' + TEAM_A + '"]', { timeout: 30000 });
-    await openTeamGroup(page, TEAM_A);
+    await openTeamGroup(page, TEAM_A, MEMBER_A);
     assert.match(page.url(), new RegExp("orgTeamGuid=" + encodeURIComponent(TEAM_A)));
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_A + '"]').count(), 1);
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_B + '"]').count(), 0);
 
     await page.goto(`${baseUrl}/clients?view=teams&v3mode=1&v3entity=legal_grouped&v3view=teams`);
     await page.waitForSelector('[data-team-guid="' + TEAM_B + '"]', { timeout: 30000 });
-    await openTeamGroup(page, TEAM_B);
+    await openTeamGroup(page, TEAM_B, MEMBER_B);
+    assert.match(page.url(), new RegExp("orgTeamGuid=" + encodeURIComponent(TEAM_B)));
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_B + '"]').count(), 1);
     assert.equal(await page.locator('.x13-person[data-manager="' + MEMBER_A + '"]').count(), 0);
     await page.close();
