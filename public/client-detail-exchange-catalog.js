@@ -3,6 +3,16 @@
 
   /** Human labels for client.other keys; unknown keys fall back to raw key in UI. */
   root.ClientDetailExchangeCatalog = {
+    otherDateKinds: {
+      Оптовик_ДатаСледКонтакта: "date",
+      Оптовик_НеблагонадёжныйДата: "date",
+      Оптовик_ДатаВозвратаАктаСверкиВБухгалтерию: "date",
+      Оптовик_ОптоваяСкидкаДействуетДо: "date",
+      Оптовик_ОптоваяСкидкаПоСтатусуДействуетДо: "date",
+      ДатаРегистрации: "date",
+      ДатаРождения: "date",
+      loading_time: "time",
+    },
     otherFieldLabels: {
       Код: "Код 1С",
       Наименование: "Наименование (1С)",

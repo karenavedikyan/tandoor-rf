@@ -287,6 +287,12 @@
         ? shell.escapeHtml(structured)
         : '<span class="clients-no-data">Нет данных</span>';
     }
+    if (colId === "category_name") {
+      var topLabel = item.type_name || item.category_name;
+      return topLabel
+        ? shell.escapeHtml(String(topLabel))
+        : '<span class="clients-no-data">Нет данных</span>';
+    }
     if (
       colId === "contract_number" ||
       colId === "payment_type" ||

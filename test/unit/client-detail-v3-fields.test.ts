@@ -91,7 +91,7 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Статус клиента/);
   });
 
-  it("formats year-0001 exchange datetimes as time-only", () => {
+  it("formats exchange dates by field semantics", () => {
     const ClientDetailV3 = loadV3();
     const shell = { escapeHtml: (v: string) => v };
     const html = ClientDetailV3.renderCard(
@@ -101,14 +101,17 @@ describe("client-detail-v3 field rendering", () => {
         name_client: "Legal",
         type_category: { name_type: "TOP350" },
         other_fields: {
-          Оптовик_ДатаСледКонтакта: "0001-01-01T08:00:00",
-          Оптовик_НеблагонадёжныйДата: "2020-05-10T12:30:00",
+          Оптовик_ДатаСледКонтакта: "0001-01-01T00:00:00",
+          Оптовик_НеблагонадёжныйДата: "01.01.0001 0:00:00",
+          Оптовик_КонтактноеЛицо: null,
         },
       },
       null,
     );
-    assert.match(html, /08:00/);
-    assert.match(html, /10\.05\.2020/);
+    assert.match(html, /Нет данных из 1С/);
+    assert.doesNotMatch(html, /00:00/);
+    assert.doesNotMatch(html, /01\.01\.0001/);
+    assert.match(html, /Контактное лицо/);
   });
 
   it("renders retail passport groups with route and club", () => {

@@ -17,6 +17,11 @@ describe("onec-exchange-v3 client other fields", () => {
       assert.ok(key in picked, `missing ${key}`);
     }
     assert.equal(picked.FutureUnknownKeyFrom1C, "future");
+    assert.equal(picked.ApiToken, undefined);
+    assert.equal(
+      pickSupportedOtherFields({ ApiToken: "SYNTH", Пароль: "SYNTH", Код: "1" }).Код,
+      "1",
+    );
   });
 
   it("keeps false and zero as stored values", () => {

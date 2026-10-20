@@ -20,7 +20,7 @@ import { parseMultiFilterTokenParam } from "./query-params";
 import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
-import { getLegalSalesForMonth, listLegalSalesMonths } from "./legal-sales";
+import { getLegalSalesForMonth, getLegalSalesImportMeta, listLegalSalesMonths } from "./legal-sales";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -421,8 +421,16 @@ export async function v3LegalSalesMonthsHandler(req: AccessRequest, res: Respons
     notFoundForAccess(res);
     return;
   }
+  const importMeta = await getLegalSalesImportMeta();
   setNoStore(res);
-  res.json({ legalGuid, months });
+  res.json({
+    legalGuid,
+    months,
+    salesImport: {
+      applied: Boolean(importMeta && importMeta.rowCount > 0),
+      importedAt: importMeta?.importedAt ?? null,
+    },
+  });
 }
 
 export async function v3LegalSalesMonthHandler(req: AccessRequest, res: Response): Promise<void> {

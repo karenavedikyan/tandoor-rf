@@ -300,13 +300,20 @@
       .then(function (results) {
         var monthsResult = results[0];
         if (monthsResult.response.status !== 200) {
-          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: monthsResult.response.status === 403 ? "forbidden" : "error",
+          });
           return;
         }
         v3SalesState.months = monthsResult.data.months || [];
         var selectedMonth = month || v3SalesState.months[0] || null;
         if (!selectedMonth) {
-          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, { sales: { lines: [] } });
+          var importInfo = monthsResult.data.salesImport || {};
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: importInfo.applied ? "empty_month" : "not_imported",
+          });
           return;
         }
         if (!month || month !== selectedMonth) {
@@ -314,7 +321,10 @@
         }
         var salesResult = results[1];
         if (!salesResult || salesResult.response.status !== 200) {
-          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: salesResult && salesResult.response.status === 403 ? "forbidden" : "error",
+          });
           return;
         }
         v3SalesState.month = selectedMonth;

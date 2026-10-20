@@ -1,7 +1,7 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
-import { v3CategoryGuidSql, v3CategoryNameSql, v3JsonManagerField } from "./json-paths";
+import { v3CategoryGuidSql, v3CategoryNameSql, v3JsonManagerField, v3TypeNameSql } from "./json-paths";
 import {
   LEGAL_ADDRESS_SQL,
   LEGAL_CITY_SQL,
@@ -338,9 +338,9 @@ export async function listV3LegalGrouped(
         END AS name,
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
-            THEN NULLIF(TRIM(MAX(${v3CategoryNameSql("h")})), '')
+            THEN NULLIF(TRIM(MAX(${v3TypeNameSql("h")})), '')
           WHEN pg.group_key LIKE 'holding:%' THEN NULL
-          ELSE ${distinctOrMissing(v3CategoryNameSql("m"))}
+          ELSE ${distinctOrMissing(v3TypeNameSql("m"))}
         END AS category_name,
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1

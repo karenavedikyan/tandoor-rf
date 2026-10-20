@@ -119,21 +119,10 @@ export const V3_CLIENT_OTHER_INVENTORY_KEYS = [
   "ИмяПредопределенныхДанных",
 ] as const;
 
-/** Never persist secrets even if they appear in a rogue export. */
-const BLOCKED_CLIENT_OTHER_KEYS = new Set<string>([]);
+import { sanitizeClientOtherFields } from "./sanitize-client-other";
 
 export type V3ClientOtherFields = Record<string, unknown>;
 
 export function pickSupportedOtherFields(raw: Record<string, unknown>): V3ClientOtherFields {
-  const result: V3ClientOtherFields = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (BLOCKED_CLIENT_OTHER_KEYS.has(key)) {
-      continue;
-    }
-    if (value === undefined) {
-      continue;
-    }
-    result[key] = value;
-  }
-  return result;
+  return sanitizeClientOtherFields(raw);
 }

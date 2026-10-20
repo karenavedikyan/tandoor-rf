@@ -31,6 +31,34 @@ function canViewMarginFields(context: AccessContext): boolean {
   return context.role === "admin" || context.fullClientBase;
 }
 
+export async function getLegalSalesImportMeta(): Promise<{
+  rowCount: number;
+  importedAt: string | null;
+  sourceSha256: string | null;
+} | null> {
+  const rows = await query<{
+    row_count: number;
+    imported_at: string | null;
+    source_sha256: string | null;
+  }>(
+    `
+      SELECT row_count, imported_at::text, source_sha256
+      FROM onec_v3_legal_sales_import_state
+      WHERE id = 1
+      LIMIT 1
+    `,
+  );
+  if (!rows.rows.length) {
+    return null;
+  }
+  const row = rows.rows[0];
+  return {
+    rowCount: Number(row.row_count ?? 0),
+    importedAt: row.imported_at,
+    sourceSha256: row.source_sha256,
+  };
+}
+
 export async function listLegalSalesMonths(
   context: AccessContext,
   legalGuid: string,

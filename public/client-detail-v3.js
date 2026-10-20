@@ -38,12 +38,12 @@
   }
 
   var UNAVAILABLE_SECTION_COPY = {
-    work: "Раздел «Работа» ожидает данные из Битрикс24. Интеграция задач в ЛК не подключена.",
+    work: "Раздел «Работа» ожидает данные из Битрикс24. Источник данных не подключён в ЛК.",
     showcase: "Витрина и каталог ожидают отдельный источник; в обмене 1С v3 только справочные поля витрин.",
     orders: "Заказы ожидают подключение учётной системы заказов, не файл clients JSON.",
     finance: "Финансовые показатели вне обмена clients v3; долг не вычисляется из лимитов 1С.",
     documents: "Документы ожидают подключение хранилища документов, не обмен clients.",
-    claims: "Рекламации — задачи Битрикс24; отдельный обмен не подключён.",
+    claims: "Рекламации ожидают задачи Битрикс24. Источник данных не подключён в ЛК.",
     plan: "План продаж не передаётся в clients JSON; раздел ожидает подключение планирования.",
   };
 
@@ -182,31 +182,64 @@
     misc: ["Комментарий"],
   };
   var OTHER_GROUP_TITLES = catalog.groupTitles || {};
+  var OTHER_DATE_KINDS = catalog.otherDateKinds || {};
 
   function otherFieldLabel(key) {
     return OTHER_FIELD_LABELS[key] || key;
   }
 
-  function formatExchangeDateTime(value) {
-    if (typeof value !== "string") {
-      return null;
+  function parseExchangeDateParts(value) {
+    var iso = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})/);
+    if (iso) {
+      return {
+        year: Number(iso[1]),
+        month: iso[2],
+        day: iso[3],
+        hour: iso[4].padStart(2, "0"),
+        minute: iso[5],
+      };
     }
-    var trimmed = value.trim();
-    if (!trimmed) {
-      return null;
+    var ru = value.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (ru) {
+      return {
+        year: Number(ru[3]),
+        month: ru[2],
+        day: ru[1],
+        hour: (ru[4] || "00").padStart(2, "0"),
+        minute: ru[5] || "00",
+      };
     }
-    var m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-    if (!m) {
-      return trimmed;
-    }
-    var year = Number(m[1]);
-    if (year <= 1) {
-      return m[4] + ":" + m[5];
-    }
-    return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5];
+    return null;
   }
 
-  function formatOtherFieldScalar(value) {
+  function formatExchangeDateValue(value, kind) {
+    var parts = parseExchangeDateParts(value);
+    if (!parts) {
+      return value;
+    }
+    if (parts.year <= 1) {
+      if (kind === "time") {
+        return parts.hour + ":" + parts.minute;
+      }
+      if (kind === "date") {
+        return null;
+      }
+      if (parts.hour === "00" && parts.minute === "00") {
+        return null;
+      }
+      return parts.hour + ":" + parts.minute;
+    }
+    var dateText = parts.day + "." + parts.month + "." + parts.year;
+    if (kind === "date") {
+      return dateText;
+    }
+    if (parts.hour !== "00" || parts.minute !== "00") {
+      return dateText + " " + parts.hour + ":" + parts.minute;
+    }
+    return dateText;
+  }
+
+  function formatOtherFieldScalar(value, fieldKey) {
     if (value === null || value === undefined) {
       return null;
     }
@@ -224,24 +257,27 @@
       if (!trimmed) {
         return null;
       }
-      if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
-        return formatExchangeDateTime(trimmed);
+      var kind = OTHER_DATE_KINDS[fieldKey] || "date";
+      if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) {
+        return formatExchangeDateValue(trimmed, kind);
       }
       return trimmed;
     }
     if (Array.isArray(value)) {
       var parts = value
         .map(function (item) {
-          return formatOtherFieldScalar(item);
+          return formatOtherFieldScalar(item, fieldKey);
         })
-        .filter(Boolean);
+        .filter(function (item) {
+          return item != null && item !== "";
+        });
       return parts.length ? parts.join(", ") : null;
     }
     if (typeof value === "object") {
       var inner = Object.keys(value)
         .map(function (k) {
-          var v = formatOtherFieldScalar(value[k]);
-          return v ? k + ": " + v : null;
+          var v = formatOtherFieldScalar(value[k], k);
+          return v != null && v !== "" ? k + ": " + v : null;
         })
         .filter(Boolean);
       return inner.length ? inner.join("; ") : null;
@@ -258,11 +294,14 @@
       if (!(key in other)) {
         return;
       }
-      var text = formatOtherFieldScalar(other[key]);
-      if (text == null) {
-        return;
-      }
-      rows.push(field(otherFieldLabel(key), esc(shell, text), true));
+      var text = formatOtherFieldScalar(other[key], key);
+      rows.push(
+        field(
+          otherFieldLabel(key),
+          text != null && text !== "" ? esc(shell, text) : emptyFrom1C(),
+          text != null && text !== "",
+        ),
+      );
     });
     return rows.join("");
   }
@@ -284,7 +323,7 @@
     });
     var extraKeys = Object.keys(other)
       .filter(function (key) {
-        return !groupedKeys.has(key) && formatOtherFieldScalar(other[key]) != null;
+        return !groupedKeys.has(key);
       })
       .sort();
     if (extraKeys.length) {
@@ -374,7 +413,8 @@
         parts.push(days[i]);
       }
     }
-    var time = loading.loadingTime || loading.loading_time || "";
+    var timeRaw = loading.loadingTime || loading.loading_time || "";
+    var time = timeRaw ? formatOtherFieldScalar(String(timeRaw), "loading_time") : null;
     if (!parts.length && !time) {
       return { html: emptyNoData(), known: false };
     }
@@ -414,9 +454,14 @@
     if (lpr.phone) rows.push(field("Телефон", esc(shell, lpr.phone), true));
     if (lpr.email) rows.push(field("Email", esc(shell, lpr.email), true));
     if (lpr.date_of_birth || lpr.dateOfBirth) {
-      rows.push(field("Дата рождения", esc(shell, lpr.date_of_birth || lpr.dateOfBirth), true));
+      var dob = formatOtherFieldScalar(String(lpr.date_of_birth || lpr.dateOfBirth), "ДатаРождения");
+      rows.push(
+        field("Дата рождения", dob ? esc(shell, dob) : emptyFrom1C(), Boolean(dob)),
+      );
     }
-    if (lpr.bonus) rows.push(field("Бонус", esc(shell, lpr.bonus), true));
+    if (lpr.bonus != null && lpr.bonus !== "") {
+      rows.push(field("Бонус", esc(shell, String(lpr.bonus)), true));
+    }
     if (lpr.conditions_bonus || lpr.conditionsBonus) {
       rows.push(field("Условия бонуса", esc(shell, lpr.conditions_bonus || lpr.conditionsBonus), true));
     }
@@ -711,8 +756,21 @@
       renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
       renderOtherFieldsByGroup(shell, other) +
       renderDataGroup(
+        "Основной договор и соглашение (строки 1С)",
+        renderOtherFieldsFromKeys(shell, other, ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"]) ||
+          field(
+            "Договор",
+            emptyFrom1C(),
+            false,
+          ),
+      ) +
+      renderDataGroup(
         "Торговая точка (уровень юрлица)",
-        field("Доставка, приёмка, ЛПР, Club", emptyFrom1C(), false),
+        field(
+          "Доставка, приёмка, ЛПР, Club",
+          "См. доступные торговые точки холдинга ниже и карточки ТТ.",
+          true,
+        ),
       ) +
       renderDataGroup(
         "Доступные точки холдинга",
@@ -987,11 +1045,22 @@
     payload = payload || {};
     var sales = payload.sales || {};
     var lines = sales.lines || [];
+    var salesState = payload.salesState || (lines.length ? "loaded" : "empty_month");
     if (!lines.length) {
+      var emptyCopy =
+        salesState === "not_imported"
+          ? "Данные из 1С ещё не загружены в ЛК (файл продаж не применён)."
+          : salesState === "error"
+            ? "Не удалось загрузить продажи. Повторите позже."
+            : salesState === "forbidden"
+              ? "Продажи недоступны в вашей области видимости."
+              : "Нет строк продаж за выбранный месяц.";
       return (
         '<section class="card pad x13-empty-section" data-testid="v3-sales-empty">' +
         "<header><h3>Продажи</h3></header>" +
-        '<p class="pc-unavailable">Нет данных о продажах за выбранный месяц.</p>' +
+        '<p class="pc-unavailable">' +
+        esc(shell, emptyCopy) +
+        "</p>" +
         '<p class="pc-label">' +
         esc(shell, sales.vatNote || "Суммы с НДС, ₽") +
         "</p></section>"
