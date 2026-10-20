@@ -275,12 +275,72 @@
     return { displayName: displayName, roleLabel: roleLabel, scopeLabel: scopeLabel };
   }
 
+  var v3SalesState = { legalGuid: null, months: [], month: null, loading: false };
+
+  function loadV3LegalSales(detailRoot, legalGuid, month) {
+    if (!detailRoot || !legalGuid || !window.ClientDetailV3) {
+      return;
+    }
+    var host = detailRoot.querySelector('[data-testid="v3-sales-host"]');
+    if (!host) {
+      return;
+    }
+    v3SalesState.loading = true;
+    host.innerHTML = '<p class="pc-unavailable">Загрузка продаж…</p>';
+    Promise.all([
+      v3SalesState.months.length
+        ? Promise.resolve({ response: { status: 200 }, data: { months: v3SalesState.months } })
+        : api.apiRequest("/api/clients/v3/legal/" + encodeURIComponent(legalGuid) + "/sales/months"),
+      month
+        ? api.apiRequest(
+            "/api/clients/v3/legal/" + encodeURIComponent(legalGuid) + "/sales?month=" + encodeURIComponent(month),
+          )
+        : Promise.resolve(null),
+    ])
+      .then(function (results) {
+        var monthsResult = results[0];
+        if (monthsResult.response.status !== 200) {
+          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          return;
+        }
+        v3SalesState.months = monthsResult.data.months || [];
+        var selectedMonth = month || v3SalesState.months[0] || null;
+        if (!selectedMonth) {
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, { sales: { lines: [] } });
+          return;
+        }
+        if (!month || month !== selectedMonth) {
+          return loadV3LegalSales(detailRoot, legalGuid, selectedMonth);
+        }
+        var salesResult = results[1];
+        if (!salesResult || salesResult.response.status !== 200) {
+          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          return;
+        }
+        v3SalesState.month = selectedMonth;
+        host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+          sales: salesResult.data.sales,
+          months: v3SalesState.months,
+        });
+        var selectEl = host.querySelector('[data-testid="v3-sales-month-select"]');
+        if (selectEl) {
+          selectEl.addEventListener("change", function () {
+            loadV3LegalSales(detailRoot, legalGuid, selectEl.value);
+          });
+        }
+      })
+      .finally(function () {
+        v3SalesState.loading = false;
+      });
+  }
+
   function renderV3Detail(payload) {
     hideAllPanels();
     detailEl.classList.remove("clients-hidden");
     var backHref = resolveV3BackHref();
     var ent = payload.entity || {};
     var title = v3DetailTitle(payload);
+    v3SalesState = { legalGuid: null, months: [], month: null, loading: false };
     var cardHtml = window.ClientDetailV3
       ? window.ClientDetailV3.renderCard(shell, payload.entityType, ent, payload.holdingLink, {
           session: buildV3SessionContext(currentUser),
@@ -288,14 +348,24 @@
       : "";
     detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
+      var legalGuid = payload.entityType === "legal" ? ent.guid || ent.guid_client : null;
+      if (legalGuid) {
+        v3SalesState.legalGuid = legalGuid;
+      }
       window.ClientDetailV3.bindTabs(detailRoot, {
         title: title,
+        entityType: payload.entityType,
         entityLabel:
           payload.entityType === "holding"
             ? "Холдинг"
             : payload.entityType === "legal"
               ? "Юрлицо"
               : "Торговая точка",
+        onSalesTabSelected: function () {
+          if (legalGuid) {
+            loadV3LegalSales(detailRoot, legalGuid, v3SalesState.month);
+          }
+        },
       });
     }
     if (payload.entityType === "holding" && ent.guid) {

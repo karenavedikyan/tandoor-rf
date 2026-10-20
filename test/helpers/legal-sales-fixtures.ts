@@ -1,0 +1,45 @@
+export const LEGAL_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const LEGAL_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+export function buildSaleRecord(input: {
+  legalGuid: string;
+  month?: string;
+  type: string;
+  quantity?: number | string;
+  income?: number | string;
+  manualDiscount?: number | string;
+  automaticDiscount?: number | string;
+  totalDiscount?: number | string;
+  costPrice?: number | string;
+  additionalExpenses?: number | string;
+  grossProfit?: number | string;
+  profitability?: number | string;
+}) {
+  return {
+    client_info: {
+      name: "Synthetic Legal",
+      id: input.legalGuid,
+      inn: "1234567890",
+      kpp: "123456789",
+    },
+    month: input.month ?? "2026-09-01T00:00:00",
+    sale_info: {
+      type: input.type,
+      quantity: input.quantity ?? 1,
+      income: input.income ?? 1000,
+      discounts: {
+        manual_discount: input.manualDiscount ?? 0,
+        automatic_discount: input.automaticDiscount ?? 0,
+        total_discount: input.totalDiscount ?? 0,
+      },
+      cost_price: input.costPrice ?? 500,
+      additional_expenses: input.additionalExpenses ?? 0,
+      gross_profit: input.grossProfit ?? 500,
+      profitability: input.profitability ?? 50,
+    },
+  };
+}
+
+export function buildSaleJsonBytes(records: unknown[]): Buffer {
+  return Buffer.from(JSON.stringify(records), "utf8");
+}
