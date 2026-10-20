@@ -3,8 +3,34 @@ import type { AccessContext } from "../../access/types";
 import { shortUuidLabel } from "../uuid-param";
 import { OrgStructureAccessError, type OrgResponsibleSummary } from "../org/structure-repository";
 import { v3EntityAssignmentScope } from "./access-scope";
-import { readableGroupKey } from "./list-legal-grouped";
+import { readableGroupKey, renumberV3ScopeClause } from "./list-legal-grouped";
 import { v3JsonManagerField } from "./json-paths";
+
+function buildScopedQueryParams(
+  context: AccessContext,
+  leScope: { clause: string; params: unknown[] },
+  roScope: { clause: string; params: unknown[] },
+  memberGuids: string[],
+): {
+  params: unknown[];
+  legalGroupKey: string;
+  leClause: string;
+  roClause: string;
+  membersIdx: number;
+} {
+  const params = [...leScope.params];
+  const legalGroupKey = readableGroupKey(context, params);
+  const roClause = renumberV3ScopeClause(roScope.clause, params.length + 1);
+  params.push(...roScope.params);
+  params.push(memberGuids);
+  return {
+    params,
+    legalGroupKey,
+    leClause: leScope.clause,
+    roClause,
+    membersIdx: params.length,
+  };
+}
 
 export async function resolveV3TeamGroupLeaderBinding(
   teamGuid: string,
@@ -129,29 +155,25 @@ export async function countDistinctV3TeamPortfolio(
   }
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
-  const leParams = [...leScope.params, memberGuids];
-  const membersIdxLe = leScope.params.length + 1;
-  const groupKey = readableGroupKey(context, leParams);
-  const roParams = [...roScope.params, memberGuids];
-  const membersIdxRo = roScope.params.length + 1;
+  const scoped = buildScopedQueryParams(context, leScope, roScope, memberGuids);
   const [legal, retail] = await Promise.all([
     query<{ count: string }>(
       `
         SELECT COUNT(*)::text AS count FROM (
-          SELECT DISTINCT ${groupKey} AS group_key
+          SELECT DISTINCT ${scoped.legalGroupKey} AS group_key
           FROM onec_v3_legal_entities le
-          WHERE (${leScope.clause}) AND ${memberAssignmentMatchSql("le", `$${membersIdxLe}`)}
+          WHERE (${scoped.leClause}) AND ${memberAssignmentMatchSql("le", `$${scoped.membersIdx}`)}
         ) grouped
       `,
-      leParams,
+      scoped.params,
     ),
     query<{ count: string }>(
       `
         SELECT COUNT(DISTINCT ro.guid_store)::text AS count
         FROM onec_v3_retail_outlets ro
-        WHERE (${roScope.clause}) AND ${memberAssignmentMatchSql("ro", `$${membersIdxRo}`)}
+        WHERE (${scoped.roClause}) AND ${memberAssignmentMatchSql("ro", `$${scoped.membersIdx}`)}
       `,
-      roParams,
+      scoped.params,
     ),
   ]);
   return {
@@ -182,17 +204,8 @@ export async function queryV3AssignmentSummariesForMembers(
   }
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
-  const leParams = [...leScope.params];
-  const legalGroupKey = readableGroupKey(context, leParams);
-  const leLen = leScope.params.length;
-  const roLen = roScope.params.length;
-  const roScopeOffset = leLen + 1;
-  let roScopeClause = roScope.clause;
-  if (roLen > 0) {
-    roScopeClause = roScopeClause.replace(/\$(\d+)/g, (_match, index: string) => `$${Number(index) + roScopeOffset}`);
-  }
-  const membersIdx = leLen + roLen + 1;
-  const sqlParams = [...leScope.params, ...roScope.params, memberGuids];
+  const scoped = buildScopedQueryParams(context, leScope, roScope, memberGuids);
+  const { params: sqlParams, legalGroupKey, leClause, roClause, membersIdx } = scoped;
 
   const rows = await query<{
     kind: "manager" | "regional" | "hardware";
@@ -208,7 +221,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("le", "nameManager")}) AS name,
           COUNT(DISTINCT ${legalGroupKey})::text AS client_count, '0'::text AS outlet_count
         FROM onec_v3_legal_entities le
-        WHERE (${leScope.clause})
+        WHERE (${leClause})
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
@@ -219,7 +232,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("le", "nameRegionalManager")}) AS name,
           COUNT(DISTINCT ${legalGroupKey})::text AS client_count, '0'::text AS outlet_count
         FROM onec_v3_legal_entities le
-        WHERE (${leScope.clause})
+        WHERE (${leClause})
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidRegionalManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidRegionalManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
@@ -230,7 +243,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("le", "nameHardwareManager")}) AS name,
           COUNT(DISTINCT ${legalGroupKey})::text AS client_count, '0'::text AS outlet_count
         FROM onec_v3_legal_entities le
-        WHERE (${leScope.clause})
+        WHERE (${leClause})
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidHardwareManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("le", "guidHardwareManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
@@ -241,7 +254,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("ro", "nameManager")}) AS name,
           '0'::text AS client_count, COUNT(*)::text AS outlet_count
         FROM onec_v3_retail_outlets ro
-        WHERE (${roScopeClause})
+        WHERE (${roClause})
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
@@ -252,7 +265,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("ro", "nameRegionalManager")}) AS name,
           '0'::text AS client_count, COUNT(*)::text AS outlet_count
         FROM onec_v3_retail_outlets ro
-        WHERE (${roScopeClause})
+        WHERE (${roClause})
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidRegionalManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidRegionalManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
@@ -263,7 +276,7 @@ export async function queryV3AssignmentSummariesForMembers(
           MAX(${v3JsonManagerField("ro", "nameHardwareManager")}) AS name,
           '0'::text AS client_count, COUNT(*)::text AS outlet_count
         FROM onec_v3_retail_outlets ro
-        WHERE (${roScopeClause})
+        WHERE (${roClause})
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidHardwareManager")}), '') IS NOT NULL
           AND NULLIF(TRIM(${v3JsonManagerField("ro", "guidHardwareManager")}), '')::uuid = ANY($${membersIdx}::uuid[])
         GROUP BY 2
