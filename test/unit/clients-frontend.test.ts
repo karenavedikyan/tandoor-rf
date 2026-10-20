@@ -141,6 +141,16 @@ describe("clients frontend logic", () => {
       logic.parseReturnQuery("?return=" + encodeURIComponent("?v3dense=1&openRedirect=https%3A%2F%2Fevil.test")),
       "",
     );
+    const regionalTeamReturn =
+      "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&page=1" +
+      "&ropEmployee=11111111-1111-4111-8111-111111111111" +
+      "&orgTeamGuid=22222222-2222-4222-8222-222222222222" +
+      "&responsibleGuid=44444444-4444-4444-8444-444444444444" +
+      "&responsibleKind=regional&teamKind=regional";
+    assert.equal(
+      logic.parseReturnQuery("?return=" + encodeURIComponent(regionalTeamReturn)),
+      regionalTeamReturn,
+    );
   });
 
   it("invalidates stale list responses", () => {
