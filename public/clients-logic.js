@@ -25,6 +25,7 @@
     "rop",
     "ropEmployee",
     "orgTeamGuid",
+    "orgCatalogEntry",
     "clientRopEmployee",
     "outletRopEmployee",
     "unassignedCategory",
@@ -785,12 +786,103 @@
       teamSource: params.get("teamSource") === "onec" ? "onec" : "rop",
       onecTeam: params.get("onecTeam") || "",
       onecPortfolioEmployee: params.get("onecPortfolioEmployee") || "",
+      orgCatalogEntry: params.get("orgCatalogEntry") || "",
     });
   }
 
   function normalizeTeamKind(value) {
     if (value === "manager" || value === "regional" || value === "hardware") {
       return value;
+    }
+    return "";
+  }
+
+  function normalizeOrgTeamGuid(value) {
+    return (value || "").trim().toLowerCase();
+  }
+
+  /**
+   * Resolve org team scope for a ROP leader from org-structure rows.
+   * Single team → that team; multiple teams → only when preferred matches; invalid preferred → "".
+   */
+  function listOwnTeamBranches(ropEmployeeGuid, rops) {
+    var leader = normalizeOrgTeamGuid(ropEmployeeGuid);
+    if (!leader) {
+      return [];
+    }
+    return (rops || []).filter(function (rop) {
+      return (
+        normalizeOrgTeamGuid(rop.employeeGuid) === leader &&
+        rop.teamGuid &&
+        (rop.catalogEntryKind || "team_branch") === "team_branch"
+      );
+    });
+  }
+
+  function ropOwnTeamChoiceRequired(ropEmployeeGuid, preferredOrgTeamGuid, rops) {
+    if (resolveRopOrgTeamGuid(ropEmployeeGuid, preferredOrgTeamGuid, rops)) {
+      return false;
+    }
+    return listOwnTeamBranches(ropEmployeeGuid, rops).length > 1;
+  }
+
+  function findRopOrgSummary(ropEmployeeGuid, preferredOrgTeamGuid, rops) {
+    var leader = normalizeOrgTeamGuid(ropEmployeeGuid);
+    if (!leader) {
+      return null;
+    }
+    var teamGuidFilter = resolveRopOrgTeamGuid(ropEmployeeGuid, preferredOrgTeamGuid, rops);
+    if (!teamGuidFilter && ropOwnTeamChoiceRequired(ropEmployeeGuid, preferredOrgTeamGuid, rops)) {
+      return null;
+    }
+    var branches = listOwnTeamBranches(ropEmployeeGuid, rops);
+    var candidates = (rops || []).filter(function (item) {
+      if (normalizeOrgTeamGuid(item.employeeGuid) !== leader) {
+        return false;
+      }
+      if (item.catalogEntryKind === "employee_portfolio") {
+        return false;
+      }
+      if (teamGuidFilter) {
+        return item.teamGuid && normalizeOrgTeamGuid(item.teamGuid) === teamGuidFilter;
+      }
+      if (branches.length === 1) {
+        return item.teamGuid && normalizeOrgTeamGuid(item.teamGuid) === normalizeOrgTeamGuid(branches[0].teamGuid);
+      }
+      return Boolean(item.teamGuid);
+    });
+    return candidates[0] || null;
+  }
+
+  function isOrgCatalogEmployeePortfolio(state) {
+    return Boolean(
+      state &&
+        state.view === "teams" &&
+        state.orgCatalogEntry === "employee_portfolio" &&
+        state.responsibleGuid,
+    );
+  }
+
+  function resolveRopOrgTeamGuid(ropEmployeeGuid, preferredOrgTeamGuid, rops) {
+    var leader = normalizeOrgTeamGuid(ropEmployeeGuid);
+    if (!leader) {
+      return "";
+    }
+    var teams = (rops || []).filter(function (rop) {
+      return normalizeOrgTeamGuid(rop.employeeGuid) === leader && rop.teamGuid;
+    });
+    if (!teams.length) {
+      return "";
+    }
+    var preferred = normalizeOrgTeamGuid(preferredOrgTeamGuid);
+    if (preferred) {
+      var matched = teams.find(function (rop) {
+        return normalizeOrgTeamGuid(rop.teamGuid) === preferred;
+      });
+      return matched && matched.teamGuid ? matched.teamGuid : "";
+    }
+    if (teams.length === 1) {
+      return teams[0].teamGuid || "";
     }
     return "";
   }
@@ -915,6 +1007,9 @@
   }
 
   function hasResponsibleSelection(state) {
+    if (isOrgCatalogEmployeePortfolio(state)) {
+      return true;
+    }
     if (!state || !state.ropEmployee) {
       return false;
     }
@@ -948,6 +1043,7 @@
       responsibleKind: "",
       teamKind: "",
       portfolio: "",
+      orgCatalogEntry: "",
     };
   }
 
@@ -1154,6 +1250,7 @@
     if (state.warehouse && state.warehouse !== "all") params.set("warehouse", state.warehouse);
     if (state.portfolio) params.set("portfolio", state.portfolio);
     if (state.orgTeamGuid) params.set("orgTeamGuid", state.orgTeamGuid);
+    if (state.orgCatalogEntry) params.set("orgCatalogEntry", state.orgCatalogEntry);
     if (state.responsibleKind) params.set("responsibleKind", state.responsibleKind);
     if (state.teamSource === "onec") params.set("teamSource", "onec");
     if (state.onecTeam) params.set("onecTeam", state.onecTeam);
@@ -2298,6 +2395,11 @@
     isBareClientsMenuSearch: isBareClientsMenuSearch,
     mergeRoleEntryHref: mergeRoleEntryHref,
     normalizeTeamKind: normalizeTeamKind,
+    resolveRopOrgTeamGuid: resolveRopOrgTeamGuid,
+    listOwnTeamBranches: listOwnTeamBranches,
+    ropOwnTeamChoiceRequired: ropOwnTeamChoiceRequired,
+    findRopOrgSummary: findRopOrgSummary,
+    isOrgCatalogEmployeePortfolio: isOrgCatalogEmployeePortfolio,
     v3ResponsibleFromLegacyState: v3ResponsibleFromLegacyState,
     legacyStringField: legacyStringField,
     mapLegacyEntityToV3Entity: mapLegacyEntityToV3Entity,

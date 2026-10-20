@@ -58,6 +58,13 @@ export type OrgRopSummary = {
   /** Present when org overview is built from wholesale team groups (all_employees team[]). */
   teamGuid?: string;
   teamName?: string | null;
+  /**
+   * Director catalog row semantics. `team_branch` = open ROP team staff;
+   * `employee_portfolio` = apex direct without own team group (own assignments only).
+   */
+  catalogEntryKind?: "team_branch" | "employee_portfolio";
+  /** Preferred assignment direction for employee_portfolio catalog rows. */
+  primaryResponsibleKind?: "manager" | "regional" | "hardware";
 };
 
 export type OrgResponsibleSummary = {

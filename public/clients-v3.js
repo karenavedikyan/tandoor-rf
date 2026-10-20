@@ -38,6 +38,30 @@
     return ENTITIES[1];
   }
 
+  function resolveClientsLogic(ctx) {
+    if (ctx && ctx.logic) {
+      return ctx.logic;
+    }
+    if (ctx && ctx.lktandoorContext && ctx.lktandoorContext.logic) {
+      return ctx.lktandoorContext.logic;
+    }
+    if (typeof window !== "undefined" && window.ClientsLogic) {
+      return window.ClientsLogic;
+    }
+    return null;
+  }
+
+  function legacyStateFromV3ListState(state) {
+    return {
+      view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
+      ropEmployee: state.ropEmployee || "",
+      responsibleGuid: state.responsibleGuid || "",
+      responsibleKind: state.responsibleKind || "",
+      orgCatalogEntry: state.orgCatalogEntry || "",
+      orgTeamGuid: state.orgTeamGuid || "",
+    };
+  }
+
   function normalizeResponsibleKind(value) {
     if (value === "manager" || value === "regional" || value === "hardware") {
       return value;
@@ -86,6 +110,7 @@
       missingManager: params.get("missingManager") === "1",
       ropEmployee: params.get("ropEmployee") || "",
       orgTeamGuid: params.get("orgTeamGuid") || "",
+      orgCatalogEntry: params.get("orgCatalogEntry") || "",
       responsibleGuid: responsibleGuid,
       responsibleKind: responsibleGuid ? responsibleKind : "",
       pageSize: Math.min(100, Math.max(1, Number(params.get("v3pageSize") || "50") || 50)),
@@ -284,6 +309,7 @@
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       orgTeamGuid: url.orgTeamGuid,
+      orgCatalogEntry: url.orgCatalogEntry,
       responsibleGuid: url.responsibleGuid,
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,
@@ -479,6 +505,12 @@
           : fromUrl
             ? urlFilters.orgTeamGuid || ""
             : "",
+      orgCatalogEntry:
+        legacy && Object.prototype.hasOwnProperty.call(legacy, "orgCatalogEntry")
+          ? legacy.orgCatalogEntry || ""
+          : fromUrl
+            ? urlFilters.orgCatalogEntry || ""
+            : "",
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
       pageSize: urlFilters.pageSize || 50,
@@ -547,6 +579,8 @@
     else params.delete("ropEmployee");
     if (state.orgTeamGuid) params.set("orgTeamGuid", state.orgTeamGuid);
     else params.delete("orgTeamGuid");
+    if (state.orgCatalogEntry) params.set("orgCatalogEntry", state.orgCatalogEntry);
+    else params.delete("orgCatalogEntry");
     if (state.responsibleGuid) {
       params.set("responsibleGuid", state.responsibleGuid);
       params.set("responsibleKind", state.responsibleKind || "manager");
@@ -602,6 +636,7 @@
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
     if (s.orgTeamGuid) params.set("orgTeamGuid", s.orgTeamGuid);
+    if (s.orgCatalogEntry) params.set("orgCatalogEntry", s.orgCatalogEntry);
     if (s.responsibleGuid) {
       params.set("responsibleGuid", s.responsibleGuid);
       params.set("responsibleKind", s.responsibleKind || "manager");
@@ -948,11 +983,12 @@
       }
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
-      var legacyState = {
-        view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
-        ropEmployee: state.ropEmployee,
-        responsibleGuid: state.responsibleGuid,
-      };
+      var legacyState = legacyStateFromV3ListState(state);
+      var listLogic = resolveClientsLogic(ctx);
+      var catalogPortfolio =
+        listLogic &&
+        listLogic.isOrgCatalogEmployeePortfolio &&
+        listLogic.isOrgCatalogEmployeePortfolio(legacyState);
       var lktandoorActive =
         window.ClientsLktandoorList &&
         window.ClientsLktandoorList.shouldActivate(legacyState, true);
@@ -1040,7 +1076,9 @@
       }
       var teamAssignment =
         isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
-      if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
+      if (catalogPortfolio && state.responsibleGuid) {
+        params.set("employeePortfolioGuid", state.responsibleGuid);
+      } else if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
       }
@@ -1055,7 +1093,7 @@
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
-        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid"].map(function (key) {
+        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid", "employeePortfolioGuid"].map(function (key) {
           return params.has(key) ? "&" + key + "=" + encodeURIComponent(params.get(key)) : "";
         }).join(""),
       ).then(function (optionsResult) {
@@ -1467,6 +1505,15 @@
             );
           });
         });
+      }
+
+      var catalogPortfolioList =
+        legacyState.view === "teams" &&
+        hooks.logic.isOrgCatalogEmployeePortfolio &&
+        hooks.logic.isOrgCatalogEmployeePortfolio(legacyState);
+      if (catalogPortfolioList) {
+        hooks.updateViewChrome(legacyState);
+        return window.ClientsV3.loadList(ctx, v3state, replaceHistory);
       }
 
       var teamsResponsibleList =

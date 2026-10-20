@@ -255,7 +255,17 @@ describe("authoritative flat org rebuild", { concurrency: false }, () => {
     const overview = await getV3OrgStructureOverview(ctx);
     assert.ok(overview.director);
     assert.equal(overview.director?.employeeGuid.toLowerCase(), FLAT_ORG.APEX.toLowerCase());
+    assert.equal(overview.rops.length, FLAT_ORG_APEX_TEAM_LEADER_GUIDS.length);
     assert.ok(overview.rops.some((rop) => rop.employeeGuid.toLowerCase() === FLAT_ORG.GUSLEVA.toLowerCase()));
+    const morozova = overview.rops.find(
+      (rop) => rop.employeeGuid.toLowerCase() === FLAT_ORG.MOROZOVA.toLowerCase(),
+    );
+    assert.ok(morozova, "apex direct without own team group must appear in overview");
+    assert.equal(morozova?.teamGuid, undefined);
+    assert.equal(morozova?.teamMemberCount, 0);
+    assert.equal(morozova?.catalogEntryKind, "employee_portfolio");
+    assert.ok(morozova?.rosterPost);
+    assert.ok(morozova?.primaryResponsibleKind);
 
     const guslevaTeam = await listV3RopResponsibles(ctx, FLAT_ORG.GUSLEVA, { teamGuid: FLAT_ORG.TEAM_GUSLEVA });
     assert.equal(guslevaTeam.length, FLAT_ORG_GUSLEVA_MEMBER_GUIDS.length);

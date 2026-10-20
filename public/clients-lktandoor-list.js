@@ -4,6 +4,9 @@
   var scopeCountsCacheKey = "";
 
   function territoryParamsFromState(state) {
+    if (state.orgCatalogEntry === "employee_portfolio" && state.responsibleGuid && !state.ropEmployee) {
+      return new URLSearchParams({ employeePortfolioGuid: state.responsibleGuid });
+    }
     var teamAssignment =
       Boolean(state.responsibleGuid && state.responsibleKind && (state.v3view === "teams" || state.ropEmployee)) ||
       Boolean(state.responsibleGuid && state.ropEmployee);
@@ -32,6 +35,14 @@
       return "";
     }
     var tc = ctx.teamContext;
+    if (state.orgCatalogEntry === "employee_portfolio") {
+      var catalogEntry = (tc.rops || []).find(function (item) {
+        return item.catalogEntryKind === "employee" && guidEquals(item.employeeGuid, state.responsibleGuid);
+      });
+      if (catalogEntry && catalogEntry.name) {
+        return catalogEntry.name;
+      }
+    }
     var match = (tc.managers || []).find(function (item) {
       return guidEquals(item.employeeGuid, state.responsibleGuid);
     });
