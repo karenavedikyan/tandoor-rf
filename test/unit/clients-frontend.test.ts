@@ -30,8 +30,19 @@ const logic = require("../../public/clients-logic.js") as {
   resolveRopOrgTeamGuid: (
     ropEmployeeGuid: string,
     preferredOrgTeamGuid: string,
-    rops: Array<{ employeeGuid: string; teamGuid?: string }>,
+    rops: Array<{ employeeGuid: string; teamGuid?: string; catalogEntryKind?: string }>,
   ) => string;
+  findRopOrgSummary: (
+    ropEmployeeGuid: string,
+    preferredOrgTeamGuid: string,
+    rops: Array<{ employeeGuid: string; teamGuid?: string; catalogEntryKind?: string }>,
+  ) => { employeeGuid: string; teamGuid?: string } | null;
+  ropOwnTeamChoiceRequired: (
+    ropEmployeeGuid: string,
+    preferredOrgTeamGuid: string,
+    rops: Array<{ employeeGuid: string; teamGuid?: string; catalogEntryKind?: string }>,
+  ) => boolean;
+  isOrgCatalogEmployeePortfolio: (state: Record<string, string>) => boolean;
   buildListQueryString: (state: {
     q: string;
     manager: string;
@@ -128,6 +139,33 @@ describe("clients frontend logic", () => {
     assert.equal(logic.resolveRopOrgTeamGuid(rop, teamB, rows), teamB);
     assert.equal(logic.resolveRopOrgTeamGuid(rop, "00000000-0000-4000-8000-000000000099", rows), "");
     assert.equal(logic.resolveRopOrgTeamGuid(rop, "", [{ employeeGuid: rop, teamGuid: teamA }]), teamA);
+  });
+
+  it("requires explicit team choice when ROP leads multiple groups", () => {
+    const rop = "11111111-1111-4111-8111-111111111111";
+    const teamA = "22222222-2222-4222-8222-222222222222";
+    const teamB = "33333333-3333-4333-8333-333333333333";
+    const rows = [
+      { employeeGuid: rop, teamGuid: teamA, catalogEntryKind: "team_branch" },
+      { employeeGuid: rop, teamGuid: teamB, catalogEntryKind: "team_branch" },
+    ];
+    assert.equal(logic.resolveRopOrgTeamGuid(rop, "", rows), "");
+    assert.equal(logic.ropOwnTeamChoiceRequired(rop, "", rows), true);
+    assert.equal(logic.findRopOrgSummary(rop, "", rows), null);
+    assert.equal(logic.findRopOrgSummary(rop, teamB, rows)?.teamGuid, teamB);
+    assert.equal(logic.resolveRopOrgTeamGuid(rop, "00000000-0000-4000-8000-000000000099", rows), "");
+  });
+
+  it("detects director catalog employee portfolio navigation state", () => {
+    assert.equal(
+      logic.isOrgCatalogEmployeePortfolio({
+        view: "teams",
+        orgCatalogEntry: "employee_portfolio",
+        responsibleGuid: "44444444-4444-4444-8444-444444444444",
+      }),
+      true,
+    );
+    assert.equal(logic.isOrgCatalogEmployeePortfolio({ view: "teams", responsibleGuid: "x" }), false);
   });
 
   it("reads and writes list state from URL search", () => {

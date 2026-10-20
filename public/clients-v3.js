@@ -86,6 +86,7 @@
       missingManager: params.get("missingManager") === "1",
       ropEmployee: params.get("ropEmployee") || "",
       orgTeamGuid: params.get("orgTeamGuid") || "",
+      orgCatalogEntry: params.get("orgCatalogEntry") || "",
       responsibleGuid: responsibleGuid,
       responsibleKind: responsibleGuid ? responsibleKind : "",
       pageSize: Math.min(100, Math.max(1, Number(params.get("v3pageSize") || "50") || 50)),
@@ -284,6 +285,7 @@
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       orgTeamGuid: url.orgTeamGuid,
+      orgCatalogEntry: url.orgCatalogEntry,
       responsibleGuid: url.responsibleGuid,
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,
@@ -479,6 +481,12 @@
           : fromUrl
             ? urlFilters.orgTeamGuid || ""
             : "",
+      orgCatalogEntry:
+        legacy && Object.prototype.hasOwnProperty.call(legacy, "orgCatalogEntry")
+          ? legacy.orgCatalogEntry || ""
+          : fromUrl
+            ? urlFilters.orgCatalogEntry || ""
+            : "",
       responsibleGuid: assignment.responsibleGuid,
       responsibleKind: assignment.responsibleKind,
       pageSize: urlFilters.pageSize || 50,
@@ -547,6 +555,8 @@
     else params.delete("ropEmployee");
     if (state.orgTeamGuid) params.set("orgTeamGuid", state.orgTeamGuid);
     else params.delete("orgTeamGuid");
+    if (state.orgCatalogEntry) params.set("orgCatalogEntry", state.orgCatalogEntry);
+    else params.delete("orgCatalogEntry");
     if (state.responsibleGuid) {
       params.set("responsibleGuid", state.responsibleGuid);
       params.set("responsibleKind", state.responsibleKind || "manager");
@@ -1039,7 +1049,12 @@
         params.set("teamGuid", state.orgTeamGuid);
       }
       var teamAssignment =
-        isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
+        isV3TeamAssignment(state) ||
+        Boolean(state.responsibleGuid && state.ropEmployee) ||
+        (hooks.logic.isOrgCatalogEmployeePortfolio &&
+          hooks.logic.isOrgCatalogEmployeePortfolio(
+            Object.assign({}, hooks.currentStateFromForm(), legacyState),
+          ));
       if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
@@ -1467,6 +1482,15 @@
             );
           });
         });
+      }
+
+      var catalogPortfolioList =
+        legacyState.view === "teams" &&
+        hooks.logic.isOrgCatalogEmployeePortfolio &&
+        hooks.logic.isOrgCatalogEmployeePortfolio(legacyState);
+      if (catalogPortfolioList) {
+        hooks.updateViewChrome(legacyState);
+        return window.ClientsV3.loadList(ctx, v3state, replaceHistory);
       }
 
       var teamsResponsibleList =

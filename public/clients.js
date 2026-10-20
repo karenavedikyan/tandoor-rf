@@ -394,6 +394,8 @@
         navigateDirectorBranchPortfolio: navigateDirectorBranchPortfolio,
         navigateDirectorOpenTeam: navigateDirectorOpenTeam,
         navigateDirectorResponsible: navigateDirectorResponsible,
+        navigateDirectorCatalogEmployeePortfolio: navigateDirectorCatalogEmployeePortfolio,
+        resolveRopOwnBranchGuid: resolveRopOwnBranchGuid,
         isAdminSession: function () {
           return rolePresentation && rolePresentation.businessRole === "admin";
         },
@@ -1524,10 +1526,8 @@
       }
       var rops = result.data.rops || [];
       var match = state.ropEmployee
-        ? rops.find(function (item) {
-            return item.employeeGuid === state.ropEmployee;
-          })
-        : rops[0];
+        ? logic.findRopOrgSummary(state.ropEmployee, state.orgTeamGuid || "", rops)
+        : null;
       teamContext.ropSummary = match || null;
       renderRopStatsFromSummary(teamContext.ropSummary);
     });
@@ -3118,7 +3118,11 @@
         var directorRootLabel = "Все команды";
         var directorRootHref =
           state.teamSource === "onec" ? "/clients?view=teams&teamSource=onec" : "/clients?view=teams";
-        if (logic.hasResponsibleSelection(state)) {
+        if (logic.isOrgCatalogEmployeePortfolio(state)) {
+          parts.push({ label: directorRootLabel, href: directorRootHref });
+          parts.push({ label: teamContext.managerName || "Сотрудник", href: null });
+          showBackToTeam = true;
+        } else if (logic.hasResponsibleSelection(state)) {
           parts.push({ label: directorRootLabel, href: directorRootHref });
           if (state.ropEmployee) {
             parts.push({
@@ -3217,22 +3221,20 @@
     var backButton = document.getElementById("clients-breadcrumbs-back");
     if (backButton) {
       backButton.onclick = function () {
-        navigateState({
-          view: "teams",
-          teamSource: state.teamSource || "rop",
-          onecTeam: state.onecTeam || "",
-          teamExpand: state.teamExpand || [],
-          onecPortfolioEmployee: "",
-          ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
-          rop: "",
-          manager: "",
-          regionalManager: "",
-          hardwareManager: "",
-          portfolio: "",
-          responsibleKind: "",
-          entity: "clients",
-          page: 1,
-        });
+        var cleared = logic.clearedTeamTerritoryFields ? logic.clearedTeamTerritoryFields() : {};
+        navigateState(
+          Object.assign({}, cleared, {
+            view: "teams",
+            teamSource: state.teamSource || "rop",
+            onecTeam: state.onecTeam || "",
+            teamExpand: state.teamExpand || [],
+            onecPortfolioEmployee: "",
+            ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
+            rop: "",
+            entity: "clients",
+            page: 1,
+          }),
+        );
       };
     }
     breadcrumbsEl.classList.toggle("clients-hidden", parts.length === 0);
@@ -3310,6 +3312,34 @@
       entity: portfolio === "outlets" ? "outlets" : "clients",
       page: 1,
     });
+  }
+
+  function navigateDirectorCatalogEmployeePortfolio(employee, kind, entityMode) {
+    var guid = employee.employeeGuid;
+    var assignmentKind = kind || employee.primaryResponsibleKind || "manager";
+    navigateState({
+      view: "teams",
+      ropEmployee: "",
+      orgTeamGuid: "",
+      orgCatalogEntry: "employee_portfolio",
+      rop: "",
+      portfolio: "",
+      manager: assignmentKind === "manager" ? guid : "",
+      clientManager: assignmentKind === "manager" ? guid : "",
+      outletManager: assignmentKind === "manager" ? guid : "",
+      regionalManager: assignmentKind === "regional" ? guid : "",
+      clientRegionalManager: assignmentKind === "regional" ? guid : "",
+      outletRegionalManager: assignmentKind === "regional" ? guid : "",
+      hardwareManager: assignmentKind === "hardware" ? guid : "",
+      clientHardwareManager: assignmentKind === "hardware" ? guid : "",
+      outletHardwareManager: assignmentKind === "hardware" ? guid : "",
+      responsibleKind: assignmentKind,
+      responsibleGuid: guid,
+      v3manager: assignmentKind === "manager" ? guid : "",
+      entity: entityMode || "clients",
+      page: 1,
+    });
+    teamContext.managerName = employee.name || "";
   }
 
   function navigateDirectorResponsible(ropEmployeeGuid, manager, kind, entityMode) {
@@ -4083,17 +4113,7 @@
       teamGuidFilter = logic.resolveRopOrgTeamGuid(summaryGuid, "", data.rops || []);
     }
     var match = summaryGuid
-      ? (data.rops || []).find(function (item) {
-          if (item.employeeGuid !== summaryGuid) {
-            return false;
-          }
-          if (teamGuidFilter) {
-            if (!item.teamGuid || item.teamGuid.toLowerCase() !== teamGuidFilter.toLowerCase()) {
-              return false;
-            }
-          }
-          return true;
-        })
+      ? logic.findRopOrgSummary(summaryGuid, teamGuidFilter, data.rops || [])
       : null;
     if (match) {
       teamContext.ropSummary = match;
@@ -4155,33 +4175,48 @@
             if (liveRop && liveRop !== v3TeamsRop) {
               return result.response.status === 200;
             }
-            if (result.response.status === 200 && result.data) {
-              syncTeamContextFromOrgStructure(result.data, v3TeamsRop, v3OrgTeamGuid);
-            } else {
+            if (result.response.status !== 200 || !result.data) {
               teamContext.loadError = true;
+              return false;
             }
-            return result.response.status === 200;
+            syncTeamContextFromOrgStructure(result.data, v3TeamsRop, v3OrgTeamGuid);
+            if (logic.isOrgCatalogEmployeePortfolio(state)) {
+              teamContext.managers = [];
+              return true;
+            }
+            var resolvedTeamGuid =
+              logic.resolveRopOrgTeamGuid(v3TeamsRop, v3OrgTeamGuid, teamContext.rops || []) || v3OrgTeamGuid;
+            if (
+              !logic.hasResponsibleSelection(state) &&
+              logic.ropOwnTeamChoiceRequired(v3TeamsRop, v3OrgTeamGuid, teamContext.rops || [])
+            ) {
+              teamContext.managers = [];
+              return true;
+            }
+            if (!resolvedTeamGuid && !logic.hasResponsibleSelection(state)) {
+              teamContext.managers = [];
+              return true;
+            }
+            return api
+              .apiRequest(
+                "/api/clients/v3/org-structure/" +
+                  encodeURIComponent(state.ropEmployee) +
+                  "/responsibles" +
+                  (resolvedTeamGuid ? "?teamGuid=" + encodeURIComponent(resolvedTeamGuid) : ""),
+              )
+              .then(function (responsiblesResult) {
+                if (navigationRopEmployeeGuid() && navigationRopEmployeeGuid() !== v3TeamsRop) {
+                  return responsiblesResult.response.status === 200;
+                }
+                if (responsiblesResult.response.status === 200 && responsiblesResult.data) {
+                  teamContext.managers = responsiblesResult.data.items || [];
+                  applyTerritoryDisplayFromManagers(state);
+                } else {
+                  teamContext.loadError = true;
+                }
+                return responsiblesResult.response.status === 200;
+              });
           }),
-          api
-            .apiRequest(
-              "/api/clients/v3/org-structure/" +
-                encodeURIComponent(state.ropEmployee) +
-                "/responsibles" +
-                (v3OrgTeamGuid ? "?teamGuid=" + encodeURIComponent(v3OrgTeamGuid) : ""),
-            )
-            .then(function (result) {
-              var liveRop = navigationRopEmployeeGuid();
-              if (liveRop && liveRop !== v3TeamsRop) {
-                return result.response.status === 200;
-              }
-              if (result.response.status === 200 && result.data) {
-                teamContext.managers = result.data.items || [];
-                applyTerritoryDisplayFromManagers(state);
-              } else {
-                teamContext.loadError = true;
-              }
-              return result.response.status === 200;
-            }),
         );
       }
       return Promise.all(v3Requests).then(function (results) {

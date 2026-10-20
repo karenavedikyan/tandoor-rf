@@ -224,7 +224,41 @@
       );
     }
 
+    function isEmployeePortfolioCatalogEntry(summary) {
+      return summary && summary.catalogEntryKind === "employee_portfolio";
+    }
+
+    function renderX13EmployeePortfolioCatalog(summary) {
+      var kind = summary.primaryResponsibleKind || "manager";
+      var metrics =
+        String(summary.uniqueClientCount ?? "—") +
+        " клиентов · " +
+        String(summary.uniqueOutletCount ?? "—") +
+        " ТТ";
+      var postLabel = summary.rosterPost || "Сотрудник";
+      return (
+        '<button type="button" class="x13-person" data-open-catalog-portfolio="clients" data-responsible-kind="' +
+        deps.shell.escapeHtml(kind) +
+        '" data-employee-guid="' +
+        deps.shell.escapeHtml(summary.employeeGuid) +
+        '" data-employee-name="' +
+        deps.shell.escapeHtml(summary.name || summary.shortId || "") +
+        '"><span class="avatar">' +
+        deps.shell.escapeHtml(initialsFromName(summary.name || summary.shortId)) +
+        '</span><span class="x13-person-info"><strong>' +
+        deps.shell.escapeHtml(summary.name || summary.shortId || summary.employeeGuid) +
+        '</strong><small>' +
+        deps.shell.escapeHtml(postLabel) +
+        "</small><span>" +
+        deps.shell.escapeHtml(metrics) +
+        '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
+      );
+    }
+
     function renderX13RopPerson(summary) {
+      if (isEmployeePortfolioCatalogEntry(summary)) {
+        return renderX13EmployeePortfolioCatalog(summary);
+      }
       var metrics =
         String(summary.teamMemberCount ?? "—") +
         " сотрудников · " +
@@ -251,6 +285,46 @@
         "</small><span>" +
         deps.shell.escapeHtml(metrics) +
         '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
+      );
+    }
+
+    function renderRopOwnTeamChoiceX13(state, ownGuid, rops) {
+      var branches = deps.logic.listOwnTeamBranches(ownGuid, rops || []);
+      var rows = branches
+        .map(function (branch) {
+          var metrics =
+            String(branch.teamMemberCount ?? "—") +
+            " сотрудников · " +
+            String(branch.uniqueClientCount ?? "—") +
+            " клиентов · " +
+            String(branch.uniqueOutletCount ?? "—") +
+            " ТТ";
+          var teamName = branch.teamName || branch.name || branch.shortId || "Команда";
+          return (
+            '<button type="button" class="x13-person" data-pick-own-team="' +
+            deps.shell.escapeHtml(branch.teamGuid || "") +
+            '" data-rop-employee="' +
+            deps.shell.escapeHtml(ownGuid) +
+            '"><span class="avatar avatar--rop">' +
+            deps.shell.escapeHtml(initialsFromName(teamName)) +
+            '</span><span class="x13-person-info"><strong>' +
+            deps.shell.escapeHtml(teamName) +
+            '</strong><small>Моя команда</small><span>' +
+            deps.shell.escapeHtml(metrics) +
+            '</span></span><span class="x13-arrow" aria-hidden="true">→</span></button>'
+          );
+        })
+        .join("");
+      var bodyHtml =
+        rows || '<div class="x6-empty">Нет доступных команд для выбора.</div>';
+      return renderX13DirectoryCard(
+        "Выберите команду",
+        "У вашего аккаунта несколько групп в структуре 1С. Выберите команду для просмотра состава и клиентов.",
+        "Найти команду…",
+        "Поиск команды",
+        state.teamQ || "",
+        bodyHtml,
+        "",
       );
     }
 
@@ -298,6 +372,21 @@
     }
 
     function renderStaffX13(state, context) {
+      if (
+        deps.isRopSession &&
+        deps.isRopSession() &&
+        deps.resolveRopOwnBranchGuid &&
+        deps.logic.ropOwnTeamChoiceRequired
+      ) {
+        var ownGuid = deps.resolveRopOwnBranchGuid();
+        if (
+          ownGuid &&
+          state.ropEmployee === ownGuid &&
+          deps.logic.ropOwnTeamChoiceRequired(ownGuid, state.orgTeamGuid || "", context.rops || [])
+        ) {
+          return renderRopOwnTeamChoiceX13(state, ownGuid, context.rops || []);
+        }
+      }
       var summary = context.ropSummary;
       if (!summary) {
         return '<p class="clients-compact-team__empty">Команда недоступна.</p>';
@@ -833,6 +922,42 @@
         );
       }
 
+      container.querySelectorAll("[data-open-catalog-portfolio]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var guid = btn.getAttribute("data-employee-guid");
+          if (!guid) {
+            return;
+          }
+          var kind = btn.getAttribute("data-responsible-kind") || "manager";
+          var name = btn.getAttribute("data-employee-name") || "";
+          if (deps.navigateDirectorCatalogEmployeePortfolio) {
+            deps.navigateDirectorCatalogEmployeePortfolio(
+              { employeeGuid: guid, name: name },
+              kind,
+              btn.getAttribute("data-open-catalog-portfolio") || "clients",
+            );
+          }
+        });
+      });
+      container.querySelectorAll("[data-pick-own-team]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var teamGuid = btn.getAttribute("data-pick-own-team") || "";
+          var ropGuid = btn.getAttribute("data-rop-employee") || "";
+          if (!teamGuid || !ropGuid) {
+            return;
+          }
+          callbacks.navigate({
+            view: "teams",
+            ropEmployee: ropGuid,
+            orgTeamGuid: teamGuid,
+            teamExpand: [ropGuid],
+            portfolio: "",
+            responsibleGuid: "",
+            responsibleKind: "",
+            page: 1,
+          });
+        });
+      });
       container.querySelectorAll("[data-open-rop-team]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var ropGuid = btn.getAttribute("data-open-rop-team");

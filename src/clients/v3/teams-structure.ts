@@ -17,8 +17,30 @@ import {
   buildV3TeamResponsibleSummaries,
   countDistinctV3TeamPortfolio,
   loadV3TeamMemberGuids,
+  queryV3AssignmentSummariesForMembers,
   resolveV3TeamGroupLeaderBinding,
 } from "./team-assignment-counts";
+
+async function primaryResponsibleKindForEmployee(
+  context: AccessContext,
+  employeeGuid: string,
+): Promise<"manager" | "regional" | "hardware"> {
+  const rows = await queryV3AssignmentSummariesForMembers(context, [employeeGuid]);
+  const guid = employeeGuid.toLowerCase();
+  let bestKind: "manager" | "regional" | "hardware" = "manager";
+  let bestScore = -1;
+  for (const row of rows) {
+    if (row.employee_guid.toLowerCase() !== guid) {
+      continue;
+    }
+    const score = Number(row.client_count) + Number(row.outlet_count);
+    if (score > bestScore) {
+      bestScore = score;
+      bestKind = row.kind;
+    }
+  }
+  return bestKind;
+}
 
 function assertAccess(context: AccessContext): void {
   if (context.status !== "active") {
@@ -162,6 +184,7 @@ async function buildV3OrgOverviewFromTeamGroups(
       sources: ["roster"],
       teamGuid: group.guid_team,
       teamName: group.name_team,
+      catalogEntryKind: "team_branch",
     });
   }
 
@@ -186,8 +209,9 @@ async function buildV3OrgOverviewFromTeamGroups(
       if (covered.has(memberGuid.toLowerCase())) {
         continue;
       }
-      const counts = await countBranch(context, memberGuid);
+      const counts = await countDistinctV3TeamPortfolio(context, [memberGuid]);
       const hasPortfolio = counts.legal + counts.retail > 0;
+      const primaryResponsibleKind = await primaryResponsibleKindForEmployee(context, memberGuid);
       rops.push({
         employeeGuid: memberGuid,
         name: member.name_manager || shortUuidLabel(memberGuid),
@@ -195,7 +219,7 @@ async function buildV3OrgOverviewFromTeamGroups(
         rosterPost: member.post,
         hasLinkedAccount: linked.has(memberGuid.toLowerCase()),
         hasAssignedPortfolio: hasPortfolio,
-        portfolioNote: hasPortfolio ? null : "Нет объектов v3 в ветке команды",
+        portfolioNote: hasPortfolio ? null : "Нет объектов v3 по назначениям сотрудника",
         managerCount: 0,
         regionalCount: 0,
         teamMemberCount: 0,
@@ -203,6 +227,8 @@ async function buildV3OrgOverviewFromTeamGroups(
         uniqueOutletCount: counts.retail,
         parentClientCount: 0,
         sources: ["roster"],
+        catalogEntryKind: "employee_portfolio",
+        primaryResponsibleKind,
       });
       covered.add(memberGuid.toLowerCase());
     }
