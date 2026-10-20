@@ -14,6 +14,8 @@ export type SyntheticEmployeeRosterEntry = {
   post?: string;
   guid_team?: string | null;
   name_team?: string | null;
+  guid_team_leader?: string | null;
+  name_team_leader?: string | null;
   team?: SyntheticTeamEntry[];
   condition?: string;
   date_of_assumption?: string;

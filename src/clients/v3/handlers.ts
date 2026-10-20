@@ -20,6 +20,7 @@ import { parseMultiFilterTokenParam } from "./query-params";
 import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
+import { getLegalSalesForMonth, listLegalSalesMonths } from "./legal-sales";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -368,4 +369,49 @@ export async function v3HoldingCompositionHandler(req: AccessRequest, res: Respo
   }
   setNoStore(res);
   res.json(composition);
+}
+
+export async function v3LegalSalesMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const legalGuid = parseGuidParam(req.params.guid);
+  if (!legalGuid) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный GUID юрлица."));
+    return;
+  }
+  const months = await listLegalSalesMonths(req.accessContext!, legalGuid);
+  if (months === null) {
+    notFoundForAccess(res);
+    return;
+  }
+  setNoStore(res);
+  res.json({ legalGuid, months });
+}
+
+export async function v3LegalSalesMonthHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const legalGuid = parseGuidParam(req.params.guid);
+  if (!legalGuid) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный GUID юрлица."));
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  if (!month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
+    return;
+  }
+  const sales = await getLegalSalesForMonth(req.accessContext!, legalGuid, month);
+  if (sales === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (sales === null) {
+    notFoundForAccess(res);
+    return;
+  }
+  setNoStore(res);
+  res.json({ legalGuid, sales });
 }

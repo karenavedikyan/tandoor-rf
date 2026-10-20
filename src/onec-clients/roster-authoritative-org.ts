@@ -9,11 +9,19 @@ import {
 } from "./roster-team-memberships";
 import { loadExistingRoster, type ExistingRosterRow } from "./roster-upsert";
 import { resolveRosterFieldValues } from "./roster-field-values";
+import {
+  classifyAuthoritativeTeamDeclaration,
+  validateAuthoritativeFlatTeamRecord,
+} from "./roster-flat-org";
 
 export type AuthoritativeOrgValidationCode =
   | "EMPTY_SNAPSHOT"
   | "MISSING_TEAM_KEY"
   | "INVALID_TEAM_KEY"
+  | "FLAT_MEMBERSHIP_UNDECLARED"
+  | "FLAT_TEAM_FIELD_INVALID_TYPE"
+  | "FLAT_TEAM_FIELD_INVALID_UUID"
+  | "FLAT_TEAM_FIELDS_INCONSISTENT"
   | "MISSING_TEAM_LEADER_EMPLOYEE"
   | "TEAM_NAME_CONFLICT"
   | "TEAM_LEADER_CONFLICT";
@@ -35,7 +43,10 @@ export type AuthoritativeOrgValidationResult =
   | AuthoritativeOrgValidationSuccess
   | AuthoritativeOrgValidationFailure;
 
-/** Confirmed full org snapshot: every employee row must include explicit `team` (array, may be empty). */
+/**
+ * Confirmed full org snapshot: every employee declares membership via explicit `team[]`
+ * (array, may be empty) or flat guid_team/name_team/guid_team_leader/name_team_leader keys.
+ */
 export function validateAuthoritativeOrgRoster(roster: WholesaleEmployeeRoster): AuthoritativeOrgValidationResult {
   if (roster.isEmpty || roster.records.length === 0) {
     return { ok: false, code: "EMPTY_SNAPSHOT", message: "Authoritative org snapshot is empty." };
@@ -53,19 +64,38 @@ export function validateAuthoritativeOrgRoster(roster: WholesaleEmployeeRoster):
   }
 
   for (const record of roster.records) {
-    if (record.teams === undefined) {
+    const declaration = classifyAuthoritativeTeamDeclaration(record);
+    if (declaration === "flat_undeclared") {
+      return {
+        ok: false,
+        code: "FLAT_MEMBERSHIP_UNDECLARED",
+        message: `Employee ${record.guidManager} is missing flat team field keys in authoritative org snapshot.`,
+      };
+    }
+    if (declaration === "invalid_team_array") {
+      return {
+        ok: false,
+        code: "INVALID_TEAM_KEY",
+        message: `Employee ${record.guidManager} has invalid team[] type in authoritative org snapshot.`,
+      };
+    }
+    if (declaration === "team_array" && record.teams === undefined) {
       return {
         ok: false,
         code: "MISSING_TEAM_KEY",
         message: `Employee ${record.guidManager} is missing required team[] in authoritative org snapshot.`,
       };
     }
-    if (record.teams !== null && !Array.isArray(record.teams)) {
-      return {
-        ok: false,
-        code: "INVALID_TEAM_KEY",
-        message: `Employee ${record.guidManager} has invalid team[] type in authoritative org snapshot.`,
-      };
+    if (declaration === "flat_empty" || declaration === "flat_member") {
+      const flatValidation = validateAuthoritativeFlatTeamRecord(record);
+      if (!flatValidation.ok) {
+        return {
+          ok: false,
+          code: flatValidation.code,
+          message: flatValidation.message,
+          details: flatValidation.details,
+        };
+      }
     }
   }
 

@@ -29,13 +29,20 @@ describe("client-detail-v3 visible tabs", () => {
     delete (globalThis as { location?: Location }).location;
   });
 
-  it("exposes only connected overview and data tabs in markup", () => {
+  it("exposes connected tabs including sales for legal entity", () => {
     const v3 = loadV3Tabs();
-    const ids = v3.visibleTabs().map((t) => t[0]);
-    assert.deepEqual(ids, ["overview", "data"]);
-    const html = v3.renderTabsMarkup("overview");
+    assert.deepEqual(
+      v3.visibleTabs("legal").map((t) => t[0]),
+      ["overview", "data", "sales"],
+    );
+    assert.deepEqual(
+      v3.visibleTabs("retail").map((t) => t[0]),
+      ["overview", "data"],
+    );
+    const html = v3.renderTabsMarkup("overview", "legal");
     assert.match(html, /data-card-tab="overview"/);
     assert.match(html, /data-card-tab="data"/);
+    assert.match(html, /data-card-tab="sales"/);
     assert.doesNotMatch(html, /data-card-tab="orders"/);
     assert.doesNotMatch(html, /data-card-tab="work"/);
   });
