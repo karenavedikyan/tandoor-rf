@@ -6,6 +6,43 @@ import { v3EntityAssignmentScope } from "./access-scope";
 import { readableGroupKey, renumberV3ScopeClause } from "./list-legal-grouped";
 import { v3JsonManagerField } from "./json-paths";
 
+/** Params for a legal-only portfolio/count query (no unused retail placeholders). */
+function buildLegalTeamMemberQueryParams(
+  context: AccessContext,
+  leScope: { clause: string; params: unknown[] },
+  memberGuids: string[],
+): {
+  params: unknown[];
+  legalGroupKey: string;
+  leClause: string;
+  membersIdx: number;
+} {
+  const params = [...leScope.params];
+  const legalGroupKey = readableGroupKey(context, params);
+  params.push(memberGuids);
+  return {
+    params,
+    legalGroupKey,
+    leClause: leScope.clause,
+    membersIdx: params.length,
+  };
+}
+
+/** Params for a retail-only portfolio/count query. */
+function buildRetailTeamMemberQueryParams(
+  roScope: { clause: string; params: unknown[] },
+  memberGuids: string[],
+): { params: unknown[]; roClause: string; membersIdx: number } {
+  const params = [...roScope.params];
+  params.push(memberGuids);
+  return {
+    params,
+    roClause: roScope.clause,
+    membersIdx: params.length,
+  };
+}
+
+/** Combined params for unified legal+retail assignment summary CTE query. */
 function buildScopedQueryParams(
   context: AccessContext,
   leScope: { clause: string; params: unknown[] },
@@ -155,25 +192,26 @@ export async function countDistinctV3TeamPortfolio(
   }
   const leScope = v3EntityAssignmentScope(context, "le", "legal");
   const roScope = v3EntityAssignmentScope(context, "ro", "retail");
-  const scoped = buildScopedQueryParams(context, leScope, roScope, memberGuids);
+  const legalScoped = buildLegalTeamMemberQueryParams(context, leScope, memberGuids);
+  const retailScoped = buildRetailTeamMemberQueryParams(roScope, memberGuids);
   const [legal, retail] = await Promise.all([
     query<{ count: string }>(
       `
         SELECT COUNT(*)::text AS count FROM (
-          SELECT DISTINCT ${scoped.legalGroupKey} AS group_key
+          SELECT DISTINCT ${legalScoped.legalGroupKey} AS group_key
           FROM onec_v3_legal_entities le
-          WHERE (${scoped.leClause}) AND ${memberAssignmentMatchSql("le", `$${scoped.membersIdx}`)}
+          WHERE (${legalScoped.leClause}) AND ${memberAssignmentMatchSql("le", `$${legalScoped.membersIdx}`)}
         ) grouped
       `,
-      scoped.params,
+      legalScoped.params,
     ),
     query<{ count: string }>(
       `
         SELECT COUNT(DISTINCT ro.guid_store)::text AS count
         FROM onec_v3_retail_outlets ro
-        WHERE (${scoped.roClause}) AND ${memberAssignmentMatchSql("ro", `$${scoped.membersIdx}`)}
+        WHERE (${retailScoped.roClause}) AND ${memberAssignmentMatchSql("ro", `$${retailScoped.membersIdx}`)}
       `,
-      scoped.params,
+      retailScoped.params,
     ),
   ]);
   return {

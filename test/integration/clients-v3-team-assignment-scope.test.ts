@@ -90,9 +90,12 @@ function clientsBytesForTeamAssignments(): Buffer {
   return Buffer.from(JSON.stringify(base), "utf8");
 }
 
+const ROP_OWN_EMAIL = "rop-own-scope@example.test";
+
 describe("v3 team assignment counts and list scope", { concurrency: false }, () => {
   let databaseUrl = "";
   let adminUserId = "";
+  let ropOwnUserId = "";
 
   before(async () => {
     databaseUrl = getIntegrationDatabaseUrl();
@@ -108,6 +111,21 @@ describe("v3 team assignment counts and list scope", { concurrency: false }, () 
       role: "admin",
     });
     adminUserId = admin.id;
+
+    const ropOwn = await createTestUser({
+      databaseUrl,
+      email: ROP_OWN_EMAIL,
+      password: TEST_PASSWORD,
+      fullName: "ROP Own Scope",
+      role: "rop",
+    });
+    ropOwnUserId = ropOwn.id;
+    await linkUserToEmployee({
+      databaseUrl,
+      userId: ropOwnUserId,
+      employeeId: LEADER,
+      confirmedByUserId: adminUserId,
+    });
 
     const rosterBytes = buildEmployeeRosterBytes([
       buildEmployeeRosterEntry(LEADER, {
@@ -238,22 +256,9 @@ describe("v3 team assignment counts and list scope", { concurrency: false }, () 
   });
 
   it("own ROP scoped portfolio matches admin for regional-only team member", async () => {
-    const ropUser = await createTestUser({
-      databaseUrl,
-      email: "rop-own-scope@example.test",
-      password: TEST_PASSWORD,
-      fullName: "ROP Own Scope",
-      role: "rop",
-    });
-    await linkUserToEmployee({
-      databaseUrl,
-      userId: ropUser.id,
-      employeeId: LEADER,
-      confirmedByUserId: adminUserId,
-    });
     const memberGuids = [MANAGER, REGIONAL].map((g) => g.toLowerCase());
     const adminPortfolio = await countDistinctV3TeamPortfolio(adminContext(adminUserId), memberGuids);
-    const ropPortfolio = await countDistinctV3TeamPortfolio(ropContext(ropUser.id, LEADER), memberGuids);
+    const ropPortfolio = await countDistinctV3TeamPortfolio(ropContext(ropOwnUserId, LEADER), memberGuids);
     assert.equal(ropPortfolio.legal, adminPortfolio.legal);
     assert.ok(ropPortfolio.legal >= 1);
 
@@ -263,7 +268,7 @@ describe("v3 team assignment counts and list scope", { concurrency: false }, () 
     const login = await request(app)
       .post("/api/auth/login")
       .set({ Origin: ORIGIN, "Content-Type": "application/json" })
-      .send({ email: "rop-own-scope@example.test", password: TEST_PASSWORD });
+      .send({ email: ROP_OWN_EMAIL, password: TEST_PASSWORD });
     const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
     const list = await request(app)
       .get(`/api/clients/v3/list?entity=legal&page=1&pageSize=50`)
@@ -273,26 +278,13 @@ describe("v3 team assignment counts and list scope", { concurrency: false }, () 
   });
 
   it("forbids rop access to foreign teamGuid on list", async () => {
-    const ropUser = await createTestUser({
-      databaseUrl,
-      email: "rop-team-assign@example.test",
-      password: TEST_PASSWORD,
-      fullName: "ROP Team Assign",
-      role: "rop",
-    });
-    await linkUserToEmployee({
-      databaseUrl,
-      userId: ropUser.id,
-      employeeId: LEADER,
-      confirmedByUserId: adminUserId,
-    });
     await resetPoolForTests();
     const { createApp } = await import("../../src/server");
     const app = createApp();
     const login = await request(app)
       .post("/api/auth/login")
       .set({ Origin: ORIGIN, "Content-Type": "application/json" })
-      .send({ email: "rop-team-assign@example.test", password: TEST_PASSWORD });
+      .send({ email: ROP_OWN_EMAIL, password: TEST_PASSWORD });
     const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
     const foreignLeader = "66666666-6666-4666-8666-666666666666";
     const forbidden = await request(app)
