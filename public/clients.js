@@ -5504,6 +5504,9 @@
               window.ClientsV3.loadList(buildV3UiContext(), next, true);
             });
           }
+          window.__lktandoorListContextResolver = function () {
+            return buildV3UiContext();
+          };
           window.ClientsV3.bindListChrome(function () {
             return buildV3UiContext();
           });
@@ -5528,7 +5531,9 @@
             if (entityId !== "retail" && entityId !== "orphan_retail") {
               v3state.closed = "";
             }
-            window.ClientsV3.loadList(buildV3UiContext(), v3state, true);
+            window.ClientsV3.loadList(buildV3UiContext(), v3state, true).then(function () {
+              updateViewChrome(currentStateFromForm());
+            });
           });
         }
         loadPortfolioStats(initialState);

@@ -3,6 +3,16 @@
 
   var scopeCountsCacheKey = "";
 
+  function resolveListUiContext() {
+    if (window.__lktandoorListCtx) {
+      return window.__lktandoorListCtx;
+    }
+    if (typeof window.__lktandoorListContextResolver === "function") {
+      return window.__lktandoorListContextResolver();
+    }
+    return window.__lktandoorUiCtx;
+  }
+
   function territoryParamsFromState(state) {
     if (state.orgCatalogEntry === "employee_portfolio" && state.responsibleGuid && !state.ropEmployee) {
       return new URLSearchParams({ employeePortfolioGuid: state.responsibleGuid });
@@ -230,7 +240,11 @@
           return;
         }
         var patch = { v3entity: nextEntity === "retail" ? "retail" : "legal_grouped", page: 1 };
-        window.ClientsV3.loadList(window.__lktandoorUiCtx, window.ClientsV3.mergeListStateForUserAction(patch), false);
+        var listCtx = resolveListUiContext();
+        if (!listCtx) {
+          return;
+        }
+        window.ClientsV3.loadList(listCtx, window.ClientsV3.mergeListStateForUserAction(patch), false);
       });
     });
   }
@@ -418,6 +432,7 @@
   }
 
   window.ClientsLktandoorList = {
+    resolveListUiContext: resolveListUiContext,
     shouldActivate: shouldActivate,
     syncLayout: syncLayout,
     renderContextNav: renderContextNav,
@@ -432,7 +447,7 @@
     syncTerritoryDisplayContext: syncTerritoryDisplayContext,
     refreshChrome: function (shell, state, ctx) {
       syncTerritoryDisplayContext(state, ctx);
-      window.__lktandoorUiCtx = ctx.uiCtx;
+      window.__lktandoorUiCtx = ctx.uiCtx || resolveListUiContext();
       window.__lktandoorScopeTitle = scopeTitle(state, ctx);
       var titleEl = document.getElementById("v3-lktandoor-scope-title");
       if (titleEl) {
@@ -447,7 +462,7 @@
         rules.splice(index, 1);
         next.v3Rules = rules;
         window.ClientsV3FieldRules.syncLegacyFromRules(next);
-        window.ClientsV3.loadList(ctx.uiCtx || window.__lktandoorUiCtx, next, false);
+        window.ClientsV3.loadList(ctx.uiCtx || resolveListUiContext(), next, false);
       });
       var territoryKey = territoryParamsFromState(state).toString();
       loadScopeCounts(ctx.api, state).then(function (counts) {
