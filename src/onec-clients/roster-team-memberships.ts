@@ -200,16 +200,39 @@ function dedupeTeamEntries(entries: WholesaleEmployeeTeamEntry[]): WholesaleEmpl
   return [...byGuid.values()].sort((left, right) => left.guidTeam.localeCompare(right.guidTeam));
 }
 
+function flatTeamLeaderFieldsFromRaw(raw: Record<string, unknown>): {
+  guidTeamLeader: string | null;
+  nameTeamLeader: string | null;
+} {
+  let guidTeamLeader: string | null = null;
+  let nameTeamLeader: string | null = null;
+  if (hasRosterRawKey(raw, "guid_team_leader")) {
+    const value = raw.guid_team_leader;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0 && !isNullUuid(trimmed) && isValidNonZeroUuid(trimmed)) {
+        guidTeamLeader = normalizeUuid(trimmed);
+      }
+    }
+  }
+  if (hasRosterRawKey(raw, "name_team_leader") && typeof raw.name_team_leader === "string") {
+    const trimmed = raw.name_team_leader.trim();
+    nameTeamLeader = trimmed.length > 0 ? trimmed : null;
+  }
+  return { guidTeamLeader, nameTeamLeader };
+}
+
 export function legacyTeamEntries(record: WholesaleEmployeeRecord): WholesaleEmployeeTeamEntry[] {
   if (!record.guidTeam) {
     return [];
   }
+  const leaders = flatTeamLeaderFieldsFromRaw(record.raw);
   return [
     {
       guidTeam: record.guidTeam,
       nameTeam: record.nameTeam,
-      guidTeamLeader: null,
-      nameTeamLeader: null,
+      guidTeamLeader: leaders.guidTeamLeader,
+      nameTeamLeader: leaders.nameTeamLeader,
     },
   ];
 }

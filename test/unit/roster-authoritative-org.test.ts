@@ -39,12 +39,34 @@ describe("authoritative org roster validation", () => {
     assert.equal(result.code, "EMPTY_SNAPSHOT");
   });
 
-  it("requires explicit team[] on every employee", () => {
+  it("requires flat team keys or explicit team[] on every employee", () => {
     const roster = parseRoster([buildEmployeeRosterEntry(MANAGER)]);
     const result = validateAuthoritativeOrgRoster(roster);
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.equal(result.code, "MISSING_TEAM_KEY");
+    assert.equal(result.code, "FLAT_MEMBERSHIP_UNDECLARED");
+  });
+
+  it("accepts authoritative flat membership on one employee", () => {
+    const roster = parseRoster([
+      buildEmployeeRosterEntry(MANAGER, {
+        guid_team: TEAM_A,
+        name_team: "Alpha",
+        guid_team_leader: LEADER,
+        name_team_leader: "Leader",
+      }),
+      buildEmployeeRosterEntry(LEADER, {
+        guid_team: null,
+        name_team: null,
+        guid_team_leader: null,
+        name_team_leader: null,
+      }),
+    ]);
+    const result = validateAuthoritativeOrgRoster(roster);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.membershipCount, 1);
+    assert.equal(result.teamGroupCount, 1);
   });
 
   it("accepts team: [] as full membership clear", () => {
