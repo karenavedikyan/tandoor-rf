@@ -15,6 +15,8 @@ import {
   buildFlatOrgHierarchyRosterBytes,
   buildFullFlatOrgHierarchyRosterBytes,
   FLAT_ORG,
+  FLAT_ORG_APEX_TEAM_LEADER_GUIDS,
+  FLAT_ORG_GUSLEVA_MEMBER_GUIDS,
   FULL_FLAT_ORG_EXPECTED,
 } from "../helpers/flat-org-hierarchy-fixtures";
 
@@ -29,6 +31,14 @@ function parseRoster(bytes: Buffer) {
     throw new Error("parse failed");
   }
   return parsed.roster;
+}
+
+function expectFlatValidationFails(bytes: Buffer, code: string) {
+  const roster = parseRoster(bytes);
+  const validation = validateAuthoritativeOrgRoster(roster);
+  assert.equal(validation.ok, false);
+  if (validation.ok) return;
+  assert.equal(validation.code, code);
 }
 
 describe("flat org team declaration classifier", () => {
@@ -47,6 +57,21 @@ describe("flat org team declaration classifier", () => {
     assert.equal(classifyAuthoritativeTeamDeclaration(record), "flat_empty");
     assert.equal(isAuthoritativeFlatEmptyTeam(record), true);
     assert.deepEqual(resolveEmployeeTeamMemberships(record, []), []);
+  });
+
+  it("accepts apex with explicit empty strings on all four flat keys", () => {
+    const roster = parseRoster(
+      buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry(FLAT_ORG.APEX, {
+          guid_team: "",
+          name_team: "",
+          guid_team_leader: "",
+          name_team_leader: "",
+        }),
+      ]),
+    );
+    const validation = validateAuthoritativeOrgRoster(roster);
+    assert.equal(validation.ok, true);
   });
 
   it("treats missing flat keys as undeclared, not empty apex", () => {
@@ -98,19 +123,88 @@ describe("flat org team declaration classifier", () => {
   });
 });
 
+describe("strict authoritative flat field validation", () => {
+  const baseMember = {
+    guid_team: TEAM,
+    name_team: "Synthetic team",
+  };
+
+  it("rejects non-uuid guid_team_leader", () => {
+    expectFlatValidationFails(
+      buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry(MANAGER, {
+          ...baseMember,
+          guid_team_leader: "not-a-guid",
+          name_team_leader: "Invalid leader",
+        }),
+        buildEmployeeRosterEntry(LEADER, {
+          guid_team: null,
+          name_team: null,
+          guid_team_leader: null,
+          name_team_leader: null,
+        }),
+      ]),
+      "FLAT_TEAM_FIELD_INVALID_UUID",
+    );
+  });
+
+  it("rejects empty guid_team_leader with valid guid_team", () => {
+    expectFlatValidationFails(
+      buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry(MANAGER, {
+          ...baseMember,
+          guid_team_leader: "",
+          name_team_leader: "",
+        }),
+      ]),
+      "FLAT_TEAM_FIELDS_INCONSISTENT",
+    );
+  });
+
+  it("rejects residual team metadata on apex-style empty guid_team", () => {
+    expectFlatValidationFails(
+      buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry(MANAGER, {
+          guid_team: "",
+          name_team: "Residual team",
+          guid_team_leader: FLAT_ORG.APEX,
+          name_team_leader: "Synthetic apex",
+        }),
+      ]),
+      "FLAT_TEAM_FIELDS_INCONSISTENT",
+    );
+  });
+
+  it("rejects invalid types for flat leader fields", () => {
+    expectFlatValidationFails(
+      buildEmployeeRosterBytes([
+        buildEmployeeRosterEntry(MANAGER, {
+          ...baseMember,
+          guid_team_leader: 123 as unknown as string,
+          name_team_leader: { bad: true } as unknown as string,
+        }),
+      ]),
+      "FLAT_TEAM_FIELD_INVALID_TYPE",
+    );
+  });
+});
+
 describe("flat authoritative org snapshot validation", () => {
   it("accepts mini hierarchy with Gusleva team independent of post", () => {
     const roster = parseRoster(buildFlatOrgHierarchyRosterBytes());
-    assert.equal(roster.records.length, 8);
+    assert.equal(roster.records.length, FULL_FLAT_ORG_EXPECTED.miniEmployeeCount);
     const validation = validateAuthoritativeOrgRoster(roster);
     assert.equal(validation.ok, true);
     if (!validation.ok) return;
-    assert.equal(validation.teamGroupCount, 2);
-    assert.equal(validation.membershipCount, 7);
-    const guslevaMembers = roster.records.filter(
+    assert.equal(validation.teamGroupCount, FULL_FLAT_ORG_EXPECTED.miniTeamGroupCount);
+    assert.equal(validation.membershipCount, FULL_FLAT_ORG_EXPECTED.miniMembershipCount);
+    const guslevaTeamMembers = roster.records.filter(
       (r) => r.guidTeam?.toLowerCase() === FLAT_ORG.TEAM_GUSLEVA.toLowerCase(),
     );
-    assert.equal(guslevaMembers.length, 5);
+    assert.equal(guslevaTeamMembers.length, FLAT_ORG_GUSLEVA_MEMBER_GUIDS.length);
+    assert.ok(
+      !guslevaTeamMembers.some((r) => r.guidManager.toLowerCase() === FLAT_ORG.GUSLEVA.toLowerCase()),
+    );
   });
 
   it("accepts full 40-employee flat hierarchy counts", () => {
@@ -124,5 +218,19 @@ describe("flat authoritative org snapshot validation", () => {
     const apex = roster.records.find((r) => r.guidManager.toLowerCase() === FLAT_ORG.APEX.toLowerCase());
     assert.ok(apex);
     assert.deepEqual(resolveEmployeeTeamMemberships(apex!, []), []);
+    const apexTeamMembers = roster.records.filter(
+      (r) => r.guidTeam?.toLowerCase() === FLAT_ORG.TEAM_APEX.toLowerCase(),
+    );
+    assert.equal(apexTeamMembers.length, FLAT_ORG_APEX_TEAM_LEADER_GUIDS.length);
+    for (const leaderGuid of FLAT_ORG_APEX_TEAM_LEADER_GUIDS) {
+      assert.ok(
+        !roster.records.some(
+          (r) =>
+            r.guidManager.toLowerCase() === leaderGuid.toLowerCase() &&
+            r.guidTeam?.toLowerCase() === r.guidManager.toLowerCase(),
+        ),
+        `leader ${leaderGuid} must not self-member own team`,
+      );
+    }
   });
 });

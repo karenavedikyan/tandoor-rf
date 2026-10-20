@@ -9,13 +9,19 @@ import {
 } from "./roster-team-memberships";
 import { loadExistingRoster, type ExistingRosterRow } from "./roster-upsert";
 import { resolveRosterFieldValues } from "./roster-field-values";
-import { classifyAuthoritativeTeamDeclaration } from "./roster-flat-org";
+import {
+  classifyAuthoritativeTeamDeclaration,
+  validateAuthoritativeFlatTeamRecord,
+} from "./roster-flat-org";
 
 export type AuthoritativeOrgValidationCode =
   | "EMPTY_SNAPSHOT"
   | "MISSING_TEAM_KEY"
   | "INVALID_TEAM_KEY"
   | "FLAT_MEMBERSHIP_UNDECLARED"
+  | "FLAT_TEAM_FIELD_INVALID_TYPE"
+  | "FLAT_TEAM_FIELD_INVALID_UUID"
+  | "FLAT_TEAM_FIELDS_INCONSISTENT"
   | "MISSING_TEAM_LEADER_EMPLOYEE"
   | "TEAM_NAME_CONFLICT"
   | "TEAM_LEADER_CONFLICT";
@@ -79,6 +85,17 @@ export function validateAuthoritativeOrgRoster(roster: WholesaleEmployeeRoster):
         code: "MISSING_TEAM_KEY",
         message: `Employee ${record.guidManager} is missing required team[] in authoritative org snapshot.`,
       };
+    }
+    if (declaration === "flat_empty" || declaration === "flat_member") {
+      const flatValidation = validateAuthoritativeFlatTeamRecord(record);
+      if (!flatValidation.ok) {
+        return {
+          ok: false,
+          code: flatValidation.code,
+          message: flatValidation.message,
+          details: flatValidation.details,
+        };
+      }
     }
   }
 
