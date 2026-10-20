@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { saleDecimalStringsEqual } from "./decimal";
 import type { LegalSalesRoster, ParsedLegalSaleLine } from "./types";
 
 export type LegalSalesImportPlan = {
@@ -81,15 +82,15 @@ async function loadExistingLine(
 
 function linesEqualStored(a: ParsedLegalSaleLine, b: ParsedLegalSaleLine): boolean {
   return (
-    a.quantity === b.quantity &&
-    a.income === b.income &&
-    a.manualDiscount === b.manualDiscount &&
-    a.automaticDiscount === b.automaticDiscount &&
-    a.totalDiscount === b.totalDiscount &&
-    a.costPrice === b.costPrice &&
-    a.additionalExpenses === b.additionalExpenses &&
-    a.grossProfit === b.grossProfit &&
-    a.profitability === b.profitability
+    saleDecimalStringsEqual(a.quantity, b.quantity) &&
+    saleDecimalStringsEqual(a.income, b.income) &&
+    saleDecimalStringsEqual(a.manualDiscount, b.manualDiscount) &&
+    saleDecimalStringsEqual(a.automaticDiscount, b.automaticDiscount) &&
+    saleDecimalStringsEqual(a.totalDiscount, b.totalDiscount) &&
+    saleDecimalStringsEqual(a.costPrice, b.costPrice) &&
+    saleDecimalStringsEqual(a.additionalExpenses, b.additionalExpenses) &&
+    saleDecimalStringsEqual(a.grossProfit, b.grossProfit) &&
+    saleDecimalStringsEqual(a.profitability, b.profitability)
   );
 }
 

@@ -24,10 +24,10 @@ describe("onec legal sales import", { concurrency: false }, () => {
     await pool.query(
       `
         INSERT INTO onec_v3_legal_entities (guid_client, name_client)
-        VALUES ($1::uuid, 'Legal Sales Fixture')
+        VALUES ($1::uuid, 'Legal Sales Fixture A'), ($2::uuid, 'Legal Sales Fixture B')
         ON CONFLICT (guid_client) DO NOTHING
       `,
-      [LEGAL_A],
+      [LEGAL_A, LEGAL_B],
     );
     await pool.query(
       `
@@ -55,7 +55,7 @@ describe("onec legal sales import", { concurrency: false }, () => {
   it("dry-run does not write and apply is idempotent", async () => {
     const rosterBytes = buildSaleJsonBytes([
       buildSaleRecord({ legalGuid: LEGAL_A, type: "Входные двери", income: 1000 }),
-      buildSaleRecord({ legalGuid: LEGAL_B, type: "Unknown legal", income: 1 }),
+      buildSaleRecord({ legalGuid: LEGAL_B, type: "Межкомнатные двери", income: 500 }),
     ]);
 
     const dry = await runLegalSalesImport({
@@ -64,8 +64,8 @@ describe("onec legal sales import", { concurrency: false }, () => {
       saleBytes: rosterBytes,
     });
     assert.equal(dry.status, "SUCCESS", dry.message);
-    assert.equal(dry.plan?.insertCount, 1);
-    assert.equal(dry.plan?.unknownLegalGuids.length, 1);
+    assert.equal(dry.plan?.insertCount, 2);
+    assert.equal(dry.plan?.unknownLegalGuids.length, 0);
 
     const poolBefore = new Pool({ connectionString: databaseUrl, max: 1 });
     const before = await poolBefore.query<{ count: string }>(
@@ -116,6 +116,9 @@ describe("onec legal sales import", { concurrency: false }, () => {
       saleBytes: rosterBytes,
     });
     assert.equal(applied2.status, "SUCCESS");
+    assert.equal(dry2.plan?.updateCount, 0, "identical file must not plan updates");
+    assert.equal(dry2.plan?.unchangedCount, 2, "known lines unchanged on repeat plan");
+    assert.equal(dry2.plan?.insertCount, 0);
     const count = await pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM onec_v3_legal_sales_lines WHERE legal_guid = $1::uuid AND product_type = 'Входные двери'`,
       [LEGAL_A],

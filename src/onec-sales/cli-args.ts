@@ -3,7 +3,8 @@ import { isSha256Hex } from "../onec-clients/sha256";
 
 export type LegalSalesCliOptions = {
   mode: "dry_run" | "apply";
-  saleFilePath: string;
+  /** Local/offline path when --sale-file is passed; otherwise fetch from project FTP. */
+  saleFilePath?: string;
   expectedSourceSha256?: string;
   confirmTargetDb?: string;
 };
@@ -24,7 +25,7 @@ export type LegalSalesCliParseResult =
 
 export const LEGAL_SALES_CLI_ERRORS: Record<string, string> = {
   UNKNOWN_ARGUMENT: "Unknown CLI argument.",
-  SALE_FILE_REQUIRED: "--sale-file requires a file path.",
+  SALE_FILE_REQUIRED: "--sale-file requires a file path when provided.",
   APPLY_REQUIRES_EXPECTED_SHA256:
     "Apply requires --expected-source-sha256 from a verified dry-run of the same file.",
   APPLY_REQUIRES_CONFIRM_TARGET_DB: "Apply requires --confirm-target-db from dry-run target DB identity.",
@@ -58,7 +59,11 @@ export function parseLegalSalesCliArgs(argv: string[]): LegalSalesCliParseResult
       continue;
     }
     if (arg === "--sale-file") {
-      saleFilePath = argv[index + 1]?.trim();
+      const next = argv[index + 1]?.trim();
+      if (!next) {
+        return { ok: false, code: "SALE_FILE_REQUIRED" };
+      }
+      saleFilePath = next;
       index += 1;
       continue;
     }
@@ -77,9 +82,6 @@ export function parseLegalSalesCliArgs(argv: string[]): LegalSalesCliParseResult
 
   if (sawDryRun && sawApply) {
     return { ok: false, code: "APPLY_AND_DRY_RUN" };
-  }
-  if (!saleFilePath) {
-    return { ok: false, code: "SALE_FILE_REQUIRED" };
   }
   if (mode === "apply") {
     if (!expectedSourceSha256) {
@@ -100,7 +102,7 @@ export function parseLegalSalesCliArgs(argv: string[]): LegalSalesCliParseResult
     ok: true,
     options: {
       mode,
-      saleFilePath: resolveLegalSalesFilePath(saleFilePath),
+      saleFilePath: saleFilePath ? resolveLegalSalesFilePath(saleFilePath) : undefined,
       expectedSourceSha256,
       confirmTargetDb,
     },

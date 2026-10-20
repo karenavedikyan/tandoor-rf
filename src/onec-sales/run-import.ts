@@ -67,12 +67,23 @@ export async function runLegalSalesImport(
   let bytes: Buffer;
   if (options.saleBytes) {
     bytes = options.saleBytes;
-  } else {
+  } else if (cli.saleFilePath) {
     try {
       bytes = await readFile(cli.saleFilePath);
     } catch {
       return { status: "ERROR", mode: cli.mode, errorCode: "FILE_READ_FAILED", message: "Cannot read sale file." };
     }
+  } else {
+    const ftpRead = await readSaleBytesFromFtp(env);
+    if (!ftpRead.ok) {
+      return {
+        status: "ERROR",
+        mode: cli.mode,
+        errorCode: ftpRead.code,
+        message: ftpRead.message,
+      };
+    }
+    bytes = ftpRead.bytes;
   }
 
   const parsed = parseLegalSalesJsonBytes(bytes);

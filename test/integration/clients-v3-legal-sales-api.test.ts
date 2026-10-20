@@ -52,6 +52,14 @@ describe("v3 legal sales API", { concurrency: false }, () => {
        ON CONFLICT DO NOTHING`,
       [LEGAL_A, LEGAL_B],
     );
+    await pool.query(
+      `
+        UPDATE onec_v3_exchange_state
+        SET last_bundle_fingerprint = $1, updated_at = NOW()
+        WHERE id = 1
+      `,
+      ["a".repeat(64)],
+    );
     const parsed = parseLegalSalesJsonBytes(
       buildSaleJsonBytes([buildSaleRecord({ legalGuid: LEGAL_A, type: "Фурнитура (ручки)", income: 900 })]),
     );
@@ -77,7 +85,7 @@ describe("v3 legal sales API", { concurrency: false }, () => {
     assert.ok(own);
     if (!own || own === "invalid_month") return;
     assert.equal(own.lines.length, 1);
-    assert.equal(own.incomeTotal, "900");
+    assert.equal(Number(own.incomeTotal), 900);
 
     const foreign = await getLegalSalesForMonth(adminContext(adminUserId), LEGAL_B, "2026-09");
     assert.ok(foreign);
