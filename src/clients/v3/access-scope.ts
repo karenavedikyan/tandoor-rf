@@ -29,6 +29,35 @@ function regionalAssignmentClause(alias: string, employeeParam: string): string 
   return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidRegionalManager")}, '')), '')::uuid = ${employeeParam}::uuid`;
 }
 
+function hardwareAssignmentClause(alias: string, employeeParam: string): string {
+  return `NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHardwareManager")}, '')), '')::uuid = ${employeeParam}::uuid`;
+}
+
+/** ROP-readable employee GUIDs: legacy linked team + wholesale org memberships for teams led by this ROP. */
+function v3RopTeamEmployeeGuidsSubquery(ropUserParam: string, ropEmployeeParam: string): string {
+  const legacy = ropLegacyTeamEmployeesSubquery(ropUserParam, ropEmployeeParam);
+  return `
+    SELECT employee_guid::uuid FROM (
+      ${legacy}
+      UNION
+      SELECT m.guid_manager AS employee_guid
+      FROM onec_wholesale_team_groups g
+      JOIN onec_wholesale_employee_team_memberships m ON m.guid_team = g.guid_team
+      WHERE lower(g.guid_team_leader::text) = lower(${ropEmployeeParam}::text)
+        AND lower(m.guid_manager::text) <> lower(${ropEmployeeParam}::text)
+    ) scoped
+    WHERE employee_guid IS NOT NULL
+  `;
+}
+
+function v3RopTeamAssignmentScopeClause(alias: string, teamEmployeesSubquery: string): string {
+  return `(
+    NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidManager")}, '')), '')::uuid IN (${teamEmployeesSubquery})
+    OR NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidRegionalManager")}, '')), '')::uuid IN (${teamEmployeesSubquery})
+    OR NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, "guidHardwareManager")}, '')), '')::uuid IN (${teamEmployeesSubquery})
+  )`;
+}
+
 function appendObjectDenials(
   innerClause: string,
   params: unknown[],
@@ -187,9 +216,9 @@ export function v3EntityAssignmentScope(
       };
       break;
     case "rop": {
-      const teamEmployees = ropLegacyTeamEmployeesSubquery("$1", "$2");
+      const teamEmployees = v3RopTeamEmployeeGuidsSubquery("$1", "$2");
       base = {
-        clause: `(${alias}.managers->>'guidManager')::uuid IN (${teamEmployees})`,
+        clause: v3RopTeamAssignmentScopeClause(alias, teamEmployees),
         params: [userId, employeeId],
       };
       break;

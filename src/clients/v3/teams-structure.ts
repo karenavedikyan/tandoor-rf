@@ -13,6 +13,12 @@ import { selfRopEmployeeGuidFromContext } from "../self-rop-identity";
 import { v3EntityAssignmentScope } from "./access-scope";
 import { readableGroupKey } from "./list-legal-grouped";
 import { v3JsonManagerField } from "./json-paths";
+import {
+  buildV3TeamResponsibleSummaries,
+  countDistinctV3TeamPortfolio,
+  loadV3TeamMemberGuids,
+  resolveV3TeamGroupLeaderBinding,
+} from "./team-assignment-counts";
 
 function assertAccess(context: AccessContext): void {
   if (context.status !== "active") {
@@ -128,8 +134,17 @@ async function buildV3OrgOverviewFromTeamGroups(
       continue;
     }
     const teamMemberCount = await countTeamMembersForGroup(group.guid_team, leaderGuid);
-    const counts = await countBranch(context, leaderGuid);
+    const memberGuids = await loadV3TeamMemberGuids(leaderGuid, group.guid_team);
+    const counts = await countDistinctV3TeamPortfolio(context, memberGuids);
     const hasPortfolio = counts.legal + counts.retail > 0;
+    let managerCount = 0;
+    let regionalCount = 0;
+    if (teamMemberCount > 0) {
+      const responsibles = await listV3RosterTeamResponsibles(context, leaderGuid, group.guid_team);
+      const teamCounts = teamCountsFromResponsibles(responsibles);
+      managerCount = teamCounts.managerCount;
+      regionalCount = teamCounts.regionalCount;
+    }
     rops.push({
       employeeGuid: leaderGuid,
       name: group.name_team || group.name_team_leader || shortUuidLabel(leaderGuid),
@@ -138,8 +153,8 @@ async function buildV3OrgOverviewFromTeamGroups(
       hasLinkedAccount: linked.has(leaderGuid.toLowerCase()),
       hasAssignedPortfolio: hasPortfolio,
       portfolioNote: hasPortfolio ? null : "Нет объектов v3 в ветке команды",
-      managerCount: teamMemberCount,
-      regionalCount: 0,
+      managerCount,
+      regionalCount,
       teamMemberCount,
       uniqueClientCount: counts.legal,
       uniqueOutletCount: counts.retail,
@@ -152,36 +167,13 @@ async function buildV3OrgOverviewFromTeamGroups(
   return rops;
 }
 
-async function resolveTeamGroupLeaderBinding(
-  teamGuid: string,
-  leaderGuid: string,
-): Promise<"ok" | "missing" | "leader_mismatch"> {
-  const result = await query<{ guid_team_leader: string | null }>(
-    `
-      SELECT guid_team_leader::text
-      FROM onec_wholesale_team_groups
-      WHERE guid_team = $1::uuid
-      LIMIT 1
-    `,
-    [teamGuid],
-  );
-  const row = result.rows[0];
-  if (!row) {
-    return "missing";
-  }
-  if (!row.guid_team_leader || row.guid_team_leader.toLowerCase() !== leaderGuid.toLowerCase()) {
-    return "leader_mismatch";
-  }
-  return "ok";
-}
-
 async function listV3RosterTeamResponsibles(
   context: AccessContext,
   leaderGuid: string,
   teamGuid?: string | null,
 ): Promise<OrgResponsibleSummary[]> {
   if (teamGuid) {
-    const binding = await resolveTeamGroupLeaderBinding(teamGuid, leaderGuid);
+    const binding = await resolveV3TeamGroupLeaderBinding(teamGuid, leaderGuid);
     if (binding === "missing") {
       return [];
     }
@@ -221,16 +213,8 @@ async function listV3RosterTeamResponsibles(
       `,
     teamGuid ? [teamGuid, leaderGuid] : [leaderGuid],
   );
-  return rows.rows.map((row) => ({
-    kind: "manager" as const,
-    employeeGuid: row.employee_guid,
-    name: row.name || row.employee_guid.slice(0, 8),
-    shortId: shortUuidLabel(row.employee_guid),
-    hasLinkedAccount: linked.has(row.employee_guid.toLowerCase()),
-    rosterInOpt: true,
-    clientCount: 0,
-    outletCount: 0,
-  }));
+  const memberGuids = rows.rows.map((row) => row.employee_guid.toLowerCase());
+  return buildV3TeamResponsibleSummaries(context, linked, rows.rows, memberGuids);
 }
 
 async function countBranch(context: AccessContext, ropGuid: string): Promise<{ legal: number; retail: number }> {

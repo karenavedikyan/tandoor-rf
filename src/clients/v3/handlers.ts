@@ -21,6 +21,7 @@ import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 import { getLegalSalesForMonth, listLegalSalesMonths } from "./legal-sales";
+import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -43,6 +44,39 @@ function parseGuidParam(value: unknown): string | null {
 function notFoundForAccess(res: Response): void {
   setNoStore(res);
   res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Объект не найден."));
+}
+
+async function resolveTeamMemberGuidsForQuery(
+  context: AccessRequest["accessContext"],
+  res: Response,
+  query: AccessRequest["query"],
+  responsibleGuid: string | null | undefined,
+): Promise<string[] | undefined> {
+  if (query.teamGuid === undefined) {
+    return undefined;
+  }
+  const teamGuid = parseGuidParam(query.teamGuid);
+  if (!teamGuid) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый teamGuid."));
+    return undefined;
+  }
+  const leaderGuid = parseGuidParam(query.ropBranchGuid);
+  if (!leaderGuid) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Для teamGuid нужен ropBranchGuid."));
+    return undefined;
+  }
+  try {
+    return await resolveV3ListTeamMemberGuids(context!, teamGuid, leaderGuid, responsibleGuid ?? undefined);
+  } catch (error) {
+    if (error instanceof OrgStructureAccessError) {
+      setNoStore(res);
+      res.status(error.code === "FORBIDDEN" ? 403 : 404).json(apiError(ERROR_CODES.FORBIDDEN, error.message));
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 export async function v3ClientsListHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -92,6 +126,10 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый filters."));
     return;
   }
+  const teamMemberGuids = await resolveTeamMemberGuidsForQuery(context, res, req.query, responsibleGuid);
+  if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+    return;
+  }
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
@@ -102,6 +140,7 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     responsibleGuid: responsibleGuid ?? undefined,
     responsibleKind,
     ropBranchGuid: ropBranchGuid ?? undefined,
+    teamMemberGuids,
     typeGuid: typeGuids?.length === 1 ? typeGuids[0] : undefined,
     categoryGuid: categoryGuids?.length === 1 ? categoryGuids[0] : undefined,
     typeGuids: typeGuids && typeGuids.length > 1 ? typeGuids : undefined,
@@ -143,11 +182,21 @@ export async function v3ScopeSummaryHandler(req: AccessRequest, res: Response): 
   const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
   const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
   const managerGuid = parseGuidParam(req.query.managerGuid);
+  const teamMemberGuids = await resolveTeamMemberGuidsForQuery(
+    req.accessContext,
+    res,
+    req.query,
+    responsibleGuid,
+  );
+  if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+    return;
+  }
   const summary = await loadV3ScopeSummary(req.accessContext!, {
     ropBranchGuid: ropBranchGuid ?? undefined,
     responsibleGuid: responsibleGuid ?? undefined,
     responsibleKind,
     managerGuid: managerGuid ?? undefined,
+    teamMemberGuids,
   });
   setNoStore(res);
   res.json(summary);
@@ -164,7 +213,7 @@ export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response)
   }
   const rawKind = String(req.query.responsibleKind ?? "");
   const kind = ["manager", "regional", "hardware"].includes(rawKind) ? rawKind as V3ResponsibleKind : undefined;
-  for (const key of ["managerGuid", "responsibleGuid", "ropBranchGuid"] as const) {
+  for (const key of ["managerGuid", "responsibleGuid", "ropBranchGuid", "teamGuid"] as const) {
     if (req.query[key] !== undefined && !parseGuidParam(req.query[key])) {
       res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимая территория."));
       return;
@@ -174,11 +223,22 @@ export async function v3ClientsOptionsHandler(req: AccessRequest, res: Response)
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleKind."));
     return;
   }
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const teamMemberGuids = await resolveTeamMemberGuidsForQuery(
+    req.accessContext,
+    res,
+    req.query,
+    responsibleGuid,
+  );
+  if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+    return;
+  }
   const options = await loadV3FilterOptions(req.accessContext!, entityRaw as V3ListEntity, {
     managerGuid: parseGuidParam(req.query.managerGuid) ?? undefined,
-    responsibleGuid: parseGuidParam(req.query.responsibleGuid) ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
     responsibleKind: kind,
     ropBranchGuid: parseGuidParam(req.query.ropBranchGuid) ?? undefined,
+    teamMemberGuids,
   });
   setNoStore(res);
   res.json(options);

@@ -1035,6 +1035,9 @@
       if (state.ropEmployee) {
         params.set("ropBranchGuid", state.ropEmployee);
       }
+      if (state.orgTeamGuid) {
+        params.set("teamGuid", state.orgTeamGuid);
+      }
       var teamAssignment =
         isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
       if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
@@ -1052,7 +1055,7 @@
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
-        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid"].map(function (key) {
+        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid"].map(function (key) {
           return params.has(key) ? "&" + key + "=" + encodeURIComponent(params.get(key)) : "";
         }).join(""),
       ).then(function (optionsResult) {

@@ -9,6 +9,7 @@ export type V3TerritoryQuery = {
   responsibleGuid?: string;
   responsibleKind?: V3ResponsibleKind;
   managerGuid?: string;
+  teamMemberGuids?: string[];
 };
 
 function territoryListInput(territory: V3TerritoryQuery): V3ListQuery {
@@ -21,6 +22,7 @@ function territoryListInput(territory: V3TerritoryQuery): V3ListQuery {
     responsibleGuid: territory.responsibleGuid,
     responsibleKind: territory.responsibleKind,
     managerGuid: territory.managerGuid,
+    teamMemberGuids: territory.teamMemberGuids,
   };
 }
 

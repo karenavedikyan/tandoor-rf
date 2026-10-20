@@ -24,6 +24,7 @@
     "phone",
     "rop",
     "ropEmployee",
+    "orgTeamGuid",
     "clientRopEmployee",
     "outletRopEmployee",
     "unassignedCategory",

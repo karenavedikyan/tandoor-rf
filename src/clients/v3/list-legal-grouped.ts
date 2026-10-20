@@ -40,8 +40,12 @@ export function readableGroupKey(context: AccessContext, params: unknown[]): str
   return v3LegalGroupKeyExpr("le", clause);
 }
 
-function renumberScopeClause(clause: string, startIndex: number): string {
+export function renumberV3ScopeClause(clause: string, startIndex: number): string {
   return clause.replace(/\$(\d+)/g, (_m, index) => `$${Number(index) + startIndex - 1}`);
+}
+
+function renumberScopeClause(clause: string, startIndex: number): string {
+  return renumberV3ScopeClause(clause, startIndex);
 }
 
 function appendGroupedSearch(
@@ -197,7 +201,10 @@ function appendEligibilityFilters(
 
 export async function countV3LegalGroups(
   context: AccessContext,
-  territory: Pick<V3ListQuery, "ropBranchGuid" | "responsibleGuid" | "responsibleKind" | "managerGuid">,
+  territory: Pick<
+    V3ListQuery,
+    "ropBranchGuid" | "responsibleGuid" | "responsibleKind" | "managerGuid" | "teamMemberGuids"
+  >,
 ): Promise<number> {
   const scope = v3EntityAssignmentScope(context, "le");
   const params = [...scope.params];
