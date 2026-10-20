@@ -303,7 +303,8 @@
         return '<p class="clients-compact-team__empty">Команда недоступна.</p>';
       }
       var teamUi = readTeamUi(state);
-      var entry = cacheEntry(summary.employeeGuid, summary.teamGuid);
+      var teamScopeGuid = state.orgTeamGuid || summary.teamGuid || null;
+      var entry = cacheEntry(summary.employeeGuid, teamScopeGuid);
       if (entry.status === "loading" || entry.status === "idle") {
         return '<div class="clients-compact-team__members clients-compact-team__members--loading">Загрузка состава…</div>';
       }
@@ -1065,7 +1066,8 @@
         if (isStale()) {
           return;
         }
-        return ensureResponsibles(summary.employeeGuid, summary.teamGuid).then(function () {
+        var teamScopeGuid = state.orgTeamGuid || summary.teamGuid || null;
+        return ensureResponsibles(summary.employeeGuid, teamScopeGuid).then(function () {
           if (isStale()) {
             return;
           }

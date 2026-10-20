@@ -164,6 +164,57 @@ async function buildV3OrgOverviewFromTeamGroups(
       teamName: group.name_team,
     });
   }
+
+  const apexGroup = groups.rows.find(
+    (group) => group.guid_team_leader?.toLowerCase() === ORG_DIRECTOR_EMPLOYEE_GUID.toLowerCase(),
+  );
+  if (apexGroup) {
+    const covered = new Set(rops.map((rop) => rop.employeeGuid.toLowerCase()));
+    const apexMembers = await query<{ guid_manager: string; name_manager: string | null; post: string | null }>(
+      `
+        SELECT m.guid_manager::text, r.name_manager, r.post
+        FROM onec_wholesale_employee_team_memberships m
+        JOIN onec_wholesale_employee_roster r ON r.guid_manager = m.guid_manager
+        WHERE m.guid_team = $1::uuid
+          AND lower(m.guid_manager::text) <> lower($2::text)
+        ORDER BY r.name_manager ASC NULLS LAST, m.guid_manager ASC
+      `,
+      [apexGroup.guid_team, ORG_DIRECTOR_EMPLOYEE_GUID],
+    );
+    for (const member of apexMembers.rows) {
+      const memberGuid = member.guid_manager;
+      if (covered.has(memberGuid.toLowerCase())) {
+        continue;
+      }
+      const counts = await countBranch(context, memberGuid);
+      const hasPortfolio = counts.legal + counts.retail > 0;
+      rops.push({
+        employeeGuid: memberGuid,
+        name: member.name_manager || shortUuidLabel(memberGuid),
+        shortId: shortUuidLabel(memberGuid),
+        rosterPost: member.post,
+        hasLinkedAccount: linked.has(memberGuid.toLowerCase()),
+        hasAssignedPortfolio: hasPortfolio,
+        portfolioNote: hasPortfolio ? null : "Нет объектов v3 в ветке команды",
+        managerCount: 0,
+        regionalCount: 0,
+        teamMemberCount: 0,
+        uniqueClientCount: counts.legal,
+        uniqueOutletCount: counts.retail,
+        parentClientCount: 0,
+        sources: ["roster"],
+      });
+      covered.add(memberGuid.toLowerCase());
+    }
+    rops.sort((left, right) => {
+      const nameCmp = (left.name || "").localeCompare(right.name || "", "ru");
+      if (nameCmp !== 0) {
+        return nameCmp;
+      }
+      return left.employeeGuid.localeCompare(right.employeeGuid);
+    });
+  }
+
   return rops;
 }
 

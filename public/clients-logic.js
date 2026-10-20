@@ -795,6 +795,38 @@
     return "";
   }
 
+  function normalizeOrgTeamGuid(value) {
+    return (value || "").trim().toLowerCase();
+  }
+
+  /**
+   * Resolve org team scope for a ROP leader from org-structure rows.
+   * Single team → that team; multiple teams → only when preferred matches; invalid preferred → "".
+   */
+  function resolveRopOrgTeamGuid(ropEmployeeGuid, preferredOrgTeamGuid, rops) {
+    var leader = normalizeOrgTeamGuid(ropEmployeeGuid);
+    if (!leader) {
+      return "";
+    }
+    var teams = (rops || []).filter(function (rop) {
+      return normalizeOrgTeamGuid(rop.employeeGuid) === leader && rop.teamGuid;
+    });
+    if (!teams.length) {
+      return "";
+    }
+    var preferred = normalizeOrgTeamGuid(preferredOrgTeamGuid);
+    if (preferred) {
+      var matched = teams.find(function (rop) {
+        return normalizeOrgTeamGuid(rop.teamGuid) === preferred;
+      });
+      return matched && matched.teamGuid ? matched.teamGuid : "";
+    }
+    if (teams.length === 1) {
+      return teams[0].teamGuid || "";
+    }
+    return "";
+  }
+
   function v3ResponsibleFromLegacyState(state) {
     if (!state) {
       return { responsibleGuid: "", responsibleKind: "", v3manager: "" };
@@ -2298,6 +2330,7 @@
     isBareClientsMenuSearch: isBareClientsMenuSearch,
     mergeRoleEntryHref: mergeRoleEntryHref,
     normalizeTeamKind: normalizeTeamKind,
+    resolveRopOrgTeamGuid: resolveRopOrgTeamGuid,
     v3ResponsibleFromLegacyState: v3ResponsibleFromLegacyState,
     legacyStringField: legacyStringField,
     mapLegacyEntityToV3Entity: mapLegacyEntityToV3Entity,

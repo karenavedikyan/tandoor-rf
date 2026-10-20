@@ -921,13 +921,19 @@
     if (expanded.indexOf(ownGuid) === -1) {
       expanded = expanded.concat([ownGuid]);
     }
-    return {
+    var urlOrgTeam = (state && state.orgTeamGuid) || readStateFromUrl().orgTeamGuid || "";
+    var orgTeamGuid = logic.resolveRopOrgTeamGuid(ownGuid, urlOrgTeam, teamContext.rops || []);
+    var patch = {
       view: "teams",
       ropEmployee: ownGuid,
       teamExpand: expanded,
       entity: "clients",
       page: 1,
     };
+    if (orgTeamGuid) {
+      patch.orgTeamGuid = orgTeamGuid;
+    }
+    return patch;
   }
 
   function usesDirectorLayout() {
@@ -2777,6 +2783,7 @@
     var next = {
       view: "teams",
       ropEmployee: state.ropEmployee,
+      orgTeamGuid: state.orgTeamGuid || readStateFromUrl().orgTeamGuid || "",
       rop: "",
       portfolio: "",
       manager: kind === "manager" ? guid : "",
@@ -3084,7 +3091,16 @@
     if (!ownGuid) {
       return "/clients?view=teams";
     }
-    return "/clients?view=teams&ropEmployee=" + encodeURIComponent(ownGuid);
+    var orgTeamGuid = logic.resolveRopOrgTeamGuid(
+      ownGuid,
+      state.orgTeamGuid || readStateFromUrl().orgTeamGuid || "",
+      teamContext.rops || [],
+    );
+    var href = "/clients?view=teams&ropEmployee=" + encodeURIComponent(ownGuid);
+    if (orgTeamGuid) {
+      href += "&orgTeamGuid=" + encodeURIComponent(orgTeamGuid);
+    }
+    return href;
   }
 
   function renderBreadcrumbs(state) {
@@ -3232,6 +3248,7 @@
     navigateState({
       view: "teams",
       ropEmployee: state.ropEmployee,
+      orgTeamGuid: state.orgTeamGuid || readStateFromUrl().orgTeamGuid || "",
       rop: "",
       manager: "",
       regionalManager: "",
@@ -4062,6 +4079,9 @@
       summaryGuid = resolveRopOwnBranchGuid();
     }
     var teamGuidFilter = orgTeamGuid || "";
+    if (summaryGuid && !teamGuidFilter && isRopDesignSession()) {
+      teamGuidFilter = logic.resolveRopOrgTeamGuid(summaryGuid, "", data.rops || []);
+    }
     var match = summaryGuid
       ? (data.rops || []).find(function (item) {
           if (item.employeeGuid !== summaryGuid) {
