@@ -3,7 +3,6 @@ import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { getV3OrgStructureOverview, listV3RopResponsibles } from "../../src/clients/v3/teams-structure";
-import { parseWholesaleEmployeeRosterBytes } from "../../src/onec-clients/employee-roster";
 import { runAuthoritativeWholesaleOrgRebuild } from "../../src/onec-clients/run-authoritative-org-rebuild";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import {
@@ -185,7 +184,8 @@ describe("authoritative flat org rebuild", { concurrency: false }, () => {
       rosterBytes: invalid,
     });
     assert.equal(result.status, "VALIDATION_FAILED");
-    assert.match(result.message ?? "", /FLAT_TEAM_FIELD_INVALID_UUID/i);
+    assert.equal(result.errorCode, "FLAT_TEAM_FIELD_INVALID_UUID");
+    assert.match(result.message ?? "", /invalid UUID in flat guid_team_leader/i);
 
     const verifyPool = new Pool({ connectionString: databaseUrl, max: 1 });
     assert.equal(await countTable(verifyPool, "onec_wholesale_team_groups"), beforeGroups);
@@ -246,7 +246,7 @@ describe("authoritative flat org rebuild", { concurrency: false }, () => {
       await countTable(verifyPool, "onec_wholesale_employee_team_memberships"),
       membershipCountAfterFirst,
     );
-    assert.equal(await countTable(verifyPool, "user_onec_employee_team_memberships"), linksAfterFirst);
+    assert.equal(await countTable(verifyPool, "user_onec_employee_links"), linksAfterFirst);
     await verifyPool.end();
   });
 
