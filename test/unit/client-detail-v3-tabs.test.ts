@@ -19,7 +19,9 @@ function loadV3Tabs(search = "") {
   const { window } = dom;
   (globalThis as { window?: Window }).window = window as unknown as Window;
   (globalThis as { location?: Location }).location = window.location;
+  delete require.cache[require.resolve("../../public/client-detail-exchange-catalog.js")];
   delete require.cache[require.resolve("../../public/client-detail-v3.js")];
+  require("../../public/client-detail-exchange-catalog.js");
   return require("../../public/client-detail-v3.js") as V3TabsModule;
 }
 
@@ -29,28 +31,37 @@ describe("client-detail-v3 visible tabs", () => {
     delete (globalThis as { location?: Location }).location;
   });
 
-  it("exposes connected tabs including sales for legal entity", () => {
+  it("exposes prototype tab strip including sales for legal entity", () => {
     const v3 = loadV3Tabs();
     assert.deepEqual(
       v3.visibleTabs("legal").map((t) => t[0]),
-      ["overview", "data", "sales"],
+      [
+        "overview",
+        "data",
+        "sales",
+        "work",
+        "showcase",
+        "orders",
+        "finance",
+        "documents",
+        "claims",
+        "plan",
+      ],
     );
     assert.deepEqual(
       v3.visibleTabs("retail").map((t) => t[0]),
-      ["overview", "data"],
+      ["overview", "data", "work", "showcase", "orders", "finance", "documents", "claims", "plan"],
     );
     const html = v3.renderTabsMarkup("overview", "legal");
     assert.match(html, /data-card-tab="overview"/);
-    assert.match(html, /data-card-tab="data"/);
-    assert.match(html, /data-card-tab="sales"/);
-    assert.doesNotMatch(html, /data-card-tab="orders"/);
-    assert.doesNotMatch(html, /data-card-tab="work"/);
+    assert.match(html, /data-card-tab="orders"/);
+    assert.match(html, /data-card-tab="work"/);
   });
 
-  it("falls back legacy cardTab query params to overview", () => {
+  it("resolves disconnected section tabs for deep links", () => {
     const v3Orders = loadV3Tabs("cardTab=orders&returnUrl=%2Fclients");
-    assert.equal(v3Orders.resolveCardTab("orders"), "overview");
-    assert.equal(v3Orders.readInitialCardTab(), "overview");
+    assert.equal(v3Orders.resolveCardTab("orders"), "orders");
+    assert.equal(v3Orders.readInitialCardTab(), "orders");
 
     const v3Data = loadV3Tabs("cardTab=data");
     assert.equal(v3Data.readInitialCardTab(), "data");

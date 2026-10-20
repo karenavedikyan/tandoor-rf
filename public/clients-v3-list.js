@@ -31,7 +31,7 @@
   var COLUMN_CATALOG = {
     name: { label: "Название клиента", required: true, filterKey: null },
     client_name: { label: "Название клиента", required: true, filterKey: null },
-    category_name: { label: "ТОП-категория холдинга", filterKey: null },
+    category_name: { label: "ТОП (тип 1С)", filterKey: null },
     legal_name: { label: "Юридическое лицо", filterKey: null },
     city: { label: "Город", filterKey: null },
     address_line: { label: "Адрес", filterKey: null },

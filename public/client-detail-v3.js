@@ -5,20 +5,17 @@
     ["overview", "Обзор", true],
     ["data", "Данные", true],
     ["sales", "Продажи", true],
-    ["work", "Работа", false],
-    ["showcase", "Витрина", false],
-    ["orders", "Заказы", false],
-    ["finance", "Финансы", false],
-    ["documents", "Документы", false],
-    ["claims", "Рекламации", false],
-    ["plan", "План", false],
+    ["work", "Работа", true],
+    ["showcase", "Витрина", true],
+    ["orders", "Заказы", true],
+    ["finance", "Финансы", true],
+    ["documents", "Документы", true],
+    ["claims", "Рекламации", true],
+    ["plan", "План", true],
   ];
 
   function visibleTabs(entityType) {
     return TABS.filter(function (t) {
-      if (!t[2]) {
-        return false;
-      }
       if (t[0] === "sales") {
         return entityType === "legal";
       }
@@ -41,13 +38,13 @@
   }
 
   var UNAVAILABLE_SECTION_COPY = {
-    work: "Задачи и работа с клиентом доступны в полной карточке с подключённым Битрикс24.",
-    showcase: "Витрина и каталог не подключены к v3-карточке.",
-    orders: "Заказы не подключены к v3-карточке.",
-    finance: "Финансовые показатели не подключены к v3-карточке.",
-    documents: "Документы не подключены к v3-карточке.",
-    claims: "Рекламации не подключены к v3-карточке.",
-    plan: "План продаж не подключён к v3-карточке.",
+    work: "Раздел «Работа» ожидает данные из Битрикс24. Интеграция задач в ЛК не подключена.",
+    showcase: "Витрина и каталог ожидают отдельный источник; в обмене 1С v3 только справочные поля витрин.",
+    orders: "Заказы ожидают подключение учётной системы заказов, не файл clients JSON.",
+    finance: "Финансовые показатели вне обмена clients v3; долг не вычисляется из лимитов 1С.",
+    documents: "Документы ожидают подключение хранилища документов, не обмен clients.",
+    claims: "Рекламации — задачи Битрикс24; отдельный обмен не подключён.",
+    plan: "План продаж не передаётся в clients JSON; раздел ожидает подключение планирования.",
   };
 
   function esc(shell, value) {
@@ -62,7 +59,7 @@
   }
 
   function emptyFrom1C() {
-    return '<span class="pc-unavailable">Не передано из 1С</span>';
+    return '<span class="pc-unavailable">Нет данных из 1С</span>';
   }
 
   function boolLabel(value) {
@@ -133,10 +130,13 @@
     var type = tc.nameType || tc.name_type || "";
     var cat = tc.nameCategory || tc.name_category || "";
     if (type && cat) {
-      return { html: esc(shell, type + " / " + cat), known: true };
+      return { html: esc(shell, "ТОП: " + type + " · категория: " + cat), known: true };
     }
-    if (type || cat) {
-      return { html: esc(shell, type || cat), known: true };
+    if (type) {
+      return { html: esc(shell, "ТОП: " + type), known: true };
+    }
+    if (cat) {
+      return { html: esc(shell, "Категория: " + cat), known: true };
     }
     if (tc.guidType || tc.guid_type || tc.guidCategory || tc.guid_category) {
       return { html: emptyFrom1C(), known: false };
@@ -165,33 +165,9 @@
     return { html: text || emptyNoData(), known: Boolean(text) };
   }
 
-  var OTHER_FIELD_LABELS = {
-    Код: "Код 1С",
-    НаименованиеПолное: "Полное наименование",
-    ЮрФизЛицо: "Юр./физ. лицо",
-    Оптовик_ОГРН: "ОГРН",
-    Оптовик_ОсновнойДоговор: "Основной договор (строка 1С)",
-    Оптовик_ОсновноеСоглашение: "Основное соглашение (строка 1С)",
-    Оптовик_Наличные: "Наличный расчёт",
-    Оптовик_ДопустимаяСуммаЗадолженности: "Допустимая сумма задолженности (лимит 1С)",
-    Оптовик_ДопустимоеЧислоДнейЗадолженности: "Допустимое число дней задолженности (лимит 1С)",
-    Оптовик_КонтролироватьСуммуЗадолженности: "Контролировать сумму задолженности",
-    Оптовик_КонтролироватьЧислоДнейЗадолженности: "Контролировать число дней задолженности",
-    Оптовик_Неблагонадёжный: "Неблагонадёжный",
-    Оптовик_КатегорияТорговойТочкиТандор: "Категория ТТ Tandoor",
-    Оптовик_ТипКлиентаТандор: "Тип клиента Tandoor",
-    Оптовик_ВитринВсегоТандор: "Витрин всего (1С)",
-    Оптовик_ВитринТандорТандор: "Витрин Tandoor (1С)",
-    Оптовик_ЭксклюзивТандор: "Эксклюзив Tandoor",
-    Оптовик_РетроБонус: "Ретро-бонус",
-    Оптовик_ЗапретСамовывоз: "Запрет самовывоза",
-    Оптовик_КрайГород: "Край / город",
-    Оптовик_НаселенныйПункт: "Населённый пункт",
-    БизнесРегион: "Бизнес-регион",
-    Комментарий: "Комментарий",
-  };
-
-  var OTHER_FIELD_GROUPS = {
+  var catalog = root.ClientDetailExchangeCatalog || {};
+  var OTHER_FIELD_LABELS = catalog.otherFieldLabels || {};
+  var OTHER_FIELD_GROUPS = catalog.otherFieldGroups || {
     requisites: ["Код", "НаименованиеПолное", "ЮрФизЛицо", "Оптовик_ОГРН"],
     location: ["Оптовик_КрайГород", "Оптовик_НаселенныйПункт", "БизнесРегион"],
     contractRefs: ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"],
@@ -203,23 +179,38 @@
       "Оптовик_Неблагонадёжный",
       "Оптовик_Наличные",
     ],
-    vitrine: [
-      "Оптовик_КатегорияТорговойТочкиТандор",
-      "Оптовик_ТипКлиентаТандор",
-      "Оптовик_ВитринВсегоТандор",
-      "Оптовик_ВитринТандорТандор",
-      "Оптовик_ЭксклюзивТандор",
-    ],
-    commercialExtra: ["Оптовик_РетроБонус", "Оптовик_ЗапретСамовывоз"],
     misc: ["Комментарий"],
   };
+  var OTHER_GROUP_TITLES = catalog.groupTitles || {};
 
   function otherFieldLabel(key) {
     return OTHER_FIELD_LABELS[key] || key;
   }
 
+  function formatExchangeDateTime(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    var trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    var m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) {
+      return trimmed;
+    }
+    var year = Number(m[1]);
+    if (year <= 1) {
+      return m[4] + ":" + m[5];
+    }
+    return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5];
+  }
+
   function formatOtherFieldScalar(value) {
-    if (value === null || value === undefined || value === "") {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (value === "") {
       return null;
     }
     if (typeof value === "boolean") {
@@ -229,7 +220,14 @@
       return String(value);
     }
     if (typeof value === "string") {
-      return value.trim() || null;
+      var trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+        return formatExchangeDateTime(trimmed);
+      }
+      return trimmed;
     }
     if (Array.isArray(value)) {
       var parts = value
@@ -274,22 +272,27 @@
       return "";
     }
     var html = "";
-    var groupTitles = {
-      requisites: "Реквизиты (прочие поля 1С)",
-      location: "География и регион",
-      contractRefs: "Ссылки на договор в 1С",
-      debtControl: "Контроль задолженности (лимиты и флаги)",
-      vitrine: "Витрина и классификация Tandoor",
-      commercialExtra: "Доп. коммерческие условия",
-      misc: "Прочее",
-    };
+    var groupedKeys = new Set();
     Object.keys(OTHER_FIELD_GROUPS).forEach(function (groupId) {
+      (OTHER_FIELD_GROUPS[groupId] || []).forEach(function (key) {
+        groupedKeys.add(key);
+      });
       var body = renderOtherFieldsFromKeys(shell, other, OTHER_FIELD_GROUPS[groupId]);
       if (body) {
-        html += renderDataGroup(groupTitles[groupId], body);
+        html += renderDataGroup(OTHER_GROUP_TITLES[groupId] || groupId, body);
       }
     });
-    var known = new Set(Object.keys(OTHER_FIELD_LABELS));
+    var extraKeys = Object.keys(other)
+      .filter(function (key) {
+        return !groupedKeys.has(key) && formatOtherFieldScalar(other[key]) != null;
+      })
+      .sort();
+    if (extraKeys.length) {
+      html += renderDataGroup(
+        "Все данные 1С (дополнительные поля)",
+        renderOtherFieldsFromKeys(shell, other, extraKeys),
+      );
+    }
     return html;
   }
 
@@ -545,7 +548,7 @@
       '<div class="x13-kpis v3-overview-kpis" aria-label="Сводка из 1С" data-testid="v3-overview-kpis">' +
       kpi("Торговые точки", retailCount) +
       kpi("Юридические лица", legalCount) +
-      kpi("Категория", typeCategoryPlain(typeCat)) +
+      kpi("ТОП / тип", typeCategoryPlain(typeCat)) +
       "</div>"
     );
   }
@@ -939,6 +942,16 @@
       dataHtml +
       "</section>" +
       (entityType === "legal" ? renderSalesPanelShell(initialTab === "sales") : "");
+    TABS.forEach(function (t) {
+      var tabId = t[0];
+      if (tabId === "overview" || tabId === "data" || tabId === "sales") {
+        return;
+      }
+      if (tabId === "sales" && entityType !== "legal") {
+        return;
+      }
+      panels += renderUnavailablePanel(tabId, t[1], initialTab === tabId);
+    });
 
     var subtitleParts = [entityKindLabel(entityType)];
     if (typeCat.known) {

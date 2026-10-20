@@ -314,8 +314,8 @@ export async function listV3Entities(
                le.managers->>'nameHardwareManager' AS hardware_name,
                le.managers->>'nameHeadOfSales' AS rop_name,
                ${LEGAL_STATUS_SQL} AS status_label,
-               le.type_category->>'nameType' AS type_name,
-               le.type_category->>'nameCategory' AS category_name,
+               le.type_category->>'nameCategory' AS type_name,
+               le.type_category->>'nameType' AS category_name,
                ${legalInnSql("le")} AS inn
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
@@ -362,8 +362,8 @@ export async function listV3Entities(
              NULLIF(TRIM(ro.lpr_information->>'name'), '') AS lpr_name,
              NULLIF(TRIM(ro.additional_information->>'status_tandoor_club'), '') AS club_status,
              NULLIF(TRIM(ro.additional_information->>'bonus_tandoor_club'), '') AS club_bonus,
-             ${v3CategoryNameSql("ro")} AS category_name,
-             ${v3TypeNameSql("ro")} AS type_name
+             COALESCE(NULLIF(TRIM(${v3TypeNameSql("ro")}), ''), ${v3CategoryNameSql("ro")}) AS category_name,
+             ${v3CategoryNameSql("ro")} AS type_name
       ${fromSql}
       WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
       ORDER BY ro.address->>'store_address' ASC NULLS LAST, name ASC

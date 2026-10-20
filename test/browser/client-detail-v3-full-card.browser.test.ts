@@ -39,7 +39,12 @@ function legalDetailPayload() {
       discount: "10%",
       discount_amount: 5,
       markups: [],
-      other_fields: { Код: "SYNTH-001" },
+      other_fields: {
+        Код: "SYNTH-001",
+        Оптовик_КонтактноеЛицо: "SYNTH Contact Person",
+        Оптовик_СтатусКлиента: "Active",
+        Оптовик_ИндивидуальнаяСкидка: "5",
+      },
       last_imported_at: "2026-01-01T12:00:00.000Z",
       last_source_sha256: "hidden-sha-value",
     },
@@ -123,7 +128,8 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     await page.waitForSelector('[data-testid="v3-detail-card"]', { timeout: 30000 });
     await page.waitForSelector("#pc-panel-overview:not([hidden])");
     await page.waitForSelector('[data-testid="v3-territory-nav"]');
-    assert.match(await page.locator("#pc-panel-overview").innerText(), /Type A \/ Cat A/);
+    assert.match(await page.locator("#pc-panel-overview").innerText(), /ТОП: Type A/);
+    assert.match(await page.locator('[data-testid="v3-detail-card"] [role="tablist"]').innerText(), /Заказы/);
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Точки и контакты/);
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Торговые точки/);
     assert.match(await page.locator("#pc-panel-overview").innerText(), /Ответственные клиента/);
@@ -146,7 +152,12 @@ describe("client-detail v3 full card browser (mocked v3 detail)", { concurrency:
     assert.match(await page.locator("#pc-panel-data").innerText(), /ROP One/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Клиент и холдинг/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Коммерческие условия/);
+    assert.match(await page.locator("#pc-panel-data").innerText(), /SYNTH Contact Person/);
     assert.match(await page.locator("#pc-panel-data").innerText(), /Доступные точки холдинга/);
+
+    await page.locator("#pc-tab-orders").click();
+    await page.waitForSelector("#pc-panel-orders:not([hidden])");
+    assert.match(await page.locator("#pc-panel-orders").innerText(), /учётной системы заказов/);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "impl-legal-data-desktop-1440.png"),
