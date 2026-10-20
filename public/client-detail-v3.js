@@ -4,6 +4,7 @@
   var TABS = [
     ["overview", "Обзор", true],
     ["data", "Данные", true],
+    ["sales", "Продажи", true],
     ["work", "Работа", false],
     ["showcase", "Витрина", false],
     ["orders", "Заказы", false],
@@ -13,20 +14,27 @@
     ["plan", "План", false],
   ];
 
-  function visibleTabs() {
+  function visibleTabs(entityType) {
     return TABS.filter(function (t) {
-      return t[2];
+      if (!t[2]) {
+        return false;
+      }
+      if (t[0] === "sales") {
+        return entityType === "legal";
+      }
+      return true;
     });
   }
 
-  function isConnectedTab(tabId) {
-    return visibleTabs().some(function (t) {
+  function isConnectedTab(tabId, entityType) {
+    return visibleTabs(entityType).some(function (t) {
       return t[0] === tabId;
     });
   }
 
-  function resolveCardTab(tabId) {
-    if (!tabId || !isConnectedTab(tabId)) {
+  function resolveCardTab(tabId, entityType) {
+    entityType = entityType || "legal";
+    if (!tabId || !isConnectedTab(tabId, entityType)) {
       return "overview";
     }
     return tabId;
@@ -820,9 +828,10 @@
     );
   }
 
-  function renderTabsMarkup(initialTab) {
-    initialTab = resolveCardTab(initialTab || "overview");
-    var tabs = visibleTabs();
+  function renderTabsMarkup(initialTab, entityType) {
+    entityType = entityType || "legal";
+    initialTab = resolveCardTab(initialTab || "overview", entityType);
+    var tabs = visibleTabs(entityType);
     return (
       '<nav class="x13-card-tabs pc-tabs" role="tablist" aria-label="Разделы карточки">' +
       tabs.map(function (t, i) {
@@ -849,13 +858,34 @@
     );
   }
 
-  function readInitialCardTab() {
+  function readInitialCardTab(entityType) {
     try {
       var tab = new URLSearchParams(root.location.search).get("cardTab") || "overview";
-      return resolveCardTab(tab);
+      return resolveCardTab(tab, entityType);
     } catch (_err) {
       return "overview";
     }
+  }
+
+  function formatSaleNumber(value) {
+    if (value === null || value === undefined || value === "") {
+      return "—";
+    }
+    var num = Number(value);
+    if (!Number.isFinite(num)) {
+      return String(value);
+    }
+    return num.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  function renderSalesPanelShell(visible) {
+    return (
+      '<section id="pc-panel-sales" class="v3-detail-panel v3-sales-panel" role="tabpanel" aria-labelledby="pc-tab-sales"' +
+      (visible ? "" : " hidden") +
+      ' data-testid="v3-sales-panel">' +
+      '<div class="v3-sales-host" data-testid="v3-sales-host">' +
+      '<p class="pc-unavailable">Загрузка продаж…</p></div></section>'
+    );
   }
 
   function writeCardTabQuery(tab) {
@@ -874,7 +904,7 @@
 
   function renderCard(shell, entityType, ent, holdingLink, options) {
     options = options || {};
-    var initialTab = resolveCardTab(options.initialTab || readInitialCardTab());
+    var initialTab = resolveCardTab(options.initialTab || readInitialCardTab(entityType), entityType);
     try {
       var requestedTab = new URLSearchParams(root.location.search).get("cardTab");
       if (requestedTab && requestedTab !== initialTab) {
@@ -907,7 +937,8 @@
       panelVisibility("data") +
       ">" +
       dataHtml +
-      "</section>";
+      "</section>" +
+      (entityType === "legal" ? renderSalesPanelShell(initialTab === "sales") : "");
 
     var subtitleParts = [entityKindLabel(entityType)];
     if (typeCat.known) {
@@ -933,9 +964,109 @@
       '<p class="pc-subtitle v3-detail-subtitle" data-testid="v3-detail-subtitle">' +
       esc(shell, addrLine || subtitleParts.join(" · ")) +
       "</p></div>" +
-      renderTabsMarkup(initialTab) +
+      renderTabsMarkup(initialTab, entityType) +
       panels +
       "</div>"
+    );
+  }
+
+  function renderSalesContent(shell, payload) {
+    payload = payload || {};
+    var sales = payload.sales || {};
+    var lines = sales.lines || [];
+    if (!lines.length) {
+      return (
+        '<section class="card pad x13-empty-section" data-testid="v3-sales-empty">' +
+        "<header><h3>Продажи</h3></header>" +
+        '<p class="pc-unavailable">Нет данных о продажах за выбранный месяц.</p>' +
+        '<p class="pc-label">' +
+        esc(shell, sales.vatNote || "Суммы с НДС, ₽") +
+        "</p></section>"
+      );
+    }
+    var monthSelect =
+      '<label class="pc-label v3-sales-month-label">Месяц ' +
+      '<select class="v3-sales-month-select" data-testid="v3-sales-month-select">';
+    (payload.months || [sales.month]).forEach(function (m) {
+      monthSelect +=
+        '<option value="' +
+        esc(shell, m) +
+        '"' +
+        (m === sales.month ? " selected" : "") +
+        ">" +
+        esc(shell, m) +
+        "</option>";
+    });
+    monthSelect += "</select></label>";
+    var summary =
+      '<div class="x13-kpis v3-sales-kpis" data-testid="v3-sales-kpis">' +
+      "<div><span>Выручка</span><b>" +
+      formatSaleNumber(sales.incomeTotal) +
+      "</b></div>" +
+      "<div><span>Количество, шт</span><b>" +
+      formatSaleNumber(sales.quantityTotal) +
+      "</b></div>";
+    if (sales.grossProfitTotal != null) {
+      summary +=
+        "<div><span>Валовая прибыль</span><b>" +
+        formatSaleNumber(sales.grossProfitTotal) +
+        "</b></div>" +
+        "<div><span>Рентабельность</span><b>" +
+        (sales.profitabilityPercent != null ? formatSaleNumber(sales.profitabilityPercent) + "%" : "—") +
+        "</b></div>";
+    }
+    summary += "</div>";
+    var rows = lines
+      .map(function (line) {
+        var detail =
+          '<details class="v3-sales-line-details"><summary>Детализация</summary><ul class="v3-sales-detail-list">' +
+          "<li>Ручная скидка: " +
+          formatSaleNumber(line.manualDiscount) +
+          "</li>" +
+          "<li>Авто скидка: " +
+          formatSaleNumber(line.automaticDiscount) +
+          "</li>" +
+          "<li>Итого скидок: " +
+          formatSaleNumber(line.totalDiscount) +
+          "</li>";
+        if (line.costPrice != null) {
+          detail +=
+            "<li>Себестоимость: " +
+            formatSaleNumber(line.costPrice) +
+            "</li><li>Доп. расходы: " +
+            formatSaleNumber(line.additionalExpenses) +
+            "</li><li>Валовая прибыль: " +
+            formatSaleNumber(line.grossProfit) +
+            "</li><li>Рентабельность: " +
+            formatSaleNumber(line.profitability) +
+            "%</li>";
+        }
+        detail += "</ul></details>";
+        return (
+          "<tr><td>" +
+          esc(shell, line.productType) +
+          "</td><td class=\"num\">" +
+          formatSaleNumber(line.quantity) +
+          '</td><td class="num">' +
+          formatSaleNumber(line.income) +
+          "</td><td>" +
+          detail +
+          "</td></tr>"
+        );
+      })
+      .join("");
+    return (
+      '<section class="card pad v3-sales-card" data-testid="v3-sales-content">' +
+      "<header><h3>Продажи из 1С</h3>" +
+      monthSelect +
+      "</header>" +
+      summary +
+      '<div class="v3-sales-table-wrap"><table class="v3-sales-table"><thead><tr><th>Категория</th><th>Кол-во, шт</th><th>Выручка, ₽</th><th></th></tr></thead><tbody>' +
+      rows +
+      "</tbody></table></div>" +
+      '<p class="pc-label">' +
+      esc(shell, sales.vatNote || "Суммы с НДС, ₽") +
+      "</p></section>"
     );
   }
 
@@ -979,10 +1110,11 @@
     var baseTitle = (context && context.title) || (titleEl && titleEl.textContent) || "";
     var entityLabel = (context && context.entityLabel) || "";
 
-    var tabs = visibleTabs();
+    var entityType = (context && context.entityType) || "legal";
+    var tabs = visibleTabs(entityType);
 
     function select(id, focus) {
-      id = resolveCardTab(id);
+      id = resolveCardTab(id, entityType);
       tabs.forEach(function (t) {
         var tabId = t[0];
         var btn = workspace.querySelector("#pc-tab-" + tabId);
@@ -1000,6 +1132,9 @@
       });
       writeCardTabQuery(id);
       refreshRelatedOutletReturnLinks(root);
+      if (id === "sales" && context && typeof context.onSalesTabSelected === "function") {
+        context.onSalesTabSelected();
+      }
       if (titleEl) {
         titleEl.textContent = id === "data" ? "Данные и условия клиента · " + baseTitle : baseTitle;
       }
@@ -1033,9 +1168,12 @@
       });
     });
 
-    var initialTab = readInitialCardTab();
+    var initialTab = readInitialCardTab(entityType);
     if (initialTab !== "overview") {
       select(initialTab, false);
+    }
+    if (initialTab === "sales" && context && typeof context.onSalesTabSelected === "function") {
+      context.onSalesTabSelected();
     }
   }
 
@@ -1043,6 +1181,7 @@
     renderCard: renderCard,
     bindTabs: bindTabs,
     updateRelatedContext: updateRelatedContext,
+    renderSalesContent: renderSalesContent,
     visibleTabs: visibleTabs,
     resolveCardTab: resolveCardTab,
     readInitialCardTab: readInitialCardTab,
@@ -1059,6 +1198,7 @@
       resolveCardTab: resolveCardTab,
       readInitialCardTab: readInitialCardTab,
       renderTabsMarkup: renderTabsMarkup,
+      renderSalesContent: renderSalesContent,
     };
   }
 })(typeof window !== "undefined" ? window : globalThis);

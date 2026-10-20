@@ -65,6 +65,8 @@ import {
   v3FilterFieldsHandler,
   v3ScopeSummaryHandler,
   v3UnassignedSummaryHandler,
+  v3LegalSalesMonthsHandler,
+  v3LegalSalesMonthHandler,
 } from "./v3/handlers";
 
 export function createClientsRouter(): express.Router {
@@ -115,6 +117,14 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/detail", ...readChain, (req, res, next) => {
     void v3ClientsDetailHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/legal/:guid/sales/months", ...readChain, (req, res, next) => {
+    void v3LegalSalesMonthsHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/legal/:guid/sales", ...readChain, (req, res, next) => {
+    void v3LegalSalesMonthHandler(req, res).catch(next);
   });
 
   router.get("/v3/field-catalog", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
