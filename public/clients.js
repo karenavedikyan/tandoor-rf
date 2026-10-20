@@ -3222,14 +3222,55 @@
     if (backButton) {
       backButton.onclick = function () {
         var cleared = logic.clearedTeamTerritoryFields ? logic.clearedTeamTerritoryFields() : {};
+        var teamScope = readStateFromUrl();
+        if (logic.isOrgCatalogEmployeePortfolio(state)) {
+          navigateState(
+            Object.assign({}, cleared, {
+              view: "teams",
+              teamSource: state.teamSource || "rop",
+              onecTeam: state.onecTeam || "",
+              teamExpand: teamScope.teamExpand || [],
+              onecPortfolioEmployee: "",
+              ropEmployee: "",
+              orgTeamGuid: "",
+              rop: "",
+              entity: "clients",
+              page: 1,
+            }),
+          );
+          return;
+        }
+        if (logic.hasResponsibleSelection(state) && state.ropEmployee) {
+          navigateState(
+            Object.assign({}, cleared, {
+              view: "teams",
+              teamSource: state.teamSource || "rop",
+              onecTeam: state.onecTeam || "",
+              teamExpand:
+                state.teamExpand && state.teamExpand.length
+                  ? state.teamExpand
+                  : teamScope.teamExpand && teamScope.teamExpand.length
+                    ? teamScope.teamExpand
+                    : [state.ropEmployee],
+              onecPortfolioEmployee: "",
+              ropEmployee: state.ropEmployee,
+              orgTeamGuid: state.orgTeamGuid || teamScope.orgTeamGuid || "",
+              rop: "",
+              entity: "clients",
+              page: 1,
+            }),
+          );
+          return;
+        }
         navigateState(
           Object.assign({}, cleared, {
             view: "teams",
             teamSource: state.teamSource || "rop",
             onecTeam: state.onecTeam || "",
-            teamExpand: state.teamExpand || [],
+            teamExpand: state.teamExpand || teamScope.teamExpand || [],
             onecPortfolioEmployee: "",
             ropEmployee: usesDirectorLayout() ? "" : state.ropEmployee || "",
+            orgTeamGuid: usesDirectorLayout() ? "" : state.orgTeamGuid || teamScope.orgTeamGuid || "",
             rop: "",
             entity: "clients",
             page: 1,
@@ -4469,6 +4510,8 @@
       isNavigationCurrent: function () {
         return navId === activeRequestId;
       },
+      logic: logic,
+      currentStateFromForm: currentStateFromForm,
       getSearchQuery: function () {
         return searchInput.value.trim();
       },

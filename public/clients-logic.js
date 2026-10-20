@@ -1044,7 +1044,6 @@
       teamKind: "",
       portfolio: "",
       orgCatalogEntry: "",
-      orgTeamGuid: "",
     };
   }
 

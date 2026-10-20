@@ -51,6 +51,20 @@ const testLogic = {
   },
   legacyStringField: (_legacy: Record<string, unknown>, _key: string, fallback: string) => fallback,
   mapLegacyEntityToV3Entity: (entity: string) => (entity === "outlets" ? "retail" : "legal"),
+  isOrgCatalogEmployeePortfolio: (state: Record<string, unknown>) =>
+    Boolean(
+      state &&
+        state.view === "teams" &&
+        state.orgCatalogEntry === "employee_portfolio" &&
+        state.responsibleGuid,
+    ),
+  isBranchPortfolioList: () => false,
+  clearedTeamTerritoryFields: () => ({
+    manager: "",
+    responsibleGuid: "",
+    responsibleKind: "",
+    orgCatalogEntry: "",
+  }),
 };
 
 function loadHarness(search: string): {
@@ -383,5 +397,35 @@ describe("clients v3 navigation orchestration guards", () => {
     teamsDeferred.resolve({ ok: false });
     await runA;
     assert.equal(lastErrorTitle, "");
+  });
+
+  it("catalog employee portfolio list uses employeePortfolioGuid query param", async () => {
+    const { window, ClientsV3 } = loadHarness("?v3mode=1&v3entity=legal_grouped&v3view=teams");
+    const listUrls: string[] = [];
+    (window as unknown as { TandoorRf: { apiRequest: (url: string) => Promise<unknown> } }).TandoorRf.apiRequest = (
+      url: string,
+    ) => {
+      if (String(url).includes("/api/clients/v3/list")) {
+        listUrls.push(String(url));
+      }
+      return Promise.resolve({
+        response: { ok: true, status: 200 },
+        data: { items: [], total: 0, managers: [], types: [], categories: [] },
+      });
+    };
+    const ctx = Object.assign(baseCtx(window), { logic: testLogic });
+    await ClientsV3.loadList(ctx, {
+      v3mode: true,
+      v3entity: "legal_grouped",
+      v3view: "teams",
+      page: 1,
+      orgCatalogEntry: "employee_portfolio",
+      responsibleGuid: "44444444-4444-4444-8444-444444444444",
+      responsibleKind: "manager",
+      ropEmployee: "",
+    }, true);
+    assert.ok(listUrls.length >= 1);
+    assert.match(listUrls[0], /employeePortfolioGuid=44444444-4444-4444-8444-444444444444/i);
+    assert.doesNotMatch(listUrls[0], /responsibleKind=/);
   });
 });

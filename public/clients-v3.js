@@ -38,6 +38,30 @@
     return ENTITIES[1];
   }
 
+  function resolveClientsLogic(ctx) {
+    if (ctx && ctx.logic) {
+      return ctx.logic;
+    }
+    if (ctx && ctx.lktandoorContext && ctx.lktandoorContext.logic) {
+      return ctx.lktandoorContext.logic;
+    }
+    if (typeof window !== "undefined" && window.ClientsLogic) {
+      return window.ClientsLogic;
+    }
+    return null;
+  }
+
+  function legacyStateFromV3ListState(state) {
+    return {
+      view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
+      ropEmployee: state.ropEmployee || "",
+      responsibleGuid: state.responsibleGuid || "",
+      responsibleKind: state.responsibleKind || "",
+      orgCatalogEntry: state.orgCatalogEntry || "",
+      orgTeamGuid: state.orgTeamGuid || "",
+    };
+  }
+
   function normalizeResponsibleKind(value) {
     if (value === "manager" || value === "regional" || value === "hardware") {
       return value;
@@ -958,11 +982,12 @@
       }
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
-      var legacyState = {
-        view: state.v3view === "teams" ? "teams" : state.v3view === "unassigned" ? "review" : "all",
-        ropEmployee: state.ropEmployee,
-        responsibleGuid: state.responsibleGuid,
-      };
+      var legacyState = legacyStateFromV3ListState(state);
+      var listLogic = resolveClientsLogic(ctx);
+      var catalogPortfolio =
+        listLogic &&
+        listLogic.isOrgCatalogEmployeePortfolio &&
+        listLogic.isOrgCatalogEmployeePortfolio(legacyState);
       var lktandoorActive =
         window.ClientsLktandoorList &&
         window.ClientsLktandoorList.shouldActivate(legacyState, true);
@@ -1049,13 +1074,10 @@
         params.set("teamGuid", state.orgTeamGuid);
       }
       var teamAssignment =
-        isV3TeamAssignment(state) ||
-        Boolean(state.responsibleGuid && state.ropEmployee) ||
-        (hooks.logic.isOrgCatalogEmployeePortfolio &&
-          hooks.logic.isOrgCatalogEmployeePortfolio(
-            Object.assign({}, hooks.currentStateFromForm(), legacyState),
-          ));
-      if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
+        isV3TeamAssignment(state) || Boolean(state.responsibleGuid && state.ropEmployee);
+      if (catalogPortfolio && state.responsibleGuid) {
+        params.set("employeePortfolioGuid", state.responsibleGuid);
+      } else if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
         params.set("responsibleGuid", state.responsibleGuid);
         params.set("responsibleKind", state.responsibleKind);
       }
@@ -1070,7 +1092,7 @@
       if (state.missingManager) params.set("missingManager", "true");
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
-        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid"].map(function (key) {
+        ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid", "employeePortfolioGuid"].map(function (key) {
           return params.has(key) ? "&" + key + "=" + encodeURIComponent(params.get(key)) : "";
         }).join(""),
       ).then(function (optionsResult) {

@@ -126,9 +126,27 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый filters."));
     return;
   }
-  const teamMemberGuids = await resolveTeamMemberGuidsForQuery(context, res, req.query, responsibleGuid);
-  if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
-    return;
+  const employeePortfolioGuid = parseGuidParam(req.query.employeePortfolioGuid);
+  let teamMemberGuids: string[] | undefined;
+  if (employeePortfolioGuid) {
+    if (req.query.teamGuid !== undefined || ropBranchGuid) {
+      setNoStore(res);
+      res
+        .status(400)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            "employeePortfolioGuid несовместим с teamGuid или ropBranchGuid.",
+          ),
+        );
+      return;
+    }
+    teamMemberGuids = [employeePortfolioGuid];
+  } else {
+    teamMemberGuids = await resolveTeamMemberGuidsForQuery(context, res, req.query, responsibleGuid);
+    if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+      return;
+    }
   }
   const result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
@@ -137,9 +155,9 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     q,
     closed,
     managerGuid: managerGuid ?? undefined,
-    responsibleGuid: responsibleGuid ?? undefined,
-    responsibleKind,
-    ropBranchGuid: ropBranchGuid ?? undefined,
+    responsibleGuid: employeePortfolioGuid ? undefined : responsibleGuid ?? undefined,
+    responsibleKind: employeePortfolioGuid ? undefined : responsibleKind,
+    ropBranchGuid: employeePortfolioGuid ? undefined : ropBranchGuid ?? undefined,
     teamMemberGuids,
     typeGuid: typeGuids?.length === 1 ? typeGuids[0] : undefined,
     categoryGuid: categoryGuids?.length === 1 ? categoryGuids[0] : undefined,
@@ -182,20 +200,38 @@ export async function v3ScopeSummaryHandler(req: AccessRequest, res: Response): 
   const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
   const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
   const managerGuid = parseGuidParam(req.query.managerGuid);
-  const teamMemberGuids = await resolveTeamMemberGuidsForQuery(
-    req.accessContext,
-    res,
-    req.query,
-    responsibleGuid,
-  );
-  if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
-    return;
+  const employeePortfolioGuid = parseGuidParam(req.query.employeePortfolioGuid);
+  let teamMemberGuids: string[] | undefined;
+  if (employeePortfolioGuid) {
+    if (req.query.teamGuid !== undefined || ropBranchGuid) {
+      setNoStore(res);
+      res
+        .status(400)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            "employeePortfolioGuid несовместим с teamGuid или ropBranchGuid.",
+          ),
+        );
+      return;
+    }
+    teamMemberGuids = [employeePortfolioGuid];
+  } else {
+    teamMemberGuids = await resolveTeamMemberGuidsForQuery(
+      req.accessContext,
+      res,
+      req.query,
+      responsibleGuid,
+    );
+    if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+      return;
+    }
   }
   const summary = await loadV3ScopeSummary(req.accessContext!, {
-    ropBranchGuid: ropBranchGuid ?? undefined,
-    responsibleGuid: responsibleGuid ?? undefined,
-    responsibleKind,
-    managerGuid: managerGuid ?? undefined,
+    ropBranchGuid: employeePortfolioGuid ? undefined : ropBranchGuid ?? undefined,
+    responsibleGuid: employeePortfolioGuid ? undefined : responsibleGuid ?? undefined,
+    responsibleKind: employeePortfolioGuid ? undefined : responsibleKind,
+    managerGuid: employeePortfolioGuid ? undefined : managerGuid ?? undefined,
     teamMemberGuids,
   });
   setNoStore(res);

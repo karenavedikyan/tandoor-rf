@@ -6,10 +6,13 @@ import { after, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { runAuthoritativeWholesaleOrgRebuild } from "../../src/onec-clients/run-authoritative-org-rebuild";
+import { runExchangeV3RegularUpdate } from "../../src/onec-exchange-v3/run-update";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import { buildFullFlatOrgHierarchyRosterBytes, FLAT_ORG } from "../helpers/flat-org-hierarchy-fixtures";
 
 const TEST_PASSWORD = "StrongPass123!";
+const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
+const FOREIGN = FLAT_ORG.KOMKOV;
 
 function authoritativeEnv(databaseUrl: string): NodeJS.ProcessEnv {
   return {
@@ -18,6 +21,67 @@ function authoritativeEnv(databaseUrl: string): NodeJS.ProcessEnv {
     PGSSLMODE: "disable",
     TANDOOR_WHOLESALE_ORG_AUTHORITATIVE_SNAPSHOT: "1",
   };
+}
+
+function morozovaPortfolioClientsBytes(): Buffer {
+  const base = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_clients.json"), "utf8")) as Record<
+    string,
+    unknown
+  >[];
+  const extra = [
+    {
+      guid_client: "b2000000-0000-4000-8000-00000000a1",
+      name_client: "Morozova Manager Client",
+      guid_holding: "a1000000-0000-4000-8000-000000000001",
+      name_holding: "SYNTH Holding One",
+      type_category: { guid_type: "t1", name_type: "Type A", guid_category: "c1", name_category: "Cat A" },
+      guid_manager: FLAT_ORG.MOROZOVA,
+      name_manager: "Morozova Leader",
+      guid_head_of_the_sales_department: FLAT_ORG.GUSLEVA,
+      name_head_of_the_sales_department: "Gusleva Leader",
+      address: "Morozova mgr",
+      telephone: [],
+      Discount: "",
+      DiscountAmount: 0,
+      markups: [],
+      other: {},
+    },
+    {
+      guid_client: "b2000000-0000-4000-8000-00000000a2",
+      name_client: "Morozova Regional Client",
+      guid_holding: "a1000000-0000-4000-8000-000000000002",
+      name_holding: "SYNTH Holding Two",
+      type_category: { guid_type: "t2", name_type: "Type B", guid_category: "c2", name_category: "Cat B" },
+      guid_regional_manager: FLAT_ORG.MOROZOVA,
+      name_regional_manager: "Morozova Leader",
+      guid_head_of_the_sales_department: FLAT_ORG.GUSLEVA,
+      name_head_of_the_sales_department: "Gusleva Leader",
+      address: "Morozova reg",
+      telephone: [],
+      Discount: "",
+      DiscountAmount: 0,
+      markups: [],
+      other: {},
+    },
+    {
+      guid_client: "b2000000-0000-4000-8000-00000000fx",
+      name_client: "Foreign Komkov Client",
+      guid_holding: "a1000000-0000-4000-8000-000000000003",
+      name_holding: "SYNTH Holding Three",
+      type_category: { guid_type: "t1", name_type: "Type A", guid_category: "c1", name_category: "Cat A" },
+      guid_manager: FOREIGN,
+      name_manager: "Komkov Leader",
+      guid_head_of_the_sales_department: FLAT_ORG.GUSLEVA,
+      name_head_of_the_sales_department: "Gusleva Leader",
+      address: "Foreign",
+      telephone: [],
+      Discount: "",
+      DiscountAmount: 0,
+      markups: [],
+      other: {},
+    },
+  ];
+  return Buffer.from(JSON.stringify([...base, ...extra]));
 }
 
 describe("apex catalog employee portfolio navigation", { concurrency: false }, () => {
@@ -40,12 +104,12 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
     });
 
     const rosterBytes = buildFullFlatOrgHierarchyRosterBytes();
-    const dry = await runAuthoritativeWholesaleOrgRebuild({
+    const dryOrg = await runAuthoritativeWholesaleOrgRebuild({
       env: authoritativeEnv(databaseUrl),
       argv: ["--dry-run", "--employee-roster", "/dev/null"],
       rosterBytes,
     });
-    assert.equal(dry.status, "SUCCESS", dry.message);
+    assert.equal(dryOrg.status, "SUCCESS", dryOrg.message);
     await runAuthoritativeWholesaleOrgRebuild({
       env: authoritativeEnv(databaseUrl),
       argv: [
@@ -53,11 +117,30 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
         "--employee-roster",
         "/dev/null",
         "--expected-roster-sha256",
-        dry.rosterSourceSha256!,
+        dryOrg.rosterSourceSha256!,
         "--confirm-target-db",
-        dry.targetDbFingerprint!,
+        dryOrg.targetDbFingerprint!,
       ],
       rosterBytes,
+    });
+
+    const employeesBytes = buildFullFlatOrgHierarchyRosterBytes();
+    const dryV3 = await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--dry-run"],
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: morozovaPortfolioClientsBytes(),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      employeesBytes,
+    });
+    assert.equal(dryV3.status, "SUCCESS");
+    await runExchangeV3RegularUpdate({
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      argv: ["--apply", "--expected-fingerprint", dryV3.verificationFingerprint!],
+      holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
+      clientsBytes: morozovaPortfolioClientsBytes(),
+      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      employeesBytes,
     });
 
     const { createApp } = await import("../../src/server");
@@ -90,31 +173,33 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
     });
   }
 
-  it("opens employee portfolio from apex catalog row and returns to teams root", async () => {
+  it("union portfolio counts match list and exclude foreign assignments", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await login(page);
     await page.goto(`${baseUrl}/clients?view=teams&v3mode=1&v3entity=legal_grouped&v3view=teams`);
     const morozovaSelector =
       '[data-open-catalog-portfolio][data-employee-guid="' + FLAT_ORG.MOROZOVA + '"]';
     await page.waitForSelector(morozovaSelector, { timeout: 30000 });
-    const listRequest = page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    const cardText = await page.locator(morozovaSelector).innerText();
+    assert.match(cardText, /2\s+клиентов/);
+
+    const listResponse = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("employeePortfolioGuid"),
       { timeout: 30000 },
     );
     await page.locator(morozovaSelector).click();
-    await listRequest;
-    await page.waitForURL(
-      (url) =>
-        url.searchParams.get("orgCatalogEntry") === "employee_portfolio" &&
-        url.searchParams.get("responsibleGuid") === FLAT_ORG.MOROZOVA,
-      { timeout: 30000 },
-    );
-    assert.equal(page.url().includes("ropEmployee="), false);
+    const listRes = await listResponse;
+    const listBody = (await listRes.json()) as { total: number; items: Array<{ name?: string }> };
+    assert.equal(listBody.total, 2);
+    const names = listBody.items.map((item) => item.name || "").join(" ");
+    assert.match(names, /Morozova Manager Client/);
+    assert.match(names, /Morozova Regional Client/);
+    assert.doesNotMatch(names, /Foreign Komkov Client/);
+
+    await page.waitForSelector("table tbody tr, .clients-card", { timeout: 30000 });
     await page.click("#clients-breadcrumbs-back");
-    await page.waitForURL((url) => url.pathname.includes("/clients") && !url.searchParams.get("orgCatalogEntry"), {
-      timeout: 30000,
-    });
-    assert.equal(page.url().includes("view=teams"), true);
+    await page.waitForURL((url) => !url.searchParams.get("orgCatalogEntry"), { timeout: 30000 });
+    await page.waitForSelector(morozovaSelector, { timeout: 30000 });
     await page.close();
   });
 });

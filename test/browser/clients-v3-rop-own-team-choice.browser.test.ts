@@ -19,6 +19,8 @@ const LEADER = "44444444-4444-4444-8444-444444444444";
 const TEAM_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TEAM_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const MEMBER_A = "22222222-2222-4222-8222-222222222222";
+const MEMBER_B = "33333333-3333-4333-8333-333333333333";
+const FOREIGN_TEAM = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
 
 function orgRosterBytes() {
@@ -39,6 +41,10 @@ function orgRosterBytes() {
     buildEmployeeRosterEntry(MEMBER_A, {
       name_manager: "Member Alpha Only",
       team: [{ guid_team: TEAM_A, name_team: "Team Alpha", guid_team_leader: LEADER }],
+    }),
+    buildEmployeeRosterEntry(MEMBER_B, {
+      name_manager: "Member Beta Only",
+      team: [{ guid_team: TEAM_B, name_team: "Team Beta", guid_team_leader: LEADER }],
     }),
   ]);
 }
@@ -147,7 +153,7 @@ describe("rop own multi-team choice UI", { concurrency: false }, () => {
     });
   }
 
-  it("shows team picker for multi-group ROP and persists orgTeamGuid after choice", async () => {
+  it("shows team picker for multi-group ROP and preserves orgTeamGuid through territory and reload", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const responsiblesUrls: string[] = [];
     page.on("request", (req) => {
@@ -170,6 +176,41 @@ describe("rop own multi-team choice UI", { concurrency: false }, () => {
     await responsibles;
     await page.waitForURL((url) => url.searchParams.get("orgTeamGuid") === TEAM_A, { timeout: 30000 });
     assert.match(page.url(), new RegExp("orgTeamGuid=" + encodeURIComponent(TEAM_A)));
+
+    const territoryList = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+      { timeout: 30000 },
+    );
+    await page.locator('.x13-person[data-manager="' + MEMBER_A + '"]').click();
+    await territoryList;
+    await page.waitForURL(
+      (url) =>
+        url.searchParams.get("orgTeamGuid") === TEAM_A &&
+        url.searchParams.get("responsibleGuid") === MEMBER_A,
+      { timeout: 30000 },
+    );
+
+    await page.click("#clients-breadcrumbs-back");
+    await page.waitForURL(
+      (url) =>
+        url.searchParams.get("orgTeamGuid") === TEAM_A &&
+        !url.searchParams.get("responsibleGuid"),
+      { timeout: 30000 },
+    );
+    await page.reload();
+    await page.waitForURL((url) => url.searchParams.get("orgTeamGuid") === TEAM_A, { timeout: 30000 });
+
+    await page.goto(
+      `${baseUrl}/clients?view=teams&v3mode=1&v3entity=legal_grouped&v3view=teams&ropEmployee=${encodeURIComponent(LEADER)}&orgTeamGuid=${encodeURIComponent(FOREIGN_TEAM)}`,
+    );
+    await page.waitForSelector('[data-pick-own-team="' + TEAM_A + '"]', {
+      timeout: 30000,
+    });
+    assert.equal(
+      await page.locator('.x13-person[data-manager="' + MEMBER_B + '"]').count(),
+      0,
+      "foreign team scope must not show other team members",
+    );
     await page.close();
   });
 });
