@@ -11,6 +11,9 @@
     if (state.ropEmployee) {
       params.set("ropBranchGuid", state.ropEmployee);
     }
+    if (state.orgTeamGuid) {
+      params.set("teamGuid", state.orgTeamGuid);
+    }
     if (teamAssignment && state.responsibleGuid && state.responsibleKind) {
       params.set("responsibleGuid", state.responsibleGuid);
       params.set("responsibleKind", state.responsibleKind);

@@ -11,6 +11,7 @@ import {
   RETAIL_STATUS_LABEL_SQL,
 } from "./list-sql-expressions";
 import { appendV3FieldRulesSql, type V3FilterRule } from "./list-field-rules";
+import { appendV3TeamMemberAssignmentUnionSql } from "./team-assignment-counts";
 import { v3CategoryNameSql, v3TypeNameSql } from "./json-paths";
 
 export type V3ResponsibleKind = "manager" | "regional" | "hardware";
@@ -38,6 +39,8 @@ export type V3ListQuery = {
   responsibleGuid?: string;
   responsibleKind?: V3ResponsibleKind;
   ropBranchGuid?: string;
+  /** Resolved server-side from teamGuid + leader binding; never accept from client. */
+  teamMemberGuids?: string[];
   city?: string;
   colManager?: string;
   colRegional?: string;
@@ -161,28 +164,36 @@ function appendRopBranchFilter(input: V3ListQuery, alias: string, params: unknow
 /** Selected employee / ROP territory only (no type, category, or missing-manager narrowing). */
 export function appendTerritoryAssignmentFilters(input: V3ListQuery, alias: string, params: unknown[]): string {
   let sql = "";
-  const teamScoped =
-    Boolean(input.ropBranchGuid) ||
-    (Boolean(input.responsibleGuid) &&
-      Boolean(input.responsibleKind) &&
-      input.responsibleKind !== "manager");
-  let guidFilter: string | undefined;
-  let kind: V3ResponsibleKind | undefined;
-  if (teamScoped && input.responsibleGuid && input.responsibleKind) {
-    guidFilter = input.responsibleGuid;
-    kind = input.responsibleKind;
-  } else if (input.managerGuid) {
-    guidFilter = input.managerGuid;
-    kind = "manager";
-  } else if (input.responsibleGuid && input.responsibleKind) {
-    guidFilter = input.responsibleGuid;
-    kind = input.responsibleKind;
+  const teamPortfolio = Boolean(input.teamMemberGuids && input.teamMemberGuids.length > 0);
+  if (teamPortfolio && input.responsibleGuid && input.responsibleKind) {
+    params.push(input.responsibleGuid);
+    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(input.responsibleKind))}, '')), '')::uuid = $${params.length}::uuid`;
+  } else if (teamPortfolio) {
+    sql += appendV3TeamMemberAssignmentUnionSql(alias, input.teamMemberGuids!, params);
+  } else {
+    const teamScoped =
+      Boolean(input.ropBranchGuid) ||
+      (Boolean(input.responsibleGuid) &&
+        Boolean(input.responsibleKind) &&
+        input.responsibleKind !== "manager");
+    let guidFilter: string | undefined;
+    let kind: V3ResponsibleKind | undefined;
+    if (teamScoped && input.responsibleGuid && input.responsibleKind) {
+      guidFilter = input.responsibleGuid;
+      kind = input.responsibleKind;
+    } else if (input.managerGuid) {
+      guidFilter = input.managerGuid;
+      kind = "manager";
+    } else if (input.responsibleGuid && input.responsibleKind) {
+      guidFilter = input.responsibleGuid;
+      kind = input.responsibleKind;
+    }
+    if (guidFilter && kind) {
+      params.push(guidFilter);
+      sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
+    }
+    sql += appendRopBranchFilter(input, alias, params);
   }
-  if (guidFilter && kind) {
-    params.push(guidFilter);
-    sql += ` AND NULLIF(TRIM(COALESCE(${v3JsonManagerField(alias, responsibleGuidField(kind))}, '')), '')::uuid = $${params.length}::uuid`;
-  }
-  sql += appendRopBranchFilter(input, alias, params);
   return sql;
 }
 

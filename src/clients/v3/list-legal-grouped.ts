@@ -197,7 +197,10 @@ function appendEligibilityFilters(
 
 export async function countV3LegalGroups(
   context: AccessContext,
-  territory: Pick<V3ListQuery, "ropBranchGuid" | "responsibleGuid" | "responsibleKind" | "managerGuid">,
+  territory: Pick<
+    V3ListQuery,
+    "ropBranchGuid" | "responsibleGuid" | "responsibleKind" | "managerGuid" | "teamMemberGuids"
+  >,
 ): Promise<number> {
   const scope = v3EntityAssignmentScope(context, "le");
   const params = [...scope.params];
