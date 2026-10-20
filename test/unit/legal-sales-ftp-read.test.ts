@@ -17,6 +17,7 @@ describe("legal sales FTP read", () => {
       basePath: "/LC",
       retrContent: saleBytes,
     });
+    process.env.ONEC_FTP_ENABLED = "true";
     process.env.ONEC_FTP_HOST = server.host;
     process.env.ONEC_FTP_PORT = String(server.port);
     process.env.ONEC_FTP_USER = "lc_exchange";
