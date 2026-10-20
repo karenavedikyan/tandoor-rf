@@ -46,6 +46,21 @@ function loadClientsV3(search: string): ClientsV3Api {
 }
 
 describe("clients v3 multiselect normalization", () => {
+  it("preserves catalogue employee portfolio scope in card return query", () => {
+    const v3 = loadClientsV3("?v3mode=1&v3entity=legal_grouped");
+    const guid = "b2000000-0000-4000-8000-0000000000a1";
+    const query = v3.buildListReturnQuery({
+      v3entity: "legal_grouped",
+      v3view: "teams",
+      orgCatalogEntry: "employee_portfolio",
+      responsibleGuid: guid,
+      responsibleKind: "manager",
+    });
+    assert.equal(new URLSearchParams(query).get("orgCatalogEntry"), "employee_portfolio");
+    assert.equal(logic.readStateFromSearch(query).orgCatalogEntry, "employee_portfolio");
+    assert.equal(logic.readStateFromSearch(query).responsibleGuid, guid);
+  });
+
   it("restores field rules on initial load and honors an explicit empty rule array", () => {
     const rules = [{ field: "lprName", op: "contains", value: "Ivan" }];
     const search = "?v3mode=1&v3entity=retail&filters=" + encodeURIComponent(JSON.stringify(rules));

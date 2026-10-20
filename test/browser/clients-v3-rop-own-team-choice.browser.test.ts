@@ -182,7 +182,8 @@ describe("rop own multi-team choice UI", { concurrency: false }, () => {
       { timeout: 30000 },
     );
     await page.locator('.x13-person[data-manager="' + MEMBER_A + '"]').click();
-    await territoryList;
+    const territoryBody = (await (await territoryList).json()) as { total: number };
+    assert.ok(territoryBody.total > 0, "selected employee must have a real nonempty client list");
     await page.waitForURL(
       (url) =>
         url.searchParams.get("orgTeamGuid") === TEAM_A &&
@@ -190,7 +191,18 @@ describe("rop own multi-team choice UI", { concurrency: false }, () => {
       { timeout: 30000 },
     );
 
-    await page.click("#clients-breadcrumbs-back");
+    const selectedListUrl = page.url();
+    await page.locator('a.clients-link--secondary[href*="/clients/"]:visible, .x13-client-card[data-list-href*="/clients/"]:visible').first().click();
+    await page.locator('[data-testid="v3-back-to-list"]').click();
+    await page.waitForURL(
+      (url) =>
+        url.pathname === "/clients" &&
+        url.searchParams.get("orgTeamGuid") === TEAM_A &&
+        url.searchParams.get("responsibleGuid") === MEMBER_A,
+      { timeout: 30000 },
+    );
+    assert.equal(new URL(page.url()).searchParams.get("orgTeamGuid"), new URL(selectedListUrl).searchParams.get("orgTeamGuid"));
+    await page.locator('[data-testid="v3-lktandoor-back"]').click();
     await page.waitForURL(
       (url) =>
         url.searchParams.get("orgTeamGuid") === TEAM_A &&

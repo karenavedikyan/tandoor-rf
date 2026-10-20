@@ -946,6 +946,10 @@
           if (!teamGuid || !ropGuid) {
             return;
           }
+          if (deps.navigateDirectorOpenTeam) {
+            deps.navigateDirectorOpenTeam(ropGuid, teamGuid);
+            return;
+          }
           callbacks.navigate({
             view: "teams",
             ropEmployee: ropGuid,

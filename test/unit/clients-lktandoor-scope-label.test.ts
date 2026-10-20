@@ -11,7 +11,7 @@ describe("clients-lktandoor scope label resolution", () => {
     vm.runInNewContext(source, { window, console });
     return window.ClientsLktandoorList as {
       scopeTitle: (
-        state: { responsibleGuid?: string; ropEmployee?: string },
+        state: { responsibleGuid?: string; ropEmployee?: string; orgCatalogEntry?: string },
         ctx: { rolePresentation?: { businessRole?: string }; teamContext?: Record<string, unknown> },
       ) => string;
       resolveManagerDisplayName: (
@@ -26,6 +26,22 @@ describe("clients-lktandoor scope label resolution", () => {
   }
 
   const M2 = "33333333-3333-4333-8333-333333333333";
+
+  it("restores catalogue employee identity after reload without managerName memory", () => {
+    const mod = loadListModule();
+    const ctx = {
+      rolePresentation: { businessRole: "admin" },
+      teamContext: {
+        managerName: "",
+        managers: [],
+        rops: [{ employeeGuid: M2, name: "Сотрудник из файла", catalogEntryKind: "employee" }],
+      },
+    };
+    assert.equal(
+      mod.scopeTitle({ responsibleGuid: M2, orgCatalogEntry: "employee_portfolio" }, ctx),
+      "Территория: Сотрудник из файла",
+    );
+  });
 
   it("scopeTitle uses managers roster when managerName memory is empty", () => {
     const mod = loadListModule();

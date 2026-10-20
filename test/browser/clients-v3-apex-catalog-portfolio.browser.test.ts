@@ -30,10 +30,10 @@ function morozovaPortfolioClientsBytes(): Buffer {
   >[];
   const extra = [
     {
-      guid_client: "b2000000-0000-4000-8000-00000000a1",
+      guid_client: "b2000000-0000-4000-8000-0000000000a1",
       name_client: "Morozova Manager Client",
-      guid_holding: "a1000000-0000-4000-8000-000000000001",
-      name_holding: "SYNTH Holding One",
+      guid_holding: "",
+      name_holding: "",
       type_category: { guid_type: "t1", name_type: "Type A", guid_category: "c1", name_category: "Cat A" },
       guid_manager: FLAT_ORG.MOROZOVA,
       name_manager: "Morozova Leader",
@@ -47,10 +47,10 @@ function morozovaPortfolioClientsBytes(): Buffer {
       other: {},
     },
     {
-      guid_client: "b2000000-0000-4000-8000-00000000a2",
+      guid_client: "b2000000-0000-4000-8000-0000000000a2",
       name_client: "Morozova Regional Client",
-      guid_holding: "a1000000-0000-4000-8000-000000000002",
-      name_holding: "SYNTH Holding Two",
+      guid_holding: "",
+      name_holding: "",
       type_category: { guid_type: "t2", name_type: "Type B", guid_category: "c2", name_category: "Cat B" },
       guid_regional_manager: FLAT_ORG.MOROZOVA,
       name_regional_manager: "Morozova Leader",
@@ -64,10 +64,10 @@ function morozovaPortfolioClientsBytes(): Buffer {
       other: {},
     },
     {
-      guid_client: "b2000000-0000-4000-8000-00000000fx",
+      guid_client: "b2000000-0000-4000-8000-0000000000ff",
       name_client: "Foreign Komkov Client",
-      guid_holding: "a1000000-0000-4000-8000-000000000003",
-      name_holding: "SYNTH Holding Three",
+      guid_holding: "",
+      name_holding: "",
       type_category: { guid_type: "t1", name_type: "Type A", guid_category: "c1", name_category: "Cat A" },
       guid_manager: FOREIGN,
       name_manager: "Komkov Leader",
@@ -79,6 +79,40 @@ function morozovaPortfolioClientsBytes(): Buffer {
       DiscountAmount: 0,
       markups: [],
       other: {},
+    },
+  ];
+  return Buffer.from(JSON.stringify([...base, ...extra]));
+}
+
+function morozovaPortfolioRetailBytes(): Buffer {
+  const base = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json"), "utf8")) as unknown[];
+  const extra = [
+    {
+      guid_store: "c3000000-0000-4000-8000-0000000000a1",
+      guid_holding: "",
+      warehouse: false,
+      closed: false,
+      type_category: {},
+      address: { store_address: "Portfolio Manager TT" },
+      managers: { guid_manager: FLAT_ORG.MOROZOVA },
+    },
+    {
+      guid_store: "c3000000-0000-4000-8000-0000000000a2",
+      guid_holding: "",
+      warehouse: false,
+      closed: false,
+      type_category: {},
+      address: { store_address: "Portfolio Regional TT" },
+      managers: { guid_regional_manager: FLAT_ORG.MOROZOVA },
+    },
+    {
+      guid_store: "c3000000-0000-4000-8000-0000000000ff",
+      guid_holding: "",
+      warehouse: false,
+      closed: false,
+      type_category: {},
+      address: { store_address: "Foreign Portfolio TT" },
+      managers: { guid_manager: FOREIGN },
     },
   ];
   return Buffer.from(JSON.stringify([...base, ...extra]));
@@ -130,7 +164,7 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
       argv: ["--dry-run"],
       holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
       clientsBytes: morozovaPortfolioClientsBytes(),
-      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      retailBytes: morozovaPortfolioRetailBytes(),
       employeesBytes,
     });
     assert.equal(dryV3.status, "SUCCESS");
@@ -139,7 +173,7 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
       argv: ["--apply", "--expected-fingerprint", dryV3.verificationFingerprint!],
       holdingsBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_holding.json")),
       clientsBytes: morozovaPortfolioClientsBytes(),
-      retailBytes: fs.readFileSync(path.join(FIXTURE_DIR, "all_retail.json")),
+      retailBytes: morozovaPortfolioRetailBytes(),
       employeesBytes,
     });
 
@@ -183,6 +217,10 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
     const cardText = await page.locator(morozovaSelector).innerText();
     assert.match(cardText, /2\s+клиентов/);
 
+    const summaryResponse = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/scope-summary") && res.url().includes("employeePortfolioGuid=" + FLAT_ORG.MOROZOVA),
+      { timeout: 30000 },
+    );
     const listResponse = page.waitForResponse(
       (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("employeePortfolioGuid"),
       { timeout: 30000 },
@@ -195,9 +233,42 @@ describe("apex catalog employee portfolio navigation", { concurrency: false }, (
     assert.match(names, /Morozova Manager Client/);
     assert.match(names, /Morozova Regional Client/);
     assert.doesNotMatch(names, /Foreign Komkov Client/);
+    const summary = (await (await summaryResponse).json()) as {
+      legal: number;
+      retail: number;
+    };
+    assert.equal(summary.legal, 2);
+    assert.equal(summary.retail, 2);
 
-    await page.waitForSelector("table tbody tr, .clients-card", { timeout: 30000 });
-    await page.click("#clients-breadcrumbs-back");
+    await page.waitForSelector("table tbody tr:visible, .clients-card:visible, .x13-client-card:visible", { timeout: 30000 });
+    await page.locator(
+      'a.clients-link--secondary[href*="b2000000-0000-4000-8000-0000000000a1"]:visible, .x13-client-card[data-list-href*="b2000000-0000-4000-8000-0000000000a1"]:visible',
+    ).first().click();
+    await page.locator('[data-testid="v3-back-to-list"]').click();
+    await page.waitForURL(
+      (url) => url.pathname === "/clients" && url.searchParams.get("orgCatalogEntry") === "employee_portfolio",
+      { timeout: 30000 },
+    );
+    await page.reload();
+    assert.match(page.url(), /orgCatalogEntry=employee_portfolio/);
+    const outletResponse = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/list") &&
+        res.url().includes("entity=retail") &&
+        res.url().includes("employeePortfolioGuid=" + FLAT_ORG.MOROZOVA),
+      { timeout: 30000 },
+    );
+    const outletUrl = new URL(page.url());
+    outletUrl.searchParams.set("v3entity", "retail");
+    outletUrl.searchParams.set("entity", "outlets");
+    await page.goto(outletUrl.toString());
+    const outletBody = (await (await outletResponse).json()) as { total: number; items: unknown[] };
+    assert.equal(outletBody.total, 2);
+    const outletRows = JSON.stringify(outletBody.items);
+    assert.match(outletRows, /Portfolio Manager TT/);
+    assert.match(outletRows, /Portfolio Regional TT/);
+    assert.doesNotMatch(outletRows, /Foreign Portfolio TT/);
+    await page.locator('[data-testid="v3-lktandoor-back"]').click();
     await page.waitForURL((url) => !url.searchParams.get("orgCatalogEntry"), { timeout: 30000 });
     await page.waitForSelector(morozovaSelector, { timeout: 30000 });
     await page.close();

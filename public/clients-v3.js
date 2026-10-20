@@ -636,6 +636,7 @@
     if (s.missingManager) params.set("missingManager", "1");
     if (s.ropEmployee) params.set("ropEmployee", s.ropEmployee);
     if (s.orgTeamGuid) params.set("orgTeamGuid", s.orgTeamGuid);
+    if (s.orgCatalogEntry) params.set("orgCatalogEntry", s.orgCatalogEntry);
     if (s.responsibleGuid) {
       params.set("responsibleGuid", s.responsibleGuid);
       params.set("responsibleKind", s.responsibleKind || "manager");
