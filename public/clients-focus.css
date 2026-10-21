@@ -111,6 +111,9 @@ body.x14-focus-mode #v3-focus-host {
   flex: 1;
   min-height: 0;
 }
+body.x14-focus-mode #v3-focus-host:not(.clients-hidden) .x14-focus {
+  min-height: 12rem;
+}
 
 .x14-focus {
   display: grid;

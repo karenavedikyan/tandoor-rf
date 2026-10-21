@@ -416,6 +416,25 @@
     return next;
   }
 
+  function buildFocusResetState() {
+    return window.ClientsV3.mergeListStateForUserAction({
+      q: "",
+      page: 1,
+      v3Rules: [],
+      city: "",
+      closed: "",
+      colManager: "",
+      colRegional: "",
+      colRop: "",
+      colCity: "",
+      colStatus: "",
+      v3types: [],
+      v3categories: [],
+      v3type: "",
+      v3category: "",
+    });
+  }
+
   function applyEditor(state, editor) {
     var spec = COL_FILTER[editor.colId];
     if (!spec) {
@@ -427,12 +446,30 @@
       next[spec.key] = editor.value || "";
       return next;
     }
+    if (spec.input === "number") {
+      var trimmed = String(editor.value || "").trim();
+      if (trimmed === "" || trimmed === "-") {
+        next.v3Rules = next.v3Rules.filter(function (r) {
+          return !(r.field === spec.field && r.op === editor.op);
+        });
+        return next;
+      }
+      var normalized =
+        window.ClientsV3FilterNumber && window.ClientsV3FilterNumber.normalizeListFilterNumberValue
+          ? window.ClientsV3FilterNumber.normalizeListFilterNumberValue(trimmed)
+          : { ok: false, reason: "invalid" };
+      if (!normalized.ok) {
+        return null;
+      }
+      next.v3Rules = next.v3Rules.filter(function (r) {
+        return !(r.field === spec.field && r.op === editor.op);
+      });
+      next.v3Rules.push({ field: spec.field, op: editor.op, value: normalized.value });
+      return next;
+    }
     next.v3Rules = next.v3Rules.filter(function (r) {
       if (r.field !== spec.field) {
         return true;
-      }
-      if (spec.input === "number") {
-        return r.op !== editor.op;
       }
       if (spec.input === "bool") {
         return false;
@@ -464,21 +501,6 @@
       }
       return next;
     }
-    if (spec.input === "number") {
-      var trimmed = String(editor.value || "").trim();
-      if (trimmed === "" || trimmed === "-") {
-        return next;
-      }
-      var normalized =
-        window.ClientsV3FieldRules && window.ClientsV3FieldRules.normalizeNumberFilterValue
-          ? window.ClientsV3FieldRules.normalizeNumberFilterValue(trimmed)
-          : { ok: true, value: trimmed };
-      if (!normalized.ok) {
-        return next;
-      }
-      next.v3Rules.push({ field: spec.field, op: editor.op, value: normalized.value });
-      return next;
-    }
     var text = String(editor.value || "").trim();
     if (text) {
       next.v3Rules.push({ field: spec.field, op: spec.op || "contains", value: text });
@@ -489,18 +511,60 @@
     return next;
   }
 
-  function renderFocusChrome(shell, state, bodyHtml) {
+  function bindFocusChromeControls(payload, pane) {
+    var state = payload.state || {};
+    document.getElementById("v3-focus-exit")?.addEventListener("click", function () {
+      writeScroll(state, pane || document.getElementById("x14-focus-scroll"));
+      if (payload.onExit) {
+        payload.onExit();
+      }
+    });
+    document.getElementById("v3-focus-reset")?.addEventListener("click", function () {
+      if (payload.onReset) {
+        payload.onReset();
+      }
+    });
+    document.getElementById("v3-focus-retry-load")?.addEventListener("click", function () {
+      if (payload.onRetry) {
+        payload.onRetry();
+      }
+    });
+    document.getElementById("v3-focus-columns")?.addEventListener("click", function () {
+      if (window.ClientsV3 && window.ClientsV3.openLktandoorColumnsDialog) {
+        var liveCtx = payload.ctx || window.__lktandoorListCtx || window.__lktandoorUiCtx;
+        var liveState = window.ClientsV3.readState();
+        window.ClientsV3.openLktandoorColumnsDialog(liveCtx, liveState);
+      }
+    });
+    var search = document.getElementById("v3-focus-search");
+    if (search) {
+      search.addEventListener(
+        "input",
+        function () {
+          if (!payload.onSearch) {
+            return;
+          }
+          clearTimeout(filterTimer);
+          filterTimer = setTimeout(function () {
+            payload.onSearch(search.value || "");
+          }, 220);
+        },
+        { passive: true },
+      );
+    }
+  }
+
+  function renderFocusChrome(shell, state, bodyHtml, statusLine) {
     syncLayout(state);
+    document.getElementById("results-content")?.classList.remove("clients-hidden");
+    document.getElementById("results-state")?.classList.add("clients-hidden");
     var host = document.getElementById("v3-focus-host");
     if (!host) {
       return null;
     }
     host.classList.remove("clients-hidden");
     var filterCount = activeFilterCount(state);
-    var countLine =
-      window.ClientsLktandoorList && window.ClientsLktandoorList.formatResultCountLine
-        ? window.ClientsLktandoorList.formatResultCountLine(state, 0)
-        : "Совпало 0";
+    var countLine = statusLine || "Загрузка…";
     host.innerHTML =
       '<div class="x14-focus" data-testid="v3-focus-root">' +
       '<div class="x14-focusbar">' +
@@ -539,39 +603,11 @@
       '<div class="x14-focus-error__actions">' +
       '<button type="button" class="workspace-button workspace-button--primary" id="v3-focus-retry-load">Повторить</button>' +
       "</div></div>";
-    var host = renderFocusChrome(shell, state, body);
+    var host = renderFocusChrome(shell, state, body, payload.statusLine || "Ошибка загрузки");
     if (!host) {
       return;
     }
-    document.getElementById("v3-focus-exit")?.addEventListener("click", function () {
-      writeScroll(state, document.getElementById("x14-focus-scroll"));
-      if (payload.onExit) {
-        payload.onExit();
-      }
-    });
-    document.getElementById("v3-focus-reset")?.addEventListener("click", function () {
-      if (payload.onReset) {
-        payload.onReset();
-      }
-    });
-    document.getElementById("v3-focus-retry-load")?.addEventListener("click", function () {
-      if (payload.onRetry) {
-        payload.onRetry();
-      }
-    });
-    var search = document.getElementById("v3-focus-search");
-    if (search && payload.onSearch) {
-      search.addEventListener(
-        "input",
-        function () {
-          clearTimeout(filterTimer);
-          filterTimer = setTimeout(function () {
-            payload.onSearch(search.value || "");
-          }, 220);
-        },
-        { passive: true },
-      );
-    }
+    bindFocusChromeControls(payload, null);
   }
 
   function render(ctx, payload) {
@@ -733,22 +769,7 @@
       }
     });
     function resetAll() {
-      var next = window.ClientsV3.mergeListStateForUserAction({
-        q: "",
-        page: 1,
-        v3Rules: [],
-        city: "",
-        closed: "",
-        colManager: "",
-        colRegional: "",
-        colRop: "",
-        colCity: "",
-        colStatus: "",
-        v3types: [],
-        v3categories: [],
-        v3type: "",
-        v3category: "",
-      });
+      var next = buildFocusResetState();
       var mainSearch = document.getElementById("search-input");
       if (mainSearch) {
         mainSearch.value = "";
@@ -799,6 +820,31 @@
         var apply = function () {
           var live = window.ClientsV3.readState();
           var next = applyEditor(live, editor);
+          if (next === null) {
+            window.ClientsLktandoorFocus.renderBlockingError({
+              shell: shell,
+              state: live,
+              ctx: ctx,
+              statusLine: "Недопустимое значение",
+              title: "Недопустимое число",
+              message:
+                "Используйте обычный десятичный формат (например 1000 или 0.5). Значение не отправлено на сервер.",
+              onRetry: function () {
+                reload(live, editor);
+              },
+              onReset: function () {
+                reload(buildFocusResetState(), null);
+              },
+              onExit: function () {
+                reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
+              },
+              onSearch: function (q) {
+                reload(window.ClientsV3.mergeListStateForUserAction({ q: q, page: 1 }), editor);
+              },
+            });
+            restoreFilterEditor(editor);
+            return;
+          }
           next.page = 1;
           if (window.ClientsV3FieldRules) {
             window.ClientsV3FieldRules.syncLegacyFromRules(next);
@@ -860,6 +906,7 @@
     syncLayout: syncLayout,
     render: render,
     renderBlockingError: renderBlockingError,
+    buildFocusResetState: buildFocusResetState,
     bindGlobal: bindGlobal,
     captureScroll: function (state) {
       writeScroll(state, document.getElementById("x14-focus-scroll"));

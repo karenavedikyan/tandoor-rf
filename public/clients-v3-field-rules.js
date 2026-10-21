@@ -2,6 +2,18 @@
   "use strict";
 
   var fieldsCache = {};
+  var V3_MAX_FILTER_RULES = 12;
+
+  function normalizeNumberFilterValue(raw) {
+    if (window.ClientsV3FilterNumber && window.ClientsV3FilterNumber.normalizeListFilterNumberValue) {
+      return window.ClientsV3FilterNumber.normalizeListFilterNumberValue(raw);
+    }
+    return { ok: false, reason: "invalid" };
+  }
+
+  function rulesOverLimit(rules) {
+    return (rules || []).length > V3_MAX_FILTER_RULES;
+  }
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -17,30 +29,6 @@
 
   function serializeRules(rules) {
     return JSON.stringify(rules || []);
-  }
-
-  /** Keep in sync with src/clients/v3/normalize-list-filter-number.ts */
-  function normalizeNumberFilterValue(raw) {
-    var trimmed = String(raw == null ? "" : raw).trim();
-    if (!trimmed || trimmed === "-") {
-      return { ok: false, reason: "empty" };
-    }
-    var n = Number(trimmed);
-    if (!Number.isFinite(n)) {
-      return { ok: false, reason: "invalid" };
-    }
-    var value = String(n);
-    if (/^-?\d+(\.\d+)?$/.test(value)) {
-      return { ok: true, value: value };
-    }
-    if (Number.isInteger(n)) {
-      return { ok: true, value: String(n) };
-    }
-    value = n.toFixed(12).replace(/\.?0+$/, "");
-    if (!/^-?\d+(\.\d+)?$/.test(value)) {
-      return { ok: false, reason: "invalid" };
-    }
-    return { ok: true, value: value };
   }
 
   function sanitizeRulesForApi(rules, entity) {
@@ -63,6 +51,7 @@
           if (normalized.reason === "invalid") {
             invalid = true;
           }
+          out.push(rule);
           return;
         }
         out.push({ field: rule.field, op: rule.op, value: normalized.value });
@@ -131,7 +120,7 @@
     if (types[0]) {
       upsertEq("typeGuid", types[0]);
     }
-    state.v3Rules = rules.slice(0, 12);
+    state.v3Rules = rules;
     return syncLegacyFromRules(state);
   }
 
@@ -448,6 +437,8 @@
     },
     normalizeNumberFilterValue: normalizeNumberFilterValue,
     sanitizeRulesForApi: sanitizeRulesForApi,
+    rulesOverLimit: rulesOverLimit,
+    maxFilterRules: V3_MAX_FILTER_RULES,
     readRulesFromUrl: function (search) {
       var params = new URLSearchParams(search || window.location.search);
       var raw = params.get("filters");
@@ -478,7 +469,13 @@
         var state = window.ClientsV3.mergeListStateForUserAction({ page: 1 });
         var rules = parseRulesFromState(state);
         rules.push({ field: field, op: op, value: value });
-        state.v3Rules = rules.slice(0, 12);
+        if (rules.length >= V3_MAX_FILTER_RULES) {
+          if (window.ClientsV3 && window.ClientsV3.showFilterRulesLimitError) {
+            window.ClientsV3.showFilterRulesLimitError();
+          }
+          return;
+        }
+        state.v3Rules = rules;
         syncLegacyFromRules(state);
         reload(state);
       });

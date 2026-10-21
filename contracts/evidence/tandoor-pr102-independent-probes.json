@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-10-21T22:44:32.553Z",
+  "files": [
+    "public/clients-v3-filter-number.js",
+    "public/clients-lktandoor-focus.js"
+  ],
+  "normalizeListFilterNumberValue": {
+    "1e-20": {
+      "ok": true,
+      "value": "0.00000000000000000001"
+    },
+    "1e21": {
+      "ok": true,
+      "value": "1000000000000000000000"
+    },
+    "9007199254740993": {
+      "ok": true,
+      "value": "9007199254740993"
+    },
+    "1e3": {
+      "ok": true,
+      "value": "1000"
+    },
+    "Infinity": {
+      "ok": false,
+      "reason": "invalid"
+    }
+  },
+  "focusExports": {
+    "renderBlockingError": true,
+    "buildFocusResetState": true
+  }
+}
