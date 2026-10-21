@@ -19,6 +19,12 @@ import {
   planLegalOtherFieldsBackfill,
   type LegalOtherFieldsBackfillPlan,
 } from "./plan-apply";
+import {
+  buildBackfillSnapshotRows,
+  loadBackfillSnapshots,
+  persistBackfillSnapshots,
+  rollbackLegalOtherFieldsFromSnapshot,
+} from "./rollback";
 import { validateClientsSourceForBackfill } from "./source-validation";
 
 export type LegalOtherFieldsBackfillStatus = "SUCCESS" | "REJECTED_BY_CHECKS" | "ERROR" | "VALIDATION_FAILED";
@@ -33,6 +39,7 @@ export type LegalOtherFieldsBackfillResult = {
   targetDbLabel?: string;
   plan?: LegalOtherFieldsBackfillPlan;
   applied?: number;
+  rolledBack?: number;
   parseErrors?: string[];
   duplicateGuids?: string[];
 };
@@ -66,6 +73,50 @@ export async function runLegalOtherFieldsBackfill(
     };
   }
   const cli = parsedCli.options;
+
+  if (cli.rollbackPlanHash) {
+    const databaseUrl = getDatabaseUrl();
+    if (!databaseUrl) {
+      return { status: "ERROR", mode: "dry_run", errorCode: "NO_DATABASE_URL", message: "DATABASE_URL is not set." };
+    }
+    const pool = createImportPool(databaseUrl);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const snapshots = await loadBackfillSnapshots(client, cli.rollbackPlanHash);
+      if (!snapshots.length) {
+        await client.query("ROLLBACK");
+        return rejected("dry_run", "SNAPSHOT_NOT_FOUND", "No snapshots for plan hash.", {
+          errorCode: "SNAPSHOT_NOT_FOUND",
+        });
+      }
+      const result = await rollbackLegalOtherFieldsFromSnapshot(client, snapshots);
+      if (result.rolledBack !== snapshots.length) {
+        await client.query("ROLLBACK");
+        return rejected("dry_run", "ROLLBACK_GUARD", "Rollback guard blocked one or more rows.", {
+          rolledBack: result.rolledBack,
+        });
+      }
+      await client.query("COMMIT");
+      return {
+        status: "SUCCESS",
+        mode: "dry_run",
+        message: "Rollback completed.",
+        rolledBack: result.rolledBack,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      return {
+        status: "ERROR",
+        mode: "dry_run",
+        errorCode: "ROLLBACK_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      client.release();
+      await pool.end();
+    }
+  }
 
   let bytes: Buffer;
   if (options.clientsBytes) {
@@ -243,6 +294,11 @@ export async function runLegalOtherFieldsBackfill(
     const applyResult = await applyLegalOtherFieldsBackfill(lockClient, parsedFile, livePlan, {
       expectedSourceSha256: parsedFile.sourceSha256,
     });
+    const snapshots = buildBackfillSnapshotRows(
+      livePlan,
+      new Map(parsedFile.rows.map((row) => [row.guidClient, row.otherFields])),
+    );
+    await persistBackfillSnapshots(lockClient, livePlan, snapshots);
     await lockClient.query("COMMIT");
     return {
       status: "SUCCESS",

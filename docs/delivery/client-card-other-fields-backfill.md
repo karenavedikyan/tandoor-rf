@@ -49,23 +49,31 @@ Guards:
 
 ## Backup / rollback (только `other_fields`)
 
+После успешного `--apply` CLI автоматически пишет строки в `onec_v3_legal_other_backfill_snapshots` (миграция `046_onec_v3_legal_other_backfill_snapshots.sql`):
+
+| Колонка | Смысл |
+|---------|--------|
+| `guid_client`, `plan_hash` | PK снимка apply |
+| `source_sha256` | SHA clients-файла |
+| `previous_other_fields` | JSON до apply |
+| `expected_post_other_fields` | post JSON **с тем же trusted-stamping**, что и apply (`persistableLegalOtherFields`) |
+
+Откат только через поддержанный CLI (не ручной SQL на prod):
+
+```bash
+node dist/cli/onec-v3-legal-other-fields-backfill.js \
+  --rollback-plan-hash <plan.planHash_из_apply>
+```
+
+Guard: `UPDATE` только если текущий `other_fields` **байт-в-байт** равен `expected_post_other_fields` из снимка. Если после apply было ручное изменение — откат пропускает строку (`ROLLBACK_GUARD`).
+
+Опциональный SQL backup перед apply (только test/synthetic):
+
 ```sql
 CREATE TABLE IF NOT EXISTS backup_legal_other_fields_YYYYMMDD AS
 SELECT guid_client, other_fields, last_source_sha256, last_imported_at
 FROM onec_v3_legal_entities;
 ```
-
-Rollback с guard (только если `other_fields` **совпадает** с ожидаемым post-apply снимком из плана, не просто «отличается от backup»):
-
-```sql
-UPDATE onec_v3_legal_entities le
-SET other_fields = snap.previous_other_fields
-FROM backfill_apply_snapshot snap
-WHERE le.guid_client = snap.guid_client
-  AND le.other_fields = snap.expected_post_other_fields;
-```
-
-`backfill_apply_snapshot` формируется из dry-run/apply плана (`previousOtherFields` + `expectedPostOtherFields` на строку). Если после apply было ручное изменение — `rowCount=0`, позднее состояние не затирается.
 
 ## Продажи (отдельное разрешение)
 

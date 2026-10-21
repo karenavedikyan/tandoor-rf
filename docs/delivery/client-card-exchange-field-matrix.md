@@ -80,3 +80,5 @@
 | subtype колонка | `type_name` = `nameCategory` на уровне сущности | отдельная колонка, не ТОП | `typeGuid` на flat-списках; A/B/C/D ≠ ТОП |
 
 Дозагрузка `other_fields`: `npm run onec-v3-legal-other-fields-backfill` — см. `docs/delivery/client-card-other-fields-backfill.md`.
+
+Машинная матрица путей (5 файлов обмена): `src/onec-exchange-v3/exchange-v3-path-matrix.ts`, проверка полноты — `test/unit/exchange-v3-path-matrix.test.ts`.

@@ -66,6 +66,27 @@
     return '<span class="pc-unavailable">Данные из 1С ещё не загружены в карточку</span>';
   }
 
+  function emptyOtherRestricted() {
+    return '<span class="pc-unavailable">Скрыто политикой доступа</span>';
+  }
+
+  function otherFieldState(ent, key) {
+    if (!ent || !ent.other_field_states || typeof ent.other_field_states !== "object") {
+      return otherFieldsExchangeComplete(ent) ? "empty_1c" : "not_ingested";
+    }
+    return ent.other_field_states[key] || (otherFieldsExchangeComplete(ent) ? "empty_1c" : "not_ingested");
+  }
+
+  function emptyOtherForState(state) {
+    if (state === "restricted") {
+      return emptyOtherRestricted();
+    }
+    if (state === "not_ingested") {
+      return emptyOtherNotIngested();
+    }
+    return emptyFrom1C();
+  }
+
   function otherFieldsExchangeComplete(ent) {
     return Boolean(ent && ent.other_fields_exchange_complete);
   }
@@ -302,13 +323,7 @@
     keys.forEach(function (key) {
       var hasKey = Object.prototype.hasOwnProperty.call(bag, key);
       if (!hasKey) {
-        rows.push(
-          field(
-            otherFieldLabel(key),
-            otherFieldsExchangeComplete(ent) ? emptyFrom1C() : emptyOtherNotIngested(),
-            false,
-          ),
-        );
+        rows.push(field(otherFieldLabel(key), emptyOtherForState(otherFieldState(ent, key)), false));
         return;
       }
       var text = formatOtherFieldScalar(bag[key], key);
@@ -398,25 +413,100 @@
     );
   }
 
+  function renderLegalScopedDetailPreview(shell, ent) {
+    if (!ent) {
+      return '<p class="pc-unavailable">Нет данных.</p>';
+    }
+    var other = ent.other_fields || ent.other || {};
+    var contractKeys = ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"];
+    var contractHtml = renderOtherFieldsFromKeys(shell, other, contractKeys, ent);
+    var commercialHtml = renderCommercialBlock(shell, ent);
+    var phones = formatTelephones(shell, ent.telephone);
+    return (
+      '<div class="v3-legal-scoped-preview">' +
+      field("ИНН", ent.inn ? esc(shell, String(ent.inn)) : emptyNoData(), Boolean(ent.inn)) +
+      field("КПП", ent.kpp ? esc(shell, String(ent.kpp)) : emptyNoData(), Boolean(ent.kpp)) +
+      field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
+      field("Телефоны", phones.html, phones.known) +
+      renderDataGroup("Договор и соглашение", contractHtml || field("Договор", emptyFrom1C(), false)) +
+      renderDataGroup("Коммерческие условия", commercialHtml) +
+      "</div>"
+    );
+  }
+
+  function renderLegalLazyExpandItem(shell, row, parentReturn) {
+    var meta = [];
+    if (row.inn) meta.push("ИНН " + row.inn);
+    if (row.kpp) meta.push("КПП " + row.kpp);
+    var guid = row.guid || row.guid_client || "";
+    return (
+      '<details class="x6-group v3-legal-lazy-expand" data-legal-guid="' +
+      esc(shell, guid) +
+      '"><summary class="v3-legal-lazy-expand__summary">' +
+      '<span class="v3-legal-lazy-expand__title">' +
+      esc(shell, row.name || guid) +
+      (meta.length ? ' <span class="pc-label">' + esc(shell, meta.join(" · ")) + "</span>" : "") +
+      '</span><a class="clients-link v3-legal-lazy-expand__card-link" href="' +
+      legalEntityHref(guid, parentReturn) +
+      '">Карточка</a></summary><div class="v3-legal-lazy-expand__body pc-label">' +
+      "Раскройте для загрузки реквизитов и договора из 1С." +
+      "</div></details>"
+    );
+  }
+
+  function bindLegalLazyExpansions(root, requestFn) {
+    if (!root || typeof requestFn !== "function") {
+      return;
+    }
+    root.querySelectorAll(".v3-legal-lazy-expand").forEach(function (details) {
+      if (details.dataset.lazyBound === "1") {
+        return;
+      }
+      details.dataset.lazyBound = "1";
+      details.addEventListener("toggle", function () {
+        if (!details.open || details.dataset.lazyLoaded === "1") {
+          return;
+        }
+        var guid = details.getAttribute("data-legal-guid");
+        if (!guid) {
+          return;
+        }
+        var body = details.querySelector(".v3-legal-lazy-expand__body");
+        if (!body) {
+          return;
+        }
+        body.textContent = "Загрузка…";
+        requestFn(guid)
+          .then(function (result) {
+            if (!details.isConnected) {
+              return;
+            }
+            if (!result || !result.response || !result.response.ok || !result.data || !result.data.entity) {
+              body.innerHTML = '<p class="pc-unavailable">Не удалось загрузить реквизиты.</p>';
+              return;
+            }
+            details.dataset.lazyLoaded = "1";
+            body.innerHTML = renderLegalScopedDetailPreview(
+              { escapeHtml: function (v) { return String(v ?? ""); } },
+              result.data.entity,
+            );
+          })
+          .catch(function () {
+            if (body.isConnected) {
+              body.innerHTML = '<p class="pc-unavailable">Ошибка сети.</p>';
+            }
+          });
+      });
+    });
+  }
+
   function renderRelatedLegalLines(shell, legals, parentReturn) {
     if (!legals.length) {
       return '<span class="pc-unavailable">В вашей области нет доступных юрлиц этого холдинга.</span>';
     }
     return legals
       .map(function (row) {
-        var meta = [];
-        if (row.inn) meta.push("ИНН " + row.inn);
-        if (row.kpp) meta.push("КПП " + row.kpp);
-        return (
-          '<a class="x13-related-line" data-legal-guid="' +
-          shell.escapeHtml(row.guid) +
-          '" href="' +
-          legalEntityHref(row.guid, parentReturn) +
-          '"><span>' +
-          shell.escapeHtml(row.name || row.guid) +
-          (meta.length ? ' <span class="pc-label">' + shell.escapeHtml(meta.join(" · ")) + "</span>" : "") +
-          '</span><span class="x13-related-line__arrow" aria-hidden="true">→</span></a>'
-        );
+        return renderLegalLazyExpandItem(shell, row, parentReturn);
       })
       .join("");
   }
@@ -1249,6 +1339,9 @@
       legalHost.innerHTML = legalBlock;
     }
     refreshRelatedOutletReturnLinks(root);
+    if (typeof root.ClientDetailV3LazyRequest === "function") {
+      bindLegalLazyExpansions(root, root.ClientDetailV3LazyRequest);
+    }
   }
 
   function bindTabs(root, context) {
@@ -1329,6 +1422,9 @@
 
   root.ClientDetailV3 = {
     renderOtherFieldsFromKeys: renderOtherFieldsFromKeys,
+    renderLegalScopedDetailPreview: renderLegalScopedDetailPreview,
+    renderLegalLazyExpandItem: renderLegalLazyExpandItem,
+    bindLegalLazyExpansions: bindLegalLazyExpansions,
     renderCard: renderCard,
     bindTabs: bindTabs,
     updateRelatedContext: updateRelatedContext,

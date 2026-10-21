@@ -8,6 +8,7 @@ export type LegalOtherFieldsBackfillCliOptions = {
   expectedSourceSha256?: string;
   expectedPlanHash?: string;
   confirmTargetDb?: string;
+  rollbackPlanHash?: string;
 };
 
 export type LegalOtherFieldsBackfillCliParseResult =
@@ -69,6 +70,7 @@ export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOther
   let expectedSourceSha256: string | undefined;
   let expectedPlanHash: string | undefined;
   let confirmTargetDb: string | undefined;
+  let rollbackPlanHash: string | undefined;
   let sawDryRun = false;
   let sawApply = false;
 
@@ -108,6 +110,12 @@ export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOther
       index = confirmDb.nextIndex;
       continue;
     }
+    const rollbackPlan = readFlagValue(argv, index, "--rollback-plan-hash");
+    if (rollbackPlan) {
+      rollbackPlanHash = rollbackPlan.value.toLowerCase();
+      index = rollbackPlan.nextIndex;
+      continue;
+    }
     return { ok: false, code: "UNKNOWN_ARGUMENT" };
   }
 
@@ -143,6 +151,7 @@ export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOther
       expectedSourceSha256,
       expectedPlanHash,
       confirmTargetDb,
+      rollbackPlanHash,
     },
   };
 }

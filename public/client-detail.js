@@ -103,33 +103,36 @@
     };
   }
 
+  function requestV3LegalDetail(guid) {
+    return api.apiRequest(
+      "/api/clients/v3/detail?entity=legal&guid=" + encodeURIComponent(guid),
+    );
+  }
+
+  function bindCompositionLegalLazy(host) {
+    if (host && window.ClientDetailV3 && window.ClientDetailV3.bindLegalLazyExpansions) {
+      window.ClientDetailV3.bindLegalLazyExpansions(host, requestV3LegalDetail);
+    }
+  }
+
   function renderV3CompositionLists(host, legal, retail) {
     if (!host) {
       return;
     }
     var parentReturn = currentDetailReturnParam();
     var legalInner = legal.length
-      ? "<ul class=\"v3-composition-list\">" +
-        legal
+      ? legal
           .map(function (row) {
+            if (window.ClientDetailV3 && window.ClientDetailV3.renderLegalLazyExpandItem) {
+              return window.ClientDetailV3.renderLegalLazyExpandItem(shell, row, parentReturn);
+            }
             return (
-              "<li><a class=\"clients-link\" href=\"/clients/" +
-              encodeURIComponent(row.guid) +
-              "?v3Entity=legal&return=" +
-              parentReturn +
-              '">' +
+              "<details><summary>" +
               shell.escapeHtml(row.name) +
-              (row.inn
-                ? ' <span class="pc-label">ИНН ' + shell.escapeHtml(String(row.inn)) + "</span>"
-                : "") +
-              (row.kpp
-                ? ' <span class="pc-label">КПП ' + shell.escapeHtml(String(row.kpp)) + "</span>"
-                : "") +
-              "</a></li>"
+              "</summary></details>"
             );
           })
-          .join("") +
-        "</ul>"
+          .join("")
       : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>';
     var retailInner = retail.length
       ? "<ul class=\"v3-composition-list\">" +
@@ -158,6 +161,7 @@
       ")</summary><div class=\"v3-inline-disclosure__body\">" +
       retailInner +
       "</div></details>";
+    bindCompositionLegalLazy(host);
   }
 
   function applyV3CompositionContext(detailRoot, payload, rows) {
@@ -367,6 +371,7 @@
         })
       : "";
     detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
+    detailRoot.ClientDetailV3LazyRequest = requestV3LegalDetail;
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
       var legalGuid = payload.entityType === "legal" ? ent.guid || ent.guid_client : null;
       if (legalGuid) {

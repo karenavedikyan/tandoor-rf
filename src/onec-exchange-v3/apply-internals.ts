@@ -5,6 +5,7 @@ import {
   validateAuthoritativeOrgRoster,
 } from "../onec-clients/roster-authoritative-org";
 import { upsertWholesaleEmployeeRoster } from "../onec-clients/roster-upsert";
+import { persistableLegalOtherFields } from "./persist-legal-other-fields";
 import type { V3ValidatedBundle } from "./types";
 import { bootstrapBitrixLabelsForV3Domain } from "./bitrix-bootstrap";
 
@@ -102,7 +103,7 @@ export async function writeV3BundleToClient(
         legal.discount,
         legal.discountAmount,
         JSON.stringify(legal.markups),
-        JSON.stringify(legal.otherFields),
+        JSON.stringify(persistableLegalOtherFields(legal.otherFields, sourceSha)),
         legal.membershipConflict,
         sourceSha,
       ],

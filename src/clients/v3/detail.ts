@@ -1,5 +1,6 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
+import { computeLegalOtherFieldStates } from "../../onec-exchange-v3/legal-other-field-states";
 import { otherFieldsBagCompleteForSource } from "../../onec-exchange-v3/other-fields-presence";
 import { presentLegalOtherFieldsForApi } from "../../onec-exchange-v3/sanitize-client-other";
 import { v3JsonManagerField } from "./json-paths";
@@ -150,6 +151,11 @@ export async function getV3LegalDetail(context: AccessContext, guid: string) {
     ...entityRow,
     other_fields_exchange_complete: otherFieldsBagCompleteForSource(
       rawOther,
+      entityRow.last_source_sha256 as string | null | undefined,
+    ),
+    other_field_states: computeLegalOtherFieldStates(
+      rawOther,
+      context,
       entityRow.last_source_sha256 as string | null | undefined,
     ),
     other_fields: presentLegalOtherFieldsForApi(rawOther, context),

@@ -215,6 +215,10 @@
 .client-card-page .v3-detail-stat__value{font-size:14px;font-weight:600;margin-top:6px;}
 .client-card-page .v3-composition-list{margin:8px 0 16px;padding-left:18px;}
 .client-card-page .v3-composition-list li{margin:6px 0;}
+.client-card-page .v3-legal-lazy-expand{margin:10px 0;border:1px solid var(--border-subtle,#e5e7eb);border-radius:8px;padding:4px 10px;}
+.client-card-page .v3-legal-lazy-expand__summary{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;}
+.client-card-page .v3-legal-lazy-expand__card-link{font-size:12px;white-space:nowrap;}
+.client-card-page .v3-legal-scoped-preview{margin-top:8px;}
 .client-card-page .v3-detail-panel--unavailable .pc-notice{margin-top:0;}
 .client-card-page .v3-role-context{margin:0 0 14px;padding:14px 16px;background:var(--rf-surface);border:1px solid var(--rf-border);border-radius:9px;}
 .client-card-page .v3-role-context__row{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-start;}

@@ -12,6 +12,8 @@ const DETAIL_RESTRICTED_OTHER_KEYS = new Set([
   "Пол",
 ]);
 
+const INTERNAL_OTHER_FIELD_KEYS = new Set(["__v3ExchangeOtherComplete"]);
+
 const ASCII_BLOCKED_KEY_PATTERN =
   /(?:^__|prototype|constructor|password|passwd|secret|token|api[_-]?key|credential|auth(?:orization)?|private[_-]?key)/i;
 
@@ -133,7 +135,7 @@ export function sanitizeClientOtherFields(raw: Record<string, unknown> | null | 
   const result: Record<string, unknown> = {};
   let count = 0;
   for (const [key, value] of Object.entries(raw)) {
-    if (isBlockedClientOtherKey(key)) {
+    if (INTERNAL_OTHER_FIELD_KEYS.has(key) || isBlockedClientOtherKey(key)) {
       continue;
     }
     if (count >= MAX_OTHER_KEYS) {
@@ -181,8 +183,6 @@ function stripRestrictedLegalOtherFields(value: unknown, depth = 0): unknown {
   }
   return null;
 }
-
-const INTERNAL_OTHER_FIELD_KEYS = new Set(["__v3ExchangeOtherComplete"]);
 
 function stripInternalOtherMarkers(fields: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

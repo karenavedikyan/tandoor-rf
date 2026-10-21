@@ -69,6 +69,15 @@ describe("sanitize-client-other", () => {
     assert.equal(admin.ГруппаДоступа, "X");
   });
 
+  it("drops forged internal complete marker from exchange JSON", () => {
+    const picked = sanitizeClientOtherFields({
+      Код: "001",
+      __v3ExchangeOtherComplete: "forged-sha",
+    });
+    assert.equal(picked.Код, "001");
+    assert.equal(picked.__v3ExchangeOtherComplete, undefined);
+  });
+
   it("blocks compound Russian credential key variants", () => {
     const picked = sanitizeClientOtherFields({
       ПарольFTP: "SYNTH",

@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { stampOtherFieldsBagComplete } from "../other-fields-presence";
+import { persistableLegalOtherFields } from "../persist-legal-other-fields";
 import { stableJsonHash, type ParsedClientsOtherRow } from "./parse-clients-file";
 
 export type LegalOtherFieldsBackfillPlanRow = {
@@ -101,7 +101,7 @@ export async function planLegalOtherFieldsBackfill(
       continue;
     }
     const previousHash = stableJsonHash(existing.otherFields);
-    const stamped = stampOtherFieldsBagComplete(row.otherFields, parsed.sourceSha256);
+    const stamped = persistableLegalOtherFields(row.otherFields, parsed.sourceSha256);
     const postHash = stableJsonHash(stamped);
     if (previousHash === postHash) {
       unchangedCount += 1;
@@ -148,7 +148,7 @@ export async function applyLegalOtherFieldsBackfill(
   const otherByGuid = new Map(
     parsed.rows.map((row) => [
       row.guidClient,
-      stampOtherFieldsBagComplete(row.otherFields, parsed.sourceSha256),
+      persistableLegalOtherFields(row.otherFields, parsed.sourceSha256),
     ]),
   );
   const expectedSha = options.expectedSourceSha256.toLowerCase();

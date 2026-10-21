@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { persistableLegalOtherFields } from "../persist-legal-other-fields";
 import type { LegalOtherFieldsBackfillPlan, LegalOtherFieldsBackfillPlanRow } from "./plan-apply";
 
 export type BackfillSnapshotRow = LegalOtherFieldsBackfillPlanRow & {
@@ -11,7 +12,64 @@ export function buildBackfillSnapshotRows(
 ): BackfillSnapshotRow[] {
   return plan.updates.map((row) => ({
     ...row,
-    expectedPostOtherFields: otherByGuid.get(row.guidClient) ?? {},
+    expectedPostOtherFields: persistableLegalOtherFields(
+      otherByGuid.get(row.guidClient) ?? {},
+      plan.sourceSha256,
+    ),
+  }));
+}
+
+export async function persistBackfillSnapshots(
+  client: PoolClient,
+  plan: LegalOtherFieldsBackfillPlan,
+  snapshots: BackfillSnapshotRow[],
+): Promise<void> {
+  for (const snap of snapshots) {
+    await client.query(
+      `
+        INSERT INTO onec_v3_legal_other_backfill_snapshots (
+          guid_client, source_sha256, plan_hash, previous_other_fields, expected_post_other_fields
+        ) VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb)
+        ON CONFLICT (guid_client, plan_hash) DO NOTHING
+      `,
+      [
+        snap.guidClient,
+        plan.sourceSha256,
+        plan.planHash,
+        JSON.stringify(snap.previousOtherFields),
+        JSON.stringify(snap.expectedPostOtherFields),
+      ],
+    );
+  }
+}
+
+export async function loadBackfillSnapshots(
+  client: PoolClient,
+  planHash: string,
+): Promise<BackfillSnapshotRow[]> {
+  const result = await client.query<{
+    guid_client: string;
+    previous_other_fields: Record<string, unknown>;
+    expected_post_other_fields: Record<string, unknown>;
+    source_sha256: string;
+  }>(
+    `
+      SELECT lower(guid_client::text) AS guid_client,
+             previous_other_fields,
+             expected_post_other_fields,
+             lower(source_sha256) AS source_sha256
+      FROM onec_v3_legal_other_backfill_snapshots
+      WHERE plan_hash = $1
+    `,
+    [planHash],
+  );
+  return result.rows.map((row) => ({
+    guidClient: row.guid_client,
+    previousHash: "",
+    postHash: "",
+    previousOtherFields: row.previous_other_fields ?? {},
+    lastSourceSha256: row.source_sha256,
+    expectedPostOtherFields: row.expected_post_other_fields ?? {},
   }));
 }
 
