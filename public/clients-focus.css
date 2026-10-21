@@ -120,6 +120,23 @@ body.x14-focus-mode #v3-focus-host {
   background: var(--rf-surface, #fff);
   color: var(--rf-text, #232c35);
 }
+.x14-focus-error {
+  padding: 24px 20px;
+  max-width: 40rem;
+}
+.x14-focus-error h3 {
+  margin: 0 0 8px;
+  font-size: 1.125rem;
+}
+.x14-focus-error p {
+  margin: 0 0 16px;
+  color: var(--rf-text-muted, #697683);
+}
+.x14-focus-error__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .x14-focusbar {
   display: flex;
   align-items: center;

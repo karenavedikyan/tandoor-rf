@@ -954,6 +954,67 @@
     loadList: function (ctx, state, replaceHistory) {
       var api = ctx.api;
       var shell = ctx.shell;
+      function isV3FocusListMode(focusState) {
+        return Boolean(
+          focusState &&
+            focusState.v3focus &&
+            document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list") &&
+            window.ClientsLktandoorFocus &&
+            window.ClientsLktandoorFocus.renderBlockingError,
+        );
+      }
+      function showV3ListLoadFailure(focusState, title, message) {
+        if (isV3FocusListMode(focusState)) {
+          ctx.showResultsContent();
+          window.ClientsLktandoorFocus.renderBlockingError({
+            shell: shell,
+            state: focusState,
+            title: title,
+            message: message,
+            onRetry: function () {
+              window.ClientsV3.loadList(ctx, readState(), true);
+            },
+            onReset: function () {
+              var next = mergeListStateForUserAction({
+                page: 1,
+                q: "",
+                v3Rules: [],
+                v3type: "",
+                v3types: [],
+                v3category: "",
+                v3categories: [],
+                city: "",
+                closed: "",
+                colManager: "",
+                colRegional: "",
+                colRop: "",
+                colCity: "",
+                colStatus: "",
+              });
+              if (window.ClientsV3FieldRules) {
+                window.ClientsV3FieldRules.syncLegacyFromRules(next);
+              }
+              window.ClientsV3.loadList(ctx, next, true);
+            },
+            onExit: function () {
+              window.ClientsV3.loadList(ctx, mergeListStateForUserAction({ v3focus: false }), true);
+            },
+            onSearch: function (q) {
+              window.ClientsV3.loadList(ctx, mergeListStateForUserAction({ q: q, page: 1 }), false);
+            },
+          });
+          return;
+        }
+        ctx.showResultsState(
+          "error",
+          title,
+          message,
+          '<button type="button" class="workspace-button workspace-button--primary" id="v3-retry-load">Повторить</button>',
+        );
+        document.getElementById("v3-retry-load")?.addEventListener("click", function () {
+          window.ClientsV3.loadList(ctx, readState(), true);
+        });
+      }
       v3ListLoadGeneration += 1;
       var loadGeneration = v3ListLoadGeneration;
       function isStaleListLoad() {
@@ -980,6 +1041,20 @@
       syncV3FilterAliases(state);
       if (window.ClientsV3FieldRules) {
         window.ClientsV3FieldRules.mergeRulesFromLegacy(state);
+        var sanitizedRules = window.ClientsV3FieldRules.sanitizeRulesForApi(
+          window.ClientsV3FieldRules.parseRulesFromState(state),
+          state.v3entity || "legal",
+        );
+        if (sanitizedRules.invalid) {
+          showV3ListLoadFailure(
+            state,
+            "Недопустимое значение фильтра",
+            "Проверьте числовые поля или сбросьте условия в заголовках колонок.",
+          );
+          return Promise.resolve();
+        }
+        state.v3Rules = sanitizedRules.rules;
+        window.ClientsV3FieldRules.syncLegacyFromRules(state);
       }
       writeState(state, replaceHistory);
       toggleV3ListChrome(true);
@@ -1158,15 +1233,11 @@
             return;
           }
           if (!result.response.ok) {
-            ctx.showResultsState(
-              "error",
+            showV3ListLoadFailure(
+              readState(),
               "Не удалось загрузить список",
               api.extractErrorMessage(result.data, "Повторите попытку."),
-              '<button type="button" class="workspace-button workspace-button--primary" id="v3-retry-load">Повторить</button>',
             );
-            document.getElementById("v3-retry-load")?.addEventListener("click", function () {
-              window.ClientsV3.loadList(ctx, state, true);
-            });
             return;
           }
           var data = result.data || { items: [], total: 0 };
@@ -1350,6 +1421,19 @@
               window.ClientsV3.loadList(ctx, nextState, false);
             },
           };
+        })
+        .catch(function (err) {
+          if (isStaleListLoad()) {
+            return;
+          }
+          if (err && err.name === "AbortError") {
+            return;
+          }
+          showV3ListLoadFailure(
+            readState(),
+            "Не удалось загрузить список",
+            "Проверьте соединение и повторите попытку.",
+          );
         });
       return Promise.all([optionsPromise, listPromise]).finally(function () {
         if (!isStaleListLoad()) ctx.tableBody.setAttribute("aria-busy", "false");

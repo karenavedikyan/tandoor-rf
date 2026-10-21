@@ -2507,6 +2507,58 @@
   }
 
   function showResultsState(kind, title, text, actionHtml) {
+    var v3State = window.ClientsV3 && window.ClientsV3.readState ? window.ClientsV3.readState() : null;
+    if (
+      v3State &&
+      v3State.v3focus &&
+      document.body.classList.contains("x14-focus-mode") &&
+      window.ClientsLktandoorFocus &&
+      window.ClientsLktandoorFocus.renderBlockingError
+    ) {
+      resultsStateEl.classList.add("clients-hidden");
+      resultsContentEl.classList.remove("clients-hidden");
+      window.ClientsLktandoorFocus.renderBlockingError({
+        shell: shell,
+        state: v3State,
+        title: title,
+        message: text,
+        onRetry: function () {
+          if (window.__lktandoorUiCtx && window.ClientsV3) {
+            window.ClientsV3.loadList(window.__lktandoorUiCtx, v3State, true);
+          }
+        },
+        onReset: function () {
+          if (!window.ClientsV3) {
+            return;
+          }
+          var next = window.ClientsV3.mergeListStateForUserAction({
+            page: 1,
+            q: "",
+            v3Rules: [],
+            v3type: "",
+            v3types: [],
+            v3category: "",
+            v3categories: [],
+          });
+          if (window.ClientsV3FieldRules) {
+            window.ClientsV3FieldRules.syncLegacyFromRules(next);
+          }
+          if (window.__lktandoorUiCtx) {
+            window.ClientsV3.loadList(window.__lktandoorUiCtx, next, true);
+          }
+        },
+        onExit: function () {
+          if (window.__lktandoorUiCtx && window.ClientsV3) {
+            window.ClientsV3.loadList(
+              window.__lktandoorUiCtx,
+              window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
+              true,
+            );
+          }
+        },
+      });
+      return;
+    }
     resultsContentEl.classList.add("clients-hidden");
     paginationEl.classList.add("clients-hidden");
     resultsStateEl.classList.remove("clients-hidden");

@@ -19,6 +19,60 @@
     return JSON.stringify(rules || []);
   }
 
+  /** Keep in sync with src/clients/v3/normalize-list-filter-number.ts */
+  function normalizeNumberFilterValue(raw) {
+    var trimmed = String(raw == null ? "" : raw).trim();
+    if (!trimmed || trimmed === "-") {
+      return { ok: false, reason: "empty" };
+    }
+    var n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+      return { ok: false, reason: "invalid" };
+    }
+    var value = String(n);
+    if (/^-?\d+(\.\d+)?$/.test(value)) {
+      return { ok: true, value: value };
+    }
+    if (Number.isInteger(n)) {
+      return { ok: true, value: String(n) };
+    }
+    value = n.toFixed(12).replace(/\.?0+$/, "");
+    if (!/^-?\d+(\.\d+)?$/.test(value)) {
+      return { ok: false, reason: "invalid" };
+    }
+    return { ok: true, value: value };
+  }
+
+  function sanitizeRulesForApi(rules, entity) {
+    var fields = fieldsCache[entity] || [];
+    var numberFields = { creditLimit: true, discountAmount: true, deferDays: true };
+    fields.forEach(function (f) {
+      if (f.kind === "number") {
+        numberFields[f.id] = true;
+      }
+    });
+    var out = [];
+    var invalid = false;
+    (rules || []).forEach(function (rule) {
+      if (!rule || !rule.field) {
+        return;
+      }
+      if (numberFields[rule.field] && ["eq", "gte", "lte"].indexOf(rule.op) !== -1) {
+        var normalized = normalizeNumberFilterValue(rule.value);
+        if (!normalized.ok) {
+          if (normalized.reason === "invalid") {
+            invalid = true;
+          }
+          return;
+        }
+        out.push({ field: rule.field, op: rule.op, value: normalized.value });
+        return;
+      }
+      out.push(rule);
+    });
+    return { rules: out, invalid: invalid };
+  }
+
   function syncLegacyFromRules(state) {
     var rules = parseRulesFromState(state);
     state.v3Rules = rules;
@@ -301,7 +355,7 @@
   }
 
   var FIELD_SHORTCUTS = [
-    { label: "ТОП", fieldId: "categoryGuid", op: "filled" },
+    { label: "ТОП", fieldId: "typeGuid", op: "filled" },
     { label: "Юрлицо", fieldId: "legalName", op: "contains", entities: ["legal", "legal_grouped"] },
     { label: "ИНН", fieldId: "inn", op: "contains", entities: ["legal", "legal_grouped"] },
     {
@@ -384,12 +438,16 @@
     renderFieldShortcuts: renderFieldShortcuts,
     appendRulesToParams: function (params, state) {
       var rules = parseRulesFromState(state);
+      var sanitized = sanitizeRulesForApi(rules, state.v3entity || "legal");
+      rules = sanitized.rules;
       if (rules.length) {
         params.set("filters", serializeRules(rules));
       } else {
         params.delete("filters");
       }
     },
+    normalizeNumberFilterValue: normalizeNumberFilterValue,
+    sanitizeRulesForApi: sanitizeRulesForApi,
     readRulesFromUrl: function (search) {
       var params = new URLSearchParams(search || window.location.search);
       var raw = params.get("filters");

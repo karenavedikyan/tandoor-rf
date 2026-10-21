@@ -466,9 +466,17 @@
     }
     if (spec.input === "number") {
       var trimmed = String(editor.value || "").trim();
-      if (trimmed !== "" && trimmed !== "-") {
-        next.v3Rules.push({ field: spec.field, op: editor.op, value: trimmed });
+      if (trimmed === "" || trimmed === "-") {
+        return next;
       }
+      var normalized =
+        window.ClientsV3FieldRules && window.ClientsV3FieldRules.normalizeNumberFilterValue
+          ? window.ClientsV3FieldRules.normalizeNumberFilterValue(trimmed)
+          : { ok: true, value: trimmed };
+      if (!normalized.ok) {
+        return next;
+      }
+      next.v3Rules.push({ field: spec.field, op: editor.op, value: normalized.value });
       return next;
     }
     var text = String(editor.value || "").trim();
@@ -479,6 +487,91 @@
       next.city = text;
     }
     return next;
+  }
+
+  function renderFocusChrome(shell, state, bodyHtml) {
+    syncLayout(state);
+    var host = document.getElementById("v3-focus-host");
+    if (!host) {
+      return null;
+    }
+    host.classList.remove("clients-hidden");
+    var filterCount = activeFilterCount(state);
+    var countLine =
+      window.ClientsLktandoorList && window.ClientsLktandoorList.formatResultCountLine
+        ? window.ClientsLktandoorList.formatResultCountLine(state, 0)
+        : "Совпало 0";
+    host.innerHTML =
+      '<div class="x14-focus" data-testid="v3-focus-root">' +
+      '<div class="x14-focusbar">' +
+      '<label class="x15-search"><input id="v3-focus-search" type="search" autocomplete="off" aria-label="Поиск в полноэкранном реестре" placeholder="Поиск по клиентам, адресам, контактам…" value="' +
+      shell.escapeHtml(state.q || "") +
+      '"></label>' +
+      '<span role="status">' +
+      shell.escapeHtml(countLine) +
+      "</span>" +
+      (filterCount
+        ? '<button type="button" class="workspace-button workspace-button--ghost x15-reset" id="v3-focus-reset">Сбросить' +
+          (filterCount > 1 ? " · " + filterCount : "") +
+          "</button>"
+        : "") +
+      '<button type="button" class="workspace-button workspace-button--ghost" id="v3-focus-columns">Колонки</button>' +
+      '<button type="button" class="workspace-button workspace-button--primary" id="v3-focus-exit">Выйти <kbd>Esc</kbd></button>' +
+      "</div>" +
+      bodyHtml +
+      "</div>";
+    return host;
+  }
+
+  function renderBlockingError(payload) {
+    var shell = payload.shell;
+    var state = payload.state || {};
+    var title = payload.title || "Не удалось загрузить список";
+    var message = payload.message || "";
+    var body =
+      '<div class="x14-focus-error" role="alert" data-testid="v3-focus-error">' +
+      "<h3>" +
+      shell.escapeHtml(title) +
+      "</h3>" +
+      "<p>" +
+      shell.escapeHtml(message) +
+      "</p>" +
+      '<div class="x14-focus-error__actions">' +
+      '<button type="button" class="workspace-button workspace-button--primary" id="v3-focus-retry-load">Повторить</button>' +
+      "</div></div>";
+    var host = renderFocusChrome(shell, state, body);
+    if (!host) {
+      return;
+    }
+    document.getElementById("v3-focus-exit")?.addEventListener("click", function () {
+      writeScroll(state, document.getElementById("x14-focus-scroll"));
+      if (payload.onExit) {
+        payload.onExit();
+      }
+    });
+    document.getElementById("v3-focus-reset")?.addEventListener("click", function () {
+      if (payload.onReset) {
+        payload.onReset();
+      }
+    });
+    document.getElementById("v3-focus-retry-load")?.addEventListener("click", function () {
+      if (payload.onRetry) {
+        payload.onRetry();
+      }
+    });
+    var search = document.getElementById("v3-focus-search");
+    if (search && payload.onSearch) {
+      search.addEventListener(
+        "input",
+        function () {
+          clearTimeout(filterTimer);
+          filterTimer = setTimeout(function () {
+            payload.onSearch(search.value || "");
+          }, 220);
+        },
+        { passive: true },
+      );
+    }
   }
 
   function render(ctx, payload) {
@@ -766,6 +859,7 @@
     isActive: isActive,
     syncLayout: syncLayout,
     render: render,
+    renderBlockingError: renderBlockingError,
     bindGlobal: bindGlobal,
     captureScroll: function (state) {
       writeScroll(state, document.getElementById("x14-focus-scroll"));
