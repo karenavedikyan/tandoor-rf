@@ -38,7 +38,7 @@ describe("onec exchange v3 other_fields presence", { concurrency: false }, () =>
     await query("TRUNCATE onec_v3_legal_entities, onec_v3_holdings CASCADE");
     await query(
       `INSERT INTO onec_v3_legal_entities (guid_client, name_client, type_category, other_fields, last_source_sha256)
-       VALUES ($1::uuid, 'SYNTH', '{}'::jsonb, $2, $2)`,
+       VALUES ($1::uuid, 'SYNTH', '{}'::jsonb, '{}'::jsonb, $2)`,
       [GUID, "f".repeat(64)],
     );
   }
@@ -127,10 +127,58 @@ describe("onec exchange v3 other_fields presence", { concurrency: false }, () =>
       ],
     });
     assert.equal(apply.status, "SUCCESS");
+    const beforeDry = await query<{ other_fields: Record<string, unknown> }>(
+      "SELECT other_fields FROM onec_v3_legal_entities WHERE guid_client = $1::uuid",
+      [GUID],
+    );
+    const dryRollback = await runLegalOtherFieldsBackfill({
+      argv: ["--dry-run", "--rollback-plan-hash", dry.plan!.planHash],
+    });
+    assert.equal(dryRollback.status, "SUCCESS");
+    assert.equal(dryRollback.mode, "dry_run");
+    assert.equal(dryRollback.rolledBack, 1);
+    const afterDry = await query<{ other_fields: Record<string, unknown> }>(
+      "SELECT other_fields FROM onec_v3_legal_entities WHERE guid_client = $1::uuid",
+      [GUID],
+    );
+    assert.deepEqual(afterDry.rows[0].other_fields, beforeDry.rows[0].other_fields);
+
+    const wrongTarget = await runLegalOtherFieldsBackfill({
+      argv: [
+        "--apply",
+        "--rollback-plan-hash",
+        dry.plan!.planHash,
+        "--expected-plan-hash",
+        dry.plan!.planHash,
+        "--confirm-target-db",
+        "0".repeat(64),
+      ],
+    });
+    assert.equal(wrongTarget.status, "REJECTED_BY_CHECKS");
+
+    await query("UPDATE onec_v3_legal_entities SET last_source_sha256 = $2 WHERE guid_client = $1::uuid", [
+      GUID,
+      "d".repeat(64),
+    ]);
+    const driftDry = await runLegalOtherFieldsBackfill({
+      argv: ["--dry-run", "--rollback-plan-hash", dry.plan!.planHash],
+    });
+    assert.equal(driftDry.rolledBack, 0);
+
+    await query("UPDATE onec_v3_legal_entities SET last_source_sha256 = $2 WHERE guid_client = $1::uuid", [GUID, sha]);
     const rollback = await runLegalOtherFieldsBackfill({
-      argv: ["--rollback-plan-hash", dry.plan!.planHash],
+      argv: [
+        "--apply",
+        "--rollback-plan-hash",
+        dry.plan!.planHash,
+        "--expected-plan-hash",
+        dry.plan!.planHash,
+        "--confirm-target-db",
+        dry.targetDbFingerprint!,
+      ],
     });
     assert.equal(rollback.status, "SUCCESS");
+    assert.equal(rollback.mode, "apply");
     assert.equal(rollback.rolledBack, 1);
     const row = await query<{ other_fields: Record<string, unknown> }>(
       "SELECT other_fields FROM onec_v3_legal_entities WHERE guid_client = $1::uuid",

@@ -34,6 +34,24 @@ describe("legal other_fields backfill CLI", () => {
     assert.equal(parsed.ok, true);
   });
 
+  it("requires confirm target db and matching plan hash for rollback apply", () => {
+    const plan = "b".repeat(64);
+    const missing = parseLegalOtherFieldsBackfillCliArgs(["--apply", `--rollback-plan-hash=${plan}`]);
+    assert.equal(missing.ok, false);
+    const mismatch = parseLegalOtherFieldsBackfillCliArgs([
+      "--apply",
+      `--rollback-plan-hash=${plan}`,
+      `--expected-plan-hash=${"c".repeat(64)}`,
+      `--confirm-target-db=${"d".repeat(64)}`,
+    ]);
+    assert.equal(mismatch.ok, false);
+    const ok = parseLegalOtherFieldsBackfillCliArgs([
+      "--dry-run",
+      `--rollback-plan-hash=${plan}`,
+    ]);
+    assert.equal(ok.ok, true);
+  });
+
   it("requires plan hash and target db on apply", () => {
     const missing = parseLegalOtherFieldsBackfillCliArgs(["--apply"]);
     assert.equal(missing.ok, false);

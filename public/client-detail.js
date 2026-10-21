@@ -111,7 +111,7 @@
 
   function bindCompositionLegalLazy(host) {
     if (host && window.ClientDetailV3 && window.ClientDetailV3.bindLegalLazyExpansions) {
-      window.ClientDetailV3.bindLegalLazyExpansions(host, requestV3LegalDetail);
+      window.ClientDetailV3.bindLegalLazyExpansions(host, requestV3LegalDetail, shell);
     }
   }
 

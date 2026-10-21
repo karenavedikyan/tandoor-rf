@@ -47,11 +47,24 @@
     plan: "План продаж не передаётся в clients JSON; раздел ожидает подключение планирования.",
   };
 
+  function defaultEscapeShell() {
+    return {
+      escapeHtml: function (value) {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        return String(value).replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+      },
+    };
+  }
+
   function esc(shell, value) {
     if (value === null || value === undefined || value === "") {
       return "";
     }
-    return shell.escapeHtml(String(value));
+    return (shell && shell.escapeHtml ? shell : defaultEscapeShell()).escapeHtml(String(value));
   }
 
   function emptyNoData() {
@@ -454,10 +467,11 @@
     );
   }
 
-  function bindLegalLazyExpansions(root, requestFn) {
+  function bindLegalLazyExpansions(root, requestFn, shell) {
     if (!root || typeof requestFn !== "function") {
       return;
     }
+    shell = shell || defaultEscapeShell();
     root.querySelectorAll(".v3-legal-lazy-expand").forEach(function (details) {
       if (details.dataset.lazyBound === "1") {
         return;
@@ -486,10 +500,7 @@
               return;
             }
             details.dataset.lazyLoaded = "1";
-            body.innerHTML = renderLegalScopedDetailPreview(
-              { escapeHtml: function (v) { return String(v ?? ""); } },
-              result.data.entity,
-            );
+            body.innerHTML = renderLegalScopedDetailPreview(shell, result.data.entity);
           })
           .catch(function () {
             if (body.isConnected) {
@@ -1340,7 +1351,7 @@
     }
     refreshRelatedOutletReturnLinks(root);
     if (typeof root.ClientDetailV3LazyRequest === "function") {
-      bindLegalLazyExpansions(root, root.ClientDetailV3LazyRequest);
+      bindLegalLazyExpansions(root, root.ClientDetailV3LazyRequest, shell);
     }
   }
 

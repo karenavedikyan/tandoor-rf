@@ -60,9 +60,20 @@ Guards:
 
 Откат только через поддержанный CLI (не ручной SQL на prod):
 
+Dry-run (read-only, без UPDATE):
+
 ```bash
 node dist/cli/onec-v3-legal-other-fields-backfill.js \
-  --rollback-plan-hash <plan.planHash_из_apply>
+  --dry-run --rollback-plan-hash <plan.planHash_из_apply>
+```
+
+Apply (требует target DB + plan hash):
+
+```bash
+node dist/cli/onec-v3-legal-other-fields-backfill.js \
+  --apply --rollback-plan-hash <plan.planHash_из_apply> \
+  --expected-plan-hash <тот_же_hash> \
+  --confirm-target-db <targetDbFingerprint>
 ```
 
 Guard: `UPDATE` только если текущий `other_fields` **байт-в-байт** равен `expected_post_other_fields` из снимка. Если после apply было ручное изменение — откат пропускает строку (`ROLLBACK_GUARD`).

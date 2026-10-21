@@ -24,7 +24,11 @@ export type LegalOtherFieldsBackfillCliParseResult =
         | "INVALID_EXPECTED_SOURCE_SHA256"
         | "INVALID_EXPECTED_PLAN_HASH"
         | "INVALID_CONFIRM_TARGET_DB"
-        | "APPLY_AND_DRY_RUN";
+        | "APPLY_AND_DRY_RUN"
+        | "ROLLBACK_REQUIRES_CONFIRM_TARGET_DB"
+        | "ROLLBACK_REQUIRES_EXPECTED_PLAN_HASH"
+        | "ROLLBACK_PLAN_HASH_MISMATCH"
+        | "INVALID_ROLLBACK_PLAN_HASH";
     };
 
 export const LEGAL_OTHER_FIELDS_BACKFILL_CLI_ERRORS: Record<string, string> = {
@@ -39,6 +43,12 @@ export const LEGAL_OTHER_FIELDS_BACKFILL_CLI_ERRORS: Record<string, string> = {
   INVALID_EXPECTED_PLAN_HASH: "--expected-plan-hash must be a 64-character hex SHA-256.",
   INVALID_CONFIRM_TARGET_DB: "--confirm-target-db must be a 64-character hex target DB fingerprint.",
   APPLY_AND_DRY_RUN: "Use either --apply or --dry-run, not both.",
+  ROLLBACK_REQUIRES_CONFIRM_TARGET_DB:
+    "Rollback apply requires --confirm-target-db from a verified dry-run on this database.",
+  ROLLBACK_REQUIRES_EXPECTED_PLAN_HASH:
+    "Rollback apply requires --expected-plan-hash matching --rollback-plan-hash.",
+  ROLLBACK_PLAN_HASH_MISMATCH: "--expected-plan-hash must equal --rollback-plan-hash.",
+  INVALID_ROLLBACK_PLAN_HASH: "--rollback-plan-hash must be a 64-character hex SHA-256.",
 };
 
 export function resolveClientsFilePath(filePath: string, cwd = process.cwd()): string {
@@ -122,7 +132,24 @@ export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOther
   if (sawDryRun && sawApply) {
     return { ok: false, code: "APPLY_AND_DRY_RUN" };
   }
-  if (mode === "apply") {
+  if (rollbackPlanHash && !isSha256Hex(rollbackPlanHash)) {
+    return { ok: false, code: "INVALID_ROLLBACK_PLAN_HASH" };
+  }
+  if (rollbackPlanHash && mode === "apply") {
+    if (!confirmTargetDb) {
+      return { ok: false, code: "ROLLBACK_REQUIRES_CONFIRM_TARGET_DB" };
+    }
+    if (!expectedPlanHash) {
+      return { ok: false, code: "ROLLBACK_REQUIRES_EXPECTED_PLAN_HASH" };
+    }
+    if (!isSha256Hex(confirmTargetDb)) {
+      return { ok: false, code: "INVALID_CONFIRM_TARGET_DB" };
+    }
+    if (expectedPlanHash !== rollbackPlanHash) {
+      return { ok: false, code: "ROLLBACK_PLAN_HASH_MISMATCH" };
+    }
+  }
+  if (mode === "apply" && !rollbackPlanHash) {
     if (!expectedSourceSha256) {
       return { ok: false, code: "APPLY_REQUIRES_EXPECTED_SOURCE_SHA256" };
     }

@@ -81,4 +81,4 @@
 
 Дозагрузка `other_fields`: `npm run onec-v3-legal-other-fields-backfill` — см. `docs/delivery/client-card-other-fields-backfill.md`.
 
-Машинная матрица путей (5 файлов обмена): `src/onec-exchange-v3/exchange-v3-path-matrix.ts`, проверка полноты — `test/unit/exchange-v3-path-matrix.test.ts`.
+Машинная матрица путей (5 файлов обмена): `src/onec-exchange-v3/exchange-v3-path-matrix.ts`, снимок путей источника — `data/client-card-v3-exchange-path-inventory.json` (holding/retail/employees/sale; clients — fixtures + `V3_CLIENT_OTHER_INVENTORY_KEYS`). Проверка: exact match без parent-fallback — `test/unit/exchange-v3-path-matrix.test.ts`.

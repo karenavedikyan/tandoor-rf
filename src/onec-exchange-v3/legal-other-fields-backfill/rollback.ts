@@ -77,6 +77,40 @@ export async function loadBackfillSnapshots(
  * Roll back only rows from a verified apply snapshot. Requires current other_fields to match
  * the expected post-apply payload — does not overwrite newer manual/import changes.
  */
+function rollbackRowWhereClause(): string {
+  return `
+    lower(guid_client::text) = $1
+    AND other_fields = $2::jsonb
+    AND lower(coalesce(last_source_sha256, '')) = lower($3)
+  `;
+}
+
+/** Read-only: rows that would pass rollback guards (no writes). */
+export async function previewRollbackLegalOtherFieldsFromSnapshot(
+  client: PoolClient,
+  snapshots: BackfillSnapshotRow[],
+): Promise<{ eligible: number; skippedGuard: number }> {
+  let eligible = 0;
+  let skippedGuard = 0;
+  for (const snap of snapshots) {
+    const result = await client.query(
+      `
+        SELECT 1
+        FROM onec_v3_legal_entities
+        WHERE ${rollbackRowWhereClause()}
+        LIMIT 1
+      `,
+      [snap.guidClient, JSON.stringify(snap.expectedPostOtherFields), snap.lastSourceSha256],
+    );
+    if ((result.rowCount ?? 0) === 1) {
+      eligible += 1;
+    } else {
+      skippedGuard += 1;
+    }
+  }
+  return { eligible, skippedGuard };
+}
+
 export async function rollbackLegalOtherFieldsFromSnapshot(
   client: PoolClient,
   snapshots: BackfillSnapshotRow[],
@@ -87,11 +121,15 @@ export async function rollbackLegalOtherFieldsFromSnapshot(
     const result = await client.query(
       `
         UPDATE onec_v3_legal_entities
-        SET other_fields = $2::jsonb
-        WHERE lower(guid_client::text) = $1
-          AND other_fields = $3::jsonb
+        SET other_fields = $4::jsonb
+        WHERE ${rollbackRowWhereClause()}
       `,
-      [snap.guidClient, JSON.stringify(snap.previousOtherFields), JSON.stringify(snap.expectedPostOtherFields)],
+      [
+        snap.guidClient,
+        JSON.stringify(snap.expectedPostOtherFields),
+        snap.lastSourceSha256,
+        JSON.stringify(snap.previousOtherFields),
+      ],
     );
     if ((result.rowCount ?? 0) === 1) {
       rolledBack += 1;

@@ -49,6 +49,7 @@ describe("legal other_fields rollback guard", () => {
     ]);
     assert.equal(result.rolledBack, 0);
     assert.equal(result.skippedGuard, 1);
-    assert.match(queries[0], /other_fields = \$3::jsonb/);
+    assert.match(queries[0], /other_fields = \$4::jsonb/);
+    assert.match(queries[0], /last_source_sha256/);
   });
 });

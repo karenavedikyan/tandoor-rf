@@ -6,6 +6,7 @@ import { V3_CLIENT_OTHER_INVENTORY_KEYS } from "../../src/onec-exchange-v3/other
 import {
   EXCHANGE_V3_PATH_MATRIX,
   matchExchangeV3MatrixPath,
+  type ExchangeV3PathDisposition,
 } from "../../src/onec-exchange-v3/exchange-v3-path-matrix";
 
 function collectPaths(value: unknown, prefix = "", out = new Set<string>()): Set<string> {
@@ -49,6 +50,21 @@ describe("exchange v3 path matrix", () => {
       ),
     );
     const missing = V3_CLIENT_OTHER_INVENTORY_KEYS.filter((key) => !otherPaths.has(key));
+    assert.deepEqual(missing, []);
+  });
+
+  it("covers every path in materialized five-file inventory (exact match, no parent fallback)", () => {
+    const inventory = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), "data/client-card-v3-exchange-path-inventory.json"), "utf8"),
+    ) as { files: Record<string, string[]> };
+    const missing: string[] = [];
+    for (const [file, paths] of Object.entries(inventory.files)) {
+      for (const observed of paths) {
+        if (!matchExchangeV3MatrixPath(file as ExchangeV3PathDisposition["file"], observed)) {
+          missing.push(`${file}:${observed}`);
+        }
+      }
+    }
     assert.deepEqual(missing, []);
   });
 

@@ -23,6 +23,7 @@ import {
   buildBackfillSnapshotRows,
   loadBackfillSnapshots,
   persistBackfillSnapshots,
+  previewRollbackLegalOtherFieldsFromSnapshot,
   rollbackLegalOtherFieldsFromSnapshot,
 } from "./rollback";
 import { validateClientsSourceForBackfill } from "./source-validation";
@@ -77,38 +78,60 @@ export async function runLegalOtherFieldsBackfill(
   if (cli.rollbackPlanHash) {
     const databaseUrl = getDatabaseUrl();
     if (!databaseUrl) {
-      return { status: "ERROR", mode: "dry_run", errorCode: "NO_DATABASE_URL", message: "DATABASE_URL is not set." };
+      return { status: "ERROR", mode: cli.mode, errorCode: "NO_DATABASE_URL", message: "DATABASE_URL is not set." };
+    }
+    let targetDbFingerprint: string;
+    try {
+      targetDbFingerprint = (await resolveTargetDbIdentityFromUrl(databaseUrl)).fingerprint;
+    } catch (error) {
+      const message =
+        error instanceof TargetDbIdentityError ? error.message : "Target DB identity check failed.";
+      return { status: "ERROR", mode: cli.mode, errorCode: "TARGET_DB_IDENTITY", message };
+    }
+    if (cli.mode === "apply" && cli.confirmTargetDb !== targetDbFingerprint) {
+      return rejected("apply", "TARGET_DB_MISMATCH", "Target DB fingerprint does not match --confirm-target-db.", {
+        targetDbFingerprint,
+      });
     }
     const pool = createImportPool(databaseUrl);
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
       const snapshots = await loadBackfillSnapshots(client, cli.rollbackPlanHash);
       if (!snapshots.length) {
-        await client.query("ROLLBACK");
-        return rejected("dry_run", "SNAPSHOT_NOT_FOUND", "No snapshots for plan hash.", {
-          errorCode: "SNAPSHOT_NOT_FOUND",
-        });
+        return rejected(cli.mode, "SNAPSHOT_NOT_FOUND", "No snapshots for plan hash.");
       }
+      if (cli.mode === "dry_run") {
+        const preview = await previewRollbackLegalOtherFieldsFromSnapshot(client, snapshots);
+        return {
+          status: "SUCCESS",
+          mode: "dry_run",
+          message: "Rollback dry-run completed (no database changes).",
+          rolledBack: preview.eligible,
+          targetDbFingerprint,
+          plan: { planHash: cli.rollbackPlanHash, updateCount: preview.eligible } as LegalOtherFieldsBackfillPlan,
+        };
+      }
+      await client.query("BEGIN");
       const result = await rollbackLegalOtherFieldsFromSnapshot(client, snapshots);
       if (result.rolledBack !== snapshots.length) {
         await client.query("ROLLBACK");
-        return rejected("dry_run", "ROLLBACK_GUARD", "Rollback guard blocked one or more rows.", {
+        return rejected("apply", "ROLLBACK_GUARD", "Rollback guard blocked one or more rows.", {
           rolledBack: result.rolledBack,
         });
       }
       await client.query("COMMIT");
       return {
         status: "SUCCESS",
-        mode: "dry_run",
-        message: "Rollback completed.",
+        mode: "apply",
+        message: "Rollback applied.",
         rolledBack: result.rolledBack,
+        targetDbFingerprint,
       };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       return {
         status: "ERROR",
-        mode: "dry_run",
+        mode: cli.mode,
         errorCode: "ROLLBACK_FAILED",
         message: error instanceof Error ? error.message : String(error),
       };
