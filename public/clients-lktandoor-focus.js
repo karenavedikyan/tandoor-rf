@@ -8,7 +8,7 @@
     name: { kind: "rule", field: "groupDisplayName", input: "text", op: "contains" },
     client_name: { kind: "rule", field: "clientName", input: "text", op: "contains" },
     address_line: { kind: "rule", field: "legalAddress", input: "text", op: "contains" },
-    category_name: { kind: "rule", field: "categoryGuid", input: "enum", optionsKey: "categories" },
+    category_name: { kind: "rule", field: "typeGuid", input: "enum", optionsKey: "types" },
     legal_name: { kind: "rule", field: "legalName", input: "text", op: "contains" },
     city: { kind: "rule", field: "city", input: "text", op: "contains" },
     manager_name: { kind: "col", key: "colManager", input: "text" },

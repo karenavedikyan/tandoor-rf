@@ -288,7 +288,10 @@
         : '<span class="clients-no-data">Нет данных</span>';
     }
     if (colId === "category_name") {
-      var topLabel = item.type_name || item.category_name;
+      var topLabel =
+        item.top_name != null && String(item.top_name).trim() !== ""
+          ? item.top_name
+          : item.category_name;
       return topLabel
         ? shell.escapeHtml(String(topLabel))
         : '<span class="clients-no-data">Нет данных</span>';

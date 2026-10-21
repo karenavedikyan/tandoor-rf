@@ -108,47 +108,56 @@
       return;
     }
     var parentReturn = currentDetailReturnParam();
+    var legalInner = legal.length
+      ? "<ul class=\"v3-composition-list\">" +
+        legal
+          .map(function (row) {
+            return (
+              "<li><a class=\"clients-link\" href=\"/clients/" +
+              encodeURIComponent(row.guid) +
+              "?v3Entity=legal&return=" +
+              parentReturn +
+              '">' +
+              shell.escapeHtml(row.name) +
+              (row.inn
+                ? ' <span class="pc-label">ИНН ' + shell.escapeHtml(String(row.inn)) + "</span>"
+                : "") +
+              (row.kpp
+                ? ' <span class="pc-label">КПП ' + shell.escapeHtml(String(row.kpp)) + "</span>"
+                : "") +
+              "</a></li>"
+            );
+          })
+          .join("") +
+        "</ul>"
+      : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>';
+    var retailInner = retail.length
+      ? "<ul class=\"v3-composition-list\">" +
+        retail
+          .map(function (row) {
+            return (
+              "<li><a class=\"clients-link\" href=\"/clients/" +
+              encodeURIComponent(row.guid) +
+              "?v3Entity=retail&return=" +
+              parentReturn +
+              '">' +
+              shell.escapeHtml(row.name) +
+              "</a></li>"
+            );
+          })
+          .join("") +
+        "</ul>"
+      : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>';
     host.innerHTML =
-      (legal.length
-        ? "<h3 class=\"pc-label\">Юрлица</h3><ul class=\"v3-composition-list\">" +
-          legal
-            .map(function (row) {
-              return (
-                "<li><a class=\"clients-link\" href=\"/clients/" +
-                encodeURIComponent(row.guid) +
-                "?v3Entity=legal&return=" +
-                parentReturn +
-                '">' +
-                shell.escapeHtml(row.name) +
-                (row.inn
-                  ? ' <span class="pc-label">ИНН ' + shell.escapeHtml(String(row.inn)) + "</span>"
-                  : "") +
-                (row.kpp
-                  ? ' <span class="pc-label">КПП ' + shell.escapeHtml(String(row.kpp)) + "</span>"
-                  : "") +
-                "</a></li>"
-              );
-            })
-            .join("") +
-          "</ul>"
-        : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>') +
-      (retail.length
-        ? "<h3 class=\"pc-label\">Торговые точки</h3><ul class=\"v3-composition-list\">" +
-          retail
-            .map(function (row) {
-              return (
-                "<li><a class=\"clients-link\" href=\"/clients/" +
-                encodeURIComponent(row.guid) +
-                "?v3Entity=retail&return=" +
-                parentReturn +
-                '">' +
-                shell.escapeHtml(row.name) +
-                "</a></li>"
-              );
-            })
-            .join("") +
-          "</ul>"
-        : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>');
+      '<details class="x6-group v3-inline-disclosure" open><summary>Юрлица (' +
+      legal.length +
+      ")</summary><div class=\"v3-inline-disclosure__body\">" +
+      legalInner +
+      '</div></details><details class="x6-group v3-inline-disclosure" open><summary>Торговые точки (' +
+      retail.length +
+      ")</summary><div class=\"v3-inline-disclosure__body\">" +
+      retailInner +
+      "</div></details>";
   }
 
   function applyV3CompositionContext(detailRoot, payload, rows) {
@@ -162,6 +171,7 @@
         legalEntities: payload.entityType === "legal" ? 1 : rows.legal.length,
       },
       retailOutlets: rows.retail,
+      legalEntities: rows.legal,
       parentReturn: currentDetailReturnParam(),
     });
   }
@@ -446,8 +456,9 @@
     }
     function showRelatedError(message) {
       if (!detailRoot.isConnected) return;
-      detailRoot.querySelectorAll('[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"]')
-        .forEach(function (host) { host.textContent = message; });
+      detailRoot.querySelectorAll(
+        '[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"], [data-testid="v3-data-holding-legals"]',
+      ).forEach(function (host) { host.textContent = message; });
     }
     loadV3Composition(detailRoot, payload, {
       onTerritoryError: showRelatedError,

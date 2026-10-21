@@ -1,8 +1,5 @@
 import type { AccessContext } from "../access/types";
 
-const BLOCKED_KEY_PATTERN =
-  /(?:^__|prototype|constructor|password|пароль|passwd|secret|token|api[_-]?key|credential|auth(?:orization)?|private[_-]?key)/i;
-
 const MAX_OTHER_DEPTH = 6;
 const MAX_OTHER_KEYS = 120;
 const MAX_STRING_LENGTH = 8_000;
@@ -15,12 +12,56 @@ const DETAIL_RESTRICTED_OTHER_KEYS = new Set([
   "Пол",
 ]);
 
+const ASCII_BLOCKED_KEY_PATTERN =
+  /(?:^__|prototype|constructor|password|passwd|secret|token|api[_-]?key|credential|auth(?:orization)?|private[_-]?key)/i;
+
+/** Normalize key for credential heuristics: lower case, drop spaces/underscores/dashes. */
+export function normalizeClientOtherKeyForPolicy(key: string): string {
+  return key.trim().toLowerCase().replace(/[\s_\-]+/g, "");
+}
+
+function isBlockedCredentialNormalized(normalized: string): boolean {
+  if (!normalized) {
+    return true;
+  }
+  if (normalized.startsWith("__") || normalized === "prototype" || normalized === "constructor") {
+    return true;
+  }
+  if (
+    normalized === "токен" ||
+    normalized === "token" ||
+    normalized === "секрет" ||
+    normalized === "secret" ||
+    normalized === "пароль" ||
+    normalized === "password" ||
+    normalized === "passwd"
+  ) {
+    return true;
+  }
+  if (normalized === "ключдоступа" || normalized === "accesskey" || normalized === "apikey") {
+    return true;
+  }
+  if (normalized === "auth" || normalized === "authorization" || normalized === "credential") {
+    return true;
+  }
+  if (/privatekey/.test(normalized)) {
+    return true;
+  }
+  if (ASCII_BLOCKED_KEY_PATTERN.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
 export function isBlockedClientOtherKey(key: string): boolean {
   const trimmed = key.trim();
   if (!trimmed || trimmed.startsWith("__")) {
     return true;
   }
-  return BLOCKED_KEY_PATTERN.test(trimmed);
+  if (ASCII_BLOCKED_KEY_PATTERN.test(trimmed)) {
+    return true;
+  }
+  return isBlockedCredentialNormalized(normalizeClientOtherKeyForPolicy(trimmed));
 }
 
 function sanitizeScalar(value: unknown): unknown {
@@ -97,6 +138,36 @@ export function canViewRestrictedLegalOtherFields(context: AccessContext): boole
   return context.role === "admin" || context.role === "director" || Boolean(context.fullClientBase);
 }
 
+function stripRestrictedLegalOtherFields(value: unknown, depth = 0): unknown {
+  if (depth > MAX_OTHER_DEPTH) {
+    return null;
+  }
+  const scalar = sanitizeScalar(value);
+  if (scalar !== null && (typeof scalar === "string" || typeof scalar === "number" || typeof scalar === "boolean")) {
+    return scalar;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_ARRAY_LENGTH)
+      .map((entry) => stripRestrictedLegalOtherFields(entry, depth + 1))
+      .filter((entry) => entry !== undefined);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (DETAIL_RESTRICTED_OTHER_KEYS.has(key)) {
+        continue;
+      }
+      const filtered = stripRestrictedLegalOtherFields(nested, depth + 1);
+      if (filtered !== undefined) {
+        out[key] = filtered;
+      }
+    }
+    return out;
+  }
+  return null;
+}
+
 export function presentLegalOtherFieldsForApi(
   raw: Record<string, unknown> | null | undefined,
   context: AccessContext,
@@ -105,12 +176,9 @@ export function presentLegalOtherFieldsForApi(
   if (canViewRestrictedLegalOtherFields(context)) {
     return sanitized;
   }
-  const filtered: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(sanitized)) {
-    if (DETAIL_RESTRICTED_OTHER_KEYS.has(key)) {
-      continue;
-    }
-    filtered[key] = value;
+  const filtered = stripRestrictedLegalOtherFields(sanitized, 0);
+  if (filtered && typeof filtered === "object" && !Array.isArray(filtered)) {
+    return filtered as Record<string, unknown>;
   }
-  return filtered;
+  return {};
 }

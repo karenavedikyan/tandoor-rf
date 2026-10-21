@@ -23,16 +23,27 @@ describe("sanitize-client-other", () => {
   it("blocks credential-like keys at top level and nested", () => {
     assert.ok(isBlockedClientOtherKey("ApiToken"));
     assert.ok(isBlockedClientOtherKey("Пароль"));
+    assert.ok(isBlockedClientOtherKey("Токен"));
+    assert.ok(isBlockedClientOtherKey("Секрет"));
+    assert.ok(isBlockedClientOtherKey("КлючДоступа"));
+    assert.ok(isBlockedClientOtherKey("Ключ_Доступа"));
+    assert.ok(!isBlockedClientOtherKey("Оптовик_Категория"));
     const picked = sanitizeClientOtherFields({
       Код: "001",
       ApiToken: "SYNTH",
       Пароль: "SYNTH",
+      Токен: "SYNTH",
+      Секрет: "SYNTH",
+      КлючДоступа: "SYNTH",
       Future: { password: "SYNTH", note: "ok" },
       __proto__: { polluted: true },
     });
     assert.equal(picked.Код, "001");
     assert.equal(picked.ApiToken, undefined);
     assert.equal(picked.Пароль, undefined);
+    assert.equal(picked.Токен, undefined);
+    assert.equal(picked.Секрет, undefined);
+    assert.equal(picked.КлючДоступа, undefined);
     assert.deepEqual(picked.Future, { note: "ok" });
     assert.equal(Object.hasOwn(picked, "__proto__"), false);
   });
@@ -56,5 +67,15 @@ describe("sanitize-client-other", () => {
       role: "admin",
     } as AccessContext);
     assert.equal(admin.ГруппаДоступа, "X");
+  });
+
+  it("strips nested restricted fields for non-privileged roles", () => {
+    const manager = presentLegalOtherFieldsForApi(
+      {
+        Future: { Пол: "SYNTH", ДатаРождения: "SYNTH", ГруппаДоступа: "SYNTH", note: "ok" },
+      },
+      managerContext(),
+    );
+    assert.deepEqual(manager.Future, { note: "ok" });
   });
 });

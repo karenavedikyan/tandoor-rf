@@ -286,15 +286,18 @@
   }
 
   function renderOtherFieldsFromKeys(shell, other, keys) {
-    if (!other || typeof other !== "object") {
+    if (!keys || !keys.length) {
       return "";
     }
+    var bag = other && typeof other === "object" ? other : {};
     var rows = [];
     keys.forEach(function (key) {
-      if (!(key in other)) {
+      var hasKey = Object.prototype.hasOwnProperty.call(bag, key);
+      if (!hasKey) {
+        rows.push(field(otherFieldLabel(key), emptyFrom1C(), false));
         return;
       }
-      var text = formatOtherFieldScalar(other[key], key);
+      var text = formatOtherFieldScalar(bag[key], key);
       rows.push(
         field(
           otherFieldLabel(key),
@@ -307,21 +310,19 @@
   }
 
   function renderOtherFieldsByGroup(shell, other) {
-    if (!other || typeof other !== "object" || !Object.keys(other).length) {
-      return "";
-    }
+    var bag = other && typeof other === "object" ? other : {};
     var html = "";
     var groupedKeys = new Set();
     Object.keys(OTHER_FIELD_GROUPS).forEach(function (groupId) {
       (OTHER_FIELD_GROUPS[groupId] || []).forEach(function (key) {
         groupedKeys.add(key);
       });
-      var body = renderOtherFieldsFromKeys(shell, other, OTHER_FIELD_GROUPS[groupId]);
+      var body = renderOtherFieldsFromKeys(shell, bag, OTHER_FIELD_GROUPS[groupId]);
       if (body) {
         html += renderDataGroup(OTHER_GROUP_TITLES[groupId] || groupId, body);
       }
     });
-    var extraKeys = Object.keys(other)
+    var extraKeys = Object.keys(bag)
       .filter(function (key) {
         return !groupedKeys.has(key);
       })
@@ -329,7 +330,7 @@
     if (extraKeys.length) {
       html += renderDataGroup(
         "Все данные 1С (дополнительные поля)",
-        renderOtherFieldsFromKeys(shell, other, extraKeys),
+        renderOtherFieldsFromKeys(shell, bag, extraKeys),
       );
     }
     return html;
@@ -372,6 +373,51 @@
         anchor.href = outletRetailHref(guid, parentReturn);
       }
     });
+  }
+
+  function legalEntityHref(guid, parentReturn) {
+    return (
+      "/clients/" +
+      encodeURIComponent(guid) +
+      "?v3Entity=legal&return=" +
+      (parentReturn || encodedDetailReturnParam())
+    );
+  }
+
+  function renderRelatedLegalLines(shell, legals, parentReturn) {
+    if (!legals.length) {
+      return '<span class="pc-unavailable">В вашей области нет доступных юрлиц этого холдинга.</span>';
+    }
+    return legals
+      .map(function (row) {
+        var meta = [];
+        if (row.inn) meta.push("ИНН " + row.inn);
+        if (row.kpp) meta.push("КПП " + row.kpp);
+        return (
+          '<a class="x13-related-line" data-legal-guid="' +
+          shell.escapeHtml(row.guid) +
+          '" href="' +
+          legalEntityHref(row.guid, parentReturn) +
+          '"><span>' +
+          shell.escapeHtml(row.name || row.guid) +
+          (meta.length ? ' <span class="pc-label">' + shell.escapeHtml(meta.join(" · ")) + "</span>" : "") +
+          '</span><span class="x13-related-line__arrow" aria-hidden="true">→</span></a>'
+        );
+      })
+      .join("");
+  }
+
+  function renderInlineDisclosure(shell, title, innerHtml) {
+    if (!innerHtml) {
+      return "";
+    }
+    return (
+      '<details class="x6-group v3-inline-disclosure" open><summary>' +
+      esc(shell, title) +
+      '</summary><div class="v3-inline-disclosure__body">' +
+      innerHtml +
+      "</div></details>"
+    );
   }
 
   function renderRelatedOutletLines(shell, outlets, parentReturn) {
@@ -756,13 +802,9 @@
       renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
       renderOtherFieldsByGroup(shell, other) +
       renderDataGroup(
-        "Основной договор и соглашение (строки 1С)",
-        renderOtherFieldsFromKeys(shell, other, ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"]) ||
-          field(
-            "Договор",
-            emptyFrom1C(),
-            false,
-          ),
+        "Доступные юрлица холдинга",
+        '<div id="v3-data-holding-legals" data-testid="v3-data-holding-legals">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
       ) +
       renderDataGroup(
         "Торговая точка (уровень юрлица)",
@@ -1158,6 +1200,7 @@
     var kpis = root.querySelector('[data-testid="v3-overview-kpis"]');
     var host = root.querySelector('[data-testid="v3-related-outlets"]');
     var dataHost = root.querySelector('[data-testid="v3-data-holding-outlets"]');
+    var legalHost = root.querySelector('[data-testid="v3-data-holding-legals"]');
     var counts = payload.counts || {};
     var entityType = payload.entityType || "legal";
     if (kpis && counts.retailOutlets != null) {
@@ -1172,13 +1215,24 @@
       }
     }
     var outlets = payload.retailOutlets || [];
+    var legals = payload.legalEntities || [];
     var parentReturn = payload.parentReturn || "";
-    var linesHtml = renderRelatedOutletLines(shell, outlets, parentReturn);
+    var outletLines = renderRelatedOutletLines(shell, outlets, parentReturn);
+    var outletBlock = renderInlineDisclosure(
+      shell,
+      "Торговые точки (" + outlets.length + ")",
+      outletLines,
+    );
+    var legalLines = renderRelatedLegalLines(shell, legals, parentReturn);
+    var legalBlock = renderInlineDisclosure(shell, "Юрлица (" + legals.length + ")", legalLines);
     if (host) {
-      host.innerHTML = linesHtml;
+      host.innerHTML = outletBlock;
     }
     if (dataHost) {
-      dataHost.innerHTML = linesHtml;
+      dataHost.innerHTML = outletBlock;
+    }
+    if (legalHost) {
+      legalHost.innerHTML = legalBlock;
     }
     refreshRelatedOutletReturnLinks(root);
   }
@@ -1260,6 +1314,7 @@
   }
 
   root.ClientDetailV3 = {
+    renderOtherFieldsFromKeys: renderOtherFieldsFromKeys,
     renderCard: renderCard,
     bindTabs: bindTabs,
     updateRelatedContext: updateRelatedContext,

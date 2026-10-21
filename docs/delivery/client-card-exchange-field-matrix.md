@@ -16,7 +16,7 @@
 | `Discount`, `DiscountAmount` | parse | `discount`, `discount_amount` | same | Данные → коммерция | показывать 0 |
 | `guid_manager`…`guid_head_of_the_sales_department` | parse | `managers` JSONB | `managers` | Ответственные | «Не назначен в 1С» |
 | `address`, `telephone[]` | parse | columns | same | Обзор / Данные | empty-1c |
-| `other.*` (все ключи инвентаря) | `pickSupportedOtherFields` (полное сохранение) | `other_fields` JSONB | `other_fields` | Данные → группы + «Все данные 1С» | ключ отсутствует → строка не выводится; значение null/"" → пропуск |
+| `other.*` (все ключи инвентаря) | `pickSupportedOtherFields` (полное сохранение) | `other_fields` JSONB | `presentLegalOtherFieldsForApi` | Данные → группы + «Все данные 1С» | ожидаемый ключ в группе без значения → **empty-1c**; restricted → не в API; not-ingested — только при явном контракте версии |
 
 ### `other` — группы UI (`client-detail-exchange-catalog.js`)
 
@@ -58,7 +58,7 @@
 
 | Путь | Import | UI |
 |------|--------|-----|
-| `month`, `client_info.id`, `sale_info.*` | `onec_v3_sales_lines` (отдельный apply) | вкладка «Продажи» (только юрлицо) |
+| `month`, `client_info.id`, `sale_info.*` | `onec_v3_legal_sales_lines` + `onec_v3_legal_sales_import_state` (отдельный apply) | вкладка «Продажи» (только юрлицо) |
 
 Пока `sales_lines` не применены в БД: **«Данные из 1С ещё не загружены»** на вкладке при пустом ответе API (не смешивать с empty-1c по полю).
 
@@ -73,4 +73,10 @@
 
 ## Список v3: колонка ТОП
 
-`category_name` в SQL списка юрлиц/ТТ берётся из `type_category.nameType` (ТОП), `type_name` — из `nameCategory` где есть.
+| Уровень | SQL / DTO | UI колонка «ТОП» | Фильтр focus |
+|---------|-----------|------------------|--------------|
+| `legal_grouped` holding | `top_name` / `category_name` = `nameType` холдинга | `ClientsV3List.cellDisplay` → только `top_name`∥`category_name`, **не** `type_name` дочерних | `typeGuid` + options `types` из `groupedTopTypeExpressions` |
+| `legal_grouped` orphan/legal | `top_name` = `nameType` юрлица | same | same |
+| subtype колонка | `type_name` = `nameCategory` на уровне сущности | отдельная колонка, не ТОП | `typeGuid` на flat-списках; A/B/C/D ≠ ТОП |
+
+Дозагрузка `other_fields`: `npm run onec-v3-legal-other-fields-backfill` — см. `docs/delivery/client-card-other-fields-backfill.md`.
