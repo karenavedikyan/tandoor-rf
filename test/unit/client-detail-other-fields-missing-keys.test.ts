@@ -21,8 +21,14 @@ describe("client-detail-v3 missing other keys", () => {
       ) => string;
     };
     const shell = { escapeHtml: (v: string) => v };
-    const html = api.renderOtherFieldsFromKeys(shell, {}, ["Оптовик_КонтактноеЛицо"]);
-    assert.match(html, /Оптовик_КонтактноеЛицо|Контактное лицо/i);
-    assert.match(html, /Нет данных из 1С/);
+    const notIngested = api.renderOtherFieldsFromKeys(shell, {}, ["Оптовик_КонтактноеЛицо"]);
+    assert.match(notIngested, /ещё не загружены в карточку/);
+    const empty1c = api.renderOtherFieldsFromKeys(
+      shell,
+      {},
+      ["Оптовик_КонтактноеЛицо"],
+      { other_fields_exchange_complete: true },
+    );
+    assert.match(empty1c, /Нет данных из 1С/);
   });
 });

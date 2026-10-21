@@ -20,7 +20,7 @@
     club_status: { kind: "rule", field: "clubStatus", input: "text", op: "contains" },
     club_bonus: { kind: "rule", field: "clubBonus", input: "text", op: "contains" },
     closed: { kind: "rule", field: "closed", input: "bool" },
-    type_name: { kind: "rule", field: "typeGuid", input: "enum", optionsKey: "types" },
+    type_name: { kind: "rule", field: "categoryGuid", input: "enum", optionsKey: "categories" },
     discount_amount: { kind: "rule", field: "discountAmount", input: "number" },
     defer_days: { kind: "rule", field: "deferDays", input: "number" },
     credit_limit: { kind: "rule", field: "creditLimit", input: "number" },

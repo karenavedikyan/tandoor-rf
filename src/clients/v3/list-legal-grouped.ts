@@ -191,9 +191,8 @@ function appendEligibilityFilters(
     params,
   );
   sql += appendV3ColumnFilters(input, "legal", params);
-  const topTypeRules = (input.fieldRules || []).filter(
-    (rule) => rule.field === "typeGuid" || rule.field === "categoryGuid",
-  );
+  const topTypeRules = (input.fieldRules || []).filter((rule) => rule.field === "typeGuid");
+  const categoryRules = (input.fieldRules || []).filter((rule) => rule.field === "categoryGuid");
   const legalNameRules = (input.fieldRules || []).filter((rule) => rule.field === "legalName");
   const groupDisplayNameRules = (input.fieldRules || []).filter((rule) => rule.field === "groupDisplayName");
   const rulesWithoutTopType = (input.fieldRules || []).filter(
@@ -211,10 +210,8 @@ function appendEligibilityFilters(
     sql += legalNameOnLe;
   }
   const memberLegalNameSql = legalNameOnLe.replace(/\ble\./g, "s.");
-  const topTypeGuids = [
-    ...(input.typeGuids?.length ? input.typeGuids : input.typeGuid ? [input.typeGuid] : []),
-    ...(input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : []),
-  ];
+  const topTypeGuids =
+    input.typeGuids?.length ? input.typeGuids : input.typeGuid ? [input.typeGuid] : [];
   if (topTypeRules.length || topTypeGuids.length) {
     const topType = groupedTopTypeExpressions(context, "le", params).guid;
     if (topTypeGuids.length) {
@@ -227,6 +224,23 @@ function appendEligibilityFilters(
       } else {
         params.push(rule.value);
         sql += ` AND ${topType} = $${params.length}`;
+      }
+    }
+  }
+  const categoryGuids =
+    input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : [];
+  if (categoryRules.length || categoryGuids.length) {
+    const category = groupedCategoryExpressions(context, "le", params).guid;
+    if (categoryGuids.length) {
+      params.push(categoryGuids);
+      sql += ` AND ${category} = ANY($${params.length}::text[])`;
+    }
+    for (const rule of categoryRules) {
+      if (rule.op === "empty" || rule.op === "filled") {
+        sql += ` AND NULLIF(TRIM(${category}), '') IS ${rule.op === "filled" ? "NOT " : ""}NULL`;
+      } else {
+        params.push(rule.value);
+        sql += ` AND ${category} = $${params.length}`;
       }
     }
   }

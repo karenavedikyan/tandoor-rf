@@ -14,9 +14,12 @@ import {
 import { parseClientsOtherFromJsonBytes } from "./parse-clients-file";
 import {
   applyLegalOtherFieldsBackfill,
+  LegalOtherFieldsBackfillApplyError,
+  planHasBlockingPreconditions,
   planLegalOtherFieldsBackfill,
   type LegalOtherFieldsBackfillPlan,
 } from "./plan-apply";
+import { validateClientsSourceForBackfill } from "./source-validation";
 
 export type LegalOtherFieldsBackfillStatus = "SUCCESS" | "REJECTED_BY_CHECKS" | "ERROR" | "VALIDATION_FAILED";
 
@@ -30,7 +33,8 @@ export type LegalOtherFieldsBackfillResult = {
   targetDbLabel?: string;
   plan?: LegalOtherFieldsBackfillPlan;
   applied?: number;
-  skippedGuard?: number;
+  parseErrors?: string[];
+  duplicateGuids?: string[];
 };
 
 export type RunLegalOtherFieldsBackfillOptions = {
@@ -38,6 +42,15 @@ export type RunLegalOtherFieldsBackfillOptions = {
   argv?: string[];
   clientsBytes?: Buffer;
 };
+
+function rejected(
+  mode: "dry_run" | "apply",
+  errorCode: string,
+  message: string,
+  extra: Partial<LegalOtherFieldsBackfillResult> = {},
+): LegalOtherFieldsBackfillResult {
+  return { status: "REJECTED_BY_CHECKS", mode, errorCode, message, ...extra };
+}
 
 export async function runLegalOtherFieldsBackfill(
   options: RunLegalOtherFieldsBackfillOptions = {},
@@ -98,6 +111,19 @@ export async function runLegalOtherFieldsBackfill(
     };
   }
 
+  const sourceValidation = validateClientsSourceForBackfill(parsedFile);
+  if (!sourceValidation.ok) {
+    return {
+      status: "VALIDATION_FAILED",
+      mode: cli.mode,
+      errorCode: sourceValidation.code,
+      message: sourceValidation.message,
+      sourceSha256: parsedFile.sourceSha256,
+      parseErrors: sourceValidation.parseErrors,
+      duplicateGuids: sourceValidation.duplicateGuids,
+    };
+  }
+
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
     return { status: "ERROR", mode: cli.mode, errorCode: "NO_DATABASE_URL", message: "DATABASE_URL is not set." };
@@ -115,19 +141,19 @@ export async function runLegalOtherFieldsBackfill(
   const targetDbLabel = formatTargetDbForReport(databaseUrl);
 
   const pool = createImportPool(databaseUrl);
-  const client = await pool.connect();
   let plan: LegalOtherFieldsBackfillPlan | undefined;
   try {
-    await client.query("BEGIN");
-    plan = await planLegalOtherFieldsBackfill(
-      client,
-      parsedFile,
-      cli.mode === "apply" ? { requireLastSourceSha256: cli.expectedSourceSha256 } : undefined,
-    );
-    await client.query("ROLLBACK");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      plan = await planLegalOtherFieldsBackfill(client, parsedFile, {
+        expectedSourceSha256: parsedFile.sourceSha256,
+      });
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    client.release();
     await pool.end();
     return {
       status: "ERROR",
@@ -135,9 +161,17 @@ export async function runLegalOtherFieldsBackfill(
       errorCode: "PLAN_FAILED",
       message: error instanceof Error ? error.message : String(error),
     };
-  } finally {
-    client.release();
-    await pool.end();
+  }
+  await pool.end();
+
+  if (plan && planHasBlockingPreconditions(plan)) {
+    return rejected(cli.mode, "SOURCE_PRECONDITION_FAILED", "Source or import-history preconditions failed.", {
+      sourceSha256: parsedFile.sourceSha256,
+      targetDbFingerprint,
+      plan,
+      parseErrors: plan.parseErrors,
+      duplicateGuids: plan.duplicateGuids,
+    });
   }
 
   if (cli.mode === "dry_run") {
@@ -153,36 +187,24 @@ export async function runLegalOtherFieldsBackfill(
   }
 
   if (cli.expectedSourceSha256 !== parsedFile.sourceSha256) {
-    return {
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      errorCode: "SOURCE_SHA_MISMATCH",
-      message: "Clients file SHA does not match --expected-source-sha256.",
+    return rejected("apply", "SOURCE_SHA_MISMATCH", "Clients file SHA does not match --expected-source-sha256.", {
       sourceSha256: parsedFile.sourceSha256,
       targetDbFingerprint,
       plan,
-    };
+    });
   }
   if (cli.confirmTargetDb !== targetDbFingerprint) {
-    return {
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      errorCode: "TARGET_DB_MISMATCH",
-      message: "Target DB fingerprint does not match --confirm-target-db.",
+    return rejected("apply", "TARGET_DB_MISMATCH", "Target DB fingerprint does not match --confirm-target-db.", {
       sourceSha256: parsedFile.sourceSha256,
       targetDbFingerprint,
       plan,
-    };
+    });
   }
   if (cli.expectedPlanHash !== plan?.planHash) {
-    return {
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      errorCode: "PLAN_HASH_MISMATCH",
-      message: "Plan hash does not match --expected-plan-hash.",
+    return rejected("apply", "PLAN_HASH_MISMATCH", "Plan hash does not match --expected-plan-hash.", {
       sourceSha256: parsedFile.sourceSha256,
       plan,
-    };
+    });
   }
 
   const lockPool = createImportPool(databaseUrl);
@@ -191,21 +213,35 @@ export async function runLegalOtherFieldsBackfill(
   if (!locked) {
     lockClient.release();
     await lockPool.end();
-    return {
-      status: "REJECTED_BY_CHECKS",
-      mode: "apply",
-      errorCode: "IMPORT_LOCKED",
-      message: "Another import holds the advisory lock.",
+    return rejected("apply", "IMPORT_LOCKED", "Another import holds the advisory lock.", {
       sourceSha256: parsedFile.sourceSha256,
       targetDbFingerprint,
       plan,
-    };
+    });
   }
 
   try {
     await lockClient.query("BEGIN");
-    const applyResult = await applyLegalOtherFieldsBackfill(lockClient, parsedFile, plan!, {
-      requireLastSourceSha256: cli.expectedSourceSha256,
+    const livePlan = await planLegalOtherFieldsBackfill(lockClient, parsedFile, {
+      expectedSourceSha256: parsedFile.sourceSha256,
+    });
+    if (planHasBlockingPreconditions(livePlan)) {
+      await lockClient.query("ROLLBACK");
+      return rejected("apply", "SOURCE_PRECONDITION_FAILED", "Live plan preconditions failed under lock.", {
+        sourceSha256: parsedFile.sourceSha256,
+        targetDbFingerprint,
+        plan: livePlan,
+      });
+    }
+    if (livePlan.planHash !== plan?.planHash) {
+      await lockClient.query("ROLLBACK");
+      return rejected("apply", "PLAN_HASH_MISMATCH", "Live plan hash drifted since dry-run.", {
+        sourceSha256: parsedFile.sourceSha256,
+        plan: livePlan,
+      });
+    }
+    const applyResult = await applyLegalOtherFieldsBackfill(lockClient, parsedFile, livePlan, {
+      expectedSourceSha256: parsedFile.sourceSha256,
     });
     await lockClient.query("COMMIT");
     return {
@@ -215,12 +251,22 @@ export async function runLegalOtherFieldsBackfill(
       sourceSha256: parsedFile.sourceSha256,
       targetDbFingerprint,
       targetDbLabel,
-      plan,
+      plan: livePlan,
       applied: applyResult.applied,
-      skippedGuard: applyResult.skippedGuard,
     };
   } catch (error) {
     await lockClient.query("ROLLBACK").catch(() => undefined);
+    if (error instanceof LegalOtherFieldsBackfillApplyError) {
+      return {
+        status: "ERROR",
+        mode: "apply",
+        errorCode: error.code,
+        message: error.message,
+        sourceSha256: parsedFile.sourceSha256,
+        targetDbFingerprint,
+        plan,
+      };
+    }
     return {
       status: "ERROR",
       mode: "apply",

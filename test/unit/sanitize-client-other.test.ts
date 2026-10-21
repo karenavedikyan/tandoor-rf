@@ -69,6 +69,21 @@ describe("sanitize-client-other", () => {
     assert.equal(admin.ГруппаДоступа, "X");
   });
 
+  it("blocks compound Russian credential key variants", () => {
+    const picked = sanitizeClientOtherFields({
+      ПарольFTP: "SYNTH",
+      Пароль_1С: "SYNTH",
+      ТокенДоступа: "SYNTH",
+      СекретАвторизации: "SYNTH",
+      Оптовик_Категория: "ok",
+    });
+    assert.equal(picked.ПарольFTP, undefined);
+    assert.equal(picked.Пароль_1С, undefined);
+    assert.equal(picked.ТокенДоступа, undefined);
+    assert.equal(picked.СекретАвторизации, undefined);
+    assert.equal(picked.Оптовик_Категория, "ok");
+  });
+
   it("strips nested restricted fields for non-privileged roles", () => {
     const manager = presentLegalOtherFieldsForApi(
       {
@@ -77,5 +92,15 @@ describe("sanitize-client-other", () => {
       managerContext(),
     );
     assert.deepEqual(manager.Future, { note: "ok" });
+  });
+
+  it("strips restricted fields inside nested arrays", () => {
+    const manager = presentLegalOtherFieldsForApi(
+      {
+        Future: [{ Пол: "SYNTH", ДатаРождения: "SYNTH", ГруппаДоступа: "SYNTH", note: "OK" }],
+      },
+      managerContext(),
+    );
+    assert.deepEqual(manager.Future, [{ note: "OK" }]);
   });
 });

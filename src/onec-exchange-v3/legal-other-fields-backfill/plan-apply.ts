@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { stampOtherFieldsBagComplete } from "../other-fields-presence";
 import { stableJsonHash, type ParsedClientsOtherRow } from "./parse-clients-file";
 
 export type LegalOtherFieldsBackfillPlanRow = {
@@ -6,7 +7,7 @@ export type LegalOtherFieldsBackfillPlanRow = {
   previousHash: string;
   postHash: string;
   previousOtherFields: Record<string, unknown>;
-  lastSourceSha256: string | null;
+  lastSourceSha256: string;
 };
 
 export type LegalOtherFieldsBackfillPlan = {
@@ -16,13 +17,29 @@ export type LegalOtherFieldsBackfillPlan = {
   knownLegalRows: number;
   unknownGuids: string[];
   duplicateGuids: string[];
+  parseErrors: string[];
+  unknownSourceHistoryGuids: string[];
+  sourceHistoryMismatchGuids: string[];
   updateCount: number;
   unchangedCount: number;
-  skippedSourceShaMismatch: number;
   updates: LegalOtherFieldsBackfillPlanRow[];
 };
 
-export function hashLegalOtherBackfillPlan(updates: LegalOtherFieldsBackfillPlanRow[]): string {
+export class LegalOtherFieldsBackfillApplyError extends Error {
+  readonly code: "APPLY_PARTIAL" | "PLAN_DRIFT";
+  readonly applied: number;
+  readonly expected: number;
+
+  constructor(code: "APPLY_PARTIAL" | "PLAN_DRIFT", message: string, applied: number, expected: number) {
+    super(message);
+    this.name = "LegalOtherFieldsBackfillApplyError";
+    this.code = code;
+    this.applied = applied;
+    this.expected = expected;
+  }
+}
+
+export function hashLegalOtherFieldsBackfillPlan(updates: LegalOtherFieldsBackfillPlanRow[]): string {
   const payload = updates
     .map((row) => `${row.guidClient}:${row.postHash}:${row.previousHash}`)
     .sort()
@@ -30,10 +47,24 @@ export function hashLegalOtherBackfillPlan(updates: LegalOtherFieldsBackfillPlan
   return stableJsonHash(payload);
 }
 
+export function planHasBlockingPreconditions(plan: LegalOtherFieldsBackfillPlan): boolean {
+  return (
+    plan.duplicateGuids.length > 0 ||
+    plan.parseErrors.length > 0 ||
+    plan.unknownSourceHistoryGuids.length > 0 ||
+    plan.sourceHistoryMismatchGuids.length > 0
+  );
+}
+
 export async function planLegalOtherFieldsBackfill(
   client: PoolClient,
-  parsed: { sourceSha256: string; rows: ParsedClientsOtherRow[]; duplicateGuids: string[] },
-  options?: { requireLastSourceSha256?: string },
+  parsed: {
+    sourceSha256: string;
+    rows: ParsedClientsOtherRow[];
+    duplicateGuids: string[];
+    parseErrors: string[];
+  },
+  options: { expectedSourceSha256: string },
 ): Promise<LegalOtherFieldsBackfillPlan> {
   const guids = parsed.rows.map((row) => row.guidClient);
   const dbRows = await client.query<{
@@ -58,27 +89,30 @@ export async function planLegalOtherFieldsBackfill(
     ]),
   );
   const unknownGuids: string[] = [];
+  const unknownSourceHistoryGuids: string[] = [];
+  const sourceHistoryMismatchGuids: string[] = [];
   const updates: LegalOtherFieldsBackfillPlanRow[] = [];
   let unchangedCount = 0;
-  let skippedSourceShaMismatch = 0;
+  const expectedSha = options.expectedSourceSha256.toLowerCase();
   for (const row of parsed.rows) {
     const existing = byGuid.get(row.guidClient);
     if (!existing) {
       unknownGuids.push(row.guidClient);
       continue;
     }
-    if (
-      options?.requireLastSourceSha256 &&
-      existing.lastSourceSha256 &&
-      existing.lastSourceSha256 !== options.requireLastSourceSha256.toLowerCase()
-    ) {
-      skippedSourceShaMismatch += 1;
-      continue;
-    }
     const previousHash = stableJsonHash(existing.otherFields);
-    const postHash = stableJsonHash(row.otherFields);
+    const stamped = stampOtherFieldsBagComplete(row.otherFields, parsed.sourceSha256);
+    const postHash = stableJsonHash(stamped);
     if (previousHash === postHash) {
       unchangedCount += 1;
+      continue;
+    }
+    if (!existing.lastSourceSha256) {
+      unknownSourceHistoryGuids.push(row.guidClient);
+      continue;
+    }
+    if (existing.lastSourceSha256 !== expectedSha) {
+      sourceHistoryMismatchGuids.push(row.guidClient);
       continue;
     }
     updates.push({
@@ -91,54 +125,71 @@ export async function planLegalOtherFieldsBackfill(
   }
   return {
     sourceSha256: parsed.sourceSha256,
-    planHash: hashLegalOtherBackfillPlan(updates),
+    planHash: hashLegalOtherFieldsBackfillPlan(updates),
     totalFileRows: parsed.rows.length,
     knownLegalRows: parsed.rows.length - unknownGuids.length,
     unknownGuids,
     duplicateGuids: parsed.duplicateGuids,
+    parseErrors: parsed.parseErrors,
+    unknownSourceHistoryGuids,
+    sourceHistoryMismatchGuids,
     updateCount: updates.length,
     unchangedCount,
-    skippedSourceShaMismatch,
     updates,
   };
 }
 
 export async function applyLegalOtherFieldsBackfill(
   client: PoolClient,
-  parsed: { rows: ParsedClientsOtherRow[] },
+  parsed: { sourceSha256: string; rows: ParsedClientsOtherRow[] },
   plan: LegalOtherFieldsBackfillPlan,
-  options?: { requireLastSourceSha256?: string },
-): Promise<{ applied: number; skippedGuard: number }> {
-  const otherByGuid = new Map(parsed.rows.map((row) => [row.guidClient, row.otherFields]));
+  options: { expectedSourceSha256: string },
+): Promise<{ applied: number }> {
+  const otherByGuid = new Map(
+    parsed.rows.map((row) => [
+      row.guidClient,
+      stampOtherFieldsBagComplete(row.otherFields, parsed.sourceSha256),
+    ]),
+  );
+  const expectedSha = options.expectedSourceSha256.toLowerCase();
   let applied = 0;
-  let skippedGuard = 0;
   for (const update of plan.updates) {
     const nextOther = otherByGuid.get(update.guidClient);
     if (!nextOther) {
-      skippedGuard += 1;
-      continue;
+      throw new LegalOtherFieldsBackfillApplyError("PLAN_DRIFT", "Planned row missing from source file.", applied, plan.updateCount);
     }
-    const params: unknown[] = [
-      update.guidClient,
-      JSON.stringify(nextOther),
-      JSON.stringify(update.previousOtherFields),
-    ];
-    let sql = `
-      UPDATE onec_v3_legal_entities
-      SET other_fields = $2::jsonb
-      WHERE lower(guid_client::text) = $1
-        AND other_fields = $3::jsonb
-    `;
-    if (options?.requireLastSourceSha256) {
-      params.push(options.requireLastSourceSha256.toLowerCase());
-      sql += ` AND lower(COALESCE(last_source_sha256, '')) = $${params.length}`;
+    const result = await client.query(
+      `
+        UPDATE onec_v3_legal_entities
+        SET other_fields = $2::jsonb
+        WHERE lower(guid_client::text) = $1
+          AND other_fields = $3::jsonb
+          AND lower(last_source_sha256) = $4
+      `,
+      [
+        update.guidClient,
+        JSON.stringify(nextOther),
+        JSON.stringify(update.previousOtherFields),
+        expectedSha,
+      ],
+    );
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new LegalOtherFieldsBackfillApplyError(
+        "APPLY_PARTIAL",
+        "Row guard failed during apply (source/history drift).",
+        applied,
+        plan.updateCount,
+      );
     }
-    const result = await client.query(sql, params);
-    if ((result.rowCount ?? 0) === 1) {
-      applied += 1;
-    } else {
-      skippedGuard += 1;
-    }
+    applied += 1;
   }
-  return { applied, skippedGuard };
+  if (applied !== plan.updateCount) {
+    throw new LegalOtherFieldsBackfillApplyError(
+      "APPLY_PARTIAL",
+      "Apply row count does not match plan.",
+      applied,
+      plan.updateCount,
+    );
+  }
+  return { applied };
 }

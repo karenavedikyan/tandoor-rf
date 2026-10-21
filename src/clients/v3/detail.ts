@@ -1,5 +1,6 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
+import { otherFieldsBagCompleteForSource } from "../../onec-exchange-v3/other-fields-presence";
 import { presentLegalOtherFieldsForApi } from "../../onec-exchange-v3/sanitize-client-other";
 import { v3JsonManagerField } from "./json-paths";
 import {
@@ -144,12 +145,14 @@ export async function getV3LegalDetail(context: AccessContext, guid: string) {
     }
   }
   const entityRow = row.rows[0] as Record<string, unknown>;
+  const rawOther = entityRow.other_fields as Record<string, unknown> | undefined;
   const entity = {
     ...entityRow,
-    other_fields: presentLegalOtherFieldsForApi(
-      entityRow.other_fields as Record<string, unknown> | undefined,
-      context,
+    other_fields_exchange_complete: otherFieldsBagCompleteForSource(
+      rawOther,
+      entityRow.last_source_sha256 as string | null | undefined,
     ),
+    other_fields: presentLegalOtherFieldsForApi(rawOther, context),
   };
   return { access: "visible" as const, entity, holdingLink };
 }

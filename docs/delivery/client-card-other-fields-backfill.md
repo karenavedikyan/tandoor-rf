@@ -29,10 +29,12 @@ Apply (только test DB, после dry-run того же файла):
 ```bash
 node dist/cli/onec-v3-legal-other-fields-backfill.js --apply \
   --clients-file /path/to/all_clients.json \
-  --expected-source-sha256="<sourceSha256 из dry-run>" \
-  --expected-plan-hash="<plan.planHash из dry-run>" \
-  --confirm-target-db="<targetDbFingerprint из dry-run>"
+  --expected-source-sha256 <sourceSha256_из_dry-run> \
+  --expected-plan-hash <plan.planHash_из_dry-run> \
+  --confirm-target-db <targetDbFingerprint_из_dry-run>
 ```
+
+Форма `--flag=value` тоже поддерживается.
 
 Guards:
 
@@ -53,15 +55,17 @@ SELECT guid_client, other_fields, last_source_sha256, last_imported_at
 FROM onec_v3_legal_entities;
 ```
 
-Rollback с guard (не перезаписать более новое состояние):
+Rollback с guard (только если `other_fields` **совпадает** с ожидаемым post-apply снимком из плана, не просто «отличается от backup»):
 
 ```sql
 UPDATE onec_v3_legal_entities le
-SET other_fields = b.other_fields
-FROM backup_legal_other_fields_YYYYMMDD b
-WHERE le.guid_client = b.guid_client
-  AND le.other_fields IS DISTINCT FROM b.other_fields;
+SET other_fields = snap.previous_other_fields
+FROM backfill_apply_snapshot snap
+WHERE le.guid_client = snap.guid_client
+  AND le.other_fields = snap.expected_post_other_fields;
 ```
+
+`backfill_apply_snapshot` формируется из dry-run/apply плана (`previousOtherFields` + `expectedPostOtherFields` на строку). Если после apply было ручное изменение — `rowCount=0`, позднее состояние не затирается.
 
 ## Продажи (отдельное разрешение)
 

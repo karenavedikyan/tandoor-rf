@@ -34,7 +34,21 @@ function isBlockedCredentialNormalized(normalized: string): boolean {
     normalized === "secret" ||
     normalized === "пароль" ||
     normalized === "password" ||
-    normalized === "passwd"
+    normalized === "passwd" ||
+    normalized.startsWith("пароль") ||
+    normalized.endsWith("пароль")
+  ) {
+    return true;
+  }
+  if (
+    (normalized.includes("токен") || normalized.includes("token")) &&
+    (normalized.includes("доступа") || normalized.includes("access"))
+  ) {
+    return true;
+  }
+  if (
+    (normalized.includes("секрет") || normalized.includes("secret")) &&
+    (normalized.includes("авториз") || normalized.includes("auth"))
   ) {
     return true;
   }
@@ -168,17 +182,30 @@ function stripRestrictedLegalOtherFields(value: unknown, depth = 0): unknown {
   return null;
 }
 
+const INTERNAL_OTHER_FIELD_KEYS = new Set(["__v3ExchangeOtherComplete"]);
+
+function stripInternalOtherMarkers(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (INTERNAL_OTHER_FIELD_KEYS.has(key)) {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function presentLegalOtherFieldsForApi(
   raw: Record<string, unknown> | null | undefined,
   context: AccessContext,
 ): Record<string, unknown> {
-  const sanitized = sanitizeClientOtherFields(raw);
+  const sanitized = stripInternalOtherMarkers(sanitizeClientOtherFields(raw));
   if (canViewRestrictedLegalOtherFields(context)) {
     return sanitized;
   }
   const filtered = stripRestrictedLegalOtherFields(sanitized, 0);
   if (filtered && typeof filtered === "object" && !Array.isArray(filtered)) {
-    return filtered as Record<string, unknown>;
+    return stripInternalOtherMarkers(filtered as Record<string, unknown>);
   }
   return {};
 }

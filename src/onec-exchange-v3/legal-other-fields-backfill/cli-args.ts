@@ -44,6 +44,25 @@ export function resolveClientsFilePath(filePath: string, cwd = process.cwd()): s
   return isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
 }
 
+function readFlagValue(argv: string[], index: number, flag: string): { value: string; nextIndex: number } | null {
+  const arg = argv[index];
+  if (arg === flag) {
+    const value = argv[index + 1]?.trim();
+    if (!value) {
+      return null;
+    }
+    return { value, nextIndex: index + 1 };
+  }
+  if (arg.startsWith(`${flag}=`)) {
+    const value = arg.slice(flag.length + 1).trim();
+    if (!value) {
+      return null;
+    }
+    return { value, nextIndex: index };
+  }
+  return null;
+}
+
 export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOtherFieldsBackfillCliParseResult {
   let mode: LegalOtherFieldsBackfillCliOptions["mode"] = "dry_run";
   let clientsFilePath: string | undefined;
@@ -65,28 +84,28 @@ export function parseLegalOtherFieldsBackfillCliArgs(argv: string[]): LegalOther
       mode = "apply";
       continue;
     }
-    if (arg === "--clients-file") {
-      const next = argv[index + 1]?.trim();
-      if (!next) {
-        return { ok: false, code: "CLIENTS_FILE_REQUIRED" };
-      }
-      clientsFilePath = next;
-      index += 1;
+    const clientsFile = readFlagValue(argv, index, "--clients-file");
+    if (clientsFile) {
+      clientsFilePath = clientsFile.value;
+      index = clientsFile.nextIndex;
       continue;
     }
-    if (arg === "--expected-source-sha256") {
-      expectedSourceSha256 = argv[index + 1]?.trim().toLowerCase();
-      index += 1;
+    const expectedSha = readFlagValue(argv, index, "--expected-source-sha256");
+    if (expectedSha) {
+      expectedSourceSha256 = expectedSha.value.toLowerCase();
+      index = expectedSha.nextIndex;
       continue;
     }
-    if (arg === "--expected-plan-hash") {
-      expectedPlanHash = argv[index + 1]?.trim().toLowerCase();
-      index += 1;
+    const expectedPlan = readFlagValue(argv, index, "--expected-plan-hash");
+    if (expectedPlan) {
+      expectedPlanHash = expectedPlan.value.toLowerCase();
+      index = expectedPlan.nextIndex;
       continue;
     }
-    if (arg === "--confirm-target-db") {
-      confirmTargetDb = argv[index + 1]?.trim().toLowerCase();
-      index += 1;
+    const confirmDb = readFlagValue(argv, index, "--confirm-target-db");
+    if (confirmDb) {
+      confirmTargetDb = confirmDb.value.toLowerCase();
+      index = confirmDb.nextIndex;
       continue;
     }
     return { ok: false, code: "UNKNOWN_ARGUMENT" };

@@ -22,6 +22,18 @@ describe("legal other_fields backfill CLI", () => {
     }
   });
 
+  it("accepts flag=value apply arguments from documentation", () => {
+    const parsed = parseLegalOtherFieldsBackfillCliArgs([
+      "--apply",
+      "--clients-file",
+      "/tmp/synthetic.json",
+      `--expected-source-sha256=${"a".repeat(64)}`,
+      `--expected-plan-hash=${"b".repeat(64)}`,
+      `--confirm-target-db=${"c".repeat(64)}`,
+    ]);
+    assert.equal(parsed.ok, true);
+  });
+
   it("requires plan hash and target db on apply", () => {
     const missing = parseLegalOtherFieldsBackfillCliArgs(["--apply"]);
     assert.equal(missing.ok, false);

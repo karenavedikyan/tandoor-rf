@@ -62,6 +62,14 @@
     return '<span class="pc-unavailable">Нет данных из 1С</span>';
   }
 
+  function emptyOtherNotIngested() {
+    return '<span class="pc-unavailable">Данные из 1С ещё не загружены в карточку</span>';
+  }
+
+  function otherFieldsExchangeComplete(ent) {
+    return Boolean(ent && ent.other_fields_exchange_complete);
+  }
+
   function boolLabel(value) {
     if (value === true) return "Да";
     if (value === false) return "Нет";
@@ -285,7 +293,7 @@
     return String(value);
   }
 
-  function renderOtherFieldsFromKeys(shell, other, keys) {
+  function renderOtherFieldsFromKeys(shell, other, keys, ent) {
     if (!keys || !keys.length) {
       return "";
     }
@@ -294,7 +302,13 @@
     keys.forEach(function (key) {
       var hasKey = Object.prototype.hasOwnProperty.call(bag, key);
       if (!hasKey) {
-        rows.push(field(otherFieldLabel(key), emptyFrom1C(), false));
+        rows.push(
+          field(
+            otherFieldLabel(key),
+            otherFieldsExchangeComplete(ent) ? emptyFrom1C() : emptyOtherNotIngested(),
+            false,
+          ),
+        );
         return;
       }
       var text = formatOtherFieldScalar(bag[key], key);
@@ -309,7 +323,7 @@
     return rows.join("");
   }
 
-  function renderOtherFieldsByGroup(shell, other) {
+  function renderOtherFieldsByGroup(shell, ent, other) {
     var bag = other && typeof other === "object" ? other : {};
     var html = "";
     var groupedKeys = new Set();
@@ -317,7 +331,7 @@
       (OTHER_FIELD_GROUPS[groupId] || []).forEach(function (key) {
         groupedKeys.add(key);
       });
-      var body = renderOtherFieldsFromKeys(shell, bag, OTHER_FIELD_GROUPS[groupId]);
+      var body = renderOtherFieldsFromKeys(shell, bag, OTHER_FIELD_GROUPS[groupId], ent);
       if (body) {
         html += renderDataGroup(OTHER_GROUP_TITLES[groupId] || groupId, body);
       }
@@ -330,7 +344,7 @@
     if (extraKeys.length) {
       html += renderDataGroup(
         "Все данные 1С (дополнительные поля)",
-        renderOtherFieldsFromKeys(shell, bag, extraKeys),
+        renderOtherFieldsFromKeys(shell, bag, extraKeys, ent),
       );
     }
     return html;
@@ -800,7 +814,7 @@
       renderDataGroup("Клиент и холдинг", clientBlock) +
       renderDataGroup("Ответственные", respBlock.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "")) +
       renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
-      renderOtherFieldsByGroup(shell, other) +
+      renderOtherFieldsByGroup(shell, ent, other) +
       renderDataGroup(
         "Доступные юрлица холдинга",
         '<div id="v3-data-holding-legals" data-testid="v3-data-holding-legals">' +
