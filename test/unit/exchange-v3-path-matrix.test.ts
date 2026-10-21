@@ -57,15 +57,39 @@ describe("exchange v3 path matrix", () => {
     const inventory = JSON.parse(
       fs.readFileSync(path.join(process.cwd(), "data/client-card-v3-exchange-path-inventory.json"), "utf8"),
     ) as { files: Record<string, string[]> };
+    const fileNames = Object.keys(inventory.files).sort();
+    assert.deepEqual(fileNames, [
+      "all_clients.json",
+      "all_employees.json",
+      "all_holding.json",
+      "all_retail.json",
+      "sale.json",
+    ]);
+    let totalPaths = 0;
     const missing: string[] = [];
     for (const [file, paths] of Object.entries(inventory.files)) {
+      totalPaths += paths.length;
       for (const observed of paths) {
         if (!matchExchangeV3MatrixPath(file as ExchangeV3PathDisposition["file"], observed)) {
           missing.push(`${file}:${observed}`);
         }
       }
     }
+    assert.equal(totalPaths, 218);
     assert.deepEqual(missing, []);
+  });
+
+  it("rejects wrong-file paths and does not parent-fallback unlisted children", () => {
+    assert.equal(matchExchangeV3MatrixPath("all_retail.json", "other.Пол"), null);
+    assert.equal(matchExchangeV3MatrixPath("all_clients.json", "other.Пол"), EXCHANGE_V3_PATH_MATRIX.find(
+      (e) => e.file === "all_clients.json" && e.path === "other.Пол",
+    ));
+    assert.equal(matchExchangeV3MatrixPath("all_retail.json", "address.fictional_nested_field"), null);
+    const parent = matchExchangeV3MatrixPath("all_retail.json", "address");
+    const child = matchExchangeV3MatrixPath("all_retail.json", "address.store_address");
+    assert.ok(parent);
+    assert.ok(child);
+    assert.notEqual(parent?.path, child?.path);
   });
 
   it("covers all paths observed in v3 JSON fixtures", () => {

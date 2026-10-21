@@ -756,6 +756,13 @@ function supplementalInventoryDispositions(): ExchangeV3PathDisposition[] {
       files: Record<string, string[]>;
     };
     const templates: Record<string, Omit<ExchangeV3PathDisposition, "file" | "path">> = {
+      "all_clients.json": {
+        parser: "parseLegalRecord / pickSupportedOtherFields",
+        storage: "onec_v3_legal_entities",
+        api: "getV3LegalDetail + other_field_states",
+        ui: "client-detail-v3 groups",
+        emptyState: "policy via other_field_states",
+      },
       "all_holding.json": {
         parser: "parseHoldingRecord / parseTypeCategory / parseManagers",
         storage: "onec_v3_holdings + composition",
