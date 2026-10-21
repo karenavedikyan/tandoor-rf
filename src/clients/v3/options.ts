@@ -7,7 +7,7 @@ import {
 } from "./access-scope";
 import type { V3ListEntity } from "./list";
 import { appendAssignmentFilters, type V3ListQuery } from "./list";
-import { groupedCategoryExpressions, readableGroupKey } from "./list-legal-grouped";
+import { groupedCategoryExpressions, groupedTopTypeExpressions, readableGroupKey } from "./list-legal-grouped";
 import {
   v3CategoryGuidSql,
   v3CategoryNameSql,
@@ -165,18 +165,44 @@ export async function loadV3FilterOptions(
     if (entity === "legal_grouped") {
       const params = [...scope.params];
       const territorySql = appendAssignmentFilters({ entity, page: 1, pageSize: 1, q: "", ...territory }, "le", params);
-      const category = groupedCategoryExpressions(context, "le", params);
+      const topType = groupedTopTypeExpressions(context, "le", params);
       const groupKey = readableGroupKey(context, params);
       const rows = await query<{ guid: string; name: string; count: string }>(
         `WITH readable AS (
-          SELECT ${groupKey} AS group_key, ${category.guid} AS guid, ${category.name} AS name
+          SELECT ${groupKey} AS group_key, ${topType.guid} AS guid, ${topType.name} AS name
           FROM onec_v3_legal_entities le WHERE (${scope.clause})${territorySql}
         )
         SELECT guid, MAX(name) AS name, COUNT(DISTINCT group_key)::text AS count FROM readable
         WHERE NULLIF(TRIM(guid), '') IS NOT NULL GROUP BY guid ORDER BY name`,
         params,
       );
-      result.categories = rows.rows.map(row => ({ guid: row.guid, name: row.name || row.guid, count: Number(row.count) }));
+      result.types = rows.rows.map((row) => ({
+        guid: row.guid,
+        name: row.name || row.guid,
+        count: Number(row.count),
+      }));
+      const categoryParams = [...scope.params];
+      const categoryTerritorySql = appendAssignmentFilters(
+        { entity, page: 1, pageSize: 1, q: "", ...territory },
+        "le",
+        categoryParams,
+      );
+      const groupedCategory = groupedCategoryExpressions(context, "le", categoryParams);
+      const categoryGroupKey = readableGroupKey(context, categoryParams);
+      const categoryRows = await query<{ guid: string; name: string; count: string }>(
+        `WITH readable AS (
+          SELECT ${categoryGroupKey} AS group_key, ${groupedCategory.guid} AS guid, ${groupedCategory.name} AS name
+          FROM onec_v3_legal_entities le WHERE (${scope.clause})${categoryTerritorySql}
+        )
+        SELECT guid, MAX(name) AS name, COUNT(DISTINCT group_key)::text AS count FROM readable
+        WHERE NULLIF(TRIM(guid), '') IS NOT NULL GROUP BY guid ORDER BY name`,
+        categoryParams,
+      );
+      result.categories = categoryRows.rows.map((row) => ({
+        guid: row.guid,
+        name: row.name || row.guid,
+        count: Number(row.count),
+      }));
     }
     return result;
   }

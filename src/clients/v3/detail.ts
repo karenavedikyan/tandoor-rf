@@ -1,5 +1,8 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
+import { computeLegalOtherFieldStates } from "../../onec-exchange-v3/legal-other-field-states";
+import { otherFieldsBagCompleteForSource } from "../../onec-exchange-v3/other-fields-presence";
+import { presentLegalOtherFieldsForApi } from "../../onec-exchange-v3/sanitize-client-other";
 import { v3JsonManagerField } from "./json-paths";
 import {
   v3EntityAssignmentScope,
@@ -142,7 +145,22 @@ export async function getV3LegalDetail(context: AccessContext, guid: string) {
       holdingLink = { guid: holdingGuid, name: String(row.rows[0]?.holding_name ?? "") };
     }
   }
-  return { access: "visible" as const, entity: row.rows[0], holdingLink };
+  const entityRow = row.rows[0] as Record<string, unknown>;
+  const rawOther = entityRow.other_fields as Record<string, unknown> | undefined;
+  const entity = {
+    ...entityRow,
+    other_fields_exchange_complete: otherFieldsBagCompleteForSource(
+      rawOther,
+      entityRow.last_source_sha256 as string | null | undefined,
+    ),
+    other_field_states: computeLegalOtherFieldStates(
+      rawOther,
+      context,
+      entityRow.last_source_sha256 as string | null | undefined,
+    ),
+    other_fields: presentLegalOtherFieldsForApi(rawOther, context),
+  };
+  return { access: "visible" as const, entity, holdingLink };
 }
 
 export async function getV3RetailDetail(context: AccessContext, guid: string) {

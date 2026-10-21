@@ -31,7 +31,7 @@
   var COLUMN_CATALOG = {
     name: { label: "Название клиента", required: true, filterKey: null },
     client_name: { label: "Название клиента", required: true, filterKey: null },
-    category_name: { label: "ТОП-категория холдинга", filterKey: null },
+    category_name: { label: "ТОП (тип 1С)", filterKey: null },
     legal_name: { label: "Юридическое лицо", filterKey: null },
     city: { label: "Город", filterKey: null },
     address_line: { label: "Адрес", filterKey: null },
@@ -285,6 +285,15 @@
       var structured = item[colId] ? String(item[colId]) : "";
       return structured
         ? shell.escapeHtml(structured)
+        : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (colId === "category_name") {
+      var topLabel =
+        item.top_name != null && String(item.top_name).trim() !== ""
+          ? item.top_name
+          : item.category_name;
+      return topLabel
+        ? shell.escapeHtml(String(topLabel))
         : '<span class="clients-no-data">Нет данных</span>';
     }
     if (

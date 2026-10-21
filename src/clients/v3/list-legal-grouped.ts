@@ -1,7 +1,13 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
-import { v3CategoryGuidSql, v3CategoryNameSql, v3JsonManagerField } from "./json-paths";
+import {
+  v3CategoryGuidSql,
+  v3CategoryNameSql,
+  v3JsonManagerField,
+  v3TypeGuidSql,
+  v3TypeNameSql,
+} from "./json-paths";
 import {
   LEGAL_ADDRESS_SQL,
   LEGAL_CITY_SQL,
@@ -135,7 +141,7 @@ function appendGroupDisplayNameRules(
   return next;
 }
 
-/** The grouped category is the readable holding's category, not a child category. */
+/** Subtype (nameCategory) at group level — holding's own category, not aggregated from members. */
 export function groupedCategoryExpressions(context: AccessContext, alias: string, params: unknown[]) {
   const scope = v3HoldingVisibilityScope(context, "_v3cat");
   const clause = renumberScopeClause(scope.clause, params.length + 1);
@@ -151,19 +157,48 @@ export function groupedCategoryExpressions(context: AccessContext, alias: string
   return { guid: expression("guid"), name: expression("name") };
 }
 
+/** TOP / nameType at group level — holding's own type, never a child legal's type. */
+export function groupedTopTypeExpressions(context: AccessContext, alias: string, params: unknown[]) {
+  const scope = v3HoldingVisibilityScope(context, "_v3top");
+  const clause = renumberScopeClause(scope.clause, params.length + 1);
+  params.push(...scope.params);
+  const expression = (field: "guid" | "name") => `(CASE
+    WHEN ${v3LegalGroupKeyExpr(alias, clause.replace(/\b_v3top\./g, "_v3gh."))} LIKE 'holding:%' THEN (
+      SELECT ${field === "guid" ? v3TypeGuidSql("_v3top") : v3TypeNameSql("_v3top")}
+      FROM onec_v3_holdings _v3top
+      WHERE _v3top.guid_holding = ${alias}.guid_holding AND (${clause})
+    )
+    ELSE ${field === "guid" ? v3TypeGuidSql(alias) : v3TypeNameSql(alias)}
+  END)`;
+  return { guid: expression("guid"), name: expression("name") };
+}
+
 function appendEligibilityFilters(
   input: V3ListQuery,
   params: unknown[],
   holdingScope: ReturnType<typeof v3HoldingVisibilityScope>,
   context: AccessContext,
 ): { filterSql: string; memberLegalNameSql: string } {
-  let sql = appendCatalogAssignmentFilters({ ...input, categoryGuid: undefined, categoryGuids: undefined }, "le", params);
+  let sql = appendCatalogAssignmentFilters(
+    {
+      ...input,
+      categoryGuid: undefined,
+      categoryGuids: undefined,
+      typeGuid: undefined,
+      typeGuids: undefined,
+    },
+    "le",
+    params,
+  );
   sql += appendV3ColumnFilters(input, "legal", params);
-  const categoryRules = (input.fieldRules || []).filter(rule => rule.field === "categoryGuid");
+  const topTypeRules = (input.fieldRules || []).filter((rule) => rule.field === "typeGuid");
+  const categoryRules = (input.fieldRules || []).filter((rule) => rule.field === "categoryGuid");
   const legalNameRules = (input.fieldRules || []).filter((rule) => rule.field === "legalName");
   const groupDisplayNameRules = (input.fieldRules || []).filter((rule) => rule.field === "groupDisplayName");
-  const rulesWithoutCategory = (input.fieldRules || []).filter((rule) => rule.field !== "categoryGuid");
-  const rulesWithoutCategoryAndLegalName = rulesWithoutCategory.filter(
+  const rulesWithoutTopType = (input.fieldRules || []).filter(
+    (rule) => rule.field !== "categoryGuid" && rule.field !== "typeGuid",
+  );
+  const rulesWithoutCategoryAndLegalName = rulesWithoutTopType.filter(
     (rule) => rule.field !== "legalName" && rule.field !== "groupDisplayName",
   );
   sql = appendV3FieldRulesSql(sql, params, "legal_grouped", "le", rulesWithoutCategoryAndLegalName).sql;
@@ -175,7 +210,25 @@ function appendEligibilityFilters(
     sql += legalNameOnLe;
   }
   const memberLegalNameSql = legalNameOnLe.replace(/\ble\./g, "s.");
-  const categoryGuids = input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : [];
+  const topTypeGuids =
+    input.typeGuids?.length ? input.typeGuids : input.typeGuid ? [input.typeGuid] : [];
+  if (topTypeRules.length || topTypeGuids.length) {
+    const topType = groupedTopTypeExpressions(context, "le", params).guid;
+    if (topTypeGuids.length) {
+      params.push(topTypeGuids);
+      sql += ` AND ${topType} = ANY($${params.length}::text[])`;
+    }
+    for (const rule of topTypeRules) {
+      if (rule.op === "empty" || rule.op === "filled") {
+        sql += ` AND NULLIF(TRIM(${topType}), '') IS ${rule.op === "filled" ? "NOT " : ""}NULL`;
+      } else {
+        params.push(rule.value);
+        sql += ` AND ${topType} = $${params.length}`;
+      }
+    }
+  }
+  const categoryGuids =
+    input.categoryGuids?.length ? input.categoryGuids : input.categoryGuid ? [input.categoryGuid] : [];
   if (categoryRules.length || categoryGuids.length) {
     const category = groupedCategoryExpressions(context, "le", params).guid;
     if (categoryGuids.length) {
@@ -338,10 +391,28 @@ export async function listV3LegalGrouped(
         END AS name,
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
+            THEN NULLIF(TRIM(MAX(${v3TypeNameSql("h")})), '')
+          WHEN pg.group_key LIKE 'holding:%' THEN NULL
+          ELSE ${distinctOrMissing(v3TypeNameSql("m"))}
+        END AS category_name,
+        CASE
+          WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
+            THEN NULLIF(TRIM(MAX(${v3TypeNameSql("h")})), '')
+          WHEN pg.group_key LIKE 'holding:%' THEN NULL
+          ELSE ${distinctOrMissing(v3TypeNameSql("m"))}
+        END AS top_name,
+        CASE
+          WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
+            THEN NULLIF(TRIM(MAX(${v3TypeGuidSql("h")})), '')
+          WHEN pg.group_key LIKE 'holding:%' THEN NULL
+          ELSE ${distinctOrMissing(v3TypeGuidSql("m"))}
+        END AS top_guid,
+        CASE
+          WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
             THEN NULLIF(TRIM(MAX(${v3CategoryNameSql("h")})), '')
           WHEN pg.group_key LIKE 'holding:%' THEN NULL
           ELSE ${distinctOrMissing(v3CategoryNameSql("m"))}
-        END AS category_name,
+        END AS type_name,
         CASE
           WHEN pg.group_key LIKE 'holding:%' AND MAX(CASE WHEN h.guid_holding IS NOT NULL THEN 1 ELSE 0 END) = 1
             THEN COALESCE(
@@ -371,7 +442,6 @@ export async function listV3LegalGrouped(
           '[]'::jsonb
         ) AS legal_entities,
         MAX(m.guid_holding::text) AS holding_guid,
-        ${distinctOrMissing("m.type_category->>'nameType'")} AS type_name,
         ${distinctOrMissing(LEGAL_CONTRACT_NUMBER_SQL.replace(/\ble\./g, "m."))} AS contract_number,
         ${distinctOrMissing(LEGAL_DEFER_DAYS_SQL.replace(/\ble\./g, "m."))} AS defer_days,
         ${distinctOrMissing(LEGAL_CREDIT_LIMIT_SQL.replace(/\ble\./g, "m."))} AS credit_limit,
@@ -444,6 +514,8 @@ export async function listV3LegalGrouped(
       detail_entity: row.detail_entity,
       name: row.name,
       category_name: row.category_name,
+      top_name: row.top_name,
+      top_guid: row.top_guid,
       manager_name: row.manager_name,
       rop_name: row.rop_name,
       legal_entities: legalEntities,

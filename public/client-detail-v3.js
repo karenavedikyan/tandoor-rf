@@ -5,20 +5,17 @@
     ["overview", "Обзор", true],
     ["data", "Данные", true],
     ["sales", "Продажи", true],
-    ["work", "Работа", false],
-    ["showcase", "Витрина", false],
-    ["orders", "Заказы", false],
-    ["finance", "Финансы", false],
-    ["documents", "Документы", false],
-    ["claims", "Рекламации", false],
-    ["plan", "План", false],
+    ["work", "Работа", true],
+    ["showcase", "Витрина", true],
+    ["orders", "Заказы", true],
+    ["finance", "Финансы", true],
+    ["documents", "Документы", true],
+    ["claims", "Рекламации", true],
+    ["plan", "План", true],
   ];
 
   function visibleTabs(entityType) {
     return TABS.filter(function (t) {
-      if (!t[2]) {
-        return false;
-      }
       if (t[0] === "sales") {
         return entityType === "legal";
       }
@@ -41,20 +38,33 @@
   }
 
   var UNAVAILABLE_SECTION_COPY = {
-    work: "Задачи и работа с клиентом доступны в полной карточке с подключённым Битрикс24.",
-    showcase: "Витрина и каталог не подключены к v3-карточке.",
-    orders: "Заказы не подключены к v3-карточке.",
-    finance: "Финансовые показатели не подключены к v3-карточке.",
-    documents: "Документы не подключены к v3-карточке.",
-    claims: "Рекламации не подключены к v3-карточке.",
-    plan: "План продаж не подключён к v3-карточке.",
+    work: "Раздел «Работа» ожидает данные из Битрикс24. Источник данных не подключён в ЛК.",
+    showcase: "Витрина и каталог ожидают отдельный источник; в обмене 1С v3 только справочные поля витрин.",
+    orders: "Заказы ожидают подключение учётной системы заказов, не файл clients JSON.",
+    finance: "Финансовые показатели вне обмена clients v3; долг не вычисляется из лимитов 1С.",
+    documents: "Документы ожидают подключение хранилища документов, не обмен clients.",
+    claims: "Рекламации ожидают задачи Битрикс24. Источник данных не подключён в ЛК.",
+    plan: "План продаж не передаётся в clients JSON; раздел ожидает подключение планирования.",
   };
+
+  function defaultEscapeShell() {
+    return {
+      escapeHtml: function (value) {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        return String(value).replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+      },
+    };
+  }
 
   function esc(shell, value) {
     if (value === null || value === undefined || value === "") {
       return "";
     }
-    return shell.escapeHtml(String(value));
+    return (shell && shell.escapeHtml ? shell : defaultEscapeShell()).escapeHtml(String(value));
   }
 
   function emptyNoData() {
@@ -62,7 +72,36 @@
   }
 
   function emptyFrom1C() {
-    return '<span class="pc-unavailable">Не передано из 1С</span>';
+    return '<span class="pc-unavailable">Нет данных из 1С</span>';
+  }
+
+  function emptyOtherNotIngested() {
+    return '<span class="pc-unavailable">Данные из 1С ещё не загружены в карточку</span>';
+  }
+
+  function emptyOtherRestricted() {
+    return '<span class="pc-unavailable">Скрыто политикой доступа</span>';
+  }
+
+  function otherFieldState(ent, key) {
+    if (!ent || !ent.other_field_states || typeof ent.other_field_states !== "object") {
+      return otherFieldsExchangeComplete(ent) ? "empty_1c" : "not_ingested";
+    }
+    return ent.other_field_states[key] || (otherFieldsExchangeComplete(ent) ? "empty_1c" : "not_ingested");
+  }
+
+  function emptyOtherForState(state) {
+    if (state === "restricted") {
+      return emptyOtherRestricted();
+    }
+    if (state === "not_ingested") {
+      return emptyOtherNotIngested();
+    }
+    return emptyFrom1C();
+  }
+
+  function otherFieldsExchangeComplete(ent) {
+    return Boolean(ent && ent.other_fields_exchange_complete);
   }
 
   function boolLabel(value) {
@@ -133,10 +172,13 @@
     var type = tc.nameType || tc.name_type || "";
     var cat = tc.nameCategory || tc.name_category || "";
     if (type && cat) {
-      return { html: esc(shell, type + " / " + cat), known: true };
+      return { html: esc(shell, "ТОП: " + type + " · категория: " + cat), known: true };
     }
-    if (type || cat) {
-      return { html: esc(shell, type || cat), known: true };
+    if (type) {
+      return { html: esc(shell, "ТОП: " + type), known: true };
+    }
+    if (cat) {
+      return { html: esc(shell, "Категория: " + cat), known: true };
     }
     if (tc.guidType || tc.guid_type || tc.guidCategory || tc.guid_category) {
       return { html: emptyFrom1C(), known: false };
@@ -165,33 +207,9 @@
     return { html: text || emptyNoData(), known: Boolean(text) };
   }
 
-  var OTHER_FIELD_LABELS = {
-    Код: "Код 1С",
-    НаименованиеПолное: "Полное наименование",
-    ЮрФизЛицо: "Юр./физ. лицо",
-    Оптовик_ОГРН: "ОГРН",
-    Оптовик_ОсновнойДоговор: "Основной договор (строка 1С)",
-    Оптовик_ОсновноеСоглашение: "Основное соглашение (строка 1С)",
-    Оптовик_Наличные: "Наличный расчёт",
-    Оптовик_ДопустимаяСуммаЗадолженности: "Допустимая сумма задолженности (лимит 1С)",
-    Оптовик_ДопустимоеЧислоДнейЗадолженности: "Допустимое число дней задолженности (лимит 1С)",
-    Оптовик_КонтролироватьСуммуЗадолженности: "Контролировать сумму задолженности",
-    Оптовик_КонтролироватьЧислоДнейЗадолженности: "Контролировать число дней задолженности",
-    Оптовик_Неблагонадёжный: "Неблагонадёжный",
-    Оптовик_КатегорияТорговойТочкиТандор: "Категория ТТ Tandoor",
-    Оптовик_ТипКлиентаТандор: "Тип клиента Tandoor",
-    Оптовик_ВитринВсегоТандор: "Витрин всего (1С)",
-    Оптовик_ВитринТандорТандор: "Витрин Tandoor (1С)",
-    Оптовик_ЭксклюзивТандор: "Эксклюзив Tandoor",
-    Оптовик_РетроБонус: "Ретро-бонус",
-    Оптовик_ЗапретСамовывоз: "Запрет самовывоза",
-    Оптовик_КрайГород: "Край / город",
-    Оптовик_НаселенныйПункт: "Населённый пункт",
-    БизнесРегион: "Бизнес-регион",
-    Комментарий: "Комментарий",
-  };
-
-  var OTHER_FIELD_GROUPS = {
+  var catalog = root.ClientDetailExchangeCatalog || {};
+  var OTHER_FIELD_LABELS = catalog.otherFieldLabels || {};
+  var OTHER_FIELD_GROUPS = catalog.otherFieldGroups || {
     requisites: ["Код", "НаименованиеПолное", "ЮрФизЛицо", "Оптовик_ОГРН"],
     location: ["Оптовик_КрайГород", "Оптовик_НаселенныйПункт", "БизнесРегион"],
     contractRefs: ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"],
@@ -203,23 +221,71 @@
       "Оптовик_Неблагонадёжный",
       "Оптовик_Наличные",
     ],
-    vitrine: [
-      "Оптовик_КатегорияТорговойТочкиТандор",
-      "Оптовик_ТипКлиентаТандор",
-      "Оптовик_ВитринВсегоТандор",
-      "Оптовик_ВитринТандорТандор",
-      "Оптовик_ЭксклюзивТандор",
-    ],
-    commercialExtra: ["Оптовик_РетроБонус", "Оптовик_ЗапретСамовывоз"],
     misc: ["Комментарий"],
   };
+  var OTHER_GROUP_TITLES = catalog.groupTitles || {};
+  var OTHER_DATE_KINDS = catalog.otherDateKinds || {};
 
   function otherFieldLabel(key) {
     return OTHER_FIELD_LABELS[key] || key;
   }
 
-  function formatOtherFieldScalar(value) {
-    if (value === null || value === undefined || value === "") {
+  function parseExchangeDateParts(value) {
+    var iso = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})/);
+    if (iso) {
+      return {
+        year: Number(iso[1]),
+        month: iso[2],
+        day: iso[3],
+        hour: iso[4].padStart(2, "0"),
+        minute: iso[5],
+      };
+    }
+    var ru = value.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (ru) {
+      return {
+        year: Number(ru[3]),
+        month: ru[2],
+        day: ru[1],
+        hour: (ru[4] || "00").padStart(2, "0"),
+        minute: ru[5] || "00",
+      };
+    }
+    return null;
+  }
+
+  function formatExchangeDateValue(value, kind) {
+    var parts = parseExchangeDateParts(value);
+    if (!parts) {
+      return value;
+    }
+    if (parts.year <= 1) {
+      if (kind === "time") {
+        return parts.hour + ":" + parts.minute;
+      }
+      if (kind === "date") {
+        return null;
+      }
+      if (parts.hour === "00" && parts.minute === "00") {
+        return null;
+      }
+      return parts.hour + ":" + parts.minute;
+    }
+    var dateText = parts.day + "." + parts.month + "." + parts.year;
+    if (kind === "date") {
+      return dateText;
+    }
+    if (parts.hour !== "00" || parts.minute !== "00") {
+      return dateText + " " + parts.hour + ":" + parts.minute;
+    }
+    return dateText;
+  }
+
+  function formatOtherFieldScalar(value, fieldKey) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (value === "") {
       return null;
     }
     if (typeof value === "boolean") {
@@ -229,21 +295,31 @@
       return String(value);
     }
     if (typeof value === "string") {
-      return value.trim() || null;
+      var trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      var kind = OTHER_DATE_KINDS[fieldKey] || "date";
+      if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) {
+        return formatExchangeDateValue(trimmed, kind);
+      }
+      return trimmed;
     }
     if (Array.isArray(value)) {
       var parts = value
         .map(function (item) {
-          return formatOtherFieldScalar(item);
+          return formatOtherFieldScalar(item, fieldKey);
         })
-        .filter(Boolean);
+        .filter(function (item) {
+          return item != null && item !== "";
+        });
       return parts.length ? parts.join(", ") : null;
     }
     if (typeof value === "object") {
       var inner = Object.keys(value)
         .map(function (k) {
-          var v = formatOtherFieldScalar(value[k]);
-          return v ? k + ": " + v : null;
+          var v = formatOtherFieldScalar(value[k], k);
+          return v != null && v !== "" ? k + ": " + v : null;
         })
         .filter(Boolean);
       return inner.length ? inner.join("; ") : null;
@@ -251,45 +327,54 @@
     return String(value);
   }
 
-  function renderOtherFieldsFromKeys(shell, other, keys) {
-    if (!other || typeof other !== "object") {
+  function renderOtherFieldsFromKeys(shell, other, keys, ent) {
+    if (!keys || !keys.length) {
       return "";
     }
+    var bag = other && typeof other === "object" ? other : {};
     var rows = [];
     keys.forEach(function (key) {
-      if (!(key in other)) {
+      var hasKey = Object.prototype.hasOwnProperty.call(bag, key);
+      if (!hasKey) {
+        rows.push(field(otherFieldLabel(key), emptyOtherForState(otherFieldState(ent, key)), false));
         return;
       }
-      var text = formatOtherFieldScalar(other[key]);
-      if (text == null) {
-        return;
-      }
-      rows.push(field(otherFieldLabel(key), esc(shell, text), true));
+      var text = formatOtherFieldScalar(bag[key], key);
+      rows.push(
+        field(
+          otherFieldLabel(key),
+          text != null && text !== "" ? esc(shell, text) : emptyFrom1C(),
+          text != null && text !== "",
+        ),
+      );
     });
     return rows.join("");
   }
 
-  function renderOtherFieldsByGroup(shell, other) {
-    if (!other || typeof other !== "object" || !Object.keys(other).length) {
-      return "";
-    }
+  function renderOtherFieldsByGroup(shell, ent, other) {
+    var bag = other && typeof other === "object" ? other : {};
     var html = "";
-    var groupTitles = {
-      requisites: "Реквизиты (прочие поля 1С)",
-      location: "География и регион",
-      contractRefs: "Ссылки на договор в 1С",
-      debtControl: "Контроль задолженности (лимиты и флаги)",
-      vitrine: "Витрина и классификация Tandoor",
-      commercialExtra: "Доп. коммерческие условия",
-      misc: "Прочее",
-    };
+    var groupedKeys = new Set();
     Object.keys(OTHER_FIELD_GROUPS).forEach(function (groupId) {
-      var body = renderOtherFieldsFromKeys(shell, other, OTHER_FIELD_GROUPS[groupId]);
+      (OTHER_FIELD_GROUPS[groupId] || []).forEach(function (key) {
+        groupedKeys.add(key);
+      });
+      var body = renderOtherFieldsFromKeys(shell, bag, OTHER_FIELD_GROUPS[groupId], ent);
       if (body) {
-        html += renderDataGroup(groupTitles[groupId], body);
+        html += renderDataGroup(OTHER_GROUP_TITLES[groupId] || groupId, body);
       }
     });
-    var known = new Set(Object.keys(OTHER_FIELD_LABELS));
+    var extraKeys = Object.keys(bag)
+      .filter(function (key) {
+        return !groupedKeys.has(key);
+      })
+      .sort();
+    if (extraKeys.length) {
+      html += renderDataGroup(
+        "Все данные 1С (дополнительные поля)",
+        renderOtherFieldsFromKeys(shell, bag, extraKeys, ent),
+      );
+    }
     return html;
   }
 
@@ -332,6 +417,124 @@
     });
   }
 
+  function legalEntityHref(guid, parentReturn) {
+    return (
+      "/clients/" +
+      encodeURIComponent(guid) +
+      "?v3Entity=legal&return=" +
+      (parentReturn || encodedDetailReturnParam())
+    );
+  }
+
+  function renderLegalScopedDetailPreview(shell, ent) {
+    if (!ent) {
+      return '<p class="pc-unavailable">Нет данных.</p>';
+    }
+    var other = ent.other_fields || ent.other || {};
+    var contractKeys = ["Оптовик_ОсновнойДоговор", "Оптовик_ОсновноеСоглашение"];
+    var contractHtml = renderOtherFieldsFromKeys(shell, other, contractKeys, ent);
+    var commercialHtml = renderCommercialBlock(shell, ent);
+    var phones = formatTelephones(shell, ent.telephone);
+    return (
+      '<div class="v3-legal-scoped-preview">' +
+      field("ИНН", ent.inn ? esc(shell, String(ent.inn)) : emptyNoData(), Boolean(ent.inn)) +
+      field("КПП", ent.kpp ? esc(shell, String(ent.kpp)) : emptyNoData(), Boolean(ent.kpp)) +
+      field("Адрес", ent.address ? esc(shell, ent.address) : emptyNoData(), Boolean(ent.address)) +
+      field("Телефоны", phones.html, phones.known) +
+      renderDataGroup("Договор и соглашение", contractHtml || field("Договор", emptyFrom1C(), false)) +
+      renderDataGroup("Коммерческие условия", commercialHtml) +
+      "</div>"
+    );
+  }
+
+  function renderLegalLazyExpandItem(shell, row, parentReturn) {
+    var meta = [];
+    if (row.inn) meta.push("ИНН " + row.inn);
+    if (row.kpp) meta.push("КПП " + row.kpp);
+    var guid = row.guid || row.guid_client || "";
+    return (
+      '<details class="x6-group v3-legal-lazy-expand" data-legal-guid="' +
+      esc(shell, guid) +
+      '"><summary class="v3-legal-lazy-expand__summary">' +
+      '<span class="v3-legal-lazy-expand__title">' +
+      esc(shell, row.name || guid) +
+      (meta.length ? ' <span class="pc-label">' + esc(shell, meta.join(" · ")) + "</span>" : "") +
+      '</span><a class="clients-link v3-legal-lazy-expand__card-link" href="' +
+      legalEntityHref(guid, parentReturn) +
+      '">Карточка</a></summary><div class="v3-legal-lazy-expand__body pc-label">' +
+      "Раскройте для загрузки реквизитов и договора из 1С." +
+      "</div></details>"
+    );
+  }
+
+  function bindLegalLazyExpansions(root, requestFn, shell) {
+    if (!root || typeof requestFn !== "function") {
+      return;
+    }
+    shell = shell || defaultEscapeShell();
+    root.querySelectorAll(".v3-legal-lazy-expand").forEach(function (details) {
+      if (details.dataset.lazyBound === "1") {
+        return;
+      }
+      details.dataset.lazyBound = "1";
+      details.addEventListener("toggle", function () {
+        if (!details.open || details.dataset.lazyLoaded === "1") {
+          return;
+        }
+        var guid = details.getAttribute("data-legal-guid");
+        if (!guid) {
+          return;
+        }
+        var body = details.querySelector(".v3-legal-lazy-expand__body");
+        if (!body) {
+          return;
+        }
+        body.textContent = "Загрузка…";
+        requestFn(guid)
+          .then(function (result) {
+            if (!details.isConnected) {
+              return;
+            }
+            if (!result || !result.response || !result.response.ok || !result.data || !result.data.entity) {
+              body.innerHTML = '<p class="pc-unavailable">Не удалось загрузить реквизиты.</p>';
+              return;
+            }
+            details.dataset.lazyLoaded = "1";
+            body.innerHTML = renderLegalScopedDetailPreview(shell, result.data.entity);
+          })
+          .catch(function () {
+            if (body.isConnected) {
+              body.innerHTML = '<p class="pc-unavailable">Ошибка сети.</p>';
+            }
+          });
+      });
+    });
+  }
+
+  function renderRelatedLegalLines(shell, legals, parentReturn) {
+    if (!legals.length) {
+      return '<span class="pc-unavailable">В вашей области нет доступных юрлиц этого холдинга.</span>';
+    }
+    return legals
+      .map(function (row) {
+        return renderLegalLazyExpandItem(shell, row, parentReturn);
+      })
+      .join("");
+  }
+
+  function renderInlineDisclosure(shell, title, innerHtml) {
+    if (!innerHtml) {
+      return "";
+    }
+    return (
+      '<details class="x6-group v3-inline-disclosure" open><summary>' +
+      esc(shell, title) +
+      '</summary><div class="v3-inline-disclosure__body">' +
+      innerHtml +
+      "</div></details>"
+    );
+  }
+
   function renderRelatedOutletLines(shell, outlets, parentReturn) {
     if (!outlets.length) {
       return '<span class="pc-unavailable">В вашей области нет доступных торговых точек этого холдинга.</span>';
@@ -371,7 +574,8 @@
         parts.push(days[i]);
       }
     }
-    var time = loading.loadingTime || loading.loading_time || "";
+    var timeRaw = loading.loadingTime || loading.loading_time || "";
+    var time = timeRaw ? formatOtherFieldScalar(String(timeRaw), "loading_time") : null;
     if (!parts.length && !time) {
       return { html: emptyNoData(), known: false };
     }
@@ -411,9 +615,14 @@
     if (lpr.phone) rows.push(field("Телефон", esc(shell, lpr.phone), true));
     if (lpr.email) rows.push(field("Email", esc(shell, lpr.email), true));
     if (lpr.date_of_birth || lpr.dateOfBirth) {
-      rows.push(field("Дата рождения", esc(shell, lpr.date_of_birth || lpr.dateOfBirth), true));
+      var dob = formatOtherFieldScalar(String(lpr.date_of_birth || lpr.dateOfBirth), "ДатаРождения");
+      rows.push(
+        field("Дата рождения", dob ? esc(shell, dob) : emptyFrom1C(), Boolean(dob)),
+      );
     }
-    if (lpr.bonus) rows.push(field("Бонус", esc(shell, lpr.bonus), true));
+    if (lpr.bonus != null && lpr.bonus !== "") {
+      rows.push(field("Бонус", esc(shell, String(lpr.bonus)), true));
+    }
     if (lpr.conditions_bonus || lpr.conditionsBonus) {
       rows.push(field("Условия бонуса", esc(shell, lpr.conditions_bonus || lpr.conditionsBonus), true));
     }
@@ -545,7 +754,7 @@
       '<div class="x13-kpis v3-overview-kpis" aria-label="Сводка из 1С" data-testid="v3-overview-kpis">' +
       kpi("Торговые точки", retailCount) +
       kpi("Юридические лица", legalCount) +
-      kpi("Категория", typeCategoryPlain(typeCat)) +
+      kpi("ТОП / тип", typeCategoryPlain(typeCat)) +
       "</div>"
     );
   }
@@ -706,10 +915,19 @@
       renderDataGroup("Клиент и холдинг", clientBlock) +
       renderDataGroup("Ответственные", respBlock.replace(/<details[^>]*>|<\/details>|<summary>[^<]*<\/summary>/g, "")) +
       renderDataGroup("Коммерческие условия", renderCommercialBlock(shell, ent)) +
-      renderOtherFieldsByGroup(shell, other) +
+      renderOtherFieldsByGroup(shell, ent, other) +
+      renderDataGroup(
+        "Доступные юрлица холдинга",
+        '<div id="v3-data-holding-legals" data-testid="v3-data-holding-legals">' +
+          '<span class="pc-unavailable">Загрузка…</span></div>',
+      ) +
       renderDataGroup(
         "Торговая точка (уровень юрлица)",
-        field("Доставка, приёмка, ЛПР, Club", emptyFrom1C(), false),
+        field(
+          "Доставка, приёмка, ЛПР, Club",
+          "См. доступные торговые точки холдинга ниже и карточки ТТ.",
+          true,
+        ),
       ) +
       renderDataGroup(
         "Доступные точки холдинга",
@@ -939,6 +1157,16 @@
       dataHtml +
       "</section>" +
       (entityType === "legal" ? renderSalesPanelShell(initialTab === "sales") : "");
+    TABS.forEach(function (t) {
+      var tabId = t[0];
+      if (tabId === "overview" || tabId === "data" || tabId === "sales") {
+        return;
+      }
+      if (tabId === "sales" && entityType !== "legal") {
+        return;
+      }
+      panels += renderUnavailablePanel(tabId, t[1], initialTab === tabId);
+    });
 
     var subtitleParts = [entityKindLabel(entityType)];
     if (typeCat.known) {
@@ -974,11 +1202,22 @@
     payload = payload || {};
     var sales = payload.sales || {};
     var lines = sales.lines || [];
+    var salesState = payload.salesState || (lines.length ? "loaded" : "empty_month");
     if (!lines.length) {
+      var emptyCopy =
+        salesState === "not_imported"
+          ? "Данные из 1С ещё не загружены в ЛК (файл продаж не применён)."
+          : salesState === "error"
+            ? "Не удалось загрузить продажи. Повторите позже."
+            : salesState === "forbidden"
+              ? "Продажи недоступны в вашей области видимости."
+              : "Нет строк продаж за выбранный месяц.";
       return (
         '<section class="card pad x13-empty-section" data-testid="v3-sales-empty">' +
         "<header><h3>Продажи</h3></header>" +
-        '<p class="pc-unavailable">Нет данных о продажах за выбранный месяц.</p>' +
+        '<p class="pc-unavailable">' +
+        esc(shell, emptyCopy) +
+        "</p>" +
         '<p class="pc-label">' +
         esc(shell, sales.vatNote || "Суммы с НДС, ₽") +
         "</p></section>"
@@ -1076,6 +1315,7 @@
     var kpis = root.querySelector('[data-testid="v3-overview-kpis"]');
     var host = root.querySelector('[data-testid="v3-related-outlets"]');
     var dataHost = root.querySelector('[data-testid="v3-data-holding-outlets"]');
+    var legalHost = root.querySelector('[data-testid="v3-data-holding-legals"]');
     var counts = payload.counts || {};
     var entityType = payload.entityType || "legal";
     if (kpis && counts.retailOutlets != null) {
@@ -1090,15 +1330,29 @@
       }
     }
     var outlets = payload.retailOutlets || [];
+    var legals = payload.legalEntities || [];
     var parentReturn = payload.parentReturn || "";
-    var linesHtml = renderRelatedOutletLines(shell, outlets, parentReturn);
+    var outletLines = renderRelatedOutletLines(shell, outlets, parentReturn);
+    var outletBlock = renderInlineDisclosure(
+      shell,
+      "Торговые точки (" + outlets.length + ")",
+      outletLines,
+    );
+    var legalLines = renderRelatedLegalLines(shell, legals, parentReturn);
+    var legalBlock = renderInlineDisclosure(shell, "Юрлица (" + legals.length + ")", legalLines);
     if (host) {
-      host.innerHTML = linesHtml;
+      host.innerHTML = outletBlock;
     }
     if (dataHost) {
-      dataHost.innerHTML = linesHtml;
+      dataHost.innerHTML = outletBlock;
+    }
+    if (legalHost) {
+      legalHost.innerHTML = legalBlock;
     }
     refreshRelatedOutletReturnLinks(root);
+    if (typeof root.ClientDetailV3LazyRequest === "function") {
+      bindLegalLazyExpansions(root, root.ClientDetailV3LazyRequest, shell);
+    }
   }
 
   function bindTabs(root, context) {
@@ -1178,6 +1432,10 @@
   }
 
   root.ClientDetailV3 = {
+    renderOtherFieldsFromKeys: renderOtherFieldsFromKeys,
+    renderLegalScopedDetailPreview: renderLegalScopedDetailPreview,
+    renderLegalLazyExpandItem: renderLegalLazyExpandItem,
+    bindLegalLazyExpansions: bindLegalLazyExpansions,
     renderCard: renderCard,
     bindTabs: bindTabs,
     updateRelatedContext: updateRelatedContext,

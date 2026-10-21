@@ -6,8 +6,13 @@ import { describe, it } from "node:test";
 
 describe("client-detail-v3 field rendering", () => {
   function loadV3() {
+    const catalogSource = fs.readFileSync(
+      path.join(process.cwd(), "public/client-detail-exchange-catalog.js"),
+      "utf8",
+    );
     const source = fs.readFileSync(path.join(process.cwd(), "public/client-detail-v3.js"), "utf8");
     const window: Record<string, unknown> = { location: { pathname: "/clients/x", search: "?v3Entity=legal" } };
+    vm.runInNewContext(catalogSource, { window, console });
     vm.runInNewContext(source, { window, console });
     return window.ClientDetailV3 as {
       renderCard: (
@@ -43,7 +48,7 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /pc-tab-overview/);
     assert.match(html, /pc-tab-data/);
     assert.match(html, /pc-tab-work/);
-    assert.match(html, /Type A \/ Cat A/);
+    assert.match(html, /ТОП: Type A/);
     assert.match(html, /Manager One/);
     assert.match(html, /ROP One/);
     assert.match(html, /Holding One/);
@@ -72,6 +77,8 @@ describe("client-detail-v3 field rendering", () => {
         other_fields: {
           Код: "001",
           Оптовик_РетроБонус: "10%",
+          Оптовик_КонтактноеЛицо: "SYNTH Contact",
+          Оптовик_СтатусКлиента: "Active",
           nested: { flag: true },
         },
       },
@@ -80,6 +87,31 @@ describe("client-detail-v3 field rendering", () => {
     assert.doesNotMatch(html, /\[object Object\]/);
     assert.match(html, /Ретро-бонус/);
     assert.match(html, /10%/);
+    assert.match(html, /SYNTH Contact/);
+    assert.match(html, /Статус клиента/);
+  });
+
+  it("formats exchange dates by field semantics", () => {
+    const ClientDetailV3 = loadV3();
+    const shell = { escapeHtml: (v: string) => v };
+    const html = ClientDetailV3.renderCard(
+      shell,
+      "legal",
+      {
+        name_client: "Legal",
+        type_category: { name_type: "TOP350" },
+        other_fields: {
+          Оптовик_ДатаСледКонтакта: "0001-01-01T00:00:00",
+          Оптовик_НеблагонадёжныйДата: "01.01.0001 0:00:00",
+          Оптовик_КонтактноеЛицо: null,
+        },
+      },
+      null,
+    );
+    assert.match(html, /Нет данных из 1С/);
+    assert.doesNotMatch(html, /00:00/);
+    assert.doesNotMatch(html, /01\.01\.0001/);
+    assert.match(html, /Контактное лицо/);
   });
 
   it("renders retail passport groups with route and club", () => {
@@ -102,7 +134,7 @@ describe("client-detail-v3 field rendering", () => {
       null,
     );
     assert.match(retailHtml, /Route North/);
-    assert.match(retailHtml, /Retail Type \/ Retail Cat/);
+    assert.match(retailHtml, /ТОП: Retail Type/);
     assert.match(retailHtml, /Gold/);
     assert.match(retailHtml, /Ivan LPR/);
     assert.match(retailHtml, /Доставка и приёмка/);

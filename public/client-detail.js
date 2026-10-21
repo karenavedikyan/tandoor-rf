@@ -103,52 +103,65 @@
     };
   }
 
+  function requestV3LegalDetail(guid) {
+    return api.apiRequest(
+      "/api/clients/v3/detail?entity=legal&guid=" + encodeURIComponent(guid),
+    );
+  }
+
+  function bindCompositionLegalLazy(host) {
+    if (host && window.ClientDetailV3 && window.ClientDetailV3.bindLegalLazyExpansions) {
+      window.ClientDetailV3.bindLegalLazyExpansions(host, requestV3LegalDetail, shell);
+    }
+  }
+
   function renderV3CompositionLists(host, legal, retail) {
     if (!host) {
       return;
     }
     var parentReturn = currentDetailReturnParam();
+    var legalInner = legal.length
+      ? legal
+          .map(function (row) {
+            if (window.ClientDetailV3 && window.ClientDetailV3.renderLegalLazyExpandItem) {
+              return window.ClientDetailV3.renderLegalLazyExpandItem(shell, row, parentReturn);
+            }
+            return (
+              "<details><summary>" +
+              shell.escapeHtml(row.name) +
+              "</summary></details>"
+            );
+          })
+          .join("")
+      : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>';
+    var retailInner = retail.length
+      ? "<ul class=\"v3-composition-list\">" +
+        retail
+          .map(function (row) {
+            return (
+              "<li><a class=\"clients-link\" href=\"/clients/" +
+              encodeURIComponent(row.guid) +
+              "?v3Entity=retail&return=" +
+              parentReturn +
+              '">' +
+              shell.escapeHtml(row.name) +
+              "</a></li>"
+            );
+          })
+          .join("") +
+        "</ul>"
+      : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>';
     host.innerHTML =
-      (legal.length
-        ? "<h3 class=\"pc-label\">Юрлица</h3><ul class=\"v3-composition-list\">" +
-          legal
-            .map(function (row) {
-              return (
-                "<li><a class=\"clients-link\" href=\"/clients/" +
-                encodeURIComponent(row.guid) +
-                "?v3Entity=legal&return=" +
-                parentReturn +
-                '">' +
-                shell.escapeHtml(row.name) +
-                (row.inn
-                  ? ' <span class="pc-label">ИНН ' + shell.escapeHtml(String(row.inn)) + "</span>"
-                  : "") +
-                (row.kpp
-                  ? ' <span class="pc-label">КПП ' + shell.escapeHtml(String(row.kpp)) + "</span>"
-                  : "") +
-                "</a></li>"
-              );
-            })
-            .join("") +
-          "</ul>"
-        : '<p class="pc-unavailable">Юрлица не переданы из 1С.</p>') +
-      (retail.length
-        ? "<h3 class=\"pc-label\">Торговые точки</h3><ul class=\"v3-composition-list\">" +
-          retail
-            .map(function (row) {
-              return (
-                "<li><a class=\"clients-link\" href=\"/clients/" +
-                encodeURIComponent(row.guid) +
-                "?v3Entity=retail&return=" +
-                parentReturn +
-                '">' +
-                shell.escapeHtml(row.name) +
-                "</a></li>"
-              );
-            })
-            .join("") +
-          "</ul>"
-        : '<p class="pc-unavailable">Торговые точки не переданы из 1С.</p>');
+      '<details class="x6-group v3-inline-disclosure" open><summary>Юрлица (' +
+      legal.length +
+      ")</summary><div class=\"v3-inline-disclosure__body\">" +
+      legalInner +
+      '</div></details><details class="x6-group v3-inline-disclosure" open><summary>Торговые точки (' +
+      retail.length +
+      ")</summary><div class=\"v3-inline-disclosure__body\">" +
+      retailInner +
+      "</div></details>";
+    bindCompositionLegalLazy(host);
   }
 
   function applyV3CompositionContext(detailRoot, payload, rows) {
@@ -162,6 +175,7 @@
         legalEntities: payload.entityType === "legal" ? 1 : rows.legal.length,
       },
       retailOutlets: rows.retail,
+      legalEntities: rows.legal,
       parentReturn: currentDetailReturnParam(),
     });
   }
@@ -300,13 +314,20 @@
       .then(function (results) {
         var monthsResult = results[0];
         if (monthsResult.response.status !== 200) {
-          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: monthsResult.response.status === 403 ? "forbidden" : "error",
+          });
           return;
         }
         v3SalesState.months = monthsResult.data.months || [];
         var selectedMonth = month || v3SalesState.months[0] || null;
         if (!selectedMonth) {
-          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, { sales: { lines: [] } });
+          var importInfo = monthsResult.data.salesImport || {};
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: importInfo.applied ? "empty_month" : "not_imported",
+          });
           return;
         }
         if (!month || month !== selectedMonth) {
@@ -314,7 +335,10 @@
         }
         var salesResult = results[1];
         if (!salesResult || salesResult.response.status !== 200) {
-          host.innerHTML = '<p class="pc-unavailable">Не удалось загрузить продажи.</p>';
+          host.innerHTML = window.ClientDetailV3.renderSalesContent(shell, {
+            sales: { lines: [] },
+            salesState: salesResult && salesResult.response.status === 403 ? "forbidden" : "error",
+          });
           return;
         }
         v3SalesState.month = selectedMonth;
@@ -347,6 +371,7 @@
         })
       : "";
     detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
+    detailRoot.ClientDetailV3LazyRequest = requestV3LegalDetail;
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
       var legalGuid = payload.entityType === "legal" ? ent.guid || ent.guid_client : null;
       if (legalGuid) {
@@ -436,8 +461,9 @@
     }
     function showRelatedError(message) {
       if (!detailRoot.isConnected) return;
-      detailRoot.querySelectorAll('[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"]')
-        .forEach(function (host) { host.textContent = message; });
+      detailRoot.querySelectorAll(
+        '[data-testid="v3-related-outlets"], [data-testid="v3-data-holding-outlets"], [data-testid="v3-data-holding-legals"]',
+      ).forEach(function (host) { host.textContent = message; });
     }
     loadV3Composition(detailRoot, payload, {
       onTerritoryError: showRelatedError,

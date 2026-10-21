@@ -916,15 +916,25 @@ describe("clients v3 API", { concurrency: false }, () => {
     assert.equal(hiddenInn.status, 200);
     assert.equal(hiddenInn.body.total, 0);
 
-    const siblingAnd = await request(app)
+    const holdingTopWithMemberManager = await request(app)
       .get(
         `/api/clients/v3/list?entity=legal_grouped&typeGuid=${TYPE_A}&filters=${encodeURIComponent(
           JSON.stringify([{ field: "managerGuid", op: "eq", value: M2 }]),
         )}`,
       )
       .set(headers);
-    assert.equal(siblingAnd.status, 200);
-    assert.equal(siblingAnd.body.total, 0);
+    assert.equal(holdingTopWithMemberManager.status, 200);
+    // Grouped TOP is the holding's own type (t1); member manager M2 still matches the holding row.
+    assert.equal(holdingTopWithMemberManager.body.total, 1);
+    assert.equal(holdingTopWithMemberManager.body.items[0].group_key, `holding:${HOLDING}`);
+
+    const flatChildTypeAndManager = await request(app)
+      .get(
+        `/api/clients/v3/list?entity=legal&typeGuid=${TYPE_A}&managerGuid=${M2}&page=1&pageSize=50`,
+      )
+      .set(headers);
+    assert.equal(flatChildTypeAndManager.status, 200);
+    assert.equal(flatChildTypeAndManager.body.total, 0);
 
     const typeOnly = await request(app)
       .get(`/api/clients/v3/list?entity=legal_grouped&typeGuid=${TYPE_A}&page=1&pageSize=50`)

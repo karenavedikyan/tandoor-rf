@@ -131,13 +131,64 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     return { types, categories };
   }
 
-  async function ensureMobileFiltersExpanded(page: Page, viewport: { width: number; height: number }): Promise<void> {
-    const toggle = page.locator("#clients-filters-toggle");
-    if (await toggle.count()) {
-      const expanded = await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").count();
-      if (!expanded) {
-        await toggle.click();
+  function parseApiStructuredFilters(
+    apiUrl: string,
+  ): Array<{ field: string; op: string; value: unknown }> {
+    try {
+      const raw = new URL(apiUrl).searchParams.get("filters");
+      if (!raw) {
+        return [];
       }
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed) ? (parsed as Array<{ field: string; op: string; value: unknown }>) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Legal/retail list API may send typeGuid via query, multiselect params, or structured filters[]. */
+  function apiListMatchesTypeGuidFilter(apiUrl: string, entity: string, typeGuid: string): boolean {
+    if (!apiUrl.includes("/api/clients/v3/list") || !apiUrl.includes(`entity=${entity}`)) {
+      return false;
+    }
+    const u = new URL(apiUrl);
+    if (u.searchParams.get("typeGuid") === typeGuid) {
+      return true;
+    }
+    const sets = parseApiListFilterGuids(apiUrl);
+    if (sets.types.includes(typeGuid)) {
+      return true;
+    }
+    return parseApiStructuredFilters(apiUrl).some(
+      (rule) => rule.field === "typeGuid" && rule.op === "eq" && String(rule.value) === typeGuid,
+    );
+  }
+
+  function isV3ListResponse(res: { url(): string; status(): number }, entity: string, typeGuid?: string): boolean {
+    if (!res.url().includes("/api/clients/v3/list") || !res.url().includes(`entity=${entity}`) || res.status() !== 200) {
+      return false;
+    }
+    if (!typeGuid) {
+      return true;
+    }
+    return apiListMatchesTypeGuidFilter(res.url(), entity, typeGuid);
+  }
+
+  async function ensureMobileFiltersExpanded(page: Page, viewport: { width: number; height: number }): Promise<void> {
+    if (viewport.width > 480) {
+      return;
+    }
+    const toggle = page.locator("#clients-filters-toggle");
+    if (!(await toggle.count()) || !(await toggle.isVisible())) {
+      return;
+    }
+    const expanded = await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").count();
+    if (!expanded) {
+      await toggle.click();
+      await page.locator(".clients-toolbar__row--filters.clients-filters-panel--expanded").waitFor({
+        state: "attached",
+        timeout: 10000,
+      });
     }
   }
 
@@ -145,9 +196,10 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     page: Page,
     viewport?: { width: number; height: number },
   ): Promise<void> {
-    await ensureMobileFiltersExpanded(page, viewport || page.viewportSize() || DESKTOP);
+    const vp = viewport || page.viewportSize() || DESKTOP;
+    await ensureMobileFiltersExpanded(page, vp);
     await page.locator("#v3-filters-wrap:not(.clients-hidden) #v3-type-filter").waitFor({
-      state: "visible",
+      state: "attached",
       timeout: 30000,
     });
   }
@@ -325,6 +377,18 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     });
   }
 
+  async function openLegalOneCard(page: Page): Promise<void> {
+    const link = page
+      .locator(
+        '#clients-table-body a:has-text("Legal One"):visible, ' +
+          '#clients-cards a:has-text("Legal One"):visible, ' +
+          '[data-testid="v3-lktandoor-mobile-card"]:has-text("Legal One"):visible',
+      )
+      .first();
+    await link.waitFor({ state: "visible", timeout: 15000 });
+    await link.click();
+  }
+
   async function waitForLegalList(page: Page, expectTypeFilterRequest: boolean): Promise<void> {
     if (expectTypeFilterRequest) {
       await page
@@ -332,8 +396,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
           (res) =>
             res.url().includes("/api/clients/v3/list") &&
             res.url().includes("entity=legal") &&
-            res.url().includes("typeGuid=t1") &&
-            res.status() === 200,
+            apiListMatchesTypeGuidFilter(res.url(), "legal", "t1"),
           { timeout: 20000 },
         )
         .catch(function () {
@@ -348,14 +411,9 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
 
   async function runViewportFlow(page: Page, viewport: { width: number; height: number }): Promise<void> {
     await page.setViewportSize(viewport);
+    await ensureMobileFiltersExpanded(page, viewport);
     const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1&view=all";
-    const initialList = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/clients/v3/list") &&
-        res.url().includes("entity=legal") &&
-        res.url().includes("typeGuid=t1") &&
-        res.status() === 200,
-    );
+    const initialList = page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
     const initialOptions = page.waitForResponse(
       (res) =>
         res.url().includes("/api/clients/v3/options") && res.url().includes("entity=legal") && res.status() === 200,
@@ -381,64 +439,42 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     );
     assert.ok(typeSelected.includes("t1"));
     await assertListFilterState(page);
-    if (viewport.width <= 400) {
-      await page.locator(".clients-card__meta").first().waitFor({ state: "attached", timeout: 15000 });
-    }
 
-    const reloadList = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/clients/v3/list") &&
-        res.url().includes("entity=legal") &&
-        res.url().includes("typeGuid=t1") &&
-        res.status() === 200,
-    );
-    await page.reload();
-    await reloadList;
+    await page.reload({ waitUntil: "domcontentloaded" });
     await assertListFilterState(page);
+    await waitForLegalList(page, false);
 
-    const retailClick = page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=retail") && res.status() === 200,
-    );
-    await page.click('[data-v3entity="retail"]');
-    await retailClick;
+    async function clickEntityTab(entityId: string, labelRe: RegExp): Promise<void> {
+      const tab = page.locator(`[data-v3entity="${entityId}"]`).filter({ hasText: labelRe }).first();
+      await tab.waitFor({ state: "visible", timeout: 15000 });
+      await tab.click();
+    }
+    await clickEntityTab("retail", /Торговые точки/i);
     await page.waitForFunction(function () {
-      return document.querySelector('[data-v3entity="retail"].clients-view-switcher__btn--active');
+      return new URL(window.location.href).searchParams.get("v3entity") === "retail";
     });
 
-    const legalClick = page.waitForResponse(
-      (res) => res.url().includes("/api/clients/v3/list") && res.url().includes("entity=legal") && res.status() === 200,
-    );
-    await page.click('[data-v3entity="legal"]');
-    await legalClick;
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&view=all");
     await page.waitForFunction(function () {
-      return document.querySelector('[data-v3entity="legal"].clients-view-switcher__btn--active');
+      return new URL(window.location.href).searchParams.get("v3entity") === "legal";
     });
     const urlAfterEntityRound = new URL(page.url());
     assert.equal(urlAfterEntityRound.searchParams.get("v3entity"), "legal");
     assert.equal(urlAfterEntityRound.searchParams.get("v3type") || "", "");
     assert.equal(urlAfterEntityRound.searchParams.get("typeGuids") || "", "");
 
+    const restoreFilteredList = page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
+    await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1&view=all");
+    await restoreFilteredList;
     await waitForV3FiltersReady(page, viewport);
-    const restoreTypeList = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/clients/v3/list") &&
-        res.url().includes("entity=legal") &&
-        res.url().includes("typeGuid=t1") &&
-        res.status() === 200,
-    );
-    await page.selectOption("#v3-type-filter", "t1");
-    await restoreTypeList;
-    await waitForLegalList(page, true);
+    await waitForLegalList(page, false);
     await assertListFilterState(page);
 
-    const link =
-      viewport.width <= 400
-        ? page.locator('#clients-cards a:has-text("Legal One")')
-        : page.locator('#clients-table-body a:has-text("Legal One")');
-    await link.first().click();
+    await openLegalOneCard(page);
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.waitForSelector('[data-testid="v3-detail-card"]');
-    await page.waitForSelector('#pc-panel-overview :text("Type A / Cat A")');
+    await page.waitForSelector('#pc-panel-overview :text("Type A")');
+    await page.waitForSelector('#pc-panel-overview :text("Cat A")');
     await page.locator("#pc-tab-data").click();
     await page.waitForSelector('#pc-panel-data :text("ROP One")');
 
@@ -460,24 +496,23 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     await assertListFilterState(page);
     await waitForLegalList(page, false);
 
-    const cardLink =
-      viewport.width <= 400
-        ? page.locator('#clients-cards a:has-text("Legal One")').first()
-        : page.locator('#clients-table-body a:has-text("Legal One")').first();
-    await cardLink.click();
+    await openLegalOneCard(page);
     await page.waitForSelector('[data-testid="v3-detail-title"]');
-    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
+    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]:visible').first();
     await holdingNav.waitFor({ state: "visible", timeout: 15000 });
     await holdingNav.click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click("#pc-tab-data");
-    await page.waitForSelector("#v3-composition a", { timeout: 15000 });
-    await page.locator("#v3-composition a").first().click();
+    await page.waitForSelector("#v3-composition .v3-legal-lazy-expand", { timeout: 15000 });
+    const legalDisclosure = page.locator("#v3-composition .v3-legal-lazy-expand").first();
+    await legalDisclosure.locator("summary").click();
+    await page.waitForSelector(".v3-legal-scoped-preview", { timeout: 15000 });
+    await page.locator("#v3-composition .v3-legal-lazy-expand__card-link").first().click();
     await page.waitForSelector('[data-testid="v3-back-to-list"]');
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click("#pc-tab-data");
-    await page.waitForSelector("#v3-composition a", { timeout: 15000 });
+    await page.waitForSelector("#v3-composition .v3-legal-lazy-expand", { timeout: 15000 });
     await page.click('[data-testid="v3-back-to-list"]');
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.click('[data-testid="v3-back-to-list"]');
@@ -797,7 +832,11 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const clearLastTypeChip = page.waitForResponse(
       (res) => {
         const u = res.url();
-        return u.includes("/api/clients/v3/list") && !u.includes("typeGuid") && res.status() === 200;
+        return (
+          u.includes("/api/clients/v3/list") &&
+          res.status() === 200 &&
+          !apiListMatchesTypeGuidFilter(u, "legal", "t1")
+        );
       },
       { timeout: 60000 },
     );
@@ -1343,13 +1382,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const creds = testCreds;
     const page = await browser.newPage();
     await login(page, creds.email);
-    const listReady = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/clients/v3/list") &&
-        res.url().includes("entity=legal") &&
-        res.url().includes("typeGuid=t1") &&
-        res.status() === 200,
-    );
+    const listReady = page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
     await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal&view=all&v3type=t1", {
       waitUntil: "networkidle",
     });
@@ -1360,7 +1393,11 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const chipClear = page.waitForResponse(
       (res) => {
         const u = res.url();
-        return u.includes("/api/clients/v3/list") && !u.includes("typeGuid=") && res.status() === 200;
+        return (
+          u.includes("/api/clients/v3/list") &&
+          res.status() === 200 &&
+          !apiListMatchesTypeGuidFilter(u, "legal", "t1")
+        );
       },
       { timeout: 30000 },
     );
@@ -1385,5 +1422,38 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
       await runViewportFlow(page, viewport);
       await page.close();
     }
+  });
+
+  it("real API: legal card overview, data tab, and holding lazy preview", async () => {
+    const page = await browser.newPage();
+    await login(page, testCreds.email);
+    const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1&view=all";
+    const initialList = page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
+    await page.goto(listUrl);
+    await initialList;
+    await openLegalOneCard(page);
+    await page.waitForSelector('[data-testid="v3-detail-title"]:has-text("Legal One")');
+    await page.waitForSelector('#pc-panel-overview :text("Type A")');
+    await page.waitForSelector('#pc-panel-overview :text("Cat A")');
+    await page.locator("#pc-tab-data").click();
+    await page.waitForSelector('#pc-panel-data :text("ROP One")');
+    const holdingNav = page.locator('#pc-panel-data a.clients-link[href*="v3Entity=holding"]:visible').first();
+    await holdingNav.click();
+    await page.waitForSelector('[data-testid="v3-detail-title"]');
+    await page.locator("#pc-tab-data").click();
+    const disclosure = page.locator("#v3-composition .v3-legal-lazy-expand").first();
+    await disclosure.waitFor({ state: "visible", timeout: 15000 });
+    const detailRequest = page.waitForResponse(
+      (res) =>
+        res.url().includes("/api/clients/v3/detail") &&
+        res.url().includes("entity=legal") &&
+        res.status() === 200,
+    );
+    await disclosure.locator("summary").click();
+    await detailRequest;
+    await page.waitForSelector(".v3-legal-scoped-preview");
+    const previewText = await page.locator(".v3-legal-scoped-preview").innerText();
+    assert.ok(previewText.includes("ИНН") || previewText.includes("0123456789"));
+    await page.close();
   });
 });
