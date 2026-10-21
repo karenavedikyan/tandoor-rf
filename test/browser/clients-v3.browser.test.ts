@@ -379,16 +379,14 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
 
   async function openLegalOneCard(page: Page): Promise<void> {
     const link = page
-      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
+      .locator(
+        '#clients-table-body a:has-text("Legal One"):visible, ' +
+          '#clients-cards a:has-text("Legal One"):visible, ' +
+          '[data-testid="v3-lktandoor-mobile-card"]:has-text("Legal One"):visible',
+      )
       .first();
-    await link.waitFor({ state: "attached", timeout: 15000 });
-    if (await link.isVisible()) {
-      await link.click();
-      return;
-    }
-    await link.evaluate((el) => {
-      (el as HTMLAnchorElement).click();
-    });
+    await link.waitFor({ state: "visible", timeout: 15000 });
+    await link.click();
   }
 
   async function waitForLegalList(page: Page, expectTypeFilterRequest: boolean): Promise<void> {
@@ -500,7 +498,7 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
 
     await openLegalOneCard(page);
     await page.waitForSelector('[data-testid="v3-detail-title"]');
-    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
+    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]:visible').first();
     await holdingNav.waitFor({ state: "visible", timeout: 15000 });
     await holdingNav.click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
@@ -1430,18 +1428,16 @@ describe("clients v3 UI (real API)", { concurrency: false }, () => {
     const page = await browser.newPage();
     await login(page, testCreds.email);
     const listUrl = baseUrl + "/clients?v3mode=1&v3entity=legal&page=1&q=Legal&v3type=t1&view=all";
+    const initialList = page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
     await page.goto(listUrl);
-    await page.waitForResponse((res) => isV3ListResponse(res, "legal", "t1"));
-    await page
-      .locator('#clients-table-body a:has-text("Legal One"), #clients-cards a:has-text("Legal One")')
-      .first()
-      .click();
+    await initialList;
+    await openLegalOneCard(page);
     await page.waitForSelector('[data-testid="v3-detail-title"]:has-text("Legal One")');
     await page.waitForSelector('#pc-panel-overview :text("Type A")');
     await page.waitForSelector('#pc-panel-overview :text("Cat A")');
     await page.locator("#pc-tab-data").click();
     await page.waitForSelector('#pc-panel-data :text("ROP One")');
-    const holdingNav = page.locator('a.clients-link[href*="v3Entity=holding"]').first();
+    const holdingNav = page.locator('#pc-panel-data a.clients-link[href*="v3Entity=holding"]:visible').first();
     await holdingNav.click();
     await page.waitForSelector('[data-testid="v3-detail-title"]');
     await page.locator("#pc-tab-data").click();
