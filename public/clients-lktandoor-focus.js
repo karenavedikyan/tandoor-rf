@@ -753,8 +753,16 @@
       if (state && state.v3focus) {
         event.preventDefault();
         writeScroll(state, document.getElementById("x14-focus-scroll"));
+        var listCtx =
+          window.__lktandoorListCtx ||
+          (window.ClientsLktandoorList && window.ClientsLktandoorList.resolveListUiContext
+            ? window.ClientsLktandoorList.resolveListUiContext()
+            : window.__lktandoorUiCtx);
+        if (!listCtx) {
+          return;
+        }
         window.ClientsV3.loadList(
-          window.__lktandoorUiCtx,
+          listCtx,
           window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
           true,
         );

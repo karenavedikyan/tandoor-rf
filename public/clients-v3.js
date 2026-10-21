@@ -830,7 +830,11 @@
                   return;
                 }
                 var entity = btn.getAttribute("data-v3entity");
-                var liveCtx = window.__lktandoorUiCtx;
+                var liveCtx =
+                  window.__lktandoorListCtx ||
+                  (window.ClientsLktandoorList && window.ClientsLktandoorList.resolveListUiContext
+                    ? window.ClientsLktandoorList.resolveListUiContext()
+                    : window.__lktandoorUiCtx);
                 if (!entity || !liveCtx) {
                   return;
                 }
@@ -1028,6 +1032,7 @@
           window.ClientsLktandoorFocus.bindGlobal();
         }
         if (lktandoorActive && ctx.lktandoorContext) {
+          ctx.lktandoorContext.uiCtx = ctx;
           window.__lktandoorListCtx = ctx;
           window.ClientsLktandoorList.refreshChrome(ctx.shell, state, ctx.lktandoorContext);
           if (ctx.lktandoorContext.rolePresentation && ctx.entitySwitcherEl) {
