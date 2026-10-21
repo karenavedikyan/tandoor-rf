@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { getDatabaseUrl } from "../../config";
 import { createImportPool } from "../../onec-clients/apply";
+import { readRemoteFileFromFtp } from "../../onec-clients/ftp-read";
 import { tryAcquireImportLock, releaseImportLock } from "../../onec-clients/import-lock";
+import { loadOnecFtpConfig } from "../../onec-ftp/config";
+import { V3_BUNDLE_FILES, V3_FTP_CLIENTS_DIR, V3_MAX_FILE_BYTES } from "../constants";
 import { formatTargetDbForReport } from "../target-db-fingerprint";
 import { resolveTargetDbIdentityFromUrl, TargetDbIdentityError } from "../target-db-identity";
 import {
@@ -61,12 +64,26 @@ export async function runLegalOtherFieldsBackfill(
       return { status: "ERROR", mode: cli.mode, errorCode: "FILE_READ_FAILED", message: "Cannot read clients file." };
     }
   } else {
-    return {
-      status: "VALIDATION_FAILED",
-      mode: cli.mode,
-      errorCode: "CLIENTS_FILE_REQUIRED",
-      message: "Pass --clients-file for offline backfill (production path stays /LC/clients/all_clients.json).",
-    };
+    const loaded = loadOnecFtpConfig(env);
+    if (!loaded.ok) {
+      return {
+        status: "VALIDATION_FAILED",
+        mode: cli.mode,
+        errorCode: "CLIENTS_SOURCE_UNAVAILABLE",
+        message: "Pass --clients-file or configure FTP for /LC/clients/all_clients.json.",
+      };
+    }
+    const remotePath = `${loaded.config.basePath.replace(/\/$/, "")}/${V3_FTP_CLIENTS_DIR}/${V3_BUNDLE_FILES.clients}`;
+    const ftpRead = await readRemoteFileFromFtp(loaded.config, remotePath, V3_MAX_FILE_BYTES);
+    if (!ftpRead.ok) {
+      return {
+        status: "ERROR",
+        mode: cli.mode,
+        errorCode: ftpRead.code || "FTP_READ_FAILED",
+        message: ftpRead.message,
+      };
+    }
+    bytes = ftpRead.bytes;
   }
 
   let parsedFile: ReturnType<typeof parseClientsOtherFromJsonBytes>;

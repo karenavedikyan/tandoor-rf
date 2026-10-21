@@ -10,7 +10,7 @@
 | `onec_v3_legal_sales_lines` | строки продаж | отдельный apply `sale.json` |
 | `onec_v3_legal_sales_import_state` | метаданные apply | `id=1`, `source_sha256`, `row_count` |
 
-Production source path остаётся **`/LC/clients/all_clients.json`** (FTP). Для test/synthetic — локальный файл через `--clients-file`.
+Production source path: **`/LC/clients/all_clients.json`** (FTP, если `--clients-file` не передан). Для test/synthetic — локальный файл через `--clients-file`.
 
 ## CLI (узкий инструмент)
 
