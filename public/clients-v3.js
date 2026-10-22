@@ -359,7 +359,8 @@
       teamContext &&
       patch &&
       Object.prototype.hasOwnProperty.call(patch, "v3manager") &&
-      !patch.v3manager
+      !patch.v3manager &&
+      !Object.prototype.hasOwnProperty.call(patch, "responsibleGuid")
     ) {
       next.responsibleGuid = "";
       next.responsibleKind = "";
