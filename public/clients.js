@@ -5739,17 +5739,16 @@
     }
     cancelScheduledLoad();
     invalidateInFlightRequests();
-    var next = window.ClientsV3.mergeListStateForUserAction({
-      v3focus: true,
-      page: window.ClientsV3.readState().page || 1,
-    });
+    var live = window.ClientsV3.readState();
+    var next = window.ClientsV3.mergeListStateForUserAction(
+      Object.assign({}, live, {
+        v3focus: true,
+        page: live.page || 1,
+      }),
+    );
+    delete window.__lastV3ListPayload;
     window.ClientsV3.writeState(next, false);
-    var cached = window.__lastV3ListPayload;
     var focusCtx = buildV3UiContext();
-    if (cached && window.ClientsLktandoorFocus) {
-      focusCtx.showResultsContent();
-      window.ClientsLktandoorFocus.render(focusCtx, Object.assign({}, cached, { state: next }));
-    }
     window.ClientsV3.loadList(focusCtx, next, false);
   });
   columnsPickerBtn?.addEventListener("click", function () {

@@ -295,7 +295,11 @@
     var urlCategoryTokens = url.v3categories.length
       ? url.v3categories.slice()
       : parseTokenList(url.v3category);
+    var v3ModeActive =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("v3mode") === "1";
     var preferUrlFilters =
+      v3ModeActive ||
       Boolean(url.v3focus) ||
       Boolean(url.v3Rules && url.v3Rules.length) ||
       Boolean(urlTypeTokens.length) ||

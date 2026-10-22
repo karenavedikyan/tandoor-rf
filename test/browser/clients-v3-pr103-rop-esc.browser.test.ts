@@ -38,11 +38,37 @@ function territoryPath(responsibleGuid: string, kind: "regional" | "manager" | "
   );
 }
 
+const CLIENT = (n: number) => `b2000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+function territoryListPath(responsibleGuid: string, kind: "regional" | "manager" | "hardware"): string {
+  return (
+    `/clients?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&ropEmployee=${ROP}&orgTeamGuid=${TEAM}` +
+    `&responsibleGuid=${responsibleGuid}&responsibleKind=${kind}&teamKind=${kind}`
+  );
+}
+
+function assertScopeInUrl(url: string, guid: string, kind: string): void {
+  const u = new URL(url);
+  assert.equal(u.searchParams.get("responsibleGuid"), guid);
+  assert.equal(u.searchParams.get("responsibleKind"), kind);
+  assert.equal(u.searchParams.get("teamKind"), kind);
+}
+
 function assertTopInUrl(url: string, typeGuid: string, label: string): void {
   const u = new URL(url);
   assert.equal(u.searchParams.get("v3type"), typeGuid, `${label}: v3type`);
   const filters = u.searchParams.get("filters") || "";
   assert.ok(decodeURIComponent(filters).includes(typeGuid), `${label}: filters.typeGuid`);
+}
+
+function assertNoTopInUrl(url: string, label: string): void {
+  const u = new URL(url);
+  assert.equal(u.searchParams.get("v3type") || "", "", `${label}: v3type must be empty`);
+  assert.equal(u.searchParams.get("typeGuids") || "", "", `${label}: typeGuids must be empty`);
+  const filters = u.searchParams.get("filters") || "";
+  if (filters) {
+    assert.ok(!decodeURIComponent(filters).includes("typeGuid"), `${label}: filters must not include typeGuid`);
+  }
 }
 
 describe("PR103 ROP Escape keeps latest TOP filter", { concurrency: false }, () => {
@@ -82,6 +108,64 @@ describe("PR103 ROP Escape keeps latest TOP filter", { concurrency: false }, () 
     await p.click('button[type="submit"]');
     await p.waitForURL((u) => u.pathname !== "/login");
     return p;
+  }
+
+  async function assertFocusShellVisible(p: Page): Promise<void> {
+    const root = p.locator('[data-testid="v3-focus-root"]');
+    await root.waitFor({ state: "visible", timeout: 15000 });
+    await p.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="v3-focus-root"]');
+      return Boolean(el && el.getClientRects().length > 0);
+    });
+    assert.equal(await p.locator(FOCUS_SEARCH).isVisible(), true);
+    const rows = await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').count();
+    assert.ok(rows > 0, "focus table rows must be visible after reopen");
+  }
+
+  async function assertAllowedRowGuids(p: Page, allowed: string[]): Promise<void> {
+    const guids = await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link').evaluateAll((anchors) =>
+      anchors
+        .map((a) => {
+          const href = (a as HTMLAnchorElement).getAttribute("href") || "";
+          const match = href.match(/\/clients\/([^/?]+)/);
+          return match ? decodeURIComponent(match[1]).toLowerCase() : "";
+        })
+        .filter(Boolean),
+    );
+    const uniqueGuids = [...new Set(guids)];
+    assert.equal(uniqueGuids.length, allowed.length, "row count must match allowed portfolio");
+    const allowedSet = new Set(allowed.map((g) => g.toLowerCase()));
+    for (const guid of uniqueGuids) {
+      assert.ok(allowedSet.has(guid), `unexpected client row ${guid}`);
+    }
+  }
+
+  async function waitPortfolioList(
+    p: Page,
+    subjectGuid: string,
+    expectedTotal: number,
+    requireNoTop: boolean,
+  ): Promise<import("playwright").Response> {
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      const res = await p.waitForResponse(
+        (r) => r.url().includes("/api/clients/v3/list") && r.status() === 200,
+        { timeout: 3000 },
+      );
+      const u = new URL(res.url());
+      if (u.searchParams.get("responsibleGuid") !== subjectGuid) {
+        continue;
+      }
+      const decoded = decodeURIComponent(res.url());
+      if (requireNoTop && (u.searchParams.get("v3type") || decoded.includes("typeGuid"))) {
+        continue;
+      }
+      const body = (await res.json()) as { total: number };
+      if (body.total === expectedTotal) {
+        return res;
+      }
+    }
+    throw new Error(`timed out waiting for scoped list total=${expectedTotal} subject=${subjectGuid}`);
   }
 
   async function waitScopedList(p: Page, typeGuid: string): Promise<{ total: number }> {
@@ -154,6 +238,65 @@ describe("PR103 ROP Escape keeps latest TOP filter", { concurrency: false }, () 
     it(`ROP actor ${kind}: search/reset/reselect150/Esc keeps TOP150 in URL`, async () => {
       const p = await loginRop();
       await runRopEscSequence(p, subject, kind, portfolio, top150);
+      await p.close();
+    });
+  }
+
+  async function runRopResetEscReopen(
+    p: Page,
+    subjectGuid: string,
+    kind: "regional" | "manager" | "hardware",
+    portfolioTotal: number,
+    top500Total: number,
+    allowedGuids: string[],
+  ): Promise<void> {
+    const initialList = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.goto(base + territoryListPath(subjectGuid, kind));
+    await initialList;
+    const enterFocus = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.locator('[data-testid="v3-focus-enter"]:visible').click();
+    await enterFocus;
+
+    const top500Wait = p.waitForResponse((r) =>
+      r.url().includes("/api/clients/v3/list") &&
+      r.status() === 200 &&
+      decodeURIComponent(r.url()).includes(TYPES[2]),
+    );
+    await p.locator(TOP).selectOption(TYPES[2]);
+    const top500Body = (await (await top500Wait).json()) as { total: number };
+    assert.equal(top500Body.total, top500Total);
+
+    const resetWait = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.locator("#v3-focus-reset").click();
+    const resetBody = (await (await resetWait).json()) as { total: number };
+    assert.equal(resetBody.total, portfolioTotal);
+    assertNoTopInUrl(p.url(), "after toolbar reset");
+
+    const exitList = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.keyboard.press("Escape");
+    await exitList;
+    assertNoTopInUrl(p.url(), "after Esc");
+    assertScopeInUrl(p.url(), subjectGuid, kind);
+    await p.waitForFunction(() => !document.body.classList.contains("x14-focus-mode"));
+
+    await p.locator('[data-testid="v3-focus-enter"]:visible').click();
+    const reopenRes = await waitPortfolioList(p, subjectGuid, portfolioTotal, true);
+    const reopenBody = (await reopenRes.json()) as { total: number };
+    assert.equal(reopenBody.total, portfolioTotal, "reopen list must match scoped portfolio size");
+    await assertFocusShellVisible(p);
+    assertNoTopInUrl(p.url(), "reopen must not resurrect stale sidebar value");
+    assertScopeInUrl(p.url(), subjectGuid, kind);
+    await assertAllowedRowGuids(p, allowedGuids);
+  }
+
+  for (const [kind, subject, portfolio, top500, allowed] of [
+    ["regional", REG_A, 3, 1, [CLIENT(1), CLIENT(2), CLIENT(3)]],
+    ["manager", M1, 6, 2, [CLIENT(1), CLIENT(2), CLIENT(3), CLIENT(4), CLIENT(5), CLIENT(6)]],
+    ["hardware", HW_A, 3, 1, [CLIENT(1), CLIENT(2), CLIENT(3)]],
+  ] as const) {
+    it(`ROP actor ${kind}: reset toolbar, Esc, reopen keeps empty TOP and full scoped portfolio`, async () => {
+      const p = await loginRop();
+      await runRopResetEscReopen(p, subject, kind, portfolio, top500, allowed);
       await p.close();
     });
   }
