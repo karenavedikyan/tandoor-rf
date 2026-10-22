@@ -992,6 +992,9 @@
               window.ClientsV3.loadList(ctx, readState(), true);
             },
             onReset: function () {
+              if (window.ClientsLktandoorFocus.prepareExplicitReset) {
+                window.ClientsLktandoorFocus.prepareExplicitReset();
+              }
               var next = window.ClientsLktandoorFocus.buildFocusResetState
                 ? window.ClientsLktandoorFocus.buildFocusResetState()
                 : mergeListStateForUserAction({

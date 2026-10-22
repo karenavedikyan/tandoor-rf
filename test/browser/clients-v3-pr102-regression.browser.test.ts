@@ -220,6 +220,28 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     await p.close();
   });
 
+  for (const mobile of [false, true] as const) {
+    it(`${mobile ? "mobile390" : "desktop"}: reset-empty clears applied search text in DOM`, async () => {
+      const p = await pageFor();
+      if (mobile) {
+        await p.setViewportSize({ width: 390, height: 844 });
+      }
+      await openFocusWarm(p);
+      const empty = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+      await p.locator(FOCUS_SEARCH).fill("NO_SUCH_SYNTHETIC_NAME");
+      assert.equal((await (await empty).json()).total, 0);
+      await p.getByRole("heading", { name: "Нет совпадений" }).waitFor({ state: "visible" });
+      const reset = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+      await p.locator("#v3-focus-reset-empty").click();
+      assert.equal((await (await reset).json()).total, 9);
+      assert.equal(await p.locator(FOCUS_SEARCH).inputValue(), "", "Reset must clear old applied search text, not resurrect it as draft");
+      assert.equal(new URL(p.url()).searchParams.get("q") || "", "");
+      await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+      assert.equal(await p.locator(FOCUS_SEARCH).inputValue(), "");
+      await p.close();
+    });
+  }
+
   for (const status of [400, 500, 403] as const) {
     it(`late metadata after list ${status} never resurrects cached rows`, async () => {
       const p = await pageFor();

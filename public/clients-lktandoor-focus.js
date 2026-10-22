@@ -4,6 +4,39 @@
   var filterTimer = null;
   var scrollStoragePrefix = "clients-v3-focus-scroll:";
 
+  function clearFocusSearchDebounce() {
+    clearTimeout(filterTimer);
+    filterTimer = null;
+  }
+
+  function bumpFocusSearchResetEpoch() {
+    window.__v3FocusSearchResetEpoch = (window.__v3FocusSearchResetEpoch || 0) + 1;
+    return window.__v3FocusSearchResetEpoch;
+  }
+
+  function rememberFocusSearchUserPick(value) {
+    window.__v3FocusSearchUserPick = value;
+  }
+
+  function clearFocusSearchUserPick() {
+    delete window.__v3FocusSearchUserPick;
+  }
+
+  function prepareFocusExplicitReset() {
+    clearFocusSearchDebounce();
+    bumpFocusSearchResetEpoch();
+    clearFocusSearchUserPick();
+    window.__v3FocusEnumUserPick = {};
+    var focusSearch = document.getElementById("v3-focus-search");
+    if (focusSearch) {
+      focusSearch.value = "";
+    }
+    var mainSearch = document.getElementById("search-input");
+    if (mainSearch) {
+      mainSearch.value = "";
+    }
+  }
+
   var COL_FILTER = {
     name: { kind: "rule", field: "groupDisplayName", input: "text", op: "contains" },
     client_name: { kind: "rule", field: "clientName", input: "text", op: "contains" },
@@ -682,8 +715,16 @@
           if (!payload.onSearch) {
             return;
           }
-          clearTimeout(filterTimer);
+          rememberFocusSearchUserPick(search.value || "");
+          clearFocusSearchDebounce();
+          var debounceEpoch = window.__v3FocusSearchResetEpoch || 0;
           filterTimer = setTimeout(function () {
+            if (debounceEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
+              return;
+            }
+            if (!search.isConnected) {
+              return;
+            }
             payload.onSearch(search.value || "");
           }, 220);
         },
@@ -984,11 +1025,17 @@
       var committedQ = String(state.q || "").trim();
       var draftQ = existingSearch.value || "";
       if (draftQ !== committedQ) {
-        searchDraft = {
-          value: draftQ,
-          start: existingSearch.selectionStart,
-          end: existingSearch.selectionEnd,
-        };
+        var userPick = window.__v3FocusSearchUserPick;
+        var fromUser =
+          document.activeElement === existingSearch ||
+          (typeof userPick === "string" && userPick === draftQ);
+        if (fromUser) {
+          searchDraft = {
+            value: draftQ,
+            start: existingSearch.selectionStart,
+            end: existingSearch.selectionEnd,
+          };
+        }
       }
     }
     var searchValue = searchDraft ? searchDraft.value : state.q || "";
@@ -1126,12 +1173,8 @@
       }
     });
     function resetAll() {
-      window.__v3FocusEnumUserPick = {};
+      prepareFocusExplicitReset();
       var next = buildFocusResetState();
-      var mainSearch = document.getElementById("search-input");
-      if (mainSearch) {
-        mainSearch.value = "";
-      }
       reload(next, null);
     }
     document.getElementById("v3-focus-reset")?.addEventListener("click", resetAll);
@@ -1146,8 +1189,16 @@
       searchEl.addEventListener("input", function () {
         var el = searchEl;
         var caret = el.selectionStart;
-        clearTimeout(filterTimer);
+        rememberFocusSearchUserPick(el.value || "");
+        clearFocusSearchDebounce();
+        var debounceEpoch = window.__v3FocusSearchResetEpoch || 0;
         filterTimer = setTimeout(function () {
+          if (debounceEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
+            return;
+          }
+          if (!el.isConnected) {
+            return;
+          }
           var main = document.getElementById("search-input");
           if (main) {
             main.value = el.value;
@@ -1219,6 +1270,7 @@
     render: render,
     renderBlockingError: renderBlockingError,
     buildFocusResetState: buildFocusResetState,
+    prepareExplicitReset: prepareFocusExplicitReset,
     bindGlobal: bindGlobal,
     captureScroll: function (state) {
       writeScroll(state, document.getElementById("x14-focus-scroll"));

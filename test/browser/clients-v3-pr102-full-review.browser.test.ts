@@ -189,6 +189,10 @@ describe("PR102 independent full matrix", {concurrency:false}, () => {
       await p.getByRole("heading",{name:"Нет совпадений"}).waitFor({state:"visible"});await noError(p);
       const reset=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&r.status()===200);await p.locator("#v3-focus-reset-empty").click();assert.equal((await(await reset).json()).total,9);
       await p.locator(TOP).waitFor({state:"visible"});assert.equal(await p.locator(TOP).inputValue(),"");
+      assert.equal(await p.locator("#v3-focus-search").inputValue(),"","Reset must clear old applied search text, not resurrect it as draft");
+      assert.equal(new URL(p.url()).searchParams.get("q")||"","");
+      await p.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
+      assert.equal(await p.locator("#v3-focus-search").inputValue(),"");
       await p.screenshot({path:path.join(OUT,mobile?"mobile.png":"desktop.png")});
       await p.keyboard.press("Escape");await p.waitForFunction(()=>!document.body.classList.contains("x14-focus-mode"));await p.close();
     });
@@ -202,7 +206,7 @@ describe("PR102 independent full matrix", {concurrency:false}, () => {
       await p.locator("#v3-focus-columns").click();await p.locator("#v3-lktandoor-columns-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");
       await p.unroute("**/api/clients/v3/list?*",handler);const recovered=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&r.status()===200);await p.locator("#v3-focus-retry-load").click();assert.equal((await(await recovered).json()).total,2);await noError(p);
       await p.route("**/api/clients/v3/list?*",handler);await p.locator("#v3-focus-search").fill("triggeragain");await p.locator('[data-testid="v3-focus-error"]').waitFor({state:"visible"});await p.unroute("**/api/clients/v3/list?*",handler);
-      const reset=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&r.status()===200);await p.locator("#v3-focus-reset").click();assert.equal((await(await reset).json()).total,6);await noError(p);await p.close();
+      const reset=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&r.status()===200);await p.locator("#v3-focus-reset").click();assert.equal((await(await reset).json()).total,6);assert.equal(await p.locator("#v3-focus-search").inputValue(),"","error-state reset must clear search field");await noError(p);await p.close();
     });
   }
   for(const status of [400,500,403]){
