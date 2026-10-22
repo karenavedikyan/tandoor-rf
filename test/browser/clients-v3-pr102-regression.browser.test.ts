@@ -25,6 +25,7 @@ const TYPES = [
 const CAT = "ee000000-0000-4000-8000-000000000999";
 const PW = "SyntheticOnly102!";
 const TOP = "#v3-focus-filter-category_name-enum";
+const FOCUS_SEARCH = "#v3-focus-search";
 const LIST = "/clients?v3mode=1&v3entity=legal_grouped&view=all&v3view=all&v3focus=1";
 
 describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false }, () => {
@@ -57,6 +58,20 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     await closePool();
     assert.deepEqual(pageErrors, [], "unexpected page exceptions: " + pageErrors.join("; "));
   });
+
+  async function openFocusWarm(p: Page): Promise<void> {
+    const listUrl = LIST.replace("&v3focus=1", "");
+    const first = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.goto(base + listUrl);
+    await first;
+    const focused = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.locator('[data-testid="v3-focus-enter"]:visible').click();
+    await focused;
+    await p.waitForSelector('[data-testid="v3-focus-root"]', { state: "visible" });
+    await p.locator(TOP).waitFor({ state: "visible" });
+    await p.waitForLoadState("networkidle");
+    await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').first().waitFor();
+  }
 
   async function pageFor(): Promise<Page> {
     const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -142,6 +157,63 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     );
     await p.close();
   });
+
+  for (const status of [400, 500, 403] as const) {
+    it(`late metadata after list ${status} never resurrects cached rows`, async () => {
+      const p = await pageFor();
+      await openFocusWarm(p);
+      await p.locator(TOP).selectOption(TYPES[0]);
+      await p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+      await p.waitForLoadState("networkidle");
+      let release!: () => void;
+      let seen!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const arrived = new Promise<void>((r) => {
+        seen = r;
+      });
+      await p.route("**/api/clients/v3/options?*", async (route) => {
+        const res = await route.fetch();
+        seen();
+        await gate;
+        await route.fulfill({ response: res });
+      });
+      await p.route("**/api/clients/v3/list?*", (route) =>
+        route.fulfill({
+          status,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Synthetic denied or failed request" }),
+        }),
+      );
+      const failed = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === status);
+      await p.locator(FOCUS_SEARCH).fill("NEW_FAILED_CRITERIA");
+      await p.waitForTimeout(300);
+      await failed;
+      await arrived;
+      if (status !== 403) {
+        await p.locator('[data-testid="v3-focus-error"]').waitFor({ state: "visible", timeout: 15000 });
+      }
+      const late = p.waitForResponse((r) => r.url().includes("/api/clients/v3/options"));
+      release();
+      await late;
+      await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+      assert.equal(
+        await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').count(),
+        0,
+        "cached rows must not reappear after failed list load",
+      );
+      if (status !== 403) {
+        assert.ok(await p.locator('[data-testid="v3-focus-error"]').isVisible());
+      } else {
+        assert.ok(
+          (await p.locator('[data-testid="v3-focus-error"]').count()) > 0 ||
+            (await p.locator("#results-state:not(.clients-hidden)").count()) > 0,
+        );
+      }
+      await p.close();
+    });
+  }
 });
 
 async function seedPr102(databaseUrl: string): Promise<void> {

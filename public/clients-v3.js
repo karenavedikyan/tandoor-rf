@@ -5,6 +5,14 @@
   var v3FilterReloadRef = null;
   var v3FilterCtxRef = null;
 
+  function setV3FocusListLoadOutcome(generation, ok, payload) {
+    window.__v3FocusListLoadOutcome = {
+      generation: generation,
+      ok: !!ok,
+      payload: ok && payload ? payload : null,
+    };
+  }
+
   var ENTITIES = [
     { id: "holdings", label: "Холдинги", detailEntity: "holding", listNoun: "холдингов" },
     { id: "legal_grouped", label: "Клиенты", detailEntity: "holding", listNoun: "клиентов" },
@@ -970,6 +978,7 @@
         );
       }
       function showV3ListLoadFailure(focusState, title, message) {
+        setV3FocusListLoadOutcome(loadGeneration, false, null);
         if (isV3FocusListMode(focusState)) {
           ctx.showResultsContent();
           window.ClientsLktandoorFocus.renderBlockingError({
@@ -1027,6 +1036,7 @@
       }
       v3ListLoadGeneration += 1;
       var loadGeneration = v3ListLoadGeneration;
+      setV3FocusListLoadOutcome(loadGeneration, false, null);
       function isStaleListLoad() {
         if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
           return true;
@@ -1047,10 +1057,20 @@
         if (!focusMode) {
           return;
         }
-        var cached = window.__lastV3ListPayload;
-        if (!cached || !cached.visibleCols) {
+        var outcome = window.__v3FocusListLoadOutcome;
+        if (
+          !outcome ||
+          outcome.generation !== loadGeneration ||
+          !outcome.ok ||
+          !outcome.payload ||
+          !outcome.payload.visibleCols
+        ) {
           return;
         }
+        if (document.querySelector('[data-testid="v3-focus-error"]')) {
+          return;
+        }
+        var cached = outcome.payload;
         var host = document.getElementById("v3-focus-host");
         if (!host || host.classList.contains("clients-hidden")) {
           return;
@@ -1301,7 +1321,17 @@
             return;
           }
           if (result.response.status === 403) {
-            ctx.showAccessDenied();
+            setV3FocusListLoadOutcome(loadGeneration, false, null);
+            var deniedState = readState();
+            if (isV3FocusListMode(deniedState)) {
+              showV3ListLoadFailure(
+                deniedState,
+                "Нет доступа к списку",
+                "Недостаточно прав для выбранного фильтра или области.",
+              );
+            } else {
+              ctx.showAccessDenied();
+            }
             return;
           }
           if (!result.response.ok) {
@@ -1375,6 +1405,7 @@
               visibleCols: focusCols,
               filterOptions: window.__lktandoorFilterOptions || {},
               detailType: meta.detailEntity,
+              loadGeneration: loadGeneration,
               onState: function (nextState, editor) {
                 window.__v3FocusEditor = editor || null;
                 if (window.ClientsV3FieldRules) {
@@ -1384,6 +1415,7 @@
                 window.ClientsV3.loadList(ctx, nextState, false);
               },
             };
+            setV3FocusListLoadOutcome(loadGeneration, true, window.__lastV3ListPayload);
             return;
           }
           ctx.showResultsContent();
