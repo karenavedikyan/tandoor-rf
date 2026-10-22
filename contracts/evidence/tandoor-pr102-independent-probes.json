@@ -1,0 +1,37 @@
+{
+  "generatedAt": "2026-10-22T06:38:03.775Z",
+  "shippedFiles": {
+    "filterNumber": "public/clients-v3-filter-number.js",
+    "focus": "public/clients-lktandoor-focus.js"
+  },
+  "normalizeListFilterNumberValue": {
+    "1e-20": {
+      "ok": true,
+      "value": "0.00000000000000000001"
+    },
+    "1e21": {
+      "ok": true,
+      "value": "1000000000000000000000"
+    },
+    "9007199254740993": {
+      "ok": true,
+      "value": "9007199254740993"
+    },
+    "1e3": {
+      "ok": true,
+      "value": "1000"
+    },
+    "Infinity": {
+      "ok": false,
+      "reason": "invalid"
+    },
+    "NaN": {
+      "ok": false,
+      "reason": "invalid"
+    },
+    "0x10": {
+      "ok": false,
+      "reason": "invalid"
+    }
+  }
+}

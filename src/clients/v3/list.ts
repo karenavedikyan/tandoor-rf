@@ -274,7 +274,7 @@ export async function listV3Entities(
         SELECT h.guid_holding::text AS guid, h.name_holding AS name
         FROM onec_v3_holdings h
         WHERE (${scope.clause})${search}${filters}
-        ORDER BY h.name_holding ASC
+        ORDER BY h.name_holding ASC, h.guid_holding::text ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,
@@ -319,7 +319,7 @@ export async function listV3Entities(
                ${legalInnSql("le")} AS inn
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
-        ORDER BY le.name_client ASC
+        ORDER BY le.name_client ASC, le.guid_client::text ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,
@@ -366,7 +366,7 @@ export async function listV3Entities(
              ${v3TypeNameSql("ro")} AS type_name
       ${fromSql}
       WHERE (${scope.clause})${orphanOnly}${closedFilter}${search}${filters}
-      ORDER BY ro.address->>'store_address' ASC NULLS LAST, name ASC
+      ORDER BY ro.address->>'store_address' ASC NULLS LAST, name ASC, ro.guid_store::text ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params,
