@@ -291,6 +291,15 @@
   function mergeListStateForUserAction(patch) {
     var url = readState();
     var dom = readFiltersFromDom();
+    var urlTypeTokens = url.v3types.length ? url.v3types.slice() : parseTokenList(url.v3type);
+    var urlCategoryTokens = url.v3categories.length
+      ? url.v3categories.slice()
+      : parseTokenList(url.v3category);
+    var preferUrlFilters =
+      Boolean(url.v3focus) ||
+      Boolean(url.v3Rules && url.v3Rules.length) ||
+      Boolean(urlTypeTokens.length) ||
+      Boolean(urlCategoryTokens.length);
     var teamResponsible =
       url.responsibleGuid && url.responsibleKind && (url.v3view === "teams" || url.ropEmployee);
     var next = {
@@ -304,16 +313,16 @@
           ? url.v3manager || url.responsibleGuid
           : ""
         : dom.v3manager || url.v3manager || "",
-      v3types: dom.v3types.length
-        ? dom.v3types.slice()
-        : url.v3types.length
-          ? url.v3types.slice()
-          : parseTokenList(url.v3type),
-      v3categories: dom.v3categories.length
-        ? dom.v3categories.slice()
-        : url.v3categories.length
-          ? url.v3categories.slice()
-          : parseTokenList(url.v3category),
+      v3types: preferUrlFilters
+        ? urlTypeTokens
+        : dom.v3types.length
+          ? dom.v3types.slice()
+          : urlTypeTokens,
+      v3categories: preferUrlFilters
+        ? urlCategoryTokens
+        : dom.v3categories.length
+          ? dom.v3categories.slice()
+          : urlCategoryTokens,
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       orgTeamGuid: url.orgTeamGuid,

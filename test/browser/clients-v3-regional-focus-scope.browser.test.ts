@@ -16,6 +16,8 @@ import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrat
 const M1 = "22222222-2222-4222-8222-222222222222";
 const REG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const REG_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const HW_A = "cc000000-0000-4000-8000-000000000001";
+const HW_B = "cc000000-0000-4000-8000-000000000002";
 const ROP = "55555555-5555-4555-8555-555555555555";
 const TEAM = "ab000000-0000-4000-8000-000000000001";
 const TYPES = [
@@ -132,7 +134,7 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     topGuid: string,
     expectedTotal: number,
     expectedClientGuids: string[],
-    forbiddenRegional?: string,
+    forbiddenClientGuids: string[] = [],
   ): Promise<void> {
     assertScopeInUrl(p.url(), responsibleGuid, kind);
     const listWait = p.waitForResponse((r) =>
@@ -152,22 +154,19 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     for (const guid of expectedClientGuids) {
       assert.ok(returned.includes(guid.toLowerCase()), `expected fixture client ${guid} in scoped list`);
     }
-    if (forbiddenRegional) {
-      for (const item of body.items) {
-        const guid = String(item.guid || "").toLowerCase();
-        assert.ok(
-          !guid.includes(forbiddenRegional.slice(0, 8)),
-          "other regional portfolio must not appear in scoped list",
-        );
-      }
+    const forbidden = new Set(forbiddenClientGuids.map((g) => g.toLowerCase()));
+    for (const item of body.items) {
+      const guid = String(item.guid || "").toLowerCase();
+      assert.ok(!forbidden.has(guid), `forbidden fixture client ${guid} in scoped list`);
     }
+    assert.equal(returned.length, expectedTotal);
     await assertFocusShellVisible(p);
   }
 
   it("direct URL: regional manager keeps scope after TOP filter (1 of 2 in team)", async () => {
     const p = await loginPage();
     await openTerritoryFocus(p, territoryPath(REG_A, "regional"));
-    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1, [CLIENT(1)], REG_B);
+    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1, [CLIENT(1)], [CLIENT(4), CLIENT(5), CLIENT(6)]);
     await p.close();
   });
 
@@ -202,7 +201,7 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     await p.locator('[data-testid="v3-focus-enter"]:visible').click();
     await focusList;
     await assertFocusShellVisible(p);
-    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[2], 1, [CLIENT(3)], REG_B);
+    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[2], 1, [CLIENT(3)], [CLIENT(4), CLIENT(5), CLIENT(6)]);
     await p.close();
   });
 
@@ -258,6 +257,7 @@ async function seedRegionalScope(databaseUrl: string): Promise<void> {
       type_category: tc,
       guid_manager: M1,
       guid_regional_manager: regional,
+      guid_hardware_manager: i < 3 ? HW_A : HW_B,
       guid_head_of_the_sales_department: ROP,
     });
     retail.push({
@@ -277,6 +277,8 @@ async function seedRegionalScope(databaseUrl: string): Promise<void> {
     buildEmployeeRosterEntry(M1, { name_manager: "QA Manager One", ...member }),
     buildEmployeeRosterEntry(REG_A, { name_manager: "QA Regional A", post: "Региональный менеджер", ...member }),
     buildEmployeeRosterEntry(REG_B, { name_manager: "QA Regional B", post: "Региональный менеджер", ...member }),
+    buildEmployeeRosterEntry(HW_A, { name_manager: "QA Hardware A", post: "Менеджер по фурнитуре", ...member }),
+    buildEmployeeRosterEntry(HW_B, { name_manager: "QA Hardware B", post: "Менеджер по фурнитуре", ...member }),
     buildEmployeeRosterEntry(ROP, { name_manager: "QA ROP", post: "Руководитель отдела продаж", ...member }),
   ]);
   const args = {
@@ -303,7 +305,7 @@ async function seedRegionalScope(databaseUrl: string): Promise<void> {
       await client.query(
         `INSERT INTO onec_wholesale_roster_state(id,source_sha256,employee_count,imported_at)
          VALUES(1,$1,$2,NOW()) ON CONFLICT(id) DO UPDATE SET source_sha256=EXCLUDED.source_sha256,employee_count=EXCLUDED.employee_count,imported_at=NOW()`,
-        [parsed.roster.sourceSha256, 4],
+        [parsed.roster.sourceSha256, 6],
       );
     }
     await client.query("COMMIT");
@@ -322,6 +324,19 @@ async function seedRegionalScope(databaseUrl: string): Promise<void> {
     databaseUrl,
     userId: admin.id,
     employeeId: M1,
+    confirmedByUserId: admin.id,
+  });
+  const ropUser = await createTestUser({
+    databaseUrl,
+    email: "qa-rop@example.test",
+    password: PW,
+    fullName: "QA ROP User",
+    role: "rop",
+  });
+  await linkUserToEmployee({
+    databaseUrl,
+    userId: ropUser.id,
+    employeeId: ROP,
     confirmedByUserId: admin.id,
   });
 }

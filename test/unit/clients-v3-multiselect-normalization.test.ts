@@ -206,6 +206,29 @@ describe("clients v3 multiselect normalization", () => {
     assert.equal(merged.v3manager, "");
   });
 
+  it("prefers URL TOP filters over stale lktandoor multiselect when exiting focus", () => {
+    const top150 = "ee000000-0000-4000-8000-000000000150";
+    const top500 = "ee000000-0000-4000-8000-000000000500";
+    const search =
+      "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&v3focus=1&v3type=" +
+      top150 +
+      "&filters=" +
+      encodeURIComponent(JSON.stringify([{ field: "typeGuid", op: "eq", value: top150 }]));
+    const v3 = loadClientsV3(search);
+    const select = document.createElement("select");
+    select.id = "v3-type-filter";
+    const stale = document.createElement("option");
+    stale.value = top500;
+    stale.selected = true;
+    select.appendChild(stale);
+    document.body.appendChild(select);
+    const merged = v3.mergeListStateForUserAction({ v3focus: false }) as Record<string, unknown>;
+    assert.deepEqual(merged.v3types, [top150]);
+    assert.equal(merged.v3type, top150);
+    const rules = merged.v3Rules as { field: string; value: string }[];
+    assert.equal(rules.some((r) => r.field === "typeGuid" && r.value === top150), true);
+  });
+
   it("still clears manager team scope when patch only clears v3manager", () => {
     const rop = "55555555-5555-4555-8555-555555555555";
     const manager = "22222222-2222-4222-8222-222222222222";
