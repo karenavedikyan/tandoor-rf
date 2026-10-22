@@ -26,6 +26,9 @@ const TYPES = [
 const CAT = "ee000000-0000-4000-8000-000000000999";
 const PW = "SyntheticOnly102!";
 const TOP = "#v3-focus-filter-category_name-enum";
+const FOCUS_SEARCH = "#v3-focus-search";
+const FOCUS_EXIT = "#v3-focus-exit";
+const CLIENT = (n: number) => `b2000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 function territoryPath(responsibleGuid: string, kind: "regional" | "manager", extra = ""): string {
   const base =
@@ -90,13 +93,36 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     return p;
   }
 
+  async function assertFocusShellVisible(p: Page): Promise<void> {
+    const root = p.locator('[data-testid="v3-focus-root"]');
+    await root.waitFor({ state: "visible", timeout: 15000 });
+    await p.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="v3-focus-root"]');
+      return Boolean(el && el.getClientRects().length > 0);
+    });
+    assert.equal(await root.isVisible(), true, "focus root must be visible");
+    const rectCount = await root.evaluate((el) => el.getClientRects().length);
+    assert.ok(rectCount > 0, "focus root must participate in layout (getClientRects)");
+    assert.equal(await p.locator(FOCUS_SEARCH).isVisible(), true, "focus search must be visible");
+    assert.equal(await p.locator(FOCUS_EXIT).isVisible(), true, "focus exit must be visible");
+    const rowLinks = await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').count();
+    const emptyHeading = await p.getByRole("heading", { name: "Нет совпадений" }).isVisible();
+    const errorShell = await p.locator('[data-testid="v3-focus-error"]').isVisible();
+    assert.ok(rowLinks > 0 || emptyHeading || errorShell, "rows, empty, or error shell must be visible");
+  }
+
   async function openTerritoryFocus(p: Page, path: string): Promise<void> {
     const listReady = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
     await p.goto(base + path);
     await listReady;
-    await p.locator('[data-testid="v3-focus-root"]', { timeout: 15000 }).waitFor({ state: "visible" });
+    await p
+      .locator(
+        '[data-testid="v3-focus-root"] tbody a.clients-link:visible, [data-testid="v3-focus-root"] tr.x15-empty',
+      )
+      .first()
+      .waitFor({ timeout: 15000 });
+    await assertFocusShellVisible(p);
     await p.locator(TOP).waitFor({ state: "visible" });
-    await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').first().waitFor();
   }
 
   async function selectTopAndAssertScope(
@@ -105,6 +131,7 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     kind: string,
     topGuid: string,
     expectedTotal: number,
+    expectedClientGuids: string[],
     forbiddenRegional?: string,
   ): Promise<void> {
     assertScopeInUrl(p.url(), responsibleGuid, kind);
@@ -121,6 +148,10 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     assertScopeInApi(optRes.url(), responsibleGuid, kind);
     const body = (await listRes.json()) as { total: number; items: { guid?: string }[] };
     assert.equal(body.total, expectedTotal);
+    const returned = body.items.map((item) => String(item.guid || "").toLowerCase());
+    for (const guid of expectedClientGuids) {
+      assert.ok(returned.includes(guid.toLowerCase()), `expected fixture client ${guid} in scoped list`);
+    }
     if (forbiddenRegional) {
       for (const item of body.items) {
         const guid = String(item.guid || "").toLowerCase();
@@ -130,12 +161,13 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
         );
       }
     }
+    await assertFocusShellVisible(p);
   }
 
   it("direct URL: regional manager keeps scope after TOP filter (1 of 2 in team)", async () => {
     const p = await loginPage();
     await openTerritoryFocus(p, territoryPath(REG_A, "regional"));
-    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1, REG_B);
+    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1, [CLIENT(1)], REG_B);
     await p.close();
   });
 
@@ -143,14 +175,41 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     const p = await loginPage();
     const path = territoryPath(M1, "manager", `&v3manager=${M1}`);
     await openTerritoryFocus(p, path);
-    await selectTopAndAssertScope(p, M1, "manager", TYPES[0], 2);
+    await selectTopAndAssertScope(p, M1, "manager", TYPES[0], 2, [CLIENT(1), CLIENT(4)]);
+    await p.close();
+  });
+
+  it("UI path: ROP team → regional member → fullscreen → TOP without alias", async () => {
+    const p = await loginPage();
+    const ropTeam = `/clients?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&ropEmployee=${ROP}&orgTeamGuid=${TEAM}`;
+    await p.goto(base + ropTeam);
+    await p.waitForSelector(
+      `.x13-person[data-manager="${REG_A}"][data-open-territory="clients"][data-responsible-kind="regional"]`,
+      { timeout: 15000 },
+    );
+    const territoryList = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p
+      .locator(
+        `.x13-person[data-manager="${REG_A}"][data-open-territory="clients"][data-responsible-kind="regional"]`,
+      )
+      .first()
+      .click();
+    await territoryList;
+    assertScopeInUrl(p.url(), REG_A, "regional");
+    assert.ok(!p.url().includes("v3regional="));
+    assert.ok(!p.url().includes("v3manager="));
+    const focusList = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.locator('[data-testid="v3-focus-enter"]:visible').click();
+    await focusList;
+    await assertFocusShellVisible(p);
+    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[2], 1, [CLIENT(3)], REG_B);
     await p.close();
   });
 
   it("reset-empty clears TOP but keeps regional portfolio scope", async () => {
     const p = await loginPage();
     await openTerritoryFocus(p, territoryPath(REG_A, "regional"));
-    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1);
+    await selectTopAndAssertScope(p, REG_A, "regional", TYPES[0], 1, [CLIENT(1)]);
     const resetWait = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
     await p.locator("#v3-focus-reset").click();
     const resetRes = await resetWait;
@@ -158,6 +217,7 @@ describe("clients v3 regional focus scope", { concurrency: false }, () => {
     assertScopeInApi(resetRes.url(), REG_A, "regional");
     const body = (await resetRes.json()) as { total: number };
     assert.equal(body.total, 3, "regional portfolio without TOP filter");
+    await assertFocusShellVisible(p);
     await p.close();
   });
 });

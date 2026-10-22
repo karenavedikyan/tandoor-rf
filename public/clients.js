@@ -2992,6 +2992,12 @@
     unassignedFilterWrap.classList.toggle("clients-hidden", !isReview);
     var branchList = logic.isBranchPortfolioList(state);
     var responsibleList = logic.hasResponsibleSelection(state);
+    if (exchangeV3Active && window.ClientsV3) {
+      var v3ChromeState = window.ClientsV3.readState();
+      if (v3ChromeState.v3focus && v3ChromeState.responsibleGuid && v3ChromeState.responsibleKind) {
+        responsibleList = true;
+      }
+    }
     var teamMemberSwitcher = shouldShowTeamsMemberSwitcher(state);
     teamsPanelEl.classList.toggle(
       "clients-hidden",

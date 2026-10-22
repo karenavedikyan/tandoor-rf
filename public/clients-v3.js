@@ -1150,7 +1150,12 @@
           view: state.v3view === "teams" ? "teams" : "all",
           ropEmployee: state.ropEmployee,
           responsibleGuid: state.responsibleGuid,
-          manager: state.v3manager,
+          responsibleKind: state.responsibleKind,
+          manager:
+            state.v3manager ||
+            (state.responsibleKind === "manager" ? state.responsibleGuid : ""),
+          regionalManager: state.responsibleKind === "regional" ? state.responsibleGuid : "",
+          hardwareManager: state.responsibleKind === "hardware" ? state.responsibleGuid : "",
           teamSource: "rop",
         };
         var lktandoorTeamsActive =
