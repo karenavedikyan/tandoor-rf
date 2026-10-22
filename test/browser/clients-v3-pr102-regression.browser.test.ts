@@ -243,6 +243,32 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     await closePage(p);
   });
 
+  it("list success keeps focus TOP select and search DOM node identity", async () => {
+    const p = await pageFor();
+    await openFocusWarm(p);
+    await p.evaluate(
+      ({ topSel, searchSel }) => {
+        window.__pr102DomIdentitySelect = document.querySelector(topSel);
+        window.__pr102DomIdentitySearch = document.querySelector(searchSel);
+      },
+      { topSel: TOP, searchSel: FOCUS_SEARCH },
+    );
+    const list = p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+    await p.locator(TOP).selectOption(TYPES[0]);
+    await list;
+    await p.waitForLoadState("networkidle");
+    const identity = await p.evaluate(
+      ({ topSel, searchSel }) => ({
+        selectSame: document.querySelector(topSel) === window.__pr102DomIdentitySelect,
+        searchSame: document.querySelector(searchSel) === window.__pr102DomIdentitySearch,
+      }),
+      { topSel: TOP, searchSel: FOCUS_SEARCH },
+    );
+    assert.ok(identity.selectSame, "TOP select element must stay connected across list render");
+    assert.ok(identity.searchSame, "focus search input must stay connected across list render");
+    await closePage(p);
+  });
+
   it("rapid TOP switching with native selectOption preserves latest filter", async () => {
     const p = await pageFor();
     await openFocusWarm(p);
