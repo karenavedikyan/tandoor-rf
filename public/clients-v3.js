@@ -1037,6 +1037,11 @@
       v3ListLoadGeneration += 1;
       var loadGeneration = v3ListLoadGeneration;
       setV3FocusListLoadOutcome(loadGeneration, false, null);
+      if (Object.prototype.hasOwnProperty.call(window, "__v3FocusPendingEditor")) {
+        window.__v3FocusEditor = window.__v3FocusPendingEditor;
+        window.__v3FocusEditorGeneration = loadGeneration;
+        delete window.__v3FocusPendingEditor;
+      }
       function isStaleListLoad() {
         if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
           return true;
@@ -1075,24 +1080,15 @@
         if (!host || host.classList.contains("clients-hidden")) {
           return;
         }
-        if (window.ClientsLktandoorFocus.captureScroll) {
-          window.ClientsLktandoorFocus.captureScroll(liveState);
-        }
-        try {
-          window.ClientsLktandoorFocus.render(ctx, {
-            state: liveState,
-            items: cached.items || [],
-            total: cached.total || 0,
-            visibleCols: cached.visibleCols,
-            filterOptions: window.__lktandoorFilterOptions || {},
-            detailType: cached.detailType,
-            editor: window.__v3FocusEditor || null,
-            onState: cached.onState,
-          });
-        } catch (renderErr) {
-          var wrapped = renderErr instanceof Error ? renderErr : new Error(String(renderErr));
-          wrapped.name = "V3ListRenderError";
-          throw wrapped;
+        if (
+          window.ClientsLktandoorFocus.refreshFilterMetadata &&
+          window.ClientsLktandoorFocus.refreshFilterMetadata(
+            ctx,
+            liveState,
+            window.__lktandoorFilterOptions || {},
+          )
+        ) {
+          return;
         }
       }
       if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
@@ -1381,9 +1377,13 @@
                 visibleCols: focusCols,
                 filterOptions: window.__lktandoorFilterOptions || {},
                 detailType: meta.detailEntity,
-                editor: window.__v3FocusEditor || null,
+                loadGeneration: loadGeneration,
+                editor:
+                  window.__v3FocusEditorGeneration === loadGeneration
+                    ? window.__v3FocusEditor || null
+                    : null,
                 onState: function (nextState, editor) {
-                  window.__v3FocusEditor = editor || null;
+                  window.__v3FocusPendingEditor = editor || null;
                   if (window.ClientsV3FieldRules) {
                     window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
                   }
@@ -1407,7 +1407,7 @@
               detailType: meta.detailEntity,
               loadGeneration: loadGeneration,
               onState: function (nextState, editor) {
-                window.__v3FocusEditor = editor || null;
+                window.__v3FocusPendingEditor = editor || null;
                 if (window.ClientsV3FieldRules) {
                   window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
                 }
@@ -1523,7 +1523,7 @@
             filterOptions: window.__lktandoorFilterOptions || {},
             detailType: detailType,
             onState: function (nextState, editor) {
-              window.__v3FocusEditor = editor || null;
+              window.__v3FocusPendingEditor = editor || null;
               if (window.ClientsV3FieldRules) {
                 window.ClientsV3FieldRules.mergeRulesFromLegacy(nextState);
               }

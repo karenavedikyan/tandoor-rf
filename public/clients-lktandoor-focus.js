@@ -636,6 +636,175 @@
     bindFocusChromeControls(payload, null);
   }
 
+  function patchEnumSelectOptions(selectEl, shell, colId, state, filterOptions) {
+    var spec = COL_FILTER[colId];
+    if (!spec || spec.input !== "enum") {
+      return;
+    }
+    var options = (filterOptions && filterOptions[spec.optionsKey]) || [];
+    var optionsStatus = window.__lktandoorFilterOptionsStatus || "ok";
+    var eq = rulesForField(state, spec.field).find(function (r) {
+      return r.op === "eq";
+    });
+    var stateValue = eq && eq.value ? eq.value : "";
+    var domValue = selectEl.value || "";
+    var isActive = document.activeElement === selectEl;
+    var keepValue = isActive ? domValue : stateValue;
+    if (!isActive && domValue && domValue !== stateValue) {
+      var domInOptions = options.some(function (entry) {
+        return (entry.guid || entry.value || "") === domValue;
+      });
+      if (domInOptions) {
+        keepValue = domValue;
+      }
+    }
+    if (!options.length && optionsStatus === "loading") {
+      return;
+    }
+    if (!options.length && optionsStatus === "error") {
+      return;
+    }
+    selectEl.disabled = false;
+    selectEl.removeAttribute("data-focus-options-state");
+    selectEl.innerHTML =
+      '<option value="">Все</option>' +
+      options
+        .map(function (entry) {
+          var value = entry.guid || entry.value || "";
+          var label = entry.name || entry.value || value;
+          return (
+            '<option value="' +
+            shell.escapeHtml(value) +
+            '"' +
+            (stateValue === value ? " selected" : "") +
+            ">" +
+            shell.escapeHtml(String(label)) +
+            "</option>"
+          );
+        })
+        .join("");
+    var hasKeep = Array.from(selectEl.options).some(function (opt) {
+      return opt.value === keepValue;
+    });
+    if (keepValue && hasKeep) {
+      selectEl.value = keepValue;
+    } else if (stateValue) {
+      selectEl.value = stateValue;
+    } else {
+      selectEl.value = "";
+    }
+  }
+
+  function bindFocusColumnEditor(input, ctx, shell, reload) {
+    if (!input || input.dataset.focusEditorBound === "1") {
+      return;
+    }
+    input.dataset.focusEditorBound = "1";
+    function onEdit(immediate) {
+      var colId = input.getAttribute("data-focus-col") || "";
+      var kind = input.getAttribute("data-focus-kind") || "";
+      var editor = {
+        colId: colId,
+        kind: kind,
+        value: input.value,
+        op: input.getAttribute("data-focus-op") || "contains",
+        id: input.id || filterControlId(colId, kind, input.getAttribute("data-focus-op") || undefined),
+        position: input.selectionStart,
+      };
+      var apply = function () {
+        if (kind === "number" && input.validity && input.validity.badInput) {
+          restoreFilterEditor(editor);
+          return;
+        }
+        var live = window.ClientsV3.readState();
+        var next = applyEditor(live, editor);
+        if (next === null) {
+          window.ClientsLktandoorFocus.renderBlockingError({
+            shell: shell,
+            state: live,
+            ctx: ctx,
+            statusLine: "Недопустимое значение",
+            title: "Недопустимое число",
+            message:
+              "Используйте обычный десятичный формат (например 1000 или 0.5). Значение не отправлено на сервер.",
+            onRetry: function () {
+              reload(live, editor);
+            },
+            onReset: function () {
+              reload(buildFocusResetState(), null);
+            },
+            onExit: function () {
+              reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
+            },
+            onSearch: function (q) {
+              reload(window.ClientsV3.mergeListStateForUserAction({ q: q, page: 1 }), editor);
+            },
+          });
+          restoreFilterEditor(editor);
+          return;
+        }
+        next.page = 1;
+        if (window.ClientsV3FieldRules) {
+          window.ClientsV3FieldRules.syncLegacyFromRules(next);
+        }
+        reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+      };
+      if (immediate || kind === "enum" || kind === "bool") {
+        clearTimeout(filterTimer);
+        apply();
+        return;
+      }
+      clearTimeout(filterTimer);
+      filterTimer = setTimeout(apply, 180);
+    }
+    if (input.tagName === "SELECT") {
+      input.addEventListener("change", function () {
+        onEdit(true);
+      });
+    } else {
+      input.addEventListener("input", function () {
+        onEdit(false);
+      });
+    }
+  }
+
+  function bindFocusColumnEditors(host, ctx, shell, reload) {
+    host.querySelectorAll("[data-focus-col]").forEach(function (input) {
+      bindFocusColumnEditor(input, ctx, shell, reload);
+    });
+  }
+
+  function refreshFilterMetadata(ctx, state, filterOptions) {
+    if (!ctx || !ctx.shell) {
+      return false;
+    }
+    var shell = ctx.shell;
+    var host = document.getElementById("v3-focus-host");
+    if (!host || host.classList.contains("clients-hidden")) {
+      return false;
+    }
+    if (host.querySelector('[data-testid="v3-focus-error"]')) {
+      return false;
+    }
+    var root = host.querySelector('[data-testid="v3-focus-root"]');
+    if (!root) {
+      return false;
+    }
+    var onState = window.__lastV3ListPayload && window.__lastV3ListPayload.onState;
+    if (!onState) {
+      return false;
+    }
+    function reload(nextState, editor) {
+      onState(nextState, editor);
+    }
+    root.querySelectorAll('[data-focus-kind="enum"]').forEach(function (selectEl) {
+      var colId = selectEl.getAttribute("data-focus-col") || "";
+      patchEnumSelectOptions(selectEl, shell, colId, state, filterOptions || {});
+      bindFocusColumnEditor(selectEl, ctx, shell, reload);
+    });
+    return true;
+  }
+
   function render(ctx, payload) {
     if (!ctx || !ctx.shell) {
       return;
@@ -662,11 +831,25 @@
     var listUi = window.ClientsV3List;
     var detailType = payload.detailType || "legal";
     var filterCount = activeFilterCount(state);
+    var searchDraft = null;
+    var existingSearch = document.getElementById("v3-focus-search");
+    if (existingSearch) {
+      var committedQ = String(state.q || "").trim();
+      var draftQ = existingSearch.value || "";
+      if (draftQ !== committedQ) {
+        searchDraft = {
+          value: draftQ,
+          start: existingSearch.selectionStart,
+          end: existingSearch.selectionEnd,
+        };
+      }
+    }
+    var searchValue = searchDraft ? searchDraft.value : state.q || "";
     host.innerHTML =
       '<div class="x14-focus" data-testid="v3-focus-root">' +
       '<div class="x14-focusbar">' +
       '<label class="x15-search"><input id="v3-focus-search" type="search" autocomplete="off" aria-label="Поиск в полноэкранном реестре" placeholder="Поиск по клиентам, адресам, контактам…" value="' +
-      shell.escapeHtml(state.q || "") +
+      shell.escapeHtml(searchValue) +
       '"></label>' +
       '<span role="status">' +
       shell.escapeHtml(countLine) +
@@ -807,6 +990,10 @@
 
     var searchEl = document.getElementById("v3-focus-search");
     if (searchEl) {
+      if (searchDraft && searchEl.setSelectionRange) {
+        var start = typeof searchDraft.start === "number" ? searchDraft.start : searchDraft.value.length;
+        searchEl.setSelectionRange(start, typeof searchDraft.end === "number" ? searchDraft.end : start);
+      }
       searchEl.addEventListener("input", function () {
         var el = searchEl;
         var caret = el.selectionStart;
@@ -831,76 +1018,16 @@
       });
     });
 
-    host.querySelectorAll("[data-focus-col]").forEach(function (input) {
-      function onEdit(immediate) {
-        var colId = input.getAttribute("data-focus-col") || "";
-        var kind = input.getAttribute("data-focus-kind") || "";
-        var editor = {
-          colId: colId,
-          kind: kind,
-          value: input.value,
-          op: input.getAttribute("data-focus-op") || "contains",
-          id: input.id || filterControlId(colId, kind, input.getAttribute("data-focus-op") || undefined),
-          position: input.selectionStart,
-        };
-        var apply = function () {
-          if (kind === "number" && input.validity && input.validity.badInput) {
-            restoreFilterEditor(editor);
-            return;
-          }
-          var live = window.ClientsV3.readState();
-          var next = applyEditor(live, editor);
-          if (next === null) {
-            window.ClientsLktandoorFocus.renderBlockingError({
-              shell: shell,
-              state: live,
-              ctx: ctx,
-              statusLine: "Недопустимое значение",
-              title: "Недопустимое число",
-              message:
-                "Используйте обычный десятичный формат (например 1000 или 0.5). Значение не отправлено на сервер.",
-              onRetry: function () {
-                reload(live, editor);
-              },
-              onReset: function () {
-                reload(buildFocusResetState(), null);
-              },
-              onExit: function () {
-                reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
-              },
-              onSearch: function (q) {
-                reload(window.ClientsV3.mergeListStateForUserAction({ q: q, page: 1 }), editor);
-              },
-            });
-            restoreFilterEditor(editor);
-            return;
-          }
-          next.page = 1;
-          if (window.ClientsV3FieldRules) {
-            window.ClientsV3FieldRules.syncLegacyFromRules(next);
-          }
-          reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
-        };
-        if (immediate || kind === "enum" || kind === "bool") {
-          clearTimeout(filterTimer);
-          apply();
-          return;
-        }
-        clearTimeout(filterTimer);
-        filterTimer = setTimeout(apply, 180);
-      }
-      if (input.tagName === "SELECT") {
-        input.addEventListener("change", function () {
-          onEdit(true);
-        });
-      } else {
-        input.addEventListener("input", function () {
-          onEdit(false);
-        });
-      }
-    });
+    bindFocusColumnEditors(host, ctx, shell, reload);
 
-    restoreFilterEditor(payload.editor);
+    var editorForRestore = null;
+    if (
+      payload.loadGeneration == null ||
+      window.__v3FocusEditorGeneration === payload.loadGeneration
+    ) {
+      editorForRestore = payload.editor != null ? payload.editor : window.__v3FocusEditor || null;
+    }
+    restoreFilterEditor(editorForRestore);
   }
 
   function bindGlobal() {
@@ -946,5 +1073,6 @@
     captureScroll: function (state) {
       writeScroll(state, document.getElementById("x14-focus-scroll"));
     },
+    refreshFilterMetadata: refreshFilterMetadata,
   };
 })();

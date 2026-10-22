@@ -27,6 +27,7 @@ const PW = "SyntheticOnly102!";
 const TOP = "#v3-focus-filter-category_name-enum";
 const FOCUS_SEARCH = "#v3-focus-search";
 const LIST = "/clients?v3mode=1&v3entity=legal_grouped&view=all&v3view=all&v3focus=1";
+const SEARCH = "#v3-focus-search";
 
 describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false }, () => {
   let browser: Browser;
@@ -83,6 +84,39 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     await p.waitForURL((u) => u.pathname !== "/login");
     return p;
   }
+
+  it("pending search draft survives metadata repaint and continued native typing", async () => {
+    const p = await pageFor();
+    let release!: () => void;
+    let seen!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const arrived = new Promise<void>((r) => {
+      seen = r;
+    });
+    await p.route("**/api/clients/v3/options?*", async (route) => {
+      const res = await route.fetch();
+      seen();
+      await gate;
+      await route.fulfill({ response: res });
+    });
+    await p.goto(base + LIST);
+    await p.locator('[data-testid="v3-focus-root"] tbody a.clients-link:visible').first().waitFor();
+    await arrived;
+    await p.locator(SEARCH).fill("QA Leg");
+    const late = p.waitForResponse((r) => r.url().includes("/api/clients/v3/options"));
+    release();
+    await (await late).finished();
+    await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    assert.equal(await p.locator(SEARCH).inputValue(), "QA Leg", "uncommitted draft retained during options update");
+    const result = p.waitForResponse(
+      (r) => r.url().includes("/api/clients/v3/list") && new URL(r.url()).searchParams.get("q") === "QA Legal 0",
+    );
+    await p.locator(SEARCH).pressSequentially("al 0");
+    assert.equal((await (await result).json()).total, 1);
+    await p.close();
+  });
 
   it("direct fullscreen bookmark: delayed options populate TOP enum choices", async () => {
     const p = await pageFor();
@@ -155,6 +189,29 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
       { sel: TOP, types: TYPES },
       { timeout: 15000 },
     );
+    await p.close();
+  });
+
+  it("rapid TOP switching with native selectOption preserves latest filter", async () => {
+    const p = await pageFor();
+    await openFocusWarm(p);
+    const latest = p.waitForResponse(
+      (r) =>
+        r.url().includes("/api/clients/v3/list") &&
+        r.status() === 200 &&
+        decodeURIComponent(r.url()).includes(TYPES[2]),
+    );
+    for (const type of TYPES) {
+      await p.locator(TOP).selectOption(type);
+    }
+    const r = await latest;
+    assert.equal((await r.json()).total, 3);
+    await p.waitForLoadState("networkidle");
+    await p.waitForFunction(
+      ({ s, v }) => (document.querySelector(s) as HTMLSelectElement)?.value === v,
+      { s: TOP, v: TYPES[2] },
+    );
+    assert.ok(decodeURIComponent(p.url()).includes(TYPES[2]), "latest TOP filter committed to URL");
     await p.close();
   });
 
