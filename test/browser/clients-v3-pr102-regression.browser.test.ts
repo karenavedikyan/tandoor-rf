@@ -355,8 +355,11 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     it(`late metadata after list ${status} never resurrects cached rows`, async () => {
       const p = await pageFor();
       await openFocusWarm(p);
+      const selected = p.waitForResponse((r) =>
+        r.url().includes("/api/clients/v3/list") && r.status() === 200 &&
+        decodeURIComponent(r.url()).includes(TYPES[0]));
       await p.locator(TOP).selectOption(TYPES[0]);
-      await p.waitForResponse((r) => r.url().includes("/api/clients/v3/list") && r.status() === 200);
+      await selected;
       await p.waitForLoadState("networkidle");
       let release!: () => void;
       let seen!: () => void;
