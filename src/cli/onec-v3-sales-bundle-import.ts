@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-import { readSalesBundleFilesFromPaths, runSalesBundleDryRun } from "../onec-sales/run-bundle-import";
+import {
+  readSalesBundleFilesFromPaths,
+  runSalesBundleApply,
+  runSalesBundleDryRun,
+} from "../onec-sales/run-bundle-import";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -28,17 +32,15 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
-  if (!dryRun) {
-    console.error("Apply mode for full bundle is not enabled in this build. Use dry-run only.");
-    process.exit(2);
-  }
   const files = await readSalesBundleFilesFromPaths(paths);
   const dbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
   if (!dbUrl) {
-    console.error("TEST_DATABASE_URL or DATABASE_URL required for catalog matching in dry-run.");
+    console.error("TEST_DATABASE_URL or DATABASE_URL required.");
     process.exit(2);
   }
-  const result = await runSalesBundleDryRun(files, dbUrl);
+  const result = dryRun
+    ? await runSalesBundleDryRun(files, dbUrl)
+    : await runSalesBundleApply(files, dbUrl);
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === "OK" ? 0 : 1);
 }

@@ -21,7 +21,12 @@ import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 import { getLegalSalesForMonth, getLegalSalesImportMeta, listLegalSalesMonths } from "./legal-sales";
-import { listSalesSectionMonths, loadSalesSectionOverview } from "./sales-section";
+import {
+  listSalesSectionClientRows,
+  listSalesSectionMonths,
+  listSalesSectionSkuRows,
+  loadSalesSectionOverview,
+} from "./sales-section";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -521,9 +526,23 @@ export async function v3SalesSectionMonthsHandler(req: AccessRequest, res: Respo
   if (!(await requireV3Active(res))) {
     return;
   }
-  const months = await listSalesSectionMonths();
-  setNoStore(res);
-  res.json({ months });
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  try {
+    const months = await listSalesSectionMonths(req.accessContext!, territory);
+    setNoStore(res);
+    res.json({ months });
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "42P01") {
+      setNoStore(res);
+      res.status(503).json({ months: [], dataState: "schema_not_ready" });
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function v3SalesSectionOverviewHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -546,4 +565,64 @@ export async function v3SalesSectionOverviewHandler(req: AccessRequest, res: Res
   }
   setNoStore(res);
   res.json({ overview });
+}
+
+export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  const productType = typeof req.query.productType === "string" ? req.query.productType.trim() : "";
+  const kind = req.query.kind === "returns" ? "returns" : "sales";
+  if (!month || !productType) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month и productType."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const rows = await listSalesSectionSkuRows(req.accessContext!, territory, month, productType, kind);
+  if (rows === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (rows === "no_items_source") {
+    res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Детализация по товарам недоступна для выбранного периода."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ items: rows });
+}
+
+export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  const productType = typeof req.query.productType === "string" ? req.query.productType.trim() : "";
+  const guidItem = typeof req.query.guidItem === "string" ? req.query.guidItem.trim() : "";
+  const kind = req.query.kind === "returns" ? "returns" : "sales";
+  if (!month || !productType) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month и productType."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const rows = await listSalesSectionClientRows(
+    req.accessContext!,
+    territory,
+    month,
+    productType,
+    guidItem || "00000000-0000-4000-8000-000000000000",
+    kind,
+  );
+  if (rows === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ clients: rows });
 }

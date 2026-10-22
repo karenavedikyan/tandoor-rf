@@ -1,3 +1,4 @@
+import { addSaleMoneyStrings, addSaleQuantityStrings, saleMoneyWithinTolerance, saleQuantityWithinTolerance } from "./decimal-sum";
 import type {
   LegalReturnItemsRoster,
   LegalReturnsRoster,
@@ -19,10 +20,6 @@ function aggregateKey(legalGuid: string, month: string, productType: string): st
 
 function itemAggregateKey(legalGuid: string, month: string, productType: string): string {
   return aggregateKey(legalGuid, month, productType);
-}
-
-function decimalsClose(a: string, b: string, tolerance: number): boolean {
-  return Math.abs(Number(a) - Number(b)) <= tolerance;
 }
 
 function sumItemMetrics(lines: LegalSaleItemsRoster["lines"]): Map<string, LegalSalesRoster["lines"][0]> {
@@ -51,14 +48,14 @@ function sumItemMetrics(lines: LegalSaleItemsRoster["lines"]): Map<string, Legal
     }
     map.set(key, {
       ...existing,
-      quantity: String(Number(existing.quantity) + Number(line.quantity)),
-      income: String(Number(existing.income) + Number(line.income)),
-      manualDiscount: String(Number(existing.manualDiscount) + Number(line.manualDiscount)),
-      automaticDiscount: String(Number(existing.automaticDiscount) + Number(line.automaticDiscount)),
-      totalDiscount: String(Number(existing.totalDiscount) + Number(line.totalDiscount)),
-      costPrice: String(Number(existing.costPrice) + Number(line.costPrice)),
-      additionalExpenses: String(Number(existing.additionalExpenses) + Number(line.additionalExpenses)),
-      grossProfit: String(Number(existing.grossProfit) + Number(line.grossProfit)),
+      quantity: addSaleQuantityStrings([existing.quantity, line.quantity]),
+      income: addSaleMoneyStrings([existing.income, line.income]),
+      manualDiscount: addSaleMoneyStrings([existing.manualDiscount, line.manualDiscount]),
+      automaticDiscount: addSaleMoneyStrings([existing.automaticDiscount, line.automaticDiscount]),
+      totalDiscount: addSaleMoneyStrings([existing.totalDiscount, line.totalDiscount]),
+      costPrice: addSaleMoneyStrings([existing.costPrice, line.costPrice]),
+      additionalExpenses: addSaleMoneyStrings([existing.additionalExpenses, line.additionalExpenses]),
+      grossProfit: addSaleMoneyStrings([existing.grossProfit, line.grossProfit]),
       profitability: existing.profitability,
     });
   }
@@ -109,7 +106,10 @@ export type SalesBundleAnalyzeReport = {
   returnsParity: {
     groupCountAggregate: number;
     groupCountItemsRolledUp: number;
+    onlyAggregate: number;
+    onlyItems: number;
     quantityIncomeMismatches: number;
+    parityOk: boolean;
   };
 };
 
@@ -142,12 +142,27 @@ export function analyzeSalesBundle(input: {
   }
   const unmatched = [...allGuids].filter((g) => !input.knownCatalogLegalGuids.has(g)).sort();
 
-  const aggMap = new Map(
-    input.salesAggregate.lines.map((line) => [
-      aggregateKey(line.legalGuid, line.saleMonthYyyyMm, line.productType),
-      line,
-    ]),
-  );
+  const aggMap = new Map<string, LegalSalesRoster["lines"][0]>();
+  for (const line of input.salesAggregate.lines) {
+    const key = aggregateKey(line.legalGuid, line.saleMonthYyyyMm, line.productType);
+    const existing = aggMap.get(key);
+    if (!existing) {
+      aggMap.set(key, line);
+      continue;
+    }
+    aggMap.set(key, {
+      ...existing,
+      quantity: addSaleQuantityStrings([existing.quantity, line.quantity]),
+      income: addSaleMoneyStrings([existing.income, line.income]),
+      manualDiscount: addSaleMoneyStrings([existing.manualDiscount, line.manualDiscount]),
+      automaticDiscount: addSaleMoneyStrings([existing.automaticDiscount, line.automaticDiscount]),
+      totalDiscount: addSaleMoneyStrings([existing.totalDiscount, line.totalDiscount]),
+      costPrice: addSaleMoneyStrings([existing.costPrice, line.costPrice]),
+      additionalExpenses: addSaleMoneyStrings([existing.additionalExpenses, line.additionalExpenses]),
+      grossProfit: addSaleMoneyStrings([existing.grossProfit, line.grossProfit]),
+      profitability: existing.profitability,
+    });
+  }
   const itemsRolled = sumItemMetrics(input.salesItems.lines);
   let onlyAggregate = 0;
   let onlyItems = 0;
@@ -177,8 +192,11 @@ export function analyzeSalesBundle(input: {
       "grossProfit",
     ] as const;
     for (const field of fields) {
-      const tol = field === "quantity" ? 1e-6 : 0.01;
-      if (!decimalsClose(a[field], b[field], tol)) {
+      const ok =
+        field === "quantity"
+          ? saleQuantityWithinTolerance(a[field], b[field])
+          : saleMoneyWithinTolerance(a[field], b[field], 1);
+      if (!ok) {
         metricMismatches += 1;
         break;
       }
@@ -194,8 +212,8 @@ export function analyzeSalesBundle(input: {
       retAggGroups.set(key, { quantity: line.quantity, income: line.income });
     } else {
       retAggGroups.set(key, {
-        quantity: String(Number(existing.quantity) + Number(line.quantity)),
-        income: String(Number(existing.income) + Number(line.income)),
+        quantity: addSaleQuantityStrings([existing.quantity, line.quantity]),
+        income: addSaleMoneyStrings([existing.income, line.income]),
       });
     }
   }
@@ -212,14 +230,27 @@ export function analyzeSalesBundle(input: {
       });
     }
   }
+  let returnsOnlyAggregate = 0;
+  let returnsOnlyItems = 0;
   let returnsMismatches = 0;
   for (const key of new Set([...retAggGroups.keys(), ...retItemGroups.keys()])) {
     const a = retAggGroups.get(key);
     const b = retItemGroups.get(key);
+    if (a && !b) {
+      returnsOnlyAggregate += 1;
+      continue;
+    }
+    if (b && !a) {
+      returnsOnlyItems += 1;
+      continue;
+    }
     if (!a || !b) {
       continue;
     }
-    if (!decimalsClose(a.quantity, b.quantity, 1e-6) || !decimalsClose(a.income, b.income, 0.01)) {
+    if (
+      !saleQuantityWithinTolerance(a.quantity, b.quantity) ||
+      !saleMoneyWithinTolerance(a.income, b.income, 1)
+    ) {
       returnsMismatches += 1;
     }
   }
@@ -262,7 +293,13 @@ export function analyzeSalesBundle(input: {
     returnsParity: {
       groupCountAggregate: retAggGroups.size,
       groupCountItemsRolledUp: retItemGroups.size,
+      onlyAggregate: returnsOnlyAggregate,
+      onlyItems: returnsOnlyItems,
       quantityIncomeMismatches: returnsMismatches,
+      parityOk:
+        returnsOnlyAggregate === 0 &&
+        returnsOnlyItems === 0 &&
+        returnsMismatches === 0,
     },
   };
 }

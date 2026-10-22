@@ -7,6 +7,7 @@ import { parseLegalReturnItemsJsonBytes } from "./parse-returne-items-json";
 import { parseLegalReturnsJsonBytes } from "./parse-returne-json";
 import { parseLegalSaleItemsJsonBytes } from "./parse-sale-items-json";
 import { parseLegalSalesJsonBytes } from "./parse-sale-json";
+import { applySalesBundle } from "./plan-apply-bundle";
 import { applyLegalSalesImport, planLegalSalesImport } from "./plan-apply";
 
 export type SalesBundleFiles = {
@@ -86,6 +87,53 @@ export async function readSalesBundleFilesFromPaths(paths: {
     readFile(paths.returnItems),
   ]);
   return { saleAggregate, saleItems, returnsAggregate, returnItems };
+}
+
+export async function runSalesBundleApply(
+  files: SalesBundleFiles,
+  databaseUrl: string,
+): Promise<{ status: "OK" | "PARSE_FAILED" | "ERROR"; message: string; plan?: Awaited<ReturnType<typeof applySalesBundle>> }> {
+  if (!process.env.TEST_DATABASE_URL || databaseUrl !== process.env.TEST_DATABASE_URL) {
+    return { status: "ERROR", message: "Bundle apply requires TEST_DATABASE_URL and must not target production DATABASE_URL." };
+  }
+  if (!files.saleAggregate || !files.saleItems || !files.returnsAggregate || !files.returnItems) {
+    return { status: "ERROR", message: "All four bundle files are required for apply." };
+  }
+  const aggregateParsed = parseLegalSalesJsonBytes(files.saleAggregate);
+  const itemsParsed = parseLegalSaleItemsJsonBytes(files.saleItems);
+  const returnsParsed = parseLegalReturnsJsonBytes(files.returnsAggregate);
+  const returnItemsParsed = parseLegalReturnItemsJsonBytes(files.returnItems);
+  if (!aggregateParsed.ok) {
+    return { status: "PARSE_FAILED", message: aggregateParsed.message };
+  }
+  if (!itemsParsed.ok) {
+    return { status: "PARSE_FAILED", message: itemsParsed.message };
+  }
+  if (!returnsParsed.ok) {
+    return { status: "PARSE_FAILED", message: returnsParsed.message };
+  }
+  if (!returnItemsParsed.ok) {
+    return { status: "PARSE_FAILED", message: returnItemsParsed.message };
+  }
+  const pool = createImportPool(databaseUrl);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const plan = await applySalesBundle(client, {
+      saleAggregate: aggregateParsed.roster,
+      saleItems: itemsParsed.roster,
+      returnsAggregate: returnsParsed.roster,
+      returnItems: returnItemsParsed.roster,
+    });
+    await client.query("COMMIT");
+    return { status: "OK", message: "Bundle apply complete.", plan };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return { status: "ERROR", message: error instanceof Error ? error.message : "Apply failed." };
+  } finally {
+    client.release();
+    await pool.end();
+  }
 }
 
 export async function runSalesBundleApplyAggregateOnly(

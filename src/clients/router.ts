@@ -69,6 +69,8 @@ import {
   v3LegalSalesMonthHandler,
   v3SalesSectionMonthsHandler,
   v3SalesSectionOverviewHandler,
+  v3SalesSectionSkuHandler,
+  v3SalesSectionClientsHandler,
 } from "./v3/handlers";
 
 export function createClientsRouter(): express.Router {
@@ -135,6 +137,14 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/sales/overview", ...readChain, (req, res, next) => {
     void v3SalesSectionOverviewHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/sales/sku", ...readChain, (req, res, next) => {
+    void v3SalesSectionSkuHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/sales/clients", ...readChain, (req, res, next) => {
+    void v3SalesSectionClientsHandler(req, res).catch(next);
   });
 
   router.get("/v3/field-catalog", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {
