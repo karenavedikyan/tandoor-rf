@@ -952,6 +952,12 @@
     writeState: writeState,
 
     loadList: function (ctx, state, replaceHistory) {
+      if (!ctx || !ctx.api) {
+        return Promise.resolve();
+      }
+      window.__lktandoorUiCtx = ctx;
+      window.__lktandoorListCtx = ctx;
+      window.__lktandoorFilterOptionsStatus = "loading";
       var api = ctx.api;
       var shell = ctx.shell;
       function isV3FocusListMode(focusState) {
@@ -1026,6 +1032,48 @@
           return true;
         }
         return loadGeneration !== v3ListLoadGeneration;
+      }
+      function syncFocusChromeFilterOptions() {
+        if (isStaleListLoad()) {
+          return;
+        }
+        var liveState = readState();
+        var lktandoorListMode = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
+        var focusMode =
+          lktandoorListMode &&
+          liveState.v3focus &&
+          window.ClientsLktandoorFocus &&
+          window.ClientsLktandoorFocus.isActive(liveState);
+        if (!focusMode) {
+          return;
+        }
+        var cached = window.__lastV3ListPayload;
+        if (!cached || !cached.visibleCols) {
+          return;
+        }
+        var host = document.getElementById("v3-focus-host");
+        if (!host || host.classList.contains("clients-hidden")) {
+          return;
+        }
+        if (window.ClientsLktandoorFocus.captureScroll) {
+          window.ClientsLktandoorFocus.captureScroll(liveState);
+        }
+        try {
+          window.ClientsLktandoorFocus.render(ctx, {
+            state: liveState,
+            items: cached.items || [],
+            total: cached.total || 0,
+            visibleCols: cached.visibleCols,
+            filterOptions: window.__lktandoorFilterOptions || {},
+            detailType: cached.detailType,
+            editor: window.__v3FocusEditor || null,
+            onState: cached.onState,
+          });
+        } catch (renderErr) {
+          var wrapped = renderErr instanceof Error ? renderErr : new Error(String(renderErr));
+          wrapped.name = "V3ListRenderError";
+          throw wrapped;
+        }
       }
       if (ctx.isNavigationCurrent && !ctx.isNavigationCurrent()) {
         return Promise.resolve();
@@ -1185,17 +1233,23 @@
         if (isStaleListLoad()) {
           return;
         }
-        if (optionsResult.response.ok && optionsResult.data) {
-          var liveState = readState();
-          syncFilterDom(shell, liveState, optionsResult.data);
-          window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
-          if (window.ClientsV3List) {
-            window.ClientsV3List.syncFilterbar(shell, liveState, optionsResult.data);
-          }
-          if (window.ClientsV3FieldRules) {
-            var opts = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
-            window.__lktandoorFilterOptions = opts;
-            window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
+        if (!optionsResult.response.ok || !optionsResult.data) {
+          window.__lktandoorFilterOptionsStatus = "error";
+          syncFocusChromeFilterOptions();
+          return;
+        }
+        window.__lktandoorFilterOptionsStatus = "ok";
+        var liveState = readState();
+        syncFilterDom(shell, liveState, optionsResult.data);
+        window.ClientsV3.renderFilterChips(shell, liveState, optionsResult.data);
+        if (window.ClientsV3List) {
+          window.ClientsV3List.syncFilterbar(shell, liveState, optionsResult.data);
+        }
+        if (window.ClientsV3FieldRules) {
+          var opts = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
+          window.__lktandoorFilterOptions = opts;
+          syncFocusChromeFilterOptions();
+          window.ClientsV3FieldRules.loadFields(api, liveState.v3entity).then(function () {
               if (isStaleListLoad()) return;
               window.ClientsV3FieldRules.renderBuilder(shell, liveState.v3entity, opts);
               if (window.ClientsV3FieldRules.renderFieldShortcuts) {
@@ -1225,8 +1279,16 @@
                 window.ClientsV3.loadList(ctx, next, false);
               });
             });
-          }
+        } else {
+          window.__lktandoorFilterOptions = Object.assign({ entity: liveState.v3entity }, optionsResult.data);
+          syncFocusChromeFilterOptions();
         }
+      }).catch(function () {
+        if (isStaleListLoad()) {
+          return;
+        }
+        window.__lktandoorFilterOptionsStatus = "error";
+        syncFocusChromeFilterOptions();
       });
       var listPromise = api
         .apiRequest("/api/clients/v3/list?" + params.toString(), { signal: ctx.nextListFetchSignal?.() })

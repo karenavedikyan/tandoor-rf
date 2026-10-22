@@ -281,6 +281,29 @@
         return r.op === "eq";
       });
       var options = (filterOptions && filterOptions[spec.optionsKey]) || [];
+      var optionsStatus = window.__lktandoorFilterOptionsStatus || "ok";
+      if (!options.length && optionsStatus === "loading") {
+        return (
+          '<select disabled id="' +
+          filterControlId(col.id, "enum") +
+          '" data-focus-col="' +
+          shell.escapeHtml(col.id) +
+          '" data-focus-kind="enum" data-focus-options-state="loading" aria-label="Фильтр: ' +
+          shell.escapeHtml(col.label) +
+          '"><option value="">Загрузка…</option></select>'
+        );
+      }
+      if (!options.length && optionsStatus === "error") {
+        return (
+          '<select disabled id="' +
+          filterControlId(col.id, "enum") +
+          '" data-focus-col="' +
+          shell.escapeHtml(col.id) +
+          '" data-focus-kind="enum" data-focus-options-state="error" aria-label="Фильтр: ' +
+          shell.escapeHtml(col.label) +
+          '"><option value="">Не удалось загрузить</option></select>'
+        );
+      }
       return (
         '<select id="' +
         filterControlId(col.id, "enum") +
@@ -896,15 +919,20 @@
         return;
       }
       var state = window.ClientsV3?.readState();
-      if (state && state.v3focus) {
-        event.preventDefault();
-        writeScroll(state, document.getElementById("x14-focus-scroll"));
-        window.ClientsV3.loadList(
-          window.__lktandoorUiCtx,
-          window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
-          true,
-        );
+      if (!state || !state.v3focus) {
+        return;
       }
+      var listCtx = window.__lktandoorListCtx || window.__lktandoorUiCtx;
+      if (!listCtx || !listCtx.api || !window.ClientsV3) {
+        return;
+      }
+      event.preventDefault();
+      writeScroll(state, document.getElementById("x14-focus-scroll"));
+      window.ClientsV3.loadList(
+        listCtx,
+        window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
+        true,
+      );
     });
   }
 
