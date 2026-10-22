@@ -195,23 +195,28 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
   it("rapid TOP switching with native selectOption preserves latest filter", async () => {
     const p = await pageFor();
     await openFocusWarm(p);
-    const latest = p.waitForResponse(
-      (r) =>
-        r.url().includes("/api/clients/v3/list") &&
-        r.status() === 200 &&
-        decodeURIComponent(r.url()).includes(TYPES[2]),
-    );
-    for (const type of TYPES) {
-      await p.locator(TOP).selectOption(type);
+    for (let round = 0; round < 5; round += 1) {
+      const latest = p.waitForResponse(
+        (r) =>
+          r.url().includes("/api/clients/v3/list") &&
+          r.status() === 200 &&
+          decodeURIComponent(r.url()).includes(TYPES[2]),
+      );
+      for (const type of TYPES) {
+        await p.locator(TOP).selectOption(type);
+      }
+      const r = await latest;
+      assert.equal((await r.json()).total, 3, `round ${round}`);
+      await p.waitForFunction(
+        ({ s, v }) => (document.querySelector(s) as HTMLSelectElement)?.value === v,
+        { s: TOP, v: TYPES[2] },
+      );
+      assert.ok(decodeURIComponent(p.url()).includes(TYPES[2]), `round ${round}: URL must keep TOP500`);
+      await p.locator(TOP).selectOption("");
+      await p.waitForResponse(
+        (r) => r.url().includes("/api/clients/v3/list") && r.status() === 200 && !decodeURIComponent(r.url()).includes(TYPES[2]),
+      );
     }
-    const r = await latest;
-    assert.equal((await r.json()).total, 3);
-    await p.waitForLoadState("networkidle");
-    await p.waitForFunction(
-      ({ s, v }) => (document.querySelector(s) as HTMLSelectElement)?.value === v,
-      { s: TOP, v: TYPES[2] },
-    );
-    assert.ok(decodeURIComponent(p.url()).includes(TYPES[2]), "latest TOP filter committed to URL");
     await p.close();
   });
 

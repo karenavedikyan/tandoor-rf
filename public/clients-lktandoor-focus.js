@@ -192,6 +192,107 @@
     });
   }
 
+  function enumEqValue(state, spec) {
+    var eq = rulesForField(state, spec.field).find(function (r) {
+      return r.op === "eq";
+    });
+    return eq && eq.value ? eq.value : "";
+  }
+
+  function captureFocusEnumDrafts(state, rootEl) {
+    var drafts = {};
+    if (!rootEl) {
+      return drafts;
+    }
+    var userPicks = window.__v3FocusEnumUserPick || {};
+    rootEl.querySelectorAll('[data-focus-kind="enum"]').forEach(function (sel) {
+      if (!sel.isConnected) {
+        return;
+      }
+      var colId = sel.getAttribute("data-focus-col") || "";
+      var spec = COL_FILTER[colId];
+      if (!spec || spec.input !== "enum") {
+        return;
+      }
+      var committed = enumEqValue(state, spec);
+      var domVal = sel.value || "";
+      if (domVal === committed) {
+        return;
+      }
+      var fromUser = userPicks[colId] === domVal || document.activeElement === sel;
+      if (!fromUser) {
+        return;
+      }
+      drafts[colId] = domVal;
+    });
+    return drafts;
+  }
+
+  function rememberFocusEnumUserPick(colId, value) {
+    if (!colId) {
+      return;
+    }
+    if (!window.__v3FocusEnumUserPick) {
+      window.__v3FocusEnumUserPick = {};
+    }
+    window.__v3FocusEnumUserPick[colId] = value;
+  }
+
+  function clearFocusEnumUserPick(colId) {
+    if (!window.__v3FocusEnumUserPick || !colId) {
+      return;
+    }
+    delete window.__v3FocusEnumUserPick[colId];
+  }
+
+  function flushFocusEnumDrafts(enumDrafts, reload) {
+    if (!enumDrafts || !window.ClientsV3) {
+      return;
+    }
+    var keys = Object.keys(enumDrafts);
+    if (!keys.length) {
+      return;
+    }
+    var next = window.ClientsV3.readState();
+    var editor = null;
+    var changed = false;
+    keys.forEach(function (colId) {
+      var spec = COL_FILTER[colId];
+      if (!spec || spec.input !== "enum") {
+        return;
+      }
+      var draftVal = enumDrafts[colId];
+      var committed = enumEqValue(next, spec);
+      if (draftVal === committed) {
+        return;
+      }
+      editor = {
+        colId: colId,
+        kind: "enum",
+        value: draftVal,
+        op: "contains",
+        id: filterControlId(colId, "enum"),
+      };
+      var applied = applyEditor(next, editor);
+      if (!applied) {
+        return;
+      }
+      next = applied;
+      changed = true;
+    });
+    if (!changed) {
+      return;
+    }
+    next.page = 1;
+    if (window.ClientsV3FieldRules) {
+      window.ClientsV3FieldRules.syncLegacyFromRules(next);
+    }
+    reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+    keys.forEach(function (colId) {
+      clearFocusEnumUserPick(colId);
+    });
+  }
+
   function colValue(state, key) {
     return state[key] || "";
   }
@@ -217,7 +318,7 @@
     });
   }
 
-  function renderFilterControl(shell, col, state, filterOptions) {
+  function renderFilterControl(shell, col, state, filterOptions, enumDraftValue) {
     var spec = COL_FILTER[col.id];
     if (!spec) {
       return "";
@@ -280,6 +381,10 @@
       var eq = rulesForField(state, spec.field).find(function (r) {
         return r.op === "eq";
       });
+      var selectedEnumValue = eq && eq.value ? eq.value : "";
+      if (typeof enumDraftValue === "string") {
+        selectedEnumValue = enumDraftValue;
+      }
       var options = (filterOptions && filterOptions[spec.optionsKey]) || [];
       var optionsStatus = window.__lktandoorFilterOptionsStatus || "ok";
       if (!options.length && optionsStatus === "loading") {
@@ -320,7 +425,7 @@
               '<option value="' +
               shell.escapeHtml(value) +
               '"' +
-              (eq && eq.value === value ? " selected" : "") +
+              (selectedEnumValue === value ? " selected" : "") +
               ">" +
               shell.escapeHtml(String(label)) +
               "</option>"
@@ -376,9 +481,16 @@
     );
   }
 
-  function renderHeader(shell, col, state, filterOptions) {
+  function renderHeader(shell, col, state, filterOptions, enumDrafts) {
     var filtered = hasColFilter(state, col.id);
-    var control = renderFilterControl(shell, col, state, filterOptions);
+    var draftVal = enumDrafts && enumDrafts[col.id];
+    var control = renderFilterControl(
+      shell,
+      col,
+      state,
+      filterOptions,
+      typeof draftVal === "string" ? draftVal : undefined,
+    );
     return (
       '<th scope="col" class="' +
       (filtered ? "x15-filtered" : "") +
@@ -700,70 +812,105 @@
       return;
     }
     input.dataset.focusEditorBound = "1";
-    function onEdit(immediate) {
-      var colId = input.getAttribute("data-focus-col") || "";
-      var kind = input.getAttribute("data-focus-kind") || "";
+    function runApply(target) {
+      var el = target || input;
+      if (!el) {
+        return;
+      }
+      var colId = el.getAttribute("data-focus-col") || "";
+      var kind = el.getAttribute("data-focus-kind") || "";
       var editor = {
         colId: colId,
         kind: kind,
-        value: input.value,
-        op: input.getAttribute("data-focus-op") || "contains",
-        id: input.id || filterControlId(colId, kind, input.getAttribute("data-focus-op") || undefined),
-        position: input.selectionStart,
+        value: el.value,
+        op: el.getAttribute("data-focus-op") || "contains",
+        id: el.id || filterControlId(colId, kind, el.getAttribute("data-focus-op") || undefined),
+        position: el.selectionStart,
       };
-      var apply = function () {
-        if (kind === "number" && input.validity && input.validity.badInput) {
-          restoreFilterEditor(editor);
+      if (kind === "number" && el.validity && el.validity.badInput) {
+        restoreFilterEditor(editor);
+        return;
+      }
+      var live = window.ClientsV3.readState();
+      if (kind === "enum") {
+        var enumSpec = COL_FILTER[colId];
+        if (enumSpec && enumEqValue(live, enumSpec) === String(editor.value || "")) {
           return;
         }
-        var live = window.ClientsV3.readState();
-        var next = applyEditor(live, editor);
-        if (next === null) {
-          window.ClientsLktandoorFocus.renderBlockingError({
-            shell: shell,
-            state: live,
-            ctx: ctx,
-            statusLine: "Недопустимое значение",
-            title: "Недопустимое число",
-            message:
-              "Используйте обычный десятичный формат (например 1000 или 0.5). Значение не отправлено на сервер.",
-            onRetry: function () {
-              reload(live, editor);
-            },
-            onReset: function () {
-              reload(buildFocusResetState(), null);
-            },
-            onExit: function () {
-              reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
-            },
-            onSearch: function (q) {
-              reload(window.ClientsV3.mergeListStateForUserAction({ q: q, page: 1 }), editor);
-            },
-          });
-          restoreFilterEditor(editor);
-          return;
-        }
-        next.page = 1;
-        if (window.ClientsV3FieldRules) {
-          window.ClientsV3FieldRules.syncLegacyFromRules(next);
-        }
-        reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
-      };
-      if (immediate || kind === "enum" || kind === "bool") {
+      }
+      var next = applyEditor(live, editor);
+      if (next === null) {
+        window.ClientsLktandoorFocus.renderBlockingError({
+          shell: shell,
+          state: live,
+          ctx: ctx,
+          statusLine: "Недопустимое значение",
+          title: "Недопустимое число",
+          message:
+            "Используйте обычный десятичный формат (например 1000 или 0.5). Значение не отправлено на сервер.",
+          onRetry: function () {
+            reload(live, editor);
+          },
+          onReset: function () {
+            reload(buildFocusResetState(), null);
+          },
+          onExit: function () {
+            reload(window.ClientsV3.mergeListStateForUserAction({ v3focus: false }), null);
+          },
+          onSearch: function (q) {
+            reload(window.ClientsV3.mergeListStateForUserAction({ q: q, page: 1 }), editor);
+          },
+        });
+        restoreFilterEditor(editor);
+        return;
+      }
+      next.page = 1;
+      if (window.ClientsV3FieldRules) {
+        window.ClientsV3FieldRules.syncLegacyFromRules(next);
+      }
+      if (kind === "enum") {
+        clearFocusEnumUserPick(colId);
+      }
+      reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+    }
+    function onEdit(immediate, target) {
+      if (immediate) {
         clearTimeout(filterTimer);
-        apply();
+        runApply(target);
         return;
       }
       clearTimeout(filterTimer);
-      filterTimer = setTimeout(apply, 180);
+      var el = target || input;
+      filterTimer = setTimeout(function () {
+        runApply(el);
+      }, 180);
     }
     if (input.tagName === "SELECT") {
-      input.addEventListener("change", function () {
-        onEdit(true);
-      });
+      var kind = input.getAttribute("data-focus-kind") || "";
+      if (kind === "enum") {
+        var enumApplyToken = 0;
+        function scheduleEnumApply(evt) {
+          var target = evt && evt.currentTarget ? evt.currentTarget : input;
+          rememberFocusEnumUserPick(target.getAttribute("data-focus-col") || "", target.value || "");
+          enumApplyToken += 1;
+          var token = enumApplyToken;
+          queueMicrotask(function () {
+            if (token !== enumApplyToken) {
+              return;
+            }
+            runApply(target);
+          });
+        }
+        input.addEventListener("input", scheduleEnumApply);
+        input.addEventListener("change", scheduleEnumApply);
+      } else {
+        input.addEventListener("change", function (evt) {
+          onEdit(true, evt.currentTarget);
+        });
+      }
     } else {
-      input.addEventListener("input", function () {
-        onEdit(false);
+      input.addEventListener("input", function (evt) {
+        onEdit(false, evt.currentTarget);
       });
     }
   }
@@ -845,6 +992,7 @@
       }
     }
     var searchValue = searchDraft ? searchDraft.value : state.q || "";
+    var enumDrafts = captureFocusEnumDrafts(state, host);
     host.innerHTML =
       '<div class="x14-focus" data-testid="v3-focus-root">' +
       '<div class="x14-focusbar">' +
@@ -867,7 +1015,7 @@
       tableMin +
       'px"><thead><tr>' +
       visibleCols.map(function (col) {
-        return renderHeader(shell, col, state, filterOptions);
+        return renderHeader(shell, col, state, filterOptions, enumDrafts);
       }).join("") +
       "</tr></thead><tbody>" +
       (items.length
@@ -978,6 +1126,7 @@
       }
     });
     function resetAll() {
+      window.__v3FocusEnumUserPick = {};
       var next = buildFocusResetState();
       var mainSearch = document.getElementById("search-input");
       if (mainSearch) {
@@ -1019,6 +1168,7 @@
     });
 
     bindFocusColumnEditors(host, ctx, shell, reload);
+    flushFocusEnumDrafts(enumDrafts, reload);
 
     var editorForRestore = null;
     if (
