@@ -17,6 +17,9 @@ const CORPUS: Array<{ input: string; expect: "ok" | "invalid" | "empty"; value?:
   { input: "abc", expect: "invalid" },
   { input: "", expect: "empty" },
   { input: "0x10", expect: "invalid" },
+  { input: "1e4294967296", expect: "invalid" },
+  { input: "1e-4294967296", expect: "invalid" },
+  { input: "1e1000000", expect: "invalid" },
 ];
 
 function loadJsNormalizer() {
@@ -55,6 +58,14 @@ describe("normalizeListFilterNumberValue", () => {
       const ts = normalizeListFilterNumberValue(row.input);
       const js = jsNormalize(row.input);
       assert.equal(JSON.stringify(js), JSON.stringify(ts), `parity mismatch for ${row.input}`);
+    }
+  });
+
+  it("huge scientific exponents reject without throwing in shipped JS", () => {
+    const jsNormalize = loadJsNormalizer();
+    for (const sample of ["1e4294967296", "1e-4294967296", "1e1000000"]) {
+      assert.doesNotThrow(() => jsNormalize(sample));
+      assert.equal(jsNormalize(sample).ok, false);
     }
   });
 });

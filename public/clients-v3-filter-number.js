@@ -3,13 +3,47 @@
 
   var PLAIN_DECIMAL_FILTER_RE = /^-?\d+(\.\d+)?$/;
   var MAX_TOTAL_DIGITS = 40;
+  var MAX_INPUT_CHARS = 80;
+  var MAX_EXPONENT_MAG = 60;
 
   function digitCount(part) {
     return String(part).replace(/\D/g, "").length;
   }
 
+  function safeRepeatZero(count) {
+    if (count < 0 || count > MAX_TOTAL_DIGITS) {
+      return null;
+    }
+    var out = "";
+    for (var i = 0; i < count; i++) {
+      out += "0";
+    }
+    return out;
+  }
+
+  function parseFiniteExponent(expStr) {
+    if (!/^-?\d+$/.test(expStr)) {
+      return null;
+    }
+    var unsigned = expStr.charAt(0) === "-" ? expStr.slice(1) : expStr;
+    if (!unsigned || unsigned.length > 4) {
+      return null;
+    }
+    var value = Number(expStr);
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      return null;
+    }
+    if (Math.abs(value) > MAX_EXPONENT_MAG) {
+      return null;
+    }
+    return value;
+  }
+
   function canonicalizePlainDecimal(raw) {
     var body = String(raw).trim();
+    if (body.length > MAX_INPUT_CHARS) {
+      return null;
+    }
     var negative = false;
     if (body.charAt(0) === "-") {
       negative = true;
@@ -43,9 +77,11 @@
   }
 
   function expandScientificNotation(raw) {
-    var match = String(raw)
-      .trim()
-      .match(/^(-?)(?:(\d+)(?:\.(\d*))?|\.(\d+))[eE]([+-]?\d+)$/);
+    var trimmed = String(raw).trim();
+    if (trimmed.length > MAX_INPUT_CHARS) {
+      return { ok: false, reason: "invalid" };
+    }
+    var match = trimmed.match(/^(-?)(?:(\d+)(?:\.(\d*))?|\.(\d+))[eE]([+-]?\d+)$/);
     if (!match) {
       return { ok: false, reason: "invalid" };
     }
@@ -53,8 +89,8 @@
     var intPart = match[2] || "";
     var fracFromDot = match[3] != null ? match[3] : "";
     var fracOnly = match[4] || "";
-    var exponent = Number(match[5]);
-    if (!Number.isInteger(exponent)) {
+    var exponent = parseFiniteExponent(match[5]);
+    if (exponent === null) {
       return { ok: false, reason: "invalid" };
     }
     var digits = (intPart + fracFromDot) || fracOnly;
@@ -66,13 +102,32 @@
     var intDigits;
     var fracDigits;
     if (newPos <= 0) {
-      var fracBody = (new Array(-newPos + 1).join("0") + digits).replace(/0+$/, "");
+      var leadZeros = -newPos;
+      if (leadZeros + digitCount(digits) > MAX_TOTAL_DIGITS) {
+        return { ok: false, reason: "invalid" };
+      }
+      var prefix = safeRepeatZero(leadZeros);
+      if (prefix === null) {
+        return { ok: false, reason: "invalid" };
+      }
+      var fracBody = (prefix + digits).replace(/0+$/, "");
       intDigits = "0";
       fracDigits = fracBody;
     } else {
+      if (newPos > MAX_TOTAL_DIGITS + digitCount(digits)) {
+        return { ok: false, reason: "invalid" };
+      }
       var combined = digits;
-      if (newPos > combined.length) {
-        combined = combined + new Array(newPos - combined.length + 1).join("0");
+      var pad = newPos - combined.length;
+      if (pad > MAX_TOTAL_DIGITS) {
+        return { ok: false, reason: "invalid" };
+      }
+      if (pad > 0) {
+        var padZeros = safeRepeatZero(pad);
+        if (padZeros === null) {
+          return { ok: false, reason: "invalid" };
+        }
+        combined = combined + padZeros;
       }
       intDigits = combined.slice(0, newPos) || "0";
       fracDigits = combined.slice(newPos).replace(/0+$/, "");
@@ -98,6 +153,9 @@
     var trimmed = String(raw == null ? "" : raw).trim();
     if (!trimmed || trimmed === "-") {
       return { ok: false, reason: "empty" };
+    }
+    if (trimmed.length > MAX_INPUT_CHARS) {
+      return { ok: false, reason: "invalid" };
     }
     if (/^0[xX]/.test(trimmed)) {
       return { ok: false, reason: "invalid" };

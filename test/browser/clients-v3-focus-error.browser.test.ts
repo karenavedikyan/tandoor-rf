@@ -12,6 +12,8 @@ import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrat
 
 const TEST_PASSWORD = "StrongPass123!";
 const FIXTURE_DIR = path.join(process.cwd(), "test/fixtures/onec-exchange-v3");
+const CREDIT_GTE = "#v3-focus-filter-credit_limit-gte";
+const FOCUS_SEARCH = "#v3-focus-search";
 
 const NORMALIZER_CASES: Array<{ input: string; expectOk: boolean; value?: string }> = [
   { input: "1e3", expectOk: true, value: "1000" },
@@ -20,6 +22,8 @@ const NORMALIZER_CASES: Array<{ input: string; expectOk: boolean; value?: string
   { input: "9007199254740993", expectOk: true, value: "9007199254740993" },
   { input: "Infinity", expectOk: false },
 ];
+
+const HUGE_EXPONENT_CASES = ["1e4294967296", "1e-4294967296", "1e1000000"];
 
 describe("clients v3 focus error shell (real API)", { concurrency: false }, () => {
   let browser: Browser;
@@ -124,9 +128,21 @@ describe("clients v3 focus error shell (real API)", { concurrency: false }, () =
     await page.waitForSelector('[data-testid="v3-focus-root"]', { state: "visible", timeout: 30000 });
     await response;
     await page.waitForFunction(() => document.body.classList.contains("x14-focus-mode"));
+    await page.waitForSelector(CREDIT_GTE, { state: "visible", timeout: 15000 });
   }
 
-  it("runtime JS normalizer matches safe decimal corpus", async () => {
+  async function applyCreditGteViaKeyboard(page: Page, value: string): Promise<void> {
+    const input = page.locator(CREDIT_GTE);
+    const response = page.waitForResponse(
+      (res) => res.url().includes("/api/clients/v3/list") && res.status() === 200,
+    );
+    await input.click();
+    await input.fill(value);
+    await page.waitForTimeout(250);
+    await response;
+  }
+
+  it("runtime JS normalizer matches safe decimal corpus and rejects huge exponents without throw", async () => {
     const page = await browser.newPage();
     await login(page);
     await page.goto(baseUrl + "/clients?v3mode=1&v3entity=legal_grouped&view=all");
@@ -140,10 +156,16 @@ describe("clients v3 focus error shell (real API)", { concurrency: false }, () =
         assert.equal((result as { ok: true; value: string }).value, row.value);
       }
     }
+    for (const sample of HUGE_EXPONENT_CASES) {
+      const result = await page.evaluate((input) => {
+        return window.ClientsV3FilterNumber.normalizeListFilterNumberValue(input);
+      }, sample);
+      assert.equal(result.ok, false, `huge exponent must reject: ${sample}`);
+    }
     await page.close();
   });
 
-  it("renders focus error chrome after HTTP 400 with neutral status line", async () => {
+  it("renders focus error chrome after HTTP 400 via native search", async () => {
     const page = await browser.newPage();
     await login(page);
     await openLktandoorList(page);
@@ -156,12 +178,8 @@ describe("clients v3 focus error shell (real API)", { concurrency: false }, () =
       });
     });
     const reload = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list") && res.status() === 400);
-    await page.evaluate(() => {
-      const ctx = window.__lktandoorListCtx || window.__lktandoorUiCtx;
-      if (ctx && window.ClientsV3) {
-        window.ClientsV3.loadList(ctx, window.ClientsV3.readState(), true);
-      }
-    });
+    await page.locator(FOCUS_SEARCH).fill("ошибка-400");
+    await page.waitForTimeout(250);
     await reload;
     await page.waitForSelector('[data-testid="v3-focus-error"]', { state: "visible", timeout: 15000 });
     await page.locator("#v3-focus-exit").waitFor({ state: "visible", timeout: 10000 });
@@ -174,34 +192,64 @@ describe("clients v3 focus error shell (real API)", { concurrency: false }, () =
     await page.close();
   });
 
-  it("blocks list API when numeric filter is invalid and keeps focus chrome", async () => {
+  it("native numeric filter with oversized exponent blocks list API after prior rule", async () => {
     const page = await browser.newPage();
     await login(page);
     await openLktandoorList(page);
     await enterFocus(page);
+    await applyCreditGteViaKeyboard(page, "1000");
     let listRequests = 0;
     page.on("request", (req) => {
       if (req.url().includes("/api/clients/v3/list")) {
         listRequests += 1;
       }
     });
-    await page.evaluate(() => {
-      const ctx = window.__lktandoorListCtx || window.__lktandoorUiCtx;
-      const state = window.ClientsV3.mergeListStateForUserAction({
-        v3focus: true,
-        v3Rules: [{ field: "creditLimit", op: "gte", value: "Infinity" }],
-        page: 1,
-      });
-      window.ClientsV3.loadList(ctx, state, false);
-    });
+    const gte = page.locator(CREDIT_GTE);
+    await gte.click();
+    await gte.fill("1e100");
+    await page.waitForTimeout(300);
     await page.waitForSelector('[data-testid="v3-focus-error"]', { state: "visible", timeout: 15000 });
-    assert.equal(listRequests, 0, "invalid numeric filter must not call list API");
-    const message = await page.locator('[data-testid="v3-focus-error"] p').innerText();
-    assert.match(message, /числ|фильтр|формат/i);
+    assert.equal(listRequests, 0, "invalid numeric filter must not call list API after native edit");
+    const rules = await page.evaluate(() => {
+      const rules = window.ClientsV3.readState().v3Rules || [];
+      return rules.filter((r: { field: string; op: string }) => r.field === "creditLimit" && r.op === "gte");
+    });
+    assert.deepEqual(rules, [{ field: "creditLimit", op: "gte", value: "1000" }]);
     await page.close();
   });
 
-  it("loading state in focus mode is not shown as blocking alert error", async () => {
+  it("native number badInput keeps prior rule and skips list API", async () => {
+    const page = await browser.newPage();
+    await login(page);
+    await openLktandoorList(page);
+    await enterFocus(page);
+    await applyCreditGteViaKeyboard(page, "1000");
+    let listAfterRule = 0;
+    page.on("request", (req) => {
+      if (req.url().includes("/api/clients/v3/list")) {
+        listAfterRule += 1;
+      }
+    });
+    const gte = page.locator(CREDIT_GTE);
+    await gte.click();
+    await gte.press("ControlOrMeta+a");
+    await gte.pressSequentially("1e", { delay: 40 });
+    await page.waitForTimeout(300);
+    const validity = await gte.evaluate((el) => ({
+      badInput: (el as HTMLInputElement).validity.badInput,
+      value: (el as HTMLInputElement).value,
+    }));
+    assert.equal(validity.badInput, true, "browser should mark incomplete scientific notation as badInput");
+    assert.equal(listAfterRule, 0, "badInput must not trigger list reload");
+    const rules = await page.evaluate(() => {
+      const rules = window.ClientsV3.readState().v3Rules || [];
+      return rules.filter((r: { field: string; op: string }) => r.field === "creditLimit" && r.op === "gte");
+    });
+    assert.deepEqual(rules, [{ field: "creditLimit", op: "gte", value: "1000" }]);
+    await page.close();
+  });
+
+  it("loading state in focus mode is not shown as blocking alert error (native search)", async () => {
     const page = await browser.newPage();
     await login(page);
     await openLktandoorList(page);
@@ -211,10 +259,8 @@ describe("clients v3 focus error shell (real API)", { concurrency: false }, () =
       await route.continue();
     });
     const pending = page.waitForResponse((res) => res.url().includes("/api/clients/v3/list"));
-    await page.evaluate(() => {
-      const ctx = window.__lktandoorListCtx || window.__lktandoorUiCtx;
-      window.ClientsV3.loadList(ctx, window.ClientsV3.readState(), false);
-    });
+    await page.locator(FOCUS_SEARCH).fill("задержка");
+    await page.waitForTimeout(100);
     const alertDuringLoad = await page.locator('[data-testid="v3-focus-error"][role=alert]').count();
     assert.equal(alertDuringLoad, 0, "loading must not render blocking error chrome");
     await pending;

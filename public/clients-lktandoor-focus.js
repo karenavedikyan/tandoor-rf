@@ -447,6 +447,9 @@
       return next;
     }
     if (spec.input === "number") {
+      if (editor.badInput) {
+        return null;
+      }
       var trimmed = String(editor.value || "").trim();
       if (trimmed === "" || trimmed === "-") {
         next.v3Rules = next.v3Rules.filter(function (r) {
@@ -818,6 +821,10 @@
           position: input.selectionStart,
         };
         var apply = function () {
+          if (kind === "number" && input.validity && input.validity.badInput) {
+            restoreFilterEditor(editor);
+            return;
+          }
           var live = window.ClientsV3.readState();
           var next = applyEditor(live, editor);
           if (next === null) {

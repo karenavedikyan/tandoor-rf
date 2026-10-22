@@ -2,6 +2,8 @@
 export const PLAIN_DECIMAL_FILTER_RE = /^-?\d+(\.\d+)?$/;
 
 const MAX_TOTAL_DIGITS = 40;
+const MAX_INPUT_CHARS = 80;
+const MAX_EXPONENT_MAG = 60;
 
 export type NormalizeListFilterNumberResult =
   | { ok: true; value: string }
@@ -11,6 +13,9 @@ export function normalizeListFilterNumberValue(raw: string): NormalizeListFilter
   const trimmed = String(raw ?? "").trim();
   if (!trimmed || trimmed === "-") {
     return { ok: false, reason: "empty" };
+  }
+  if (trimmed.length > MAX_INPUT_CHARS) {
+    return { ok: false, reason: "invalid" };
   }
   if (/^0[xX]/.test(trimmed)) {
     return { ok: false, reason: "invalid" };
@@ -28,20 +33,53 @@ export function normalizeListFilterNumberValue(raw: string): NormalizeListFilter
   return { ok: true, value: plain };
 }
 
+function safeRepeatZero(count: number): string | null {
+  if (count < 0 || count > MAX_TOTAL_DIGITS) {
+    return null;
+  }
+  let out = "";
+  for (let i = 0; i < count; i++) {
+    out += "0";
+  }
+  return out;
+}
+
+function parseFiniteExponent(expStr: string): number | null {
+  if (!/^-?\d+$/.test(expStr)) {
+    return null;
+  }
+  const unsigned = expStr.startsWith("-") ? expStr.slice(1) : expStr;
+  if (!unsigned || unsigned.length > 4) {
+    return null;
+  }
+  const value = Number(expStr);
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    return null;
+  }
+  if (Math.abs(value) > MAX_EXPONENT_MAG) {
+    return null;
+  }
+  return value;
+}
+
 function canonicalizePlainDecimal(raw: string): string | null {
-  let body = raw.trim();
+  const body = raw.trim();
+  if (body.length > MAX_INPUT_CHARS) {
+    return null;
+  }
   let negative = false;
-  if (body.startsWith("-")) {
+  let digitsBody = body;
+  if (digitsBody.startsWith("-")) {
     negative = true;
-    body = body.slice(1);
+    digitsBody = digitsBody.slice(1);
   }
-  if (!body || body === ".") {
+  if (!digitsBody || digitsBody === ".") {
     return null;
   }
-  if (!/^\d*\.?\d*$/.test(body)) {
+  if (!/^\d*\.?\d*$/.test(digitsBody)) {
     return null;
   }
-  const parts = body.split(".");
+  const parts = digitsBody.split(".");
   if (parts.length > 2) {
     return null;
   }
@@ -69,9 +107,11 @@ function canonicalizePlainDecimal(raw: string): string | null {
 }
 
 function expandScientificNotation(raw: string): NormalizeListFilterNumberResult {
-  const match = raw
-    .trim()
-    .match(/^(-?)(?:(\d+)(?:\.(\d*))?|\.(\d+))[eE]([+-]?\d+)$/);
+  const trimmed = raw.trim();
+  if (trimmed.length > MAX_INPUT_CHARS) {
+    return { ok: false, reason: "invalid" };
+  }
+  const match = trimmed.match(/^(-?)(?:(\d+)(?:\.(\d*))?|\.(\d+))[eE]([+-]?\d+)$/);
   if (!match) {
     return { ok: false, reason: "invalid" };
   }
@@ -79,8 +119,8 @@ function expandScientificNotation(raw: string): NormalizeListFilterNumberResult 
   const intPart = match[2] || "";
   const fracFromDot = match[3] ?? "";
   const fracOnly = match[4] || "";
-  const exponent = Number(match[5]);
-  if (!Number.isInteger(exponent)) {
+  const exponent = parseFiniteExponent(match[5]);
+  if (exponent === null) {
     return { ok: false, reason: "invalid" };
   }
   const digits = (intPart + fracFromDot) || fracOnly;
@@ -92,13 +132,32 @@ function expandScientificNotation(raw: string): NormalizeListFilterNumberResult 
   let intDigits: string;
   let fracDigits: string;
   if (newPos <= 0) {
-    const fracBody = `${"0".repeat(-newPos)}${digits}`.replace(/0+$/, "");
+    const leadZeros = -newPos;
+    if (leadZeros + digitCount(digits) > MAX_TOTAL_DIGITS) {
+      return { ok: false, reason: "invalid" };
+    }
+    const prefix = safeRepeatZero(leadZeros);
+    if (prefix === null) {
+      return { ok: false, reason: "invalid" };
+    }
+    const fracBody = `${prefix}${digits}`.replace(/0+$/, "");
     intDigits = "0";
     fracDigits = fracBody;
   } else {
+    if (newPos > MAX_TOTAL_DIGITS + digitCount(digits)) {
+      return { ok: false, reason: "invalid" };
+    }
     let combined = digits;
-    if (newPos > combined.length) {
-      combined = combined + "0".repeat(newPos - combined.length);
+    const pad = newPos - combined.length;
+    if (pad > MAX_TOTAL_DIGITS) {
+      return { ok: false, reason: "invalid" };
+    }
+    if (pad > 0) {
+      const padZeros = safeRepeatZero(pad);
+      if (padZeros === null) {
+        return { ok: false, reason: "invalid" };
+      }
+      combined = combined + padZeros;
     }
     intDigits = combined.slice(0, newPos) || "0";
     fracDigits = combined.slice(newPos).replace(/0+$/, "");

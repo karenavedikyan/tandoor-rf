@@ -14,7 +14,18 @@ vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(filterNumberPath, "utf8"), ctx);
 const normalize = ctx.window.ClientsV3FilterNumber.normalizeListFilterNumberValue;
 
-const samples = ["1e-20", "1e21", "9007199254740993", "1e3", "Infinity", "NaN", "0x10"];
+const samples = [
+  "1e-20",
+  "1e21",
+  "9007199254740993",
+  "1e3",
+  "Infinity",
+  "NaN",
+  "0x10",
+  "1e4294967296",
+  "1e-4294967296",
+  "1e1000000",
+];
 const results = {};
 for (const sample of samples) {
   results[sample] = normalize(sample);
