@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isValidNonZeroUuid, normalizeUuid } from "../onec-clients/uuid";
+import { readLegalEntityGuidFromClientInfo } from "./client-info-legal-guid";
 import { parseSaleDecimal } from "./decimal";
 import { normalizeSaleMonth } from "./sale-month";
 import { MAX_LEGAL_SALES_BYTES } from "./constants";
@@ -11,22 +11,6 @@ export type LegalSalesParseResult =
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function readLegalGuid(raw: Record<string, unknown>): string | null {
-  const clientInfo = raw.client_info;
-  if (!isPlainObject(clientInfo)) {
-    return null;
-  }
-  const id = clientInfo.id;
-  if (typeof id !== "string") {
-    return null;
-  }
-  const trimmed = id.trim();
-  if (!isValidNonZeroUuid(trimmed)) {
-    return null;
-  }
-  return normalizeUuid(trimmed);
 }
 
 function readProductType(saleInfo: Record<string, unknown>): string | null {
@@ -114,15 +98,21 @@ export function parseLegalSalesJsonBytes(bytes: Buffer): LegalSalesParseResult {
     if (!isPlainObject(item)) {
       return { ok: false, code: "INVALID_RECORD", message: `Invalid record at index ${index}.`, index };
     }
-    const legalGuid = readLegalGuid(item);
-    if (!legalGuid) {
-      return {
-        ok: false,
-        code: "INVALID_FIELD",
-        message: `Invalid client_info.id at index ${index}.`,
-        index,
-      };
+    const legalParsed = readLegalEntityGuidFromClientInfo(item.client_info);
+    if (!legalParsed.ok) {
+      const code =
+        legalParsed.code === "CLIENT_INFO_GUID_ID_CONFLICT"
+          ? "CLIENT_INFO_GUID_ID_CONFLICT"
+          : "INVALID_FIELD";
+      const message =
+        legalParsed.code === "CLIENT_INFO_GUID_ID_CONFLICT"
+          ? `Conflicting client_info.guid and client_info.id at index ${index}.`
+          : legalParsed.code === "MISSING_CLIENT_INFO"
+            ? `Missing client_info at index ${index}.`
+            : `Invalid client_info legal guid at index ${index}.`;
+      return { ok: false, code, message, index };
     }
+    const legalGuid = legalParsed.legalGuid;
     const saleInfo = item.sale_info;
     if (!isPlainObject(saleInfo)) {
       return {

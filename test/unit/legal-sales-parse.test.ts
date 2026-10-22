@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseLegalSalesJsonBytes } from "../../src/onec-sales/parse-sale-json";
 import { normalizeSaleMonth } from "../../src/onec-sales/sale-month";
-import { buildSaleJsonBytes, buildSaleRecord, LEGAL_A } from "../helpers/legal-sales-fixtures";
+import { buildSaleJsonBytes, buildSaleRecord, LEGAL_A, LEGAL_B } from "../helpers/legal-sales-fixtures";
 
 describe("legal sales month normalization", () => {
   it("normalizes 1C month timestamp to YYYY-MM without timezone shift", () => {
@@ -49,6 +49,41 @@ describe("legal sales parse", () => {
       buildSaleJsonBytes([buildSaleRecord({ legalGuid: "not-a-guid", type: "A" })]),
     );
     assert.equal(parsed.ok, false);
+  });
+
+  it("accepts client_info.guid matching all_clients.guid_client", () => {
+    const parsed = parseLegalSalesJsonBytes(
+      buildSaleJsonBytes([
+        buildSaleRecord({ legalGuid: LEGAL_A, guidOnly: true, type: "ВХОДНЫЕ ДВЕРИ" }),
+      ]),
+    );
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(parsed.roster.lines[0]?.legalGuid, LEGAL_A);
+  });
+
+  it("accepts legacy client_info.id when guid is absent", () => {
+    const row = buildSaleRecord({ legalGuid: LEGAL_A, type: "МЕЖКОМНАТНЫЕ ДВЕРИ" });
+    delete (row.client_info as Record<string, unknown>).guid;
+    const parsed = parseLegalSalesJsonBytes(buildSaleJsonBytes([row]));
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(parsed.roster.lines[0]?.legalGuid, LEGAL_A);
+  });
+
+  it("rejects conflicting client_info.guid and client_info.id", () => {
+    const parsed = parseLegalSalesJsonBytes(
+      buildSaleJsonBytes([
+        buildSaleRecord({
+          legalGuid: LEGAL_A,
+          clientInfoGuid: LEGAL_B,
+          type: "Фурнитура (ручки)",
+        }),
+      ]),
+    );
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) return;
+    assert.equal(parsed.code, "CLIENT_INFO_GUID_ID_CONFLICT");
   });
 
   it("rejects conflicting month fields", () => {

@@ -21,6 +21,7 @@ export type LegalSalesParseFailureCode =
   | "FILE_TOO_LARGE"
   | "INVALID_RECORD"
   | "INVALID_FIELD"
+  | "CLIENT_INFO_GUID_ID_CONFLICT"
   | "DUPLICATE_KEY_CONFLICT"
   | "MONTH_FIELD_CONFLICT";
 
