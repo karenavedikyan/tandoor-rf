@@ -22,10 +22,67 @@
     delete window.__v3FocusSearchUserPick;
   }
 
+  function scheduleFocusSearchCommit(reload, value, caret) {
+    var trimmed = String(value || "").trim();
+    var resetEpoch = window.__v3FocusSearchResetEpoch || 0;
+    window.__v3FocusSearchDebounceSnap = {
+      value: value || "",
+      caret: caret,
+      resetEpoch: resetEpoch,
+    };
+    clearFocusSearchDebounce();
+    filterTimer = setTimeout(function () {
+      if (resetEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
+        window.__v3FocusSearchDebounceSnap = null;
+        return;
+      }
+      window.__v3FocusSearchDebounceSnap = null;
+      var main = document.getElementById("search-input");
+      if (main) {
+        main.value = value || "";
+      }
+      reload(
+        window.ClientsV3.mergeListStateForUserAction({ q: trimmed, page: 1 }),
+        { id: "v3-focus-search", position: caret },
+      );
+    }, 180);
+  }
+
+  function flushScheduledFocusSearchCommit(reload) {
+    var snap = window.__v3FocusSearchDebounceSnap;
+    if (!snap || !window.ClientsV3) {
+      return;
+    }
+    if (snap.resetEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
+      window.__v3FocusSearchDebounceSnap = null;
+      clearFocusSearchDebounce();
+      return;
+    }
+    var live = window.ClientsV3.readState();
+    var trimmed = String(snap.value || "").trim();
+    if (String(live.q || "").trim() === trimmed) {
+      window.__v3FocusSearchDebounceSnap = null;
+      clearFocusSearchDebounce();
+      return;
+    }
+    clearFocusSearchDebounce();
+    window.__v3FocusSearchDebounceSnap = null;
+    var main = document.getElementById("search-input");
+    if (main) {
+      main.value = snap.value || "";
+    }
+    reload(
+      window.ClientsV3.mergeListStateForUserAction({ q: trimmed, page: 1 }),
+      { id: "v3-focus-search", position: snap.caret },
+    );
+  }
+
   function prepareFocusExplicitReset() {
     clearFocusSearchDebounce();
     bumpFocusSearchResetEpoch();
     clearFocusSearchUserPick();
+    window.__v3FocusSearchDebounceSnap = null;
+    delete window.__v3FocusEnumLastIntent;
     window.__v3FocusEnumUserPick = {};
     var focusSearch = document.getElementById("v3-focus-search");
     if (focusSearch) {
@@ -715,18 +772,11 @@
           if (!payload.onSearch) {
             return;
           }
+          var caret = search.selectionStart;
           rememberFocusSearchUserPick(search.value || "");
-          clearFocusSearchDebounce();
-          var debounceEpoch = window.__v3FocusSearchResetEpoch || 0;
-          filterTimer = setTimeout(function () {
-            if (debounceEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
-              return;
-            }
-            if (!search.isConnected) {
-              return;
-            }
-            payload.onSearch(search.value || "");
-          }, 220);
+          scheduleFocusSearchCommit(function (nextState) {
+            payload.onSearch(nextState.q || "");
+          }, search.value || "", caret);
         },
         { passive: true },
       );
@@ -811,6 +861,17 @@
         keepValue = domValue;
       }
     }
+    var intent = window.__v3FocusEnumLastIntent;
+    if (
+      intent &&
+      intent.colId === colId &&
+      intent.resetEpoch === (window.__v3FocusSearchResetEpoch || 0) &&
+      options.some(function (entry) {
+        return (entry.guid || entry.value || "") === intent.value;
+      })
+    ) {
+      keepValue = intent.value;
+    }
     if (!options.length && optionsStatus === "loading") {
       return;
     }
@@ -848,38 +909,25 @@
     }
   }
 
-  function bindFocusColumnEditor(input, ctx, shell, reload) {
-    if (!input || input.dataset.focusEditorBound === "1") {
+  function runApplyFromEditor(editor, ctx, shell, reload) {
+    if (!editor) {
       return;
     }
-    input.dataset.focusEditorBound = "1";
-    function runApply(target) {
-      var el = target || input;
-      if (!el) {
+    var colId = editor.colId || "";
+    var kind = editor.kind || "";
+    if (kind === "number" && editor.badInput) {
+      restoreFilterEditor(editor);
+      return;
+    }
+    var live = window.ClientsV3.readState();
+    if (kind === "enum") {
+      var enumSpec = COL_FILTER[colId];
+      if (enumSpec && enumEqValue(live, enumSpec) === String(editor.value || "")) {
+        delete window.__v3FocusEnumLastIntent;
         return;
       }
-      var colId = el.getAttribute("data-focus-col") || "";
-      var kind = el.getAttribute("data-focus-kind") || "";
-      var editor = {
-        colId: colId,
-        kind: kind,
-        value: el.value,
-        op: el.getAttribute("data-focus-op") || "contains",
-        id: el.id || filterControlId(colId, kind, el.getAttribute("data-focus-op") || undefined),
-        position: el.selectionStart,
-      };
-      if (kind === "number" && el.validity && el.validity.badInput) {
-        restoreFilterEditor(editor);
-        return;
-      }
-      var live = window.ClientsV3.readState();
-      if (kind === "enum") {
-        var enumSpec = COL_FILTER[colId];
-        if (enumSpec && enumEqValue(live, enumSpec) === String(editor.value || "")) {
-          return;
-        }
-      }
-      var next = applyEditor(live, editor);
+    }
+    var next = applyEditor(live, editor);
       if (next === null) {
         window.ClientsLktandoorFocus.renderBlockingError({
           shell: shell,
@@ -909,10 +957,57 @@
       if (window.ClientsV3FieldRules) {
         window.ClientsV3FieldRules.syncLegacyFromRules(next);
       }
-      if (kind === "enum") {
-        clearFocusEnumUserPick(colId);
+    if (kind === "enum") {
+      clearFocusEnumUserPick(colId);
+      delete window.__v3FocusEnumLastIntent;
+    }
+    reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+  }
+
+  function flushPendingFocusEnumIntent(ctx, shell, reload) {
+    var intent = window.__v3FocusEnumLastIntent;
+    if (!intent || intent.kind !== "enum") {
+      return;
+    }
+    if (intent.resetEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
+      delete window.__v3FocusEnumLastIntent;
+      return;
+    }
+    var spec = COL_FILTER[intent.colId];
+    if (!spec) {
+      delete window.__v3FocusEnumLastIntent;
+      return;
+    }
+    var live = window.ClientsV3.readState();
+    if (enumEqValue(live, spec) === String(intent.value || "")) {
+      delete window.__v3FocusEnumLastIntent;
+      return;
+    }
+    runApplyFromEditor(intent, ctx, shell, reload);
+  }
+
+  function bindFocusColumnEditor(input, ctx, shell, reload) {
+    if (!input || input.dataset.focusEditorBound === "1") {
+      return;
+    }
+    input.dataset.focusEditorBound = "1";
+    function runApply(target) {
+      var el = target || input;
+      if (!el) {
+        return;
       }
-      reload(window.ClientsV3.mergeListStateForUserAction(next), editor);
+      var colId = el.getAttribute("data-focus-col") || "";
+      var kind = el.getAttribute("data-focus-kind") || "";
+      var editor = {
+        colId: colId,
+        kind: kind,
+        value: el.value,
+        op: el.getAttribute("data-focus-op") || "contains",
+        id: el.id || filterControlId(colId, kind, el.getAttribute("data-focus-op") || undefined),
+        position: el.selectionStart,
+        badInput: kind === "number" && el.validity && el.validity.badInput,
+      };
+      runApplyFromEditor(editor, ctx, shell, reload);
     }
     function onEdit(immediate, target) {
       if (immediate) {
@@ -932,14 +1027,24 @@
         var enumApplyToken = 0;
         function scheduleEnumApply(evt) {
           var target = evt && evt.currentTarget ? evt.currentTarget : input;
-          rememberFocusEnumUserPick(target.getAttribute("data-focus-col") || "", target.value || "");
+          var colId = target.getAttribute("data-focus-col") || "";
+          var snapshot = {
+            colId: colId,
+            kind: "enum",
+            value: target.value || "",
+            op: target.getAttribute("data-focus-op") || "contains",
+            id: target.id || filterControlId(colId, "enum", target.getAttribute("data-focus-op") || undefined),
+            resetEpoch: window.__v3FocusSearchResetEpoch || 0,
+          };
+          rememberFocusEnumUserPick(colId, snapshot.value);
+          window.__v3FocusEnumLastIntent = snapshot;
           enumApplyToken += 1;
           var token = enumApplyToken;
           queueMicrotask(function () {
             if (token !== enumApplyToken) {
               return;
             }
-            runApply(target);
+            runApplyFromEditor(snapshot, ctx, shell, reload);
           });
         }
         input.addEventListener("input", scheduleEnumApply);
@@ -1007,6 +1112,14 @@
     if (!host) {
       return;
     }
+    function earlyReload(nextState, editor) {
+      if (payload.onState) {
+        payload.onState(nextState, editor);
+      }
+    }
+    flushScheduledFocusSearchCommit(earlyReload);
+    flushPendingFocusEnumIntent(ctx, shell, earlyReload);
+    state = payload.state || window.ClientsV3.readState();
     syncLayout(state);
     var scroll = readScroll(state);
     var matched = total;
@@ -1036,6 +1149,16 @@
             end: existingSearch.selectionEnd,
           };
         }
+      }
+    }
+    if (!searchDraft && window.__v3FocusSearchDebounceSnap) {
+      var snap = window.__v3FocusSearchDebounceSnap;
+      if (snap.resetEpoch === (window.__v3FocusSearchResetEpoch || 0)) {
+        searchDraft = {
+          value: snap.value,
+          start: snap.caret,
+          end: snap.caret,
+        };
       }
     }
     var searchValue = searchDraft ? searchDraft.value : state.q || "";
@@ -1188,26 +1311,8 @@
       }
       searchEl.addEventListener("input", function () {
         var el = searchEl;
-        var caret = el.selectionStart;
         rememberFocusSearchUserPick(el.value || "");
-        clearFocusSearchDebounce();
-        var debounceEpoch = window.__v3FocusSearchResetEpoch || 0;
-        filterTimer = setTimeout(function () {
-          if (debounceEpoch !== (window.__v3FocusSearchResetEpoch || 0)) {
-            return;
-          }
-          if (!el.isConnected) {
-            return;
-          }
-          var main = document.getElementById("search-input");
-          if (main) {
-            main.value = el.value;
-          }
-          reload(
-            window.ClientsV3.mergeListStateForUserAction({ q: el.value.trim(), page: 1 }),
-            { id: "v3-focus-search", position: caret },
-          );
-        }, 180);
+        scheduleFocusSearchCommit(reload, el.value || "", el.selectionStart);
       });
     }
 

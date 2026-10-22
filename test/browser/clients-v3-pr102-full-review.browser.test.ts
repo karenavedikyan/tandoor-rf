@@ -247,6 +247,25 @@ describe("PR102 independent full matrix", {concurrency:false}, () => {
     const res=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&r.status()===200&&decodeURIComponent(r.url()).includes(TYPES[2]));await p.reload();const data=await(await res).json();assert.equal(data.total,3);
     await p.locator(TOP).waitFor({state:"visible"});assert.equal(await p.locator(TOP).inputValue(),TYPES[2]);await noError(p);await p.close();
   });
+  it("pending search commits after gated list repaint before debounce settles",async()=>{
+    const p=await pageFor();await open(p);
+    let release!:()=>void,seen!:()=>void;const gate=new Promise<void>(r=>release=r),arrived=new Promise<void>(r=>seen=r);
+    await p.route("**/api/clients/v3/list?*",async route=>{
+      const u=new URL(route.request().url());
+      if(decodeURIComponent(u.toString()).includes(TYPES[0])&&!u.searchParams.get("q")){
+        const data=await route.fetch();seen();await gate;await route.fulfill({response:data});
+      }else await route.continue();
+    });
+    const first=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&decodeURIComponent(r.url()).includes(TYPES[0])&&!new URL(r.url()).searchParams.get("q"));
+    await p.locator(TOP).selectOption(TYPES[0]);await arrived;
+    const searched=p.waitForResponse(r=>r.url().includes("/api/clients/v3/list")&&new URL(r.url()).searchParams.get("q")==="QA Legal 0"&&r.status()===200);
+    await p.locator("#v3-focus-search").fill("QA Legal 0");release();await(await first).finished();
+    assert.equal((await(await searched).json()).total,1);
+    await p.waitForLoadState("networkidle");
+    assert.equal(await p.locator("#v3-focus-search").inputValue(),"QA Legal 0");
+    assert.equal(await p.evaluate(()=>window.ClientsV3.readState().q),"QA Legal 0");
+    await p.unrouteAll({behavior:"wait"});await p.close();
+  });
   it("retail equal addresses: all72 GUIDs exactly once over8 pages; UI next/back",async()=>{
     const p=await pageFor();const seen=new Set<string>();
     for(let page=1;page<=8;page++){const res=await p.request.get(base+`/api/clients/v3/list?entity=retail&page=${page}&pageSize=10`);assert.equal(res.status(),200);const data=await res.json();assert.equal(data.total,72);for(const row of data.items){assert.ok(!seen.has(row.guid),"duplicate GUID across pages");seen.add(row.guid);}}

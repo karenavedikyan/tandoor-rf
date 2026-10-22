@@ -85,6 +85,11 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     return p;
   }
 
+  async function closePage(p: Page): Promise<void> {
+    await p.unrouteAll({ behavior: "wait" });
+    await p.close();
+  }
+
   it("pending search draft survives metadata repaint and continued native typing", async () => {
     const p = await pageFor();
     let release!: () => void;
@@ -115,7 +120,53 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     );
     await p.locator(SEARCH).pressSequentially("al 0");
     assert.equal((await (await result).json()).total, 1);
-    await p.close();
+    await closePage(p);
+  });
+
+  it("pending search commits after gated list repaint before debounce settles", async () => {
+    const p = await pageFor();
+    await openFocusWarm(p);
+    let release!: () => void;
+    let seen!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const arrived = new Promise<void>((r) => {
+      seen = r;
+    });
+    await p.route("**/api/clients/v3/list?*", async (route) => {
+      const u = new URL(route.request().url());
+      if (decodeURIComponent(u.toString()).includes(TYPES[0]) && !u.searchParams.get("q")) {
+        const data = await route.fetch();
+        seen();
+        await gate;
+        await route.fulfill({ response: data });
+      } else {
+        await route.continue();
+      }
+    });
+    const first = p.waitForResponse(
+      (r) =>
+        r.url().includes("/api/clients/v3/list") &&
+        decodeURIComponent(r.url()).includes(TYPES[0]) &&
+        !new URL(r.url()).searchParams.get("q"),
+    );
+    await p.locator(TOP).selectOption(TYPES[0]);
+    await arrived;
+    const searched = p.waitForResponse(
+      (r) =>
+        r.url().includes("/api/clients/v3/list") &&
+        new URL(r.url()).searchParams.get("q") === "QA Legal 0" &&
+        r.status() === 200,
+    );
+    await p.locator(FOCUS_SEARCH).fill("QA Legal 0");
+    release();
+    await (await first).finished();
+    assert.equal((await (await searched).json()).total, 1);
+    await p.waitForLoadState("networkidle");
+    assert.equal(await p.locator(FOCUS_SEARCH).inputValue(), "QA Legal 0");
+    assert.equal(await p.evaluate(() => window.ClientsV3.readState().q), "QA Legal 0");
+    await closePage(p);
   });
 
   it("direct fullscreen bookmark: delayed options populate TOP enum choices", async () => {
@@ -144,7 +195,7 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     assert.ok(TYPES.every((t) => values.includes(t)), JSON.stringify({ values }));
     const cacheLen = await p.evaluate(() => window.__lktandoorFilterOptions?.types?.length ?? 0);
     assert.equal(cacheLen, 3);
-    await p.close();
+    await closePage(p);
   });
 
   it("cold direct fullscreen bookmark: Esc exits without missing list context", async () => {
@@ -154,7 +205,7 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
     await p.waitForLoadState("networkidle");
     await p.keyboard.press("Escape");
     await p.waitForFunction(() => !document.body.classList.contains("x14-focus-mode"));
-    await p.close();
+    await closePage(p);
   });
 
   it("card back to fullscreen: delayed options still populate TOP enum", async () => {
@@ -189,7 +240,7 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
       { sel: TOP, types: TYPES },
       { timeout: 15000 },
     );
-    await p.close();
+    await closePage(p);
   });
 
   it("rapid TOP switching with native selectOption preserves latest filter", async () => {
@@ -217,7 +268,39 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
         (r) => r.url().includes("/api/clients/v3/list") && r.status() === 200 && !decodeURIComponent(r.url()).includes(TYPES[2]),
       );
     }
-    await p.close();
+    await closePage(p);
+  });
+
+  it("rapid TOP stress: 12 sequences without extra pause between 150/350/500", async () => {
+    const p = await pageFor();
+    await openFocusWarm(p);
+    for (let seq = 1; seq <= 12; seq += 1) {
+      if (seq > 1) {
+        const all = p.waitForResponse(
+          (r) => r.url().includes("/api/clients/v3/list") && r.status() === 200 && !decodeURIComponent(r.url()).includes(TYPES[0]),
+        );
+        await p.locator(TOP).selectOption("");
+        await all;
+        await p.waitForLoadState("networkidle");
+      }
+      const latest = p.waitForResponse(
+        (r) =>
+          r.url().includes("/api/clients/v3/list") &&
+          r.status() === 200 &&
+          decodeURIComponent(r.url()).includes(TYPES[2]),
+      );
+      for (const type of TYPES) {
+        await p.locator(TOP).selectOption(type);
+      }
+      const r = await latest;
+      assert.equal((await r.json()).total, 3, `sequence ${seq}`);
+      await p.waitForFunction(
+        ({ s, v }) => (document.querySelector(s) as HTMLSelectElement)?.value === v,
+        { s: TOP, v: TYPES[2] },
+      );
+      assert.ok(decodeURIComponent(p.url()).includes(TYPES[2]), `sequence ${seq}: URL must keep TOP500`);
+    }
+    await closePage(p);
   });
 
   for (const mobile of [false, true] as const) {
@@ -238,7 +321,7 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
       assert.equal(new URL(p.url()).searchParams.get("q") || "", "");
       await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
       assert.equal(await p.locator(FOCUS_SEARCH).inputValue(), "");
-      await p.close();
+      await closePage(p);
     });
   }
 
@@ -295,7 +378,7 @@ describe("PR102 focus regression (options race + Esc ctx)", { concurrency: false
             (await p.locator("#results-state:not(.clients-hidden)").count()) > 0,
         );
       }
-      await p.close();
+      await closePage(p);
     });
   }
 });
