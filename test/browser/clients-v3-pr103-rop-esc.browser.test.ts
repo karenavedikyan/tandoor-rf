@@ -279,8 +279,9 @@ describe("PR103 ROP Escape keeps latest TOP filter", { concurrency: false }, () 
     assertScopeInUrl(p.url(), subjectGuid, kind);
     await p.waitForFunction(() => !document.body.classList.contains("x14-focus-mode"));
 
+    const reopenWait = waitPortfolioList(p, subjectGuid, portfolioTotal, true);
     await p.locator('[data-testid="v3-focus-enter"]:visible').click();
-    const reopenRes = await waitPortfolioList(p, subjectGuid, portfolioTotal, true);
+    const reopenRes = await reopenWait;
     const reopenBody = (await reopenRes.json()) as { total: number };
     assert.equal(reopenBody.total, portfolioTotal, "reopen list must match scoped portfolio size");
     await assertFocusShellVisible(p);
