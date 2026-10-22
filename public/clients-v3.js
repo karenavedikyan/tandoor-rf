@@ -291,6 +291,19 @@
   function mergeListStateForUserAction(patch) {
     var url = readState();
     var dom = readFiltersFromDom();
+    var urlTypeTokens = url.v3types.length ? url.v3types.slice() : parseTokenList(url.v3type);
+    var urlCategoryTokens = url.v3categories.length
+      ? url.v3categories.slice()
+      : parseTokenList(url.v3category);
+    var v3ModeActive =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("v3mode") === "1";
+    var preferUrlFilters =
+      v3ModeActive ||
+      Boolean(url.v3focus) ||
+      Boolean(url.v3Rules && url.v3Rules.length) ||
+      Boolean(urlTypeTokens.length) ||
+      Boolean(urlCategoryTokens.length);
     var teamResponsible =
       url.responsibleGuid && url.responsibleKind && (url.v3view === "teams" || url.ropEmployee);
     var next = {
@@ -304,16 +317,16 @@
           ? url.v3manager || url.responsibleGuid
           : ""
         : dom.v3manager || url.v3manager || "",
-      v3types: dom.v3types.length
-        ? dom.v3types.slice()
-        : url.v3types.length
-          ? url.v3types.slice()
-          : parseTokenList(url.v3type),
-      v3categories: dom.v3categories.length
-        ? dom.v3categories.slice()
-        : url.v3categories.length
-          ? url.v3categories.slice()
-          : parseTokenList(url.v3category),
+      v3types: preferUrlFilters
+        ? urlTypeTokens
+        : dom.v3types.length
+          ? dom.v3types.slice()
+          : urlTypeTokens,
+      v3categories: preferUrlFilters
+        ? urlCategoryTokens
+        : dom.v3categories.length
+          ? dom.v3categories.slice()
+          : urlCategoryTokens,
       missingManager: url.missingManager,
       ropEmployee: url.ropEmployee,
       orgTeamGuid: url.orgTeamGuid,
@@ -359,7 +372,8 @@
       teamContext &&
       patch &&
       Object.prototype.hasOwnProperty.call(patch, "v3manager") &&
-      !patch.v3manager
+      !patch.v3manager &&
+      !Object.prototype.hasOwnProperty.call(patch, "responsibleGuid")
     ) {
       next.responsibleGuid = "";
       next.responsibleKind = "";
@@ -1149,7 +1163,12 @@
           view: state.v3view === "teams" ? "teams" : "all",
           ropEmployee: state.ropEmployee,
           responsibleGuid: state.responsibleGuid,
-          manager: state.v3manager,
+          responsibleKind: state.responsibleKind,
+          manager:
+            state.v3manager ||
+            (state.responsibleKind === "manager" ? state.responsibleGuid : ""),
+          regionalManager: state.responsibleKind === "regional" ? state.responsibleGuid : "",
+          hardwareManager: state.responsibleKind === "hardware" ? state.responsibleGuid : "",
           teamSource: "rop",
         };
         var lktandoorTeamsActive =

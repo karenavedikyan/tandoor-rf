@@ -1516,9 +1516,10 @@
       event.preventDefault();
       clearFocusChromeSignature();
       writeScroll(state, document.getElementById("x14-focus-scroll"));
+      delete window.__lastV3ListPayload;
       window.ClientsV3.loadList(
         listCtx,
-        window.ClientsV3.mergeListStateForUserAction({ v3focus: false }),
+        window.ClientsV3.mergeListStateForUserAction(Object.assign({}, state, { v3focus: false })),
         true,
       );
     });

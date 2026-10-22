@@ -177,4 +177,89 @@ describe("clients v3 multiselect normalization", () => {
     assert.ok(returnQuery.includes("v3dense=1"));
     assert.ok(returnQuery.includes("v3cols=name"));
   });
+
+  it("preserves regional team scope when focus filter passes full state with empty v3manager", () => {
+    const rop = "55555555-5555-4555-8555-555555555555";
+    const team = "ab000000-0000-4000-8000-000000000001";
+    const regional = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const top150 = "ee000000-0000-4000-8000-000000000150";
+    const search =
+      "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&v3focus=1&ropEmployee=" +
+      rop +
+      "&orgTeamGuid=" +
+      team +
+      "&responsibleGuid=" +
+      regional +
+      "&responsibleKind=regional&teamKind=regional";
+    const v3 = loadClientsV3(search);
+    const live = v3.readState();
+    const patch = {
+      ...live,
+      v3Rules: [{ field: "typeGuid", op: "eq", value: top150 }],
+      v3type: top150,
+      v3types: [top150],
+      page: 1,
+    };
+    const merged = v3.mergeListStateForUserAction(patch) as Record<string, unknown>;
+    assert.equal(merged.responsibleGuid, regional);
+    assert.equal(merged.responsibleKind, "regional");
+    assert.equal(merged.v3manager, "");
+  });
+
+  it("prefers URL TOP filters over stale lktandoor multiselect when exiting focus", () => {
+    const top150 = "ee000000-0000-4000-8000-000000000150";
+    const top500 = "ee000000-0000-4000-8000-000000000500";
+    const search =
+      "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&v3focus=1&v3type=" +
+      top150 +
+      "&filters=" +
+      encodeURIComponent(JSON.stringify([{ field: "typeGuid", op: "eq", value: top150 }]));
+    const v3 = loadClientsV3(search);
+    const select = document.createElement("select");
+    select.id = "v3-type-filter";
+    const stale = document.createElement("option");
+    stale.value = top500;
+    stale.selected = true;
+    select.appendChild(stale);
+    document.body.appendChild(select);
+    const merged = v3.mergeListStateForUserAction({ v3focus: false }) as Record<string, unknown>;
+    assert.deepEqual(merged.v3types, [top150]);
+    assert.equal(merged.v3type, top150);
+    const rules = merged.v3Rules as { field: string; value: string }[];
+    assert.equal(rules.some((r) => r.field === "typeGuid" && r.value === top150), true);
+  });
+
+  it("keeps canonical empty TOP when reopening focus after reset (v3mode, stale DOM)", () => {
+    const top500 = "ee000000-0000-4000-8000-000000000500";
+    const search = "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&ropEmployee=rop-guid";
+    const v3 = loadClientsV3(search);
+    const select = document.createElement("select");
+    select.id = "v3-type-filter";
+    const stale = document.createElement("option");
+    stale.value = top500;
+    stale.selected = true;
+    select.appendChild(stale);
+    document.body.appendChild(select);
+    const merged = v3.mergeListStateForUserAction({ v3focus: true }) as Record<string, unknown>;
+    assert.deepEqual(merged.v3types, []);
+    assert.equal(merged.v3type, "");
+    const rules = merged.v3Rules as { field: string }[];
+    assert.equal(rules.length, 0);
+  });
+
+  it("still clears manager team scope when patch only clears v3manager", () => {
+    const rop = "55555555-5555-4555-8555-555555555555";
+    const manager = "22222222-2222-4222-8222-222222222222";
+    const search =
+      "?v3mode=1&v3entity=legal_grouped&view=teams&v3view=teams&ropEmployee=" +
+      rop +
+      "&responsibleGuid=" +
+      manager +
+      "&responsibleKind=manager&teamKind=manager&v3manager=" +
+      manager;
+    const v3 = loadClientsV3(search);
+    const merged = v3.mergeListStateForUserAction({ v3manager: "" }) as Record<string, unknown>;
+    assert.equal(merged.responsibleGuid, "");
+    assert.equal(merged.responsibleKind, "");
+  });
 });
