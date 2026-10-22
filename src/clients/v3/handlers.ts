@@ -21,6 +21,7 @@ import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 import { getLegalSalesForMonth, getLegalSalesImportMeta, listLegalSalesMonths } from "./legal-sales";
+import { listSalesSectionMonths, loadSalesSectionOverview } from "./sales-section";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -458,4 +459,91 @@ export async function v3LegalSalesMonthHandler(req: AccessRequest, res: Response
   }
   setNoStore(res);
   res.json({ legalGuid, sales });
+}
+
+async function resolveSalesSectionTerritory(
+  req: AccessRequest,
+  res: Response,
+): Promise<
+  | {
+      ropBranchGuid?: string;
+      responsibleGuid?: string;
+      responsibleKind?: V3ResponsibleKind;
+      managerGuid?: string;
+      teamMemberGuids?: string[];
+    }
+  | undefined
+> {
+  const responsibleKindRaw = String(req.query.responsibleKind ?? "");
+  const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
+    ? (responsibleKindRaw as V3ResponsibleKind)
+    : undefined;
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const managerGuid = parseGuidParam(req.query.managerGuid);
+  const employeePortfolioGuid = parseGuidParam(req.query.employeePortfolioGuid);
+  let teamMemberGuids: string[] | undefined;
+  if (employeePortfolioGuid) {
+    if (req.query.teamGuid !== undefined || ropBranchGuid) {
+      setNoStore(res);
+      res
+        .status(400)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            "employeePortfolioGuid несовместим с teamGuid или ropBranchGuid.",
+          ),
+        );
+      return undefined;
+    }
+    teamMemberGuids = [employeePortfolioGuid];
+  } else {
+    teamMemberGuids = await resolveTeamMemberGuidsForQuery(
+      req.accessContext,
+      res,
+      req.query,
+      responsibleGuid,
+    );
+    if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+      return undefined;
+    }
+  }
+  return {
+    ropBranchGuid: ropBranchGuid ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind,
+    managerGuid: managerGuid ?? undefined,
+    teamMemberGuids,
+  };
+}
+
+export async function v3SalesSectionMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const months = await listSalesSectionMonths();
+  setNoStore(res);
+  res.json({ months });
+}
+
+export async function v3SalesSectionOverviewHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  if (!month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const overview = await loadSalesSectionOverview(req.accessContext!, month, territory);
+  if (overview === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ overview });
 }

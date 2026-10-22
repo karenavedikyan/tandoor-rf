@@ -1,4 +1,5 @@
 export type ParsedLegalSaleLine = {
+  sourceRowIndex: number;
   legalGuid: string;
   saleMonthYyyyMm: string;
   saleMonthStartIso: string;
@@ -12,6 +13,26 @@ export type ParsedLegalSaleLine = {
   additionalExpenses: string;
   grossProfit: string;
   profitability: string;
+};
+
+export type ParsedLegalSaleItemLine = ParsedLegalSaleLine & {
+  guidItem: string;
+  nameItem: string;
+};
+
+export type ParsedLegalReturnLine = {
+  sourceRowIndex: number;
+  legalGuid: string;
+  saleMonthYyyyMm: string;
+  saleMonthStartIso: string;
+  productType: string;
+  quantity: string;
+  income: string;
+};
+
+export type ParsedLegalReturnItemLine = ParsedLegalReturnLine & {
+  guidItem: string;
+  nameItem: string;
 };
 
 export type LegalSalesParseFailureCode =
@@ -28,5 +49,23 @@ export type LegalSalesParseFailureCode =
 export type LegalSalesRoster = {
   sourceSha256: string;
   lines: ParsedLegalSaleLine[];
+  lineCount: number;
+};
+
+export type LegalSaleItemsRoster = {
+  sourceSha256: string;
+  lines: ParsedLegalSaleItemLine[];
+  lineCount: number;
+};
+
+export type LegalReturnsRoster = {
+  sourceSha256: string;
+  lines: ParsedLegalReturnLine[];
+  lineCount: number;
+};
+
+export type LegalReturnItemsRoster = {
+  sourceSha256: string;
+  lines: ParsedLegalReturnItemLine[];
   lineCount: number;
 };

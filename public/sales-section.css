@@ -1,0 +1,78 @@
+.sales-section-root {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sales-section-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+  font-size: 0.875rem;
+}
+
+.sales-section-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sales-section-tab {
+  border: 1px solid var(--legacy-border, #d8dce3);
+  background: #fff;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sales-section-tab[aria-selected="true"] {
+  border-color: var(--brand-primary, #c45c26);
+  font-weight: 600;
+}
+
+.sales-macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.sales-macro-card {
+  border: 1px solid var(--legacy-border, #d8dce3);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.sales-macro-card h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #5c6470;
+}
+
+.sales-empty {
+  padding: 1.5rem;
+  border: 1px dashed var(--legacy-border, #d8dce3);
+  border-radius: 8px;
+  color: #5c6470;
+}
+
+.sales-category-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.sales-category-table th,
+.sales-category-table td {
+  border-bottom: 1px solid #e8eaed;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+
+.sales-note {
+  font-size: 0.8rem;
+  color: #5c6470;
+}

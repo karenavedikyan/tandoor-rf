@@ -240,6 +240,10 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "clients.html");
   });
 
+  app.get("/sales", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "sales-section.html");
+  });
+
   app.get("/clients/field-map", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "clients-field-map.html");
   });

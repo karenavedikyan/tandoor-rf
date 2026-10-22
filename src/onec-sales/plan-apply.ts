@@ -64,6 +64,7 @@ async function loadExistingLine(
     return null;
   }
   return {
+    sourceRowIndex: line.sourceRowIndex,
     legalGuid: line.legalGuid,
     saleMonthYyyyMm: line.saleMonthYyyyMm,
     saleMonthStartIso: line.saleMonthStartIso,
