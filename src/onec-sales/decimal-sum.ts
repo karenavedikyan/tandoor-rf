@@ -47,14 +47,26 @@ export function addSaleQuantityStrings(values: string[]): string {
   return fromScaledInt(sum, QTY_SCALE);
 }
 
-export function saleMoneyWithinTolerance(a: string, b: string, toleranceCents = 1): boolean {
+/** Exact money equality at scale 4 (0.0001 ₽ units). */
+export function saleMoneyStringsExactEqual(a: string, b: string): boolean {
+  const left = toScaledInt(a, MONEY_SCALE);
+  const right = toScaledInt(b, MONEY_SCALE);
+  if (left == null || right == null) {
+    return a === b;
+  }
+  return left === right;
+}
+
+/** toleranceKopecks: max difference in kopecks (1 = 0.01 ₽ at scale 4 → 100 scaled units). */
+export function saleMoneyWithinTolerance(a: string, b: string, toleranceKopecks = 0): boolean {
   const left = toScaledInt(a, MONEY_SCALE);
   const right = toScaledInt(b, MONEY_SCALE);
   if (left == null || right == null) {
     return a === b;
   }
   const diff = left > right ? left - right : right - left;
-  return diff <= BigInt(toleranceCents);
+  const toleranceScaled = BigInt(toleranceKopecks) * 100n;
+  return diff <= toleranceScaled;
 }
 
 export function saleQuantityWithinTolerance(a: string, b: string): boolean {

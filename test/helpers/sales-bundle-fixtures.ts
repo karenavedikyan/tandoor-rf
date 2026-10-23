@@ -13,10 +13,12 @@ export function buildSaleItemRecord(input: {
   nameItem?: string;
   quantity?: number;
   income?: number;
+  month?: string;
 }) {
   const base = buildSaleRecord({
     legalGuid: input.legalGuid,
     type: input.type ?? CAT,
+    month: input.month ?? MONTH,
     quantity: input.quantity ?? 1,
     income: input.income ?? 100,
   });
@@ -55,6 +57,25 @@ export function buildReturnRecord(input: {
     info.name_item = input.nameItem ?? "Return SKU";
   }
   return row;
+}
+
+export function buildAlignedSalesBundleBuffers() {
+  const tiny = tinySalesBundleBuffers();
+  return {
+    saleAggregate: tiny.aggregate,
+    saleItems: tiny.items,
+    returnsAggregate: tiny.returns,
+    returnItems: tiny.returnItems,
+  };
+}
+
+/** Items income 999 vs aggregate 300 — parity must fail. */
+export function buildMisalignedSalesItemsBuffer(): Buffer {
+  return Buffer.from(
+    buildSaleJsonBytes([
+      buildSaleItemRecord({ legalGuid: LEGAL_A, quantity: 1, income: 999 }),
+    ]),
+  );
 }
 
 export function tinySalesBundleBuffers() {

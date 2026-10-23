@@ -5,7 +5,9 @@ import { appendAssignmentFilters, type V3ListQuery, type V3ResponsibleKind } fro
 import { normalizeSaleMonth } from "../../onec-sales/sale-month";
 import { saleMacroGroup, saleMacroGroupLabel, type SaleMacroGroup } from "../../onec-sales/product-type-groups";
 import {
+  countQuarantinedRows,
   loadSalesImportSnapshotState,
+  resolveMonthDatasetSha,
   monthHasReturnAggregate,
   monthHasReturnItems,
   monthHasSaleAggregate,
@@ -30,6 +32,9 @@ export type SalesSectionImportMeta = {
   scopedMatchedSalesRows: number;
   scopedQuarantinedSalesRows: number;
   scopedMatchedReturnRows: number;
+  globalQuarantinedItemRows: number;
+  globalQuarantinedReturnRows: number;
+  coverageNote: string;
 };
 
 export type SalesSectionCategoryRow = {
@@ -91,7 +96,9 @@ export async function resolveMonthSalesSource(
   snapshot: SalesImportSnapshotState,
   monthIso: string,
 ): Promise<"items" | "aggregate" | "none"> {
-  if (snapshot.saleItemsSha && (await monthHasSaleItems(snapshot.saleItemsSha, monthIso))) {
+  const itemsSha =
+    (await resolveMonthDatasetSha("sale_items", monthIso, snapshot.saleItemsSha)) ?? null;
+  if (itemsSha && (await monthHasSaleItems(itemsSha, monthIso))) {
     return "items";
   }
   if (await monthHasSaleAggregate(monthIso)) {
@@ -104,10 +111,15 @@ export async function resolveMonthReturnsSource(
   snapshot: SalesImportSnapshotState,
   monthIso: string,
 ): Promise<"items" | "aggregate" | "none"> {
-  if (snapshot.returnItemsSha && (await monthHasReturnItems(snapshot.returnItemsSha, monthIso))) {
+  const returnItemsSha =
+    (await resolveMonthDatasetSha("return_items", monthIso, snapshot.returnItemsSha)) ?? null;
+  if (returnItemsSha && (await monthHasReturnItems(returnItemsSha, monthIso))) {
     return "items";
   }
-  if (snapshot.returnsAggregateSha && (await monthHasReturnAggregate(snapshot.returnsAggregateSha, monthIso))) {
+  const returnAggSha =
+    (await resolveMonthDatasetSha("return_aggregate", monthIso, snapshot.returnsAggregateSha)) ??
+    null;
+  if (returnAggSha && (await monthHasReturnAggregate(returnAggSha, monthIso))) {
     return "aggregate";
   }
   return "none";
@@ -203,11 +215,7 @@ async function querySalesRollup(
   const table =
     source === "items" ? "onec_v3_legal_sale_item_lines" : "onec_v3_legal_sales_lines";
   const shaFilter =
-    source === "items" && activeSha
-      ? ` AND sl.source_sha256 = $${params.length + 2}`
-      : source === "aggregate" && activeSha
-        ? ` AND sl.source_sha256 = $${params.length + 2}`
-        : "";
+    source === "items" && activeSha ? ` AND sl.source_sha256 = $${params.length + 2}` : "";
   const matchedFilter = source === "items" ? " AND sl.catalog_matched = TRUE" : "";
   const queryParams = [...params, monthIso];
   if (shaFilter && activeSha) {
@@ -360,21 +368,18 @@ export async function listSalesSectionMonths(
         UNION ALL
         SELECT sl.sale_month, sl.legal_guid FROM onec_v3_legal_sale_item_lines sl
           WHERE sl.catalog_matched = TRUE
-            AND ($${params.length + 1}::text IS NULL OR sl.source_sha256 = $${params.length + 1})
         UNION ALL
         SELECT sl.sale_month, sl.legal_guid FROM onec_v3_legal_return_lines sl
           WHERE sl.catalog_matched = TRUE
-            AND ($${params.length + 2}::text IS NULL OR sl.source_sha256 = $${params.length + 2})
         UNION ALL
         SELECT sl.sale_month, sl.legal_guid FROM onec_v3_legal_return_item_lines sl
           WHERE sl.catalog_matched = TRUE
-            AND ($${params.length + 3}::text IS NULL OR sl.source_sha256 = $${params.length + 3})
       ) AS sl
       INNER JOIN onec_v3_legal_entities AS le ON le.guid_client = sl.legal_guid
       WHERE (${clause})
       ORDER BY month DESC
     `,
-    [...params, snapshot.saleItemsSha, snapshot.returnsAggregateSha, snapshot.returnItemsSha],
+    params,
   );
   return result.rows.map((r) => r.month);
 }
@@ -407,6 +412,9 @@ export async function loadSalesSectionOverview(
         scopedMatchedSalesRows: 0,
         scopedQuarantinedSalesRows: 0,
         scopedMatchedReturnRows: 0,
+        globalQuarantinedItemRows: 0,
+        globalQuarantinedReturnRows: 0,
+        coverageNote: "",
       },
       fieldPolicy,
       macroSummaries: [],
@@ -420,9 +428,19 @@ export async function loadSalesSectionOverview(
   const salesSource = await resolveMonthSalesSource(snapshot, monthParsed.monthStartIso);
   const returnsSource = await resolveMonthReturnsSource(snapshot, monthParsed.monthStartIso);
   const salesActiveSha =
-    salesSource === "items" ? snapshot.saleItemsSha : snapshot.saleAggregateSha;
+    salesSource === "items"
+      ? await resolveMonthDatasetSha("sale_items", monthParsed.monthStartIso, snapshot.saleItemsSha)
+      : null;
   const returnsActiveSha =
-    returnsSource === "items" ? snapshot.returnItemsSha : snapshot.returnsAggregateSha;
+    returnsSource === "items"
+      ? await resolveMonthDatasetSha("return_items", monthParsed.monthStartIso, snapshot.returnItemsSha)
+      : returnsSource === "aggregate"
+        ? await resolveMonthDatasetSha(
+            "return_aggregate",
+            monthParsed.monthStartIso,
+            snapshot.returnsAggregateSha,
+          )
+        : null;
 
   const salesRowsRaw =
     salesSource === "none"
@@ -455,7 +473,7 @@ export async function loadSalesSectionOverview(
           territory,
           monthParsed.monthStartIso,
           "onec_v3_legal_sale_item_lines",
-          snapshot.saleItemsSha,
+          salesActiveSha,
           true,
         )
       : salesRowsRaw.length > 0
@@ -468,19 +486,44 @@ export async function loadSalesSectionOverview(
           territory,
           monthParsed.monthStartIso,
           "onec_v3_legal_sale_item_lines",
-          snapshot.saleItemsSha,
+          salesActiveSha,
           false,
         )
       : 0;
 
   const months = await listSalesSectionMonths(context, territory);
   const hasData = categories.length > 0 || returnsCategories.length > 0;
+  const globalQuarantinedItemRows = await countQuarantinedRows(
+    "onec_v3_legal_sale_item_lines",
+    null,
+    monthParsed.monthStartIso,
+  );
+  const globalQuarantinedReturnRows =
+    (await countQuarantinedRows(
+      "onec_v3_legal_return_item_lines",
+      null,
+      monthParsed.monthStartIso,
+    )) +
+    (await countQuarantinedRows(
+      "onec_v3_legal_return_lines",
+      null,
+      monthParsed.monthStartIso,
+    ));
+  const quarantineTotal = globalQuarantinedItemRows + globalQuarantinedReturnRows;
+  const isAdmin = context.role === "admin" || context.fullClientBase;
+  let dataState: SalesSectionOverview["dataState"] = hasData ? "loaded" : "not_imported";
+  if (quarantineTotal > 0) {
+    dataState = "partial";
+  }
+  if (!hasData && quarantineTotal > 0) {
+    dataState = isAdmin ? "partial" : "not_imported";
+  }
 
   return {
     month: monthParsed.yyyyMm,
     currency: "RUB",
     vatNote: "Суммы с НДС, ₽",
-    dataState: hasData ? "loaded" : "not_imported",
+    dataState,
     salesSource,
     returnsSource,
     returnsSignedNote:
@@ -504,6 +547,12 @@ export async function loadSalesSectionOverview(
               returnsActiveSha,
               true,
             ),
+      globalQuarantinedItemRows: isAdmin ? globalQuarantinedItemRows : 0,
+      globalQuarantinedReturnRows: isAdmin ? globalQuarantinedReturnRows : 0,
+      coverageNote:
+        quarantineTotal > 0 && isAdmin
+          ? `Вне каталога клиентов: ${quarantineTotal} строк(и) импорта не включены в обзор.`
+          : "",
     },
     fieldPolicy,
     macroSummaries: buildMacroSummaries(categories, fieldPolicy),
@@ -537,7 +586,10 @@ export async function listSalesSectionSkuRows(
   if (source !== "items") {
     return "no_items_source";
   }
-  const activeSha = kind === "sales" ? snapshot.saleItemsSha : snapshot.returnItemsSha;
+  const activeSha =
+    kind === "sales"
+      ? await resolveMonthDatasetSha("sale_items", monthParsed.monthStartIso, snapshot.saleItemsSha)
+      : await resolveMonthDatasetSha("return_items", monthParsed.monthStartIso, snapshot.returnItemsSha);
   const table =
     kind === "sales" ? "onec_v3_legal_sale_item_lines" : "onec_v3_legal_return_item_lines";
   const { clause, params } = buildScopeSql(context, territory);
@@ -599,11 +651,15 @@ export async function listSalesSectionClientRows(
   const activeSha =
     source === "items"
       ? kind === "sales"
-        ? snapshot.saleItemsSha
-        : snapshot.returnItemsSha
+        ? await resolveMonthDatasetSha("sale_items", monthParsed.monthStartIso, snapshot.saleItemsSha)
+        : await resolveMonthDatasetSha("return_items", monthParsed.monthStartIso, snapshot.returnItemsSha)
       : kind === "sales"
-        ? snapshot.saleAggregateSha
-        : snapshot.returnsAggregateSha;
+        ? null
+        : await resolveMonthDatasetSha(
+            "return_aggregate",
+            monthParsed.monthStartIso,
+            snapshot.returnsAggregateSha,
+          );
   const table =
     source === "items"
       ? kind === "sales"
@@ -615,7 +671,10 @@ export async function listSalesSectionClientRows(
   const { clause, params } = buildScopeSql(context, territory);
   const itemFilter =
     source === "items" ? ` AND sl.guid_item = $${params.length + 4}::uuid` : "";
-  const queryParams = [...params, monthParsed.monthStartIso, productType, activeSha];
+  const queryParams: unknown[] = [...params, monthParsed.monthStartIso, productType];
+  if (activeSha) {
+    queryParams.push(activeSha);
+  }
   if (source === "items") {
     queryParams.push(guidItem);
   }
@@ -636,7 +695,7 @@ export async function listSalesSectionClientRows(
       INNER JOIN onec_v3_legal_entities AS le ON le.guid_client = sl.legal_guid
       WHERE sl.sale_month = $${params.length + 1}::date
         AND sl.product_type = $${params.length + 2}
-        AND sl.source_sha256 = $${params.length + 3}
+        ${activeSha ? `AND sl.source_sha256 = $${params.length + 3}` : ""}
         ${matchedSql}
         ${itemFilter}
         AND (${clause})

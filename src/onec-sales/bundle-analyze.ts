@@ -1,4 +1,9 @@
-import { addSaleMoneyStrings, addSaleQuantityStrings, saleMoneyWithinTolerance, saleQuantityWithinTolerance } from "./decimal-sum";
+import {
+  addSaleMoneyStrings,
+  addSaleQuantityStrings,
+  saleMoneyStringsExactEqual,
+  saleQuantityWithinTolerance,
+} from "./decimal-sum";
 import type {
   LegalReturnItemsRoster,
   LegalReturnsRoster,
@@ -113,6 +118,15 @@ export type SalesBundleAnalyzeReport = {
   };
 };
 
+export function isBundleParityOk(report: SalesBundleAnalyzeReport): boolean {
+  return (
+    report.parity.onlyAggregate === 0 &&
+    report.parity.onlyItems === 0 &&
+    report.parity.metricMismatches === 0 &&
+    report.returnsParity.parityOk
+  );
+}
+
 export function analyzeSalesBundle(input: {
   salesAggregate: LegalSalesRoster;
   salesItems: LegalSaleItemsRoster;
@@ -195,7 +209,7 @@ export function analyzeSalesBundle(input: {
       const ok =
         field === "quantity"
           ? saleQuantityWithinTolerance(a[field], b[field])
-          : saleMoneyWithinTolerance(a[field], b[field], 1);
+          : saleMoneyStringsExactEqual(a[field], b[field]);
       if (!ok) {
         metricMismatches += 1;
         break;
@@ -225,8 +239,8 @@ export function analyzeSalesBundle(input: {
       retItemGroups.set(key, { quantity: line.quantity, income: line.income });
     } else {
       retItemGroups.set(key, {
-        quantity: String(Number(existing.quantity) + Number(line.quantity)),
-        income: String(Number(existing.income) + Number(line.income)),
+        quantity: addSaleQuantityStrings([existing.quantity, line.quantity]),
+        income: addSaleMoneyStrings([existing.income, line.income]),
       });
     }
   }
@@ -249,7 +263,7 @@ export function analyzeSalesBundle(input: {
     }
     if (
       !saleQuantityWithinTolerance(a.quantity, b.quantity) ||
-      !saleMoneyWithinTolerance(a.income, b.income, 1)
+      !saleMoneyStringsExactEqual(a.income, b.income)
     ) {
       returnsMismatches += 1;
     }

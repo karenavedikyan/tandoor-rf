@@ -119,12 +119,17 @@ export async function runSalesBundleApply(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const plan = await applySalesBundle(client, {
-      saleAggregate: aggregateParsed.roster,
-      saleItems: itemsParsed.roster,
-      returnsAggregate: returnsParsed.roster,
-      returnItems: returnItemsParsed.roster,
-    });
+    const known = await loadKnownLegalGuids(client);
+    const plan = await applySalesBundle(
+      client,
+      {
+        saleAggregate: aggregateParsed.roster,
+        saleItems: itemsParsed.roster,
+        returnsAggregate: returnsParsed.roster,
+        returnItems: returnItemsParsed.roster,
+      },
+      known,
+    );
     await client.query("COMMIT");
     return { status: "OK", message: "Bundle apply complete.", plan };
   } catch (error) {

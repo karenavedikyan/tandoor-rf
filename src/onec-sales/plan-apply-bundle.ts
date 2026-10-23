@@ -7,6 +7,8 @@ import type {
   LegalSaleItemsRoster,
   LegalSalesRoster,
 } from "./types";
+import { isBundleParityOk, analyzeSalesBundle } from "./bundle-analyze";
+import { activateSalesMonthSnapshots } from "./month-activation";
 import { applyLegalSalesImport } from "./plan-apply";
 
 export type SalesBundleApplyPlan = {
@@ -110,6 +112,7 @@ export async function applySaleItemsRoster(
     `,
     [roster.sourceSha256, roster.lineCount],
   );
+  await activateSalesMonthSnapshots(client, "sale_items", roster.sourceSha256, months);
   return { matched, quarantined };
 }
 
@@ -193,6 +196,9 @@ async function applyReturnLines(
     `,
     [roster.sourceSha256, roster.lineCount],
   );
+  const dataset =
+    table === "onec_v3_legal_return_item_lines" ? "return_items" : "return_aggregate";
+  await activateSalesMonthSnapshots(client, dataset, roster.sourceSha256, months);
   return { matched, quarantined };
 }
 
@@ -263,13 +269,24 @@ export async function applySalesBundle(
     returnsAggregate: LegalReturnsRoster;
     returnItems: LegalReturnItemsRoster;
   },
+  knownCatalogLegalGuids: Set<string>,
 ): Promise<SalesBundleApplyPlan> {
+  const report = analyzeSalesBundle({
+    salesAggregate: input.saleAggregate,
+    salesItems: input.saleItems,
+    returnsAggregate: input.returnsAggregate,
+    returnsItems: input.returnItems,
+    knownCatalogLegalGuids,
+  });
+  if (!isBundleParityOk(report)) {
+    throw new Error("BUNDLE_PARITY_FAILED");
+  }
   const locked = await tryAcquireImportLock(client);
   if (!locked) {
     throw new Error("IMPORT_LOCK_BUSY");
   }
   try {
-    const known = await loadKnownLegalGuids(client);
+    const known = knownCatalogLegalGuids;
     const plan = await buildSalesBundleApplyPlan(input);
     await applyLegalSalesImport(client, input.saleAggregate);
     const items = await applySaleItemsRoster(client, input.saleItems, known);
