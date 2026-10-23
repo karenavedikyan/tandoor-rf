@@ -4,6 +4,8 @@ import { buildNotApprovedExecutionManifestTemplate } from "../onec-sales/matched
 import type { ExecutionManifestV2 } from "../onec-sales/matched-only/production/manifest-types";
 import { runProductionPreflight } from "../onec-sales/matched-only/production/preflight";
 import { runProductionWriteApply, runProductionWriteRollback } from "../onec-sales/matched-only/production/executor";
+import { capturePrivateBusinessBackupForManifest } from "../onec-sales/matched-only/production/private-backup-capture";
+import { validateExecutionManifestForRun } from "../onec-sales/matched-only/production/manifest-validate";
 
 async function loadManifest(path: string): Promise<ExecutionManifestV2> {
   const manifest = JSON.parse(await readFile(path, "utf8")) as ExecutionManifestV2;
@@ -29,6 +31,30 @@ async function main(): Promise<void> {
 
   const manifest = await loadManifest(args.manifestFile!);
 
+  if (args.mode === "capture-private-backup") {
+    const manifestCheck = validateExecutionManifestForRun({
+      manifest,
+      operation: args.operation,
+      requireApproved: false,
+      allowMissingPlan: false,
+    });
+    if (!manifestCheck.ok) {
+      console.error(JSON.stringify(manifestCheck));
+      process.exit(1);
+    }
+    if (!manifestCheck.manifest.plan) {
+      console.error(JSON.stringify({ ok: false, code: "MANIFEST_PLAN_MISSING", message: "Plan required." }));
+      process.exit(1);
+    }
+    const capture = await capturePrivateBusinessBackupForManifest({
+      manifest: manifestCheck.manifest,
+      plan: manifestCheck.manifest.plan,
+    });
+    console.log(JSON.stringify(capture, null, 2));
+    if (!capture.ok) process.exit(1);
+    return;
+  }
+
   if (args.mode === "preflight" || args.mode === "validate-backup-proof") {
     const result = await runProductionPreflight({
       manifest,
@@ -40,17 +66,29 @@ async function main(): Promise<void> {
       console.error(JSON.stringify(result));
       process.exit(1);
     }
-    const output =
-      args.mode === "validate-backup-proof"
-        ? {
-            ok: true,
-            mode: "validate-backup-proof",
-            executionId: result.executionId,
-            planHash: result.planHash,
-            backupProof: result.backupProof ?? null,
-          }
-        : result;
-    console.log(JSON.stringify(output, null, 2));
+    if (args.mode === "validate-backup-proof") {
+      if (!result.backupProof) {
+        console.error(
+          JSON.stringify({
+            ok: false,
+            code: "BACKUP_PROOF_MISSING",
+            message: "validate-backup-proof requires backup path and expected SHA in manifest.",
+          }),
+        );
+        process.exit(1);
+      }
+      console.log(
+        JSON.stringify({
+          ok: true,
+          mode: "validate-backup-proof",
+          executionId: result.executionId,
+          planHash: result.planHash,
+          backupProof: result.backupProof,
+        }),
+      );
+      return;
+    }
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
 

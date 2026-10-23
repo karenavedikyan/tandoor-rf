@@ -1,4 +1,10 @@
-export type ProductionCliMode = "preflight" | "validate-backup-proof" | "write-apply" | "write-rollback" | "emit-template";
+export type ProductionCliMode =
+  | "preflight"
+  | "validate-backup-proof"
+  | "capture-private-backup"
+  | "write-apply"
+  | "write-rollback"
+  | "emit-template";
 
 export type ParsedProductionCliArgs =
   | { ok: true; args: ProductionCliArgs }
@@ -15,6 +21,7 @@ export type ProductionCliArgs = {
 export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs {
   let preflight = false;
   let validateBackupProof = false;
+  let capturePrivateBackup = false;
   let write = false;
   let writeApply = false;
   let writeRollback = false;
@@ -37,6 +44,10 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
     }
     if (arg === "--validate-backup-proof") {
       validateBackupProof = true;
+      continue;
+    }
+    if (arg === "--capture-private-backup") {
+      capturePrivateBackup = true;
       continue;
     }
     if (arg === "--write") {
@@ -84,12 +95,27 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
     return { ok: false, code: "CLI_ARGS_INVALID", message: `Unknown argument: ${arg}` };
   }
 
-  const modeCount = [preflight, validateBackupProof, writeApply || writeRollback, emitTemplate].filter(Boolean).length;
+  if (writeApply && writeRollback) {
+    return {
+      ok: false,
+      code: "CLI_ARGS_INVALID",
+      message: "Conflicting --write-apply and --write-rollback flags.",
+    };
+  }
+
+  const modeCount = [
+    preflight,
+    validateBackupProof,
+    capturePrivateBackup,
+    writeApply || writeRollback,
+    emitTemplate,
+  ].filter(Boolean).length;
   if (modeCount !== 1) {
     return {
       ok: false,
       code: "CLI_ARGS_INVALID",
-      message: "Specify exactly one mode: --preflight, --validate-backup-proof, --write-apply, --write-rollback, or --emit-not-approved-template.",
+      message:
+        "Specify exactly one mode: --preflight, --validate-backup-proof, --capture-private-backup, --write-apply, --write-rollback, or --emit-not-approved-template.",
     };
   }
   if (write && !writeApply && !writeRollback) {
@@ -127,6 +153,18 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
       args: {
         mode: writeApply ? "write-apply" : "write-rollback",
         operation: writeApply ? "apply" : "rollback",
+        manifestFile,
+        approvedExecutionHash,
+      },
+    };
+  }
+
+  if (capturePrivateBackup) {
+    return {
+      ok: true,
+      args: {
+        mode: "capture-private-backup",
+        operation,
         manifestFile,
         approvedExecutionHash,
       },

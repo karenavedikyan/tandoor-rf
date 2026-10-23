@@ -36,8 +36,28 @@ import {
 } from "./guards";
 import { assertRosterScopeMatchesApprovedPlan } from "./scope";
 import type { MatchedOnlyRunResult } from "./types";
+import {
+  assertExecutionCapability,
+  type MatchedOnlyExecutionCapability,
+} from "./execution-capability";
+import { verifyMatchedOnlyPersistedOutcome } from "./apply-persist-verify";
+import { assertMatchedOnlySchemaReady } from "./production/schema-readiness";
+import {
+  assertProductionApplyContextUnderLock,
+  type ProductionApplyWriteBinding,
+} from "./production/apply-write-guard";
 
-async function assertSidecarSchema(client: PoolClient): Promise<void> {
+async function assertApplySchemaReady(
+  client: PoolClient,
+  capability: MatchedOnlyExecutionCapability,
+): Promise<void> {
+  if (capability.channel === "production") {
+    const schema = await assertMatchedOnlySchemaReady(client);
+    if (!schema.ok) {
+      throw new Error(schema.code);
+    }
+    return;
+  }
   await client.query(`SELECT 1 FROM onec_v3_legal_sales_import_quarantine_rows LIMIT 0`);
   await client.query(`SELECT 1 FROM onec_v3_legal_sales_import_month_stats LIMIT 0`);
   await client.query(`SELECT 1 FROM onec_v3_legal_sales_bundle_apply_runs LIMIT 0`);
@@ -60,8 +80,9 @@ async function tryResolveAlreadyAppliedNoOp(
   return { ...receipt, status: "no_op_already_applied" };
 }
 
-/** Shared SQL apply path; callers must enforce test vs production channel guards. */
+/** Shared SQL apply path; requires channel capability from test or production facade. */
 export async function executeMatchedOnlyApply(
+  capability: MatchedOnlyExecutionCapability,
   databaseUrl: string,
   rosters: MatchedOnlyBundleInput,
   plan: MatchedOnlyBundlePlanV1,
@@ -69,7 +90,17 @@ export async function executeMatchedOnlyApply(
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
   testHooks?: { failBeforeCommit?: boolean },
+  productionBinding?: ProductionApplyWriteBinding,
 ): Promise<MatchedOnlyRunResult> {
+  assertExecutionCapability(capability);
+  if (capability.channel === "production" && !productionBinding) {
+    return {
+      ok: false,
+      mode: "apply",
+      code: "PRODUCTION_BINDING_REQUIRED",
+      message: "Production apply requires verified execution binding.",
+    };
+  }
   const computedHash = planHashFromPlan(plan);
   if (approvedPlanHash !== computedHash) {
     return { ok: false, mode: "apply", code: "PLAN_HASH_MISMATCH", message: "Approved plan hash mismatch." };
@@ -107,7 +138,7 @@ export async function executeMatchedOnlyApply(
   try {
     await client.query("BEGIN");
     transactionOpen = true;
-    await assertSidecarSchema(client);
+    await assertApplySchemaReady(client, capability);
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
       await client.query("ROLLBACK");
@@ -115,6 +146,16 @@ export async function executeMatchedOnlyApply(
       return { ok: false, mode: "apply", code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
     }
     lockHeld = true;
+
+    if (capability.channel === "production" && productionBinding) {
+      await assertProductionApplyContextUnderLock(
+        client,
+        productionBinding,
+        plan,
+        backup,
+        approvedPlanHash,
+      );
+    }
 
     const existing = await loadApplyRun(client, approvedPlanHash);
     if (existing?.status === "commit_uncertain") {
@@ -179,6 +220,38 @@ export async function executeMatchedOnlyApply(
       throw new Error("TEST_FAIL_BEFORE_COMMIT");
     }
 
+    const persistCheck = await verifyMatchedOnlyPersistedOutcome(
+      client,
+      plan,
+      partition,
+      rosters,
+      {
+        saleAggregate: insertedSaleAgg,
+        saleItems: insertedSaleItems,
+        returnsAggregate: insertedRetAgg,
+        returnItems: insertedRetItems,
+      },
+    );
+    if (!persistCheck.ok) {
+      throw new Error(persistCheck.code);
+    }
+
+    const matchedTotal =
+      partition.saleAggregate.counts.matched +
+      partition.saleItems.counts.matched +
+      partition.returnsAggregate.counts.matched +
+      partition.returnItems.counts.matched;
+    const fullTotal =
+      partition.saleAggregate.counts.full +
+      partition.saleItems.counts.full +
+      partition.returnsAggregate.counts.full +
+      partition.returnItems.counts.full;
+    const excludedTotal =
+      partition.saleAggregate.counts.excluded +
+      partition.saleItems.counts.excluded +
+      partition.returnsAggregate.counts.excluded +
+      partition.returnItems.counts.excluded;
+
     const afterStateSha256 = await captureScopedAfterStateDigest(client, plan.scope.saleMonthsIso);
     const receipt: MatchedOnlyApplyReceiptV1 = {
       v: 1,
@@ -190,9 +263,9 @@ export async function executeMatchedOnlyApply(
       status: "applied",
       appliedAt: new Date().toISOString(),
       inserted: {
-        full: 0,
-        matched: 0,
-        excluded: 0,
+        full: fullTotal,
+        matched: matchedTotal,
+        excluded: excludedTotal,
         saleAggregate: insertedSaleAgg,
         saleItems: insertedSaleItems,
         returnsAggregate: insertedRetAgg,
@@ -204,6 +277,15 @@ export async function executeMatchedOnlyApply(
         returnsAggregate: plan.counts.returnsAggregate,
         returnItems: plan.counts.returnItems,
       },
+      ...(productionBinding
+        ? {
+            productionBinding: {
+              manifestContentHash: productionBinding.manifestContentHash,
+              codeArtifactLabel: productionBinding.codeArtifactLabel,
+              returnsMatchedIncome: productionBinding.executionBudget.returnsMatchedIncome,
+            },
+          }
+        : {}),
     };
     await upsertApplyRun(client, {
       planHash: approvedPlanHash,
@@ -268,14 +350,16 @@ export async function executeMatchedOnlyApply(
   }
 }
 
-/** Shared SQL rollback path; callers must enforce test vs production channel guards. */
+/** Shared SQL rollback path; requires channel capability from test or production facade. */
 export async function executeMatchedOnlyRollback(
+  capability: MatchedOnlyExecutionCapability,
   databaseUrl: string,
   plan: MatchedOnlyBundlePlanV1,
   approvedPlanHash: string,
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
 ): Promise<MatchedOnlyRunResult> {
+  assertExecutionCapability(capability);
   if (planHashFromPlan(plan) !== approvedPlanHash) {
     return { ok: false, mode: "rollback", code: "PLAN_HASH_MISMATCH", message: "Plan hash mismatch." };
   }
@@ -302,6 +386,7 @@ export async function executeMatchedOnlyRollback(
   try {
     await client.query("BEGIN");
     transactionOpen = true;
+    await assertApplySchemaReady(client, capability);
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
       await client.query("ROLLBACK");

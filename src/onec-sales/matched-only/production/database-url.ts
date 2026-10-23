@@ -29,5 +29,12 @@ export function resolveProductionDatabaseUrl(): ProductionDatabaseUrlResult {
       message: "DATABASE_URL must not equal TEST_DATABASE_URL for production executor.",
     };
   }
+  if (testUrl && testUrl !== productionUrl) {
+    return {
+      ok: false,
+      code: "TEST_DATABASE_URL_MIXED",
+      message: "TEST_DATABASE_URL must not be set alongside production DATABASE_URL.",
+    };
+  }
   return { ok: true, databaseUrl: productionUrl };
 }

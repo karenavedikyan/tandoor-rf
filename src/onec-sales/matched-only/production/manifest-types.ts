@@ -11,6 +11,26 @@ export type ExecutionManifestApproval = {
   validUntil: string | null;
 };
 
+export type ExecutionManifestBudgetV2 = {
+  quantityScale: 6;
+  operationScopeDigest: string;
+  beforeStateSha256: string;
+  counts: MatchedOnlyBundlePlanV1["counts"];
+  expectedDmlInserts: {
+    saleAggregate: number;
+    saleItems: number;
+    returnsAggregate: number;
+    returnItems: number;
+  };
+  /** Matched return-item income only (aggregate/items not summed). */
+  returnsMatchedIncome: string;
+};
+
+export type ExecutionManifestPrivateBackupCapture = {
+  status: "NOT_APPROVED" | "APPROVED";
+  destinationPath: string | null;
+};
+
 export type ExecutionManifestV2 = {
   v: typeof EXECUTION_MANIFEST_V;
   policy: typeof MATCHED_ONLY_POLICY;
@@ -18,6 +38,8 @@ export type ExecutionManifestV2 = {
   executionId: string;
   contentHash: string;
   approval: ExecutionManifestApproval;
+  executionBudget: ExecutionManifestBudgetV2 | null;
+  privateBackupCapture: ExecutionManifestPrivateBackupCapture | null;
   target: {
     controlPlane: { timewebAppId: number; timewebDbId: number };
     expectedDbFingerprint: string;

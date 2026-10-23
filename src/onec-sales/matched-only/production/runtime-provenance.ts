@@ -30,10 +30,17 @@ export function assertManifestCodeProvenance(
   if (!requireMatch) {
     return { ok: true };
   }
+  if (!manifestLabel?.trim()) {
+    return {
+      ok: false,
+      code: "CODE_PROVENANCE_UNVERIFIED",
+      message: "Manifest codeArtifactLabel is required for verified write.",
+    };
+  }
   if (!runtime.ok) {
     return { ok: false, code: runtime.code, message: runtime.message };
   }
-  if (manifestLabel && manifestLabel !== runtime.label) {
+  if (manifestLabel !== runtime.label) {
     return {
       ok: false,
       code: "CODE_PROVENANCE_UNVERIFIED",

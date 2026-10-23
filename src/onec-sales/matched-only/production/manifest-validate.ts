@@ -1,6 +1,7 @@
 import { planHashFromPlan } from "../plan-build";
 import type { ExecutionManifestV2 } from "./manifest-types";
-import { computeExecutionManifestContentHash } from "./manifest-hash";
+import { validateManifestBudgetAgainstPlan } from "./manifest-budget";
+import { computeApprovedExecutionBindingHash, computeExecutionManifestContentHash } from "./manifest-hash";
 import {
   DRAFT_MIGRATION_049_SQL_SHA256,
   EXPECTED_PRODUCTION_DB_FINGERPRINT,
@@ -13,16 +14,71 @@ export type ManifestValidationFailureCode =
   | "MANIFEST_CONTENT_HASH_MISMATCH"
   | "MANIFEST_NOT_APPROVED"
   | "MANIFEST_APPROVAL_EXPIRED"
+  | "MANIFEST_APPROVAL_INVALID"
   | "MANIFEST_APPROVAL_HASH_MISSING"
   | "MANIFEST_APPROVED_HASH_MISMATCH"
   | "MANIFEST_PLAN_MISSING"
   | "MANIFEST_PLAN_HASH_MISMATCH"
   | "MANIFEST_TARGET_POLICY_MISMATCH"
-  | "MANIFEST_OPERATION_MISMATCH";
+  | "MANIFEST_OPERATION_MISMATCH"
+  | "MANIFEST_BUDGET_MISSING"
+  | "MANIFEST_BUDGET_INVALID"
+  | "MANIFEST_BUDGET_SCOPE_MISMATCH"
+  | "MANIFEST_BUDGET_BEFORE_MISMATCH"
+  | "MANIFEST_BUDGET_COUNTS_MISMATCH"
+  | "MANIFEST_BUDGET_DML_MISMATCH";
 
 export type ManifestValidationResult =
   | { ok: true; manifest: ExecutionManifestV2 }
   | { ok: false; code: ManifestValidationFailureCode; message: string };
+
+function validateApprovalFields(manifest: ExecutionManifestV2): ManifestValidationResult | null {
+  const approval = manifest.approval;
+  if (approval.status !== "APPROVED") {
+    return null;
+  }
+  if (!approval.humanDecisionRef?.trim()) {
+    return {
+      ok: false,
+      code: "MANIFEST_APPROVAL_INVALID",
+      message: "Approved manifest requires humanDecisionRef.",
+    };
+  }
+  if (!approval.validUntil?.trim()) {
+    return {
+      ok: false,
+      code: "MANIFEST_APPROVAL_INVALID",
+      message: "Approved manifest requires validUntil.",
+    };
+  }
+  const expires = Date.parse(approval.validUntil);
+  if (Number.isNaN(expires)) {
+    return {
+      ok: false,
+      code: "MANIFEST_APPROVAL_INVALID",
+      message: "Approved manifest validUntil must be an ISO timestamp.",
+    };
+  }
+  if (Date.now() > expires) {
+    return { ok: false, code: "MANIFEST_APPROVAL_EXPIRED", message: "Manifest approval expired." };
+  }
+  if (!approval.approvedExecutionHash?.trim()) {
+    return {
+      ok: false,
+      code: "MANIFEST_APPROVAL_HASH_MISSING",
+      message: "Approved execution hash missing from manifest.",
+    };
+  }
+  const binding = computeApprovedExecutionBindingHash(manifest);
+  if (approval.approvedExecutionHash.toLowerCase() !== binding.toLowerCase()) {
+    return {
+      ok: false,
+      code: "MANIFEST_APPROVED_HASH_MISMATCH",
+      message: "Approved execution hash does not bind manifest actionable body.",
+    };
+  }
+  return null;
+}
 
 export function validateExecutionManifestForRun(input: {
   manifest: ExecutionManifestV2;
@@ -74,16 +130,15 @@ export function validateExecutionManifestForRun(input: {
       message: "Manifest control-plane identifiers do not match pinned policy.",
     };
   }
+
+  const approvalFailure = validateApprovalFields(manifest);
+  if (approvalFailure) {
+    return approvalFailure;
+  }
+
   if (requireApproved) {
     if (manifest.approval.status !== "APPROVED") {
       return { ok: false, code: "MANIFEST_NOT_APPROVED", message: "Manifest is not approved for write." };
-    }
-    if (!manifest.approval.approvedExecutionHash) {
-      return {
-        ok: false,
-        code: "MANIFEST_APPROVAL_HASH_MISSING",
-        message: "Approved execution hash missing from manifest.",
-      };
     }
     if (!approvedExecutionHash) {
       return {
@@ -92,20 +147,15 @@ export function validateExecutionManifestForRun(input: {
         message: "CLI --approved-execution-hash is required for write.",
       };
     }
-    if (approvedExecutionHash.toLowerCase() !== manifest.approval.approvedExecutionHash.toLowerCase()) {
+    if (approvedExecutionHash.toLowerCase() !== manifest.contentHash.toLowerCase()) {
       return {
         ok: false,
         code: "MANIFEST_APPROVED_HASH_MISMATCH",
-        message: "CLI approved execution hash does not match manifest approval.",
+        message: "CLI approved execution hash does not bind manifest contentHash.",
       };
     }
-    if (manifest.approval.validUntil) {
-      const expires = Date.parse(manifest.approval.validUntil);
-      if (!Number.isNaN(expires) && Date.now() > expires) {
-        return { ok: false, code: "MANIFEST_APPROVAL_EXPIRED", message: "Manifest approval expired." };
-      }
-    }
   }
+
   if (!allowMissingPlan) {
     if (!manifest.plan || !manifest.planHash) {
       return { ok: false, code: "MANIFEST_PLAN_MISSING", message: "Manifest plan is required." };
@@ -116,6 +166,10 @@ export function validateExecutionManifestForRun(input: {
         code: "MANIFEST_PLAN_HASH_MISMATCH",
         message: "Embedded plan hash mismatch.",
       };
+    }
+    const budgetCheck = validateManifestBudgetAgainstPlan(manifest.plan, manifest.executionBudget);
+    if (!budgetCheck.ok) {
+      return { ok: false, code: budgetCheck.code as ManifestValidationFailureCode, message: budgetCheck.message };
     }
   }
   return { ok: true, manifest };

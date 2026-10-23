@@ -1,9 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { executeMatchedOnlyApply, executeMatchedOnlyRollback } from "../apply-pipeline";
+import { createProductionExecutionCapability } from "../execution-capability";
 import type { MatchedOnlyScopedBackupV1 } from "../types";
 import type { ExecutionManifestV2 } from "./manifest-types";
 import { runProductionPreflight } from "./preflight";
 import { resolveProductionDatabaseUrl } from "./database-url";
+import type { ProductionApplyWriteBinding } from "./apply-write-guard";
+
+export type ProductionExecutorHarnessOptions = {
+  /** Test harness only — never set from public production CLI. */
+  targetFingerprintPolicy?: string;
+};
 
 export type ProductionWriteResult =
   | { ok: true; mode: "write-apply" | "write-rollback"; planHash: string; receipt?: unknown }
@@ -32,15 +39,34 @@ async function loadRostersFromManifest(manifest: ExecutionManifestV2) {
   };
 }
 
-export async function runProductionWriteApply(input: {
-  manifest: ExecutionManifestV2;
-  approvedExecutionHash: string;
-}): Promise<ProductionWriteResult> {
+function productionApplyBinding(manifest: ExecutionManifestV2): ProductionApplyWriteBinding | null {
+  if (!manifest.executionBudget || !manifest.provenance.codeArtifactLabel || !manifest.approval.validUntil) {
+    return null;
+  }
+  if (!manifest.backup.expectedSha256) {
+    return null;
+  }
+  return {
+    manifestContentHash: manifest.contentHash,
+    codeArtifactLabel: manifest.provenance.codeArtifactLabel,
+    approvalValidUntil: manifest.approval.validUntil,
+    executionBudget: manifest.executionBudget,
+    expectedBackupSha256: manifest.backup.expectedSha256,
+  };
+}
+
+export async function runProductionWriteApply(
+  input: {
+    manifest: ExecutionManifestV2;
+    approvedExecutionHash: string;
+  } & ProductionExecutorHarnessOptions,
+): Promise<ProductionWriteResult> {
   const preflight = await runProductionPreflight({
     manifest: input.manifest,
     operation: "apply",
     approvedExecutionHash: input.approvedExecutionHash,
     writeMode: true,
+    targetFingerprintPolicy: input.targetFingerprintPolicy,
   });
   if (!preflight.ok) {
     return { ok: false, code: preflight.code, message: preflight.message };
@@ -57,13 +83,20 @@ export async function runProductionWriteApply(input: {
     await readFile(manifest.backup.filePath, "utf8"),
   ) as MatchedOnlyScopedBackupV1;
   const rosters = await loadRostersFromManifest(manifest);
+  const binding = productionApplyBinding(manifest);
+  if (!binding) {
+    return { ok: false, code: "PRODUCTION_BINDING_INCOMPLETE", message: "Manifest missing execution budget or provenance." };
+  }
   const result = await executeMatchedOnlyApply(
+    createProductionExecutionCapability(),
     urlResult.databaseUrl,
     rosters,
     manifest.plan,
     manifest.planHash,
     backup,
     manifest.backup.expectedSha256,
+    undefined,
+    binding,
   );
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };
@@ -76,15 +109,18 @@ export async function runProductionWriteApply(input: {
   };
 }
 
-export async function runProductionWriteRollback(input: {
-  manifest: ExecutionManifestV2;
-  approvedExecutionHash: string;
-}): Promise<ProductionWriteResult> {
+export async function runProductionWriteRollback(
+  input: {
+    manifest: ExecutionManifestV2;
+    approvedExecutionHash: string;
+  } & ProductionExecutorHarnessOptions,
+): Promise<ProductionWriteResult> {
   const preflight = await runProductionPreflight({
     manifest: input.manifest,
     operation: "rollback",
     approvedExecutionHash: input.approvedExecutionHash,
     writeMode: true,
+    targetFingerprintPolicy: input.targetFingerprintPolicy,
   });
   if (!preflight.ok) {
     return { ok: false, code: preflight.code, message: preflight.message };
@@ -101,6 +137,7 @@ export async function runProductionWriteRollback(input: {
     await readFile(manifest.backup.filePath, "utf8"),
   ) as MatchedOnlyScopedBackupV1;
   const result = await executeMatchedOnlyRollback(
+    createProductionExecutionCapability(),
     urlResult.databaseUrl,
     manifest.plan,
     manifest.planHash,

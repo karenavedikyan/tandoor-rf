@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { resolveTargetDbIdentityFromUrl } from "../../onec-exchange-v3/target-db-identity";
 import { createImportPool } from "../../onec-clients/apply";
 import { executeMatchedOnlyApply, executeMatchedOnlyRollback } from "./apply-pipeline";
+import { createTestExecutionCapability } from "./execution-capability";
 import { readBackupFile } from "./backup";
 import { buildMatchedOnlyBundlePlan, planHashFromPlan } from "./plan-build";
 import { captureScopedBackup } from "./scoped-backup-capture";
@@ -99,6 +100,7 @@ export async function runMatchedOnlyApply(
     return channelFailure;
   }
   return executeMatchedOnlyApply(
+    createTestExecutionCapability(),
     databaseUrl,
     rosters,
     plan,
@@ -134,5 +136,12 @@ export async function runMatchedOnlyRollback(
   if (channelFailure) {
     return channelFailure;
   }
-  return executeMatchedOnlyRollback(databaseUrl, plan, approvedPlanHash, backup, expectedBackupSha256);
+  return executeMatchedOnlyRollback(
+    createTestExecutionCapability(),
+    databaseUrl,
+    plan,
+    approvedPlanHash,
+    backup,
+    expectedBackupSha256,
+  );
 }

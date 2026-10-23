@@ -22,6 +22,11 @@ export function buildNotApprovedExecutionManifestTemplate(
       humanDecisionRef: null,
       validUntil: null,
     },
+    executionBudget: null,
+    privateBackupCapture: {
+      status: "NOT_APPROVED",
+      destinationPath: null,
+    },
     target: {
       controlPlane: {
         timewebAppId: TIMEWEB_MATCHED_ONLY_APP_ID,

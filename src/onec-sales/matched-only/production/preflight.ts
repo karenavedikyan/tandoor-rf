@@ -6,10 +6,12 @@ import { parseLegalReturnsJsonBytes } from "../../parse-returne-json";
 import { parseLegalSaleItemsJsonBytes } from "../../parse-sale-items-json";
 import { parseLegalSalesJsonBytes } from "../../parse-sale-json";
 import { readSalesBundleFilesFromPaths } from "../../run-bundle-import";
+import { loadApplyRun } from "../apply-ops";
 import { buildMatchedOnlyBundlePlan } from "../plan-build";
 import { backupSha256 } from "../backup";
 import { readBackupFile } from "../backup";
 import { validateBackupAgainstPlan } from "../guards";
+import { captureScopedAfterStateDigest } from "../state-digest";
 import type { ExecutionManifestV2 } from "./manifest-types";
 import { resolveProductionDatabaseUrl } from "./database-url";
 import { assertMatchedOnlySchemaReady } from "./schema-readiness";
@@ -36,6 +38,7 @@ export type ProductionPreflightProof = {
   liveDbFingerprint: string;
   schemaReady: boolean;
   runtimeCodeArtifactLabel: string | null;
+  phase: "template" | "fresh_apply" | "already_applied" | "rollback_ready";
   backupProof?: {
     backupSha256: string;
     beforeStateSha256: string;
@@ -47,23 +50,22 @@ export type ProductionPreflightResult =
   | ProductionPreflightProof
   | { ok: false; code: string; message: string };
 
-function loadRostersFromManifest(manifest: ExecutionManifestV2) {
-  return readSalesBundleFilesFromPaths(manifest.sourcePaths).then(async (files) => {
-    const saleAggregate = parseLegalSalesJsonBytes(files.saleAggregate!);
-    const saleItems = parseLegalSaleItemsJsonBytes(files.saleItems!);
-    const returnsAggregate = parseLegalReturnsJsonBytes(files.returnsAggregate!);
-    const returnItems = parseLegalReturnItemsJsonBytes(files.returnItems!);
-    if (!saleAggregate.ok) throw new Error(saleAggregate.message);
-    if (!saleItems.ok) throw new Error(saleItems.message);
-    if (!returnsAggregate.ok) throw new Error(returnsAggregate.message);
-    if (!returnItems.ok) throw new Error(returnItems.message);
-    return {
-      saleAggregate: saleAggregate.roster,
-      saleItems: saleItems.roster,
-      returnsAggregate: returnsAggregate.roster,
-      returnItems: returnItems.roster,
-    };
-  });
+async function loadRostersFromManifest(manifest: ExecutionManifestV2) {
+  const files = await readSalesBundleFilesFromPaths(manifest.sourcePaths);
+  const saleAggregate = parseLegalSalesJsonBytes(files.saleAggregate!);
+  const saleItems = parseLegalSaleItemsJsonBytes(files.saleItems!);
+  const returnsAggregate = parseLegalReturnsJsonBytes(files.returnsAggregate!);
+  const returnItems = parseLegalReturnItemsJsonBytes(files.returnItems!);
+  if (!saleAggregate.ok) throw new Error(saleAggregate.message);
+  if (!saleItems.ok) throw new Error(saleItems.message);
+  if (!returnsAggregate.ok) throw new Error(returnsAggregate.message);
+  if (!returnItems.ok) throw new Error(returnItems.message);
+  return {
+    saleAggregate: saleAggregate.roster,
+    saleItems: saleItems.roster,
+    returnsAggregate: returnsAggregate.roster,
+    returnItems: returnItems.roster,
+  };
 }
 
 export async function runProductionPreflight(
@@ -125,72 +127,145 @@ export async function runProductionPreflight(
   });
 
   try {
-    const schema = await withReadOnlyPreflightSession(pool, async (client) => {
-      return assertMatchedOnlySchemaReady(client);
-    });
-    if (!schema.ok) {
-      return { ok: false, code: schema.code, message: schema.message };
-    }
+    return await withReadOnlyPreflightSession(pool, async (client) => {
+      const schema = await assertMatchedOnlySchemaReady(client);
+      if (!schema.ok) {
+        return { ok: false, code: schema.code, message: schema.message };
+      }
 
-    if (!manifest.plan || !manifest.planHash) {
+      if (!manifest.plan || !manifest.planHash) {
+        return {
+          ok: true,
+          mode: "preflight",
+          executionId: manifest.executionId,
+          operation: options.operation,
+          planHash: "",
+          liveDbFingerprint: identity.fingerprint,
+          schemaReady: true,
+          runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+          phase: "template",
+        };
+      }
+
+      let backupProof: ProductionPreflightProof["backupProof"];
+      if (manifest.backup.filePath && manifest.backup.expectedSha256) {
+        const backup = await readBackupFile(manifest.backup.filePath);
+        const failure = validateBackupAgainstPlan(backup, manifest.plan, manifest.backup.expectedSha256);
+        if (failure) {
+          return { ok: false, code: failure.code, message: failure.message };
+        }
+        backupProof = {
+          backupSha256: backupSha256(backup),
+          beforeStateSha256: backup.beforeStateSha256,
+          planHash: manifest.planHash,
+        };
+      } else if (options.writeMode || options.operation === "rollback") {
+        return {
+          ok: false,
+          code: "BACKUP_PROOF_MISSING",
+          message: "Backup path and expected SHA are required.",
+        };
+      }
+
+      if (options.operation === "rollback") {
+        const rollback = manifest.rollback;
+        if (
+          !rollback?.originalApplyPlanHash ||
+          !rollback.expectedLiveAfterStateSha256 ||
+          !rollback.rollbackScopeHash
+        ) {
+          return {
+            ok: false,
+            code: "ROLLBACK_MANIFEST_INCOMPLETE",
+            message: "Rollback manifest requires original apply receipt binding fields.",
+          };
+        }
+        if (rollback.originalApplyPlanHash !== manifest.planHash) {
+          return {
+            ok: false,
+            code: "ROLLBACK_PLAN_HASH_MISMATCH",
+            message: "Rollback originalApplyPlanHash mismatch.",
+          };
+        }
+        if (rollback.rollbackScopeHash !== manifest.plan.scope.operationsDigest) {
+          return {
+            ok: false,
+            code: "ROLLBACK_SCOPE_MISMATCH",
+            message: "Rollback scope hash mismatch.",
+          };
+        }
+        const liveAfter = await captureScopedAfterStateDigest(client, manifest.plan.scope.saleMonthsIso);
+        if (liveAfter !== rollback.expectedLiveAfterStateSha256) {
+          return {
+            ok: false,
+            code: "ROLLBACK_AFTER_STATE_MISMATCH",
+            message: "Live after-state does not match rollback manifest.",
+          };
+        }
+        return {
+          ok: true,
+          mode: "preflight",
+          executionId: manifest.executionId,
+          operation: options.operation,
+          planHash: manifest.planHash,
+          liveDbFingerprint: identity.fingerprint,
+          schemaReady: true,
+          runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+          phase: "rollback_ready",
+          backupProof,
+        };
+      }
+
+      const existing = await loadApplyRun(client, manifest.planHash);
+      if (existing?.status === "applied" && existing.after_state_sha256) {
+        const liveAfter = await captureScopedAfterStateDigest(client, manifest.plan.scope.saleMonthsIso);
+        if (liveAfter === existing.after_state_sha256) {
+          return {
+            ok: true,
+            mode: "preflight",
+            executionId: manifest.executionId,
+            operation: options.operation,
+            planHash: manifest.planHash,
+            liveDbFingerprint: identity.fingerprint,
+            schemaReady: true,
+            runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+            phase: "already_applied",
+            backupProof,
+          };
+        }
+        return {
+          ok: false,
+          code: "APPLY_DRIFT",
+          message: "Applied plan receipt does not match live scoped state.",
+        };
+      }
+
+      const rosters = await loadRostersFromManifest(manifest);
+      const built = await buildMatchedOnlyBundlePlan(client, {
+        ...rosters,
+        targetDbFingerprint: identity.fingerprint,
+      });
+      if (built.planHash !== manifest.planHash) {
+        return {
+          ok: false,
+          code: "MANIFEST_SOURCE_DRIFT",
+          message: "Live source-derived plan hash does not match manifest.",
+        };
+      }
+
       return {
         ok: true,
         mode: "preflight",
         executionId: manifest.executionId,
         operation: options.operation,
-        planHash: "",
+        planHash: manifest.planHash,
         liveDbFingerprint: identity.fingerprint,
         schemaReady: true,
         runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+        phase: "fresh_apply",
+        backupProof,
       };
-    }
-
-    const rosters = await loadRostersFromManifest(manifest);
-    const built = await withReadOnlyPreflightSession(pool, async (client) => {
-      return buildMatchedOnlyBundlePlan(client, {
-        ...rosters,
-        targetDbFingerprint: identity.fingerprint,
-      });
     });
-    if (built.planHash !== manifest.planHash) {
-      return {
-        ok: false,
-        code: "MANIFEST_SOURCE_DRIFT",
-        message: "Live source-derived plan hash does not match manifest.",
-      };
-    }
-
-    let backupProof: ProductionPreflightProof["backupProof"];
-    if (manifest.backup.filePath && manifest.backup.expectedSha256) {
-      const backup = await readBackupFile(manifest.backup.filePath);
-      const failure = validateBackupAgainstPlan(backup, manifest.plan!, manifest.backup.expectedSha256);
-      if (failure) {
-        return { ok: false, code: failure.code, message: failure.message };
-      }
-      backupProof = {
-        backupSha256: backupSha256(backup),
-        beforeStateSha256: backup.beforeStateSha256,
-        planHash: manifest.planHash!,
-      };
-    } else if (options.operation === "apply" && options.writeMode) {
-      return {
-        ok: false,
-        code: "BACKUP_PROOF_MISSING",
-        message: "Write apply requires backup path and expected SHA in manifest.",
-      };
-    }
-
-    return {
-      ok: true,
-      mode: "preflight",
-      executionId: manifest.executionId,
-      operation: options.operation,
-      planHash: manifest.planHash!,
-      liveDbFingerprint: identity.fingerprint,
-      schemaReady: true,
-      runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
-      backupProof,
-    };
   } catch (error) {
     return {
       ok: false,

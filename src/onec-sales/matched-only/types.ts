@@ -98,4 +98,9 @@ export type MatchedOnlyApplyReceiptV1 = {
     returnItems: number;
   };
   quarantined: MatchedOnlyBundlePlanV1["counts"];
+  productionBinding?: {
+    manifestContentHash: string;
+    codeArtifactLabel: string;
+    returnsMatchedIncome: string;
+  };
 };
