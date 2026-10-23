@@ -17,6 +17,11 @@ import { verifySourceFilePin, verifyMatchedCountsFromSources } from "./source-pi
 import { readFile } from "node:fs/promises";
 import { assertPreflightDatabaseUrl } from "./operator-guard";
 
+function pgJsonArrayLength(jsonText: string): number {
+  const parsed = JSON.parse(jsonText) as unknown;
+  return Array.isArray(parsed) ? parsed.length : 0;
+}
+
 export type SeptemberPreflightReport = {
   v: 1;
   mode: "preflight";
@@ -107,10 +112,10 @@ export async function runSeptember2026Preflight(input: {
         sourcePins,
         beforeStateDigest: before.digest,
         beforeCounts: {
-          saleAggregateLines: before.snapshot.saleAggregateLines.length,
-          saleItemLines: before.snapshot.saleItemLines.length,
-          returnLines: before.snapshot.returnLines.length,
-          returnItemLines: before.snapshot.returnItemLines.length,
+          saleAggregateLines: pgJsonArrayLength(before.snapshot.saleAggregateLinesJson),
+          saleItemLines: pgJsonArrayLength(before.snapshot.saleItemLinesJson),
+          returnLines: pgJsonArrayLength(before.snapshot.returnLinesJson),
+          returnItemLines: pgJsonArrayLength(before.snapshot.returnItemLinesJson),
         },
         expectedSourcePins: EXPECTED_SOURCE_FILES,
         authorization: "read-only",

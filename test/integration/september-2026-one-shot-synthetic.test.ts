@@ -157,6 +157,59 @@ it("synthetic: source pin rejects wrong file bytes", async () => {
   assert.equal(r.code, "SOURCE_SHA_MISMATCH");
 });
 
+it("synthetic: PG json snapshot exact NUMERIC/BIGINT/timestamptz roundtrip", async () => {
+  const sourceSha = "a".repeat(64);
+  const itemGuid = "11111111-1111-4111-8111-111111111111";
+  const ts = "2026-09-15 12:34:56.123456+00";
+  await pool.query(`DELETE FROM onec_v3_legal_sale_item_lines WHERE sale_month = '2026-09-01'::date`);
+  await pool.query(
+    `
+      INSERT INTO onec_v3_legal_sale_item_lines (
+        source_sha256, source_row_index, legal_guid, sale_month, product_type,
+        guid_item, name_item, quantity, income,
+        manual_discount, automatic_discount, total_discount,
+        cost_price, additional_expenses, gross_profit, profitability,
+        catalog_matched, imported_at
+      ) VALUES (
+        $1, 2147483647, $2::uuid, '2026-09-01'::date, 'Exact types',
+        $3::uuid, 'micro-item', 123.456789, 999999999999.1234,
+        0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 12.3456,
+        true, $4::timestamptz
+      )
+    `,
+    [sourceSha, LEGAL_A, itemGuid, ts],
+  );
+  const client = await pool.connect();
+  try {
+    const identity = await readTargetDbIdentityFromClient(client, url);
+    const backup = await captureSeptember047048Backup(client, identity.fingerprint);
+    const beforeJson = backup.snapshot.saleItemLinesJson;
+    await pool.query(
+      `UPDATE onec_v3_legal_sale_item_lines SET quantity = 0 WHERE sale_month = '2026-09-01'::date`,
+    );
+    await client.query("BEGIN");
+    await restoreSeptember047048Backup(client, backup);
+    await client.query("COMMIT");
+    const after = await captureSeptember047048BeforeState(client);
+    assert.equal(after.snapshot.saleItemLinesJson, beforeJson);
+    const check = await pool.query<{ qty: string; income: string; idx: string; ts_ok: boolean }>(
+      `
+        SELECT quantity::text AS qty, income::text AS income, source_row_index::text AS idx,
+               imported_at = $1::timestamptz AS ts_ok
+        FROM onec_v3_legal_sale_item_lines
+        WHERE source_sha256 = $2 AND source_row_index = 2147483647
+      `,
+      [ts, sourceSha],
+    );
+    assert.equal(check.rows[0]?.qty, "123.456789");
+    assert.equal(check.rows[0]?.income, "999999999999.1234");
+    assert.equal(check.rows[0]?.idx, "2147483647");
+    assert.equal(check.rows[0]?.ts_ok, true);
+  } finally {
+    client.release();
+  }
+});
+
 it("synthetic: rollback live-after drift stops before write", async () => {
   process.env.SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF = "synthetic-test-not-human-consent";
   const savedTestUrl = process.env.TEST_DATABASE_URL;

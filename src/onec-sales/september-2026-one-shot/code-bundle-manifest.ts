@@ -9,6 +9,7 @@ export const SEPTEMBER_2026_OPERATOR_CODE_FILES = [
   "src/onec-sales/september-2026-one-shot/schema-047-048.ts",
   "src/onec-sales/september-2026-one-shot/operator-guard.ts",
   "src/onec-sales/september-2026-one-shot/before-state-047-048.ts",
+  "src/onec-sales/september-2026-one-shot/scoped-pg-json-snapshot.ts",
   "src/onec-sales/september-2026-one-shot/source-pins.ts",
   "src/onec-sales/september-2026-one-shot/preflight.ts",
   "src/onec-sales/september-2026-one-shot/backup.ts",

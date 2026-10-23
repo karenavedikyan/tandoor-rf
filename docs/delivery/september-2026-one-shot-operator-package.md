@@ -40,7 +40,7 @@ node dist/cli/onec-v3-sales-september-2026-operator.js --preflight
 
 Sources listed in `src/onec-sales/september-2026-one-shot/code-bundle-manifest.ts`.
 
-**Executable operator code bundle SHA-256 (listed files only):** `3ae41bd532112b91ed24caf63ca5ac337d4dde9ddbd26b842b4aa3d371c4f8cf`  
+**Executable operator code bundle SHA-256 (listed files only):** `47ff7f1586555d7dac0e8ff9e1e600263831aad52a91a46903b681e83a409526`  
 Recompute after any change: `npm run september-2026-operator:code-bundle-sha`.
 
 Preflight (read-only, RR snapshot):
@@ -57,7 +57,7 @@ Implemented in `september-2026-one-shot/` modules; **not** wired to default CLI 
 
 | Operation | Scope |
 |-----------|--------|
-| Backup | Four line tables month 9; four `*_import_state` id=1; `month_activation` month 9 |
+| Backup | Four line tables month 9; four `*_import_state` id=1; `month_activation` month 9. Row payloads: **PostgreSQL `json_agg(row_to_json)` as raw text** (snapshot `v: 2`) — no JS `Number`/`Date` coercion; restore via `json_populate_recordset` / `json_to_recordset`. **Global sequences are not restored.** |
 | Apply | Single transaction + lock; `sidecar049: false` (no 049 quarantine/stats/apply_runs); matched rows only in line tables; full materialization verify before COMMIT |
 | Audit receipt | External private JSON (not 049) |
 | Rollback | `rollback-047-048.ts` — separate authorization; identity + backup SHA + optional live-after guard; drift → STOP |
@@ -66,7 +66,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 ## Local synthetic QA
 
-`test/integration/september-2026-one-shot-synthetic.test.ts` (8 cases, local `TEST_DATABASE_URL` only):
+`test/integration/september-2026-one-shot-synthetic.test.ts` (9 cases, local `TEST_DATABASE_URL` only):
 
 | Scenario | Status |
 |----------|--------|
@@ -76,6 +76,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 | Code bundle SHA stability | **RUN** |
 | Frozen month pin | **RUN** |
 | 047–048 backup JSON roundtrip + preserve August | **RUN** |
+| PG JSON exact `NUMERIC` / `INTEGER` / `timestamptz` microsecond roundtrip | **RUN** |
 | Source file SHA pin reject (synthetic bytes) | **RUN** |
 | Rollback live-after drift STOP | **RUN** |
 | Production RR preflight + FTP four-file pins + catalog SHA | **NOTRUN** (no authorization / no FTP in this task) |
