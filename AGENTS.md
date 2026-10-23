@@ -37,3 +37,11 @@
 Рекламации также остаются задачами Битрикс24; менеджеру без полного доступа показывать только опубликованную специалистом разрешённую сводку. Перед разработкой проверить существующий механизм и реализовать только недостающее, не расширяя права. Полный R2 не объявлять закрытым до приёмки этого сценария. Подробности: [план релизов, R2](docs/delivery/release-plan.md#r2--моя-работа-и-общий-контекст).
 
 Формат публикации утверждён 01.10.2026: существующая метка клиента + единственный `#орк` в описании задачи. В сводку идёт весь текст после `#орк` до конца описания; текст выше, комментарии и вложения не публикуются. Удаление метки отзывает публикацию после успешной синхронизации; пустой текст или несколько меток блокируют публикацию. Не заменять этот формат блоками `[ЛК]` и не расширять права по наличию хэштега. Это требование к следующей реализации, а не уже выпущенная функция.
+
+## Cursor Cloud specific instructions
+
+Локальный ЛК после `bash scripts/cloud-agent-start.sh` слушает `http://127.0.0.1:3000`. PostgreSQL только на `127.0.0.1`: `tandoor_rf_dev` для просмотра, `tandoor_rf_test` для тестов, которые делают `DROP SCHEMA`. Пароль роли `postgres` — `postgres`. Внешние FTP 1С, Bitrix, почта и расписание в start выключены. Импорт 1С и cron не запускать.
+
+Демо-учётки создаёт `npm run seed:dev` только при `NODE_ENV` не `production` и только в `tandoor_rf_dev`. Общий пароль `LocalDev-Pass-1`. Адреса: `admin@example.com`, `director@example.com`, `rop-a@example.com`, `rop-b@example.com`, `manager-m1@example.com`, `manager-m2@example.com`, `regional@example.com`. Это синтетические имена, не реальные люди.
+
+Проверки: `npm run typecheck`, `npm run build`. Один integration-тест: `TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test PGSSLMODE=disable node --import tsx --test --test-concurrency=1 test/integration/auth-profile.test.ts`. Один browser-тест: тот же `TEST_DATABASE_URL` и `node --import tsx --test --test-concurrency=1 test/browser/clients-rop-outlets.browser.test.ts`. Полные suites не запускать ради проверки среды.
