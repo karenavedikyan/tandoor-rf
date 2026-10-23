@@ -1,72 +1,17 @@
 import { createHash } from "node:crypto";
-import { isValidNonZeroUuid, normalizeUuid } from "../onec-clients/uuid";
-import { parseSaleDecimal } from "./decimal";
-import { normalizeSaleMonth } from "./sale-month";
+import { readLegalEntityGuidFromClientInfo } from "./client-info-legal-guid";
 import { MAX_LEGAL_SALES_BYTES } from "./constants";
+import {
+  isPlainObject,
+  readMonthFields,
+  readProductType,
+  readSaleMetrics,
+} from "./parse-sale-shared";
 import type { LegalSalesParseFailureCode, LegalSalesRoster, ParsedLegalSaleLine } from "./types";
 
 export type LegalSalesParseResult =
   | { ok: true; roster: LegalSalesRoster }
   | { ok: false; code: LegalSalesParseFailureCode; message: string; index?: number };
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function readLegalGuid(raw: Record<string, unknown>): string | null {
-  const clientInfo = raw.client_info;
-  if (!isPlainObject(clientInfo)) {
-    return null;
-  }
-  const id = clientInfo.id;
-  if (typeof id !== "string") {
-    return null;
-  }
-  const trimmed = id.trim();
-  if (!isValidNonZeroUuid(trimmed)) {
-    return null;
-  }
-  return normalizeUuid(trimmed);
-}
-
-function readProductType(saleInfo: Record<string, unknown>): string | null {
-  const value = saleInfo.type;
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function readMonthFields(
-  raw: Record<string, unknown>,
-  saleInfo: Record<string, unknown>,
-): ReturnType<typeof normalizeSaleMonth> | { ok: false; code: "MONTH_FIELD_CONFLICT" } {
-  const top = "month" in raw ? normalizeSaleMonth(raw.month) : null;
-  const inner = "month" in saleInfo ? normalizeSaleMonth(saleInfo.month) : null;
-  if (top && !top.ok && inner && inner.ok) {
-    return inner;
-  }
-  if (inner && !inner.ok && top && top.ok) {
-    return top;
-  }
-  if (top && top.ok && inner && inner.ok && top.yyyyMm !== inner.yyyyMm) {
-    return { ok: false, code: "MONTH_FIELD_CONFLICT" };
-  }
-  if (top && top.ok) {
-    return top;
-  }
-  if (inner && inner.ok) {
-    return inner;
-  }
-  if (top && !top.ok) {
-    return top;
-  }
-  if (inner && !inner.ok) {
-    return inner;
-  }
-  return { ok: false, code: "EMPTY" };
-}
 
 function lineKey(legalGuid: string, yyyyMm: string, productType: string): string {
   return `${legalGuid.toLowerCase()}|${yyyyMm}|${productType}`;
@@ -114,15 +59,21 @@ export function parseLegalSalesJsonBytes(bytes: Buffer): LegalSalesParseResult {
     if (!isPlainObject(item)) {
       return { ok: false, code: "INVALID_RECORD", message: `Invalid record at index ${index}.`, index };
     }
-    const legalGuid = readLegalGuid(item);
-    if (!legalGuid) {
-      return {
-        ok: false,
-        code: "INVALID_FIELD",
-        message: `Invalid client_info.id at index ${index}.`,
-        index,
-      };
+    const legalParsed = readLegalEntityGuidFromClientInfo(item.client_info);
+    if (!legalParsed.ok) {
+      const code =
+        legalParsed.code === "CLIENT_INFO_GUID_ID_CONFLICT"
+          ? "CLIENT_INFO_GUID_ID_CONFLICT"
+          : "INVALID_FIELD";
+      const message =
+        legalParsed.code === "CLIENT_INFO_GUID_ID_CONFLICT"
+          ? `Conflicting client_info.guid and client_info.id at index ${index}.`
+          : legalParsed.code === "MISSING_CLIENT_INFO"
+            ? `Missing client_info at index ${index}.`
+            : `Invalid client_info legal guid at index ${index}.`;
+      return { ok: false, code, message, index };
     }
+    const legalGuid = legalParsed.legalGuid;
     const saleInfo = item.sale_info;
     if (!isPlainObject(saleInfo)) {
       return {
@@ -157,50 +108,19 @@ export function parseLegalSalesJsonBytes(bytes: Buffer): LegalSalesParseResult {
       };
     }
 
-    if (!isPlainObject(saleInfo.discounts)) {
-      return {
-        ok: false,
-        code: "INVALID_FIELD",
-        message: `Missing sale_info.discounts at index ${index}.`,
-        index,
-      };
+    const metricsParsed = readSaleMetrics(saleInfo, index);
+    if (!metricsParsed.ok) {
+      return { ok: false, code: "INVALID_FIELD", message: metricsParsed.message, index };
     }
-    const numericFields = {
-      quantity: parseSaleDecimal(saleInfo.quantity),
-      income: parseSaleDecimal(saleInfo.income),
-      manualDiscount: parseSaleDecimal(saleInfo.discounts.manual_discount),
-      automaticDiscount: parseSaleDecimal(saleInfo.discounts.automatic_discount),
-      totalDiscount: parseSaleDecimal(saleInfo.discounts.total_discount),
-      costPrice: parseSaleDecimal(saleInfo.cost_price),
-      additionalExpenses: parseSaleDecimal(saleInfo.additional_expenses),
-      grossProfit: parseSaleDecimal(saleInfo.gross_profit),
-      profitability: parseSaleDecimal(saleInfo.profitability),
-    };
-    for (const [field, result] of Object.entries(numericFields)) {
-      if (!result.ok) {
-        return {
-          ok: false,
-          code: "INVALID_FIELD",
-          message: `Invalid ${field} at index ${index}.`,
-          index,
-        };
-      }
-    }
+    const metrics = metricsParsed.metrics;
 
     const row: ParsedLegalSaleLine = {
+      sourceRowIndex: index,
       legalGuid,
       saleMonthYyyyMm: monthParsed.yyyyMm,
       saleMonthStartIso: monthParsed.monthStartIso,
       productType,
-      quantity: numericFields.quantity.ok ? numericFields.quantity.numeric : "0",
-      income: numericFields.income.ok ? numericFields.income.numeric : "0",
-      manualDiscount: numericFields.manualDiscount.ok ? numericFields.manualDiscount.numeric : "0",
-      automaticDiscount: numericFields.automaticDiscount.ok ? numericFields.automaticDiscount.numeric : "0",
-      totalDiscount: numericFields.totalDiscount.ok ? numericFields.totalDiscount.numeric : "0",
-      costPrice: numericFields.costPrice.ok ? numericFields.costPrice.numeric : "0",
-      additionalExpenses: numericFields.additionalExpenses.ok ? numericFields.additionalExpenses.numeric : "0",
-      grossProfit: numericFields.grossProfit.ok ? numericFields.grossProfit.numeric : "0",
-      profitability: numericFields.profitability.ok ? numericFields.profitability.numeric : "0",
+      ...metrics,
     };
 
     const key = lineKey(legalGuid, monthParsed.yyyyMm, productType);

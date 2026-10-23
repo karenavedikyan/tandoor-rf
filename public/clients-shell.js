@@ -170,6 +170,7 @@
     var clientsLink = showClients
       ? navLink(clientsNavHref, "Клиенты", "clients", active, "clients")
       : "";
+    var salesLink = showClients ? navLink("/sales", "Продажи", "clients", active, "sales") : "";
     var workLink = showClients
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
@@ -188,8 +189,9 @@
       (ICONS.collapse || "") +
       "</button>" +
       "</div>" +
-      workLink +
       clientsLink +
+      salesLink +
+      workLink +
       workspaceLink +
       "</nav>" +
       '<div class="legacy-sidebar__footer">' +

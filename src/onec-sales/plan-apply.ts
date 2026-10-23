@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { saleDecimalStringsEqual } from "./decimal";
+import { activateSalesMonthSnapshots } from "./month-activation";
 import type { LegalSalesRoster, ParsedLegalSaleLine } from "./types";
 
 export type LegalSalesImportPlan = {
@@ -64,6 +65,7 @@ async function loadExistingLine(
     return null;
   }
   return {
+    sourceRowIndex: line.sourceRowIndex,
     legalGuid: line.legalGuid,
     saleMonthYyyyMm: line.saleMonthYyyyMm,
     saleMonthStartIso: line.saleMonthStartIso,
@@ -157,6 +159,13 @@ export async function applyLegalSalesImport(
     ).rows.map((row) => row.guid_client),
   );
 
+  const months = [...new Set(roster.lines.map((line) => line.saleMonthStartIso))];
+  if (months.length > 0) {
+    await client.query(`DELETE FROM onec_v3_legal_sales_lines WHERE sale_month = ANY($1::date[])`, [
+      months,
+    ]);
+  }
+
   for (const line of roster.lines) {
     if (!known.has(line.legalGuid.toLowerCase())) {
       continue;
@@ -205,6 +214,8 @@ export async function applyLegalSalesImport(
       ],
     );
   }
+
+  await activateSalesMonthSnapshots(client, "sale_aggregate", roster.sourceSha256, months);
 
   await client.query(
     `

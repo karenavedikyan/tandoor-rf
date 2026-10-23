@@ -29,12 +29,12 @@
     if (typeof raw === "string" && raw !== "") {
       // URLSearchParams already decoded the outer return value; do not decodeURIComponent
       // the whole string or nested query inside return= will break (e.g. &v3manager=).
-      if (raw.startsWith("/clients")) {
+      if (raw.startsWith("/clients") || raw.startsWith("/sales")) {
         return raw;
       }
       try {
         var decoded = decodeURIComponent(raw);
-        if (decoded.startsWith("/clients")) {
+        if (decoded.startsWith("/clients") || decoded.startsWith("/sales")) {
           return decoded;
         }
       } catch (_err) {

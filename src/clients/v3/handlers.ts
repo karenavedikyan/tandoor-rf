@@ -21,6 +21,17 @@ import { getV3FieldCatalog } from "./field-catalog";
 import { loadV3ScopeSummary } from "./scope-summary";
 import { listFilterFieldsForEntity, parseV3FilterRulesParam } from "./list-field-rules";
 import { getLegalSalesForMonth, getLegalSalesImportMeta, listLegalSalesMonths } from "./legal-sales";
+import {
+  listSalesSectionClientRows,
+  listSalesSectionMonths,
+  listSalesSectionSkuRows,
+  loadSalesSectionOverview,
+} from "./sales-section";
+import {
+  resolveSalesSectionFieldPolicy,
+  RETURNS_SOURCE_FINANCE_AVAILABILITY,
+  SALES_SOURCE_FINANCE_AVAILABILITY,
+} from "./sales-field-policy";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -458,4 +469,185 @@ export async function v3LegalSalesMonthHandler(req: AccessRequest, res: Response
   }
   setNoStore(res);
   res.json({ legalGuid, sales });
+}
+
+async function resolveSalesSectionTerritory(
+  req: AccessRequest,
+  res: Response,
+): Promise<
+  | {
+      ropBranchGuid?: string;
+      responsibleGuid?: string;
+      responsibleKind?: V3ResponsibleKind;
+      managerGuid?: string;
+      teamMemberGuids?: string[];
+    }
+  | undefined
+> {
+  const responsibleKindRaw = String(req.query.responsibleKind ?? "");
+  const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
+    ? (responsibleKindRaw as V3ResponsibleKind)
+    : undefined;
+  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
+  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
+  const managerGuid = parseGuidParam(req.query.managerGuid);
+  const employeePortfolioGuid = parseGuidParam(req.query.employeePortfolioGuid);
+  let teamMemberGuids: string[] | undefined;
+  if (employeePortfolioGuid) {
+    if (req.query.teamGuid !== undefined || ropBranchGuid) {
+      setNoStore(res);
+      res
+        .status(400)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            "employeePortfolioGuid несовместим с teamGuid или ropBranchGuid.",
+          ),
+        );
+      return undefined;
+    }
+    teamMemberGuids = [employeePortfolioGuid];
+  } else {
+    teamMemberGuids = await resolveTeamMemberGuidsForQuery(
+      req.accessContext,
+      res,
+      req.query,
+      responsibleGuid,
+    );
+    if (teamMemberGuids === undefined && req.query.teamGuid !== undefined) {
+      return undefined;
+    }
+  }
+  return {
+    ropBranchGuid: ropBranchGuid ?? undefined,
+    responsibleGuid: responsibleGuid ?? undefined,
+    responsibleKind,
+    managerGuid: managerGuid ?? undefined,
+    teamMemberGuids,
+  };
+}
+
+export async function v3SalesSectionMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  try {
+    const months = await listSalesSectionMonths(req.accessContext!, territory);
+    setNoStore(res);
+    res.json({ months });
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "42P01") {
+      setNoStore(res);
+      res.status(503).json({ months: [], dataState: "schema_not_ready" });
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function v3SalesSectionOverviewHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  if (!month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const overview = await loadSalesSectionOverview(req.accessContext!, month, territory);
+  if (overview === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  setNoStore(res);
+  res.json({ overview });
+}
+
+export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  const productType = typeof req.query.productType === "string" ? req.query.productType.trim() : "";
+  const kind = req.query.kind === "returns" ? "returns" : "sales";
+  if (!month || !productType) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month и productType."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const skuQuery = typeof req.query.skuQuery === "string" ? req.query.skuQuery : "";
+  const rows = await listSalesSectionSkuRows(
+    req.accessContext!,
+    territory,
+    month,
+    productType,
+    kind,
+    skuQuery,
+  );
+  if (rows === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (rows === "no_items_source") {
+    res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Детализация по товарам недоступна для выбранного периода."));
+    return;
+  }
+  setNoStore(res);
+  res.json({
+    items: rows,
+    fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+    financeAvailability:
+      kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
+  });
+}
+
+export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  const productType = typeof req.query.productType === "string" ? req.query.productType.trim() : "";
+  const guidItem = typeof req.query.guidItem === "string" ? req.query.guidItem.trim() : "";
+  const kind = req.query.kind === "returns" ? "returns" : "sales";
+  if (!month || !productType) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month и productType."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const clientQuery = typeof req.query.clientQuery === "string" ? req.query.clientQuery : "";
+  const rows = await listSalesSectionClientRows(
+    req.accessContext!,
+    territory,
+    month,
+    productType,
+    guidItem || "00000000-0000-4000-8000-000000000000",
+    kind,
+    clientQuery,
+  );
+  if (rows === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  setNoStore(res);
+  res.json({
+    clients: rows,
+    fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+    financeAvailability:
+      kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
+  });
 }

@@ -268,7 +268,8 @@ describe("legacy shell DOM", () => {
     assert.ok(sidebar.classList.contains("is-open"));
     const visibleText = sidebar.querySelector(".legacy-nav-link__text") as HTMLElement;
     assert.notEqual(visibleText.getAttribute("aria-hidden"), "true");
-    assert.ok((visibleText.textContent || "").includes("Моя работа"));
+    assert.ok((sidebar.textContent || "").includes("Моя работа"));
+    assert.ok((sidebar.textContent || "").includes("Продажи"));
     assert.ok(document.querySelector(".legacy-topbar__logo"));
   });
 
@@ -283,7 +284,7 @@ describe("legacy shell DOM", () => {
     assert.ok(app.classList.contains("sidebar-collapsed"));
     assert.ok(sidebar.classList.contains("is-collapsed"));
     assert.ok(document.querySelector(".legacy-topbar__logo"));
-    assert.equal(document.querySelectorAll(".legacy-sidebar__nav a").length, 2);
+    assert.equal(document.querySelectorAll(".legacy-sidebar__nav a").length, 3);
     assert.equal(collapseBtnHiddenOnMobile(document), false);
   });
 

@@ -27,7 +27,7 @@ export type LegalSalesMonthSummary = {
   lines: LegalSalesLineDto[];
 };
 
-function canViewMarginFields(context: AccessContext): boolean {
+export function canViewMarginFields(context: AccessContext): boolean {
   return context.role === "admin" || context.fullClientBase;
 }
 
