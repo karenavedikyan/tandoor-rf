@@ -18,9 +18,12 @@ import {
   TIMEWEB_DB_ID,
 } from "./scope-pins";
 
+export const FROZEN_OPERATOR_DATA_SCOPE_KIND =
+  "FROZEN_SEPTEMBER_MATCHED_ONLY_SCOPE_CANDIDATE_NOT_WRITE_AUTHORIZATION";
+
 export type OperatorDataScopeV1 = {
   v: 1;
-  kind: "september-2026-operator-data-scope";
+  kind: typeof FROZEN_OPERATOR_DATA_SCOPE_KIND;
   appId: number;
   databaseId: number;
   targetFingerprint: string;
@@ -30,7 +33,7 @@ export type OperatorDataScopeV1 = {
   manifestSha256: string;
   sources: Record<
     keyof typeof EXPECTED_SOURCE_FILES,
-    { sha256: string; bytes: number; rawRows: number; guidFields: string[]; legacyIdFields: string[] }
+    { sha256: string; bytes: number; rawRows: number; guidFields: number; legacyIdFields: number }
   >;
   counts: Record<keyof typeof EXPECTED_SOURCE_FILES, { full: number; matched: number; excluded: number }>;
   catalog: { count: number; sha256: string };
@@ -39,17 +42,17 @@ export type OperatorDataScopeV1 = {
   financialTotals: Record<string, Record<string, Record<string, string>>>;
   beforeStateDigest: string;
   beforeCounts: {
-    saleAggregateLines: number;
-    saleItemLines: number;
-    returnLines: number;
-    returnItemLines: number;
-    importStatesPresent: number;
-    monthActivationsPresent: number;
+    saleAggregateLinesJson: number;
+    saleItemLinesJson: number;
+    returnLinesJson: number;
+    returnItemLinesJson: number;
+    importStatesJson: number;
+    monthActivationsJson: number;
   };
   expectedMatchedRows: number;
-  expectedExcludedRows: number;
+  excludedRows: number;
   allowedBusinessTables: string[];
-  allowedMetadata: string[];
+  allowedMetadata: string;
   migrationsAllowed: boolean;
   sourceFtpRefreshAllowed: boolean;
   backupBusinessValuesAuthorized: boolean;
@@ -66,11 +69,15 @@ export function unknownUnionSha256FromGuids(guids: string[]): string {
   return createHash("sha256").update(JSON.stringify(sorted), "utf8").digest("hex");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function validateOperatorDataScopeDocument(
   doc: OperatorDataScopeV1,
-  options?: { skipProductionShaPin?: boolean },
+  options?: { skipProductionPins?: boolean },
 ): { ok: true } | { ok: false; code: string; message: string } {
-  if (doc.v !== 1 || doc.kind !== "september-2026-operator-data-scope") {
+  if (doc.v !== 1 || doc.kind !== FROZEN_OPERATOR_DATA_SCOPE_KIND) {
     return { ok: false, code: "SCOPE_VERSION", message: "Invalid scope version/kind." };
   }
   if (doc.appId !== TIMEWEB_APP_ID || doc.databaseId !== TIMEWEB_DB_ID) {
@@ -85,17 +92,23 @@ export function validateOperatorDataScopeDocument(
   if (doc.saleMonth !== SEPTEMBER_2026_SALE_MONTH_ISO) {
     return { ok: false, code: "SCOPE_SALE_MONTH", message: "Sale month mismatch." };
   }
-  if (!options?.skipProductionShaPin && doc.sourceDirectory !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
+  if (!options?.skipProductionPins && doc.sourceDirectory !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
     return { ok: false, code: "SCOPE_SOURCE_DIRECTORY", message: "Source directory mismatch." };
   }
-  if (doc.manifestSha256 !== EXPECTED_SOURCE_MANIFEST_SHA256) {
+  if (!options?.skipProductionPins && doc.manifestSha256 !== EXPECTED_SOURCE_MANIFEST_SHA256) {
     return { ok: false, code: "SCOPE_MANIFEST_SHA", message: "Manifest SHA mismatch." };
+  }
+  if (typeof doc.allowedMetadata !== "string" || !doc.allowedMetadata.trim()) {
+    return { ok: false, code: "SCOPE_ALLOWED_METADATA", message: "allowedMetadata must be a non-empty string." };
   }
   for (const key of Object.keys(EXPECTED_SOURCE_FILES) as (keyof typeof EXPECTED_SOURCE_FILES)[]) {
     const pin = EXPECTED_SOURCE_FILES[key];
     const src = doc.sources[key];
     const counts = doc.counts[key];
-    if (!src || src.sha256 !== pin.sha256 || src.rawRows !== pin.counts.full) {
+    if (!src || typeof src.guidFields !== "number" || typeof src.legacyIdFields !== "number") {
+      return { ok: false, code: "SCOPE_SOURCE_FIELDS", message: `Invalid source field counters: ${key}` };
+    }
+    if (!options?.skipProductionPins && (src.sha256 !== pin.sha256 || src.rawRows !== pin.counts.full)) {
       return { ok: false, code: "SCOPE_SOURCE_PIN", message: `Source pin mismatch: ${key}` };
     }
     if (
@@ -115,20 +128,21 @@ export function validateOperatorDataScopeDocument(
   if (doc.unknownUniqueGuidCount !== EXPECTED_UNKNOWN_CATALOG_GUID_COUNT) {
     return { ok: false, code: "SCOPE_UNKNOWN_COUNT", message: "Unknown GUID count mismatch." };
   }
-  if (doc.beforeStateDigest !== EXPECTED_EMPTY_BEFORE_STATE_DIGEST) {
+  if (!options?.skipProductionPins && doc.beforeStateDigest !== EXPECTED_EMPTY_BEFORE_STATE_DIGEST) {
     return { ok: false, code: "SCOPE_BEFORE_DIGEST", message: "Before digest mismatch." };
   }
+  const bc = doc.beforeCounts;
   if (
-    doc.beforeCounts.saleAggregateLines !== 0 ||
-    doc.beforeCounts.saleItemLines !== 0 ||
-    doc.beforeCounts.returnLines !== 0 ||
-    doc.beforeCounts.returnItemLines !== 0 ||
-    doc.beforeCounts.importStatesPresent !== 0 ||
-    doc.beforeCounts.monthActivationsPresent !== 0
+    bc.saleAggregateLinesJson !== 0 ||
+    bc.saleItemLinesJson !== 0 ||
+    bc.returnLinesJson !== 0 ||
+    bc.returnItemLinesJson !== 0 ||
+    bc.importStatesJson !== 0 ||
+    bc.monthActivationsJson !== 0
   ) {
     return { ok: false, code: "SCOPE_BEFORE_COUNTS", message: "Before counts must be empty." };
   }
-  if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.expectedExcludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
+  if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.excludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
     return { ok: false, code: "SCOPE_ROW_TOTALS", message: "Matched/excluded totals mismatch." };
   }
   if (
@@ -139,6 +153,9 @@ export function validateOperatorDataScopeDocument(
     doc.rollbackAuthorized !== false
   ) {
     return { ok: false, code: "CANDIDATE_NOT_WRITE_AUTHORIZATION", message: "Write flags must remain false." };
+  }
+  if (!isRecord(doc.financialTotals)) {
+    return { ok: false, code: "SCOPE_FINANCIAL_TOTALS", message: "financialTotals must be an object." };
   }
   return { ok: true };
 }
@@ -159,7 +176,7 @@ export async function loadAndVerifyOperatorDataScope(input: {
     return { ok: false, code: "OPERATOR_DATA_SCOPE_SHA_MISMATCH", message: "Pinned operator data scope SHA mismatch." };
   }
   const doc = JSON.parse(bytes.toString("utf8")) as OperatorDataScopeV1;
-  const valid = validateOperatorDataScopeDocument(doc, { skipProductionShaPin: input.skipProductionShaPin });
+  const valid = validateOperatorDataScopeDocument(doc, { skipProductionPins: input.skipProductionShaPin });
   if (!valid.ok) return valid;
   return { ok: true, scope: doc, sha256: sha };
 }

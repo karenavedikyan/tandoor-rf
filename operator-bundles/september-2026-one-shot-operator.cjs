@@ -1579,10 +1579,18 @@ function assertProductionReadOnlyPreflightDatabaseUrl(databaseUrl, testContext) 
 
 // src/onec-sales/september-2026-one-shot/job-state-047-048.ts
 async function readSeptemberPreflightJobState(client) {
-  const row = await client.query(
-    `SELECT COUNT(*)::text AS count FROM onec_import_jobs WHERE status IN ('pending', 'running')`
-  );
-  return { pendingOrRunningImportJobs: Number(row.rows[0]?.count ?? "0") };
+  const [importRow, diagnosticRow] = await Promise.all([
+    client.query(
+      `SELECT COUNT(*)::text AS count FROM onec_import_jobs WHERE status IN ('pending', 'running')`
+    ),
+    client.query(
+      `SELECT COUNT(*)::text AS count FROM onec_diagnostic_jobs WHERE status IN ('pending', 'running')`
+    )
+  ]);
+  return {
+    pendingOrRunningImportJobs: Number(importRow.rows[0]?.count ?? "0"),
+    pendingOrRunningDiagnosticJobs: Number(diagnosticRow.rows[0]?.count ?? "0")
+  };
 }
 
 // src/onec-sales/decimal-sum.ts
@@ -3220,6 +3228,7 @@ async function assertSeptember047048EmptyBeforeState(client, expectedDigest) {
 // src/onec-sales/september-2026-one-shot/operator-data-scope.ts
 var import_node_crypto9 = require("node:crypto");
 var import_promises = require("node:fs/promises");
+var FROZEN_OPERATOR_DATA_SCOPE_KIND = "FROZEN_SEPTEMBER_MATCHED_ONLY_SCOPE_CANDIDATE_NOT_WRITE_AUTHORIZATION";
 function operatorDataScopeSha256(bytes) {
   return (0, import_node_crypto9.createHash)("sha256").update(bytes).digest("hex");
 }
@@ -3227,8 +3236,11 @@ function unknownUnionSha256FromGuids(guids) {
   const sorted = guids.map((g) => g.toLowerCase()).sort();
   return (0, import_node_crypto9.createHash)("sha256").update(JSON.stringify(sorted), "utf8").digest("hex");
 }
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function validateOperatorDataScopeDocument(doc, options) {
-  if (doc.v !== 1 || doc.kind !== "september-2026-operator-data-scope") {
+  if (doc.v !== 1 || doc.kind !== FROZEN_OPERATOR_DATA_SCOPE_KIND) {
     return { ok: false, code: "SCOPE_VERSION", message: "Invalid scope version/kind." };
   }
   if (doc.appId !== TIMEWEB_APP_ID || doc.databaseId !== TIMEWEB_DB_ID) {
@@ -3243,17 +3255,23 @@ function validateOperatorDataScopeDocument(doc, options) {
   if (doc.saleMonth !== SEPTEMBER_2026_SALE_MONTH_ISO) {
     return { ok: false, code: "SCOPE_SALE_MONTH", message: "Sale month mismatch." };
   }
-  if (!options?.skipProductionShaPin && doc.sourceDirectory !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
+  if (!options?.skipProductionPins && doc.sourceDirectory !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
     return { ok: false, code: "SCOPE_SOURCE_DIRECTORY", message: "Source directory mismatch." };
   }
-  if (doc.manifestSha256 !== EXPECTED_SOURCE_MANIFEST_SHA256) {
+  if (!options?.skipProductionPins && doc.manifestSha256 !== EXPECTED_SOURCE_MANIFEST_SHA256) {
     return { ok: false, code: "SCOPE_MANIFEST_SHA", message: "Manifest SHA mismatch." };
+  }
+  if (typeof doc.allowedMetadata !== "string" || !doc.allowedMetadata.trim()) {
+    return { ok: false, code: "SCOPE_ALLOWED_METADATA", message: "allowedMetadata must be a non-empty string." };
   }
   for (const key of Object.keys(EXPECTED_SOURCE_FILES)) {
     const pin = EXPECTED_SOURCE_FILES[key];
     const src = doc.sources[key];
     const counts = doc.counts[key];
-    if (!src || src.sha256 !== pin.sha256 || src.rawRows !== pin.counts.full) {
+    if (!src || typeof src.guidFields !== "number" || typeof src.legacyIdFields !== "number") {
+      return { ok: false, code: "SCOPE_SOURCE_FIELDS", message: `Invalid source field counters: ${key}` };
+    }
+    if (!options?.skipProductionPins && (src.sha256 !== pin.sha256 || src.rawRows !== pin.counts.full)) {
       return { ok: false, code: "SCOPE_SOURCE_PIN", message: `Source pin mismatch: ${key}` };
     }
     if (counts.full !== pin.counts.full || counts.matched !== pin.counts.matched || counts.excluded !== pin.counts.excluded) {
@@ -3269,17 +3287,21 @@ function validateOperatorDataScopeDocument(doc, options) {
   if (doc.unknownUniqueGuidCount !== EXPECTED_UNKNOWN_CATALOG_GUID_COUNT) {
     return { ok: false, code: "SCOPE_UNKNOWN_COUNT", message: "Unknown GUID count mismatch." };
   }
-  if (doc.beforeStateDigest !== EXPECTED_EMPTY_BEFORE_STATE_DIGEST) {
+  if (!options?.skipProductionPins && doc.beforeStateDigest !== EXPECTED_EMPTY_BEFORE_STATE_DIGEST) {
     return { ok: false, code: "SCOPE_BEFORE_DIGEST", message: "Before digest mismatch." };
   }
-  if (doc.beforeCounts.saleAggregateLines !== 0 || doc.beforeCounts.saleItemLines !== 0 || doc.beforeCounts.returnLines !== 0 || doc.beforeCounts.returnItemLines !== 0 || doc.beforeCounts.importStatesPresent !== 0 || doc.beforeCounts.monthActivationsPresent !== 0) {
+  const bc = doc.beforeCounts;
+  if (bc.saleAggregateLinesJson !== 0 || bc.saleItemLinesJson !== 0 || bc.returnLinesJson !== 0 || bc.returnItemLinesJson !== 0 || bc.importStatesJson !== 0 || bc.monthActivationsJson !== 0) {
     return { ok: false, code: "SCOPE_BEFORE_COUNTS", message: "Before counts must be empty." };
   }
-  if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.expectedExcludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
+  if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.excludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
     return { ok: false, code: "SCOPE_ROW_TOTALS", message: "Matched/excluded totals mismatch." };
   }
   if (doc.migrationsAllowed !== false || doc.sourceFtpRefreshAllowed !== false || doc.backupBusinessValuesAuthorized !== false || doc.applyAuthorized !== false || doc.rollbackAuthorized !== false) {
     return { ok: false, code: "CANDIDATE_NOT_WRITE_AUTHORIZATION", message: "Write flags must remain false." };
+  }
+  if (!isRecord(doc.financialTotals)) {
+    return { ok: false, code: "SCOPE_FINANCIAL_TOTALS", message: "financialTotals must be an object." };
   }
   return { ok: true };
 }
@@ -3293,51 +3315,137 @@ async function loadAndVerifyOperatorDataScope(input) {
     return { ok: false, code: "OPERATOR_DATA_SCOPE_SHA_MISMATCH", message: "Pinned operator data scope SHA mismatch." };
   }
   const doc = JSON.parse(bytes.toString("utf8"));
-  const valid = validateOperatorDataScopeDocument(doc, { skipProductionShaPin: input.skipProductionShaPin });
+  const valid = validateOperatorDataScopeDocument(doc, { skipProductionPins: input.skipProductionShaPin });
   if (!valid.ok) return valid;
   return { ok: true, scope: doc, sha256: sha };
 }
 
 // src/onec-sales/september-2026-one-shot/source-snapshot-loader.ts
 var import_node_crypto10 = require("node:crypto");
+var import_promises3 = require("node:fs/promises");
+
+// src/onec-sales/september-2026-one-shot/snapshot-path-security.ts
 var import_promises2 = require("node:fs/promises");
 var import_node_path = require("node:path");
+var SNAPSHOT_MAX_FILE_BYTES = 32 * 1024 * 1024;
+async function assertSnapshotDirectorySecurity(directory) {
+  const root = (0, import_node_path.resolve)(directory);
+  try {
+    const stat = await (0, import_promises2.lstat)(root);
+    if (stat.isSymbolicLink()) {
+      return { ok: false, code: "SNAPSHOT_SYMLINK", message: "Snapshot directory must not be a symlink." };
+    }
+    const mode = stat.mode & 511;
+    if (mode & 63) {
+      return { ok: false, code: "SNAPSHOT_DIR_NOT_PRIVATE", message: "Snapshot directory must be mode 0700." };
+    }
+  } catch {
+    return { ok: false, code: "SNAPSHOT_DIR_MISSING", message: "Snapshot directory missing." };
+  }
+  return { ok: true };
+}
+async function readSnapshotFileSecure(directory, fileName) {
+  const root = (0, import_node_path.resolve)(directory);
+  const filePath = (0, import_node_path.resolve)(root, fileName);
+  if ((0, import_node_path.dirname)(filePath) !== root && !filePath.startsWith(`${root}/`)) {
+    return { ok: false, code: "SNAPSHOT_PATH_ESCAPE", message: "Snapshot path escapes directory." };
+  }
+  try {
+    const stat = await (0, import_promises2.lstat)(filePath);
+    if (stat.isSymbolicLink()) {
+      return { ok: false, code: "SNAPSHOT_SYMLINK", message: `${fileName} must not be a symlink.` };
+    }
+    const mode = stat.mode & 511;
+    if (mode & 63) {
+      return { ok: false, code: "SNAPSHOT_FILE_NOT_PRIVATE", message: `${fileName} must be mode 0600.` };
+    }
+    if (stat.size > SNAPSHOT_MAX_FILE_BYTES) {
+      return { ok: false, code: "SNAPSHOT_FILE_TOO_LARGE", message: `${fileName} exceeds 32MiB bound.` };
+    }
+    const bytes = await (0, import_promises2.readFile)(filePath);
+    if (bytes.length > SNAPSHOT_MAX_FILE_BYTES) {
+      return { ok: false, code: "SNAPSHOT_FILE_TOO_LARGE", message: `${fileName} exceeds 32MiB bound.` };
+    }
+    return { ok: true, bytes };
+  } catch {
+    return { ok: false, code: "SOURCE_FILE_MISSING", message: `Missing snapshot file ${fileName}.` };
+  }
+}
+
+// src/onec-sales/september-2026-one-shot/source-snapshot-loader.ts
 var MANIFEST_FILE = "manifest.json";
+var FIXED_SNAPSHOT_FILE_NAMES = [
+  MANIFEST_FILE,
+  ...Object.values(EXPECTED_SOURCE_FILES).map((f) => f.fileName)
+];
 function sha256Buffer(bytes) {
   return (0, import_node_crypto10.createHash)("sha256").update(bytes).digest("hex");
 }
 async function loadVerifiedSourceSnapshotFromDirectory(input) {
-  const manifestPath = (0, import_node_path.join)(input.directory, MANIFEST_FILE);
-  let manifestBytes;
+  if (!input.skipPathSecurity) {
+    const dirSec = await assertSnapshotDirectorySecurity(input.directory);
+    if (!dirSec.ok) return dirSec;
+  }
+  let entries;
   try {
-    manifestBytes = await (0, import_promises2.readFile)(manifestPath);
+    entries = await (0, import_promises3.readdir)(input.directory);
   } catch {
-    return { ok: false, code: "MANIFEST_MISSING", message: "manifest.json missing from snapshot directory." };
+    return { ok: false, code: "SNAPSHOT_DIR_MISSING", message: "Snapshot directory missing." };
+  }
+  const expectedSet = new Set(FIXED_SNAPSHOT_FILE_NAMES);
+  if (entries.length !== expectedSet.size || !entries.every((e) => expectedSet.has(e))) {
+    return {
+      ok: false,
+      code: "SNAPSHOT_FILE_SET_MISMATCH",
+      message: "Snapshot directory must contain exactly manifest.json and four pinned source files."
+    };
+  }
+  const manifestRead = input.skipPathSecurity ? await readFileUnsafe(input.directory, MANIFEST_FILE) : await readSnapshotFileSecure(input.directory, MANIFEST_FILE);
+  if (!manifestRead.ok) return manifestRead;
+  const manifestBytes = manifestRead.bytes;
+  if (manifestBytes.length > SNAPSHOT_MAX_FILE_BYTES) {
+    return { ok: false, code: "SNAPSHOT_FILE_TOO_LARGE", message: "manifest.json exceeds 32MiB bound." };
   }
   const manifestSha256 = sha256Buffer(manifestBytes);
   const expectedManifest = input.expectedManifestSha256 ?? EXPECTED_SOURCE_MANIFEST_SHA256;
   if (!input.skipManifestShaPin && manifestSha256 !== expectedManifest) {
     return { ok: false, code: "MANIFEST_SHA_MISMATCH", message: "Snapshot manifest SHA mismatch." };
   }
+  if (input.scope && !input.skipManifestShaPin && manifestSha256 !== input.scope.manifestSha256) {
+    return { ok: false, code: "MANIFEST_SCOPE_MISMATCH", message: "Manifest SHA does not match operator scope." };
+  }
   const buffers = {};
   for (const key of Object.keys(EXPECTED_SOURCE_FILES)) {
     const fileName = EXPECTED_SOURCE_FILES[key].fileName;
-    const filePath = (0, import_node_path.join)(input.directory, fileName);
-    let bytes;
-    try {
-      bytes = await (0, import_promises2.readFile)(filePath);
-    } catch {
-      return { ok: false, code: "SOURCE_FILE_MISSING", message: `Missing snapshot file ${fileName}.` };
-    }
+    const fileRead = input.skipPathSecurity ? await readFileUnsafe(input.directory, fileName) : await readSnapshotFileSecure(input.directory, fileName);
+    if (!fileRead.ok) return fileRead;
+    const bytes = fileRead.bytes;
     if (!input.skipSourcePinVerification) {
       const pin = verifySourceBufferPin(key, bytes);
       if (!pin.ok) {
         return pin;
       }
+      if (input.scope) {
+        const scopeSrc = input.scope.sources[key];
+        const fileSha = sha256Buffer(bytes);
+        if (scopeSrc.sha256 !== fileSha || scopeSrc.bytes !== bytes.length) {
+          return { ok: false, code: "SOURCE_SCOPE_MISMATCH", message: `Source bytes/SHA mismatch vs scope: ${key}` };
+        }
+      }
     }
     buffers[key] = bytes;
   }
   return { ok: true, buffers, manifestSha256 };
+}
+async function readFileUnsafe(directory, fileName) {
+  const { readFile: readFile4 } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  try {
+    const bytes = await readFile4(joinPath(directory, fileName));
+    return { ok: true, bytes };
+  } catch {
+    return { ok: false, code: "SOURCE_FILE_MISSING", message: `Missing snapshot file ${fileName}.` };
+  }
 }
 
 // src/onec-sales/september-2026-one-shot/write-grants.ts
@@ -3390,13 +3498,95 @@ function assertSeptemberWriteGrant(kind, scope, humanGrantRef, options) {
   return { ok: true, ref };
 }
 
-// src/onec-sales/september-2026-one-shot/write-preflight-gates.ts
-async function assertWritePreflightGatesUnderLock(client, databaseUrl, testContext) {
-  const identity = await readTargetDbIdentityFromClient(client, databaseUrl);
-  const fingerprintOk = testContext?.skipTargetFingerprintPin === true || identity.fingerprint === EXPECTED_TARGET_DB_FINGERPRINT;
-  if (!fingerprintOk) {
-    return { ok: false, code: "TARGET_FINGERPRINT_MISMATCH", message: "Database fingerprint mismatch." };
+// src/onec-nightly-exchange/config.ts
+var SCHEDULE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+var WINDOW_MINUTES_DECIMAL_PATTERN = /^\d+$/;
+var MIN_WINDOW_MINUTES = 1;
+var MAX_WINDOW_MINUTES = 180;
+function parseBoolean(value) {
+  if (value == null || value.trim() === "") {
+    return null;
   }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+  return null;
+}
+function parseRequiredScheduleTime(raw) {
+  const value = raw?.trim();
+  if (!value) {
+    return null;
+  }
+  if (!SCHEDULE_TIME_PATTERN.test(value)) {
+    return null;
+  }
+  return value;
+}
+function parseRequiredWindowMinutes(raw) {
+  const value = raw?.trim();
+  if (!value || !WINDOW_MINUTES_DECIMAL_PATTERN.test(value)) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < MIN_WINDOW_MINUTES || parsed > MAX_WINDOW_MINUTES) {
+    return null;
+  }
+  return parsed;
+}
+function loadNightlyExchangeConfig(env = process.env) {
+  const enabledFlag = parseBoolean(env.ONEC_NIGHTLY_EXCHANGE_ENABLED);
+  const enabled = enabledFlag === true;
+  if (!enabled) {
+    return { ok: true, enabled: false };
+  }
+  const scheduleTime = parseRequiredScheduleTime(env.ONEC_NIGHTLY_EXCHANGE_TIME);
+  if (!env.ONEC_NIGHTLY_EXCHANGE_TIME?.trim()) {
+    return {
+      ok: false,
+      error: "ONEC_NIGHTLY_EXCHANGE_TIME is required when ONEC_NIGHTLY_EXCHANGE_ENABLED=true."
+    };
+  }
+  if (!scheduleTime) {
+    return {
+      ok: false,
+      error: `Invalid ONEC_NIGHTLY_EXCHANGE_TIME: ${env.ONEC_NIGHTLY_EXCHANGE_TIME.trim()}`
+    };
+  }
+  const windowRaw = env.ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES?.trim();
+  if (!windowRaw) {
+    return {
+      ok: false,
+      error: "ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES is required when ONEC_NIGHTLY_EXCHANGE_ENABLED=true."
+    };
+  }
+  const windowMinutes = parseRequiredWindowMinutes(env.ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES);
+  if (windowMinutes == null) {
+    return {
+      ok: false,
+      error: `Invalid ONEC_NIGHTLY_EXCHANGE_WINDOW_MINUTES: ${windowRaw}`
+    };
+  }
+  return {
+    ok: true,
+    enabled: true,
+    config: {
+      scheduleTime,
+      timezone: "Europe/Moscow",
+      windowMinutes
+    }
+  };
+}
+function isNightlyExchangeScheduleEnabled(env = process.env) {
+  const loaded = loadNightlyExchangeConfig(env);
+  return loaded.ok && loaded.enabled;
+}
+
+// src/onec-sales/september-2026-one-shot/write-preflight-gates.ts
+async function assertWritePreflightGatesAfterImportLock(client, testContext) {
   const schema = await assertSchema047048Ready(client);
   if (!schema.ok) {
     return { ok: false, code: schema.code, message: schema.message };
@@ -3405,11 +3595,15 @@ async function assertWritePreflightGatesUnderLock(client, databaseUrl, testConte
   if (jobs.pendingOrRunningImportJobs > 0) {
     return { ok: false, code: "IMPORT_JOBS_ACTIVE", message: "Active import jobs present." };
   }
-  const nightly = await client.query(
-    `SELECT COUNT(*)::text AS count FROM onec_import_jobs WHERE status IN ('pending','running') AND job_source = 'nightly'`
-  );
-  if (Number(nightly.rows[0]?.count ?? "0") > 0) {
-    return { ok: false, code: "NIGHTLY_JOBS_ACTIVE", message: "Nightly import jobs active." };
+  if (jobs.pendingOrRunningDiagnosticJobs > 0) {
+    return { ok: false, code: "DIAGNOSTIC_JOBS_ACTIVE", message: "Active diagnostic jobs present." };
+  }
+  if (!testContext?.skipNightlySchedulerPin && isNightlyExchangeScheduleEnabled()) {
+    return {
+      ok: false,
+      code: "NIGHTLY_SCHEDULER_ENABLED",
+      message: "Nightly exchange scheduler must be disabled (ONEC_NIGHTLY_EXCHANGE_ENABLED not true)."
+    };
   }
   const blocked = await client.query(
     `SELECT apply_blocked FROM onec_exchange_state WHERE id = 1`
@@ -3423,7 +3617,7 @@ async function assertWritePreflightGatesUnderLock(client, databaseUrl, testConte
       return { ok: false, code: catalog.code, message: catalog.message };
     }
   }
-  return { ok: true, fingerprint: identity.fingerprint };
+  return { ok: true };
 }
 
 // src/onec-sales/september-2026-one-shot/verify-047-048-metadata.ts
@@ -3561,6 +3755,63 @@ function assertFinancialTotalsMatchScope(scope, computed) {
   return { ok: true };
 }
 
+// src/onec-sales/september-2026-one-shot/operator-production-apply-channel.ts
+var PINNED_SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF = "SEPTEMBER-2026-HUMAN-APPLY-CHANNEL-v1";
+function assertSeptemberProductionApplyChannelOpen() {
+  const channelRef = process.env.SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF?.trim();
+  if (channelRef !== PINNED_SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF) {
+    return {
+      ok: false,
+      code: "APPLY_NOT_AUTHORIZED",
+      message: "Production apply channel is not open; operator data scope remains read-only candidate."
+    };
+  }
+  return { ok: true };
+}
+
+// src/onec-sales/september-2026-one-shot/backup-receipt-verify.ts
+var import_node_crypto11 = require("node:crypto");
+var import_promises4 = require("node:fs/promises");
+function backupReceiptSha256(receipt) {
+  return (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(receipt), "utf8").digest("hex");
+}
+async function verifySeptemberBackupReceiptForApply(input) {
+  let bytes;
+  try {
+    bytes = await (0, import_promises4.readFile)(input.receiptFilePath);
+  } catch {
+    return { ok: false, code: "BACKUP_RECEIPT_MISSING", message: "Backup receipt file not found." };
+  }
+  const computedSha = (0, import_node_crypto11.createHash)("sha256").update(bytes).digest("hex");
+  if (computedSha !== input.expectedReceiptSha256) {
+    return { ok: false, code: "BACKUP_RECEIPT_SHA_MISMATCH", message: "Backup receipt SHA mismatch." };
+  }
+  const receipt = JSON.parse(bytes.toString("utf8"));
+  if (receipt.v !== 1 || receipt.kind !== "september-2026-047-048-backup-receipt") {
+    return { ok: false, code: "BACKUP_RECEIPT_INVALID", message: "Invalid backup receipt version/kind." };
+  }
+  if (receipt.targetDbFingerprint !== input.liveTargetFingerprint) {
+    return { ok: false, code: "BACKUP_RECEIPT_TARGET_MISMATCH", message: "Backup receipt target fingerprint mismatch." };
+  }
+  if (receipt.operatorDataScopeSha256 !== input.scopeFileSha256) {
+    return { ok: false, code: "BACKUP_RECEIPT_SCOPE_MISMATCH", message: "Backup receipt scope SHA mismatch." };
+  }
+  if (receipt.beforeStateSha256 !== input.scope.beforeStateDigest) {
+    return { ok: false, code: "BACKUP_RECEIPT_BEFORE_SCOPE_MISMATCH", message: "Backup receipt before digest mismatch vs scope." };
+  }
+  if (receipt.beforeStateSha256 !== input.liveBeforeStateDigest) {
+    return { ok: false, code: "BACKUP_RECEIPT_BEFORE_LIVE_MISMATCH", message: "Backup receipt before digest mismatch vs live." };
+  }
+  const canonicalSha = backupReceiptSha256(receipt);
+  if (canonicalSha !== computedSha) {
+    return { ok: false, code: "BACKUP_RECEIPT_BINDING_INVALID", message: "Backup receipt canonical binding invalid." };
+  }
+  if (!receipt.backupPayloadSha256?.trim()) {
+    return { ok: false, code: "BACKUP_RECEIPT_PAYLOAD_MISSING", message: "Backup payload SHA missing from receipt." };
+  }
+  return { ok: true, receipt };
+}
+
 // src/onec-sales/september-2026-one-shot/one-shot-apply-core.ts
 var SIDECAR = { sidecar049: false };
 async function runSeptember2026OneShotApply(input) {
@@ -3568,12 +3819,12 @@ async function runSeptember2026OneShotApply(input) {
   if (!urlCheck.ok) {
     return urlCheck;
   }
-  if (!input.testContext?.syntheticApplyAllowed) {
-    return {
-      ok: false,
-      code: "APPLY_NOT_AUTHORIZED",
-      message: "Apply is not authorized for this operation; scope remains read-only candidate."
-    };
+  const synthetic = input.testContext?.syntheticApplyAllowed === true;
+  if (!synthetic) {
+    const channel = assertSeptemberProductionApplyChannelOpen();
+    if (!channel.ok) {
+      return channel;
+    }
   }
   let scope;
   let scopeSha;
@@ -3590,27 +3841,31 @@ async function runSeptember2026OneShotApply(input) {
     scope = loaded.scope;
     scopeSha = loaded.sha256;
   }
-  const grant = assertSeptemberWriteGrant(
-    "apply",
-    { ...scope, applyAuthorized: true },
-    input.applyGrantRef,
-    { allowAuthorizedScope: true }
-  );
+  const grant = assertSeptemberWriteGrant("apply", scope, input.applyGrantRef, {
+    allowAuthorizedScope: scope.applyAuthorized === true
+  });
   if (!grant.ok) return grant;
-  if (!input.backupReceiptSha256) {
-    return { ok: false, code: "BACKUP_RECEIPT_REQUIRED", message: "Verified backup receipt SHA required for apply." };
+  const receiptPath = input.backupReceiptFilePath?.trim() ?? input.testContext?.backupReceiptFilePath?.trim() ?? process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
+  if (!receiptPath || !input.backupReceiptSha256?.trim()) {
+    return {
+      ok: false,
+      code: "BACKUP_RECEIPT_REQUIRED",
+      message: "Verified backup receipt path and SHA required for apply."
+    };
   }
   const snapshotDir = input.snapshotDirectory ?? input.testContext?.snapshotDirectory ?? (input.testContext?.skipOperatorDataScopeShaPin ? void 0 : FIXED_SOURCE_SNAPSHOT_DIRECTORY);
   if (!snapshotDir) {
     return { ok: false, code: "SNAPSHOT_DIRECTORY_MISSING", message: "Snapshot directory required." };
   }
-  if (!input.testContext?.skipOperatorDataScopeShaPin && !input.testContext?.syntheticApplyAllowed && snapshotDir !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
+  if (!input.testContext?.skipOperatorDataScopeShaPin && !synthetic && !input.testContext?.syntheticOperatorScope && snapshotDir !== FIXED_SOURCE_SNAPSHOT_DIRECTORY) {
     return { ok: false, code: "SNAPSHOT_DIRECTORY_MISMATCH", message: "Snapshot directory mismatch." };
   }
   const snapshot = await loadVerifiedSourceSnapshotFromDirectory({
     directory: snapshotDir,
     skipManifestShaPin: input.testContext?.skipSnapshotManifestSha,
-    skipSourcePinVerification: input.testContext?.syntheticApplyAllowed
+    skipSourcePinVerification: synthetic || input.testContext?.skipSourcePinVerification === true,
+    skipPathSecurity: input.testContext?.skipSnapshotPathSecurity,
+    scope: synthetic ? void 0 : scope
   });
   if (!snapshot.ok) return snapshot;
   const rosters = parseSeptemberSourceRosters(snapshot.buffers);
@@ -3621,7 +3876,20 @@ async function runSeptember2026OneShotApply(input) {
   try {
     await client.query("BEGIN");
     txOpen = true;
-    const gates = await assertWritePreflightGatesUnderLock(client, input.databaseUrl, input.testContext);
+    const identity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+    const fingerprintOk = input.testContext?.skipTargetFingerprintPin === true || identity.fingerprint === EXPECTED_TARGET_DB_FINGERPRINT;
+    if (!fingerprintOk) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "TARGET_FINGERPRINT_MISMATCH", message: "Database fingerprint mismatch." };
+    }
+    const locked = await tryAcquireImportLock(client);
+    if (!locked) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+    }
+    const gates = await assertWritePreflightGatesAfterImportLock(client, input.testContext);
     if (!gates.ok) {
       await client.query("ROLLBACK");
       txOpen = false;
@@ -3639,15 +3907,22 @@ async function runSeptember2026OneShotApply(input) {
       txOpen = false;
       return { ok: false, code: "SCOPE_BEFORE_MISMATCH", message: "Live before digest does not match scope." };
     }
-    const locked = await tryAcquireImportLock(client);
-    if (!locked) {
+    const backupVerify = await verifySeptemberBackupReceiptForApply({
+      receiptFilePath: receiptPath,
+      expectedReceiptSha256: input.backupReceiptSha256.trim(),
+      scope,
+      scopeFileSha256: scopeSha,
+      liveTargetFingerprint: identity.fingerprint,
+      liveBeforeStateDigest: beforeDigest
+    });
+    if (!backupVerify.ok) {
       await client.query("ROLLBACK");
       txOpen = false;
-      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+      return backupVerify;
     }
     const { plan } = await buildMatchedOnlyBundlePlan(client, {
       ...bundle,
-      targetDbFingerprint: gates.fingerprint
+      targetDbFingerprint: identity.fingerprint
     });
     const planHash = planHashFromPlan(plan);
     const known = await loadKnownLegalGuidSet(client);
@@ -3690,29 +3965,45 @@ async function runSeptember2026OneShotApply(input) {
       returnItems: partition.returnItems.matched.length
     };
     if (inserted.saleAggregate !== EXPECTED_APPLY_MATCHED_ROWS.saleAggregate || inserted.saleItems !== EXPECTED_APPLY_MATCHED_ROWS.saleItems || inserted.returnsAggregate !== EXPECTED_APPLY_MATCHED_ROWS.returnsAggregate || inserted.returnItems !== EXPECTED_APPLY_MATCHED_ROWS.returnItems) {
-      if (!input.testContext?.syntheticApplyAllowed) {
+      if (!synthetic) {
         await client.query("ROLLBACK");
         txOpen = false;
         return { ok: false, code: "MATCHED_ROW_COUNT_MISMATCH", message: "Matched row counts mismatch." };
       }
     }
-    let afterDigest = null;
+    const afterInsideTx = await captureSeptember047048BeforeState(client);
+    const expectedAfterDigest = afterInsideTx.digest;
     try {
       await client.query("COMMIT");
       txOpen = false;
-      const after = await captureSeptember047048BeforeState(client);
-      afterDigest = after.digest;
     } catch (commitError) {
       if (isCommitTransportUncertainty(commitError)) {
         return {
           ok: false,
           code: "COMMIT_UNCERTAIN",
-          message: "Commit outcome uncertain; do not retry apply or rollback automatically."
+          message: `Commit outcome uncertain; expected after digest ${expectedAfterDigest}. Do not retry apply or blind rollback.`
         };
       }
       await client.query("ROLLBACK").catch(() => void 0);
       txOpen = false;
       throw commitError;
+    }
+    let afterDigest = expectedAfterDigest;
+    let postCommitVerifyOk = true;
+    if (input.testContext?.injectPostCommitReadFailure) {
+      postCommitVerifyOk = false;
+      afterDigest = expectedAfterDigest;
+    } else {
+      try {
+        const afterPost = await captureSeptember047048BeforeState(client);
+        if (afterPost.digest !== expectedAfterDigest) {
+          postCommitVerifyOk = false;
+        }
+        afterDigest = afterPost.digest;
+      } catch {
+        postCommitVerifyOk = false;
+        afterDigest = expectedAfterDigest;
+      }
     }
     return {
       ok: true,
@@ -3723,6 +4014,8 @@ async function runSeptember2026OneShotApply(input) {
         planHash,
         beforeStateDigest: beforeDigest,
         afterStateDigest: afterDigest,
+        expectedAfterStateDigest: expectedAfterDigest,
+        postCommitVerifyOk,
         matchedInserted: inserted,
         operatorDataScopeSha256: scopeSha,
         applyGrantRef: input.applyGrantRef,
@@ -3750,6 +4043,7 @@ async function main() {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_APPLY_GRANT_REF?.trim();
     const backupReceipt = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_SHA256?.trim() ?? null;
+    const backupReceiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
     const databaseUrl = process.env.DATABASE_URL?.trim();
     if (!scopePath || !grant || !databaseUrl) {
       fail("APPLY_CONFIG_INCOMPLETE", "DATABASE_URL, SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH, SEPTEMBER_2026_APPLY_GRANT_REF required.");
@@ -3759,7 +4053,8 @@ async function main() {
       operatorDataScopePath: scopePath,
       operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
       applyGrantRef: grant,
-      backupReceiptSha256: backupReceipt
+      backupReceiptSha256: backupReceipt,
+      backupReceiptFilePath: backupReceiptPath
     });
     console.log(JSON.stringify(result2, null, 2));
     if (!result2.ok) process.exit(1);

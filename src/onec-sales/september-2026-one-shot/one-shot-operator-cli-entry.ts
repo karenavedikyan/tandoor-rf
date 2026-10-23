@@ -14,6 +14,7 @@ async function main(): Promise<void> {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_APPLY_GRANT_REF?.trim();
     const backupReceipt = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_SHA256?.trim() ?? null;
+    const backupReceiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
     const databaseUrl = process.env.DATABASE_URL?.trim();
     if (!scopePath || !grant || !databaseUrl) {
       fail("APPLY_CONFIG_INCOMPLETE", "DATABASE_URL, SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH, SEPTEMBER_2026_APPLY_GRANT_REF required.");
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
       operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
       applyGrantRef: grant,
       backupReceiptSha256: backupReceipt,
+      backupReceiptFilePath: backupReceiptPath,
     });
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exit(1);

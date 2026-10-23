@@ -34,8 +34,8 @@ Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 
 | Item | Value |
 |------|--------|
-| File | `operator-bundles/september-2026-read-only-preflight.cjs` |
-| SHA-256 (file bytes) | `52956386543540ad6a06abf086e63b6d79d4d2c8b29c68ee52c08ce1778d60a4` |
+| File | `operator-bundles/september-2026-one-shot-operator.cjs` |
+| SHA-256 (file bytes) | `930336885bdcfd0812b6af8c49af73322515a4577da3ccb02685b4e075182acb` |
 | Rebuild | `npm run september-2026-read-only-preflight:build` |
 | Verify SHA | `npm run september-2026-read-only-preflight:sha` |
 
@@ -63,7 +63,7 @@ Sources are **not** read from disk paths inside the bundle. Operator supplies on
 Run:
 
 ```bash
-node operator-bundles/september-2026-read-only-preflight.cjs --runtime-config-json /path/to/runtime-config.json
+node operator-bundles/september-2026-one-shot-operator.cjs --runtime-config-json /path/to/runtime-config.json
 ```
 
 Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
@@ -74,6 +74,18 @@ Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
 2. **RR read-only** session (`REPEATABLE READ READ ONLY`); allowed reads only: schema 047–048, `onec_import_jobs` counts, catalog GUID set, month-9 line tables (PG-native snapshot digest), import state id=1, month activation 9.
 3. **Safe JSON stdout:** target fingerprint, catalog fingerprint/count, four source SHA + full/matched/excluded, period, unknown unique count (414 pin), parity flags, exact decimal money/qty rollups (full/matched/excluded), before PG-native counts/digest, `readOnlyProof`. No row payloads, client names, secrets. `appReleaseRef` is a **compatibility_constraint**, not a live release probe.
 4. **No** backup/apply/rollback/auto-write/049/DDL.
+
+**Frozen snapshot directory (read-only, no FTP refresh):** `/tmp/tandoor-source-snapshot-20261024-4c64a1a4` with manifest SHA `cb390602949e493ce678706c471dc19bd502c7eb3ff1886b250eb0791b556cb5`.
+
+**Operator data scope (candidate, not write authorization):** bytes SHA `f1daa71dce9172f93ab8590148634c0d09013ae07b60f5f8a6675392c793d9aa` — document kind `FROZEN_SEPTEMBER_MATCHED_ONLY_SCOPE_CANDIDATE_NOT_WRITE_AUTHORIZATION`; `sources[*].guidFields` / `legacyIdFields` are numeric counters; `beforeCounts.*Json`; `excludedRows: 4024`; `allowedMetadata` is a single string (not an array). Write flags remain **false** on the pinned candidate bytes until a **new** human-published scope revision sets them true.
+
+**Production apply channel (future, not enabled in this task):** `SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF` must match the pinned constant in `operator-production-apply-channel.ts`, plus `SEPTEMBER_2026_APPLY_GRANT_REF`, authorized scope file, and verified `SEPTEMBER_2026_BACKUP_RECEIPT_PATH` + SHA binding. CLI `--apply` without the channel ref returns `APPLY_NOT_AUTHORIZED` before scope load. Integration tests use `testContext.syntheticApplyAllowed` only — never accepted from the bundle CLI.
+
+**Empty before-state digest (September scope only):** `b8b0946873bc8079c559c9b5f746e7388bfa6c4555c2d33bcc611947b14b8ce5`.
+
+Apply path: `runSeptember2026OneShotApply` / `--apply` (fail-closed `APPLY_NOT_AUTHORIZED` until production channel + authorized scope + backup receipt). Order under lock: target identity → import lock → gates (schema, all pending/running import **and** diagnostic jobs, nightly scheduler env disabled, catalog) → empty before + receipt binding → writes; after-digest computed inside the open transaction before `COMMIT`. Snapshot loader: directory `0700`, files `0600`, no symlinks, 32 MiB cap, manifest/sources bound to scope.
+
+**Rollback CLI mode:** restore helpers exist (`rollback-047-048.ts`) but there is **no** production-ready bundled rollback operator mode yet — only-empty-before / strict after-guard apply to future rollback grants.
 
 Legacy TS manifest hash (`code-bundle-manifest.ts`) is for dev traceability only — **operator handoff uses the `.cjs` file SHA above**.
 
@@ -110,6 +122,8 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 | Full matched-only apply matrix (idempotent repeat, commit-uncertain) | **NOTRUN** here — covered by existing `pr105-independent` on synthetic DB, not September pins |
 
 `test/integration/september-2026-read-only-preflight.test.ts` — missing sources, wrong target before private SELECT, URL bypass, sanitization, `.cjs` SHA reproducibility (**RUN**).
+
+`test/integration/september-2026-one-shot-apply-core.test.ts` (8 cases): frozen scope structural fixture, production/CLI `APPLY_NOT_AUTHORIZED`, production channel backup refusal, fingerprint gate, non-empty before under lock, synthetic apply via same core, post-`COMMIT` classification (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
 
 `npm run typecheck` — **RUN** after changes. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 

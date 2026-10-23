@@ -5,4 +5,6 @@ export type ReadOnlyPreflightTestContext = {
   skipCatalogPin?: boolean;
   /** Local harness only — skips FTP pin verification and financial rollup. */
   skipSourcePinChecks?: boolean;
+  /** Apply/write path: nightly scheduler env may be enabled in dev integration hosts. */
+  skipNightlySchedulerPin?: boolean;
 };

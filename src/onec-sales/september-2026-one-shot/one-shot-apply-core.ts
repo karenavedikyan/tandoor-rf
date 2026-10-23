@@ -1,5 +1,6 @@
 import { tryAcquireImportLock } from "../../onec-clients/import-lock";
 import { createImportPool } from "../../onec-clients/apply";
+import { readTargetDbIdentityFromClient } from "../../onec-exchange-v3/target-db-identity";
 import {
   applyMatchedOnlyReturnItems,
   applyMatchedOnlyReturnsAggregate,
@@ -17,13 +18,14 @@ import { assertSeptember047048EmptyBeforeState } from "./before-state-empty-veri
 import {
   EXPECTED_APPLY_MATCHED_ROWS,
   EXPECTED_EMPTY_BEFORE_STATE_DIGEST,
+  EXPECTED_TARGET_DB_FINGERPRINT,
   FIXED_SOURCE_SNAPSHOT_DIRECTORY,
 } from "./scope-pins";
 import { loadAndVerifyOperatorDataScope, unknownUnionSha256FromGuids, type OperatorDataScopeV1 } from "./operator-data-scope";
 import { loadVerifiedSourceSnapshotFromDirectory } from "./source-snapshot-loader";
 import { parseSeptemberSourceRosters } from "./source-pins";
 import { assertSeptemberWriteGrant } from "./write-grants";
-import { assertWritePreflightGatesUnderLock } from "./write-preflight-gates";
+import { assertWritePreflightGatesAfterImportLock } from "./write-preflight-gates";
 import { verifySeptember047048Metadata } from "./verify-047-048-metadata";
 import {
   assertFinancialTotalsMatchScope,
@@ -31,6 +33,8 @@ import {
 } from "./operator-financial-budget";
 import type { ReadOnlyPreflightTestContext } from "./read-only-preflight-types";
 import { assertProductionReadOnlyPreflightDatabaseUrl } from "./operator-guard";
+import { assertSeptemberProductionApplyChannelOpen } from "./operator-production-apply-channel";
+import { verifySeptemberBackupReceiptForApply } from "./backup-receipt-verify";
 
 const SIDECAR = { sidecar049: false };
 
@@ -38,10 +42,15 @@ export type OneShotApplyTestContext = ReadOnlyPreflightTestContext & {
   skipOperatorDataScopeShaPin?: boolean;
   skipSnapshotManifestSha?: boolean;
   skipBeforeDigestPin?: boolean;
+  skipSnapshotPathSecurity?: boolean;
+  skipSourcePinVerification?: boolean;
   /** Local synthetic apply only — not available from operator .cjs */
   syntheticApplyAllowed?: boolean;
   syntheticOperatorScope?: OperatorDataScopeV1;
   snapshotDirectory?: string;
+  backupReceiptFilePath?: string;
+  /** When true, post-COMMIT read throws (commit must still be classified committed). */
+  injectPostCommitReadFailure?: boolean;
 };
 
 export type OneShotApplyReceipt = {
@@ -51,6 +60,8 @@ export type OneShotApplyReceipt = {
   planHash: string;
   beforeStateDigest: string;
   afterStateDigest: string | null;
+  expectedAfterStateDigest?: string;
+  postCommitVerifyOk?: boolean;
   matchedInserted: {
     saleAggregate: number;
     saleItems: number;
@@ -68,6 +79,7 @@ export async function runSeptember2026OneShotApply(input: {
   operatorDataScopeSha256: string;
   applyGrantRef: string;
   backupReceiptSha256?: string | null;
+  backupReceiptFilePath?: string;
   snapshotDirectory?: string;
   testContext?: OneShotApplyTestContext;
 }): Promise<{ ok: true; receipt: OneShotApplyReceipt } | { ok: false; code: string; message: string }> {
@@ -76,12 +88,12 @@ export async function runSeptember2026OneShotApply(input: {
     return urlCheck;
   }
 
-  if (!input.testContext?.syntheticApplyAllowed) {
-    return {
-      ok: false,
-      code: "APPLY_NOT_AUTHORIZED",
-      message: "Apply is not authorized for this operation; scope remains read-only candidate.",
-    };
+  const synthetic = input.testContext?.syntheticApplyAllowed === true;
+  if (!synthetic) {
+    const channel = assertSeptemberProductionApplyChannelOpen();
+    if (!channel.ok) {
+      return channel;
+    }
   }
 
   let scope: OperatorDataScopeV1;
@@ -100,15 +112,21 @@ export async function runSeptember2026OneShotApply(input: {
     scopeSha = loaded.sha256;
   }
 
-  const grant = assertSeptemberWriteGrant(
-    "apply",
-    { ...scope, applyAuthorized: true },
-    input.applyGrantRef,
-    { allowAuthorizedScope: true },
-  );
+  const grant = assertSeptemberWriteGrant("apply", scope, input.applyGrantRef, {
+    allowAuthorizedScope: scope.applyAuthorized === true,
+  });
   if (!grant.ok) return grant;
-  if (!input.backupReceiptSha256) {
-    return { ok: false, code: "BACKUP_RECEIPT_REQUIRED", message: "Verified backup receipt SHA required for apply." };
+
+  const receiptPath =
+    input.backupReceiptFilePath?.trim() ??
+    input.testContext?.backupReceiptFilePath?.trim() ??
+    process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
+  if (!receiptPath || !input.backupReceiptSha256?.trim()) {
+    return {
+      ok: false,
+      code: "BACKUP_RECEIPT_REQUIRED",
+      message: "Verified backup receipt path and SHA required for apply.",
+    };
   }
 
   const snapshotDir =
@@ -120,7 +138,8 @@ export async function runSeptember2026OneShotApply(input: {
   }
   if (
     !input.testContext?.skipOperatorDataScopeShaPin &&
-    !input.testContext?.syntheticApplyAllowed &&
+    !synthetic &&
+    !input.testContext?.syntheticOperatorScope &&
     snapshotDir !== FIXED_SOURCE_SNAPSHOT_DIRECTORY
   ) {
     return { ok: false, code: "SNAPSHOT_DIRECTORY_MISMATCH", message: "Snapshot directory mismatch." };
@@ -129,7 +148,9 @@ export async function runSeptember2026OneShotApply(input: {
   const snapshot = await loadVerifiedSourceSnapshotFromDirectory({
     directory: snapshotDir,
     skipManifestShaPin: input.testContext?.skipSnapshotManifestSha,
-    skipSourcePinVerification: input.testContext?.syntheticApplyAllowed,
+    skipSourcePinVerification: synthetic || input.testContext?.skipSourcePinVerification === true,
+    skipPathSecurity: input.testContext?.skipSnapshotPathSecurity,
+    scope: synthetic ? undefined : scope,
   });
   if (!snapshot.ok) return snapshot;
 
@@ -142,12 +163,31 @@ export async function runSeptember2026OneShotApply(input: {
   try {
     await client.query("BEGIN");
     txOpen = true;
-    const gates = await assertWritePreflightGatesUnderLock(client, input.databaseUrl, input.testContext);
+
+    const identity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+    const fingerprintOk =
+      input.testContext?.skipTargetFingerprintPin === true ||
+      identity.fingerprint === EXPECTED_TARGET_DB_FINGERPRINT;
+    if (!fingerprintOk) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "TARGET_FINGERPRINT_MISMATCH", message: "Database fingerprint mismatch." };
+    }
+
+    const locked = await tryAcquireImportLock(client);
+    if (!locked) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+    }
+
+    const gates = await assertWritePreflightGatesAfterImportLock(client, input.testContext);
     if (!gates.ok) {
       await client.query("ROLLBACK");
       txOpen = false;
       return gates;
     }
+
     const beforeDigest = input.testContext?.skipBeforeDigestPin
       ? (await captureSeptember047048BeforeState(client)).digest
       : EXPECTED_EMPTY_BEFORE_STATE_DIGEST;
@@ -163,16 +203,23 @@ export async function runSeptember2026OneShotApply(input: {
       return { ok: false, code: "SCOPE_BEFORE_MISMATCH", message: "Live before digest does not match scope." };
     }
 
-    const locked = await tryAcquireImportLock(client);
-    if (!locked) {
+    const backupVerify = await verifySeptemberBackupReceiptForApply({
+      receiptFilePath: receiptPath,
+      expectedReceiptSha256: input.backupReceiptSha256.trim(),
+      scope,
+      scopeFileSha256: scopeSha,
+      liveTargetFingerprint: identity.fingerprint,
+      liveBeforeStateDigest: beforeDigest,
+    });
+    if (!backupVerify.ok) {
       await client.query("ROLLBACK");
       txOpen = false;
-      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+      return backupVerify;
     }
 
     const { plan } = await buildMatchedOnlyBundlePlan(client, {
       ...bundle,
-      targetDbFingerprint: gates.fingerprint,
+      targetDbFingerprint: identity.fingerprint,
     });
     const planHash = planHashFromPlan(plan);
     const known = await loadKnownLegalGuidSet(client);
@@ -223,30 +270,48 @@ export async function runSeptember2026OneShotApply(input: {
       inserted.returnsAggregate !== EXPECTED_APPLY_MATCHED_ROWS.returnsAggregate ||
       inserted.returnItems !== EXPECTED_APPLY_MATCHED_ROWS.returnItems
     ) {
-      if (!input.testContext?.syntheticApplyAllowed) {
+      if (!synthetic) {
         await client.query("ROLLBACK");
         txOpen = false;
         return { ok: false, code: "MATCHED_ROW_COUNT_MISMATCH", message: "Matched row counts mismatch." };
       }
     }
 
-    let afterDigest: string | null = null;
+    const afterInsideTx = await captureSeptember047048BeforeState(client);
+    const expectedAfterDigest = afterInsideTx.digest;
+
     try {
       await client.query("COMMIT");
       txOpen = false;
-      const after = await captureSeptember047048BeforeState(client);
-      afterDigest = after.digest;
     } catch (commitError) {
       if (isCommitTransportUncertainty(commitError)) {
         return {
           ok: false,
           code: "COMMIT_UNCERTAIN",
-          message: "Commit outcome uncertain; do not retry apply or rollback automatically.",
+          message: `Commit outcome uncertain; expected after digest ${expectedAfterDigest}. Do not retry apply or blind rollback.`,
         };
       }
       await client.query("ROLLBACK").catch(() => undefined);
       txOpen = false;
       throw commitError;
+    }
+
+    let afterDigest: string | null = expectedAfterDigest;
+    let postCommitVerifyOk = true;
+    if (input.testContext?.injectPostCommitReadFailure) {
+      postCommitVerifyOk = false;
+      afterDigest = expectedAfterDigest;
+    } else {
+      try {
+        const afterPost = await captureSeptember047048BeforeState(client);
+        if (afterPost.digest !== expectedAfterDigest) {
+          postCommitVerifyOk = false;
+        }
+        afterDigest = afterPost.digest;
+      } catch {
+        postCommitVerifyOk = false;
+        afterDigest = expectedAfterDigest;
+      }
     }
 
     return {
@@ -258,6 +323,8 @@ export async function runSeptember2026OneShotApply(input: {
         planHash,
         beforeStateDigest: beforeDigest,
         afterStateDigest: afterDigest,
+        expectedAfterStateDigest: expectedAfterDigest,
+        postCommitVerifyOk,
         matchedInserted: inserted,
         operatorDataScopeSha256: scopeSha,
         applyGrantRef: input.applyGrantRef,
