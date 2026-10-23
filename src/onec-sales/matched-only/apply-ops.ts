@@ -92,12 +92,16 @@ async function recordMonthStatsForRoster(
   }
 }
 
+export type MatchedOnlyApplySidecarOptions = { sidecar049?: boolean };
+
 export async function applyMatchedOnlySaleAggregate(
   client: PoolClient,
   roster: LegalSalesRoster,
   partition: BundlePartition["saleAggregate"],
   planHash: string,
+  options: MatchedOnlyApplySidecarOptions = {},
 ): Promise<number> {
+  const sidecar049 = options.sidecar049 !== false;
   const months = distinctMonthsIso(roster.lines);
   if (months.length > 0) {
     await client.query(`DELETE FROM onec_v3_legal_sales_lines WHERE sale_month = ANY($1::date[])`, [
@@ -163,21 +167,23 @@ export async function applyMatchedOnlySaleAggregate(
     `,
     [roster.sourceSha256, partition.matched.length],
   );
-  await insertQuarantineRows(
-    client,
-    planHash,
-    "sale_aggregate",
-    roster.sourceSha256,
-    partition.excluded,
-  );
-  await recordMonthStatsForRoster(
-    client,
-    planHash,
-    "sale_aggregate",
-    roster.sourceSha256,
-    roster.lines,
-    partition.matched,
-  );
+  if (sidecar049) {
+    await insertQuarantineRows(
+      client,
+      planHash,
+      "sale_aggregate",
+      roster.sourceSha256,
+      partition.excluded,
+    );
+    await recordMonthStatsForRoster(
+      client,
+      planHash,
+      "sale_aggregate",
+      roster.sourceSha256,
+      roster.lines,
+      partition.matched,
+    );
+  }
   return inserted;
 }
 
@@ -186,7 +192,9 @@ export async function applyMatchedOnlySaleItems(
   roster: LegalSaleItemsRoster,
   partition: BundlePartition["saleItems"],
   planHash: string,
+  options: MatchedOnlyApplySidecarOptions = {},
 ): Promise<number> {
+  const sidecar049 = options.sidecar049 !== false;
   const months = distinctMonthsIso(roster.lines);
   await client.query(
     `DELETE FROM onec_v3_legal_sale_item_lines WHERE sale_month = ANY($1::date[]) AND source_sha256 <> $2`,
@@ -248,15 +256,17 @@ export async function applyMatchedOnlySaleItems(
     [roster.sourceSha256, partition.matched.length],
   );
   await activateSalesMonthSnapshots(client, "sale_items", roster.sourceSha256, months);
-  await insertQuarantineRows(client, planHash, "sale_items", roster.sourceSha256, partition.excluded);
-  await recordMonthStatsForRoster(
-    client,
-    planHash,
-    "sale_items",
-    roster.sourceSha256,
-    roster.lines,
-    partition.matched,
-  );
+  if (sidecar049) {
+    await insertQuarantineRows(client, planHash, "sale_items", roster.sourceSha256, partition.excluded);
+    await recordMonthStatsForRoster(
+      client,
+      planHash,
+      "sale_items",
+      roster.sourceSha256,
+      roster.lines,
+      partition.matched,
+    );
+  }
   return inserted;
 }
 
@@ -269,7 +279,9 @@ async function applyMatchedReturnTable(
   partition: BundlePartition["returnsAggregate"] | BundlePartition["returnItems"],
   planHash: string,
   withItems: boolean,
+  options: MatchedOnlyApplySidecarOptions = {},
 ): Promise<number> {
+  const sidecar049 = options.sidecar049 !== false;
   const months = distinctMonthsIso(roster.lines);
   await client.query(
     `DELETE FROM ${table} WHERE sale_month = ANY($1::date[]) AND source_sha256 <> $2`,
@@ -336,15 +348,17 @@ async function applyMatchedReturnTable(
     [roster.sourceSha256, partition.matched.length],
   );
   await activateSalesMonthSnapshots(client, dataset, roster.sourceSha256, months);
-  await insertQuarantineRows(client, planHash, dataset, roster.sourceSha256, partition.excluded);
-  await recordMonthStatsForRoster(
-    client,
-    planHash,
-    dataset,
-    roster.sourceSha256,
-    roster.lines,
-    partition.matched,
-  );
+  if (sidecar049) {
+    await insertQuarantineRows(client, planHash, dataset, roster.sourceSha256, partition.excluded);
+    await recordMonthStatsForRoster(
+      client,
+      planHash,
+      dataset,
+      roster.sourceSha256,
+      roster.lines,
+      partition.matched,
+    );
+  }
   return inserted;
 }
 
@@ -353,6 +367,7 @@ export async function applyMatchedOnlyReturnsAggregate(
   roster: LegalReturnsRoster,
   partition: BundlePartition["returnsAggregate"],
   planHash: string,
+  options: MatchedOnlyApplySidecarOptions = {},
 ): Promise<number> {
   return applyMatchedReturnTable(
     client,
@@ -363,6 +378,7 @@ export async function applyMatchedOnlyReturnsAggregate(
     partition,
     planHash,
     false,
+    options,
   );
 }
 
@@ -371,6 +387,7 @@ export async function applyMatchedOnlyReturnItems(
   roster: LegalReturnItemsRoster,
   partition: BundlePartition["returnItems"],
   planHash: string,
+  options: MatchedOnlyApplySidecarOptions = {},
 ): Promise<number> {
   return applyMatchedReturnTable(
     client,
@@ -381,6 +398,7 @@ export async function applyMatchedOnlyReturnItems(
     partition,
     planHash,
     true,
+    options,
   );
 }
 

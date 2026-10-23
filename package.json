@@ -33,6 +33,8 @@
     "onec-v3-sales-matched-bundle-import:local": "node --env-file=.env dist/cli/onec-v3-sales-matched-bundle-import.js",
     "onec-v3-sales-matched-bundle-production": "node dist/cli/onec-v3-sales-matched-bundle-production.js",
     "onec-v3-sales-matched-bundle-production:local": "node --env-file=.env dist/cli/onec-v3-sales-matched-bundle-production.js",
+    "onec-v3-sales-september-2026-operator": "node dist/cli/onec-v3-sales-september-2026-operator.js",
+    "september-2026-operator:code-bundle-sha": "node scripts/compute-september-2026-operator-bundle-sha.mjs",
     "onec-v3-legal-other-fields-backfill": "node dist/cli/onec-v3-legal-other-fields-backfill.js",
     "onec-v3-legal-other-fields-backfill:local": "node --env-file=.env dist/cli/onec-v3-legal-other-fields-backfill.js",
     "onec-exchange-v3-clean-start-observe": "node dist/cli/onec-exchange-v3-clean-start-observe.js",
