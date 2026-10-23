@@ -13,6 +13,7 @@ export async function verifyExpectedImportMetadata(
   partition: BundlePartition,
   rosters: MatchedOnlyBundleInput,
   planHash: string,
+  options?: { skip049Metadata?: boolean },
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   const activationPairs: { dataset: string; month: string; sha: string }[] = [];
   const pushMonths = (dataset: string, sha: string, lines: { saleMonthStartIso: string }[]) => {

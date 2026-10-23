@@ -116,6 +116,7 @@ export async function verifyMatchedMaterializedRows(
   partition: BundlePartition,
   rosters: MatchedOnlyBundleInput,
   planHash: string,
+  options?: { skip049Metadata?: boolean },
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   const months = plan.scope.saleMonthsIso;
   const saleAggKeys: string[] = [];
@@ -301,9 +302,11 @@ export async function verifyMatchedMaterializedRows(
     return { ok: false, code: "PERSISTED_KEYSET_MISMATCH", message: "Return items key multiset mismatch." };
   }
 
-  const metadata = await verifyExpectedImportMetadata(client, plan, partition, rosters, planHash);
-  if (!metadata.ok) {
-    return metadata;
+  if (!options?.skip049Metadata) {
+    const metadata = await verifyExpectedImportMetadata(client, plan, partition, rosters, planHash, options);
+    if (!metadata.ok) {
+      return metadata;
+    }
   }
 
   return { ok: true };

@@ -4,12 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outfile = join(root, "operator-bundles/september-2026-read-only-preflight.cjs");
+const outfile = join(root, "operator-bundles/september-2026-one-shot-operator.cjs");
 
 mkdirSync(dirname(outfile), { recursive: true });
 
 await esbuild.build({
-  entryPoints: [join(root, "src/onec-sales/september-2026-one-shot/read-only-preflight-cli-entry.ts")],
+  entryPoints: [join(root, "src/onec-sales/september-2026-one-shot/one-shot-operator-cli-entry.ts")],
   bundle: true,
   platform: "node",
   format: "cjs",

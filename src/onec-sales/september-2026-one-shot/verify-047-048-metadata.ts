@@ -30,10 +30,29 @@ export async function verifySeptember047048Metadata(
     { dataset: "return_aggregate", sha: rosters.returnsAggregate.sourceSha256 },
     { dataset: "return_items", sha: rosters.returnItems.sourceSha256 },
   ];
+  const month = rosters.saleAggregate.lines[0]?.saleMonthStartIso ?? "2026-09-01";
   for (const pair of activationPairs) {
+    const matchedCount =
+      pair.dataset === "sale_aggregate"
+        ? partition.saleAggregate.matched.length
+        : pair.dataset === "sale_items"
+          ? partition.saleItems.matched.length
+          : pair.dataset === "return_aggregate"
+            ? partition.returnsAggregate.matched.length
+            : partition.returnItems.matched.length;
+    if (matchedCount === 0) {
+      const absent = await client.query(
+        `SELECT 1 FROM onec_v3_legal_sales_month_activation WHERE dataset = $1 AND sale_month = $2::date`,
+        [pair.dataset, month],
+      );
+      if ((absent.rowCount ?? 0) > 0) {
+        return { ok: false, code: "PERSISTED_ACTIVATION_UNEXPECTED", message: "Empty dataset must not activate month." };
+      }
+      continue;
+    }
     const row = await client.query<{ source_sha256: string }>(
       `SELECT source_sha256 FROM onec_v3_legal_sales_month_activation WHERE dataset = $1 AND sale_month = $2::date`,
-      [pair.dataset, rosters.saleAggregate.lines[0]?.saleMonthStartIso ?? "2026-09-01"],
+      [pair.dataset, month],
     );
     if (row.rows[0]?.source_sha256?.trim() !== pair.sha) {
       return { ok: false, code: "PERSISTED_ACTIVATION_MISMATCH", message: "Activation SHA mismatch." };

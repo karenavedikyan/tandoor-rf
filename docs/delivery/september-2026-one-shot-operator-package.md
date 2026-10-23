@@ -21,8 +21,8 @@
 
 | File | SHA-256 | full / matched / excluded |
 |------|---------|---------------------------|
-| `sale.json` | `1e7db83fce17f3a10bc9d63d3c913283db4f900794e1212666d6e44d76d51d5e` | 4415 / 3416 / 999 |
-| `sale(items).json` | `9e35a3fae84e8cd46d8413277b8251ecbd0429447654499fc1d0c51878d762cc` | 26928 / 24030 / 2898 |
+| `sale.json` | `93892acff9ae8c99aba3cd6d78257e6c9e68c320d65b387cb085a8910c784361` | 4415 / 3416 / 999 |
+| `sale(items).json` | `63dc03737858ddabe34aa0f7e7001caeefe8f7b961eb9f264c8ba545dda43def` | 26928 / 24030 / 2898 |
 | `returne.json` | `dc31bbb982e081b26c0587163164303f6e14c083ee55b1f69760eadc7e161dbb` | 462 / 413 / 49 |
 | `returne(items).json` | `755560ee94a1001802cee6c91e5ddca40a296447f011999a76fa97d6bb7e7164` | 775 / 697 / 78 |
 

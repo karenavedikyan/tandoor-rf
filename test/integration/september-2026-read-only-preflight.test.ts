@@ -124,7 +124,7 @@ it("read-only: SYNTHETIC_HARNESS env rejected on production entry", async () => 
 });
 
 it("read-only: executable .cjs bundle SHA is reproducible", async () => {
-  const bundlePath = join(process.cwd(), "operator-bundles/september-2026-read-only-preflight.cjs");
+  const bundlePath = join(process.cwd(), "operator-bundles/september-2026-one-shot-operator.cjs");
   const bytes = readFileSync(bundlePath);
   const sha = createHash("sha256").update(bytes).digest("hex");
   const again = createHash("sha256").update(readFileSync(bundlePath)).digest("hex");
