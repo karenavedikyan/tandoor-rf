@@ -373,3 +373,71 @@ it("recovery unavailable after lost COMMIT response must remain COMMIT_UNCERTAIN
     `recovery connection failure must not downgrade an unknown committed outcome: ${JSON.stringify(result)}`,
   );
 });
+
+it("uncertain COMMIT before server dispatch must retire original transaction before marker", { timeout: 15000 }, async () => {
+  await fresh();
+  const rosters = bundle();
+  const p = await planned(rosters);
+  const proto = Pool.prototype as unknown as {
+    connect: (...args: unknown[]) => Promise<unknown> | unknown;
+  };
+  const original = proto.connect;
+  let injected = false;
+  let originalPid = 0;
+  let markerBlockedByOriginal = false;
+  proto.connect = function (...args: unknown[]) {
+    const pending = original.apply(this, args) as Promise<{
+      processID: number;
+      query: (...qa: unknown[]) => Promise<unknown>;
+    }>;
+    if (typeof args[0] === "function") {
+      return pending;
+    }
+    return pending.then((c) => {
+      const query = c.query.bind(c);
+      c.query = async (...qa: unknown[]) => {
+        if (qa[0] === "COMMIT" && !injected) {
+          injected = true;
+          originalPid = c.processID;
+          const error = new Error("Query read timeout before COMMIT reached server");
+          (error as { code?: string }).code = "ETIMEDOUT";
+          throw error;
+        }
+        const sql = typeof qa[0] === "string" ? qa[0] : "";
+        if (
+          injected &&
+          sql.includes("INSERT INTO onec_v3_legal_sales_bundle_apply_runs") &&
+          sql.includes("'commit_uncertain'")
+        ) {
+          await query("SET LOCAL lock_timeout = '600ms'");
+          const work = query(...qa);
+          work.catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          const watch = await pool.query<{ blockers: number[] }>(
+            "SELECT pg_blocking_pids($1::integer) AS blockers",
+            [c.processID],
+          );
+          markerBlockedByOriginal = watch.rows[0]?.blockers.includes(originalPid) ?? false;
+          return await work;
+        }
+        return query(...qa);
+      };
+      return c;
+    });
+  };
+  let result: Awaited<ReturnType<typeof runMatchedOnlyApply>>;
+  try {
+    result = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha);
+  } finally {
+    proto.connect = original;
+  }
+  assert.equal(injected, true);
+  assert.equal(result.ok ? "" : result.code, "COMMIT_UNCERTAIN");
+  const rows = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines");
+  assert.equal(rows.rows[0]?.n, "0");
+  assert.equal(
+    markerBlockedByOriginal,
+    false,
+    "recovery marker is blocked by the still-open original transaction; no production lock_timeout is pinned",
+  );
+});

@@ -5,6 +5,14 @@ import { safeDisposeMatchedOnlySession } from "./connection-cleanup";
 import { captureScopedAfterStateDigest } from "./state-digest";
 import type { MatchedOnlyApplyReceiptV1, MatchedOnlyBundlePlanV1 } from "./types";
 
+const RECOVERY_LOCK_TIMEOUT_MS = 5_000;
+const RECOVERY_STATEMENT_TIMEOUT_MS = 15_000;
+
+async function applyRecoverySessionGuards(client: PoolClient): Promise<void> {
+  await client.query(`SET lock_timeout = '${RECOVERY_LOCK_TIMEOUT_MS}ms'`);
+  await client.query(`SET statement_timeout = '${RECOVERY_STATEMENT_TIMEOUT_MS}ms'`);
+}
+
 export function isCommitTransportUncertainty(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -30,8 +38,12 @@ export async function reconcileAppliedPlanAfterCommitUncertainty(
 ): Promise<MatchedOnlyApplyReceiptV1 | null> {
   const pool = createImportPool(databaseUrl);
   let client: PoolClient | undefined;
+  let readOnlyTxOpen = false;
   try {
     client = await pool.connect();
+    await client.query("BEGIN READ ONLY");
+    readOnlyTxOpen = true;
+    await applyRecoverySessionGuards(client);
     const run = await loadApplyRun(client, approvedPlanHash);
     if (!run || run.status !== "applied" || !run.after_state_sha256) {
       return null;
@@ -44,10 +56,15 @@ export async function reconcileAppliedPlanAfterCommitUncertainty(
       return null;
     }
     const receipt = run.receipt_json as MatchedOnlyApplyReceiptV1;
+    await client.query("COMMIT");
+    readOnlyTxOpen = false;
     return { ...receipt, status: "applied" };
   } catch {
     return null;
   } finally {
+    if (client && readOnlyTxOpen) {
+      await client.query("ROLLBACK").catch(() => undefined);
+    }
     if (client) {
       await safeDisposeMatchedOnlySession(client, pool, false);
     } else {
@@ -109,6 +126,7 @@ export async function tryMarkCommitUncertain(
   try {
     client = await pool.connect();
     await client.query("BEGIN");
+    await applyRecoverySessionGuards(client);
     await markCommitUncertain(client, plan, approvedPlanHash, backupSha256);
     await client.query("COMMIT");
   } catch {

@@ -27,7 +27,10 @@ import type {
   MatchedOnlyScopedBackupV1,
 } from "./types";
 import { isCommitTransportUncertainty, resolveCommitTransportUncertainty } from "./commit-outcome";
-import { safeDisposeMatchedOnlySession } from "./connection-cleanup";
+import {
+  retireMatchedOnlySessionAfterCommitUncertainty,
+  safeDisposeMatchedOnlySession,
+} from "./connection-cleanup";
 import {
   assertLiveTargetMatchesPlan,
   type MatchedOnlyBundleInput,
@@ -174,6 +177,7 @@ export async function runMatchedOnlyApply(
   const client = await pool.connect();
   let lockHeld = false;
   let transactionOpen = false;
+  let sessionDisposed = false;
   try {
     await client.query("BEGIN");
     transactionOpen = true;
@@ -292,6 +296,8 @@ export async function runMatchedOnlyApply(
       transactionOpen = false;
       lockHeld = false;
       if (isCommitTransportUncertainty(commitError)) {
+        await retireMatchedOnlySessionAfterCommitUncertainty(client, pool, false);
+        sessionDisposed = true;
         const resolution = await resolveCommitTransportUncertainty(
           databaseUrl,
           plan,
@@ -330,7 +336,9 @@ export async function runMatchedOnlyApply(
       message: error instanceof Error ? error.message : "Apply failed.",
     };
   } finally {
-    await safeDisposeMatchedOnlySession(client, pool, lockHeld);
+    if (!sessionDisposed) {
+      await safeDisposeMatchedOnlySession(client, pool, lockHeld);
+    }
   }
 }
 
@@ -385,6 +393,7 @@ export async function runMatchedOnlyRollback(
   const client = await pool.connect();
   let lockHeld = false;
   let transactionOpen = false;
+  let sessionDisposed = false;
   try {
     await client.query("BEGIN");
     transactionOpen = true;
@@ -440,6 +449,8 @@ export async function runMatchedOnlyRollback(
       transactionOpen = false;
       lockHeld = false;
       if (isCommitTransportUncertainty(commitError)) {
+        await retireMatchedOnlySessionAfterCommitUncertainty(client, pool, false);
+        sessionDisposed = true;
         return {
           ok: false,
           mode: "rollback",
@@ -460,6 +471,8 @@ export async function runMatchedOnlyRollback(
       message: error instanceof Error ? error.message : "Rollback failed.",
     };
   } finally {
-    await safeDisposeMatchedOnlySession(client, pool, lockHeld);
+    if (!sessionDisposed) {
+      await safeDisposeMatchedOnlySession(client, pool, lockHeld);
+    }
   }
 }
