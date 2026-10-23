@@ -66,6 +66,13 @@ export type SalesSectionSkuRow = {
   productType: string;
   quantity: string;
   income: string;
+  manualDiscount?: string | null;
+  automaticDiscount?: string | null;
+  totalDiscount?: string | null;
+  costPrice?: string | null;
+  additionalExpenses?: string | null;
+  grossProfit?: string | null;
+  profitabilityPercent?: string | null;
 };
 
 export type SalesSectionClientRow = {
@@ -73,6 +80,13 @@ export type SalesSectionClientRow = {
   legalName: string;
   quantity: string;
   income: string;
+  manualDiscount?: string | null;
+  automaticDiscount?: string | null;
+  totalDiscount?: string | null;
+  costPrice?: string | null;
+  additionalExpenses?: string | null;
+  grossProfit?: string | null;
+  profitabilityPercent?: string | null;
 };
 
 export type SalesSectionOverview = {
@@ -173,35 +187,42 @@ function weightedProfitability(income: string, grossProfit: string): string | nu
   return ((gp / incomeNum) * 100).toFixed(2);
 }
 
+type SkuAggRow = AggRow & { guid_item: string; name_item: string; product_type: string };
+
+function policyMetricFields(row: AggRow, policy: SalesSectionFieldPolicy) {
+  const fields: Partial<SalesSectionCategoryRow> = {};
+  if (policy.manualDiscount) {
+    fields.manualDiscount = row.manual_discount;
+  }
+  if (policy.automaticDiscount) {
+    fields.automaticDiscount = row.automatic_discount;
+  }
+  if (policy.totalDiscount) {
+    fields.totalDiscount = row.total_discount;
+  }
+  if (policy.costPrice) {
+    fields.costPrice = row.cost_price;
+  }
+  if (policy.additionalExpenses) {
+    fields.additionalExpenses = row.additional_expenses;
+  }
+  if (policy.grossProfit) {
+    fields.grossProfit = row.gross_profit;
+  }
+  if (policy.profitability) {
+    fields.profitabilityPercent = weightedProfitability(row.income, row.gross_profit);
+  }
+  return fields;
+}
+
 function applyFieldPolicyToCategory(row: AggRow, policy: SalesSectionFieldPolicy): SalesSectionCategoryRow {
-  const base: SalesSectionCategoryRow = {
+  return {
     productType: row.product_type,
     macroGroup: saleMacroGroup(row.product_type),
     quantity: row.quantity,
     income: row.income,
+    ...policyMetricFields(row, policy),
   };
-  if (policy.manualDiscount) {
-    base.manualDiscount = row.manual_discount;
-  }
-  if (policy.automaticDiscount) {
-    base.automaticDiscount = row.automatic_discount;
-  }
-  if (policy.totalDiscount) {
-    base.totalDiscount = row.total_discount;
-  }
-  if (policy.costPrice) {
-    base.costPrice = row.cost_price;
-  }
-  if (policy.additionalExpenses) {
-    base.additionalExpenses = row.additional_expenses;
-  }
-  if (policy.grossProfit) {
-    base.grossProfit = row.gross_profit;
-  }
-  if (policy.profitability) {
-    base.profitabilityPercent = weightedProfitability(row.income, row.gross_profit);
-  }
-  return base;
 }
 
 async function querySalesRollup(
@@ -570,6 +591,7 @@ export async function listSalesSectionSkuRows(
   monthRaw: string,
   productType: string,
   kind: "sales" | "returns",
+  skuQuery?: string,
 ): Promise<SalesSectionSkuRow[] | "invalid_month" | "no_items_source"> {
   const monthParsed = normalizeSaleMonth(monthRaw.length === 7 ? monthRaw : `${monthRaw}-01`);
   if (!monthParsed.ok) {
@@ -593,20 +615,40 @@ export async function listSalesSectionSkuRows(
   const table =
     kind === "sales" ? "onec_v3_legal_sale_item_lines" : "onec_v3_legal_return_item_lines";
   const { clause, params } = buildScopeSql(context, territory);
-  const result = await query<{
-    guid_item: string;
-    name_item: string;
-    product_type: string;
-    quantity: string;
-    income: string;
-  }>(
+  const fieldPolicy = resolveSalesSectionFieldPolicy(context);
+  const skuFilter =
+    skuQuery && skuQuery.trim()
+      ? ` AND sl.name_item ILIKE $${params.length + 4}`
+      : "";
+  const queryParams = [...params, monthParsed.monthStartIso, productType, activeSha];
+  if (skuFilter) {
+    queryParams.push(`%${skuQuery!.trim()}%`);
+  }
+  const metricSelect =
+    kind === "sales"
+      ? `,
+        COALESCE(SUM(sl.manual_discount), 0)::text AS manual_discount,
+        COALESCE(SUM(sl.automatic_discount), 0)::text AS automatic_discount,
+        COALESCE(SUM(sl.total_discount), 0)::text AS total_discount,
+        COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
+        COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
+        COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`
+      : `,
+        '0'::text AS manual_discount,
+        '0'::text AS automatic_discount,
+        '0'::text AS total_discount,
+        '0'::text AS cost_price,
+        '0'::text AS additional_expenses,
+        '0'::text AS gross_profit`;
+  const result = await query<SkuAggRow>(
     `
       SELECT
-        sl.guid_item::text,
+        sl.guid_item::text AS guid_item,
         sl.name_item,
         sl.product_type,
         COALESCE(SUM(sl.quantity), 0)::text AS quantity,
         COALESCE(SUM(sl.income), 0)::text AS income
+        ${metricSelect}
       FROM ${table} AS sl
       INNER JOIN onec_v3_legal_entities AS le ON le.guid_client = sl.legal_guid
       WHERE sl.sale_month = $${params.length + 1}::date
@@ -614,10 +656,11 @@ export async function listSalesSectionSkuRows(
         AND sl.source_sha256 = $${params.length + 3}
         AND sl.catalog_matched = TRUE
         AND (${clause})
+        ${skuFilter}
       GROUP BY sl.guid_item, sl.name_item, sl.product_type
       ORDER BY sl.name_item ASC
     `,
-    [...params, monthParsed.monthStartIso, productType, activeSha],
+    queryParams,
   );
   return result.rows.map((row) => ({
     guidItem: row.guid_item,
@@ -625,6 +668,7 @@ export async function listSalesSectionSkuRows(
     productType: row.product_type,
     quantity: row.quantity,
     income: row.income,
+    ...policyMetricFields(row, fieldPolicy),
   }));
 }
 
@@ -635,6 +679,7 @@ export async function listSalesSectionClientRows(
   productType: string,
   guidItem: string,
   kind: "sales" | "returns",
+  clientQuery?: string,
 ): Promise<SalesSectionClientRow[] | "invalid_month"> {
   const monthParsed = normalizeSaleMonth(monthRaw.length === 7 ? monthRaw : `${monthRaw}-01`);
   if (!monthParsed.ok) {
@@ -679,18 +724,46 @@ export async function listSalesSectionClientRows(
     queryParams.push(guidItem);
   }
   const matchedSql = source === "items" ? " AND sl.catalog_matched = TRUE" : "";
-  const result = await query<{
-    legal_guid: string;
-    name_client: string;
-    quantity: string;
-    income: string;
-  }>(
+  const fieldPolicy = resolveSalesSectionFieldPolicy(context);
+  const nameFilter =
+    clientQuery && clientQuery.trim()
+      ? ` AND le.name_client ILIKE $${queryParams.length + 1}`
+      : "";
+  if (nameFilter) {
+    queryParams.push(`%${clientQuery!.trim()}%`);
+  }
+  const metricSelect =
+    source === "items" && kind === "sales"
+      ? `,
+        COALESCE(SUM(sl.manual_discount), 0)::text AS manual_discount,
+        COALESCE(SUM(sl.automatic_discount), 0)::text AS automatic_discount,
+        COALESCE(SUM(sl.total_discount), 0)::text AS total_discount,
+        COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
+        COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
+        COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`
+      : source === "items"
+        ? `,
+        '0'::text AS manual_discount,
+        '0'::text AS automatic_discount,
+        '0'::text AS total_discount,
+        '0'::text AS cost_price,
+        '0'::text AS additional_expenses,
+        '0'::text AS gross_profit`
+        : `,
+        COALESCE(SUM(sl.manual_discount), 0)::text AS manual_discount,
+        COALESCE(SUM(sl.automatic_discount), 0)::text AS automatic_discount,
+        COALESCE(SUM(sl.total_discount), 0)::text AS total_discount,
+        COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
+        COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
+        COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`;
+  const result = await query<AggRow & { legal_guid: string; name_client: string }>(
     `
       SELECT
         le.guid_client::text AS legal_guid,
         le.name_client,
         COALESCE(SUM(sl.quantity), 0)::text AS quantity,
         COALESCE(SUM(sl.income), 0)::text AS income
+        ${metricSelect}
       FROM ${table} AS sl
       INNER JOIN onec_v3_legal_entities AS le ON le.guid_client = sl.legal_guid
       WHERE sl.sale_month = $${params.length + 1}::date
@@ -698,6 +771,7 @@ export async function listSalesSectionClientRows(
         ${activeSha ? `AND sl.source_sha256 = $${params.length + 3}` : ""}
         ${matchedSql}
         ${itemFilter}
+        ${nameFilter}
         AND (${clause})
       GROUP BY le.guid_client, le.name_client
       ORDER BY le.name_client ASC
@@ -709,5 +783,6 @@ export async function listSalesSectionClientRows(
     legalName: row.name_client,
     quantity: row.quantity,
     income: row.income,
+    ...policyMetricFields(row, fieldPolicy),
   }));
 }

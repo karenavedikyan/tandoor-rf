@@ -2,7 +2,7 @@ import {
   addSaleMoneyStrings,
   addSaleQuantityStrings,
   saleMoneyStringsExactEqual,
-  saleQuantityWithinTolerance,
+  saleQuantityStringsExactEqual,
 } from "./decimal-sum";
 import type {
   LegalReturnItemsRoster,
@@ -208,7 +208,7 @@ export function analyzeSalesBundle(input: {
     for (const field of fields) {
       const ok =
         field === "quantity"
-          ? saleQuantityWithinTolerance(a[field], b[field])
+          ? saleQuantityStringsExactEqual(a[field], b[field])
           : saleMoneyStringsExactEqual(a[field], b[field]);
       if (!ok) {
         metricMismatches += 1;
@@ -262,7 +262,7 @@ export function analyzeSalesBundle(input: {
       continue;
     }
     if (
-      !saleQuantityWithinTolerance(a.quantity, b.quantity) ||
+      !saleQuantityStringsExactEqual(a.quantity, b.quantity) ||
       !saleMoneyStringsExactEqual(a.income, b.income)
     ) {
       returnsMismatches += 1;

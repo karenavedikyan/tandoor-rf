@@ -27,6 +27,7 @@ import {
   listSalesSectionSkuRows,
   loadSalesSectionOverview,
 } from "./sales-section";
+import { resolveSalesSectionFieldPolicy } from "./sales-field-policy";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -582,7 +583,15 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
   if (!territory) {
     return;
   }
-  const rows = await listSalesSectionSkuRows(req.accessContext!, territory, month, productType, kind);
+  const skuQuery = typeof req.query.skuQuery === "string" ? req.query.skuQuery : "";
+  const rows = await listSalesSectionSkuRows(
+    req.accessContext!,
+    territory,
+    month,
+    productType,
+    kind,
+    skuQuery,
+  );
   if (rows === "invalid_month") {
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
     return;
@@ -592,7 +601,10 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
     return;
   }
   setNoStore(res);
-  res.json({ items: rows });
+  res.json({
+    items: rows,
+    fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+  });
 }
 
 export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -611,6 +623,7 @@ export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Resp
   if (!territory) {
     return;
   }
+  const clientQuery = typeof req.query.clientQuery === "string" ? req.query.clientQuery : "";
   const rows = await listSalesSectionClientRows(
     req.accessContext!,
     territory,
@@ -618,11 +631,15 @@ export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Resp
     productType,
     guidItem || "00000000-0000-4000-8000-000000000000",
     kind,
+    clientQuery,
   );
   if (rows === "invalid_month") {
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
     return;
   }
   setNoStore(res);
-  res.json({ clients: rows });
+  res.json({
+    clients: rows,
+    fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+  });
 }

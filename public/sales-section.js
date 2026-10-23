@@ -1,6 +1,7 @@
 (function () {
   "use strict";
 
+  var api = window.TandoorRf;
   var root = document.getElementById("sales-section-root");
   var subtitle = document.getElementById("sales-page-subtitle");
   var loadGeneration = 0;
@@ -8,6 +9,9 @@
   var cachedMonths = [];
   var lastOverview = null;
   var activeTab = "sales";
+  var currentMonth = "";
+  var lastFieldPolicy = {};
+  var shellUser = null;
 
   function esc(text) {
     var d = document.createElement("div");
@@ -33,27 +37,139 @@
     window.history.replaceState({}, "", "/sales?" + params.toString());
   }
 
+  function setUrlParams(patch) {
+    var params = queryParams();
+    Object.keys(patch).forEach(function (key) {
+      var val = patch[key];
+      if (val == null || val === "") {
+        params.delete(key);
+      } else {
+        params.set(key, val);
+      }
+    });
+    window.history.replaceState({}, "", "/sales?" + params.toString());
+  }
+
+  function syncSubtitle(month) {
+    currentMonth = month || currentMonth;
+    if (subtitle) {
+      subtitle.textContent = currentMonth ? "Период " + currentMonth : "";
+    }
+  }
+
   function buildOverviewUrl(month) {
     var params = queryParams();
     params.set("month", month);
     return "/api/clients/v3/sales/overview?" + params.toString();
   }
 
-  function buildSkuUrl(month, productType, kind) {
+  function buildSkuUrl(month, productType, kind, skuQuery) {
     var params = queryParams();
     params.set("month", month);
     params.set("productType", productType);
     params.set("kind", kind);
+    if (skuQuery) {
+      params.set("skuQuery", skuQuery);
+    }
     return "/api/clients/v3/sales/sku?" + params.toString();
   }
 
-  function buildClientsUrl(month, productType, guidItem, kind) {
+  function buildClientsUrl(month, productType, guidItem, kind, clientQuery) {
     var params = queryParams();
     params.set("month", month);
     params.set("productType", productType);
     params.set("guidItem", guidItem);
     params.set("kind", kind);
+    if (clientQuery) {
+      params.set("clientQuery", clientQuery);
+    }
     return "/api/clients/v3/sales/clients?" + params.toString();
+  }
+
+  function salesReturnParam() {
+    var params = queryParams();
+    params.set("kind", activeTab === "returns" ? "returns" : "sales");
+    if (currentMonth) {
+      params.set("month", currentMonth);
+    }
+    return encodeURIComponent("/sales?" + params.toString());
+  }
+
+  function legalDetailHref(legalGuid) {
+    return (
+      "/clients/" +
+      encodeURIComponent(legalGuid) +
+      "?v3Entity=legal&return=" +
+      salesReturnParam()
+    );
+  }
+
+  function invalidateDrill() {
+    drillGeneration += 1;
+    var panel = document.getElementById("sales-drill-panel");
+    if (panel) {
+      panel.innerHTML = "";
+    }
+  }
+
+  function syncTabAria() {
+    if (!root) {
+      return;
+    }
+    root.querySelectorAll(".sales-section-tab[data-tab]").forEach(function (btn) {
+      var tab = btn.getAttribute("data-tab");
+      btn.setAttribute("aria-selected", tab === activeTab ? "true" : "false");
+    });
+  }
+
+  function metricColumnDefs(policy) {
+    var cols = [
+      { key: "quantity", label: "Кол-во, шт" },
+      { key: "income", label: "Выручка, ₽" },
+    ];
+    if (policy.manualDiscount) {
+      cols.push({ key: "manualDiscount", label: "Ручная скидка, ₽" });
+    }
+    if (policy.automaticDiscount) {
+      cols.push({ key: "automaticDiscount", label: "Автоскидка, ₽" });
+    }
+    if (policy.totalDiscount) {
+      cols.push({ key: "totalDiscount", label: "Скидки, ₽" });
+    }
+    if (policy.additionalExpenses) {
+      cols.push({ key: "additionalExpenses", label: "Доп. расходы, ₽" });
+    }
+    if (policy.costPrice) {
+      cols.push({ key: "costPrice", label: "Себестоимость, ₽" });
+    }
+    if (policy.grossProfit) {
+      cols.push({ key: "grossProfit", label: "Валовая прибыль, ₽" });
+    }
+    if (policy.profitability) {
+      cols.push({ key: "profitabilityPercent", label: "Рентабельность, %" });
+    }
+    return cols;
+  }
+
+  function categoryColumns(policy) {
+    var cols = [{ key: "productType", label: "Категория", text: true }].concat(metricColumnDefs(policy));
+    cols.push({ key: "_actions", label: "" });
+    return cols;
+  }
+
+  function appendMetricCells(tr, row, policy) {
+    metricColumnDefs(policy).forEach(function (col) {
+      var td = document.createElement("td");
+      td.textContent = formatNum(row[col.key]);
+      tr.appendChild(td);
+    });
+  }
+
+  function wrapScrollTable(table) {
+    var wrap = document.createElement("div");
+    wrap.className = "sales-table-scroll";
+    wrap.appendChild(table);
+    return wrap;
   }
 
   function renderMacroGrid(rows, testId) {
@@ -80,25 +196,6 @@
     });
     html += "</div>";
     return html;
-  }
-
-  function categoryColumns(policy) {
-    var cols = [
-      { key: "productType", label: "Категория", always: true },
-      { key: "quantity", label: "Кол-во, шт", always: true },
-      { key: "income", label: "Выручка, ₽", always: true },
-    ];
-    if (policy && policy.totalDiscount) {
-      cols.push({ key: "totalDiscount", label: "Скидки, ₽" });
-    }
-    if (policy && policy.grossProfit) {
-      cols.push({ key: "grossProfit", label: "Валовая прибыль, ₽" });
-    }
-    if (policy && policy.profitability) {
-      cols.push({ key: "profitabilityPercent", label: "Рентабельность, %" });
-    }
-    cols.push({ key: "_actions", label: "" });
-    return cols;
   }
 
   function mountCategoryTable(container, rows, testId, month, kind, policy) {
@@ -132,30 +229,33 @@
           btn.setAttribute("data-drill-month", month);
           btn.setAttribute("data-drill-kind", kind);
           td.appendChild(btn);
+        } else if (col.key === "productType") {
+          td.textContent = row.productType;
         } else {
           td.textContent = formatNum(row[col.key]);
-          if (col.key === "productType") {
-            td.textContent = row.productType;
-          }
         }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    container.appendChild(table);
+    container.appendChild(wrapScrollTable(table));
   }
 
-  function renderToolbarShell(month) {
+  function renderToolbarShell() {
     return (
       '<div class="sales-section-toolbar">' +
       '<label>Месяц <select id="sales-month-select" data-testid="sales-month-select"></select></label>' +
-      '<label>Категория <input id="sales-category-filter" data-testid="sales-category-filter" placeholder="фильтр" /></label>' +
+      '<label class="sales-filter-label">Поиск в списке категорий <input id="sales-category-filter" data-testid="sales-category-filter" placeholder="фильтр" /></label>' +
+      '<label class="sales-filter-label">Товар <input id="sales-sku-filter" data-testid="sales-sku-filter" placeholder="поиск SKU" /></label>' +
+      '<label class="sales-filter-label">Клиент <input id="sales-client-filter" data-testid="sales-client-filter" placeholder="поиск юрлица" /></label>' +
+      '<label id="sales-territory-label" class="sales-filter-label sales-hidden">Менеджер <select id="sales-territory-select" data-testid="sales-territory-select"><option value="">Вся доступная область</option></select></label>' +
+      '<p class="sales-note sales-filter-hint">Сводка по макрогруппам — по всей выбранной территории; поиск в списке категорий не меняет сводку.</p>' +
       '<div class="sales-section-tabs" role="tablist">' +
-      '<button type="button" class="sales-section-tab" data-tab="sales" aria-selected="' +
+      '<button type="button" class="sales-section-tab" data-tab="sales" role="tab" aria-selected="' +
       (activeTab === "sales" ? "true" : "false") +
       '">Продажи</button>' +
-      '<button type="button" class="sales-section-tab" data-tab="returns" aria-selected="' +
+      '<button type="button" class="sales-section-tab" data-tab="returns" role="tab" aria-selected="' +
       (activeTab === "returns" ? "true" : "false") +
       '">Возвраты</button>' +
       "</div></div>" +
@@ -165,11 +265,11 @@
     );
   }
 
-  function bindDrillHandlers() {
+  function bindDrillHandlers(policy) {
     root.querySelectorAll("[data-drill-category]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var productType = btn.getAttribute("data-drill-category") || "";
-        var month = btn.getAttribute("data-drill-month") || "";
+        var month = btn.getAttribute("data-drill-month") || currentMonth;
         var kind = btn.getAttribute("data-drill-kind") || activeTab;
         var gen = ++drillGeneration;
         var panel = document.getElementById("sales-drill-panel");
@@ -177,10 +277,14 @@
           return;
         }
         panel.innerHTML = '<p class="sales-note">Загрузка товаров…</p>';
+        var skuQuery = (document.getElementById("sales-sku-filter")?.value || "").trim();
         api
-          .apiRequest(buildSkuUrl(month, productType, kind))
+          .apiRequest(buildSkuUrl(month, productType, kind, skuQuery))
           .then(function (result) {
             if (gen !== drillGeneration) {
+              return;
+            }
+            if (kind !== activeTab) {
               return;
             }
             if (result.response.status !== 200) {
@@ -191,6 +295,7 @@
               });
               return;
             }
+            var drillPolicy = result.data.fieldPolicy || policy || lastFieldPolicy;
             var items = result.data.items || [];
             if (!items.length) {
               panel.innerHTML = '<p class="sales-empty">Нет товаров в области видимости.</p>';
@@ -201,7 +306,15 @@
             table.className = "sales-category-table";
             table.setAttribute("data-testid", "sales-sku-table");
             var thead = document.createElement("thead");
-            thead.innerHTML = "<tr><th>Товар</th><th>Кол-во</th><th>Выручка</th><th></th></tr>";
+            var headRow = document.createElement("tr");
+            var headCols = [{ key: "nameItem", label: "Товар", text: true }].concat(metricColumnDefs(drillPolicy));
+            headCols.push({ key: "_actions", label: "" });
+            headCols.forEach(function (col) {
+              var th = document.createElement("th");
+              th.textContent = col.label;
+              headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
             table.appendChild(thead);
             var tbody = document.createElement("tbody");
             items.forEach(function (row) {
@@ -209,26 +322,21 @@
               var nameTd = document.createElement("td");
               nameTd.textContent = row.nameItem;
               tr.appendChild(nameTd);
-              var qTd = document.createElement("td");
-              qTd.textContent = formatNum(row.quantity);
-              tr.appendChild(qTd);
-              var iTd = document.createElement("td");
-              iTd.textContent = formatNum(row.income);
-              tr.appendChild(iTd);
+              appendMetricCells(tr, row, drillPolicy);
               var actTd = document.createElement("td");
               var clientBtn = document.createElement("button");
               clientBtn.type = "button";
               clientBtn.className = "sales-section-tab";
               clientBtn.textContent = "Клиенты";
               clientBtn.addEventListener("click", function () {
-                loadClients(month, productType, row.guidItem, kind, panel);
+                loadClients(month, productType, row.guidItem, kind, panel, drillPolicy);
               });
               actTd.appendChild(clientBtn);
               tr.appendChild(actTd);
               tbody.appendChild(tr);
             });
             table.appendChild(tbody);
-            panel.appendChild(table);
+            panel.appendChild(wrapScrollTable(table));
           })
           .catch(function () {
             if (gen !== drillGeneration) {
@@ -244,19 +352,24 @@
     });
   }
 
-  function loadClients(month, productType, guidItem, kind, panel) {
+  function loadClients(month, productType, guidItem, kind, panel, policy) {
     var gen = ++drillGeneration;
     panel.innerHTML = '<p class="sales-note">Загрузка клиентов…</p>';
+    var clientQuery = (document.getElementById("sales-client-filter")?.value || "").trim();
     api
-      .apiRequest(buildClientsUrl(month, productType, guidItem, kind))
+      .apiRequest(buildClientsUrl(month, productType, guidItem, kind, clientQuery))
       .then(function (result) {
         if (gen !== drillGeneration) {
+          return;
+        }
+        if (kind !== activeTab) {
           return;
         }
         if (result.response.status !== 200) {
           panel.innerHTML = '<p class="sales-empty">Не удалось загрузить клиентов.</p>';
           return;
         }
+        var clientPolicy = result.data.fieldPolicy || policy || lastFieldPolicy;
         var clients = result.data.clients || [];
         if (!clients.length) {
           panel.innerHTML = '<p class="sales-empty">Нет клиентов в области видимости.</p>';
@@ -266,28 +379,30 @@
         table.className = "sales-category-table";
         table.setAttribute("data-testid", "sales-clients-table");
         var thead = document.createElement("thead");
-        thead.innerHTML = "<tr><th>Юрлицо</th><th>Кол-во</th><th>Выручка</th></tr>";
+        var headRow = document.createElement("tr");
+        var headCols = [{ key: "legalName", label: "Юрлицо", text: true }].concat(metricColumnDefs(clientPolicy));
+        headCols.forEach(function (col) {
+          var th = document.createElement("th");
+          th.textContent = col.label;
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
         table.appendChild(thead);
         var tbody = document.createElement("tbody");
         clients.forEach(function (row) {
           var tr = document.createElement("tr");
           var nameTd = document.createElement("td");
           var link = document.createElement("a");
-          link.href = "/clients/" + encodeURIComponent(row.legalGuid);
+          link.href = legalDetailHref(row.legalGuid);
           link.textContent = row.legalName;
           nameTd.appendChild(link);
           tr.appendChild(nameTd);
-          var qTd = document.createElement("td");
-          qTd.textContent = formatNum(row.quantity);
-          tr.appendChild(qTd);
-          var iTd = document.createElement("td");
-          iTd.textContent = formatNum(row.income);
-          tr.appendChild(iTd);
+          appendMetricCells(tr, row, clientPolicy);
           tbody.appendChild(tr);
         });
         table.appendChild(tbody);
         panel.innerHTML = "";
-        panel.appendChild(table);
+        panel.appendChild(wrapScrollTable(table));
       })
       .catch(function () {
         if (gen !== drillGeneration) {
@@ -298,7 +413,10 @@
   }
 
   function paintOverview(ov, month) {
+    invalidateDrill();
+    syncTabAria();
     var policy = ov.fieldPolicy || {};
+    lastFieldPolicy = policy;
     var tab = activeTab === "returns" ? "returns" : "sales";
     var macro = tab === "returns" ? ov.returnsMacroSummaries || [] : ov.macroSummaries || [];
     var categories = tab === "returns" ? ov.returnsCategories || [] : ov.categories || [];
@@ -322,7 +440,7 @@
         tab,
         policy,
       );
-      bindDrillHandlers();
+      bindDrillHandlers(policy);
     }
     var note = document.getElementById("sales-source-note");
     if (note) {
@@ -336,7 +454,60 @@
     }
   }
 
+  function loadTerritoryOptions(user) {
+    var label = document.getElementById("sales-territory-label");
+    var select = document.getElementById("sales-territory-select");
+    if (!label || !select || !user) {
+      return;
+    }
+    var canPick =
+      user.role === "admin" || user.role === "director" || user.role === "rop" || user.fullClientBase;
+    if (!canPick) {
+      label.classList.add("sales-hidden");
+      return;
+    }
+    label.classList.remove("sales-hidden");
+    var params = queryParams();
+    api
+      .apiRequest("/api/clients/v3/options?entity=legal&" + params.toString())
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          return;
+        }
+        var managers = result.data.managers || [];
+        select.innerHTML = '<option value="">Вся доступная область</option>';
+        managers.forEach(function (row) {
+          var opt = document.createElement("option");
+          opt.value = row.guid;
+          opt.textContent = row.name + " (" + row.count + ")";
+          select.appendChild(opt);
+        });
+        var current = params.get("responsibleGuid") || params.get("managerGuid") || "";
+        if (current) {
+          select.value = current;
+        }
+      })
+      .catch(function () {
+        /* ignore */
+      });
+    select.onchange = function () {
+      var guid = select.value;
+      if (guid) {
+        setUrlParams({ responsibleGuid: guid, responsibleKind: "manager", managerGuid: guid });
+      } else {
+        setUrlParams({ responsibleGuid: "", responsibleKind: "", managerGuid: "" });
+      }
+      loadOverview(currentMonth);
+    };
+  }
+
   function loadOverview(month) {
+    syncSubtitle(month);
+    var params = queryParams();
+    var kindParam = params.get("kind");
+    if (kindParam === "returns" || kindParam === "sales") {
+      activeTab = kindParam;
+    }
     var gen = ++loadGeneration;
     drillGeneration += 1;
     root.innerHTML = '<p class="sales-note">Загрузка…</p>';
@@ -367,7 +538,7 @@
           return;
         }
         root.innerHTML =
-          renderToolbarShell(month) +
+          renderToolbarShell() +
           '<p class="sales-note" data-testid="sales-source-note"></p>' +
           '<p class="sales-note">' +
           esc(ov.periodComparisonNote || "") +
@@ -381,12 +552,22 @@
         document.getElementById("sales-category-filter")?.addEventListener("input", function () {
           paintOverview(lastOverview, month);
         });
+        document.getElementById("sales-sku-filter")?.addEventListener("input", function () {
+          invalidateDrill();
+        });
+        document.getElementById("sales-client-filter")?.addEventListener("input", function () {
+          invalidateDrill();
+        });
         root.querySelectorAll(".sales-section-tab[data-tab]").forEach(function (btn) {
           btn.addEventListener("click", function () {
             activeTab = btn.getAttribute("data-tab") || "sales";
+            setUrlParams({ kind: activeTab });
             paintOverview(lastOverview, month);
           });
         });
+        if (shellUser) {
+          loadTerritoryOptions(shellUser);
+        }
       })
       .catch(function () {
         if (gen !== loadGeneration) {
@@ -426,6 +607,7 @@
         window.location.href = "/login";
         return;
       }
+      shellUser = user;
       api
         .apiRequest("/api/clients/v3/sales/months" + (window.location.search || ""))
         .then(function (monthsResult) {
@@ -443,9 +625,7 @@
           cachedMonths = monthsResult.data.months || [];
           var params = queryParams();
           var month = params.get("month") || cachedMonths[0] || "";
-          if (subtitle) {
-            subtitle.textContent = month ? "Период " + month : "";
-          }
+          syncSubtitle(month);
           if (!month) {
             root.innerHTML =
               '<div class="sales-empty" data-testid="sales-not-imported">Нет загруженных данных из 1С.</div>';
