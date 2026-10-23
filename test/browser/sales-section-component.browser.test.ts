@@ -63,6 +63,15 @@ describe("sales section component browser", { concurrency: false, timeout: 120_0
         grossProfit: true,
         profitability: true,
       },
+      returnsFinanceAvailability: {
+        manualDiscount: false,
+        automaticDiscount: false,
+        totalDiscount: false,
+        costPrice: false,
+        additionalExpenses: false,
+        grossProfit: false,
+        profitability: false,
+      },
       macroSummaries: [],
       categories: [
         {

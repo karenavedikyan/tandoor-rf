@@ -122,45 +122,49 @@
     });
   }
 
-  function metricColumnDefs(policy) {
+  function metricColumnDefs(policy, financeAvailability) {
+    var avail = financeAvailability || {};
     var cols = [
       { key: "quantity", label: "Кол-во, шт" },
       { key: "income", label: "Выручка, ₽" },
     ];
-    if (policy.manualDiscount) {
+    if (policy.manualDiscount && avail.manualDiscount) {
       cols.push({ key: "manualDiscount", label: "Ручная скидка, ₽" });
     }
-    if (policy.automaticDiscount) {
+    if (policy.automaticDiscount && avail.automaticDiscount) {
       cols.push({ key: "automaticDiscount", label: "Автоскидка, ₽" });
     }
-    if (policy.totalDiscount) {
+    if (policy.totalDiscount && avail.totalDiscount) {
       cols.push({ key: "totalDiscount", label: "Скидки, ₽" });
     }
-    if (policy.additionalExpenses) {
+    if (policy.additionalExpenses && avail.additionalExpenses) {
       cols.push({ key: "additionalExpenses", label: "Доп. расходы, ₽" });
     }
-    if (policy.costPrice) {
+    if (policy.costPrice && avail.costPrice) {
       cols.push({ key: "costPrice", label: "Себестоимость, ₽" });
     }
-    if (policy.grossProfit) {
+    if (policy.grossProfit && avail.grossProfit) {
       cols.push({ key: "grossProfit", label: "Валовая прибыль, ₽" });
     }
-    if (policy.profitability) {
+    if (policy.profitability && avail.profitability) {
       cols.push({ key: "profitabilityPercent", label: "Рентабельность, %" });
     }
     return cols;
   }
 
-  function categoryColumns(policy) {
-    var cols = [{ key: "productType", label: "Категория", text: true }].concat(metricColumnDefs(policy));
+  function categoryColumns(policy, financeAvailability) {
+    var cols = [{ key: "productType", label: "Категория", text: true }].concat(
+      metricColumnDefs(policy, financeAvailability),
+    );
     cols.push({ key: "_actions", label: "" });
     return cols;
   }
 
-  function appendMetricCells(tr, row, policy) {
-    metricColumnDefs(policy).forEach(function (col) {
+  function appendMetricCells(tr, row, policy, financeAvailability) {
+    metricColumnDefs(policy, financeAvailability).forEach(function (col) {
       var td = document.createElement("td");
-      td.textContent = formatNum(row[col.key]);
+      var val = row[col.key];
+      td.textContent = val == null ? "—" : formatNum(val);
       tr.appendChild(td);
     });
   }
@@ -172,10 +176,11 @@
     return wrap;
   }
 
-  function renderMacroGrid(rows, testId) {
+  function renderMacroGrid(rows, testId, financeAvailability) {
     if (!rows || !rows.length) {
       return '<p class="sales-empty">Нет данных из 1С за выбранный период в вашей области видимости.</p>';
     }
+    var avail = financeAvailability || {};
     var html = '<div class="sales-macro-grid" data-testid="' + esc(testId) + '">';
     rows.forEach(function (row) {
       html +=
@@ -186,10 +191,10 @@
         " ₽</p><p>Кол-во: " +
         formatNum(row.quantity) +
         " шт</p>";
-      if (row.grossProfit != null) {
+      if (avail.grossProfit && row.grossProfit != null) {
         html += "<p>Валовая прибыль: " + formatNum(row.grossProfit) + " ₽</p>";
       }
-      if (row.profitabilityPercent != null) {
+      if (avail.profitability && row.profitabilityPercent != null) {
         html += "<p>Рентабельность: " + formatNum(row.profitabilityPercent) + "%</p>";
       }
       html += "</div>";
@@ -198,7 +203,7 @@
     return html;
   }
 
-  function mountCategoryTable(container, rows, testId, month, kind, policy) {
+  function mountCategoryTable(container, rows, testId, month, kind, policy, financeAvailability) {
     container.innerHTML = "";
     if (!rows || !rows.length) {
       return;
@@ -208,7 +213,7 @@
     table.setAttribute("data-testid", testId);
     var thead = document.createElement("thead");
     var headRow = document.createElement("tr");
-    categoryColumns(policy).forEach(function (col) {
+    categoryColumns(policy, financeAvailability).forEach(function (col) {
       var th = document.createElement("th");
       th.textContent = col.label;
       headRow.appendChild(th);
@@ -218,7 +223,7 @@
     var tbody = document.createElement("tbody");
     rows.forEach(function (row) {
       var tr = document.createElement("tr");
-      categoryColumns(policy).forEach(function (col) {
+      categoryColumns(policy, financeAvailability).forEach(function (col) {
         var td = document.createElement("td");
         if (col.key === "_actions") {
           var btn = document.createElement("button");
@@ -265,7 +270,7 @@
     );
   }
 
-  function bindDrillHandlers(policy) {
+  function bindDrillHandlers(policy, financeAvailability) {
     root.querySelectorAll("[data-drill-category]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var productType = btn.getAttribute("data-drill-category") || "";
@@ -296,6 +301,7 @@
               return;
             }
             var drillPolicy = result.data.fieldPolicy || policy || lastFieldPolicy;
+            var drillFinance = result.data.financeAvailability || financeAvailability;
             var items = result.data.items || [];
             if (!items.length) {
               panel.innerHTML = '<p class="sales-empty">Нет товаров в области видимости.</p>';
@@ -307,7 +313,9 @@
             table.setAttribute("data-testid", "sales-sku-table");
             var thead = document.createElement("thead");
             var headRow = document.createElement("tr");
-            var headCols = [{ key: "nameItem", label: "Товар", text: true }].concat(metricColumnDefs(drillPolicy));
+            var headCols = [{ key: "nameItem", label: "Товар", text: true }].concat(
+              metricColumnDefs(drillPolicy, drillFinance),
+            );
             headCols.push({ key: "_actions", label: "" });
             headCols.forEach(function (col) {
               var th = document.createElement("th");
@@ -322,14 +330,14 @@
               var nameTd = document.createElement("td");
               nameTd.textContent = row.nameItem;
               tr.appendChild(nameTd);
-              appendMetricCells(tr, row, drillPolicy);
+              appendMetricCells(tr, row, drillPolicy, drillFinance);
               var actTd = document.createElement("td");
               var clientBtn = document.createElement("button");
               clientBtn.type = "button";
               clientBtn.className = "sales-section-tab";
               clientBtn.textContent = "Клиенты";
               clientBtn.addEventListener("click", function () {
-                loadClients(month, productType, row.guidItem, kind, panel, drillPolicy);
+                loadClients(month, productType, row.guidItem, kind, panel, drillPolicy, drillFinance);
               });
               actTd.appendChild(clientBtn);
               tr.appendChild(actTd);
@@ -352,7 +360,7 @@
     });
   }
 
-  function loadClients(month, productType, guidItem, kind, panel, policy) {
+  function loadClients(month, productType, guidItem, kind, panel, policy, financeAvailability) {
     var gen = ++drillGeneration;
     panel.innerHTML = '<p class="sales-note">Загрузка клиентов…</p>';
     var clientQuery = (document.getElementById("sales-client-filter")?.value || "").trim();
@@ -370,6 +378,7 @@
           return;
         }
         var clientPolicy = result.data.fieldPolicy || policy || lastFieldPolicy;
+        var clientFinance = result.data.financeAvailability || financeAvailability;
         var clients = result.data.clients || [];
         if (!clients.length) {
           panel.innerHTML = '<p class="sales-empty">Нет клиентов в области видимости.</p>';
@@ -380,7 +389,9 @@
         table.setAttribute("data-testid", "sales-clients-table");
         var thead = document.createElement("thead");
         var headRow = document.createElement("tr");
-        var headCols = [{ key: "legalName", label: "Юрлицо", text: true }].concat(metricColumnDefs(clientPolicy));
+        var headCols = [{ key: "legalName", label: "Юрлицо", text: true }].concat(
+          metricColumnDefs(clientPolicy, clientFinance),
+        );
         headCols.forEach(function (col) {
           var th = document.createElement("th");
           th.textContent = col.label;
@@ -397,7 +408,7 @@
           link.textContent = row.legalName;
           nameTd.appendChild(link);
           tr.appendChild(nameTd);
-          appendMetricCells(tr, row, clientPolicy);
+          appendMetricCells(tr, row, clientPolicy, clientFinance);
           tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -418,6 +429,18 @@
     var policy = ov.fieldPolicy || {};
     lastFieldPolicy = policy;
     var tab = activeTab === "returns" ? "returns" : "sales";
+    var financeAvailability =
+      tab === "returns"
+        ? ov.returnsFinanceAvailability || { grossProfit: false, profitability: false }
+        : {
+            manualDiscount: true,
+            automaticDiscount: true,
+            totalDiscount: true,
+            costPrice: true,
+            additionalExpenses: true,
+            grossProfit: true,
+            profitability: true,
+          };
     var macro = tab === "returns" ? ov.returnsMacroSummaries || [] : ov.macroSummaries || [];
     var categories = tab === "returns" ? ov.returnsCategories || [] : ov.categories || [];
     var filter = (document.getElementById("sales-category-filter")?.value || "").trim().toLowerCase();
@@ -428,7 +451,11 @@
     }
     var macroHost = document.getElementById("sales-macro-host");
     if (macroHost) {
-      macroHost.innerHTML = renderMacroGrid(macro, tab === "returns" ? "sales-returns-macro" : "sales-macro");
+      macroHost.innerHTML = renderMacroGrid(
+        macro,
+        tab === "returns" ? "sales-returns-macro" : "sales-macro",
+        financeAvailability,
+      );
     }
     var catHost = document.getElementById("sales-category-host");
     if (catHost) {
@@ -439,8 +466,9 @@
         month,
         tab,
         policy,
+        financeAvailability,
       );
-      bindDrillHandlers(policy);
+      bindDrillHandlers(policy, financeAvailability);
     }
     var note = document.getElementById("sales-source-note");
     if (note) {

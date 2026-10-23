@@ -15,7 +15,13 @@ import {
   type SalesImportSnapshotState,
 } from "../../onec-sales/import-snapshot";
 import { addSaleMoneyStrings, addSaleQuantityStrings } from "../../onec-sales/decimal-sum";
-import { resolveSalesSectionFieldPolicy, type SalesSectionFieldPolicy } from "./sales-field-policy";
+import {
+  resolveSalesSectionFieldPolicy,
+  RETURNS_SOURCE_FINANCE_AVAILABILITY,
+  SALES_SOURCE_FINANCE_AVAILABILITY,
+  type SalesSectionFieldPolicy,
+  type SalesSectionFinanceAvailability,
+} from "./sales-field-policy";
 
 export type SalesSectionTerritory = {
   ropBranchGuid?: string;
@@ -99,6 +105,7 @@ export type SalesSectionOverview = {
   returnsSignedNote: string;
   importMeta: SalesSectionImportMeta;
   fieldPolicy: SalesSectionFieldPolicy;
+  returnsFinanceAvailability: SalesSectionFinanceAvailability;
   macroSummaries: SalesSectionMacroSummary[];
   categories: SalesSectionCategoryRow[];
   returnsMacroSummaries: SalesSectionMacroSummary[];
@@ -189,27 +196,31 @@ function weightedProfitability(income: string, grossProfit: string): string | nu
 
 type SkuAggRow = AggRow & { guid_item: string; name_item: string; product_type: string };
 
-function policyMetricFields(row: AggRow, policy: SalesSectionFieldPolicy) {
+function policyMetricFields(
+  row: AggRow,
+  policy: SalesSectionFieldPolicy,
+  availability: SalesSectionFinanceAvailability,
+) {
   const fields: Partial<SalesSectionCategoryRow> = {};
-  if (policy.manualDiscount) {
+  if (policy.manualDiscount && availability.manualDiscount) {
     fields.manualDiscount = row.manual_discount;
   }
-  if (policy.automaticDiscount) {
+  if (policy.automaticDiscount && availability.automaticDiscount) {
     fields.automaticDiscount = row.automatic_discount;
   }
-  if (policy.totalDiscount) {
+  if (policy.totalDiscount && availability.totalDiscount) {
     fields.totalDiscount = row.total_discount;
   }
-  if (policy.costPrice) {
+  if (policy.costPrice && availability.costPrice) {
     fields.costPrice = row.cost_price;
   }
-  if (policy.additionalExpenses) {
+  if (policy.additionalExpenses && availability.additionalExpenses) {
     fields.additionalExpenses = row.additional_expenses;
   }
-  if (policy.grossProfit) {
+  if (policy.grossProfit && availability.grossProfit) {
     fields.grossProfit = row.gross_profit;
   }
-  if (policy.profitability) {
+  if (policy.profitability && availability.profitability && availability.grossProfit) {
     fields.profitabilityPercent = weightedProfitability(row.income, row.gross_profit);
   }
   return fields;
@@ -221,7 +232,16 @@ function applyFieldPolicyToCategory(row: AggRow, policy: SalesSectionFieldPolicy
     macroGroup: saleMacroGroup(row.product_type),
     quantity: row.quantity,
     income: row.income,
-    ...policyMetricFields(row, policy),
+    ...policyMetricFields(row, policy, SALES_SOURCE_FINANCE_AVAILABILITY),
+  };
+}
+
+function applyReturnsCategoryRow(row: Pick<AggRow, "product_type" | "quantity" | "income">): SalesSectionCategoryRow {
+  return {
+    productType: row.product_type,
+    macroGroup: saleMacroGroup(row.product_type),
+    quantity: row.quantity,
+    income: row.income,
   };
 }
 
@@ -274,7 +294,7 @@ async function queryReturnsRollup(
   monthIso: string,
   source: "items" | "aggregate",
   activeSha: string | null,
-): Promise<AggRow[]> {
+): Promise<Pick<AggRow, "product_type" | "quantity" | "income">[]> {
   const { clause, params } = buildScopeSql(context, territory);
   const table = source === "items" ? "onec_v3_legal_return_item_lines" : "onec_v3_legal_return_lines";
   const shaFilter = activeSha ? ` AND sl.source_sha256 = $${params.length + 2}` : "";
@@ -282,18 +302,12 @@ async function queryReturnsRollup(
   if (activeSha) {
     queryParams.push(activeSha);
   }
-  const result = await query<AggRow>(
+  const result = await query<Pick<AggRow, "product_type" | "quantity" | "income">>(
     `
       SELECT
         sl.product_type,
         COALESCE(SUM(sl.quantity), 0)::text AS quantity,
-        COALESCE(SUM(sl.income), 0)::text AS income,
-        '0'::text AS manual_discount,
-        '0'::text AS automatic_discount,
-        '0'::text AS total_discount,
-        '0'::text AS cost_price,
-        '0'::text AS additional_expenses,
-        '0'::text AS gross_profit
+        COALESCE(SUM(sl.income), 0)::text AS income
       FROM ${table} AS sl
       INNER JOIN onec_v3_legal_entities AS le ON le.guid_client = sl.legal_guid
       WHERE sl.sale_month = $${params.length + 1}::date
@@ -308,7 +322,11 @@ async function queryReturnsRollup(
   return result.rows;
 }
 
-function buildMacroSummaries(rows: SalesSectionCategoryRow[], policy: SalesSectionFieldPolicy): SalesSectionMacroSummary[] {
+function buildMacroSummaries(
+  rows: SalesSectionCategoryRow[],
+  policy: SalesSectionFieldPolicy,
+  financeAvailability: SalesSectionFinanceAvailability,
+): SalesSectionMacroSummary[] {
   const buckets = new Map<
     SaleMacroGroup,
     { quantity: string[]; income: string[]; gross: string[] }
@@ -318,7 +336,7 @@ function buildMacroSummaries(rows: SalesSectionCategoryRow[], policy: SalesSecti
     const bucket = buckets.get(macro) ?? { quantity: [], income: [], gross: [] };
     bucket.quantity.push(row.quantity);
     bucket.income.push(row.income);
-    if (policy.grossProfit && row.grossProfit != null) {
+    if (policy.grossProfit && financeAvailability.grossProfit && row.grossProfit != null) {
       bucket.gross.push(row.grossProfit);
     }
     buckets.set(macro, bucket);
@@ -329,7 +347,8 @@ function buildMacroSummaries(rows: SalesSectionCategoryRow[], policy: SalesSecti
     .map((group) => {
       const b = buckets.get(group)!;
       const income = addSaleMoneyStrings(b.income);
-      const gross = policy.grossProfit ? addSaleMoneyStrings(b.gross) : null;
+      const gross =
+        policy.grossProfit && financeAvailability.grossProfit ? addSaleMoneyStrings(b.gross) : null;
       return {
         group,
         label: saleMacroGroupLabel(group),
@@ -337,7 +356,9 @@ function buildMacroSummaries(rows: SalesSectionCategoryRow[], policy: SalesSecti
         income,
         grossProfit: gross,
         profitabilityPercent:
-          policy.profitability && gross != null ? weightedProfitability(income, gross) : null,
+          policy.profitability && financeAvailability.profitability && gross != null
+            ? weightedProfitability(income, gross)
+            : null,
       };
     });
 }
@@ -438,6 +459,7 @@ export async function loadSalesSectionOverview(
         coverageNote: "",
       },
       fieldPolicy,
+      returnsFinanceAvailability: RETURNS_SOURCE_FINANCE_AVAILABILITY,
       macroSummaries: [],
       categories: [],
       returnsMacroSummaries: [],
@@ -485,7 +507,7 @@ export async function loadSalesSectionOverview(
         );
 
   const categories = salesRowsRaw.map((row) => applyFieldPolicyToCategory(row, fieldPolicy));
-  const returnsCategories = returnsRowsRaw.map((row) => applyFieldPolicyToCategory(row, fieldPolicy));
+  const returnsCategories = returnsRowsRaw.map((row) => applyReturnsCategoryRow(row));
 
   const scopedMatchedSalesRows =
     salesSource === "items"
@@ -576,9 +598,14 @@ export async function loadSalesSectionOverview(
           : "",
     },
     fieldPolicy,
-    macroSummaries: buildMacroSummaries(categories, fieldPolicy),
+    returnsFinanceAvailability: RETURNS_SOURCE_FINANCE_AVAILABILITY,
+    macroSummaries: buildMacroSummaries(categories, fieldPolicy, SALES_SOURCE_FINANCE_AVAILABILITY),
     categories,
-    returnsMacroSummaries: buildMacroSummaries(returnsCategories, fieldPolicy),
+    returnsMacroSummaries: buildMacroSummaries(
+      returnsCategories,
+      fieldPolicy,
+      RETURNS_SOURCE_FINANCE_AVAILABILITY,
+    ),
     returnsCategories,
     periodComparisonNote:
       months.length >= 2 ? "Сравнение периодов будет доступно при загрузке нескольких месяцев." : "Нет данных для сравнения периодов.",
@@ -624,6 +651,8 @@ export async function listSalesSectionSkuRows(
   if (skuFilter) {
     queryParams.push(`%${skuQuery!.trim()}%`);
   }
+  const financeAvailability =
+    kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY;
   const metricSelect =
     kind === "sales"
       ? `,
@@ -633,13 +662,7 @@ export async function listSalesSectionSkuRows(
         COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
         COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
         COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`
-      : `,
-        '0'::text AS manual_discount,
-        '0'::text AS automatic_discount,
-        '0'::text AS total_discount,
-        '0'::text AS cost_price,
-        '0'::text AS additional_expenses,
-        '0'::text AS gross_profit`;
+      : "";
   const result = await query<SkuAggRow>(
     `
       SELECT
@@ -668,7 +691,7 @@ export async function listSalesSectionSkuRows(
     productType: row.product_type,
     quantity: row.quantity,
     income: row.income,
-    ...policyMetricFields(row, fieldPolicy),
+    ...policyMetricFields(row, fieldPolicy, financeAvailability),
   }));
 }
 
@@ -732,8 +755,10 @@ export async function listSalesSectionClientRows(
   if (nameFilter) {
     queryParams.push(`%${clientQuery!.trim()}%`);
   }
+  const financeAvailability =
+    kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY;
   const metricSelect =
-    source === "items" && kind === "sales"
+    kind === "sales"
       ? `,
         COALESCE(SUM(sl.manual_discount), 0)::text AS manual_discount,
         COALESCE(SUM(sl.automatic_discount), 0)::text AS automatic_discount,
@@ -741,22 +766,10 @@ export async function listSalesSectionClientRows(
         COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
         COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
         COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`
-      : source === "items"
-        ? `,
-        '0'::text AS manual_discount,
-        '0'::text AS automatic_discount,
-        '0'::text AS total_discount,
-        '0'::text AS cost_price,
-        '0'::text AS additional_expenses,
-        '0'::text AS gross_profit`
-        : `,
-        COALESCE(SUM(sl.manual_discount), 0)::text AS manual_discount,
-        COALESCE(SUM(sl.automatic_discount), 0)::text AS automatic_discount,
-        COALESCE(SUM(sl.total_discount), 0)::text AS total_discount,
-        COALESCE(SUM(sl.cost_price), 0)::text AS cost_price,
-        COALESCE(SUM(sl.additional_expenses), 0)::text AS additional_expenses,
-        COALESCE(SUM(sl.gross_profit), 0)::text AS gross_profit`;
-  const result = await query<AggRow & { legal_guid: string; name_client: string }>(
+      : "";
+  const result = await query<
+    (AggRow | Pick<AggRow, "quantity" | "income">) & { legal_guid: string; name_client: string }
+  >(
     `
       SELECT
         le.guid_client::text AS legal_guid,
@@ -783,6 +796,20 @@ export async function listSalesSectionClientRows(
     legalName: row.name_client,
     quantity: row.quantity,
     income: row.income,
-    ...policyMetricFields(row, fieldPolicy),
+    ...policyMetricFields(
+      {
+        product_type: productType,
+        quantity: row.quantity,
+        income: row.income,
+        manual_discount: "manual_discount" in row ? row.manual_discount : "0",
+        automatic_discount: "automatic_discount" in row ? row.automatic_discount : "0",
+        total_discount: "total_discount" in row ? row.total_discount : "0",
+        cost_price: "cost_price" in row ? row.cost_price : "0",
+        additional_expenses: "additional_expenses" in row ? row.additional_expenses : "0",
+        gross_profit: "gross_profit" in row ? row.gross_profit : "0",
+      },
+      fieldPolicy,
+      financeAvailability,
+    ),
   }));
 }

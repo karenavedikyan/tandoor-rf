@@ -27,7 +27,11 @@ import {
   listSalesSectionSkuRows,
   loadSalesSectionOverview,
 } from "./sales-section";
-import { resolveSalesSectionFieldPolicy } from "./sales-field-policy";
+import {
+  resolveSalesSectionFieldPolicy,
+  RETURNS_SOURCE_FINANCE_AVAILABILITY,
+  SALES_SOURCE_FINANCE_AVAILABILITY,
+} from "./sales-field-policy";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -604,6 +608,8 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
   res.json({
     items: rows,
     fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+    financeAvailability:
+      kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
   });
 }
 
@@ -641,5 +647,7 @@ export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Resp
   res.json({
     clients: rows,
     fieldPolicy: resolveSalesSectionFieldPolicy(req.accessContext!),
+    financeAvailability:
+      kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
   });
 }
