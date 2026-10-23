@@ -1,6 +1,26 @@
 import type { PoolClient } from "pg";
 import { sha256CanonicalJson } from "./canonical-json";
-import type { MatchedOnlyBundlePlanV1 } from "./types";
+import type { MatchedOnlyBundlePlanV1, MatchedOnlyScopedBackupV1 } from "./types";
+
+export function businessDigestFromScopedTables(input: {
+  saleMonthsIso: string[];
+  tables: MatchedOnlyScopedBackupV1["tables"];
+}): string {
+  const months = [...input.saleMonthsIso].sort();
+  const payload = {
+    v: 1,
+    saleMonthsIso: months,
+    saleAggregateLines: input.tables.saleAggregateLines,
+    saleItemLines: input.tables.saleItemLines,
+    returnLines: input.tables.returnLines,
+    returnItemLines: input.tables.returnItemLines,
+    importStates: input.tables.importStates,
+    monthActivations: input.tables.monthActivations,
+    monthStats: input.tables.monthStats,
+    quarantineRows: input.tables.quarantineRows,
+  };
+  return sha256CanonicalJson(payload);
+}
 
 export async function captureScopedBeforeState(
   client: PoolClient,
@@ -20,7 +40,6 @@ export async function captureScopedBeforeState(
     monthActivations,
     monthStats,
     quarantineRows,
-    applyRuns,
   ] = await Promise.all([
     client.query(
       `SELECT * FROM onec_v3_legal_sales_lines WHERE sale_month = ANY($1::date[]) ORDER BY legal_guid, sale_month, product_type`,
@@ -76,13 +95,6 @@ export async function captureScopedBeforeState(
        ORDER BY dataset, source_sha256, source_row_index`,
       [months],
     ),
-    safeQuery(
-      client,
-      `SELECT plan_hash, status, target_db_fingerprint, catalog_fingerprint, backup_sha256, before_state_sha256, after_state_sha256, applied_at::text, rolled_back_at::text
-       FROM onec_v3_legal_sales_bundle_apply_runs
-       ORDER BY plan_hash`,
-      [],
-    ),
   ]);
 
   const payload = {
@@ -96,9 +108,8 @@ export async function captureScopedBeforeState(
     monthActivations: monthActivations.rows,
     monthStats: monthStats.rows,
     quarantineRows: quarantineRows.rows,
-    applyRuns: applyRuns.rows,
   };
-  const businessPayload = { ...payload, applyRuns: undefined };
+  const businessPayload = payload;
   return {
     digest: sha256CanonicalJson(businessPayload),
     payload,

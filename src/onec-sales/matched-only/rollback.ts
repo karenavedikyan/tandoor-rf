@@ -1,6 +1,13 @@
 import type { PoolClient } from "pg";
 import type { MatchedOnlyScopedBackupV1 } from "./types";
-import { captureScopedAfterStateDigest } from "./state-digest";
+import { businessDigestFromScopedTables, captureScopedAfterStateDigest } from "./state-digest";
+
+const IMPORT_STATE_TABLES = [
+  "onec_v3_legal_sales_import_state",
+  "onec_v3_legal_sale_item_import_state",
+  "onec_v3_legal_return_import_state",
+  "onec_v3_legal_return_item_import_state",
+] as const;
 
 export async function restoreScopedBackup(
   client: PoolClient,
@@ -29,10 +36,9 @@ export async function restoreScopedBackup(
     `DELETE FROM onec_v3_legal_sales_import_month_stats WHERE sale_month = ANY($1::date[])`,
     [months],
   );
-  await client.query(
-    `DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE sale_month = ANY($1::date[])`,
-    [months],
-  );
+  await client.query(`DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE plan_hash = $1`, [
+    backup.planHash,
+  ]);
 
   for (const row of backup.tables.saleAggregateLines as Record<string, unknown>[]) {
     await client.query(
@@ -154,6 +160,10 @@ export async function restoreScopedBackup(
     );
   }
 
+  for (const table of IMPORT_STATE_TABLES) {
+    await client.query(`DELETE FROM ${table} WHERE id = 1`);
+  }
+
   for (const row of backup.tables.importStates as {
     dataset: string;
     source_sha256: string;
@@ -226,9 +236,6 @@ export async function restoreScopedBackup(
     );
   }
 
-  await client.query(`DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE plan_hash = $1`, [
-    backup.planHash,
-  ]);
   for (const row of backup.tables.quarantineRows as Record<string, unknown>[]) {
     await client.query(
       `
@@ -250,6 +257,9 @@ export async function restoreScopedBackup(
     );
   }
 
+  await client.query(`DELETE FROM onec_v3_legal_sales_bundle_apply_runs WHERE plan_hash = $1`, [
+    backup.planHash,
+  ]);
   for (const row of backup.tables.applyRuns as Record<string, unknown>[]) {
     await client.query(
       `
@@ -258,10 +268,6 @@ export async function restoreScopedBackup(
           backup_sha256, before_state_sha256, after_state_sha256, receipt_json, applied_at, rolled_back_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::timestamptz, $10::timestamptz)
-        ON CONFLICT (plan_hash) DO UPDATE SET
-          status = EXCLUDED.status,
-          after_state_sha256 = EXCLUDED.after_state_sha256,
-          rolled_back_at = EXCLUDED.rolled_back_at
       `,
       [
         row.plan_hash,
@@ -276,6 +282,97 @@ export async function restoreScopedBackup(
         row.rolled_back_at,
       ],
     );
+  }
+}
+
+export async function assertRestoredBusinessStateMatchesPlanBefore(
+  client: PoolClient,
+  backup: MatchedOnlyScopedBackupV1,
+  beforeStateSha256: string,
+): Promise<void> {
+  const digest = businessDigestFromScopedTables({
+    saleMonthsIso: backup.saleMonthsIso,
+    tables: backup.tables,
+  });
+  if (digest !== beforeStateSha256) {
+    throw new Error("ROLLBACK_BEFORE_STATE_MISMATCH");
+  }
+  const live = businessDigestFromScopedTables({
+    saleMonthsIso: backup.saleMonthsIso,
+    tables: {
+      saleAggregateLines: (
+        await client.query(
+          `SELECT * FROM onec_v3_legal_sales_lines WHERE sale_month = ANY($1::date[]) ORDER BY legal_guid, sale_month, product_type`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      saleItemLines: (
+        await client.query(
+          `SELECT * FROM onec_v3_legal_sale_item_lines WHERE sale_month = ANY($1::date[]) ORDER BY source_sha256, source_row_index`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      returnLines: (
+        await client.query(
+          `SELECT * FROM onec_v3_legal_return_lines WHERE sale_month = ANY($1::date[]) ORDER BY source_sha256, source_row_index`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      returnItemLines: (
+        await client.query(
+          `SELECT * FROM onec_v3_legal_return_item_lines WHERE sale_month = ANY($1::date[]) ORDER BY source_sha256, source_row_index`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      importStates: (
+        await client.query(
+          `
+            SELECT 'sale_aggregate' AS dataset, source_sha256, row_count::text, imported_at::text
+            FROM onec_v3_legal_sales_import_state WHERE id = 1
+            UNION ALL
+            SELECT 'sale_items', source_sha256, row_count::text, imported_at::text
+            FROM onec_v3_legal_sale_item_import_state WHERE id = 1
+            UNION ALL
+            SELECT 'return_aggregate', source_sha256, row_count::text, imported_at::text
+            FROM onec_v3_legal_return_import_state WHERE id = 1
+            UNION ALL
+            SELECT 'return_items', source_sha256, row_count::text, imported_at::text
+            FROM onec_v3_legal_return_item_import_state WHERE id = 1
+          `,
+        )
+      ).rows,
+      monthActivations: (
+        await client.query(
+          `SELECT dataset, sale_month::text, source_sha256, activated_at::text
+           FROM onec_v3_legal_sales_month_activation
+           WHERE sale_month = ANY($1::date[])
+           ORDER BY dataset, sale_month`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      monthStats: (
+        await client.query(
+          `SELECT dataset, sale_month::text, source_sha256, full_row_count, matched_row_count, excluded_row_count, last_plan_hash, updated_at::text
+           FROM onec_v3_legal_sales_import_month_stats
+           WHERE sale_month = ANY($1::date[])
+           ORDER BY dataset, sale_month, source_sha256`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      quarantineRows: (
+        await client.query(
+          `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
+           FROM onec_v3_legal_sales_import_quarantine_rows
+           WHERE sale_month = ANY($1::date[])
+           ORDER BY dataset, source_sha256, source_row_index`,
+          [backup.saleMonthsIso],
+        )
+      ).rows,
+      applyRuns: [],
+    },
+  });
+  if (live !== beforeStateSha256) {
+    throw new Error("ROLLBACK_RESTORE_DIGEST_MISMATCH");
   }
 }
 

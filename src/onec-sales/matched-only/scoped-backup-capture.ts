@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import type { MatchedOnlyBundlePlanV1, MatchedOnlyScopedBackupV1 } from "./types";
 import { captureScopedBeforeState } from "./state-digest";
+import { assertBackupCaptureMatchesPlan } from "./guards";
 import { planHashFromPlan } from "./plan-build";
 
 export async function captureScopedBackup(
@@ -8,7 +9,7 @@ export async function captureScopedBackup(
   plan: MatchedOnlyBundlePlanV1,
 ): Promise<MatchedOnlyScopedBackupV1> {
   const scoped = await captureScopedBeforeState(client, plan.scope.saleMonthsIso);
-  return {
+  const backup: MatchedOnlyScopedBackupV1 = {
     v: 1,
     planHash: planHashFromPlan(plan),
     targetDbFingerprint: plan.identity.targetDbFingerprint,
@@ -25,7 +26,9 @@ export async function captureScopedBackup(
       monthActivations: scoped.payload.monthActivations as unknown[],
       monthStats: scoped.payload.monthStats as unknown[],
       quarantineRows: scoped.payload.quarantineRows as unknown[],
-      applyRuns: scoped.payload.applyRuns as unknown[],
+      applyRuns: [],
     },
   };
+  assertBackupCaptureMatchesPlan(backup, plan);
+  return backup;
 }

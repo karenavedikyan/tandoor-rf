@@ -192,9 +192,10 @@ export async function applyMatchedOnlySaleItems(
     `DELETE FROM onec_v3_legal_sale_item_lines WHERE sale_month = ANY($1::date[]) AND source_sha256 <> $2`,
     [months, roster.sourceSha256],
   );
-  await client.query(`DELETE FROM onec_v3_legal_sale_item_lines WHERE source_sha256 = $1`, [
-    roster.sourceSha256,
-  ]);
+  await client.query(
+    `DELETE FROM onec_v3_legal_sale_item_lines WHERE source_sha256 = $1 AND sale_month = ANY($2::date[])`,
+    [roster.sourceSha256, months],
+  );
   let inserted = 0;
   for (const line of partition.matched) {
     await client.query(
@@ -274,7 +275,10 @@ async function applyMatchedReturnTable(
     `DELETE FROM ${table} WHERE sale_month = ANY($1::date[]) AND source_sha256 <> $2`,
     [months, roster.sourceSha256],
   );
-  await client.query(`DELETE FROM ${table} WHERE source_sha256 = $1`, [roster.sourceSha256]);
+  await client.query(
+    `DELETE FROM ${table} WHERE source_sha256 = $1 AND sale_month = ANY($2::date[])`,
+    [roster.sourceSha256, months],
+  );
   let inserted = 0;
   for (const line of partition.matched) {
     if (withItems && "guidItem" in line) {

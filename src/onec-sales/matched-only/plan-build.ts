@@ -38,6 +38,9 @@ export async function buildMatchedOnlyBundlePlan(
     returnsItems: input.returnItems,
     knownCatalogLegalGuids: known,
   });
+  if (!isBundleParityOk(report)) {
+    throw new Error("BUNDLE_PARITY_FAILED");
+  }
   const partition = partitionSalesBundle({
     saleAggregate: input.saleAggregate,
     saleItems: input.saleItems,

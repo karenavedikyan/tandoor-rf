@@ -210,7 +210,7 @@ describe("matched-only sales bundle import", { concurrency: false }, () => {
     const applied = await runMatchedOnlyApply(dbUrl, rosters, planned.plan, planHash, backup, backupSha);
     assert.equal(applied.ok, true);
 
-    const rolled = await runMatchedOnlyRollback(dbUrl, planned.plan, planHash, backup);
+    const rolled = await runMatchedOnlyRollback(dbUrl, planned.plan, planHash, backup, backupSha);
     assert.equal(rolled.ok, true);
 
     const lines = await pool.query(
@@ -218,6 +218,79 @@ describe("matched-only sales bundle import", { concurrency: false }, () => {
       ["2026-11-01"],
     );
     assert.equal(lines.rows[0]?.n, "0");
+  });
+
+  it("rolls back entire apply when failBeforeCommit hook fires", async () => {
+    const month = "2026-12-01T00:00:00";
+    const aggregate = buildSaleJsonBytes([
+      buildSaleRecord({ legalGuid: LEGAL_A, type: "Входные двери", month, income: 1 }),
+    ]);
+    const items = buildSaleJsonBytes([buildSaleItemRecord({ legalGuid: LEGAL_A, month, income: 1 })]);
+    const returnsAggregate = Buffer.from(
+      JSON.stringify([buildReturnRecord({ legalGuid: LEGAL_B, month, income: -1 })]),
+    );
+    const returnItems = Buffer.from(
+      JSON.stringify([buildReturnRecord({ legalGuid: LEGAL_B, month, withItems: true, income: -1 })]),
+    );
+    const rosters = await parseBundle({ aggregate, items, returns: returnsAggregate, returnItems });
+    const planned = await runMatchedOnlyBundlePlan(dbUrl, rosters);
+    if (!planned.ok || !planned.plan) return;
+    const planHash = planHashFromPlan(planned.plan);
+    const backup = await captureMatchedOnlyBackupForPlan(dbUrl, planned.plan);
+    const backupSha = backupSha256(backup);
+    const failed = await runMatchedOnlyApply(dbUrl, rosters, planned.plan, planHash, backup, backupSha, {
+      failBeforeCommit: true,
+    });
+    assert.equal(failed.ok, false);
+    const lines = await pool.query(
+      `SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines WHERE sale_month = $1::date`,
+      [month],
+    );
+    assert.equal(lines.rows[0]?.n, "0");
+  });
+
+  it("does not delete another month with the same source hash", async () => {
+    const monthA = "2026-08-01T00:00:00";
+    const monthB = "2026-09-01T00:00:00";
+    const client = await pool.connect();
+    try {
+      const augItems = parseLegalSaleItemsJsonBytes(
+        buildSaleJsonBytes([buildSaleItemRecord({ legalGuid: LEGAL_A, month: monthA, income: 40 })]),
+      );
+      assert.equal(augItems.ok, true);
+      if (!augItems.ok) return;
+      const { applyMatchedOnlySaleItems } = await import("../../src/onec-sales/matched-only/apply-ops");
+      const known = new Set([LEGAL_A.toLowerCase()]);
+      const partition = {
+        matched: augItems.roster.lines,
+        excluded: [],
+        counts: { full: 1, matched: 1, excluded: 0 },
+      };
+      await applyMatchedOnlySaleItems(client, augItems.roster, partition, "plan-aug-only");
+    } finally {
+      client.release();
+    }
+
+    const sepBundle = buildKnownUnknownBundle();
+    const rosters = await parseBundle(sepBundle);
+    const planned = await runMatchedOnlyBundlePlan(dbUrl, rosters);
+    if (!planned.ok || !planned.plan) return;
+    const planHash = planHashFromPlan(planned.plan);
+    const backup = await captureMatchedOnlyBackupForPlan(dbUrl, planned.plan);
+    const applied = await runMatchedOnlyApply(
+      dbUrl,
+      rosters,
+      planned.plan,
+      planHash,
+      backup,
+      backupSha256(backup),
+    );
+    assert.equal(applied.ok, true);
+    const augRows = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines WHERE sale_month = $1::date`,
+      [monthA],
+    );
+    assert.equal(augRows.rows[0]?.n, "1");
   });
 
   it("busy import lock blocks apply with 0 writes", async () => {

@@ -76,7 +76,7 @@ export type MatchedOnlyApplyReceiptV1 = {
   beforeStateSha256: string;
   afterStateSha256: string;
   backupSha256: string;
-  status: "applied" | "no_op_already_applied";
+  status: "applied" | "no_op_already_applied" | "commit_uncertain";
   appliedAt: string;
   inserted: DatasetRowCounts & {
     saleAggregate: number;

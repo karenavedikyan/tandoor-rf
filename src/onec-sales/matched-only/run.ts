@@ -2,12 +2,6 @@ import type { PoolClient } from "pg";
 import { resolveTargetDbIdentityFromUrl } from "../../onec-exchange-v3/target-db-identity";
 import { tryAcquireImportLock, releaseImportLock } from "../../onec-clients/import-lock";
 import { createImportPool } from "../../onec-clients/apply";
-import type {
-  LegalReturnItemsRoster,
-  LegalReturnsRoster,
-  LegalSaleItemsRoster,
-  LegalSalesRoster,
-} from "../types";
 import {
   applyMatchedOnlyReturnItems,
   applyMatchedOnlyReturnsAggregate,
@@ -16,32 +10,43 @@ import {
   loadApplyRun,
   upsertApplyRun,
 } from "./apply-ops";
-import { backupSha256, readBackupFile, validateBackupAgainstPlan } from "./backup";
-import { computeCatalogFingerprint, loadKnownLegalGuidSet } from "./catalog";
-import { analyzeSalesBundle, isBundleParityOk } from "../bundle-analyze";
+import { backupSha256, readBackupFile } from "./backup";
+import { loadKnownLegalGuidSet } from "./catalog";
 import { buildMatchedOnlyBundlePlan, planHashFromPlan } from "./plan-build";
 import { partitionSalesBundle } from "./partition";
 import { captureScopedBackup } from "./scoped-backup-capture";
-import { captureScopedAfterStateDigest, captureScopedBeforeState } from "./state-digest";
-import { assertAfterStateMatchesReceipt, restoreScopedBackup } from "./rollback";
+import { captureScopedAfterStateDigest } from "./state-digest";
+import {
+  assertAfterStateMatchesReceipt,
+  assertRestoredBusinessStateMatchesPlanBefore,
+  restoreScopedBackup,
+} from "./rollback";
 import type {
   MatchedOnlyApplyReceiptV1,
   MatchedOnlyBundlePlanV1,
   MatchedOnlyScopedBackupV1,
 } from "./types";
+import {
+  assertLiveTargetMatchesPlan,
+  type MatchedOnlyBundleInput,
+  validateApprovedPlanAgainstLive,
+  validateBackupAgainstPlan,
+} from "./guards";
+
+export type { MatchedOnlyBundleInput } from "./guards";
 
 export type MatchedOnlyMode = "plan" | "validate-backup" | "apply" | "rollback";
 
 export type MatchedOnlyRunResult =
-  | { ok: true; mode: MatchedOnlyMode; plan?: MatchedOnlyBundlePlanV1; planHash?: string; receipt?: MatchedOnlyApplyReceiptV1; backup?: MatchedOnlyScopedBackupV1 }
+  | {
+      ok: true;
+      mode: MatchedOnlyMode;
+      plan?: MatchedOnlyBundlePlanV1;
+      planHash?: string;
+      receipt?: MatchedOnlyApplyReceiptV1;
+      backup?: MatchedOnlyScopedBackupV1;
+    }
   | { ok: false; mode: MatchedOnlyMode; code: string; message: string };
-
-export type MatchedOnlyBundleInput = {
-  saleAggregate: LegalSalesRoster;
-  saleItems: LegalSaleItemsRoster;
-  returnsAggregate: LegalReturnsRoster;
-  returnItems: LegalReturnItemsRoster;
-};
 
 async function assertSidecarSchema(client: PoolClient): Promise<void> {
   await client.query(`SELECT 1 FROM onec_v3_legal_sales_import_quarantine_rows LIMIT 0`);
@@ -49,43 +54,21 @@ async function assertSidecarSchema(client: PoolClient): Promise<void> {
   await client.query(`SELECT 1 FROM onec_v3_legal_sales_bundle_apply_runs LIMIT 0`);
 }
 
-async function validatePlanFreshness(
+async function tryResolveAlreadyAppliedNoOp(
   client: PoolClient,
   plan: MatchedOnlyBundlePlanV1,
-  rosters: MatchedOnlyBundleInput,
-): Promise<void> {
-  const hashes = plan.sourceHashes;
-  if (hashes.saleAggregate !== rosters.saleAggregate.sourceSha256) {
-    throw new Error("PLAN_SOURCE_SHA_MISMATCH");
+  approvedPlanHash: string,
+): Promise<MatchedOnlyApplyReceiptV1 | null> {
+  const existing = await loadApplyRun(client, approvedPlanHash);
+  if (existing?.status !== "applied" || !existing.after_state_sha256) {
+    return null;
   }
-  if (hashes.saleItems !== rosters.saleItems.sourceSha256) {
-    throw new Error("PLAN_SOURCE_SHA_MISMATCH");
+  const current = await captureScopedAfterStateDigest(client, plan.scope.saleMonthsIso);
+  if (current !== existing.after_state_sha256) {
+    throw new Error("APPLY_DRIFT");
   }
-  if (hashes.returnsAggregate !== rosters.returnsAggregate.sourceSha256) {
-    throw new Error("PLAN_SOURCE_SHA_MISMATCH");
-  }
-  if (hashes.returnItems !== rosters.returnItems.sourceSha256) {
-    throw new Error("PLAN_SOURCE_SHA_MISMATCH");
-  }
-  const known = await loadKnownLegalGuidSet(client);
-  const catalogFingerprint = computeCatalogFingerprint(known);
-  if (catalogFingerprint !== plan.catalog.fingerprint) {
-    throw new Error("PLAN_CATALOG_DRIFT");
-  }
-  const before = await captureScopedBeforeState(client, plan.scope.saleMonthsIso);
-  if (before.businessDigest !== plan.beforeStateSha256) {
-    throw new Error("PLAN_BEFORE_STATE_DRIFT");
-  }
-  const report = analyzeSalesBundle({
-    salesAggregate: rosters.saleAggregate,
-    salesItems: rosters.saleItems,
-    returnsAggregate: rosters.returnsAggregate,
-    returnsItems: rosters.returnItems,
-    knownCatalogLegalGuids: known,
-  });
-  if (!isBundleParityOk(report)) {
-    throw new Error("BUNDLE_PARITY_FAILED");
-  }
+  const receipt = existing.receipt_json as MatchedOnlyApplyReceiptV1;
+  return { ...receipt, status: "no_op_already_applied" };
 }
 
 export async function runMatchedOnlyBundlePlan(
@@ -118,14 +101,23 @@ export async function runMatchedOnlyValidateBackup(
   databaseUrl: string,
   plan: MatchedOnlyBundlePlanV1,
   backupPath: string,
-  expectedBackupSha256?: string,
+  expectedBackupSha256: string,
 ): Promise<MatchedOnlyRunResult> {
+  try {
+    await assertLiveTargetMatchesPlan(databaseUrl, plan);
+  } catch (error) {
+    return {
+      ok: false,
+      mode: "validate-backup",
+      code: error instanceof Error ? error.message : "TARGET_IDENTITY_MISMATCH",
+      message: error instanceof Error ? error.message : "Target identity mismatch.",
+    };
+  }
   const backup = await readBackupFile(backupPath);
   const failure = validateBackupAgainstPlan(backup, plan, expectedBackupSha256);
   if (failure) {
     return { ok: false, mode: "validate-backup", code: failure.code, message: failure.message };
   }
-  const sha = backupSha256(backup);
   return { ok: true, mode: "validate-backup", plan, planHash: planHashFromPlan(plan), backup };
 }
 
@@ -136,7 +128,7 @@ export async function runMatchedOnlyApply(
   approvedPlanHash: string,
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
-  testHooks?: { failBeforeCommit?: boolean },
+  testHooks?: { failBeforeCommit?: boolean; failOnCommit?: boolean },
 ): Promise<MatchedOnlyRunResult> {
   if (!process.env.TEST_DATABASE_URL || databaseUrl !== process.env.TEST_DATABASE_URL) {
     return {
@@ -150,6 +142,16 @@ export async function runMatchedOnlyApply(
   if (approvedPlanHash !== computedHash) {
     return { ok: false, mode: "apply", code: "PLAN_HASH_MISMATCH", message: "Approved plan hash mismatch." };
   }
+  try {
+    await assertLiveTargetMatchesPlan(databaseUrl, plan);
+  } catch (error) {
+    return {
+      ok: false,
+      mode: "apply",
+      code: error instanceof Error ? error.message : "TARGET_IDENTITY_MISMATCH",
+      message: error instanceof Error ? error.message : "Target identity mismatch.",
+    };
+  }
   const backupFailure = validateBackupAgainstPlan(backup, plan, expectedBackupSha256);
   if (backupFailure) {
     return { ok: false, mode: "apply", code: backupFailure.code, message: backupFailure.message };
@@ -157,132 +159,175 @@ export async function runMatchedOnlyApply(
 
   const pool = createImportPool(databaseUrl);
   const client = await pool.connect();
+  let lockHeld = false;
+  let transactionOpen = false;
   try {
     await client.query("BEGIN");
+    transactionOpen = true;
     await assertSidecarSchema(client);
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
       await client.query("ROLLBACK");
+      transactionOpen = false;
       return { ok: false, mode: "apply", code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
     }
-    try {
-      await validatePlanFreshness(client, plan, rosters);
+    lockHeld = true;
 
-      const existing = await loadApplyRun(client, approvedPlanHash);
-      if (existing?.status === "applied" && existing.after_state_sha256) {
-        const current = await captureScopedAfterStateDigest(client, plan.scope.saleMonthsIso);
-        if (current === existing.after_state_sha256) {
-          await client.query("COMMIT");
-          return {
-            ok: true,
-            mode: "apply",
-            plan,
-            planHash: approvedPlanHash,
-            receipt: existing.receipt_json as MatchedOnlyApplyReceiptV1,
-          };
-        }
-        await client.query("ROLLBACK");
-        return {
-          ok: false,
-          mode: "apply",
-          code: "APPLY_DRIFT",
-          message: "Plan already applied but database drifted.",
-        };
-      }
-      if (existing?.status === "commit_uncertain") {
-        await client.query("ROLLBACK");
-        return {
-          ok: false,
-          mode: "apply",
-          code: "COMMIT_UNCERTAIN",
-          message: "Prior commit outcome uncertain; reconcile manually before retry.",
-        };
-      }
-
-      const known = await loadKnownLegalGuidSet(client);
-      const partition = partitionSalesBundle({ ...rosters, known });
-
-      await client.query(`DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE plan_hash = $1`, [
-        approvedPlanHash,
-      ]);
-
-      const insertedSaleAgg = await applyMatchedOnlySaleAggregate(
-        client,
-        rosters.saleAggregate,
-        partition.saleAggregate,
-        approvedPlanHash,
-      );
-      const insertedSaleItems = await applyMatchedOnlySaleItems(
-        client,
-        rosters.saleItems,
-        partition.saleItems,
-        approvedPlanHash,
-      );
-      const insertedRetAgg = await applyMatchedOnlyReturnsAggregate(
-        client,
-        rosters.returnsAggregate,
-        partition.returnsAggregate,
-        approvedPlanHash,
-      );
-      const insertedRetItems = await applyMatchedOnlyReturnItems(
-        client,
-        rosters.returnItems,
-        partition.returnItems,
-        approvedPlanHash,
-      );
-
-      if (testHooks?.failBeforeCommit) {
-        throw new Error("TEST_FAIL_BEFORE_COMMIT");
-      }
-
-      const afterStateSha256 = await captureScopedAfterStateDigest(client, plan.scope.saleMonthsIso);
-      const receipt: MatchedOnlyApplyReceiptV1 = {
-        v: 1,
-        planHash: approvedPlanHash,
-        targetDbFingerprint: plan.identity.targetDbFingerprint,
-        beforeStateSha256: plan.beforeStateSha256,
-        afterStateSha256,
-        backupSha256: expectedBackupSha256,
-        status: "applied",
-        appliedAt: new Date().toISOString(),
-        inserted: {
-          full: 0,
-          matched: 0,
-          excluded: 0,
-          saleAggregate: insertedSaleAgg,
-          saleItems: insertedSaleItems,
-          returnsAggregate: insertedRetAgg,
-          returnItems: insertedRetItems,
-        },
-        quarantined: {
-          saleAggregate: plan.counts.saleAggregate,
-          saleItems: plan.counts.saleItems,
-          returnsAggregate: plan.counts.returnsAggregate,
-          returnItems: plan.counts.returnItems,
-        },
+    const existing = await loadApplyRun(client, approvedPlanHash);
+    if (existing?.status === "commit_uncertain") {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return {
+        ok: false,
+        mode: "apply",
+        code: "COMMIT_UNCERTAIN",
+        message: "Prior commit outcome uncertain; reconcile manually before retry.",
       };
-      await upsertApplyRun(client, {
-        planHash: approvedPlanHash,
-        status: "applied",
-        plan,
-        backupSha256: expectedBackupSha256,
-        afterStateSha256,
-        receipt,
-      });
-      await client.query("COMMIT");
-      return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt };
-    } finally {
-      await releaseImportLock(client);
     }
+
+    const noOpReceipt = await tryResolveAlreadyAppliedNoOp(client, plan, approvedPlanHash);
+    if (noOpReceipt) {
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return {
+        ok: true,
+        mode: "apply",
+        plan,
+        planHash: approvedPlanHash,
+        receipt: noOpReceipt,
+      };
+    }
+
+    await validateApprovedPlanAgainstLive(client, plan, rosters);
+
+    const known = await loadKnownLegalGuidSet(client);
+    const partition = partitionSalesBundle({ ...rosters, known });
+
+    await client.query(`DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE plan_hash = $1`, [
+      approvedPlanHash,
+    ]);
+
+    const insertedSaleAgg = await applyMatchedOnlySaleAggregate(
+      client,
+      rosters.saleAggregate,
+      partition.saleAggregate,
+      approvedPlanHash,
+    );
+    const insertedSaleItems = await applyMatchedOnlySaleItems(
+      client,
+      rosters.saleItems,
+      partition.saleItems,
+      approvedPlanHash,
+    );
+    const insertedRetAgg = await applyMatchedOnlyReturnsAggregate(
+      client,
+      rosters.returnsAggregate,
+      partition.returnsAggregate,
+      approvedPlanHash,
+    );
+    const insertedRetItems = await applyMatchedOnlyReturnItems(
+      client,
+      rosters.returnItems,
+      partition.returnItems,
+      approvedPlanHash,
+    );
+
+    if (testHooks?.failBeforeCommit) {
+      throw new Error("TEST_FAIL_BEFORE_COMMIT");
+    }
+
+    const afterStateSha256 = await captureScopedAfterStateDigest(client, plan.scope.saleMonthsIso);
+    const receipt: MatchedOnlyApplyReceiptV1 = {
+      v: 1,
+      planHash: approvedPlanHash,
+      targetDbFingerprint: plan.identity.targetDbFingerprint,
+      beforeStateSha256: plan.beforeStateSha256,
+      afterStateSha256,
+      backupSha256: expectedBackupSha256,
+      status: "applied",
+      appliedAt: new Date().toISOString(),
+      inserted: {
+        full: 0,
+        matched: 0,
+        excluded: 0,
+        saleAggregate: insertedSaleAgg,
+        saleItems: insertedSaleItems,
+        returnsAggregate: insertedRetAgg,
+        returnItems: insertedRetItems,
+      },
+      quarantined: {
+        saleAggregate: plan.counts.saleAggregate,
+        saleItems: plan.counts.saleItems,
+        returnsAggregate: plan.counts.returnsAggregate,
+        returnItems: plan.counts.returnItems,
+      },
+    };
+    await upsertApplyRun(client, {
+      planHash: approvedPlanHash,
+      status: "applied",
+      plan,
+      backupSha256: expectedBackupSha256,
+      afterStateSha256,
+      receipt,
+    });
+
+    if (testHooks?.failOnCommit) {
+      throw new Error("COMMIT_OUTCOME_UNKNOWN");
+    }
+    await client.query("COMMIT");
+    transactionOpen = false;
+    return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    const code = error instanceof Error ? error.message : "APPLY_FAILED";
+    if (code === "COMMIT_OUTCOME_UNKNOWN") {
+      if (transactionOpen) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          /* connection may be unusable */
+        }
+        transactionOpen = false;
+      }
+      try {
+        const reconcilePool = createImportPool(databaseUrl);
+        const reconcileClient = await reconcilePool.connect();
+        try {
+          await upsertApplyRun(reconcileClient, {
+            planHash: approvedPlanHash,
+            status: "commit_uncertain",
+            plan,
+            backupSha256: expectedBackupSha256,
+            afterStateSha256: null,
+            receipt: { v: 1, planHash: approvedPlanHash, status: "commit_uncertain" },
+          });
+        } finally {
+          reconcileClient.release();
+          await reconcilePool.end();
+        }
+      } catch {
+        /* best-effort marker */
+      }
+      return {
+        ok: false,
+        mode: "apply",
+        code: "COMMIT_UNCERTAIN",
+        message: "Commit outcome unknown; reconcile read-only before retry.",
+      };
+    }
+    if (transactionOpen) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      transactionOpen = false;
+    }
     return {
       ok: false,
       mode: "apply",
-      code: error instanceof Error ? error.message : "APPLY_FAILED",
+      code,
       message: error instanceof Error ? error.message : "Apply failed.",
     };
   } finally {
+    if (lockHeld) {
+      await releaseImportLock(client);
+    }
     client.release();
     await pool.end();
   }
@@ -307,6 +352,7 @@ export async function runMatchedOnlyRollback(
   plan: MatchedOnlyBundlePlanV1,
   approvedPlanHash: string,
   backup: MatchedOnlyScopedBackupV1,
+  expectedBackupSha256: string,
 ): Promise<MatchedOnlyRunResult> {
   if (!process.env.TEST_DATABASE_URL || databaseUrl !== process.env.TEST_DATABASE_URL) {
     return {
@@ -319,38 +365,78 @@ export async function runMatchedOnlyRollback(
   if (planHashFromPlan(plan) !== approvedPlanHash) {
     return { ok: false, mode: "rollback", code: "PLAN_HASH_MISMATCH", message: "Plan hash mismatch." };
   }
+  try {
+    await assertLiveTargetMatchesPlan(databaseUrl, plan);
+  } catch (error) {
+    return {
+      ok: false,
+      mode: "rollback",
+      code: error instanceof Error ? error.message : "TARGET_IDENTITY_MISMATCH",
+      message: error instanceof Error ? error.message : "Target identity mismatch.",
+    };
+  }
+  const backupFailure = validateBackupAgainstPlan(backup, plan, expectedBackupSha256);
+  if (backupFailure) {
+    return { ok: false, mode: "rollback", code: backupFailure.code, message: backupFailure.message };
+  }
+
   const pool = createImportPool(databaseUrl);
   const client = await pool.connect();
+  let lockHeld = false;
+  let transactionOpen = false;
   try {
     await client.query("BEGIN");
+    transactionOpen = true;
     const locked = await tryAcquireImportLock(client);
     if (!locked) {
       await client.query("ROLLBACK");
+      transactionOpen = false;
       return { ok: false, mode: "rollback", code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
     }
-    try {
-      const run = await loadApplyRun(client, approvedPlanHash);
-      if (!run || run.status !== "applied" || !run.after_state_sha256) {
-        await client.query("ROLLBACK");
-        return { ok: false, mode: "rollback", code: "ROLLBACK_NOT_APPLIED", message: "Plan not in applied state." };
-      }
-      await assertAfterStateMatchesReceipt(client, backup, run.after_state_sha256);
-      await restoreScopedBackup(client, backup);
-      await client.query(
-        `
-          UPDATE onec_v3_legal_sales_bundle_apply_runs
-          SET status = 'rolled_back', rolled_back_at = NOW()
-          WHERE plan_hash = $1
-        `,
-        [approvedPlanHash],
-      );
-      await client.query("COMMIT");
-      return { ok: true, mode: "rollback", plan, planHash: approvedPlanHash };
-    } finally {
-      await releaseImportLock(client);
+    lockHeld = true;
+
+    const run = await loadApplyRun(client, approvedPlanHash);
+    if (!run || run.status !== "applied" || !run.after_state_sha256) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return { ok: false, mode: "rollback", code: "ROLLBACK_NOT_APPLIED", message: "Plan not in applied state." };
     }
+    if (run.backup_sha256 && run.backup_sha256 !== expectedBackupSha256) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return { ok: false, mode: "rollback", code: "BACKUP_SHA_MISMATCH", message: "Backup SHA mismatch." };
+    }
+    await assertAfterStateMatchesReceipt(client, backup, run.after_state_sha256);
+    await restoreScopedBackup(client, backup);
+    await assertRestoredBusinessStateMatchesPlanBefore(client, backup, plan.beforeStateSha256);
+    await client.query(
+      `
+        INSERT INTO onec_v3_legal_sales_bundle_apply_runs (
+          plan_hash, status, target_db_fingerprint, catalog_fingerprint,
+          backup_sha256, before_state_sha256, after_state_sha256, receipt_json, rolled_back_at
+        )
+        VALUES ($1, 'rolled_back', $2, $3, $4, $5, $6, $7::jsonb, NOW())
+        ON CONFLICT (plan_hash) DO UPDATE SET
+          status = 'rolled_back',
+          rolled_back_at = NOW()
+      `,
+      [
+        approvedPlanHash,
+        plan.identity.targetDbFingerprint,
+        plan.catalog.fingerprint,
+        expectedBackupSha256,
+        plan.beforeStateSha256,
+        run.after_state_sha256,
+        JSON.stringify({ v: 1, planHash: approvedPlanHash, status: "rolled_back" }),
+      ],
+    );
+    await client.query("COMMIT");
+    transactionOpen = false;
+    return { ok: true, mode: "rollback", plan, planHash: approvedPlanHash };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (transactionOpen) {
+      await client.query("ROLLBACK").catch(() => undefined);
+    }
     return {
       ok: false,
       mode: "rollback",
@@ -358,6 +444,9 @@ export async function runMatchedOnlyRollback(
       message: error instanceof Error ? error.message : "Rollback failed.",
     };
   } finally {
+    if (lockHeld) {
+      await releaseImportLock(client);
+    }
     client.release();
     await pool.end();
   }

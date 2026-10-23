@@ -217,8 +217,8 @@ async function main(): Promise<void> {
   }
 
   if (args.mode === "validate-backup") {
-    if (!args.planFile || !args.backupFile) {
-      throw new Error("validate-backup requires --plan-file and --backup-file");
+    if (!args.planFile || !args.backupFile || !args.expectedBackupSha256) {
+      throw new Error("validate-backup requires --plan-file, --backup-file, and --expected-backup-sha256");
     }
     const plan = await loadPlan(args.planFile);
     const result = await runMatchedOnlyValidateBackup(
@@ -253,12 +253,20 @@ async function main(): Promise<void> {
   }
 
   if (args.mode === "rollback") {
-    if (!args.planFile || !args.backupFile || !args.approvedPlanHash) {
-      throw new Error("rollback requires --plan-file, --backup-file, --approved-plan-hash");
+    if (!args.planFile || !args.backupFile || !args.approvedPlanHash || !args.expectedBackupSha256) {
+      throw new Error(
+        "rollback requires --plan-file, --backup-file, --approved-plan-hash, and --expected-backup-sha256",
+      );
     }
     const plan = await loadPlan(args.planFile);
     const backup = JSON.parse(await readFile(args.backupFile, "utf8")) as MatchedOnlyScopedBackupV1;
-    const result = await runMatchedOnlyRollback(databaseUrl, plan, args.approvedPlanHash, backup);
+    const result = await runMatchedOnlyRollback(
+      databaseUrl,
+      plan,
+      args.approvedPlanHash,
+      backup,
+      args.expectedBackupSha256,
+    );
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exit(1);
     return;
