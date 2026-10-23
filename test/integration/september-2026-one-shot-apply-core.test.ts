@@ -12,10 +12,11 @@ import { runSeptember2026OneShotApply } from "../../src/onec-sales/september-202
 import { executeSeptember2026Apply } from "../../src/onec-sales/september-2026-one-shot/execute-apply";
 import { captureSeptember047048BeforeState } from "../../src/onec-sales/september-2026-one-shot/before-state-047-048";
 import { readTargetDbIdentityFromClient } from "../../src/onec-exchange-v3/target-db-identity";
+import { captureSeptember047048Backup } from "../../src/onec-sales/september-2026-one-shot/backup";
 import {
   buildSyntheticOperatorScope,
-  writeSyntheticBackupReceiptFile,
   writeSyntheticSeptemberSnapshot,
+  writeSyntheticVerifiedBackupReceiptPair,
 } from "../helpers/september-2026-synthetic-fixtures";
 import { loadKnownLegalGuidSet } from "../../src/onec-sales/matched-only/catalog";
 import {
@@ -170,6 +171,8 @@ it("one-shot apply: wrong target fingerprint fails before business writes", asyn
     operatorDataScopeSha256: "x",
     applyGrantRef: "x",
     backupReceiptSha256: "b",
+    backupReceiptFilePath: join(snapDir, "missing.json"),
+    backupPayloadFilePath: join(snapDir, "missing-payload.json"),
     snapshotDirectory: snapDir,
     testContext: {
       allowNonProductionDatabaseUrl: true,
@@ -178,7 +181,6 @@ it("one-shot apply: wrong target fingerprint fails before business writes", asyn
       skipSnapshotPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticOperatorScope: scope,
-      backupReceiptFilePath: join(snapDir, "missing.json"),
     },
   });
   assert.equal(r.ok, false);
@@ -217,11 +219,14 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
-  const receipt = await writeSyntheticBackupReceiptFile({
-    dir: join(snapDir, ".."),
-    targetFingerprint: identity.fingerprint,
+  const workDir = join(snapDir, "..");
+  const backupClient = await new Pool({ connectionString: url }).connect();
+  const backup = await captureSeptember047048Backup(backupClient, identity.fingerprint);
+  backupClient.release();
+  const pair = await writeSyntheticVerifiedBackupReceiptPair({
+    dir: workDir,
+    backup,
     scopeFileSha256: "synthetic",
-    beforeStateDigest: scope.beforeStateDigest,
   });
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
@@ -230,8 +235,9 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
     operatorDataScopePath: join(snapDir, "scope.json"),
     operatorDataScopeSha256: "synthetic",
     applyGrantRef: "synthetic-apply-grant",
-    backupReceiptSha256: receipt.sha256,
-    backupReceiptFilePath: receipt.path,
+    backupReceiptSha256: pair.receiptSha256,
+    backupReceiptFilePath: pair.receiptPath,
+    backupPayloadFilePath: pair.backupPayloadPath,
     snapshotDirectory: snapDir,
     testContext: {
       allowNonProductionDatabaseUrl: true,
@@ -239,6 +245,7 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
       skipCatalogPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
+      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,
@@ -266,6 +273,7 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
   const identity = await readTargetDbIdentityFromClient(client, url);
   const before = await captureSeptember047048BeforeState(client);
   const known = await loadKnownLegalGuidSet(client);
+  const backup = await captureSeptember047048Backup(client, identity.fingerprint);
   client.release();
   await pool.end();
   const scope = buildSyntheticOperatorScope({
@@ -275,11 +283,10 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
-  const receipt = await writeSyntheticBackupReceiptFile({
+  const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir: join(snapDir, ".."),
-    targetFingerprint: identity.fingerprint,
+    backup,
     scopeFileSha256: "synthetic",
-    beforeStateDigest: before.digest,
   });
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
@@ -288,8 +295,9 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
     operatorDataScopePath: join(snapDir, "scope.json"),
     operatorDataScopeSha256: "synthetic",
     applyGrantRef: "synthetic-apply-grant",
-    backupReceiptSha256: receipt.sha256,
-    backupReceiptFilePath: receipt.path,
+    backupReceiptSha256: pair.receiptSha256,
+    backupReceiptFilePath: pair.receiptPath,
+    backupPayloadFilePath: pair.backupPayloadPath,
     snapshotDirectory: snapDir,
     testContext: {
       allowNonProductionDatabaseUrl: true,
@@ -298,6 +306,7 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
       skipBeforeDigestPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
+      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,
@@ -332,6 +341,7 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
   const identity = await readTargetDbIdentityFromClient(client, url);
   const before = await captureSeptember047048BeforeState(client);
   const known = await loadKnownLegalGuidSet(client);
+  const backup = await captureSeptember047048Backup(client, identity.fingerprint);
   client.release();
   await pool.end();
   const scope = buildSyntheticOperatorScope({
@@ -341,11 +351,10 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
-  const receipt = await writeSyntheticBackupReceiptFile({
+  const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir: join(snapDir, ".."),
-    targetFingerprint: identity.fingerprint,
+    backup,
     scopeFileSha256: "synthetic",
-    beforeStateDigest: before.digest,
   });
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
@@ -354,8 +363,9 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
     operatorDataScopePath: join(snapDir, "scope.json"),
     operatorDataScopeSha256: "synthetic",
     applyGrantRef: "synthetic-apply-grant",
-    backupReceiptSha256: receipt.sha256,
-    backupReceiptFilePath: receipt.path,
+    backupReceiptSha256: pair.receiptSha256,
+    backupReceiptFilePath: pair.receiptPath,
+    backupPayloadFilePath: pair.backupPayloadPath,
     snapshotDirectory: snapDir,
     testContext: {
       allowNonProductionDatabaseUrl: true,
@@ -364,6 +374,7 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
       skipBeforeDigestPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
+      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,

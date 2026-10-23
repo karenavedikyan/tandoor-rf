@@ -17,9 +17,10 @@ import {
 } from "../../src/onec-sales/september-2026-one-shot/scope-pins";
 import { buildSaleJsonBytes, buildSaleRecord, LEGAL_A } from "./legal-sales-fixtures";
 import { buildSaleItemRecord } from "./sales-bundle-fixtures";
+import type { September047048Backup } from "../../src/onec-sales/september-2026-one-shot/backup";
 import {
   backupReceiptSha256,
-  buildEmptyBeforeBackupReceiptBinding,
+  buildSeptemberBackupReceiptFromVerifiedPayload,
   type SeptemberBackupReceiptV1,
 } from "../../src/onec-sales/september-2026-one-shot/backup-receipt-verify";
 
@@ -146,28 +147,43 @@ export function buildSyntheticOperatorScope(input: {
   };
 }
 
-export async function writeSyntheticBackupReceiptFile(input: {
+/** Writes on-disk backup payload (private publish shape) and matching receipt; payload SHA is file bytes. */
+export async function writeSyntheticVerifiedBackupReceiptPair(input: {
   dir: string;
-  targetFingerprint: string;
+  backup: September047048Backup;
   scopeFileSha256: string;
-  beforeStateDigest: string;
-  backupPayloadSha256?: string;
-}): Promise<{ path: string; sha256: string; receipt: SeptemberBackupReceiptV1 }> {
-  const payloadSha =
-    input.backupPayloadSha256 ??
-    createHash("sha256").update("synthetic-empty-before-backup-payload", "utf8").digest("hex");
-  const receipt = buildEmptyBeforeBackupReceiptBinding({
-    targetDbFingerprint: input.targetFingerprint,
+}): Promise<{
+  backupPayloadPath: string;
+  backupPayloadSha256: string;
+  receiptPath: string;
+  receiptSha256: string;
+  receipt: SeptemberBackupReceiptV1;
+}> {
+  const payloadText = `${JSON.stringify(input.backup, null, 2)}\n`;
+  const backupPayloadPath = join(input.dir, "september-047-048-backup.json");
+  await writeFile(backupPayloadPath, payloadText, { encoding: "utf8", mode: 0o600 });
+  await chmod(backupPayloadPath, 0o600);
+  const backupPayloadSha256 = createHash("sha256").update(payloadText, "utf8").digest("hex");
+  const receipt = buildSeptemberBackupReceiptFromVerifiedPayload({
+    targetDbFingerprint: input.backup.targetDbFingerprint,
     scopeFileSha256: input.scopeFileSha256,
-    beforeStateSha256: input.beforeStateDigest,
-    backupPayloadSha256: payloadSha,
+    beforeStateSha256: input.backup.beforeStateSha256,
+    backupPayloadFileSha256: backupPayloadSha256,
+    capturedAt: input.backup.capturedAt,
   });
-  const text = JSON.stringify(receipt);
-  const path = join(input.dir, "backup-receipt.json");
-  await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
-  const sha256 = createHash("sha256").update(text, "utf8").digest("hex");
-  if (sha256 !== backupReceiptSha256(receipt)) {
+  const receiptText = JSON.stringify(receipt);
+  const receiptPath = join(input.dir, "backup-receipt.json");
+  await writeFile(receiptPath, receiptText, { encoding: "utf8", mode: 0o600 });
+  await chmod(receiptPath, 0o600);
+  const receiptSha256 = createHash("sha256").update(receiptText, "utf8").digest("hex");
+  if (receiptSha256 !== backupReceiptSha256(receipt)) {
     throw new Error("backup receipt file SHA must match canonical receipt hash");
   }
-  return { path, sha256, receipt };
+  return {
+    backupPayloadPath,
+    backupPayloadSha256,
+    receiptPath,
+    receiptSha256,
+    receipt,
+  };
 }

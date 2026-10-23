@@ -49,6 +49,8 @@ export type OneShotApplyTestContext = ReadOnlyPreflightTestContext & {
   syntheticOperatorScope?: OperatorDataScopeV1;
   snapshotDirectory?: string;
   backupReceiptFilePath?: string;
+  backupPayloadFilePath?: string;
+  skipBackupPayloadPathSecurity?: boolean;
   /** When true, post-COMMIT read throws (commit must still be classified committed). */
   injectPostCommitReadFailure?: boolean;
 };
@@ -80,6 +82,7 @@ export async function runSeptember2026OneShotApply(input: {
   applyGrantRef: string;
   backupReceiptSha256?: string | null;
   backupReceiptFilePath?: string;
+  backupPayloadFilePath?: string;
   snapshotDirectory?: string;
   testContext?: OneShotApplyTestContext;
 }): Promise<{ ok: true; receipt: OneShotApplyReceipt } | { ok: false; code: string; message: string }> {
@@ -121,11 +124,15 @@ export async function runSeptember2026OneShotApply(input: {
     input.backupReceiptFilePath?.trim() ??
     input.testContext?.backupReceiptFilePath?.trim() ??
     process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
-  if (!receiptPath || !input.backupReceiptSha256?.trim()) {
+  const payloadPath =
+    input.backupPayloadFilePath?.trim() ??
+    input.testContext?.backupPayloadFilePath?.trim() ??
+    process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_PATH?.trim();
+  if (!receiptPath || !input.backupReceiptSha256?.trim() || !payloadPath) {
     return {
       ok: false,
       code: "BACKUP_RECEIPT_REQUIRED",
-      message: "Verified backup receipt path and SHA required for apply.",
+      message: "Verified backup receipt path/SHA and backup payload path required for apply.",
     };
   }
 
@@ -206,10 +213,13 @@ export async function runSeptember2026OneShotApply(input: {
     const backupVerify = await verifySeptemberBackupReceiptForApply({
       receiptFilePath: receiptPath,
       expectedReceiptSha256: input.backupReceiptSha256.trim(),
+      backupPayloadFilePath: payloadPath,
       scope,
       scopeFileSha256: scopeSha,
       liveTargetFingerprint: identity.fingerprint,
       liveBeforeStateDigest: beforeDigest,
+      approvedPrivateBackupRoot: process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim(),
+      skipBackupPayloadPathSecurity: input.testContext?.skipBackupPayloadPathSecurity,
     });
     if (!backupVerify.ok) {
       await client.query("ROLLBACK");

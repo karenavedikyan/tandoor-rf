@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { OperatorDataScopeV1 } from "./operator-data-scope";
 import { operatorDataScopeSha256 } from "./operator-data-scope";
+import { verifySeptember047048BackupPayloadBinding } from "./backup-payload-verify";
 
 export type SeptemberBackupReceiptV1 = {
   v: 1;
@@ -20,10 +21,13 @@ export function backupReceiptSha256(receipt: SeptemberBackupReceiptV1): string {
 export async function verifySeptemberBackupReceiptForApply(input: {
   receiptFilePath: string;
   expectedReceiptSha256: string;
+  backupPayloadFilePath: string;
   scope: OperatorDataScopeV1;
   scopeFileSha256: string;
   liveTargetFingerprint: string;
   liveBeforeStateDigest: string;
+  approvedPrivateBackupRoot?: string;
+  skipBackupPayloadPathSecurity?: boolean;
 }): Promise<{ ok: true; receipt: SeptemberBackupReceiptV1 } | { ok: false; code: string; message: string }> {
   let bytes: Buffer;
   try {
@@ -58,14 +62,29 @@ export async function verifySeptemberBackupReceiptForApply(input: {
   if (!receipt.backupPayloadSha256?.trim()) {
     return { ok: false, code: "BACKUP_RECEIPT_PAYLOAD_MISSING", message: "Backup payload SHA missing from receipt." };
   }
+  if (!input.backupPayloadFilePath?.trim()) {
+    return { ok: false, code: "BACKUP_PAYLOAD_FILE_MISSING", message: "Backup payload file path required." };
+  }
+
+  const payload = await verifySeptember047048BackupPayloadBinding({
+    backupPayloadFilePath: input.backupPayloadFilePath,
+    expectedPayloadSha256: receipt.backupPayloadSha256,
+    targetDbFingerprint: input.liveTargetFingerprint,
+    beforeStateSha256: input.liveBeforeStateDigest,
+    approvedPrivateRoot: input.approvedPrivateBackupRoot,
+    skipPathSecurity: input.skipBackupPayloadPathSecurity,
+  });
+  if (!payload.ok) return payload;
+
   return { ok: true, receipt };
 }
 
-export function buildEmptyBeforeBackupReceiptBinding(input: {
+export function buildSeptemberBackupReceiptFromVerifiedPayload(input: {
   targetDbFingerprint: string;
   scopeFileSha256: string;
   beforeStateSha256: string;
-  backupPayloadSha256: string;
+  backupPayloadFileSha256: string;
+  capturedAt?: string;
 }): SeptemberBackupReceiptV1 {
   return {
     v: 1,
@@ -73,8 +92,8 @@ export function buildEmptyBeforeBackupReceiptBinding(input: {
     targetDbFingerprint: input.targetDbFingerprint,
     operatorDataScopeSha256: input.scopeFileSha256,
     beforeStateSha256: input.beforeStateSha256,
-    backupPayloadSha256: input.backupPayloadSha256,
-    capturedAt: new Date(0).toISOString(),
+    backupPayloadSha256: input.backupPayloadFileSha256,
+    capturedAt: input.capturedAt ?? new Date(0).toISOString(),
   };
 }
 

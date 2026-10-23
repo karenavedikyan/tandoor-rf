@@ -3438,10 +3438,10 @@ async function loadVerifiedSourceSnapshotFromDirectory(input) {
   return { ok: true, buffers, manifestSha256 };
 }
 async function readFileUnsafe(directory, fileName) {
-  const { readFile: readFile4 } = await import("node:fs/promises");
+  const { readFile: readFile5 } = await import("node:fs/promises");
   const { join: joinPath } = await import("node:path");
   try {
-    const bytes = await readFile4(joinPath(directory, fileName));
+    const bytes = await readFile5(joinPath(directory, fileName));
     return { ok: true, bytes };
   } catch {
     return { ok: false, code: "SOURCE_FILE_MISSING", message: `Missing snapshot file ${fileName}.` };
@@ -3770,19 +3770,139 @@ function assertSeptemberProductionApplyChannelOpen() {
 }
 
 // src/onec-sales/september-2026-one-shot/backup-receipt-verify.ts
+var import_node_crypto12 = require("node:crypto");
+var import_promises5 = require("node:fs/promises");
+
+// src/onec-sales/september-2026-one-shot/backup-payload-verify.ts
 var import_node_crypto11 = require("node:crypto");
 var import_promises4 = require("node:fs/promises");
+var import_node_path2 = require("node:path");
+var BACKUP_PAYLOAD_MAX_BYTES = 64 * 1024 * 1024;
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function assertPrivatePathUnderRoot(filePath, approvedRoot) {
+  const root = (0, import_node_path2.resolve)(approvedRoot);
+  const dest = (0, import_node_path2.resolve)(filePath);
+  if (dest !== root && !dest.startsWith(`${root}${import_node_path2.sep}`)) {
+    return { ok: false, code: "BACKUP_PAYLOAD_PATH_OUTSIDE_ROOT", message: "Backup payload path outside approved private root." };
+  }
+  return { ok: true };
+}
+async function readSeptember047048BackupPayloadFile(input) {
+  const filePath = (0, import_node_path2.resolve)(input.backupPayloadFilePath);
+  if (!input.skipPathSecurity && input.approvedPrivateRoot?.trim()) {
+    const rootCheck = assertPrivatePathUnderRoot(filePath, input.approvedPrivateRoot.trim());
+    if (!rootCheck.ok) return rootCheck;
+  }
+  try {
+    const stat = await (0, import_promises4.lstat)(filePath);
+    if (stat.isSymbolicLink()) {
+      return { ok: false, code: "BACKUP_PAYLOAD_SYMLINK", message: "Backup payload must not be a symlink." };
+    }
+    if (!input.skipPathSecurity) {
+      const mode = stat.mode & 511;
+      if (mode & 63) {
+        return { ok: false, code: "BACKUP_PAYLOAD_NOT_PRIVATE", message: "Backup payload file must be mode 0600." };
+      }
+    }
+    if (stat.size > BACKUP_PAYLOAD_MAX_BYTES) {
+      return { ok: false, code: "BACKUP_PAYLOAD_TOO_LARGE", message: "Backup payload exceeds size bound." };
+    }
+    const bytes = await (0, import_promises4.readFile)(filePath);
+    if (bytes.length > BACKUP_PAYLOAD_MAX_BYTES) {
+      return { ok: false, code: "BACKUP_PAYLOAD_TOO_LARGE", message: "Backup payload exceeds size bound." };
+    }
+    return { ok: true, bytes };
+  } catch {
+    return { ok: false, code: "BACKUP_PAYLOAD_FILE_MISSING", message: "Backup payload file not found." };
+  }
+}
+function validateSeptember047048BackupDocument(doc, expected) {
+  if (!isRecord2(doc)) {
+    return { ok: false, code: "BACKUP_PAYLOAD_INVALID", message: "Backup payload is not a JSON object." };
+  }
+  if (doc.v !== 1 || doc.kind !== "september-2026-047-048-backup") {
+    return { ok: false, code: "BACKUP_PAYLOAD_KIND", message: "Invalid backup payload version/kind." };
+  }
+  if (typeof doc.targetDbFingerprint !== "string" || doc.targetDbFingerprint !== expected.targetDbFingerprint) {
+    return { ok: false, code: "BACKUP_PAYLOAD_TARGET_MISMATCH", message: "Backup payload target fingerprint mismatch." };
+  }
+  if (typeof doc.beforeStateSha256 !== "string" || doc.beforeStateSha256 !== expected.beforeStateSha256) {
+    return { ok: false, code: "BACKUP_PAYLOAD_BEFORE_MISMATCH", message: "Backup payload before digest mismatch." };
+  }
+  if (!isRecord2(doc.snapshot)) {
+    return { ok: false, code: "BACKUP_PAYLOAD_SNAPSHOT", message: "Backup snapshot missing." };
+  }
+  const snap = doc.snapshot;
+  if (snap.v !== 2) {
+    return { ok: false, code: "BACKUP_PAYLOAD_SNAPSHOT_VERSION", message: "Backup snapshot version must be 2." };
+  }
+  if (snap.saleMonthIso !== SEPTEMBER_2026_SALE_MONTH_ISO) {
+    return { ok: false, code: "BACKUP_PAYLOAD_SALE_MONTH", message: "Backup snapshot sale month mismatch." };
+  }
+  const jsonFields = [
+    "saleAggregateLinesJson",
+    "saleItemLinesJson",
+    "returnLinesJson",
+    "returnItemLinesJson",
+    "importStatesJson",
+    "monthActivationsJson"
+  ];
+  for (const key of jsonFields) {
+    if (typeof snap[key] !== "string") {
+      return {
+        ok: false,
+        code: "BACKUP_PAYLOAD_NATIVE_JSON",
+        message: `Backup snapshot ${key} must remain raw PostgreSQL JSON text.`
+      };
+    }
+  }
+  const snapshot = snap;
+  const digest = sha256CanonicalJson(snapshot);
+  if (digest !== doc.beforeStateSha256) {
+    return { ok: false, code: "BACKUP_PAYLOAD_DIGEST_MISMATCH", message: "Backup snapshot digest does not match beforeStateSha256." };
+  }
+  const backup = doc;
+  return { ok: true, backup };
+}
+async function verifySeptember047048BackupPayloadBinding(input) {
+  const read = await readSeptember047048BackupPayloadFile({
+    backupPayloadFilePath: input.backupPayloadFilePath,
+    approvedPrivateRoot: input.approvedPrivateRoot,
+    skipPathSecurity: input.skipPathSecurity
+  });
+  if (!read.ok) return read;
+  const payloadSha256 = (0, import_node_crypto11.createHash)("sha256").update(read.bytes).digest("hex");
+  if (payloadSha256 !== input.expectedPayloadSha256) {
+    return { ok: false, code: "BACKUP_PAYLOAD_SHA_MISMATCH", message: "Backup payload file SHA mismatch vs receipt." };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(read.bytes.toString("utf8"));
+  } catch {
+    return { ok: false, code: "BACKUP_PAYLOAD_PARSE", message: "Backup payload is not valid JSON." };
+  }
+  const valid = validateSeptember047048BackupDocument(parsed, {
+    targetDbFingerprint: input.targetDbFingerprint,
+    beforeStateSha256: input.beforeStateSha256
+  });
+  if (!valid.ok) return valid;
+  return { ok: true, payloadSha256 };
+}
+
+// src/onec-sales/september-2026-one-shot/backup-receipt-verify.ts
 function backupReceiptSha256(receipt) {
-  return (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(receipt), "utf8").digest("hex");
+  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(receipt), "utf8").digest("hex");
 }
 async function verifySeptemberBackupReceiptForApply(input) {
   let bytes;
   try {
-    bytes = await (0, import_promises4.readFile)(input.receiptFilePath);
+    bytes = await (0, import_promises5.readFile)(input.receiptFilePath);
   } catch {
     return { ok: false, code: "BACKUP_RECEIPT_MISSING", message: "Backup receipt file not found." };
   }
-  const computedSha = (0, import_node_crypto11.createHash)("sha256").update(bytes).digest("hex");
+  const computedSha = (0, import_node_crypto12.createHash)("sha256").update(bytes).digest("hex");
   if (computedSha !== input.expectedReceiptSha256) {
     return { ok: false, code: "BACKUP_RECEIPT_SHA_MISMATCH", message: "Backup receipt SHA mismatch." };
   }
@@ -3809,6 +3929,18 @@ async function verifySeptemberBackupReceiptForApply(input) {
   if (!receipt.backupPayloadSha256?.trim()) {
     return { ok: false, code: "BACKUP_RECEIPT_PAYLOAD_MISSING", message: "Backup payload SHA missing from receipt." };
   }
+  if (!input.backupPayloadFilePath?.trim()) {
+    return { ok: false, code: "BACKUP_PAYLOAD_FILE_MISSING", message: "Backup payload file path required." };
+  }
+  const payload = await verifySeptember047048BackupPayloadBinding({
+    backupPayloadFilePath: input.backupPayloadFilePath,
+    expectedPayloadSha256: receipt.backupPayloadSha256,
+    targetDbFingerprint: input.liveTargetFingerprint,
+    beforeStateSha256: input.liveBeforeStateDigest,
+    approvedPrivateRoot: input.approvedPrivateBackupRoot,
+    skipPathSecurity: input.skipBackupPayloadPathSecurity
+  });
+  if (!payload.ok) return payload;
   return { ok: true, receipt };
 }
 
@@ -3846,11 +3978,12 @@ async function runSeptember2026OneShotApply(input) {
   });
   if (!grant.ok) return grant;
   const receiptPath = input.backupReceiptFilePath?.trim() ?? input.testContext?.backupReceiptFilePath?.trim() ?? process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
-  if (!receiptPath || !input.backupReceiptSha256?.trim()) {
+  const payloadPath = input.backupPayloadFilePath?.trim() ?? input.testContext?.backupPayloadFilePath?.trim() ?? process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_PATH?.trim();
+  if (!receiptPath || !input.backupReceiptSha256?.trim() || !payloadPath) {
     return {
       ok: false,
       code: "BACKUP_RECEIPT_REQUIRED",
-      message: "Verified backup receipt path and SHA required for apply."
+      message: "Verified backup receipt path/SHA and backup payload path required for apply."
     };
   }
   const snapshotDir = input.snapshotDirectory ?? input.testContext?.snapshotDirectory ?? (input.testContext?.skipOperatorDataScopeShaPin ? void 0 : FIXED_SOURCE_SNAPSHOT_DIRECTORY);
@@ -3910,10 +4043,13 @@ async function runSeptember2026OneShotApply(input) {
     const backupVerify = await verifySeptemberBackupReceiptForApply({
       receiptFilePath: receiptPath,
       expectedReceiptSha256: input.backupReceiptSha256.trim(),
+      backupPayloadFilePath: payloadPath,
       scope,
       scopeFileSha256: scopeSha,
       liveTargetFingerprint: identity.fingerprint,
-      liveBeforeStateDigest: beforeDigest
+      liveBeforeStateDigest: beforeDigest,
+      approvedPrivateBackupRoot: process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim(),
+      skipBackupPayloadPathSecurity: input.testContext?.skipBackupPayloadPathSecurity
     });
     if (!backupVerify.ok) {
       await client.query("ROLLBACK");
@@ -4044,6 +4180,7 @@ async function main() {
     const grant = process.env.SEPTEMBER_2026_APPLY_GRANT_REF?.trim();
     const backupReceipt = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_SHA256?.trim() ?? null;
     const backupReceiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
+    const backupPayloadPath = process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_PATH?.trim();
     const databaseUrl = process.env.DATABASE_URL?.trim();
     if (!scopePath || !grant || !databaseUrl) {
       fail("APPLY_CONFIG_INCOMPLETE", "DATABASE_URL, SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH, SEPTEMBER_2026_APPLY_GRANT_REF required.");
@@ -4054,7 +4191,8 @@ async function main() {
       operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
       applyGrantRef: grant,
       backupReceiptSha256: backupReceipt,
-      backupReceiptFilePath: backupReceiptPath
+      backupReceiptFilePath: backupReceiptPath,
+      backupPayloadFilePath: backupPayloadPath
     });
     console.log(JSON.stringify(result2, null, 2));
     if (!result2.ok) process.exit(1);
