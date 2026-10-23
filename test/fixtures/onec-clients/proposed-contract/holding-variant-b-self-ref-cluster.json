@@ -1,0 +1,54 @@
+[
+  {
+    "guid_client": "c0000000-0000-4000-8000-000000000001",
+    "name_client": "SYNTH Self-Ref Holding Root (variant B proposal)",
+    "guid_holding": "c0000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Cluster B",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "SYNTH Manager",
+    "address": "SYNTH root address",
+    "telephone": [],
+    "holding": false,
+    "retail_outlets": [
+      {
+        "guid_store": "d0000000-0000-4000-8000-000000000001",
+        "name_store": "SYNTH Store on root row",
+        "closed": false
+      }
+    ],
+    "Код": "SYNTH-B-ROOT",
+    "Контрагент": "SYNTH Root Counterparty",
+    "НаименованиеПолное": "SYNTH Root Full Name",
+    "ЮрФизЛицо": "Юрлицо",
+    "Оптовик_ОГРН": "0000000000100",
+    "Discount": "",
+    "DiscountAmount": 0,
+    "Markups": []
+  },
+  {
+    "guid_client": "c0000000-0000-4000-8000-000000000002",
+    "name_client": "SYNTH Member Legal Row Two",
+    "guid_holding": "c0000000-0000-4000-8000-000000000001",
+    "name_holding": "SYNTH Cluster B",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "SYNTH Manager",
+    "address": "SYNTH member address",
+    "telephone": [],
+    "holding": false,
+    "retail_outlets": [
+      {
+        "guid_store": "d0000000-0000-4000-8000-000000000002",
+        "name_store": "SYNTH Store on member row",
+        "closed": false
+      }
+    ],
+    "Код": "SYNTH-B-M2",
+    "Контрагент": "SYNTH Member Counterparty",
+    "НаименованиеПолное": "SYNTH Member Full Name",
+    "ЮрФизЛицо": "Юрлицо",
+    "Оптовик_ОГРН": "0000000000101",
+    "Discount": "",
+    "DiscountAmount": 0,
+    "Markups": []
+  }
+]
