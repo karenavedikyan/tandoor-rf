@@ -31,6 +31,7 @@ export function buildSaleItemRecord(input: {
 export function buildReturnRecord(input: {
   legalGuid: string;
   type?: string;
+  month?: string;
   quantity?: number;
   income?: number;
   guidItem?: string;
@@ -38,7 +39,7 @@ export function buildReturnRecord(input: {
   withItems?: boolean;
 }) {
   const row: Record<string, unknown> = {
-    month: MONTH,
+    month: input.month ?? MONTH,
     client_info: {
       name: "Synthetic",
       guid: input.legalGuid,
