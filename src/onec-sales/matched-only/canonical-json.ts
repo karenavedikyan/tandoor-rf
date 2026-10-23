@@ -5,11 +5,19 @@ export function sha256CanonicalJson(value: unknown): string {
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
+/** Exported for tests: normalize values before stable key sort + JSON.stringify. */
+export function normalizeForCanonicalJson(value: unknown): unknown {
+  return sortValue(value);
+}
+
 function stableStringify(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
 function sortValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
   if (value === null || typeof value !== "object") {
     return value;
   }
