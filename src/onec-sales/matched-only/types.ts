@@ -69,6 +69,19 @@ export type MatchedOnlyScopedBackupV1 = {
   };
 };
 
+export type MatchedOnlyMode = "plan" | "validate-backup" | "apply" | "rollback";
+
+export type MatchedOnlyRunResult =
+  | {
+      ok: true;
+      mode: MatchedOnlyMode;
+      plan?: MatchedOnlyBundlePlanV1;
+      planHash?: string;
+      receipt?: MatchedOnlyApplyReceiptV1;
+      backup?: MatchedOnlyScopedBackupV1;
+    }
+  | { ok: false; mode: MatchedOnlyMode; code: string; message: string };
+
 export type MatchedOnlyApplyReceiptV1 = {
   v: 1;
   planHash: string;
