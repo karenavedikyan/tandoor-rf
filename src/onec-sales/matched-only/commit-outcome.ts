@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { createImportPool } from "../../onec-clients/apply";
 import { loadApplyRun } from "./apply-ops";
+import { safeDisposeMatchedOnlySession } from "./connection-cleanup";
 import { captureScopedAfterStateDigest } from "./state-digest";
 import type { MatchedOnlyApplyReceiptV1, MatchedOnlyBundlePlanV1 } from "./types";
 
@@ -10,11 +11,15 @@ export function isCommitTransportUncertainty(error: unknown): boolean {
   }
   const record = error as { code?: string; message?: string };
   const code = record.code ?? "";
-  if (code === "ETIMEDOUT" || code === "ECONNRESET" || code === "ECONNREFUSED" || code === "57P01") {
+  if (code === "ETIMEDOUT" || code === "ECONNRESET" || code === "57P01") {
     return true;
   }
   const message = record.message?.toLowerCase() ?? "";
-  return message.includes("timeout") || message.includes("connection terminated");
+  return (
+    message.includes("timeout") ||
+    message.includes("connection terminated") ||
+    message.includes("connection terminated unexpectedly")
+  );
 }
 
 export async function reconcileAppliedPlanAfterCommitUncertainty(
@@ -24,8 +29,9 @@ export async function reconcileAppliedPlanAfterCommitUncertainty(
   expectedReceipt: MatchedOnlyApplyReceiptV1,
 ): Promise<MatchedOnlyApplyReceiptV1 | null> {
   const pool = createImportPool(databaseUrl);
-  const client = await pool.connect();
+  let client: PoolClient | undefined;
   try {
+    client = await pool.connect();
     const run = await loadApplyRun(client, approvedPlanHash);
     if (!run || run.status !== "applied" || !run.after_state_sha256) {
       return null;
@@ -39,9 +45,18 @@ export async function reconcileAppliedPlanAfterCommitUncertainty(
     }
     const receipt = run.receipt_json as MatchedOnlyApplyReceiptV1;
     return { ...receipt, status: "applied" };
+  } catch {
+    return null;
   } finally {
-    client.release();
-    await pool.end();
+    if (client) {
+      await safeDisposeMatchedOnlySession(client, pool, false);
+    } else {
+      try {
+        await pool.end();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -81,4 +96,56 @@ export async function markCommitUncertain(
       JSON.stringify({ v: 1, planHash: approvedPlanHash, status: "commit_uncertain" }),
     ],
   );
+}
+
+export async function tryMarkCommitUncertain(
+  databaseUrl: string,
+  plan: MatchedOnlyBundlePlanV1,
+  approvedPlanHash: string,
+  backupSha256: string,
+): Promise<void> {
+  const pool = createImportPool(databaseUrl);
+  let client: PoolClient | undefined;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    await markCommitUncertain(client, plan, approvedPlanHash, backupSha256);
+    await client.query("COMMIT");
+  } catch {
+    /* Marker is best-effort when recovery connection is unavailable. */
+  } finally {
+    if (client) {
+      await safeDisposeMatchedOnlySession(client, pool, false);
+    } else {
+      try {
+        await pool.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+export type CommitUncertaintyResolution =
+  | { kind: "reconciled"; receipt: MatchedOnlyApplyReceiptV1 }
+  | { kind: "uncertain" };
+
+export async function resolveCommitTransportUncertainty(
+  databaseUrl: string,
+  plan: MatchedOnlyBundlePlanV1,
+  approvedPlanHash: string,
+  receipt: MatchedOnlyApplyReceiptV1,
+  expectedBackupSha256: string,
+): Promise<CommitUncertaintyResolution> {
+  const reconciled = await reconcileAppliedPlanAfterCommitUncertainty(
+    databaseUrl,
+    plan,
+    approvedPlanHash,
+    receipt,
+  );
+  if (reconciled) {
+    return { kind: "reconciled", receipt: reconciled };
+  }
+  await tryMarkCommitUncertain(databaseUrl, plan, approvedPlanHash, expectedBackupSha256);
+  return { kind: "uncertain" };
 }

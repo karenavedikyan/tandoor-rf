@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { resolveTargetDbIdentityFromUrl } from "../../onec-exchange-v3/target-db-identity";
-import { tryAcquireImportLock, releaseImportLock } from "../../onec-clients/import-lock";
+import { tryAcquireImportLock } from "../../onec-clients/import-lock";
 import { createImportPool } from "../../onec-clients/apply";
 import {
   applyMatchedOnlyReturnItems,
@@ -26,11 +26,8 @@ import type {
   MatchedOnlyBundlePlanV1,
   MatchedOnlyScopedBackupV1,
 } from "./types";
-import {
-  isCommitTransportUncertainty,
-  markCommitUncertain,
-  reconcileAppliedPlanAfterCommitUncertainty,
-} from "./commit-outcome";
+import { isCommitTransportUncertainty, resolveCommitTransportUncertainty } from "./commit-outcome";
+import { safeDisposeMatchedOnlySession } from "./connection-cleanup";
 import {
   assertLiveTargetMatchesPlan,
   type MatchedOnlyBundleInput,
@@ -293,25 +290,23 @@ export async function runMatchedOnlyApply(
       return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt };
     } catch (commitError) {
       transactionOpen = false;
+      lockHeld = false;
       if (isCommitTransportUncertainty(commitError)) {
-        const reconciled = await reconcileAppliedPlanAfterCommitUncertainty(
+        const resolution = await resolveCommitTransportUncertainty(
           databaseUrl,
           plan,
           approvedPlanHash,
           receipt,
+          expectedBackupSha256,
         );
-        if (reconciled) {
-          return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt: reconciled };
-        }
-        const markPool = createImportPool(databaseUrl);
-        const markClient = await markPool.connect();
-        try {
-          await markClient.query("BEGIN");
-          await markCommitUncertain(markClient, plan, approvedPlanHash, expectedBackupSha256);
-          await markClient.query("COMMIT");
-        } finally {
-          markClient.release();
-          await markPool.end();
+        if (resolution.kind === "reconciled") {
+          return {
+            ok: true,
+            mode: "apply",
+            plan,
+            planHash: approvedPlanHash,
+            receipt: resolution.receipt,
+          };
         }
         return {
           ok: false,
@@ -335,11 +330,7 @@ export async function runMatchedOnlyApply(
       message: error instanceof Error ? error.message : "Apply failed.",
     };
   } finally {
-    if (lockHeld) {
-      await releaseImportLock(client);
-    }
-    client.release();
-    await pool.end();
+    await safeDisposeMatchedOnlySession(client, pool, lockHeld);
   }
 }
 
@@ -440,9 +431,24 @@ export async function runMatchedOnlyRollback(
         JSON.stringify({ v: 1, planHash: approvedPlanHash, status: "rolled_back" }),
       ],
     );
-    await client.query("COMMIT");
-    transactionOpen = false;
-    return { ok: true, mode: "rollback", plan, planHash: approvedPlanHash };
+    try {
+      await client.query("COMMIT");
+      transactionOpen = false;
+      lockHeld = false;
+      return { ok: true, mode: "rollback", plan, planHash: approvedPlanHash };
+    } catch (commitError) {
+      transactionOpen = false;
+      lockHeld = false;
+      if (isCommitTransportUncertainty(commitError)) {
+        return {
+          ok: false,
+          mode: "rollback",
+          code: "COMMIT_UNCERTAIN",
+          message: "Rollback commit outcome unknown; reconcile read-only before retry.",
+        };
+      }
+      throw commitError;
+    }
   } catch (error) {
     if (transactionOpen) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -454,10 +460,6 @@ export async function runMatchedOnlyRollback(
       message: error instanceof Error ? error.message : "Rollback failed.",
     };
   } finally {
-    if (lockHeld) {
-      await releaseImportLock(client);
-    }
-    client.release();
-    await pool.end();
+    await safeDisposeMatchedOnlySession(client, pool, lockHeld);
   }
 }

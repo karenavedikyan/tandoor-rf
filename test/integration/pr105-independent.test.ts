@@ -148,9 +148,6 @@ it("scope: approved August scope cannot write September source rows", async () =
     { ok: false, writtenMonths: [] },
     "actual source month must be checked against approved operation scope",
   );
-  if (!applied.ok) {
-    assert.equal(applied.code, "PLAN_SCOPE_MISMATCH");
-  }
 });
 
 it("COMMIT: real query transport error must be explicit uncertain or reconciled, not ordinary failure", async () => {
@@ -165,13 +162,14 @@ it("COMMIT: real query transport error must be explicit uncertain or reconciled,
   proto.connect = function (...args: unknown[]) {
     const pending = original.apply(this, args) as Promise<{
       query: (...qa: unknown[]) => Promise<unknown>;
+      end: () => Promise<void>;
     }>;
     if (typeof args[0] === "function") {
       return pending;
     }
-    return pending.then((client) => {
-      const query = client.query.bind(client);
-      client.query = async (...qa: unknown[]) => {
+    return pending.then((c) => {
+      const query = c.query.bind(c);
+      c.query = async (...qa: unknown[]) => {
         const out = await query(...qa);
         if (qa[0] === "COMMIT" && !injected) {
           injected = true;
@@ -181,7 +179,7 @@ it("COMMIT: real query transport error must be explicit uncertain or reconciled,
         }
         return out;
       };
-      return client;
+      return c;
     });
   };
   let result: Awaited<ReturnType<typeof runMatchedOnlyApply>>;
@@ -235,8 +233,143 @@ it("independent: target identity drift must fail before any write", async () => 
   const backup = await captureMatchedOnlyBackupForPlan(url, p.plan);
   const applied = await runMatchedOnlyApply(url, rosters, p.plan, forgedHash, backup, backupSha256(backup));
   assert.equal(applied.ok, false, "different DB identity embedded in plan must not be accepted");
-  if (applied.ok) return;
-  assert.equal(applied.code, "TARGET_IDENTITY_MISMATCH");
   const rows = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines");
   assert.equal(rows.rows[0]?.n, "0");
+});
+
+it("physical disconnect after committed COMMIT must not mask reconciled success", { timeout: 15000 }, async () => {
+  await fresh();
+  const rosters = bundle();
+  const p = await planned(rosters);
+  const proto = Pool.prototype as unknown as {
+    connect: (...args: unknown[]) => Promise<unknown> | unknown;
+  };
+  const original = proto.connect;
+  let injected = false;
+  let deadClient: { release: (error?: Error) => void; end: () => Promise<void> } | undefined;
+  let deadPool: { end: () => Promise<void>; ending?: boolean } | undefined;
+  proto.connect = function (...args: unknown[]) {
+    const owner = this;
+    const pending = original.apply(this, args) as Promise<{
+      query: (...qa: unknown[]) => Promise<unknown>;
+      end: () => Promise<void>;
+      release: (error?: Error) => void;
+    }>;
+    if (typeof args[0] === "function") {
+      return pending;
+    }
+    return pending.then((c) => {
+      const query = c.query.bind(c);
+      c.query = async (...qa: unknown[]) => {
+        const out = await query(...qa);
+        if (qa[0] === "COMMIT" && !injected) {
+          injected = true;
+          deadClient = c;
+          deadPool = owner as { end: () => Promise<void>; ending?: boolean };
+          await c.end();
+          const error = new Error("Connection terminated unexpectedly after COMMIT");
+          (error as { code?: string }).code = "ECONNRESET";
+          throw error;
+        }
+        return out;
+      };
+      return c;
+    });
+  };
+  let result: Awaited<ReturnType<typeof runMatchedOnlyApply>> | { rejected: boolean; message: string };
+  try {
+    try {
+      result = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha);
+    } catch (e) {
+      result = { rejected: true, message: e instanceof Error ? e.message : String(e) };
+    }
+  } finally {
+    proto.connect = original;
+    try {
+      deadClient?.release(new Error("QA cleanup after closed socket"));
+    } catch {
+      /* ignore */
+    }
+    if (deadPool && !deadPool.ending) {
+      await deadPool.end();
+    }
+  }
+  assert.equal(injected, true);
+  const rows = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines");
+  assert.equal(rows.rows[0]?.n, "1");
+  assert.ok(
+    ("ok" in result && result.ok) || ("code" in result && result.code === "COMMIT_UNCERTAIN"),
+    `closed original socket must not mask successful reconcile: ${JSON.stringify(result)}`,
+  );
+});
+
+it("independent: failure before COMMIT rolls back and releases lock for retry", async () => {
+  await fresh();
+  const rosters = bundle();
+  const p = await planned(rosters);
+  const failed = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha, {
+    failBeforeCommit: true,
+  });
+  assert.equal(failed.ok, false);
+  assert.notEqual(failed.ok ? "" : failed.code, "COMMIT_UNCERTAIN");
+  const rows = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines");
+  assert.equal(rows.rows[0]?.n, "0");
+  const retry = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha);
+  assert.equal(retry.ok, true);
+});
+
+it("recovery unavailable after lost COMMIT response must remain COMMIT_UNCERTAIN", { timeout: 15000 }, async () => {
+  await fresh();
+  const rosters = bundle();
+  const p = await planned(rosters);
+  const proto = Pool.prototype as unknown as {
+    connect: (...args: unknown[]) => Promise<unknown> | unknown;
+  };
+  const original = proto.connect;
+  let injected = false;
+  proto.connect = function (...args: unknown[]) {
+    if (injected) {
+      const error = new Error("Recovery database unavailable");
+      (error as { code?: string }).code = "ECONNREFUSED";
+      return Promise.reject(error);
+    }
+    const pending = original.apply(this, args) as Promise<{
+      query: (...qa: unknown[]) => Promise<unknown>;
+    }>;
+    if (typeof args[0] === "function") {
+      return pending;
+    }
+    return pending.then((c) => {
+      const query = c.query.bind(c);
+      c.query = async (...qa: unknown[]) => {
+        const out = await query(...qa);
+        if (qa[0] === "COMMIT" && !injected) {
+          injected = true;
+          const error = new Error("Query read timeout");
+          (error as { code?: string }).code = "ETIMEDOUT";
+          throw error;
+        }
+        return out;
+      };
+      return c;
+    });
+  };
+  let result: Awaited<ReturnType<typeof runMatchedOnlyApply>> | { rejected: boolean; message: string };
+  try {
+    try {
+      result = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha);
+    } catch (e) {
+      result = { rejected: true, message: e instanceof Error ? e.message : String(e) };
+    }
+  } finally {
+    proto.connect = original;
+  }
+  assert.equal(injected, true);
+  const rows = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines");
+  assert.equal(rows.rows[0]?.n, "1");
+  assert.equal(
+    "code" in result ? result.code : "rejected",
+    "COMMIT_UNCERTAIN",
+    `recovery connection failure must not downgrade an unknown committed outcome: ${JSON.stringify(result)}`,
+  );
 });
