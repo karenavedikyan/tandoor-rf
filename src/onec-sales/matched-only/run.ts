@@ -27,11 +27,17 @@ import type {
   MatchedOnlyScopedBackupV1,
 } from "./types";
 import {
+  isCommitTransportUncertainty,
+  markCommitUncertain,
+  reconcileAppliedPlanAfterCommitUncertainty,
+} from "./commit-outcome";
+import {
   assertLiveTargetMatchesPlan,
   type MatchedOnlyBundleInput,
   validateApprovedPlanAgainstLive,
   validateBackupAgainstPlan,
 } from "./guards";
+import { assertRosterScopeMatchesApprovedPlan } from "./scope";
 
 export type { MatchedOnlyBundleInput } from "./guards";
 
@@ -128,7 +134,7 @@ export async function runMatchedOnlyApply(
   approvedPlanHash: string,
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
-  testHooks?: { failBeforeCommit?: boolean; failOnCommit?: boolean },
+  testHooks?: { failBeforeCommit?: boolean },
 ): Promise<MatchedOnlyRunResult> {
   if (!process.env.TEST_DATABASE_URL || databaseUrl !== process.env.TEST_DATABASE_URL) {
     return {
@@ -155,6 +161,16 @@ export async function runMatchedOnlyApply(
   const backupFailure = validateBackupAgainstPlan(backup, plan, expectedBackupSha256);
   if (backupFailure) {
     return { ok: false, mode: "apply", code: backupFailure.code, message: backupFailure.message };
+  }
+  try {
+    assertRosterScopeMatchesApprovedPlan(plan, rosters);
+  } catch (error) {
+    return {
+      ok: false,
+      mode: "apply",
+      code: error instanceof Error ? error.message : "PLAN_SCOPE_MISMATCH",
+      message: error instanceof Error ? error.message : "Plan scope mismatch.",
+    };
   }
 
   const pool = createImportPool(databaseUrl);
@@ -271,49 +287,43 @@ export async function runMatchedOnlyApply(
       receipt,
     });
 
-    if (testHooks?.failOnCommit) {
-      throw new Error("COMMIT_OUTCOME_UNKNOWN");
+    try {
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt };
+    } catch (commitError) {
+      transactionOpen = false;
+      if (isCommitTransportUncertainty(commitError)) {
+        const reconciled = await reconcileAppliedPlanAfterCommitUncertainty(
+          databaseUrl,
+          plan,
+          approvedPlanHash,
+          receipt,
+        );
+        if (reconciled) {
+          return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt: reconciled };
+        }
+        const markPool = createImportPool(databaseUrl);
+        const markClient = await markPool.connect();
+        try {
+          await markClient.query("BEGIN");
+          await markCommitUncertain(markClient, plan, approvedPlanHash, expectedBackupSha256);
+          await markClient.query("COMMIT");
+        } finally {
+          markClient.release();
+          await markPool.end();
+        }
+        return {
+          ok: false,
+          mode: "apply",
+          code: "COMMIT_UNCERTAIN",
+          message: "Commit outcome unknown; reconcile read-only before retry.",
+        };
+      }
+      throw commitError;
     }
-    await client.query("COMMIT");
-    transactionOpen = false;
-    return { ok: true, mode: "apply", plan, planHash: approvedPlanHash, receipt };
   } catch (error) {
     const code = error instanceof Error ? error.message : "APPLY_FAILED";
-    if (code === "COMMIT_OUTCOME_UNKNOWN") {
-      if (transactionOpen) {
-        try {
-          await client.query("ROLLBACK");
-        } catch {
-          /* connection may be unusable */
-        }
-        transactionOpen = false;
-      }
-      try {
-        const reconcilePool = createImportPool(databaseUrl);
-        const reconcileClient = await reconcilePool.connect();
-        try {
-          await upsertApplyRun(reconcileClient, {
-            planHash: approvedPlanHash,
-            status: "commit_uncertain",
-            plan,
-            backupSha256: expectedBackupSha256,
-            afterStateSha256: null,
-            receipt: { v: 1, planHash: approvedPlanHash, status: "commit_uncertain" },
-          });
-        } finally {
-          reconcileClient.release();
-          await reconcilePool.end();
-        }
-      } catch {
-        /* best-effort marker */
-      }
-      return {
-        ok: false,
-        mode: "apply",
-        code: "COMMIT_UNCERTAIN",
-        message: "Commit outcome unknown; reconcile read-only before retry.",
-      };
-    }
     if (transactionOpen) {
       await client.query("ROLLBACK").catch(() => undefined);
       transactionOpen = false;

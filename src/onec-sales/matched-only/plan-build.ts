@@ -13,7 +13,8 @@ import {
 } from "./catalog";
 import { sha256CanonicalJson } from "./canonical-json";
 import { partitionSalesBundle } from "./partition";
-import { captureScopedBeforeState, operationsDigest } from "./state-digest";
+import { computeOperationsDigest, deriveSaleMonthsIsoFromRosters } from "./scope";
+import { captureScopedBeforeState } from "./state-digest";
 import type { MatchedOnlyBundlePlanV1 } from "./types";
 
 export function planHashFromPlan(plan: MatchedOnlyBundlePlanV1): string {
@@ -49,14 +50,12 @@ export async function buildMatchedOnlyBundlePlan(
     known,
   });
 
-  const saleMonthsIso = [
-    ...new Set([
-      ...input.saleAggregate.lines.map((l) => l.saleMonthStartIso),
-      ...input.saleItems.lines.map((l) => l.saleMonthStartIso),
-      ...input.returnsAggregate.lines.map((l) => l.saleMonthStartIso),
-      ...input.returnItems.lines.map((l) => l.saleMonthStartIso),
-    ]),
-  ].sort();
+  const saleMonthsIso = deriveSaleMonthsIsoFromRosters({
+    saleAggregate: input.saleAggregate,
+    saleItems: input.saleItems,
+    returnsAggregate: input.returnsAggregate,
+    returnItems: input.returnItems,
+  });
 
   const periods = [
     ...new Set([
@@ -69,28 +68,21 @@ export async function buildMatchedOnlyBundlePlan(
 
   const before = await captureScopedBeforeState(client, saleMonthsIso);
 
+  const sourceHashes = {
+    saleAggregate: input.saleAggregate.sourceSha256,
+    saleItems: input.saleItems.sourceSha256,
+    returnsAggregate: input.returnsAggregate.sourceSha256,
+    returnItems: input.returnItems.sourceSha256,
+  };
   const scope = {
     saleMonthsIso,
-    operationsDigest: operationsDigest({
-      sourceHashes: {
-        saleAggregate: input.saleAggregate.sourceSha256,
-        saleItems: input.saleItems.sourceSha256,
-        returnsAggregate: input.returnsAggregate.sourceSha256,
-        returnItems: input.returnItems.sourceSha256,
-      },
-      scope: { saleMonthsIso, operationsDigest: "" },
-    }),
+    operationsDigest: computeOperationsDigest(sourceHashes, saleMonthsIso),
   };
 
   const plan: MatchedOnlyBundlePlanV1 = {
     v: 1,
     policy: "matched-only",
-    sourceHashes: {
-      saleAggregate: input.saleAggregate.sourceSha256,
-      saleItems: input.saleItems.sourceSha256,
-      returnsAggregate: input.returnsAggregate.sourceSha256,
-      returnItems: input.returnItems.sourceSha256,
-    },
+    sourceHashes,
     periods,
     parity: {
       salesParityOk:
@@ -117,8 +109,6 @@ export async function buildMatchedOnlyBundlePlan(
     scope,
     beforeStateSha256: before.businessDigest,
   };
-  plan.scope.operationsDigest = operationsDigest(plan);
-
   return { plan, planHash: planHashFromPlan(plan), report };
 }
 

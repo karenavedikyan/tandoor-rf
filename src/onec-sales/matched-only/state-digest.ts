@@ -92,7 +92,7 @@ export async function captureScopedBeforeState(
       `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
        FROM onec_v3_legal_sales_import_quarantine_rows
        WHERE sale_month = ANY($1::date[])
-       ORDER BY dataset, source_sha256, source_row_index`,
+       ORDER BY dataset, source_sha256, source_row_index, plan_hash, legal_guid`,
       [months],
     ),
   ]);

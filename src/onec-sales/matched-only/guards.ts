@@ -15,7 +15,8 @@ import {
 } from "./catalog";
 import { partitionSalesBundle } from "./partition";
 import { planHashFromPlan } from "./plan-build";
-import { businessDigestFromScopedTables, captureScopedBeforeState, operationsDigest } from "./state-digest";
+import { assertRosterScopeMatchesApprovedPlan } from "./scope";
+import { businessDigestFromScopedTables, captureScopedBeforeState } from "./state-digest";
 import type { DatasetRowCounts, MatchedOnlyBundlePlanV1, MatchedOnlyScopedBackupV1 } from "./types";
 
 export type MatchedOnlyBundleInput = {
@@ -129,23 +130,7 @@ export async function validateApprovedPlanAgainstLive(
     throw new Error("PLAN_COUNTS_DRIFT");
   }
 
-  const periods = [
-    ...new Set([
-      ...rosters.saleAggregate.lines.map((l) => l.saleMonthYyyyMm),
-      ...rosters.saleItems.lines.map((l) => l.saleMonthYyyyMm),
-      ...rosters.returnsAggregate.lines.map((l) => l.saleMonthYyyyMm),
-      ...rosters.returnItems.lines.map((l) => l.saleMonthYyyyMm),
-    ]),
-  ].sort();
-  const planPeriods = [...plan.periods].sort();
-  if (periods.length !== planPeriods.length || periods.some((p, i) => p !== planPeriods[i])) {
-    throw new Error("PLAN_PERIODS_DRIFT");
-  }
-
-  const opsDigest = operationsDigest(plan);
-  if (opsDigest !== plan.scope.operationsDigest) {
-    throw new Error("PLAN_SCOPE_DRIFT");
-  }
+  assertRosterScopeMatchesApprovedPlan(plan, rosters);
 
   const report = analyzeSalesBundle({
     salesAggregate: rosters.saleAggregate,

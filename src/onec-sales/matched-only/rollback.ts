@@ -36,9 +36,10 @@ export async function restoreScopedBackup(
     `DELETE FROM onec_v3_legal_sales_import_month_stats WHERE sale_month = ANY($1::date[])`,
     [months],
   );
-  await client.query(`DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE plan_hash = $1`, [
-    backup.planHash,
-  ]);
+  await client.query(
+    `DELETE FROM onec_v3_legal_sales_import_quarantine_rows WHERE sale_month = ANY($1::date[])`,
+    [months],
+  );
 
   for (const row of backup.tables.saleAggregateLines as Record<string, unknown>[]) {
     await client.query(
@@ -364,7 +365,7 @@ export async function assertRestoredBusinessStateMatchesPlanBefore(
           `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
            FROM onec_v3_legal_sales_import_quarantine_rows
            WHERE sale_month = ANY($1::date[])
-           ORDER BY dataset, source_sha256, source_row_index`,
+           ORDER BY dataset, source_sha256, source_row_index, plan_hash, legal_guid`,
           [backup.saleMonthsIso],
         )
       ).rows,
