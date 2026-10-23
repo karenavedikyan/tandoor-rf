@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 export type RuntimeProvenanceResult =
   | { ok: true; label: string; executableArtifactSha256: string }
@@ -9,57 +10,62 @@ function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/**
- * Verified runtime executable artifact digest — not satisfied by arbitrary label strings alone.
- */
-export async function resolveRuntimeExecutableArtifactProof(): Promise<RuntimeProvenanceResult> {
-  const fromEnv = process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256?.trim().toLowerCase();
-  if (fromEnv && /^[0-9a-f]{64}$/.test(fromEnv)) {
-    const label =
-      process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL?.trim() ||
-      process.env.GIT_COMMIT?.trim() ||
-      process.env.CURSOR_COMMIT?.trim() ||
-      fromEnv.slice(0, 12);
-    return { ok: true, label, executableArtifactSha256: fromEnv };
-  }
-  const artifactPath = process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_PATH?.trim();
-  if (artifactPath) {
-    try {
-      const bytes = await readFile(artifactPath);
-      const digest = sha256Hex(bytes);
-      const label = process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL?.trim() || digest.slice(0, 12);
-      return { ok: true, label, executableArtifactSha256: digest };
-    } catch {
-      return {
-        ok: false,
-        code: "CODE_PROVENANCE_UNVERIFIED",
-        message: "Executable artifact path is not readable for provenance verification.",
-      };
-    }
-  }
-  return {
-    ok: false,
-    code: "CODE_PROVENANCE_UNVERIFIED",
-    message:
-      "Runtime executable artifact SHA unavailable (set MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256 or MATCHED_ONLY_EXECUTABLE_ARTIFACT_PATH).",
-  };
+function isAllowedExecutableArtifactPath(path: string): boolean {
+  const resolved = resolve(path);
+  const productionBundle = resolve(process.cwd(), "dist/cli/onec-v3-sales-matched-bundle-production.js");
+  const syntheticFixture = resolve(process.cwd(), "test/fixtures/matched-only-synthetic-executable-artifact.bin");
+  return resolved === productionBundle || resolved === syntheticFixture;
 }
 
-/** @deprecated Use resolveRuntimeExecutableArtifactProof — label alone is not proof. */
-export function resolveRuntimeCodeArtifactLabel(): RuntimeProvenanceResult | { ok: false; code: string; message: string } {
-  const label =
-    process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL?.trim() ||
-    process.env.GIT_COMMIT?.trim() ||
-    process.env.CURSOR_COMMIT?.trim() ||
-    "";
-  if (!label) {
+async function measureExecutableArtifactBytes(): Promise<Buffer | null> {
+  const pinned = process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH?.trim();
+  const candidates = [
+    pinned,
+    join(process.cwd(), "dist/cli/onec-v3-sales-matched-bundle-production.js"),
+  ].filter((p): p is string => Boolean(p));
+  for (const path of candidates) {
+    if (!isAllowedExecutableArtifactPath(path)) {
+      continue;
+    }
+    try {
+      return await readFile(path);
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Measured digest of the pinned on-disk executor artifact. Env SHA alone is never proof.
+ */
+export async function resolveRuntimeExecutableArtifactProof(): Promise<RuntimeProvenanceResult> {
+  const bytes = await measureExecutableArtifactBytes();
+  if (!bytes) {
     return {
       ok: false,
       code: "CODE_PROVENANCE_UNVERIFIED",
-      message: "Runtime code artifact label unavailable.",
+      message: "Executable artifact bytes could not be measured from pinned path.",
     };
   }
-  return { ok: false, code: "CODE_PROVENANCE_UNVERIFIED", message: "Label without executable artifact SHA is not verified provenance." };
+  const digest = sha256Hex(bytes);
+  const pinnedLabel = process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL?.trim();
+  if (!pinnedLabel) {
+    return {
+      ok: false,
+      code: "CODE_PROVENANCE_UNVERIFIED",
+      message: "Pinned code artifact label is required for verified provenance.",
+    };
+  }
+  return { ok: true, label: pinnedLabel, executableArtifactSha256: digest };
+}
+
+export function resolveRuntimeCodeArtifactLabel(): { ok: false; code: string; message: string } {
+  return {
+    ok: false,
+    code: "CODE_PROVENANCE_UNVERIFIED",
+    message: "Label without measured executable artifact is not verified provenance.",
+  };
 }
 
 export async function assertManifestCodeProvenance(
@@ -85,7 +91,7 @@ export async function assertManifestCodeProvenance(
     return {
       ok: false,
       code: "CODE_PROVENANCE_UNVERIFIED",
-      message: "Runtime executable artifact digest does not match manifest pin.",
+      message: "Manifest pin does not match measured executable artifact digest.",
     };
   }
   if (manifestLabel?.trim() && manifestLabel !== runtime.label) {

@@ -38,7 +38,6 @@ async function main(): Promise<void> {
     }
     const capture = await capturePrivateBusinessBackupForManifest({
       manifest,
-      plan: manifest.plan,
       approvedCaptureHash: args.approvedCaptureHash,
     });
     console.log(JSON.stringify(capture, null, 2));

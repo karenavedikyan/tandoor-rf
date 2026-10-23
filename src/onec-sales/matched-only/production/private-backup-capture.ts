@@ -1,16 +1,16 @@
-import { chmod, lstat, open } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { open } from "node:fs/promises";
 import { Pool } from "pg";
 import { createPgPoolOptions } from "../../../config/pg-ssl";
 import { resolveTargetDbIdentityFromUrl } from "../../../onec-exchange-v3/target-db-identity";
 import { backupSha256 } from "../backup";
+import { planHashFromPlan } from "../plan-build";
 import { captureScopedBackup } from "../scoped-backup-capture";
-import type { MatchedOnlyBundlePlanV1 } from "../types";
 import { withReadOnlyPreflightSession, PREFLIGHT_CONNECT_TIMEOUT_MS } from "./read-only-session";
 import type { ExecutionManifestV2 } from "./manifest-types";
 import { resolveProductionDatabaseUrl } from "./database-url";
 import { validatePrivateCaptureManifestForRun } from "./manifest-capture-validate";
 import { assertManifestCodeProvenance } from "./runtime-provenance";
+import { assertCaptureDestinationAllowed, resolveCaptureApprovedPrivateRoot } from "./capture-path-policy";
 
 export type PrivateBackupCaptureResult =
   | {
@@ -22,34 +22,8 @@ export type PrivateBackupCaptureResult =
     }
   | { ok: false; code: string; message: string };
 
-const PUBLIC_PATH_MARKERS = ["/public/", "/static/", "/runtime-export/"];
-
-async function assertPrivateDestination(path: string): Promise<void> {
-  const resolved = resolve(path);
-  const lower = resolved.toLowerCase();
-  for (const marker of PUBLIC_PATH_MARKERS) {
-    if (lower.includes(marker)) {
-      throw new Error("CAPTURE_DESTINATION_PUBLIC_PATH");
-    }
-  }
-  let current = dirname(resolved);
-  const root = resolve("/");
-  while (current !== root) {
-    const stat = await lstat(current);
-    if (stat.isSymbolicLink()) {
-      throw new Error("CAPTURE_DESTINATION_SYMLINK_ANCESTOR");
-    }
-    const mode = stat.mode & 0o777;
-    if (mode & 0o077) {
-      throw new Error("CAPTURE_DESTINATION_NOT_PRIVATE");
-    }
-    current = dirname(current);
-  }
-}
-
 export async function capturePrivateBusinessBackupForManifest(input: {
   manifest: ExecutionManifestV2;
-  plan: MatchedOnlyBundlePlanV1;
   approvedCaptureHash?: string;
 }): Promise<PrivateBackupCaptureResult> {
   const captureCheck = validatePrivateCaptureManifestForRun({
@@ -59,6 +33,15 @@ export async function capturePrivateBusinessBackupForManifest(input: {
   if (!captureCheck.ok) {
     return captureCheck;
   }
+  const plan = input.manifest.plan;
+  const planHash = input.manifest.planHash;
+  if (!plan || !planHash) {
+    return { ok: false, code: "MANIFEST_PLAN_MISSING", message: "Capture requires embedded approved plan." };
+  }
+  if (planHashFromPlan(plan) !== planHash) {
+    return { ok: false, code: "CAPTURE_PLAN_HASH_MISMATCH", message: "Manifest planHash does not match embedded plan." };
+  }
+
   const provenance = await assertManifestCodeProvenance(
     input.manifest.provenance.codeArtifactLabel,
     input.manifest.provenance.expectedExecutableArtifactSha256,
@@ -68,12 +51,16 @@ export async function capturePrivateBusinessBackupForManifest(input: {
     return provenance;
   }
   const destinationPath = input.manifest.privateBackupCapture!.destinationPath!;
+  const approvedRoot = resolveCaptureApprovedPrivateRoot(input.manifest);
+  if (!approvedRoot) {
+    return { ok: false, code: "CAPTURE_ROOT_MISSING", message: "Approved private capture root is required." };
+  }
   const urlResult = resolveProductionDatabaseUrl();
   if (!urlResult.ok) {
     return { ok: false, code: urlResult.code, message: urlResult.message };
   }
   const identity = await resolveTargetDbIdentityFromUrl(urlResult.databaseUrl);
-  if (identity.fingerprint !== input.plan.identity.targetDbFingerprint) {
+  if (identity.fingerprint !== plan.identity.targetDbFingerprint) {
     return {
       ok: false,
       code: "CAPTURE_TARGET_IDENTITY_MISMATCH",
@@ -81,7 +68,7 @@ export async function capturePrivateBusinessBackupForManifest(input: {
     };
   }
   try {
-    await assertPrivateDestination(destinationPath);
+    await assertCaptureDestinationAllowed(destinationPath, approvedRoot);
   } catch (error) {
     return {
       ok: false,
@@ -104,7 +91,13 @@ export async function capturePrivateBusinessBackupForManifest(input: {
       if (!schema.ok) {
         throw new Error(schema.code);
       }
-      return captureScopedBackup(client, input.plan);
+      const live = await import("../../../onec-exchange-v3/target-db-identity").then((m) =>
+        m.readTargetDbIdentityFromClient(client, urlResult.databaseUrl),
+      );
+      if (live.fingerprint !== plan.identity.targetDbFingerprint) {
+        throw new Error("CAPTURE_TARGET_IDENTITY_MISMATCH");
+      }
+      return captureScopedBackup(client, plan);
     });
     if (backup.targetDbFingerprint !== identity.fingerprint) {
       return {
@@ -115,29 +108,23 @@ export async function capturePrivateBusinessBackupForManifest(input: {
     }
     const digest = backupSha256(backup);
     const payload = `${JSON.stringify(backup, null, 2)}\n`;
-    const tempPath = join(dirname(destinationPath), `.capture-${Date.now()}-${process.pid}.partial`);
-    const tempHandle = await open(tempPath, "wx", 0o600);
+    let destHandle: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      await tempHandle.writeFile(payload, { encoding: "utf8" });
-    } finally {
-      await tempHandle.close();
-    }
-    await chmod(tempPath, 0o600);
-    try {
-      await open(destinationPath, "r");
-      return {
-        ok: false,
-        code: "CAPTURE_DESTINATION_EXISTS",
-        message: "Backup destination already exists; exclusive capture refused.",
-      };
+      destHandle = await open(destinationPath, "wx", 0o600);
+      await destHandle.writeFile(payload, { encoding: "utf8" });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        return {
+          ok: false,
+          code: "CAPTURE_DESTINATION_EXISTS",
+          message: "Backup destination already exists; exclusive capture refused.",
+        };
       }
+      throw error;
+    } finally {
+      await destHandle?.close();
     }
-    const { rename } = await import("node:fs/promises");
-    await rename(tempPath, destinationPath);
-    await chmod(destinationPath, 0o600);
     return {
       ok: true,
       backupSha256: digest,

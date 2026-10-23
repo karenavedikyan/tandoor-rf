@@ -93,15 +93,23 @@ export async function executeMatchedOnlyApply(
   expectedBackupSha256: string,
   testHooks?: { failBeforeCommit?: boolean },
   productionBinding?: ProductionApplyWriteBinding,
+  productionWriteGrantId?: string,
 ): Promise<MatchedOnlyRunResult> {
   assertExecutionCapability(capability, databaseUrl);
-  if (capability.channel === "production" && !productionBinding) {
-    return {
-      ok: false,
-      mode: "apply",
-      code: "PRODUCTION_BINDING_REQUIRED",
-      message: "Production apply requires verified execution binding.",
-    };
+  if (capability.channel === "production") {
+    if (!productionBinding || !productionWriteGrantId) {
+      return {
+        ok: false,
+        mode: "apply",
+        code: "PRODUCTION_WRITE_GRANT_INVALID",
+        message: "Production apply requires verified write grant.",
+      };
+    }
+    const { consumeProductionWriteGrant } = await import("./production/production-verified-write");
+    const consumed = consumeProductionWriteGrant(productionWriteGrantId, "apply", productionBinding);
+    if (!consumed.ok) {
+      return { ok: false, mode: "apply", code: consumed.code, message: consumed.message };
+    }
   }
   const computedHash = planHashFromPlan(plan);
   if (approvedPlanHash !== computedHash) {
@@ -172,6 +180,7 @@ export async function executeMatchedOnlyApply(
           approvedPlanHash,
           "already_applied",
           existing?.after_state_sha256 ?? undefined,
+          databaseUrl,
         );
       }
       await client.query("COMMIT");
@@ -193,6 +202,8 @@ export async function executeMatchedOnlyApply(
         backup,
         approvedPlanHash,
         "fresh_apply",
+        undefined,
+        databaseUrl,
       );
     }
 
@@ -246,6 +257,7 @@ export async function executeMatchedOnlyApply(
         returnItems: insertedRetItems,
       },
       capability.channel === "production" ? productionBinding?.executionBudget : null,
+      approvedPlanHash,
     );
     if (!persistCheck.ok) {
       throw new Error(persistCheck.code);
@@ -374,15 +386,23 @@ export async function executeMatchedOnlyRollback(
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
   productionRollbackBinding?: ProductionRollbackWriteBinding,
+  productionWriteGrantId?: string,
 ): Promise<MatchedOnlyRunResult> {
   assertExecutionCapability(capability, databaseUrl);
-  if (capability.channel === "production" && !productionRollbackBinding) {
-    return {
-      ok: false,
-      mode: "rollback",
-      code: "PRODUCTION_BINDING_REQUIRED",
-      message: "Production rollback requires verified execution binding.",
-    };
+  if (capability.channel === "production") {
+    if (!productionRollbackBinding || !productionWriteGrantId) {
+      return {
+        ok: false,
+        mode: "rollback",
+        code: "PRODUCTION_WRITE_GRANT_INVALID",
+        message: "Production rollback requires verified write grant.",
+      };
+    }
+    const { consumeProductionWriteGrant } = await import("./production/production-verified-write");
+    const consumed = consumeProductionWriteGrant(productionWriteGrantId, "rollback", productionRollbackBinding);
+    if (!consumed.ok) {
+      return { ok: false, mode: "rollback", code: consumed.code, message: consumed.message };
+    }
   }
   if (planHashFromPlan(plan) !== approvedPlanHash) {
     return { ok: false, mode: "rollback", code: "PLAN_HASH_MISMATCH", message: "Plan hash mismatch." };
@@ -426,6 +446,7 @@ export async function executeMatchedOnlyRollback(
         plan,
         backup,
         approvedPlanHash,
+        databaseUrl,
       );
     }
 

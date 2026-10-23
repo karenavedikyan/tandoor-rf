@@ -13,8 +13,10 @@
 Machine checks vs external evidence:
 
 - **Machine:** PostgreSQL `targetDbFingerprint` via identity resolver; migration filenames 047–049 in `schema_migrations` (filename/applied_at only — not a checksum); guarded table column types; manifest `contentHash` (binds approval metadata except `approvedExecutionHash`); `executionBudget.matchedTotals` per dataset (scale-4 money / scale-6 quantity, not aggregate+items sums); source-derived plan hash; backup SHA vs bytes; import lock; pre-COMMIT row/key/value materialization checks; preflight `REPEATABLE READ` RO snapshot (`BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`).
-- **Executable artifact:** verified write requires manifest `provenance.expectedExecutableArtifactSha256` matching runtime `MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256` (or SHA of `MATCHED_ONLY_EXECUTABLE_ARTIFACT_PATH`) — label alone is not proof.
-- **Private capture:** separate `privateBackupCapture` consent (`approvedCaptureHash`, `humanCaptureRef`, `validUntil`) plus CLI `--approved-capture-hash`; apply manifest must be `APPROVED`; exclusive destination create (no overwrite); live DB fingerprint must match plan.
+- **Executable artifact:** verified write requires manifest `provenance.expectedExecutableArtifactSha256` to match **measured bytes** of an allowlisted executor path (`dist/cli/onec-v3-sales-matched-bundle-production.js` or operator `MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH`). `MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL` must match manifest `codeArtifactLabel`. Env SHA or arbitrary readable files are not proof.
+- **Write grant:** production apply/rollback consumes a one-time grant minted only after full manifest validation + provenance (`production-verified-write`).
+- **Private capture:** separate `privateBackupCapture` consent (`approvedCaptureHash` binds destination, `approvedPrivateRoot`, plan scope/target, executable pin, `humanCaptureRef`, `validUntil`) plus CLI `--approved-capture-hash`; **independent of apply approval**; atomic `wx` destination create (no overwrite); path policy inside `approvedPrivateRoot` (harness: `MATCHED_ONLY_CAPTURE_HARNESS_ROOT` for local PG tests only).
+- **Pre-COMMIT materialization:** all agreed sale/return line columns from apply SQL; key multiset cardinality per scoped table; import activation SHA, import_state `row_count`, month_stats full/matched/excluded, quarantine multiset vs plan hash.
 - **External (required):** Timeweb control-plane App `258307` / DB `4212461` match operator context; owner approval hash; private backup file custody; migration 049 apply on production (not done by this CLI).
 
 Pinned production DB fingerprint (stop if live differs):
@@ -60,7 +62,8 @@ Requires separate owner approvals for code release, 049 apply, business backup, 
 ```bash
 # Illustration only — do not run without approved manifest and owner sign-off
 export DATABASE_URL='postgresql://…'
-export MATCHED_ONLY_CODE_ARTIFACT_LABEL='<release-artifact-id>'
+export MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL='<release-artifact-id>'
+export MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH='/path/to/pinned-production-bundle.js'
 node dist/cli/onec-v3-sales-matched-bundle-production.js \
   --write-apply \
   --manifest-file /private/execution-manifest.APPROVED.json \

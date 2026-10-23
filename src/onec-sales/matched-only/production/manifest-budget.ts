@@ -1,10 +1,37 @@
+import { saleDecimalStringsEqual } from "../../decimal";
+import { saleQuantityStringsExactEqual } from "../../decimal-sum";
 import type { MatchedOnlyBundleInput } from "../guards";
 import { partitionSalesBundle } from "../partition";
 import type { DatasetRowCounts, MatchedOnlyBundlePlanV1 } from "../types";
-import type { ExecutionManifestBudgetV2 } from "./manifest-types";
 import { buildMatchedTotalsFromPartition } from "../apply-persist-materialization";
+import type { ExecutionManifestBudgetV2 } from "./manifest-types";
 
 export const EXECUTION_QUANTITY_SCALE = 6;
+
+export function matchedTotalsEqual(
+  a: ExecutionManifestBudgetV2["matchedTotals"],
+  b: ExecutionManifestBudgetV2["matchedTotals"],
+): boolean {
+  const datasets = ["saleAggregate", "saleItems", "returnsAggregate", "returnItems"] as const;
+  for (const key of datasets) {
+    const left = a[key];
+    const right = b[key];
+    if (
+      !saleDecimalStringsEqual(left.matchedIncome, right.matchedIncome) ||
+      !saleQuantityStringsExactEqual(left.matchedQuantity, right.matchedQuantity)
+    ) {
+      return false;
+    }
+    if (key === "saleItems") {
+      const l = left as ExecutionManifestBudgetV2["matchedTotals"]["saleItems"];
+      const r = right as ExecutionManifestBudgetV2["matchedTotals"]["saleItems"];
+      if (!saleDecimalStringsEqual(l.matchedCostPrice, r.matchedCostPrice)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 export function buildExecutionBudgetFromPartition(
   plan: MatchedOnlyBundlePlanV1,
@@ -100,7 +127,7 @@ export function validateExecutionBudgetAgainstSource(
     return planCheck;
   }
   const fromSource = buildExecutionBudgetFromRosters(plan, rosters, known);
-  if (JSON.stringify(fromSource.matchedTotals) !== JSON.stringify(budget.matchedTotals)) {
+  if (!matchedTotalsEqual(fromSource.matchedTotals, budget.matchedTotals)) {
     return {
       ok: false,
       code: "MANIFEST_BUDGET_SOURCE_MISMATCH",

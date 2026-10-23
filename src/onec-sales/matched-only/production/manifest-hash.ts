@@ -29,11 +29,14 @@ export function computePrivateCaptureBindingHash(manifest: ExecutionManifestV2):
   if (!capture?.destinationPath) {
     return "";
   }
+  const { approvedCaptureHash: _hash, ...captureBody } = capture;
   return sha256CanonicalJson({
-    destinationPath: capture.destinationPath,
+    capture: captureBody,
     planHash: manifest.planHash,
+    planScopeDigest: manifest.plan?.scope.operationsDigest ?? null,
     targetDbFingerprint: manifest.plan?.identity.targetDbFingerprint ?? manifest.target.expectedDbFingerprint,
     executionId: manifest.executionId,
+    expectedExecutableArtifactSha256: manifest.provenance.expectedExecutableArtifactSha256,
   });
 }
 

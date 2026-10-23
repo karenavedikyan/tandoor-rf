@@ -41,6 +41,7 @@ export type ExecutionManifestBudgetV2 = {
 
 export type ExecutionManifestPrivateBackupCapture = {
   status: "NOT_APPROVED" | "APPROVED";
+  approvedPrivateRoot: string | null;
   destinationPath: string | null;
   approvedCaptureHash: string | null;
   humanCaptureRef: string | null;

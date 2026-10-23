@@ -21,4 +21,4 @@ export const DRAFT_MIGRATION_049_SQL_SHA256 =
 
 /** Synthetic local PG harness only — pinned executable artifact digest for verified write tests. */
 export const SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256 =
-  "8f4e3d2c1b0a9876543210fedcba9876543210fedcba9876543210fedcba9876";
+  "5e505993e697a67afabc6c41d391e6d34e529287db4f0c6884a69d7719c8d195";

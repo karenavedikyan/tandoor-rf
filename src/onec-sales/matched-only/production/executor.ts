@@ -6,6 +6,7 @@ import type { ExecutionManifestV2 } from "./manifest-types";
 import { runProductionPreflight } from "./preflight";
 import { resolveProductionDatabaseUrl } from "./database-url";
 import type { ProductionApplyWriteBinding, ProductionRollbackWriteBinding } from "./apply-write-guard";
+import { mintProductionWriteGrant } from "./production-verified-write";
 
 export type ProductionExecutorHarnessOptions = {
   /** Test harness only — never set from public production CLI. */
@@ -118,6 +119,15 @@ export async function runProductionWriteApply(
   if (!binding) {
     return { ok: false, code: "PRODUCTION_BINDING_INCOMPLETE", message: "Manifest missing execution budget or provenance." };
   }
+  const grant = await mintProductionWriteGrant({
+    manifest,
+    operation: "apply",
+    approvedExecutionHash: input.approvedExecutionHash,
+    applyBinding: binding,
+  });
+  if (!grant.ok) {
+    return { ok: false, code: grant.code, message: grant.message };
+  }
   const result = await executeMatchedOnlyApply(
     issueProductionExecutionCapability(urlResult.databaseUrl),
     urlResult.databaseUrl,
@@ -128,6 +138,7 @@ export async function runProductionWriteApply(
     manifest.backup.expectedSha256,
     undefined,
     binding,
+    grant.grantId,
   );
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };
@@ -171,6 +182,15 @@ export async function runProductionWriteRollback(
   if (!rollbackBinding) {
     return { ok: false, code: "PRODUCTION_BINDING_INCOMPLETE", message: "Manifest missing rollback binding fields." };
   }
+  const grant = await mintProductionWriteGrant({
+    manifest,
+    operation: "rollback",
+    approvedExecutionHash: input.approvedExecutionHash,
+    rollbackBinding,
+  });
+  if (!grant.ok) {
+    return { ok: false, code: grant.code, message: grant.message };
+  }
   const result = await executeMatchedOnlyRollback(
     issueProductionExecutionCapability(urlResult.databaseUrl),
     urlResult.databaseUrl,
@@ -179,6 +199,7 @@ export async function runProductionWriteRollback(
     backup,
     manifest.backup.expectedSha256,
     rollbackBinding,
+    grant.grantId,
   );
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };

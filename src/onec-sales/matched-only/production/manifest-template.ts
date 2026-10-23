@@ -25,6 +25,7 @@ export function buildNotApprovedExecutionManifestTemplate(
     executionBudget: null,
     privateBackupCapture: {
       status: "NOT_APPROVED",
+      approvedPrivateRoot: null,
       destinationPath: null,
       approvedCaptureHash: null,
       humanCaptureRef: null,

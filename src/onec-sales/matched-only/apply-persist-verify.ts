@@ -22,6 +22,7 @@ export async function verifyMatchedOnlyPersistedOutcome(
     returnItems: number;
   },
   executionBudget?: ExecutionManifestBudgetV2 | null,
+  approvedPlanHash?: string,
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   const expected = {
     saleAggregate: partition.saleAggregate.counts.matched,
@@ -43,7 +44,13 @@ export async function verifyMatchedOnlyPersistedOutcome(
     };
   }
 
-  const materialized = await verifyMatchedMaterializedRows(client, plan, partition, rosters);
+  const materialized = await verifyMatchedMaterializedRows(
+    client,
+    plan,
+    partition,
+    rosters,
+    approvedPlanHash ?? "",
+  );
   if (!materialized.ok) {
     return materialized;
   }
