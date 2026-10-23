@@ -44,7 +44,9 @@ import { verifyMatchedOnlyPersistedOutcome } from "./apply-persist-verify";
 import { assertMatchedOnlySchemaReady } from "./production/schema-readiness";
 import {
   assertProductionApplyContextUnderLock,
+  assertProductionRollbackContextUnderLock,
   type ProductionApplyWriteBinding,
+  type ProductionRollbackWriteBinding,
 } from "./production/apply-write-guard";
 
 async function assertApplySchemaReady(
@@ -92,7 +94,7 @@ export async function executeMatchedOnlyApply(
   testHooks?: { failBeforeCommit?: boolean },
   productionBinding?: ProductionApplyWriteBinding,
 ): Promise<MatchedOnlyRunResult> {
-  assertExecutionCapability(capability);
+  assertExecutionCapability(capability, databaseUrl);
   if (capability.channel === "production" && !productionBinding) {
     return {
       ok: false,
@@ -147,16 +149,6 @@ export async function executeMatchedOnlyApply(
     }
     lockHeld = true;
 
-    if (capability.channel === "production" && productionBinding) {
-      await assertProductionApplyContextUnderLock(
-        client,
-        productionBinding,
-        plan,
-        backup,
-        approvedPlanHash,
-      );
-    }
-
     const existing = await loadApplyRun(client, approvedPlanHash);
     if (existing?.status === "commit_uncertain") {
       await client.query("ROLLBACK");
@@ -171,6 +163,17 @@ export async function executeMatchedOnlyApply(
 
     const noOpReceipt = await tryResolveAlreadyAppliedNoOp(client, plan, approvedPlanHash);
     if (noOpReceipt) {
+      if (capability.channel === "production" && productionBinding) {
+        await assertProductionApplyContextUnderLock(
+          client,
+          productionBinding,
+          plan,
+          backup,
+          approvedPlanHash,
+          "already_applied",
+          existing?.after_state_sha256 ?? undefined,
+        );
+      }
       await client.query("COMMIT");
       transactionOpen = false;
       return {
@@ -180,6 +183,17 @@ export async function executeMatchedOnlyApply(
         planHash: approvedPlanHash,
         receipt: noOpReceipt,
       };
+    }
+
+    if (capability.channel === "production" && productionBinding) {
+      await assertProductionApplyContextUnderLock(
+        client,
+        productionBinding,
+        plan,
+        backup,
+        approvedPlanHash,
+        "fresh_apply",
+      );
     }
 
     await validateApprovedPlanAgainstLive(client, plan, rosters);
@@ -231,6 +245,7 @@ export async function executeMatchedOnlyApply(
         returnsAggregate: insertedRetAgg,
         returnItems: insertedRetItems,
       },
+      capability.channel === "production" ? productionBinding?.executionBudget : null,
     );
     if (!persistCheck.ok) {
       throw new Error(persistCheck.code);
@@ -282,7 +297,7 @@ export async function executeMatchedOnlyApply(
             productionBinding: {
               manifestContentHash: productionBinding.manifestContentHash,
               codeArtifactLabel: productionBinding.codeArtifactLabel,
-              returnsMatchedIncome: productionBinding.executionBudget.returnsMatchedIncome,
+              expectedExecutableArtifactSha256: productionBinding.expectedExecutableArtifactSha256,
             },
           }
         : {}),
@@ -358,8 +373,17 @@ export async function executeMatchedOnlyRollback(
   approvedPlanHash: string,
   backup: MatchedOnlyScopedBackupV1,
   expectedBackupSha256: string,
+  productionRollbackBinding?: ProductionRollbackWriteBinding,
 ): Promise<MatchedOnlyRunResult> {
-  assertExecutionCapability(capability);
+  assertExecutionCapability(capability, databaseUrl);
+  if (capability.channel === "production" && !productionRollbackBinding) {
+    return {
+      ok: false,
+      mode: "rollback",
+      code: "PRODUCTION_BINDING_REQUIRED",
+      message: "Production rollback requires verified execution binding.",
+    };
+  }
   if (planHashFromPlan(plan) !== approvedPlanHash) {
     return { ok: false, mode: "rollback", code: "PLAN_HASH_MISMATCH", message: "Plan hash mismatch." };
   }
@@ -394,6 +418,16 @@ export async function executeMatchedOnlyRollback(
       return { ok: false, mode: "rollback", code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
     }
     lockHeld = true;
+
+    if (capability.channel === "production" && productionRollbackBinding) {
+      await assertProductionRollbackContextUnderLock(
+        client,
+        productionRollbackBinding,
+        plan,
+        backup,
+        approvedPlanHash,
+      );
+    }
 
     const run = await loadApplyRun(client, approvedPlanHash);
     if (!run || run.status !== "applied" || !run.after_state_sha256) {

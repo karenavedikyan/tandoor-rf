@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { executeMatchedOnlyApply, executeMatchedOnlyRollback } from "../apply-pipeline";
-import { createProductionExecutionCapability } from "../execution-capability";
+import { issueProductionExecutionCapability } from "../execution-capability";
 import type { MatchedOnlyScopedBackupV1 } from "../types";
 import type { ExecutionManifestV2 } from "./manifest-types";
 import { runProductionPreflight } from "./preflight";
 import { resolveProductionDatabaseUrl } from "./database-url";
-import type { ProductionApplyWriteBinding } from "./apply-write-guard";
+import type { ProductionApplyWriteBinding, ProductionRollbackWriteBinding } from "./apply-write-guard";
 
 export type ProductionExecutorHarnessOptions = {
   /** Test harness only — never set from public production CLI. */
@@ -40,7 +40,12 @@ async function loadRostersFromManifest(manifest: ExecutionManifestV2) {
 }
 
 function productionApplyBinding(manifest: ExecutionManifestV2): ProductionApplyWriteBinding | null {
-  if (!manifest.executionBudget || !manifest.provenance.codeArtifactLabel || !manifest.approval.validUntil) {
+  if (
+    !manifest.executionBudget ||
+    !manifest.provenance.codeArtifactLabel ||
+    !manifest.provenance.expectedExecutableArtifactSha256 ||
+    !manifest.approval.validUntil
+  ) {
     return null;
   }
   if (!manifest.backup.expectedSha256) {
@@ -49,9 +54,35 @@ function productionApplyBinding(manifest: ExecutionManifestV2): ProductionApplyW
   return {
     manifestContentHash: manifest.contentHash,
     codeArtifactLabel: manifest.provenance.codeArtifactLabel,
+    expectedExecutableArtifactSha256: manifest.provenance.expectedExecutableArtifactSha256,
     approvalValidUntil: manifest.approval.validUntil,
     executionBudget: manifest.executionBudget,
     expectedBackupSha256: manifest.backup.expectedSha256,
+  };
+}
+
+function productionRollbackBinding(manifest: ExecutionManifestV2): ProductionRollbackWriteBinding | null {
+  const rollback = manifest.rollback;
+  if (
+    !manifest.provenance.codeArtifactLabel ||
+    !manifest.provenance.expectedExecutableArtifactSha256 ||
+    !manifest.approval.validUntil ||
+    !manifest.backup.expectedSha256 ||
+    !rollback?.originalApplyPlanHash ||
+    !rollback.expectedLiveAfterStateSha256 ||
+    !rollback.rollbackScopeHash
+  ) {
+    return null;
+  }
+  return {
+    manifestContentHash: manifest.contentHash,
+    codeArtifactLabel: manifest.provenance.codeArtifactLabel,
+    expectedExecutableArtifactSha256: manifest.provenance.expectedExecutableArtifactSha256,
+    approvalValidUntil: manifest.approval.validUntil,
+    expectedBackupSha256: manifest.backup.expectedSha256,
+    originalApplyPlanHash: rollback.originalApplyPlanHash,
+    expectedLiveAfterStateSha256: rollback.expectedLiveAfterStateSha256,
+    rollbackScopeHash: rollback.rollbackScopeHash,
   };
 }
 
@@ -88,7 +119,7 @@ export async function runProductionWriteApply(
     return { ok: false, code: "PRODUCTION_BINDING_INCOMPLETE", message: "Manifest missing execution budget or provenance." };
   }
   const result = await executeMatchedOnlyApply(
-    createProductionExecutionCapability(),
+    issueProductionExecutionCapability(urlResult.databaseUrl),
     urlResult.databaseUrl,
     rosters,
     manifest.plan,
@@ -136,13 +167,18 @@ export async function runProductionWriteRollback(
   const backup = JSON.parse(
     await readFile(manifest.backup.filePath, "utf8"),
   ) as MatchedOnlyScopedBackupV1;
+  const rollbackBinding = productionRollbackBinding(manifest);
+  if (!rollbackBinding) {
+    return { ok: false, code: "PRODUCTION_BINDING_INCOMPLETE", message: "Manifest missing rollback binding fields." };
+  }
   const result = await executeMatchedOnlyRollback(
-    createProductionExecutionCapability(),
+    issueProductionExecutionCapability(urlResult.databaseUrl),
     urlResult.databaseUrl,
     manifest.plan,
     manifest.planHash,
     backup,
     manifest.backup.expectedSha256,
+    rollbackBinding,
   );
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };

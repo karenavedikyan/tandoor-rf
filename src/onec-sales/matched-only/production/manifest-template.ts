@@ -26,6 +26,9 @@ export function buildNotApprovedExecutionManifestTemplate(
     privateBackupCapture: {
       status: "NOT_APPROVED",
       destinationPath: null,
+      approvedCaptureHash: null,
+      humanCaptureRef: null,
+      validUntil: null,
     },
     target: {
       controlPlane: {
@@ -37,6 +40,7 @@ export function buildNotApprovedExecutionManifestTemplate(
     },
     provenance: {
       codeArtifactLabel: null,
+      expectedExecutableArtifactSha256: null,
       observedRuntimeFingerprint: null,
     },
     planHash: null,

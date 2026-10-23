@@ -17,8 +17,10 @@ import { resolveProductionDatabaseUrl } from "./database-url";
 import { assertMatchedOnlySchemaReady } from "./schema-readiness";
 import { withReadOnlyPreflightSession, PREFLIGHT_CONNECT_TIMEOUT_MS } from "./read-only-session";
 import { validateExecutionManifestForRun } from "./manifest-validate";
+import { validateExecutionBudgetAgainstSource } from "./manifest-budget";
+import { loadKnownLegalGuidSet } from "../catalog";
 import { EXPECTED_PRODUCTION_DB_FINGERPRINT } from "./target-policy";
-import { assertManifestCodeProvenance, resolveRuntimeCodeArtifactLabel } from "./runtime-provenance";
+import { assertManifestCodeProvenance } from "./runtime-provenance";
 
 export type ProductionPreflightOptions = {
   manifest: ExecutionManifestV2;
@@ -88,10 +90,9 @@ export async function runProductionPreflight(
     return { ok: false, code: manifestCheck.code, message: manifestCheck.message };
   }
   const manifest = manifestCheck.manifest;
-  const runtime = resolveRuntimeCodeArtifactLabel();
-  const provenanceCheck = assertManifestCodeProvenance(
+  const provenanceCheck = await assertManifestCodeProvenance(
     manifest.provenance.codeArtifactLabel,
-    runtime,
+    manifest.provenance.expectedExecutableArtifactSha256,
     options.writeMode,
   );
   if (!provenanceCheck.ok) {
@@ -142,7 +143,7 @@ export async function runProductionPreflight(
           planHash: "",
           liveDbFingerprint: identity.fingerprint,
           schemaReady: true,
-          runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+          runtimeCodeArtifactLabel: manifest.provenance.codeArtifactLabel,
           phase: "template",
         };
       }
@@ -210,7 +211,7 @@ export async function runProductionPreflight(
           planHash: manifest.planHash,
           liveDbFingerprint: identity.fingerprint,
           schemaReady: true,
-          runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+          runtimeCodeArtifactLabel: manifest.provenance.codeArtifactLabel,
           phase: "rollback_ready",
           backupProof,
         };
@@ -228,7 +229,7 @@ export async function runProductionPreflight(
             planHash: manifest.planHash,
             liveDbFingerprint: identity.fingerprint,
             schemaReady: true,
-            runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+            runtimeCodeArtifactLabel: manifest.provenance.codeArtifactLabel,
             phase: "already_applied",
             backupProof,
           };
@@ -241,6 +242,18 @@ export async function runProductionPreflight(
       }
 
       const rosters = await loadRostersFromManifest(manifest);
+      if (manifest.executionBudget) {
+        const known = await loadKnownLegalGuidSet(client);
+        const budgetCheck = validateExecutionBudgetAgainstSource(
+          manifest.plan!,
+          manifest.executionBudget,
+          rosters,
+          known,
+        );
+        if (!budgetCheck.ok) {
+          return { ok: false, code: budgetCheck.code, message: budgetCheck.message };
+        }
+      }
       const built = await buildMatchedOnlyBundlePlan(client, {
         ...rosters,
         targetDbFingerprint: identity.fingerprint,
@@ -261,7 +274,7 @@ export async function runProductionPreflight(
         planHash: manifest.planHash,
         liveDbFingerprint: identity.fingerprint,
         schemaReady: true,
-        runtimeCodeArtifactLabel: runtime.ok ? runtime.label : null,
+        runtimeCodeArtifactLabel: manifest.provenance.codeArtifactLabel,
         phase: "fresh_apply",
         backupProof,
       };

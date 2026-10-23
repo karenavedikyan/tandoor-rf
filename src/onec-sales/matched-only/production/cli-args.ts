@@ -15,6 +15,7 @@ export type ProductionCliArgs = {
   operation: "apply" | "rollback";
   manifestFile?: string;
   approvedExecutionHash?: string;
+  approvedCaptureHash?: string;
   templateOperation?: "apply" | "rollback";
 };
 
@@ -28,6 +29,7 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
   let emitTemplate = false;
   let manifestFile: string | undefined;
   let approvedExecutionHash: string | undefined;
+  let approvedCaptureHash: string | undefined;
   let templateOperation: "apply" | "rollback" = "apply";
   let operation: "apply" | "rollback" = "apply";
 
@@ -74,6 +76,10 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
     }
     if (arg === "--approved-execution-hash") {
       approvedExecutionHash = argv[++i]?.toLowerCase();
+      continue;
+    }
+    if (arg === "--approved-capture-hash") {
+      approvedCaptureHash = argv[++i]?.toLowerCase();
       continue;
     }
     if (arg === "--template-operation") {
@@ -160,6 +166,13 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
   }
 
   if (capturePrivateBackup) {
+    if (!approvedCaptureHash) {
+      return {
+        ok: false,
+        code: "CLI_ARGS_INVALID",
+        message: "capture-private-backup requires --approved-capture-hash.",
+      };
+    }
     return {
       ok: true,
       args: {
@@ -167,6 +180,7 @@ export function parseProductionCliArgs(argv: string[]): ParsedProductionCliArgs 
         operation,
         manifestFile,
         approvedExecutionHash,
+        approvedCaptureHash,
       },
     };
   }

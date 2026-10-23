@@ -1,11 +1,14 @@
 import type { PoolClient } from "pg";
+import { loadKnownLegalGuidSet } from "./catalog";
 import type { MatchedOnlyBundleInput } from "./guards";
 import type { BundlePartition } from "./partition";
 import type { MatchedOnlyBundlePlanV1 } from "./types";
-
-function sumMatchedIncome(lines: { income: number | string }[]): number {
-  return lines.reduce((acc, line) => acc + Number(line.income), 0);
-}
+import type { ExecutionManifestBudgetV2 } from "./production/manifest-types";
+import {
+  verifyMatchedMaterializedRows,
+  verifyPersistedTotalsMatchBudget,
+} from "./apply-persist-materialization";
+import { validateExecutionBudgetAgainstSource } from "./production/manifest-budget";
 
 export async function verifyMatchedOnlyPersistedOutcome(
   client: PoolClient,
@@ -18,55 +21,14 @@ export async function verifyMatchedOnlyPersistedOutcome(
     returnsAggregate: number;
     returnItems: number;
   },
+  executionBudget?: ExecutionManifestBudgetV2 | null,
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
-  const months = plan.scope.saleMonthsIso;
-  const saleAgg = await client.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM onec_v3_legal_sales_lines
-     WHERE sale_month = ANY($1::date[])`,
-    [months],
-  );
-  const saleItems = await client.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
-    [months],
-  );
-  const retAgg = await client.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM onec_v3_legal_return_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
-    [months],
-  );
-  const retItems = await client.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM onec_v3_legal_return_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
-    [months],
-  );
-
-  const actual = {
-    saleAggregate: Number(saleAgg.rows[0]?.n ?? "0"),
-    saleItems: Number(saleItems.rows[0]?.n ?? "0"),
-    returnsAggregate: Number(retAgg.rows[0]?.n ?? "0"),
-    returnItems: Number(retItems.rows[0]?.n ?? "0"),
-  };
-
   const expected = {
     saleAggregate: partition.saleAggregate.counts.matched,
     saleItems: partition.saleItems.counts.matched,
     returnsAggregate: partition.returnsAggregate.counts.matched,
     returnItems: partition.returnItems.counts.matched,
   };
-
-  if (
-    actual.saleAggregate !== expected.saleAggregate ||
-    actual.saleItems !== expected.saleItems ||
-    actual.returnsAggregate !== expected.returnsAggregate ||
-    actual.returnItems !== expected.returnItems
-  ) {
-    return {
-      ok: false,
-      code: "PERSISTED_ROW_COUNT_MISMATCH",
-      message: "Persisted matched row counts do not match approved operation.",
-    };
-  }
 
   if (
     inserted.saleAggregate !== expected.saleAggregate ||
@@ -81,20 +43,21 @@ export async function verifyMatchedOnlyPersistedOutcome(
     };
   }
 
-  const incomeRow = await client.query<{ income: string }>(
-    `SELECT COALESCE(SUM(income), 0)::text AS income
-     FROM onec_v3_legal_return_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
-    [months],
-  );
-  const persistedIncome = Number(incomeRow.rows[0]?.income ?? "0");
-  const expectedIncome = sumMatchedIncome(partition.returnItems.matched);
-  if (persistedIncome !== expectedIncome) {
-    return {
-      ok: false,
-      code: "PERSISTED_MONETARY_TOTAL_MISMATCH",
-      message: "Persisted return-item income does not match source-derived totals.",
-    };
+  const materialized = await verifyMatchedMaterializedRows(client, plan, partition, rosters);
+  if (!materialized.ok) {
+    return materialized;
+  }
+
+  if (executionBudget) {
+    const known = await loadKnownLegalGuidSet(client);
+    const sourceBudget = validateExecutionBudgetAgainstSource(plan, executionBudget, rosters, known);
+    if (!sourceBudget.ok) {
+      return sourceBudget;
+    }
+    const totals = await verifyPersistedTotalsMatchBudget(client, plan, executionBudget);
+    if (!totals.ok) {
+      return totals;
+    }
   }
 
   return { ok: true };

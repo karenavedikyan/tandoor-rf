@@ -12,7 +12,9 @@
 
 Machine checks vs external evidence:
 
-- **Machine:** PostgreSQL `targetDbFingerprint` via identity resolver; migration filenames 047–049 in `schema_migrations`; sidecar table shape; manifest `contentHash`; source-derived plan hash; backup SHA vs bytes; import lock; scoped DML in shared SQL core.
+- **Machine:** PostgreSQL `targetDbFingerprint` via identity resolver; migration filenames 047–049 in `schema_migrations` (filename/applied_at only — not a checksum); guarded table column types; manifest `contentHash` (binds approval metadata except `approvedExecutionHash`); `executionBudget.matchedTotals` per dataset (scale-4 money / scale-6 quantity, not aggregate+items sums); source-derived plan hash; backup SHA vs bytes; import lock; pre-COMMIT row/key/value materialization checks; preflight `REPEATABLE READ` RO snapshot (`BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`).
+- **Executable artifact:** verified write requires manifest `provenance.expectedExecutableArtifactSha256` matching runtime `MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256` (or SHA of `MATCHED_ONLY_EXECUTABLE_ARTIFACT_PATH`) — label alone is not proof.
+- **Private capture:** separate `privateBackupCapture` consent (`approvedCaptureHash`, `humanCaptureRef`, `validUntil`) plus CLI `--approved-capture-hash`; apply manifest must be `APPROVED`; exclusive destination create (no overwrite); live DB fingerprint must match plan.
 - **External (required):** Timeweb control-plane App `258307` / DB `4212461` match operator context; owner approval hash; private backup file custody; migration 049 apply on production (not done by this CLI).
 
 Pinned production DB fingerprint (stop if live differs):

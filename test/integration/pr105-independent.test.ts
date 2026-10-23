@@ -19,7 +19,7 @@ import { backupSha256 } from "../../src/onec-sales/matched-only/backup";
 import { planHashFromPlan } from "../../src/onec-sales/matched-only/plan-build";
 import { captureScopedBeforeState } from "../../src/onec-sales/matched-only/state-digest";
 import { computeOperationsDigest } from "../../src/onec-sales/matched-only/scope";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNotApprovedExecutionManifestTemplate } from "../../src/onec-sales/matched-only/production/manifest-template";
@@ -30,7 +30,6 @@ import {
 import { validateExecutionManifestForRun } from "../../src/onec-sales/matched-only/production/manifest-validate";
 import {
   assertManifestCodeProvenance,
-  resolveRuntimeCodeArtifactLabel,
 } from "../../src/onec-sales/matched-only/production/runtime-provenance";
 import { resolveProductionDatabaseUrl } from "../../src/onec-sales/matched-only/production/database-url";
 import { parseProductionCliArgs } from "../../src/onec-sales/matched-only/production/cli-args";
@@ -39,7 +38,12 @@ import {
   runProductionWriteApplyHarness,
   runProductionWriteRollbackHarness,
 } from "../../src/onec-sales/matched-only/production/harness";
-import { buildExecutionBudgetFromPlan } from "../../src/onec-sales/matched-only/production/manifest-budget";
+import { buildExecutionBudgetFromRosters } from "../../src/onec-sales/matched-only/production/manifest-budget";
+import { SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256 } from "../../src/onec-sales/matched-only/production/target-policy";
+import { capturePrivateBusinessBackupForManifest } from "../../src/onec-sales/matched-only/production/private-backup-capture";
+import { withReadOnlyPreflightSession } from "../../src/onec-sales/matched-only/production/read-only-session";
+import { issueTestExecutionCapability } from "../../src/onec-sales/matched-only/execution-capability";
+import { executeMatchedOnlyApply } from "../../src/onec-sales/matched-only/apply-pipeline";
 import { assertMatchedOnlySchemaReady } from "../../src/onec-sales/matched-only/production/schema-readiness";
 import type { ExecutionManifestV2 } from "../../src/onec-sales/matched-only/production/manifest-types";
 
@@ -506,7 +510,8 @@ async function productionFixture(operation: "apply" | "rollback" = "apply") {
   );
   const backupPath = join(d, "synthetic-backup.json");
   await writeFile(backupPath, JSON.stringify(p.backup), { mode: 0o600 });
-  const executionBudget = buildExecutionBudgetFromPlan(p.plan, "-10.000000");
+  const known = new Set([LEGAL_A, LEGAL_B].map((g) => g.toLowerCase()));
+  const executionBudget = buildExecutionBudgetFromRosters(p.plan, rosters, known);
   const manifest = withBoundApprovalHash({
     ...buildNotApprovedExecutionManifestTemplate(operation),
     executionId: "synthetic-only-execution",
@@ -516,7 +521,11 @@ async function productionFixture(operation: "apply" | "rollback" = "apply") {
       humanDecisionRef: "synthetic-test-not-human-consent",
       validUntil: new Date(Date.now() + 3_600_000).toISOString(),
     },
-    provenance: { codeArtifactLabel: "synthetic-build", observedRuntimeFingerprint: null },
+    provenance: {
+      codeArtifactLabel: "synthetic-build",
+      expectedExecutableArtifactSha256: SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256,
+      observedRuntimeFingerprint: null,
+    },
     executionBudget,
     plan: p.plan,
     planHash: p.hash,
@@ -536,11 +545,17 @@ function validateApproved(manifest: ExecutionManifestV2) {
 }
 
 async function productionEnv<T>(work: () => Promise<T>): Promise<T> {
-  const keys = ["DATABASE_URL", "TEST_DATABASE_URL", "MATCHED_ONLY_CODE_ARTIFACT_LABEL"] as const;
+  const keys = [
+    "DATABASE_URL",
+    "TEST_DATABASE_URL",
+    "MATCHED_ONLY_CODE_ARTIFACT_LABEL",
+    "MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256",
+  ] as const;
   const old = keys.map((k) => process.env[k]);
   process.env.DATABASE_URL = url;
   delete process.env.TEST_DATABASE_URL;
   process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = "synthetic-build";
+  process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256 = SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256;
   try {
     return await work();
   } finally {
@@ -593,15 +608,19 @@ it("production: missing expiry, invalid expiry, and missing human reference fail
   assert.deepEqual(outcomes, [false, false, false]);
 });
 
-it("production: unpinned code plus arbitrary environment label is not verified provenance", () => {
-  const old = process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
+it("production: unpinned code plus arbitrary environment label is not verified provenance", async () => {
+  const oldLabel = process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
+  const oldSha = process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256;
   process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = "operator-typed-not-a-build-proof";
+  delete process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256;
   try {
-    const result = assertManifestCodeProvenance(null, resolveRuntimeCodeArtifactLabel(), true);
+    const result = await assertManifestCodeProvenance(null, null, true);
     assert.equal(result.ok, false, "missing manifest provenance cannot be satisfied by arbitrary environment text");
   } finally {
-    if (old === undefined) delete process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
-    else process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = old;
+    if (oldLabel === undefined) delete process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
+    else process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = oldLabel;
+    if (oldSha === undefined) delete process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256;
+    else process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256 = oldSha;
   }
 });
 
@@ -734,10 +753,18 @@ it("production harness: fresh apply → no-op → rollback on local PG", async (
   if (freshPreflight.ok) {
     assert.equal(freshPreflight.phase, "fresh_apply");
   }
-  const applied = await productionEnv(() =>
-    runProductionWriteApplyHarness({ manifest: f.manifest, approvedExecutionHash: hash, targetFingerprintPolicy: policy }),
-  );
+  const applyInput = {
+    manifest: f.manifest,
+    approvedExecutionHash: hash,
+    targetFingerprintPolicy: policy,
+  };
+  const applied = await productionEnv(() => runProductionWriteApplyHarness(applyInput));
   assert.equal(applied.ok, true, JSON.stringify(applied));
+  const secondApply = await productionEnv(() => runProductionWriteApplyHarness(applyInput));
+  assert.equal(secondApply.ok, true, JSON.stringify(secondApply));
+  if (secondApply.ok) {
+    assert.equal((secondApply.receipt as { status?: string })?.status, "no_op_already_applied");
+  }
   const noopPreflight = await preflightFixture(f);
   assert.equal(noopPreflight.ok, true, JSON.stringify(noopPreflight));
   if (noopPreflight.ok) {
@@ -765,4 +792,211 @@ it("production harness: fresh apply → no-op → rollback on local PG", async (
     "SELECT COUNT(*)::text AS n FROM onec_v3_legal_sale_item_lines",
   );
   assert.equal(rows.rows[0]?.n, "0");
+});
+
+it("Computer d19: expiry cannot be extended using previously approved hash", async () => {
+  const f = await productionFixture();
+  const oldHash = f.manifest.contentHash;
+  const changed = {
+    ...f.manifest,
+    approval: {
+      ...f.manifest.approval,
+      validUntil: new Date(Date.now() + 864_000_000).toISOString(),
+      humanDecisionRef: "different-decision",
+    },
+  };
+  const result = validateExecutionManifestForRun({
+    manifest: changed,
+    operation: "apply",
+    requireApproved: true,
+    approvedExecutionHash: oldHash,
+  });
+  assert.equal(result.ok, false, "approval metadata must be bound, not freely replaceable under old approval hash");
+});
+
+it("Computer d19: actual production facade second apply is a no-op", async () => {
+  const f = await productionFixture();
+  const input = {
+    manifest: f.manifest,
+    approvedExecutionHash: f.manifest.contentHash,
+    targetFingerprintPolicy: f.p.plan.identity.targetDbFingerprint,
+  };
+  const first = await productionEnv(() => runProductionWriteApplyHarness(input));
+  assert.equal(first.ok, true, JSON.stringify(first));
+  const second = await productionEnv(() => runProductionWriteApplyHarness(input));
+  assert.equal(second.ok, true, JSON.stringify(second));
+  if (second.ok) assert.equal((second.receipt as { status?: string })?.status, "no_op_already_applied");
+});
+
+for (const [table, field] of [
+  ["onec_v3_legal_sales_lines", "income"],
+  ["onec_v3_legal_sale_item_lines", "income"],
+  ["onec_v3_legal_return_lines", "income"],
+  ["onec_v3_legal_return_item_lines", "quantity"],
+  ["onec_v3_legal_sale_item_lines", "cost_price"],
+] as const) {
+  it(`Computer d19: actual ${table}.${field} is verified before commit`, async () => {
+    const f = await productionFixture();
+    await pool.query(
+      `CREATE FUNCTION qa_change_money() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.${field} := NEW.${field} + 1; RETURN NEW; END $$`,
+    );
+    await pool.query(
+      `CREATE TRIGGER qa_change_money BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION qa_change_money()`,
+    );
+    const r = await runMatchedOnlyApply(url, f.rosters, f.p.plan, f.p.hash, f.p.backup, f.p.sha);
+    assert.equal(r.ok, false, `unverified persisted ${table}.${field} committed: ${JSON.stringify(r)}`);
+    const n = await pool.query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM ${table}`);
+    assert.equal(n.rows[0]?.n, "0", "mismatch must rollback, not commit then report failure");
+  });
+}
+
+it("Computer d19: exact decimal legitimate return income -0.1 plus -0.2 succeeds", async () => {
+  await fresh();
+  const rosters = {
+    ...bundle(),
+    returnsAggregate: parse(parseLegalReturnsJsonBytes, [
+      buildReturnRecord({ legalGuid: LEGAL_B, income: "-0.3", quantity: -2 }),
+    ]),
+    returnItems: parse(parseLegalReturnItemsJsonBytes, [
+      buildReturnRecord({ legalGuid: LEGAL_B, income: "-0.1", quantity: -1, withItems: true }),
+      buildReturnRecord({ legalGuid: LEGAL_B, income: "-0.2", quantity: -1, withItems: true }),
+    ]),
+  };
+  const p = await planned(rosters);
+  const r = await runMatchedOnlyApply(url, rosters, p.plan, p.hash, p.backup, p.sha);
+  assert.equal(r.ok, true, `exact decimals cannot be compared through binary Number: ${JSON.stringify(r)}`);
+});
+
+it("Computer d19: code provenance cannot be forged by matching arbitrary environment label", async () => {
+  const old = process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
+  process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = "made-up-unverified-build";
+  process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256 = SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256;
+  try {
+    assert.equal(
+      (await assertManifestCodeProvenance("made-up-unverified-build", "deadbeef".repeat(8), true)).ok,
+      false,
+    );
+  } finally {
+    if (old === undefined) delete process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL;
+    else process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = old;
+  }
+});
+
+it("Computer d19: RO preflight is repeatable-read, not a mixed read-committed snapshot", async () => {
+  const isolation = await withReadOnlyPreflightSession(pool, async (c) =>
+    (await c.query("SHOW transaction_isolation")).rows[0].transaction_isolation,
+  );
+  assert.equal(isolation, "repeatable read");
+});
+
+it("Computer d19: direct core cannot use test capability with TEST_DATABASE_URL absent", async () => {
+  const f = await productionFixture();
+  const r = await productionEnv(async () => {
+    try {
+      const capability = issueTestExecutionCapability(url);
+      return await executeMatchedOnlyApply(
+        capability,
+        url,
+        f.rosters,
+        f.p.plan,
+        f.p.hash,
+        f.p.backup,
+        f.p.sha,
+      );
+    } catch {
+      return { ok: false as const, mode: "apply" as const, code: "TEST_DATABASE_REQUIRED", message: "" };
+    }
+  });
+  assert.equal(r.ok, false, "public capability factory must not bypass channel target/approval guard");
+});
+
+it("Computer d19: private capture without independent capture consent cannot export business rows", async () => {
+  const f = await productionFixture();
+  const m = withComputedContentHash({
+    ...f.manifest,
+    approval: {
+      status: "NOT_APPROVED",
+      approvedExecutionHash: null,
+      humanDecisionRef: null,
+      validUntil: null,
+    },
+    privateBackupCapture: {
+      status: "APPROVED",
+      destinationPath: join(f.scratchDir, "unauthorized-export.json"),
+      approvedCaptureHash: "a".repeat(64),
+      humanCaptureRef: "forged",
+      validUntil: new Date(Date.now() + 3_600_000).toISOString(),
+    },
+  });
+  const r = await productionEnv(() =>
+    capturePrivateBusinessBackupForManifest({ manifest: m, plan: f.p.plan, approvedCaptureHash: "a".repeat(64) }),
+  );
+  assert.equal(r.ok, false, "one editable capture.status field is not independent consent or target verification");
+});
+
+it("Computer d19: private capture cannot overwrite an existing backup", async () => {
+  const f = await productionFixture();
+  const destination = join(f.scratchDir, "keep-original.json");
+  await writeFile(destination, "SYNTHETIC ORIGINAL MUST SURVIVE", { mode: 0o600 });
+  const { withBoundCaptureHash } = await import("../../src/onec-sales/matched-only/production/manifest-hash");
+  const m = withBoundCaptureHash(
+    withBoundApprovalHash({
+      ...f.manifest,
+      privateBackupCapture: {
+        status: "APPROVED",
+        destinationPath: destination,
+        approvedCaptureHash: null,
+        humanCaptureRef: "synthetic-capture-consent",
+        validUntil: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+    }),
+  );
+  const captureHash = m.privateBackupCapture!.approvedCaptureHash!;
+  const r = await productionEnv(() =>
+    capturePrivateBusinessBackupForManifest({
+      manifest: m,
+      plan: f.p.plan,
+      approvedCaptureHash: captureHash,
+    }),
+  );
+  const bytes = await readFile(destination, "utf8");
+  assert.equal(bytes, "SYNTHETIC ORIGINAL MUST SURVIVE", `backup overwritten: ${JSON.stringify(r)}`);
+  assert.equal(r.ok, false);
+});
+
+it("Computer d19: approved budget monetary total must equal source and persisted money", async () => {
+  const f = await productionFixture();
+  const m = withBoundApprovalHash({
+    ...f.manifest,
+    executionBudget: {
+      ...f.manifest.executionBudget!,
+      matchedTotals: {
+        ...f.manifest.executionBudget!.matchedTotals,
+        returnItems: {
+          matchedIncome: "999999999999.0000",
+          matchedQuantity: f.manifest.executionBudget!.matchedTotals.returnItems.matchedQuantity,
+        },
+      },
+    },
+  });
+  const r = await productionEnv(() =>
+    runProductionWriteApplyHarness({
+      manifest: m,
+      approvedExecutionHash: m.contentHash,
+      targetFingerprintPolicy: f.p.plan.identity.targetDbFingerprint,
+    }),
+  );
+  assert.equal(r.ok, false, `contradictory approved budget must not commit actual income -10: ${JSON.stringify(r)}`);
+});
+
+it("Computer d19: unchanged counts and totals cannot hide wrong client GUID", async () => {
+  const f = await productionFixture();
+  await pool.query(
+    `CREATE FUNCTION qa_wrong_client() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.legal_guid := '${LEGAL_A}'::uuid; RETURN NEW; END$$`,
+  );
+  await pool.query(
+    "CREATE TRIGGER qa_wrong_client BEFORE INSERT ON onec_v3_legal_return_item_lines FOR EACH ROW EXECUTE FUNCTION qa_wrong_client()",
+  );
+  const r = await runMatchedOnlyApply(url, f.rosters, f.p.plan, f.p.hash, f.p.backup, f.p.sha);
+  assert.equal(r.ok, false, "persisted source-key/client correspondence must be checked, not merely total income");
 });

@@ -18,3 +18,7 @@ export const REQUIRED_MATCHED_ONLY_MIGRATIONS = [
 /** Draft migration 049 SQL SHA-256 (release evidence; not applied in production yet). */
 export const DRAFT_MIGRATION_049_SQL_SHA256 =
   "992e21c6dce071bab2a4e915612618c576be0862d2afe963ad957249dcd612eb";
+
+/** Synthetic local PG harness only — pinned executable artifact digest for verified write tests. */
+export const SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256 =
+  "8f4e3d2c1b0a9876543210fedcba9876543210fedcba9876543210fedcba9876";

@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import { resolveTargetDbIdentityFromUrl } from "../../onec-exchange-v3/target-db-identity";
 import { createImportPool } from "../../onec-clients/apply";
 import { executeMatchedOnlyApply, executeMatchedOnlyRollback } from "./apply-pipeline";
-import { createTestExecutionCapability } from "./execution-capability";
+import { issueTestExecutionCapability } from "./execution-capability";
 import { readBackupFile } from "./backup";
 import { buildMatchedOnlyBundlePlan, planHashFromPlan } from "./plan-build";
 import { captureScopedBackup } from "./scoped-backup-capture";
@@ -100,7 +100,7 @@ export async function runMatchedOnlyApply(
     return channelFailure;
   }
   return executeMatchedOnlyApply(
-    createTestExecutionCapability(),
+    issueTestExecutionCapability(databaseUrl),
     databaseUrl,
     rosters,
     plan,
@@ -115,6 +115,10 @@ export async function captureMatchedOnlyBackupForPlan(
   databaseUrl: string,
   plan: MatchedOnlyBundlePlanV1,
 ): Promise<MatchedOnlyScopedBackupV1> {
+  const channelFailure = assertTestDatabaseChannel(databaseUrl, "validate-backup");
+  if (channelFailure) {
+    throw new Error(channelFailure.ok === false ? channelFailure.message : "TEST_DATABASE_REQUIRED");
+  }
   const pool = createImportPool(databaseUrl);
   const client = await pool.connect();
   try {
@@ -137,7 +141,7 @@ export async function runMatchedOnlyRollback(
     return channelFailure;
   }
   return executeMatchedOnlyRollback(
-    createTestExecutionCapability(),
+    issueTestExecutionCapability(databaseUrl),
     databaseUrl,
     plan,
     approvedPlanHash,

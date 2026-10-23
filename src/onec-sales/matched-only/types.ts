@@ -101,6 +101,6 @@ export type MatchedOnlyApplyReceiptV1 = {
   productionBinding?: {
     manifestContentHash: string;
     codeArtifactLabel: string;
-    returnsMatchedIncome: string;
+    expectedExecutableArtifactSha256: string;
   };
 };

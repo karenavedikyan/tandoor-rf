@@ -18,7 +18,7 @@ export async function withReadOnlyPreflightSession<T>(
   try {
     await client.query(`SET statement_timeout = '${PREFLIGHT_STATEMENT_TIMEOUT_MS}ms'`);
     await client.query(`SET lock_timeout = '${PREFLIGHT_LOCK_TIMEOUT_MS}ms'`);
-    await client.query("BEGIN READ ONLY");
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
     txOpen = true;
     const result = await work(client);
     await client.query("COMMIT");

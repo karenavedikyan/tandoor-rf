@@ -1,23 +1,45 @@
+import { resolveProductionDatabaseUrl } from "./production/database-url";
+
 export type MatchedOnlyExecutionChannel = "test" | "production";
 
+/** Opaque channel binding — must be issued via issue* helpers, not constructed ad hoc. */
 export type MatchedOnlyExecutionCapability = {
   readonly channel: MatchedOnlyExecutionChannel;
-  readonly token: string;
+  readonly databaseUrl: string;
 };
 
-const TEST_TOKEN = "matched-only-test-channel";
-const PRODUCTION_TOKEN = "matched-only-production-channel";
-
-export function createTestExecutionCapability(): MatchedOnlyExecutionCapability {
-  return { channel: "test", token: TEST_TOKEN };
+export function issueTestExecutionCapability(databaseUrl: string): MatchedOnlyExecutionCapability {
+  const testUrl = process.env.TEST_DATABASE_URL?.trim();
+  if (!testUrl || databaseUrl !== testUrl) {
+    throw new Error("TEST_DATABASE_REQUIRED");
+  }
+  return { channel: "test", databaseUrl };
 }
 
-export function createProductionExecutionCapability(): MatchedOnlyExecutionCapability {
-  return { channel: "production", token: PRODUCTION_TOKEN };
+export function issueProductionExecutionCapability(databaseUrl: string): MatchedOnlyExecutionCapability {
+  const resolved = resolveProductionDatabaseUrl();
+  if (!resolved.ok || resolved.databaseUrl !== databaseUrl) {
+    throw new Error("PRODUCTION_CHANNEL_VIOLATION");
+  }
+  return { channel: "production", databaseUrl };
 }
 
-export function assertExecutionCapability(capability: MatchedOnlyExecutionCapability): void {
-  if (capability.token !== TEST_TOKEN && capability.token !== PRODUCTION_TOKEN) {
-    throw new Error("INVALID_EXECUTION_CAPABILITY");
+export function assertExecutionCapability(
+  capability: MatchedOnlyExecutionCapability,
+  databaseUrl: string,
+): void {
+  if (capability.databaseUrl !== databaseUrl) {
+    throw new Error("EXECUTION_CHANNEL_TARGET_MISMATCH");
+  }
+  if (capability.channel === "test") {
+    const testUrl = process.env.TEST_DATABASE_URL?.trim();
+    if (!testUrl || databaseUrl !== testUrl) {
+      throw new Error("TEST_DATABASE_REQUIRED");
+    }
+    return;
+  }
+  const resolved = resolveProductionDatabaseUrl();
+  if (!resolved.ok || resolved.databaseUrl !== databaseUrl) {
+    throw new Error("PRODUCTION_CHANNEL_VIOLATION");
   }
 }

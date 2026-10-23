@@ -32,23 +32,14 @@ async function main(): Promise<void> {
   const manifest = await loadManifest(args.manifestFile!);
 
   if (args.mode === "capture-private-backup") {
-    const manifestCheck = validateExecutionManifestForRun({
-      manifest,
-      operation: args.operation,
-      requireApproved: false,
-      allowMissingPlan: false,
-    });
-    if (!manifestCheck.ok) {
-      console.error(JSON.stringify(manifestCheck));
-      process.exit(1);
-    }
-    if (!manifestCheck.manifest.plan) {
+    if (!manifest.plan) {
       console.error(JSON.stringify({ ok: false, code: "MANIFEST_PLAN_MISSING", message: "Plan required." }));
       process.exit(1);
     }
     const capture = await capturePrivateBusinessBackupForManifest({
-      manifest: manifestCheck.manifest,
-      plan: manifestCheck.manifest.plan,
+      manifest,
+      plan: manifest.plan,
+      approvedCaptureHash: args.approvedCaptureHash,
     });
     console.log(JSON.stringify(capture, null, 2));
     if (!capture.ok) process.exit(1);

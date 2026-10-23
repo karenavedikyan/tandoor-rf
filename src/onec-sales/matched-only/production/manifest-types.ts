@@ -11,6 +11,15 @@ export type ExecutionManifestApproval = {
   validUntil: string | null;
 };
 
+export type DatasetMatchedTotalsV2 = {
+  matchedIncome: string;
+  matchedQuantity: string;
+};
+
+export type SaleItemsMatchedTotalsV2 = DatasetMatchedTotalsV2 & {
+  matchedCostPrice: string;
+};
+
 export type ExecutionManifestBudgetV2 = {
   quantityScale: 6;
   operationScopeDigest: string;
@@ -22,13 +31,20 @@ export type ExecutionManifestBudgetV2 = {
     returnsAggregate: number;
     returnItems: number;
   };
-  /** Matched return-item income only (aggregate/items not summed). */
-  returnsMatchedIncome: string;
+  matchedTotals: {
+    saleAggregate: DatasetMatchedTotalsV2;
+    saleItems: SaleItemsMatchedTotalsV2;
+    returnsAggregate: DatasetMatchedTotalsV2;
+    returnItems: DatasetMatchedTotalsV2;
+  };
 };
 
 export type ExecutionManifestPrivateBackupCapture = {
   status: "NOT_APPROVED" | "APPROVED";
   destinationPath: string | null;
+  approvedCaptureHash: string | null;
+  humanCaptureRef: string | null;
+  validUntil: string | null;
 };
 
 export type ExecutionManifestV2 = {
@@ -47,6 +63,7 @@ export type ExecutionManifestV2 = {
   };
   provenance: {
     codeArtifactLabel: string | null;
+    expectedExecutableArtifactSha256: string | null;
     observedRuntimeFingerprint: string | null;
   };
   planHash: string | null;
