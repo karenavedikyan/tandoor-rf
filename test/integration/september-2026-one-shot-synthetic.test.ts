@@ -8,7 +8,8 @@ import { resetPoolForTests, closePool } from "../../src/db/pool";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import { LEGAL_A, LEGAL_B, buildSaleJsonBytes, buildSaleRecord } from "../helpers/legal-sales-fixtures";
 import { buildSaleItemRecord, buildReturnRecord } from "../helpers/sales-bundle-fixtures";
-import { runSeptember2026Preflight } from "../../src/onec-sales/september-2026-one-shot/preflight";
+import { runSeptember2026ReadOnlyPreflight } from "../../src/onec-sales/september-2026-one-shot/read-only-preflight-core";
+import type { SeptemberSourceBuffers } from "../../src/onec-sales/september-2026-one-shot/source-pins";
 import { assertExternalWriteAuthorization } from "../../src/onec-sales/september-2026-one-shot/operator-guard";
 import { publishPrivateBackupJson } from "../../src/onec-sales/september-2026-one-shot/private-backup-publish";
 import { computeSeptember2026OperatorCodeBundleSha256 } from "../../src/onec-sales/september-2026-one-shot/code-bundle-manifest";
@@ -49,12 +50,28 @@ after(async () => {
   for (const d of scratch) await rm(d, { recursive: true, force: true });
 });
 
+function harnessSources(): SeptemberSourceBuffers {
+  return {
+    saleAggregate: Buffer.from("harness"),
+    saleItems: Buffer.from("harness"),
+    returnsAggregate: Buffer.from("harness"),
+    returnItems: Buffer.from("harness"),
+  };
+}
+
 it("synthetic: preflight read-only harness skips production catalog pin", async () => {
-  process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS = "1";
-  process.env.TEST_DATABASE_URL = url;
-  const r = await runSeptember2026Preflight({ databaseUrl: url });
-  delete process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS;
+  const r = await runSeptember2026ReadOnlyPreflight({
+    databaseUrl: url,
+    sources: harnessSources(),
+    testContext: {
+      allowNonProductionDatabaseUrl: true,
+      skipTargetFingerprintPin: true,
+      skipCatalogPin: true,
+      skipSourcePinChecks: true,
+    },
+  });
   assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.report.readOnlyProof.readOnly, true);
 });
 
 it("synthetic: write operations require external authorization ref", () => {

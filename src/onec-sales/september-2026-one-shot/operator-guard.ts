@@ -22,6 +22,40 @@ export function assertExternalWriteAuthorization(): { ok: true; ref: string } | 
   return { ok: true, ref };
 }
 
+import type { ReadOnlyPreflightTestContext } from "./read-only-preflight-types";
+
+export function assertProductionReadOnlyPreflightDatabaseUrl(
+  databaseUrl: string,
+  testContext?: ReadOnlyPreflightTestContext,
+): { ok: true } | { ok: false; code: string; message: string } {
+  if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS?.trim()) {
+    return {
+      ok: false,
+      code: "OPERATOR_BYPASS_FORBIDDEN",
+      message: "Production read-only entry does not accept SEPTEMBER_2026_SYNTHETIC_HARNESS.",
+    };
+  }
+  const test = process.env.TEST_DATABASE_URL?.trim();
+  if (test && databaseUrl === test) {
+    if (testContext?.allowNonProductionDatabaseUrl) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      code: "TEST_DATABASE_URL_NOT_ALLOWED",
+      message: "Operator read-only preflight must not use TEST_DATABASE_URL.",
+    };
+  }
+  if (test && process.env.DATABASE_URL?.trim() === test) {
+    return {
+      ok: false,
+      code: "PRODUCTION_URL_TEST_MIXED",
+      message: "DATABASE_URL must not equal TEST_DATABASE_URL.",
+    };
+  }
+  return { ok: true };
+}
+
 export function assertPreflightDatabaseUrl(databaseUrl: string): { ok: true } | { ok: false; code: string; message: string } {
   const test = process.env.TEST_DATABASE_URL?.trim();
   if (test && databaseUrl === test) {

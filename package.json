@@ -35,6 +35,8 @@
     "onec-v3-sales-matched-bundle-production:local": "node --env-file=.env dist/cli/onec-v3-sales-matched-bundle-production.js",
     "onec-v3-sales-september-2026-operator": "node dist/cli/onec-v3-sales-september-2026-operator.js",
     "september-2026-operator:code-bundle-sha": "node scripts/compute-september-2026-operator-bundle-sha.mjs",
+    "september-2026-read-only-preflight:build": "node scripts/build-september-2026-read-only-preflight.mjs",
+    "september-2026-read-only-preflight:sha": "node scripts/compute-september-2026-read-only-preflight-sha.mjs",
     "onec-v3-legal-other-fields-backfill": "node dist/cli/onec-v3-legal-other-fields-backfill.js",
     "onec-v3-legal-other-fields-backfill:local": "node --env-file=.env dist/cli/onec-v3-legal-other-fields-backfill.js",
     "onec-exchange-v3-clean-start-observe": "node dist/cli/onec-exchange-v3-clean-start-observe.js",
@@ -87,6 +89,7 @@
     "playwright": "^1.49.1",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.2"
   }
 }

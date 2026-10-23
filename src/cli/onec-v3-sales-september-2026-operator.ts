@@ -1,12 +1,18 @@
-import { runSeptember2026Preflight } from "../onec-sales/september-2026-one-shot/preflight";
-import { computeSeptember2026OperatorCodeBundleSha256 } from "../onec-sales/september-2026-one-shot/code-bundle-manifest";
+import { runSeptember2026ReadOnlyPreflight } from "../onec-sales/september-2026-one-shot/read-only-preflight-core";
+import { parseSeptemberReadOnlyRuntimeConfig } from "../onec-sales/september-2026-one-shot/read-only-preflight-runtime-config";
+import { readFileSync } from "node:fs";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.includes("--code-bundle-sha")) {
-    const sha = await computeSeptember2026OperatorCodeBundleSha256(process.cwd());
-    console.log(JSON.stringify({ ok: true, codeBundleSha256: sha }, null, 2));
-    return;
+    console.error(
+      JSON.stringify({
+        ok: false,
+        code: "USE_READ_ONLY_BUNDLE_SHA",
+        message: "Use npm run september-2026-read-only-preflight:sha for executable .cjs SHA.",
+      }),
+    );
+    process.exit(1);
   }
   const preflight = args.includes("--preflight") || args.length === 0;
   if (!preflight) {
@@ -20,27 +26,33 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) {
-    console.error(JSON.stringify({ ok: false, code: "DATABASE_URL_MISSING", message: "DATABASE_URL required." }));
+  const configPath = process.env.SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_PATH?.trim();
+  const inline = process.env.SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON?.trim();
+  let raw: unknown;
+  if (configPath) {
+    raw = JSON.parse(readFileSync(configPath, "utf8"));
+  } else if (inline) {
+    raw = JSON.parse(inline);
+  } else {
+    console.error(
+      JSON.stringify({
+        ok: false,
+        code: "RUNTIME_CONFIG_REQUIRED",
+        message:
+          "Set SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON or SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_PATH with all four in-memory FTP sources (contentBase64).",
+      }),
+    );
     process.exit(1);
   }
-  const paths = {
-    saleAggregate: process.env.SEPTEMBER_2026_SOURCE_SALE_AGGREGATE?.trim(),
-    saleItems: process.env.SEPTEMBER_2026_SOURCE_SALE_ITEMS?.trim(),
-    returnsAggregate: process.env.SEPTEMBER_2026_SOURCE_RETURNS_AGGREGATE?.trim(),
-    returnItems: process.env.SEPTEMBER_2026_SOURCE_RETURN_ITEMS?.trim(),
-  };
-  const localSourcePaths =
-    paths.saleAggregate && paths.saleItems && paths.returnsAggregate && paths.returnItems
-      ? {
-          saleAggregate: paths.saleAggregate,
-          saleItems: paths.saleItems,
-          returnsAggregate: paths.returnsAggregate,
-          returnItems: paths.returnItems,
-        }
-      : undefined;
-  const result = await runSeptember2026Preflight({ databaseUrl, localSourcePaths });
+  const parsed = parseSeptemberReadOnlyRuntimeConfig(raw);
+  if (!parsed.ok) {
+    console.error(JSON.stringify({ ok: false, code: parsed.code, message: parsed.message }));
+    process.exit(1);
+  }
+  const result = await runSeptember2026ReadOnlyPreflight({
+    databaseUrl: parsed.config.databaseUrl,
+    sources: parsed.buffers,
+  });
   console.log(JSON.stringify(result, null, 2));
   if (!result.ok) process.exit(1);
 }

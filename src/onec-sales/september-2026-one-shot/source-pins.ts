@@ -13,12 +13,23 @@ function sha256File(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-export async function verifySourceFilePin(
+export type SourceBufferPinResult =
+  | {
+      ok: true;
+      full: number;
+      matched: number;
+      excluded: number;
+      sha256: string;
+      path: string;
+      periodOk: true;
+    }
+  | { ok: false; code: string; message: string };
+
+export function verifySourceBufferPin(
   key: keyof typeof EXPECTED_SOURCE_FILES,
-  localPath: string,
-): Promise<{ ok: true; full: number } | { ok: false; code: string; message: string }> {
+  bytes: Buffer,
+): SourceBufferPinResult {
   const pin = EXPECTED_SOURCE_FILES[key];
-  const bytes = await readFile(localPath);
   const sha = sha256File(bytes);
   if (sha !== pin.sha256) {
     return { ok: false, code: "SOURCE_SHA_MISMATCH", message: `${pin.path} SHA mismatch.` };
@@ -43,7 +54,51 @@ export async function verifySourceFilePin(
       return { ok: false, code: "SOURCE_PERIOD_MISMATCH", message: `${pin.path} contains non-September rows.` };
     }
   }
-  return { ok: true, full };
+  return {
+    ok: true,
+    full,
+    matched: pin.counts.matched,
+    excluded: pin.counts.excluded,
+    sha256: sha,
+    path: pin.path,
+    periodOk: true,
+  };
+}
+
+export async function verifySourceFilePin(
+  key: keyof typeof EXPECTED_SOURCE_FILES,
+  localPath: string,
+): Promise<{ ok: true; full: number } | { ok: false; code: string; message: string }> {
+  const bytes = await readFile(localPath);
+  const r = verifySourceBufferPin(key, bytes);
+  return r.ok ? { ok: true, full: r.full } : r;
+}
+
+export type SeptemberSourceBuffers = Record<keyof typeof EXPECTED_SOURCE_FILES, Buffer>;
+
+export function parseSeptemberSourceRosters(sources: SeptemberSourceBuffers) {
+  const saleAggregate = parseLegalSalesJsonBytes(sources.saleAggregate);
+  const saleItems = parseLegalSaleItemsJsonBytes(sources.saleItems);
+  const returnsAggregate = parseLegalReturnsJsonBytes(sources.returnsAggregate);
+  const returnItems = parseLegalReturnItemsJsonBytes(sources.returnItems);
+  if (!saleAggregate.ok || !saleAggregate.roster) {
+    throw new Error("SOURCE_PARSE_FAILED:saleAggregate");
+  }
+  if (!saleItems.ok || !saleItems.roster) {
+    throw new Error("SOURCE_PARSE_FAILED:saleItems");
+  }
+  if (!returnsAggregate.ok || !returnsAggregate.roster) {
+    throw new Error("SOURCE_PARSE_FAILED:returnsAggregate");
+  }
+  if (!returnItems.ok || !returnItems.roster) {
+    throw new Error("SOURCE_PARSE_FAILED:returnItems");
+  }
+  return {
+    saleAggregate: saleAggregate.roster,
+    saleItems: saleItems.roster,
+    returnsAggregate: returnsAggregate.roster,
+    returnItems: returnItems.roster,
+  };
 }
 
 export async function verifyMatchedCountsFromSources(

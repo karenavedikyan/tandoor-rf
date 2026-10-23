@@ -28,28 +28,54 @@
 
 Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 
-## Self-contained code bundle
+## Read-only preflight executable (portable `.cjs`)
 
-Operator entry (not HTTP/cron/public API):
+**Deliverable for Timeweb console (App 258307):** single bundled entry — not the PR105 executor and not `dist/` app CLI.
 
-```bash
-npm run build
-npm run september-2026-operator:code-bundle-sha   # SHA-256 over listed operator sources
-node dist/cli/onec-v3-sales-september-2026-operator.js --preflight
+| Item | Value |
+|------|--------|
+| File | `operator-bundles/september-2026-read-only-preflight.cjs` |
+| SHA-256 (file bytes) | `52956386543540ad6a06abf086e63b6d79d4d2c8b29c68ee52c08ce1778d60a4` |
+| Rebuild | `npm run september-2026-read-only-preflight:build` |
+| Verify SHA | `npm run september-2026-read-only-preflight:sha` |
+
+**Runtime resolution (not bundled):** Node ≥22, npm package **`pg`** (and native optional `pg-native`) must be resolvable from the console working directory (`require('pg')`). No other runtime deps.
+
+**No env bypasses** in this entry: `SEPTEMBER_2026_SYNTHETIC_HARNESS`, `TEST_DATABASE_URL`, or fake code-proof env vars are rejected.
+
+### Runtime config (all four FTP inputs required, in RAM only)
+
+Sources are **not** read from disk paths inside the bundle. Operator supplies one JSON config with pinned FTP paths and **base64** payloads (fetch FTP → memory in the parent shell; bundle does not write raw files):
+
+```json
+{
+  "v": 1,
+  "databaseUrl": "<runtime DATABASE_URL>",
+  "sources": {
+    "saleAggregate": { "path": "/LC/sale/sale.json", "contentBase64": "..." },
+    "saleItems": { "path": "/LC/sale/sale(items).json", "contentBase64": "..." },
+    "returnsAggregate": { "path": "/LC/sale/returne.json", "contentBase64": "..." },
+    "returnItems": { "path": "/LC/sale/returne(items).json", "contentBase64": "..." }
+  }
+}
 ```
 
-Sources listed in `src/onec-sales/september-2026-one-shot/code-bundle-manifest.ts`.
+Run:
 
-**Executable operator code bundle SHA-256 (listed files only):** `47ff7f1586555d7dac0e8ff9e1e600263831aad52a91a46903b681e83a409526`  
-Recompute after any change: `npm run september-2026-operator:code-bundle-sha`.
+```bash
+node operator-bundles/september-2026-read-only-preflight.cjs --runtime-config-json /path/to/runtime-config.json
+```
 
-Preflight (read-only, RR snapshot):
+Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
 
-- `DATABASE_URL` — production runtime URL only when `SEPTEMBER_2026_PREFLIGHT_ALLOW_RUNTIME_DATABASE=1` after approval; **never** set `TEST_DATABASE_URL` to production URL.
-- Optional local path overrides for source verification (bytes not committed):  
-  `SEPTEMBER_2026_SOURCE_SALE_AGGREGATE`, `SEPTEMBER_2026_SOURCE_SALE_ITEMS`, `SEPTEMBER_2026_SOURCE_RETURNS_AGGREGATE`, `SEPTEMBER_2026_SOURCE_RETURN_ITEMS`
+### Read-only behaviour
 
-Output: JSON technical report (`beforeStateDigest`, line counts for month 9, catalog/schema/target checks, source pin results). No SQL writes, no raw payload persistence.
+1. **Target DB fingerprint** checked on the read-only connection **before** catalog / month-9 line / state reads. Wrong DB → `TARGET_FINGERPRINT_MISMATCH`, `catalog.code: NOT_RUN_WRONG_TARGET`, no private row reads.
+2. **RR read-only** session (`REPEATABLE READ READ ONLY`); allowed reads only: schema 047–048, `onec_import_jobs` counts, catalog GUID set, month-9 line tables (PG-native snapshot digest), import state id=1, month activation 9.
+3. **Safe JSON stdout:** target fingerprint, catalog fingerprint/count, four source SHA + full/matched/excluded, period, unknown unique count (414 pin), parity flags, exact decimal money/qty rollups (full/matched/excluded), before PG-native counts/digest, `readOnlyProof`. No row payloads, client names, secrets. `appReleaseRef` is a **compatibility_constraint**, not a live release probe.
+4. **No** backup/apply/rollback/auto-write/049/DDL.
+
+Legacy TS manifest hash (`code-bundle-manifest.ts`) is for dev traceability only — **operator handoff uses the `.cjs` file SHA above**.
 
 ## Backup / apply / rollback (code only)
 
@@ -70,7 +96,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 | Scenario | Status |
 |----------|--------|
-| Read-only preflight harness (`SEPTEMBER_2026_SYNTHETIC_HARNESS=1`) | **RUN** (integration) |
+| Read-only preflight harness (explicit `testContext` in tests) | **RUN** (integration) |
 | External authorization gate / `DATABASE_URL`≠`TEST_DATABASE_URL` on writes | **RUN** |
 | Private backup `wx` no-overwrite + `0700` root | **RUN** |
 | Code bundle SHA stability | **RUN** |
@@ -83,7 +109,9 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 | Production backup / apply / rollback | **NOTRUN** |
 | Full matched-only apply matrix (idempotent repeat, commit-uncertain) | **NOTRUN** here — covered by existing `pr105-independent` on synthetic DB, not September pins |
 
-`npm run typecheck` — **RUN** after changes. Full `npm test` — recommended before merge; not re-run for this doc-only SHA pin unless CI requires it.
+`test/integration/september-2026-read-only-preflight.test.ts` — missing sources, wrong target before private SELECT, URL bypass, sanitization, `.cjs` SHA reproducibility (**RUN**).
+
+`npm run typecheck` — **RUN** after changes. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 
 ## Explicitly out of scope
 
