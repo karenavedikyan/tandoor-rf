@@ -7,6 +7,10 @@ import { runProductionPreflight } from "./preflight";
 import { resolveProductionDatabaseUrl } from "./database-url";
 import type { ProductionApplyWriteBinding, ProductionRollbackWriteBinding } from "./apply-write-guard";
 import { mintProductionWriteGrant } from "./production-verified-write";
+import {
+  deriveProductionApplyBindingFromManifest,
+  deriveProductionRollbackBindingFromManifest,
+} from "./production-binding";
 
 export type ProductionExecutorHarnessOptions = {
   /** Test harness only — never set from public production CLI. */
@@ -41,50 +45,11 @@ async function loadRostersFromManifest(manifest: ExecutionManifestV2) {
 }
 
 function productionApplyBinding(manifest: ExecutionManifestV2): ProductionApplyWriteBinding | null {
-  if (
-    !manifest.executionBudget ||
-    !manifest.provenance.codeArtifactLabel ||
-    !manifest.provenance.expectedExecutableArtifactSha256 ||
-    !manifest.approval.validUntil
-  ) {
-    return null;
-  }
-  if (!manifest.backup.expectedSha256) {
-    return null;
-  }
-  return {
-    manifestContentHash: manifest.contentHash,
-    codeArtifactLabel: manifest.provenance.codeArtifactLabel,
-    expectedExecutableArtifactSha256: manifest.provenance.expectedExecutableArtifactSha256,
-    approvalValidUntil: manifest.approval.validUntil,
-    executionBudget: manifest.executionBudget,
-    expectedBackupSha256: manifest.backup.expectedSha256,
-  };
+  return deriveProductionApplyBindingFromManifest(manifest);
 }
 
 function productionRollbackBinding(manifest: ExecutionManifestV2): ProductionRollbackWriteBinding | null {
-  const rollback = manifest.rollback;
-  if (
-    !manifest.provenance.codeArtifactLabel ||
-    !manifest.provenance.expectedExecutableArtifactSha256 ||
-    !manifest.approval.validUntil ||
-    !manifest.backup.expectedSha256 ||
-    !rollback?.originalApplyPlanHash ||
-    !rollback.expectedLiveAfterStateSha256 ||
-    !rollback.rollbackScopeHash
-  ) {
-    return null;
-  }
-  return {
-    manifestContentHash: manifest.contentHash,
-    codeArtifactLabel: manifest.provenance.codeArtifactLabel,
-    expectedExecutableArtifactSha256: manifest.provenance.expectedExecutableArtifactSha256,
-    approvalValidUntil: manifest.approval.validUntil,
-    expectedBackupSha256: manifest.backup.expectedSha256,
-    originalApplyPlanHash: rollback.originalApplyPlanHash,
-    expectedLiveAfterStateSha256: rollback.expectedLiveAfterStateSha256,
-    rollbackScopeHash: rollback.rollbackScopeHash,
-  };
+  return deriveProductionRollbackBindingFromManifest(manifest);
 }
 
 export async function runProductionWriteApply(
@@ -123,7 +88,6 @@ export async function runProductionWriteApply(
     manifest,
     operation: "apply",
     approvedExecutionHash: input.approvedExecutionHash,
-    applyBinding: binding,
   });
   if (!grant.ok) {
     return { ok: false, code: grant.code, message: grant.message };
@@ -186,7 +150,6 @@ export async function runProductionWriteRollback(
     manifest,
     operation: "rollback",
     approvedExecutionHash: input.approvedExecutionHash,
-    rollbackBinding,
   });
   if (!grant.ok) {
     return { ok: false, code: grant.code, message: grant.message };

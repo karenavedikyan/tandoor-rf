@@ -19,7 +19,7 @@ import { backupSha256 } from "../../src/onec-sales/matched-only/backup";
 import { planHashFromPlan } from "../../src/onec-sales/matched-only/plan-build";
 import { captureScopedBeforeState } from "../../src/onec-sales/matched-only/state-digest";
 import { computeOperationsDigest } from "../../src/onec-sales/matched-only/scope";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, mkdir, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNotApprovedExecutionManifestTemplate } from "../../src/onec-sales/matched-only/production/manifest-template";
@@ -53,6 +53,8 @@ import type { ExecutionManifestV2 } from "../../src/onec-sales/matched-only/prod
 import { validatePrivateCaptureManifestForRun } from "../../src/onec-sales/matched-only/production/manifest-capture-validate";
 import { validateExecutionBudgetAgainstSource } from "../../src/onec-sales/matched-only/production/manifest-budget";
 import { createHash } from "node:crypto";
+import { mintProductionWriteGrant } from "../../src/onec-sales/matched-only/production/production-verified-write";
+import { assertCaptureDestinationAllowed } from "../../src/onec-sales/matched-only/production/capture-path-policy";
 
 const SYNTHETIC_EXECUTABLE_FIXTURE = join(
   process.cwd(),
@@ -556,7 +558,7 @@ function validateApproved(manifest: ExecutionManifestV2) {
   });
 }
 
-async function productionEnv<T>(work: () => Promise<T>, captureHarnessRoot?: string): Promise<T> {
+async function productionEnv<T>(work: () => Promise<T>): Promise<T> {
   const keys = [
     "DATABASE_URL",
     "TEST_DATABASE_URL",
@@ -564,20 +566,16 @@ async function productionEnv<T>(work: () => Promise<T>, captureHarnessRoot?: str
     "MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256",
     "MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH",
     "MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL",
-    "MATCHED_ONLY_CAPTURE_HARNESS_ROOT",
+    "MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS",
   ] as const;
   const old = keys.map((k) => process.env[k]);
   process.env.DATABASE_URL = url;
   delete process.env.TEST_DATABASE_URL;
   process.env.MATCHED_ONLY_CODE_ARTIFACT_LABEL = "synthetic-build";
   process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL = "synthetic-build";
+  process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS = "1";
   delete process.env.MATCHED_ONLY_EXECUTABLE_ARTIFACT_SHA256;
   process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH = SYNTHETIC_EXECUTABLE_FIXTURE;
-  if (captureHarnessRoot) {
-    process.env.MATCHED_ONLY_CAPTURE_HARNESS_ROOT = captureHarnessRoot;
-  } else {
-    delete process.env.MATCHED_ONLY_CAPTURE_HARNESS_ROOT;
-  }
   try {
     return await work();
   } finally {
@@ -971,13 +969,11 @@ it("Computer d19: private capture cannot overwrite an existing backup", async ()
     }),
   );
   const captureHash = m.privateBackupCapture!.approvedCaptureHash!;
-  const r = await productionEnv(
-    () =>
-      capturePrivateBusinessBackupForManifest({
-        manifest: m,
-        approvedCaptureHash: captureHash,
-      }),
-    f.scratchDir,
+  const r = await productionEnv(() =>
+    capturePrivateBusinessBackupForManifest({
+      manifest: m,
+      approvedCaptureHash: captureHash,
+    }),
   );
   const bytes = await readFile(destination, "utf8");
   assert.equal(bytes, "SYNTHETIC ORIGINAL MUST SURVIVE", `backup overwritten: ${JSON.stringify(r)}`);
@@ -1250,9 +1246,8 @@ it("Computer b177: capture-only consent exports backup then separate apply manif
     },
   });
   const captureHash = captureM.privateBackupCapture!.approvedCaptureHash!;
-  const captured = await productionEnv(
-    () => capturePrivateBusinessBackupForManifest({ manifest: captureM, approvedCaptureHash: captureHash }),
-    f.scratchDir,
+  const captured = await productionEnv(() =>
+    capturePrivateBusinessBackupForManifest({ manifest: captureM, approvedCaptureHash: captureHash }),
   );
   assert.equal(captured.ok, true, JSON.stringify(captured));
   const applied = await productionEnv(() =>
@@ -1263,4 +1258,255 @@ it("Computer b177: capture-only consent exports backup then separate apply manif
     }),
   );
   assert.equal(applied.ok, true, JSON.stringify(applied));
+});
+
+it("Computer 14a8: public production provenance cannot accept a synthetic test fixture", async () => {
+  const oldTest = process.env.TEST_DATABASE_URL;
+  const oldHarness = process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+  const oldPinned = process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH;
+  const oldLabel = process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL;
+  delete process.env.TEST_DATABASE_URL;
+  process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH = SYNTHETIC_EXECUTABLE_FIXTURE;
+  process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL = "synthetic-build";
+  delete process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+  try {
+    const r = await assertManifestCodeProvenance("synthetic-build", SYNTHETIC_TEST_EXECUTABLE_ARTIFACT_SHA256, true);
+    assert.equal(r.ok, false);
+  } finally {
+    if (oldTest === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = oldTest;
+    if (oldHarness === undefined) delete process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+    else process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS = oldHarness;
+    if (oldPinned === undefined) delete process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH;
+    else process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH = oldPinned;
+    if (oldLabel === undefined) delete process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL;
+    else process.env.MATCHED_ONLY_PINNED_CODE_ARTIFACT_LABEL = oldLabel;
+  }
+});
+
+it("Computer 14a8: changing cwd cannot substitute a counterfeit dist entry as actual executable", async () => {
+  const f = await productionFixture();
+  const oldCwd = process.cwd();
+  await mkdir(join(f.scratchDir, "dist/cli"), { recursive: true });
+  const bytes = "Synthetic counterfeit entry, not the code loaded by this process";
+  await writeFile(join(f.scratchDir, "dist/cli/onec-v3-sales-matched-bundle-production.js"), bytes, { mode: 0o600 });
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  try {
+    process.chdir(f.scratchDir);
+    delete process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH;
+    const r = await assertManifestCodeProvenance("synthetic-build", hash, true);
+    assert.equal(r.ok, false);
+  } finally {
+    process.chdir(oldCwd);
+  }
+});
+
+it("Computer 14a8: grant for approved A cannot authorize B or be mutated after issuance", { timeout: 30_000 }, async () => {
+  const accepted: string[] = [];
+  for (const mode of ["differentBindingAtMint", "bindingMutationAfterMint"] as const) {
+    const f = await productionFixture();
+    const rb = bundle(200);
+    const pb = await planned(rb);
+    const binding = {
+      manifestContentHash: f.manifest.contentHash,
+      codeArtifactLabel: f.manifest.provenance.codeArtifactLabel!,
+      expectedExecutableArtifactSha256: f.manifest.provenance.expectedExecutableArtifactSha256!,
+      approvalValidUntil: f.manifest.approval.validUntil!,
+      executionBudget: f.manifest.executionBudget!,
+      expectedBackupSha256: f.p.sha,
+    };
+    const budgetB = buildExecutionBudgetFromRosters(pb.plan, rb, new Set([LEGAL_A, LEGAL_B].map((s) => s.toLowerCase())));
+    const result = await productionEnv(async () => {
+      if (mode === "differentBindingAtMint") {
+        binding.executionBudget = budgetB;
+        binding.expectedBackupSha256 = pb.sha;
+      }
+      const grant = await mintProductionWriteGrant({
+        manifest: f.manifest,
+        operation: "apply",
+        approvedExecutionHash: f.manifest.contentHash,
+      });
+      if (!grant.ok) return grant;
+      binding.executionBudget = budgetB;
+      binding.expectedBackupSha256 = pb.sha;
+      return executeMatchedOnlyApply(
+        issueProductionExecutionCapability(url),
+        url,
+        rb,
+        pb.plan,
+        pb.hash,
+        pb.backup,
+        pb.sha,
+        undefined,
+        binding,
+        grant.grantId,
+      );
+    });
+    if (result.ok) accepted.push(mode);
+  }
+  assert.deepEqual(accepted, []);
+});
+
+it("Computer 14a8: month correspondence is checked across a multi-month approved scope", { timeout: 45_000 }, async () => {
+  const accepted: string[] = [];
+  for (const table of [
+    "onec_v3_legal_sale_item_lines",
+    "onec_v3_legal_return_lines",
+    "onec_v3_legal_return_item_lines",
+  ]) {
+    const f = await productionFixture();
+    const months = ["2026-08-01T00:00:00", "2026-09-01T00:00:00"];
+    const records = [
+      months.map((month, i) => buildSaleRecord({ legalGuid: LEGAL_A, type: "Входные двери", month, income: 10 * (i + 1), quantity: 1 })),
+      months.map((month, i) => buildSaleItemRecord({ legalGuid: LEGAL_A, month, income: 10 * (i + 1), quantity: 1 })),
+      months.map((month, i) => buildReturnRecord({ legalGuid: LEGAL_B, month, income: -(i + 1), quantity: -1 })),
+      months.map((month, i) => buildReturnRecord({ legalGuid: LEGAL_B, month, income: -(i + 1), quantity: -1, withItems: true })),
+    ];
+    const r = {
+      saleAggregate: parse(parseLegalSalesJsonBytes, records[0]),
+      saleItems: parse(parseLegalSaleItemsJsonBytes, records[1]),
+      returnsAggregate: parse(parseLegalReturnsJsonBytes, records[2]),
+      returnItems: parse(parseLegalReturnItemsJsonBytes, records[3]),
+    };
+    const p = await planned(r);
+    await Promise.all(Object.values(f.manifest.sourcePaths).map((path, i) => writeFile(path, buildSaleJsonBytes(records[i]), { mode: 0o600 })));
+    await writeFile(f.manifest.backup.filePath!, JSON.stringify(p.backup), { mode: 0o600 });
+    const m = withBoundApprovalHash({
+      ...f.manifest,
+      plan: p.plan,
+      planHash: p.hash,
+      backup: { filePath: f.manifest.backup.filePath, expectedSha256: p.sha },
+      executionBudget: buildExecutionBudgetFromRosters(p.plan, r, new Set([LEGAL_A, LEGAL_B].map((s) => s.toLowerCase()))),
+    });
+    await pool.query(`CREATE FUNCTION qa_swap_months() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+      NEW.sale_month := CASE WHEN NEW.sale_month=DATE '2026-08-01' THEN DATE '2026-09-01' ELSE DATE '2026-08-01' END;
+      RETURN NEW; END$$`);
+    await pool.query(`CREATE TRIGGER qa_swap_months BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION qa_swap_months()`);
+    const applied = await productionEnv(() =>
+      runProductionWriteApplyHarness({
+        manifest: m,
+        approvedExecutionHash: m.contentHash,
+        targetFingerprintPolicy: p.plan.identity.targetDbFingerprint,
+      }),
+    );
+    if (applied.ok) accepted.push(table);
+    else assert.match(applied.code, /PERSISTED|MATERIALIZ|BUDGET/);
+  }
+  assert.deepEqual(accepted, []);
+});
+
+it("Computer 14a8: unmatched extra business rows are forbidden, not hidden by catalog_matched=false", async () => {
+  const f = await productionFixture();
+  await pool.query(`CREATE FUNCTION qa_hidden_extra() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+    IF NEW.source_row_index < 1000 THEN
+      NEW.source_row_index := NEW.source_row_index + 1000; NEW.legal_guid := '${OTHER}'::uuid;
+      NEW.catalog_matched := false; NEW.quantity := 1; NEW.income := 999;
+      INSERT INTO onec_v3_legal_return_item_lines SELECT NEW.*;
+    END IF; RETURN NULL; END$$`);
+  await pool.query(
+    "CREATE TRIGGER qa_hidden_extra AFTER INSERT ON onec_v3_legal_return_item_lines FOR EACH ROW EXECUTE FUNCTION qa_hidden_extra()",
+  );
+  const r = await productionEnv(() =>
+    runProductionWriteApplyHarness({
+      manifest: f.manifest,
+      approvedExecutionHash: f.manifest.contentHash,
+      targetFingerprintPolicy: f.p.plan.identity.targetDbFingerprint,
+    }),
+  );
+  assert.equal(r.ok, false);
+});
+
+it("Computer 14a8: remaining semantic state and quarantine fields are verified", { timeout: 45_000 }, async () => {
+  const cases: [string, string, string][] = [];
+  for (const table of [
+    "onec_v3_legal_sales_import_state",
+    "onec_v3_legal_sale_item_import_state",
+    "onec_v3_legal_return_import_state",
+    "onec_v3_legal_return_item_import_state",
+  ]) {
+    cases.push([table, "source_sha256", `'${"f".repeat(64)}'`]);
+  }
+  cases.push(["onec_v3_legal_sales_import_month_stats", "last_plan_hash", `'${"f".repeat(64)}'`]);
+  for (const [field, value] of [
+    ["source_sha256", `'${"f".repeat(64)}'`],
+    ["sale_month", "DATE '2026-08-01'"],
+    ["quarantine_reason", "'synthetic_wrong_reason'"],
+    ["source_path", "'/wrong/exchange/'"],
+  ]) {
+    cases.push(["onec_v3_legal_sales_import_quarantine_rows", field, value]);
+  }
+  const accepted: string[] = [];
+  for (const [table, field, value] of cases) {
+    const f = await productionFixture();
+    await pool.query(
+      `CREATE FUNCTION qa_remaining_meta() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.${field} := ${value}; RETURN NEW; END$$`,
+    );
+    await pool.query(
+      `CREATE TRIGGER qa_remaining_meta BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION qa_remaining_meta()`,
+    );
+    const r = await productionEnv(() =>
+      runProductionWriteApplyHarness({
+        manifest: f.manifest,
+        approvedExecutionHash: f.manifest.contentHash,
+        targetFingerprintPolicy: f.p.plan.identity.targetDbFingerprint,
+      }),
+    );
+    if (r.ok) accepted.push(`${table}.${field}`);
+    else assert.match(r.code, /PERSISTED|MATERIALIZ|BUDGET|STATE|QUARANTINE/);
+  }
+  assert.deepEqual(accepted, []);
+});
+
+it("Computer 14a8: public capture cannot bypass private-root permissions with harness env", async () => {
+  const f = await productionFixture();
+  await chmod(f.scratchDir, 0o755);
+  try {
+    await assert.rejects(
+      () => assertCaptureDestinationAllowed(join(f.scratchDir, "not-private.json"), f.scratchDir),
+      /PRIVATE/,
+    );
+  } finally {
+    await chmod(f.scratchDir, 0o700);
+  }
+});
+
+it("Computer 14a8: approved private root cannot traverse a symlink ancestor", async () => {
+  const f = await productionFixture();
+  const realParent = join(f.scratchDir, "real");
+  const alias = join(f.scratchDir, "alias");
+  await mkdir(join(realParent, "private"), { recursive: true, mode: 0o700 });
+  await symlink(realParent, alias, "dir");
+  await assert.rejects(
+    () => assertCaptureDestinationAllowed(join(alias, "private", "capture.json"), join(alias, "private")),
+    /SYMLINK/,
+  );
+});
+
+it("Computer 14a8: public capture cannot export a different target than pinned production identity", async () => {
+  const f = await productionFixture();
+  const m = withBoundCaptureHash({
+    ...f.manifest,
+    approval: { status: "NOT_APPROVED", approvedExecutionHash: null, humanDecisionRef: null, validUntil: null },
+    privateBackupCapture: {
+      status: "APPROVED",
+      approvedPrivateRoot: f.scratchDir,
+      destinationPath: join(f.scratchDir, "public-capture-blocked.json"),
+      approvedCaptureHash: null,
+      humanCaptureRef: "synthetic-capture-consent",
+      validUntil: new Date(Date.now() + 3_600_000).toISOString(),
+    },
+  });
+  const captureHash = m.privateBackupCapture!.approvedCaptureHash!;
+  const oldHarness = process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+  delete process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+  try {
+    const r = await capturePrivateBusinessBackupForManifest({
+      manifest: m,
+      approvedCaptureHash: captureHash,
+    });
+    assert.equal(r.ok, false);
+  } finally {
+    if (oldHarness === undefined) delete process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS;
+    else process.env.MATCHED_ONLY_SYNTHETIC_VERIFIED_HARNESS = oldHarness;
+  }
 });

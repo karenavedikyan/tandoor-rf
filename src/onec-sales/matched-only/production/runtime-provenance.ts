@@ -1,39 +1,45 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { isSyntheticVerifiedHarnessActive } from "./synthetic-harness-context";
 
 export type RuntimeProvenanceResult =
   | { ok: true; label: string; executableArtifactSha256: string }
   | { ok: false; code: "CODE_PROVENANCE_UNVERIFIED"; message: string };
 
+const PACKAGE_ROOT = resolve(__dirname, "../../../..");
+const PRODUCTION_BUNDLE_PATH = join(PACKAGE_ROOT, "dist/cli/onec-v3-sales-matched-bundle-production.js");
+const SYNTHETIC_FIXTURE_PATH = join(PACKAGE_ROOT, "test/fixtures/matched-only-synthetic-executable-artifact.bin");
+
 function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function isAllowedExecutableArtifactPath(path: string): boolean {
-  const resolved = resolve(path);
-  const productionBundle = resolve(process.cwd(), "dist/cli/onec-v3-sales-matched-bundle-production.js");
-  const syntheticFixture = resolve(process.cwd(), "test/fixtures/matched-only-synthetic-executable-artifact.bin");
-  return resolved === productionBundle || resolved === syntheticFixture;
+function resolveMeasuredArtifactPath(): string | null {
+  const pinned = process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH?.trim();
+  if (pinned) {
+    const resolved = resolve(pinned);
+    if (resolved === resolve(PRODUCTION_BUNDLE_PATH)) {
+      return resolved;
+    }
+    if (isSyntheticVerifiedHarnessActive() && resolved === resolve(SYNTHETIC_FIXTURE_PATH)) {
+      return resolved;
+    }
+    return null;
+  }
+  return PRODUCTION_BUNDLE_PATH;
 }
 
 async function measureExecutableArtifactBytes(): Promise<Buffer | null> {
-  const pinned = process.env.MATCHED_ONLY_PINNED_EXECUTABLE_ARTIFACT_PATH?.trim();
-  const candidates = [
-    pinned,
-    join(process.cwd(), "dist/cli/onec-v3-sales-matched-bundle-production.js"),
-  ].filter((p): p is string => Boolean(p));
-  for (const path of candidates) {
-    if (!isAllowedExecutableArtifactPath(path)) {
-      continue;
-    }
-    try {
-      return await readFile(path);
-    } catch {
-      continue;
-    }
+  const path = resolveMeasuredArtifactPath();
+  if (!path) {
+    return null;
   }
-  return null;
+  try {
+    return await readFile(path);
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -106,7 +106,14 @@ export async function executeMatchedOnlyApply(
       };
     }
     const { consumeProductionWriteGrant } = await import("./production/production-verified-write");
-    const consumed = consumeProductionWriteGrant(productionWriteGrantId, "apply", productionBinding);
+    const consumed = consumeProductionWriteGrant(
+      productionWriteGrantId,
+      "apply",
+      productionBinding,
+      approvedPlanHash,
+      plan,
+      expectedBackupSha256,
+    );
     if (!consumed.ok) {
       return { ok: false, mode: "apply", code: consumed.code, message: consumed.message };
     }
@@ -399,7 +406,14 @@ export async function executeMatchedOnlyRollback(
       };
     }
     const { consumeProductionWriteGrant } = await import("./production/production-verified-write");
-    const consumed = consumeProductionWriteGrant(productionWriteGrantId, "rollback", productionRollbackBinding);
+    const consumed = consumeProductionWriteGrant(
+      productionWriteGrantId,
+      "rollback",
+      productionRollbackBinding,
+      approvedPlanHash,
+      plan,
+      expectedBackupSha256,
+    );
     if (!consumed.ok) {
       return { ok: false, mode: "rollback", code: consumed.code, message: consumed.message };
     }

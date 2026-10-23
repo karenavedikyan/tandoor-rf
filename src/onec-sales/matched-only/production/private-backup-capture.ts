@@ -1,4 +1,5 @@
-import { open } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { open, readFile, unlink } from "node:fs/promises";
 import { Pool } from "pg";
 import { createPgPoolOptions } from "../../../config/pg-ssl";
 import { resolveTargetDbIdentityFromUrl } from "../../../onec-exchange-v3/target-db-identity";
@@ -11,6 +12,8 @@ import { resolveProductionDatabaseUrl } from "./database-url";
 import { validatePrivateCaptureManifestForRun } from "./manifest-capture-validate";
 import { assertManifestCodeProvenance } from "./runtime-provenance";
 import { assertCaptureDestinationAllowed, resolveCaptureApprovedPrivateRoot } from "./capture-path-policy";
+import { EXPECTED_PRODUCTION_DB_FINGERPRINT } from "./target-policy";
+import { isSyntheticVerifiedHarnessActive } from "./synthetic-harness-context";
 
 export type PrivateBackupCaptureResult =
   | {
@@ -21,6 +24,36 @@ export type PrivateBackupCaptureResult =
       destinationPath: string;
     }
   | { ok: false; code: string; message: string };
+
+function assertCaptureTargetPolicy(
+  manifest: ExecutionManifestV2,
+  liveFingerprint: string,
+  planFingerprint: string,
+): { ok: true } | { ok: false; code: string; message: string } {
+  const expectedTarget = manifest.target.expectedDbFingerprint;
+  if (liveFingerprint !== planFingerprint) {
+    return {
+      ok: false,
+      code: "CAPTURE_TARGET_IDENTITY_MISMATCH",
+      message: "Live database identity does not match approved plan target fingerprint.",
+    };
+  }
+  if (isSyntheticVerifiedHarnessActive()) {
+    return { ok: true };
+  }
+  if (
+    liveFingerprint !== expectedTarget ||
+    planFingerprint !== expectedTarget ||
+    expectedTarget !== EXPECTED_PRODUCTION_DB_FINGERPRINT
+  ) {
+    return {
+      ok: false,
+      code: "CAPTURE_TARGET_POLICY_MISMATCH",
+      message: "Capture target must match manifest production allowlist fingerprint.",
+    };
+  }
+  return { ok: true };
+}
 
 export async function capturePrivateBusinessBackupForManifest(input: {
   manifest: ExecutionManifestV2;
@@ -60,12 +93,9 @@ export async function capturePrivateBusinessBackupForManifest(input: {
     return { ok: false, code: urlResult.code, message: urlResult.message };
   }
   const identity = await resolveTargetDbIdentityFromUrl(urlResult.databaseUrl);
-  if (identity.fingerprint !== plan.identity.targetDbFingerprint) {
-    return {
-      ok: false,
-      code: "CAPTURE_TARGET_IDENTITY_MISMATCH",
-      message: "Live database identity does not match approved plan target fingerprint.",
-    };
+  const targetPolicy = assertCaptureTargetPolicy(input.manifest, identity.fingerprint, plan.identity.targetDbFingerprint);
+  if (!targetPolicy.ok) {
+    return targetPolicy;
   }
   try {
     await assertCaptureDestinationAllowed(destinationPath, approvedRoot);
@@ -94,8 +124,9 @@ export async function capturePrivateBusinessBackupForManifest(input: {
       const live = await import("../../../onec-exchange-v3/target-db-identity").then((m) =>
         m.readTargetDbIdentityFromClient(client, urlResult.databaseUrl),
       );
-      if (live.fingerprint !== plan.identity.targetDbFingerprint) {
-        throw new Error("CAPTURE_TARGET_IDENTITY_MISMATCH");
+      const policy = assertCaptureTargetPolicy(input.manifest, live.fingerprint, plan.identity.targetDbFingerprint);
+      if (!policy.ok) {
+        throw new Error(policy.code);
       }
       return captureScopedBackup(client, plan);
     });
@@ -112,7 +143,22 @@ export async function capturePrivateBusinessBackupForManifest(input: {
     try {
       destHandle = await open(destinationPath, "wx", 0o600);
       await destHandle.writeFile(payload, { encoding: "utf8" });
+      await destHandle.sync();
+      await destHandle.close();
+      destHandle = null;
+      const readback = await readFile(destinationPath, "utf8");
+      const readbackDigest = createHash("sha256").update(readback).digest("hex");
+      const payloadDigest = createHash("sha256").update(payload).digest("hex");
+      if (readbackDigest !== payloadDigest) {
+        await unlink(destinationPath);
+        return {
+          ok: false,
+          code: "CAPTURE_PUBLISH_VERIFY_FAILED",
+          message: "Capture destination readback did not match written payload.",
+        };
+      }
     } catch (error) {
+      await destHandle?.close().catch(() => undefined);
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
         return {
@@ -121,9 +167,8 @@ export async function capturePrivateBusinessBackupForManifest(input: {
           message: "Backup destination already exists; exclusive capture refused.",
         };
       }
+      await unlink(destinationPath).catch(() => undefined);
       throw error;
-    } finally {
-      await destHandle?.close();
     }
     return {
       ok: true,

@@ -3,7 +3,7 @@ import { saleQuantityStringsExactEqual } from "../../decimal-sum";
 import type { MatchedOnlyBundleInput } from "../guards";
 import { partitionSalesBundle } from "../partition";
 import type { DatasetRowCounts, MatchedOnlyBundlePlanV1 } from "../types";
-import { buildMatchedTotalsFromPartition } from "../apply-persist-materialization";
+import { buildFinancialTotalsFromPartition, buildMatchedTotalsFromPartition } from "../apply-persist-materialization";
 import type { ExecutionManifestBudgetV2 } from "./manifest-types";
 
 export const EXECUTION_QUANTITY_SCALE = 6;
@@ -49,8 +49,36 @@ export function buildExecutionBudgetFromPartition(
       returnsAggregate: dml(plan.counts.returnsAggregate),
       returnItems: dml(plan.counts.returnItems),
     },
+    financialTotals: buildFinancialTotalsFromPartition(partition),
     matchedTotals: buildMatchedTotalsFromPartition(partition),
   };
+}
+
+function financialTotalsEqual(
+  a: ExecutionManifestBudgetV2["financialTotals"],
+  b: ExecutionManifestBudgetV2["financialTotals"],
+): boolean {
+  const datasets = ["saleAggregate", "saleItems", "returnsAggregate", "returnItems"] as const;
+  for (const key of datasets) {
+    for (const bucket of ["full", "matched", "excluded"] as const) {
+      const left = a[key][bucket];
+      const right = b[key][bucket];
+      if (
+        !saleDecimalStringsEqual(left.income, right.income) ||
+        !saleQuantityStringsExactEqual(left.quantity, right.quantity)
+      ) {
+        return false;
+      }
+      if (key === "saleItems") {
+        const l = left as ExecutionManifestBudgetV2["financialTotals"]["saleItems"]["full"];
+        const r = right as ExecutionManifestBudgetV2["financialTotals"]["saleItems"]["full"];
+        if (!saleDecimalStringsEqual(l.costPrice, r.costPrice)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 export function buildExecutionBudgetFromRosters(
@@ -132,6 +160,13 @@ export function validateExecutionBudgetAgainstSource(
       ok: false,
       code: "MANIFEST_BUDGET_SOURCE_MISMATCH",
       message: "Execution budget monetary totals do not match source-derived plan.",
+    };
+  }
+  if (!financialTotalsEqual(fromSource.financialTotals, budget.financialTotals)) {
+    return {
+      ok: false,
+      code: "MANIFEST_BUDGET_SOURCE_MISMATCH",
+      message: "Execution budget full/matched/excluded totals do not match source.",
     };
   }
   return { ok: true };

@@ -11,6 +11,15 @@ export type ExecutionManifestApproval = {
   validUntil: string | null;
 };
 
+export type DatasetFinancialTotalsV2 = {
+  income: string;
+  quantity: string;
+};
+
+export type SaleItemsFinancialTotalsV2 = DatasetFinancialTotalsV2 & {
+  costPrice: string;
+};
+
 export type DatasetMatchedTotalsV2 = {
   matchedIncome: string;
   matchedQuantity: string;
@@ -18,6 +27,18 @@ export type DatasetMatchedTotalsV2 = {
 
 export type SaleItemsMatchedTotalsV2 = DatasetMatchedTotalsV2 & {
   matchedCostPrice: string;
+};
+
+export type DatasetFinancialRollupV2 = {
+  full: DatasetFinancialTotalsV2;
+  matched: DatasetFinancialTotalsV2;
+  excluded: DatasetFinancialTotalsV2;
+};
+
+export type SaleItemsFinancialRollupV2 = {
+  full: SaleItemsFinancialTotalsV2;
+  matched: SaleItemsFinancialTotalsV2;
+  excluded: SaleItemsFinancialTotalsV2;
 };
 
 export type ExecutionManifestBudgetV2 = {
@@ -30,6 +51,12 @@ export type ExecutionManifestBudgetV2 = {
     saleItems: number;
     returnsAggregate: number;
     returnItems: number;
+  };
+  financialTotals: {
+    saleAggregate: DatasetFinancialRollupV2;
+    saleItems: SaleItemsFinancialRollupV2;
+    returnsAggregate: DatasetFinancialRollupV2;
+    returnItems: DatasetFinancialRollupV2;
   };
   matchedTotals: {
     saleAggregate: DatasetMatchedTotalsV2;

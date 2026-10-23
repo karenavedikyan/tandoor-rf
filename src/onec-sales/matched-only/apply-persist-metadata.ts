@@ -4,12 +4,8 @@ import type { BundlePartition } from "./partition";
 import type { MatchedOnlyBundlePlanV1 } from "./types";
 import type { MatchedOnlyDataset } from "./types";
 
-const DATASET_TO_ACTIVATION: Record<string, string> = {
-  sale_aggregate: "sale_aggregate",
-  sale_items: "sale_items",
-  return_aggregate: "return_aggregate",
-  return_items: "return_items",
-};
+const DEFAULT_QUARANTINE_REASON = "unknown_catalog_guid";
+const DEFAULT_SOURCE_PATH = "/LC/sale/";
 
 export async function verifyExpectedImportMetadata(
   client: PoolClient,
@@ -18,7 +14,6 @@ export async function verifyExpectedImportMetadata(
   rosters: MatchedOnlyBundleInput,
   planHash: string,
 ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
-  const months = plan.scope.saleMonthsIso;
   const activationPairs: { dataset: string; month: string; sha: string }[] = [];
   const pushMonths = (dataset: string, sha: string, lines: { saleMonthStartIso: string }[]) => {
     for (const month of new Set(lines.map((l) => l.saleMonthStartIso))) {
@@ -43,17 +38,20 @@ export async function verifyExpectedImportMetadata(
   }
 
   const stateExpectations = [
-    { table: "onec_v3_legal_sales_import_state", count: partition.saleAggregate.matched.length },
-    { table: "onec_v3_legal_sale_item_import_state", count: partition.saleItems.matched.length },
-    { table: "onec_v3_legal_return_import_state", count: partition.returnsAggregate.matched.length },
-    { table: "onec_v3_legal_return_item_import_state", count: partition.returnItems.matched.length },
+    { table: "onec_v3_legal_sales_import_state", sha: rosters.saleAggregate.sourceSha256, count: partition.saleAggregate.matched.length },
+    { table: "onec_v3_legal_sale_item_import_state", sha: rosters.saleItems.sourceSha256, count: partition.saleItems.matched.length },
+    { table: "onec_v3_legal_return_import_state", sha: rosters.returnsAggregate.sourceSha256, count: partition.returnsAggregate.matched.length },
+    { table: "onec_v3_legal_return_item_import_state", sha: rosters.returnItems.sourceSha256, count: partition.returnItems.matched.length },
   ];
   for (const state of stateExpectations) {
-    const row = await client.query<{ row_count: number }>(
-      `SELECT row_count FROM ${state.table} WHERE id = 1`,
+    const row = await client.query<{ row_count: number; source_sha256: string }>(
+      `SELECT row_count, trim(source_sha256) AS source_sha256 FROM ${state.table} WHERE id = 1`,
     );
     if ((row.rows[0]?.row_count ?? -1) !== state.count) {
       return { ok: false, code: "PERSISTED_IMPORT_STATE_MISMATCH", message: `${state.table} row_count mismatch.` };
+    }
+    if (row.rows[0]?.source_sha256 !== state.sha) {
+      return { ok: false, code: "PERSISTED_IMPORT_STATE_MISMATCH", message: `${state.table} source_sha256 mismatch.` };
     }
   }
 
@@ -70,39 +68,63 @@ export async function verifyExpectedImportMetadata(
       const full = item.roster.lines.filter((l) => l.saleMonthStartIso === month).length;
       const matched = item.partition.matched.filter((l) => l.saleMonthStartIso === month).length;
       const excluded = full - matched;
-      const row = await client.query<{ full_row_count: number; matched_row_count: number; excluded_row_count: number }>(
-        `SELECT full_row_count, matched_row_count, excluded_row_count
+      const row = await client.query<{ full_row_count: number; matched_row_count: number; excluded_row_count: number; last_plan_hash: string }>(
+        `SELECT full_row_count, matched_row_count, excluded_row_count, trim(last_plan_hash) AS last_plan_hash
          FROM onec_v3_legal_sales_import_month_stats
          WHERE dataset = $1 AND sale_month = $2::date AND source_sha256 = $3`,
         [item.dataset, month, sourceSha],
       );
       const stats = row.rows[0];
-      if (!stats || stats.full_row_count !== full || stats.matched_row_count !== matched || stats.excluded_row_count !== excluded) {
+      if (
+        !stats ||
+        stats.full_row_count !== full ||
+        stats.matched_row_count !== matched ||
+        stats.excluded_row_count !== excluded ||
+        stats.last_plan_hash !== planHash
+      ) {
         return { ok: false, code: "PERSISTED_MONTH_STATS_MISMATCH", message: "Month stats mismatch." };
       }
     }
   }
 
-  const quarantine = await client.query<{ dataset: string; source_row_index: number; legal_guid: string }>(
-    `SELECT dataset, source_row_index, legal_guid::text
-     FROM onec_v3_legal_sales_import_quarantine_rows
-     WHERE plan_hash = $1
-     ORDER BY dataset, source_row_index, legal_guid`,
-    [planHash],
-  );
   const expectedQuarantine: string[] = [];
-  const pushExcluded = (dataset: MatchedOnlyDataset, lines: { legalGuid: string; sourceRowIndex: number }[]) => {
+  const pushExcluded = (
+    dataset: MatchedOnlyDataset,
+    sourceSha: string,
+    lines: { legalGuid: string; saleMonthStartIso: string; sourceRowIndex: number }[],
+  ) => {
     for (const line of lines) {
-      expectedQuarantine.push(`${dataset}|${line.sourceRowIndex}|${line.legalGuid.toLowerCase()}`);
+      expectedQuarantine.push(
+        `${dataset}|${sourceSha}|${line.sourceRowIndex}|${line.legalGuid.toLowerCase()}|${line.saleMonthStartIso}|${DEFAULT_QUARANTINE_REASON}|${DEFAULT_SOURCE_PATH}`,
+      );
     }
   };
-  pushExcluded("sale_aggregate", partition.saleAggregate.excluded);
-  pushExcluded("sale_items", partition.saleItems.excluded);
-  pushExcluded("return_aggregate", partition.returnsAggregate.excluded);
-  pushExcluded("return_items", partition.returnItems.excluded);
+  pushExcluded("sale_aggregate", rosters.saleAggregate.sourceSha256, partition.saleAggregate.excluded);
+  pushExcluded("sale_items", rosters.saleItems.sourceSha256, partition.saleItems.excluded);
+  pushExcluded("return_aggregate", rosters.returnsAggregate.sourceSha256, partition.returnsAggregate.excluded);
+  pushExcluded("return_items", rosters.returnItems.sourceSha256, partition.returnItems.excluded);
   expectedQuarantine.sort();
+
+  const quarantine = await client.query<{
+    dataset: string;
+    source_sha256: string;
+    source_row_index: number;
+    legal_guid: string;
+    sale_month: string;
+    quarantine_reason: string;
+    source_path: string;
+  }>(
+    `SELECT dataset, trim(source_sha256) AS source_sha256, source_row_index, legal_guid::text,
+            sale_month::text, quarantine_reason, source_path
+     FROM onec_v3_legal_sales_import_quarantine_rows
+     WHERE plan_hash = $1`,
+    [planHash],
+  );
   const actualQuarantine = quarantine.rows
-    .map((r) => `${r.dataset}|${r.source_row_index}|${r.legal_guid.toLowerCase()}`)
+    .map(
+      (r) =>
+        `${r.dataset}|${r.source_sha256}|${r.source_row_index}|${r.legal_guid.toLowerCase()}|${r.sale_month.slice(0, 10)}|${r.quarantine_reason}|${r.source_path}`,
+    )
     .sort();
   if (actualQuarantine.join("\n") !== expectedQuarantine.join("\n")) {
     return { ok: false, code: "PERSISTED_QUARANTINE_MISMATCH", message: "Quarantine rows mismatch." };

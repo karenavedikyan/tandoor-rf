@@ -4,7 +4,11 @@ import { addSaleMoneyStrings, addSaleQuantityStrings, saleQuantityStringsExactEq
 import type { MatchedOnlyBundleInput } from "./guards";
 import type { BundlePartition } from "./partition";
 import type { MatchedOnlyBundlePlanV1 } from "./types";
-import type { ExecutionManifestBudgetV2 } from "./production/manifest-types";
+import type {
+  DatasetFinancialRollupV2,
+  ExecutionManifestBudgetV2,
+  SaleItemsFinancialRollupV2,
+} from "./production/manifest-types";
 import { verifyExpectedImportMetadata } from "./apply-persist-metadata";
 
 function money(values: string[]): string {
@@ -17,6 +21,62 @@ function qty(values: string[]): string {
 
 function normSha(sha: string): string {
   return sha.trim();
+}
+
+function normMonth(value: string): string {
+  return value.slice(0, 10);
+}
+
+function financialRollup(
+  full: { income: string | number; quantity: string | number }[],
+  matched: { income: string | number; quantity: string | number }[],
+  excluded: { income: string | number; quantity: string | number }[],
+): DatasetFinancialRollupV2 {
+  const sum = (lines: { income: string | number; quantity: string | number }[]) => ({
+    income: money(lines.map((l) => String(l.income))),
+    quantity: qty(lines.map((l) => String(l.quantity))),
+  });
+  return { full: sum(full), matched: sum(matched), excluded: sum(excluded) };
+}
+
+function saleItemsFinancialRollup(
+  partition: BundlePartition["saleItems"],
+): SaleItemsFinancialRollupV2 {
+  const sum = (lines: { income: string | number; quantity: string | number; costPrice: string | number }[]) => ({
+    income: money(lines.map((l) => String(l.income))),
+    quantity: qty(lines.map((l) => String(l.quantity))),
+    costPrice: money(lines.map((l) => String(l.costPrice))),
+  });
+  return {
+    full: sum(allPartitionLines(partition)),
+    matched: sum(partition.matched),
+    excluded: sum(partition.excluded),
+  };
+}
+
+function allPartitionLines<T>(part: { matched: T[]; excluded: T[] }): T[] {
+  return [...part.matched, ...part.excluded];
+}
+
+export function buildFinancialTotalsFromPartition(partition: BundlePartition): ExecutionManifestBudgetV2["financialTotals"] {
+  return {
+    saleAggregate: financialRollup(
+      allPartitionLines(partition.saleAggregate),
+      partition.saleAggregate.matched,
+      partition.saleAggregate.excluded,
+    ),
+    saleItems: saleItemsFinancialRollup(partition.saleItems),
+    returnsAggregate: financialRollup(
+      allPartitionLines(partition.returnsAggregate),
+      partition.returnsAggregate.matched,
+      partition.returnsAggregate.excluded,
+    ),
+    returnItems: financialRollup(
+      allPartitionLines(partition.returnItems),
+      partition.returnItems.matched,
+      partition.returnItems.excluded,
+    ),
+  };
 }
 
 export function buildMatchedTotalsFromPartition(partition: BundlePartition): ExecutionManifestBudgetV2["matchedTotals"] {
@@ -106,7 +166,8 @@ export async function verifyMatchedMaterializedRows(
       `SELECT legal_guid::text, sale_month::text, product_type, guid_item::text, name_item,
               quantity::text, income::text, manual_discount::text, automatic_discount::text,
               total_discount::text, cost_price::text, additional_expenses::text, gross_profit::text,
-              profitability::text, trim(source_sha256) AS source_sha256, source_row_index::text
+              profitability::text, trim(source_sha256) AS source_sha256, source_row_index::text,
+              catalog_matched::text
        FROM onec_v3_legal_sale_item_lines
        WHERE source_sha256 = $1 AND source_row_index = $2`,
       [rosters.saleItems.sourceSha256, line.sourceRowIndex],
@@ -130,6 +191,8 @@ export async function verifyMatchedMaterializedRows(
       ["gross_profit", p.gross_profit, String(line.grossProfit)],
       ["profitability", p.profitability, String(line.profitability)],
       ["source_sha256", p.source_sha256, rosters.saleItems.sourceSha256],
+      ["sale_month", normMonth(p.sale_month), line.saleMonthStartIso],
+      ["catalog_matched", p.catalog_matched, "true"],
     ];
     for (const [field, actual, expected] of checks) {
       const equal =
@@ -139,7 +202,7 @@ export async function verifyMatchedMaterializedRows(
             ? normSha(actual) === normSha(expected)
             : field === "legal_guid" || field === "guid_item"
               ? actual.toLowerCase() === expected.toLowerCase()
-              : field === "name_item" || field === "product_type"
+              : field === "name_item" || field === "product_type" || field === "catalog_matched" || field === "sale_month"
                 ? actual === expected
                 : saleDecimalStringsEqual(actual, expected);
       if (!equal) {
@@ -165,6 +228,7 @@ export async function verifyMatchedMaterializedRows(
     if (
       p.legal_guid.toLowerCase() !== line.legalGuid.toLowerCase() ||
       p.product_type !== line.productType ||
+      normMonth(p.sale_month) !== line.saleMonthStartIso ||
       !saleDecimalStringsEqual(p.income, String(line.income)) ||
       !saleQuantityStringsExactEqual(p.quantity, String(line.quantity))
     ) {
@@ -177,7 +241,8 @@ export async function verifyMatchedMaterializedRows(
     retItemKeys.push(`${rosters.returnItems.sourceSha256}|${line.sourceRowIndex}`);
     const row = await client.query<Record<string, string>>(
       `SELECT legal_guid::text, sale_month::text, product_type, guid_item::text, name_item,
-              quantity::text, income::text, trim(source_sha256) AS source_sha256, source_row_index::text
+              quantity::text, income::text, trim(source_sha256) AS source_sha256, source_row_index::text,
+              catalog_matched::text
        FROM onec_v3_legal_return_item_lines
        WHERE source_sha256 = $1 AND source_row_index = $2`,
       [rosters.returnItems.sourceSha256, line.sourceRowIndex],
@@ -191,6 +256,8 @@ export async function verifyMatchedMaterializedRows(
       p.product_type !== line.productType ||
       p.guid_item.toLowerCase() !== line.guidItem.toLowerCase() ||
       p.name_item !== line.nameItem ||
+      normMonth(p.sale_month) !== line.saleMonthStartIso ||
+      p.catalog_matched !== "true" ||
       !saleDecimalStringsEqual(p.income, String(line.income)) ||
       !saleQuantityStringsExactEqual(p.quantity, String(line.quantity))
     ) {
@@ -209,7 +276,7 @@ export async function verifyMatchedMaterializedRows(
   const saleItemsPersisted = await client.query<{ key: string }>(
     `SELECT trim(source_sha256) || '|' || source_row_index::text AS key
      FROM onec_v3_legal_sale_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
   if (multisetMismatch(saleItemsPersisted.rows.map((r) => r.key), saleItemKeys)) {
@@ -218,7 +285,7 @@ export async function verifyMatchedMaterializedRows(
   const retAggPersisted = await client.query<{ key: string }>(
     `SELECT trim(source_sha256) || '|' || source_row_index::text AS key
      FROM onec_v3_legal_return_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
   if (multisetMismatch(retAggPersisted.rows.map((r) => r.key), retAggKeys)) {
@@ -227,7 +294,7 @@ export async function verifyMatchedMaterializedRows(
   const retItemsPersisted = await client.query<{ key: string }>(
     `SELECT trim(source_sha256) || '|' || source_row_index::text AS key
      FROM onec_v3_legal_return_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
   if (multisetMismatch(retItemsPersisted.rows.map((r) => r.key), retItemKeys)) {
@@ -257,19 +324,19 @@ export async function verifyPersistedTotalsMatchBudget(
     `SELECT COALESCE(SUM(income),0)::text AS income, COALESCE(SUM(quantity),0)::text AS quantity,
             COALESCE(SUM(cost_price),0)::text AS cost_price
      FROM onec_v3_legal_sale_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
   const retAgg = await client.query<{ income: string; quantity: string }>(
     `SELECT COALESCE(SUM(income),0)::text AS income, COALESCE(SUM(quantity),0)::text AS quantity
      FROM onec_v3_legal_return_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
   const retItems = await client.query<{ income: string; quantity: string }>(
     `SELECT COALESCE(SUM(income),0)::text AS income, COALESCE(SUM(quantity),0)::text AS quantity
      FROM onec_v3_legal_return_item_lines
-     WHERE sale_month = ANY($1::date[]) AND catalog_matched = true`,
+     WHERE sale_month = ANY($1::date[])`,
     [months],
   );
 
