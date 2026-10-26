@@ -175,7 +175,7 @@
       ":" +
       (state.responsibleGuid || state.v3manager || "") +
       ":" +
-      (state.ropEmployee || "")
+      (state.ropEmployee || "") + ":" + (state.salesSort || "") + ":" + (state.salesMin || "") + ":" + (state.salesMax || "")
     );
   }
 
@@ -389,6 +389,7 @@
   }
 
   function hasColFilter(state, colId) {
+    if (colId === "sales_income_total") return Boolean(state.salesMin || state.salesMax);
     var spec = COL_FILTER[colId];
     if (!spec) {
       return false;
@@ -410,6 +411,7 @@
   }
 
   function renderFilterControl(shell, col, state, filterOptions, enumDraftValue) {
+    if (col.id === "sales_income_total" && window.ClientSalesSummaryUi) return window.ClientSalesSummaryUi.renderSalesRange(shell, state);
     var spec = COL_FILTER[col.id];
     if (!spec) {
       return "";
@@ -583,10 +585,10 @@
       typeof draftVal === "string" ? draftVal : undefined,
     );
     return (
-      '<th scope="col" class="' +
+      '<th scope="col"' + (col.id === "sales_income_total" ? ' aria-sort="' + (state.salesSort === "asc" ? "ascending" : state.salesSort === "desc" ? "descending" : "none") + '"' : "") + ' class="' +
       (filtered ? "x15-filtered" : "") +
       '"><div class="x15-col-heading"><span>' +
-      shell.escapeHtml(col.label) +
+      (col.id === "sales_income_total" && window.ClientSalesSummaryUi ? window.ClientSalesSummaryUi.renderSalesHeading(shell, state) : shell.escapeHtml(col.label)) +
       "</span>" +
       (filtered
         ? '<button type="button" class="x15-clear-field" data-focus-clear-col="' +
@@ -603,6 +605,7 @@
 
   function activeFilterCount(state) {
     var n = state.q ? 1 : 0;
+    if (state.salesMin || state.salesMax) n += 1;
     n += (state.v3Rules || []).length;
     ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
       if (state[key]) {
@@ -613,6 +616,7 @@
   }
 
   function applyColClear(state, colId) {
+    if (colId === "sales_income_total") return Object.assign({}, state, { salesMin: "", salesMax: "", page: 1 });
     var spec = COL_FILTER[colId];
     if (!spec) {
       return state;
@@ -654,6 +658,9 @@
       colRop: "",
       colCity: "",
       colStatus: "",
+      salesMin: "",
+      salesMax: "",
+      salesSort: "",
       v3types: [],
       v3categories: [],
       v3type: "",
@@ -1110,7 +1117,8 @@
         return col.id;
       })
       .join(",");
-    return [state.v3entity || "legal", String(state.v3cols || state.v3focuscols || ""), colIds].join("|");
+    return [state.v3entity || "legal", String(state.v3cols || state.v3focuscols || ""), colIds,
+      state.salesSort || "", state.salesMin || "", state.salesMax || ""].join("|");
   }
 
   function formatFocusCountLine(state, total) {
@@ -1145,7 +1153,7 @@
                     "</a></td>"
                   );
                 }
-                return '<td><span class="x14-cell-content">' + cellHtml + "</span></td>";
+                return '<td' + (col.id === "sales_income_total" ? ' data-sales-cell' : "") + '><span class="x14-cell-content">' + cellHtml + "</span></td>";
               })
               .join("") +
             "</tr>"
@@ -1252,6 +1260,7 @@
   }
 
   function bindFocusResultsChromeActions(root, reload, resetAll) {
+    if (window.ClientSalesSummaryUi) window.ClientSalesSummaryUi.bindSalesControls(root, function (next) { reload(next, null); });
     var emptyBtn = document.getElementById("v3-focus-reset-empty");
     if (emptyBtn && emptyBtn.dataset.focusResetEmptyBound !== "1") {
       emptyBtn.dataset.focusResetEmptyBound = "1";

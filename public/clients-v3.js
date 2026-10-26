@@ -138,6 +138,9 @@
           ? window.ClientsV3FieldRules.readRulesFromUrl(search)
           : [],
       v3salesMonth: params.get("v3salesMonth") || "",
+      salesSort: params.get("salesSort") || "",
+      salesMin: params.get("salesMin") || "",
+      salesMax: params.get("salesMax") || "",
     };
   }
 
@@ -337,6 +340,9 @@
       pageSize: url.pageSize || 50,
       v3cols: url.v3cols || "",
       v3salesMonth: url.v3salesMonth || "",
+      salesSort: url.salesSort || "",
+      salesMin: url.salesMin || "",
+      salesMax: url.salesMax || "",
       v3dense: url.v3dense,
       city: dom.city || url.city || "",
       colManager: url.colManager || "",
@@ -501,6 +507,9 @@
     return {
       v3entity: v3entity,
       v3salesMonth: urlFilters.v3salesMonth || "",
+      salesSort: urlFilters.salesSort || "",
+      salesMin: urlFilters.salesMin || "",
+      salesMax: urlFilters.salesMax || "",
       v3view: v3ViewFromLegacyView(view),
       page: legacy.page != null ? legacy.page : fromUrl ? urlFilters.page || 1 : 1,
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
@@ -636,6 +645,9 @@
     }
     if (state.v3salesMonth) params.set("v3salesMonth", state.v3salesMonth);
     else params.delete("v3salesMonth");
+    ["salesSort", "salesMin", "salesMax"].forEach(function (key) {
+      if (state[key]) params.set(key, state[key]); else params.delete(key);
+    });
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -685,6 +697,9 @@
       window.ClientsV3FieldRules.appendRulesToParams(params, s);
     }
     if (s.v3salesMonth) params.set("v3salesMonth", s.v3salesMonth);
+    ["salesSort", "salesMin", "salesMax"].forEach(function (key) {
+      if (s[key]) params.set(key, s[key]);
+    });
     return "?" + params.toString();
   }
 
@@ -848,7 +863,7 @@
         }
         var key = kind + ":" + String(item.guid).toLowerCase();
         var copy = Object.assign({}, item);
-        copy._clientSales = map[key] || null;
+        copy._clientSales = map[key] ? Object.assign({}, map[key], { insight: item._salesInsight || null }) : null;
         return copy;
       });
     }
@@ -1384,6 +1399,13 @@
       params.set("entity", state.v3entity);
       params.set("page", String(state.page));
       params.set("pageSize", String(state.pageSize || 50));
+      if (state.v3entity !== "retail" && state.v3entity !== "orphan_retail") {
+        if (visibleColsNeedSales(resolveVisibleListColumns(state, ctx.currentUserId))) params.set("salesInsights", "1");
+        if (state.v3salesMonth) params.set("salesMonth", state.v3salesMonth);
+        ["salesSort", "salesMin", "salesMax"].forEach(function (key) {
+          if (state[key]) params.set(key, state[key]);
+        });
+      }
       if (state.q) {
         params.set("q", state.q);
       }
@@ -1523,6 +1545,10 @@
           var data = result.data || { items: [], total: 0 };
           var items = data.items || [];
           var liveListState = readState();
+          if (data.salesMonth && !liveListState.v3salesMonth) {
+            liveListState.v3salesMonth = data.salesMonth;
+            writeState(liveListState, true);
+          }
           var visibleColsForSales = resolveVisibleListColumns(liveListState, ctx.currentUserId);
           return enrichListItemsWithClientSales(
             api,
@@ -1633,7 +1659,8 @@
           if (listUi && ctx.tableHeadRow) {
             listUi.renderTableHead(shell, ctx.tableHeadRow, visibleCols, state, function (filterKey, value) {
               var patch = { page: 1 };
-              patch[filterKey] = value;
+              if (filterKey === "__sales") Object.assign(patch, value);
+              else patch[filterKey] = value;
               if (filterKey === "q") {
                 var searchEl = document.getElementById("search-input");
                 if (searchEl) {

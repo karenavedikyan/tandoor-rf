@@ -126,6 +126,24 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     return;
   }
   const context = req.accessContext!;
+  const { SalesRankingUnavailable } = await import("./sales-ranking");
+  const salesSort = req.query.salesSort;
+  const salesMonth = req.query.salesMonth;
+  const salesMin = req.query.salesMin;
+  const salesMax = req.query.salesMax;
+  const money = (v: unknown) => typeof v === "string" && /^-?\d{1,15}(?:\.\d{1,2})?$/.test(v);
+  const cents = (v: string) => {
+    const [whole, fraction = ""] = v.split(".");
+    return BigInt(whole) * 100n + (v.startsWith("-") ? -1n : 1n) * BigInt(fraction.padEnd(2, "0"));
+  };
+  if ((salesSort !== undefined && salesSort !== "asc" && salesSort !== "desc") ||
+      (salesMonth !== undefined && (typeof salesMonth !== "string" || !parseClientSalesMonthStrict(salesMonth).ok)) ||
+      (salesMin !== undefined && !money(salesMin)) || (salesMax !== undefined && !money(salesMax)) ||
+      (salesMin !== undefined && salesMax !== undefined && cents(salesMin as string) > cents(salesMax as string))) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Проверьте месяц, сортировку и диапазон продаж."));
+    return;
+  }
   const entityRaw = String(req.query.entity ?? "legal");
   if (!LIST_ENTITIES.has(entityRaw as V3ListEntity)) {
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый entity."));
@@ -190,7 +208,9 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
       return;
     }
   }
-  const result = await listV3Entities(context, {
+  let result;
+  try {
+  result = await listV3Entities(context, {
     entity: entityRaw as V3ListEntity,
     page,
     pageSize,
@@ -213,9 +233,20 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     colCity: trimOptional(req.query.colCity),
     colStatus: trimOptional(req.query.colStatus),
     fieldRules: fieldRules ?? [],
+    salesMonth: salesMonth as string | undefined,
+    salesSort: salesSort as "asc" | "desc" | undefined,
+    salesMin: salesMin as string | undefined,
+    salesMax: salesMax as string | undefined,
+    salesInsights: req.query.salesInsights === "1",
   });
+  } catch (error) {
+    if (!(error instanceof SalesRankingUnavailable)) throw error;
+    setNoStore(res);
+    res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, error.message));
+    return;
+  }
   setNoStore(res);
-  res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items });
+  res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items, salesMonth: result.salesMonth });
 }
 
 export async function v3FilterFieldsHandler(req: AccessRequest, res: Response): Promise<void> {
