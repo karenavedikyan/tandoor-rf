@@ -29,6 +29,14 @@ import { PINNED_SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF } from "../../src/on
 let url: string;
 const scratch: string[] = [];
 
+async function mkPrivateBackupWorkDir(prefix: string): Promise<{ workDir: string; snapDir: string }> {
+  const workDir = await mkdtemp(join(tmpdir(), prefix));
+  await chmod(workDir, 0o700);
+  scratch.push(workDir);
+  const snapDir = join(workDir, "snapshot");
+  return { workDir, snapDir };
+}
+
 before(async () => {
   url = getIntegrationDatabaseUrl();
   setIntegrationEnv(url);
@@ -190,8 +198,7 @@ it("one-shot apply: wrong target fingerprint fails before business writes", asyn
 });
 
 it("one-shot apply: non-empty before state stops under lock without matched writes", async () => {
-  const snapDir = await mkdtemp(join(tmpdir(), "sep-snap-before-"));
-  scratch.push(snapDir);
+  const { workDir, snapDir } = await mkPrivateBackupWorkDir("sep-snap-before-");
   const { buffers } = await writeSyntheticSeptemberSnapshot(snapDir);
   const pool = new Pool({ connectionString: url });
   await pool.query(`DELETE FROM onec_v3_legal_sales_lines WHERE sale_month = '2026-09-01'::date`);
@@ -219,8 +226,6 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
-  const workDir = join(snapDir, "..");
-  await chmod(workDir, 0o700);
   const backupClient = await new Pool({ connectionString: url }).connect();
   const backup = await captureSeptember047048Backup(backupClient, identity.fingerprint);
   backupClient.release();
@@ -267,8 +272,7 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
 });
 
 it("one-shot apply: synthetic core path commits matched rows", async () => {
-  const snapDir = await mkdtemp(join(tmpdir(), "sep-snap-"));
-  scratch.push(snapDir);
+  const { workDir, snapDir } = await mkPrivateBackupWorkDir("sep-snap-");
   const { buffers } = await writeSyntheticSeptemberSnapshot(snapDir);
   const pool = new Pool({ connectionString: url });
   await pool.query(`DELETE FROM onec_v3_legal_sales_lines WHERE sale_month = '2026-09-01'::date`);
@@ -279,8 +283,6 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
   const backup = await captureSeptember047048Backup(client, identity.fingerprint);
   client.release();
   await pool.end();
-  const workDir = join(snapDir, "..");
-  await chmod(workDir, 0o700);
   const scope = buildSyntheticOperatorScope({
     beforeStateDigest: before.digest,
     known,
@@ -331,8 +333,7 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
 });
 
 it("one-shot apply: post-COMMIT read failure still reports committed (no rollback)", async () => {
-  const snapDir = await mkdtemp(join(tmpdir(), "sep-snap-post-"));
-  scratch.push(snapDir);
+  const { workDir, snapDir } = await mkPrivateBackupWorkDir("sep-snap-post-");
   const { buffers } = await writeSyntheticSeptemberSnapshot(snapDir);
   const pool = new Pool({ connectionString: url });
   await pool.query(`DELETE FROM onec_v3_legal_sale_item_lines WHERE sale_month = '2026-09-01'::date`);
@@ -358,8 +359,6 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
-  const workDir = join(snapDir, "..");
-  await chmod(workDir, 0o700);
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir: workDir,
     approvedPrivateRoot: workDir,

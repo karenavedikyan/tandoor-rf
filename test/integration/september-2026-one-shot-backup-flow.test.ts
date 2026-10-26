@@ -86,6 +86,55 @@ it("backup publish: file SHA matches payload verifier (not compact JSON digest)"
   assert.equal(verify.ok, true);
 });
 
+it("one-shot backup: scope with test DB fingerprint rejected without skipTargetFingerprintPin", async () => {
+  const workDir = await privateRoot(await mkdtemp(join(tmpdir(), "sep-backup-scope-fp-")));
+  scratch.push(workDir);
+  const snapDir = join(workDir, "snapshot");
+  const { buffers } = await writeSyntheticSeptemberSnapshot(snapDir);
+  const pool = new Pool({ connectionString: url });
+  const client = await pool.connect();
+  const identity = await readTargetDbIdentityFromClient(client, url);
+  const known = await loadKnownLegalGuidSet(client);
+  const { captureSeptember047048BeforeState } = await import(
+    "../../src/onec-sales/september-2026-one-shot/before-state-047-048"
+  );
+  const before = await captureSeptember047048BeforeState(client);
+  client.release();
+  await pool.end();
+  const scope = buildSyntheticOperatorScope({
+    beforeStateDigest: before.digest,
+    known,
+    buffers,
+    applyAuthorized: false,
+    targetFingerprint: identity.fingerprint,
+  });
+  const scopePath = join(workDir, "scope.json");
+  const scopeBytes = JSON.stringify(scope);
+  await writeFile(scopePath, scopeBytes, { mode: 0o600 });
+  const scopeSha = operatorDataScopeSha256(Buffer.from(scopeBytes, "utf8"));
+  process.env.SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF = "synthetic-test-not-human-consent";
+  process.env.SEPTEMBER_2026_BACKUP_GRANT_REF = "synthetic-backup-grant";
+  delete process.env.TEST_DATABASE_URL;
+  const r = await runSeptember2026OneShotBackup({
+    databaseUrl: url,
+    operatorDataScopePath: scopePath,
+    operatorDataScopeSha256: scopeSha,
+    backupGrantRef: "synthetic-backup-grant",
+    backupPayloadDestinationPath: join(workDir, "payload.json"),
+    backupReceiptDestinationPath: join(workDir, "receipt.json"),
+    approvedPrivateRoot: workDir,
+    testContext: {
+      allowNonProductionDatabaseUrl: true,
+      skipOperatorDataScopeShaPin: true,
+      skipCatalogPin: true,
+      skipBeforeDigestPin: true,
+      skipNightlySchedulerPin: true,
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "SCOPE_TARGET_FINGERPRINT");
+});
+
 it("backup flow: one-shot backup then apply via same cores with private root", async () => {
   const workDir = await privateRoot(await mkdtemp(join(tmpdir(), "sep-backup-apply-")));
   scratch.push(workDir);
@@ -102,7 +151,14 @@ it("backup flow: one-shot backup then apply via same cores with private root", a
   const before = await captureSeptember047048BeforeState(client);
   client.release();
   await pool.end();
-  const scope = buildSyntheticOperatorScope({
+  const scopeOnDisk = buildSyntheticOperatorScope({
+    beforeStateDigest: before.digest,
+    known,
+    buffers,
+    applyAuthorized: false,
+    targetFingerprint: identity.fingerprint,
+  });
+  const scopeForApply = buildSyntheticOperatorScope({
     beforeStateDigest: before.digest,
     known,
     buffers,
@@ -110,7 +166,7 @@ it("backup flow: one-shot backup then apply via same cores with private root", a
     targetFingerprint: identity.fingerprint,
   });
   const scopePath = join(workDir, "scope.json");
-  const scopeBytes = JSON.stringify(scope);
+  const scopeBytes = JSON.stringify(scopeOnDisk);
   await writeFile(scopePath, scopeBytes, { mode: 0o600 });
   const scopeSha = operatorDataScopeSha256(Buffer.from(scopeBytes, "utf8"));
   process.env.SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF = "synthetic-test-not-human-consent";
@@ -155,7 +211,7 @@ it("backup flow: one-shot backup then apply via same cores with private root", a
       skipNightlySchedulerPin: true,
       skipOperatorDataScopeShaPin: true,
       syntheticApplyAllowed: true,
-      syntheticOperatorScope: scope,
+      syntheticOperatorScope: scopeForApply,
     },
   });
   assert.equal(apply.ok, true, JSON.stringify(apply));

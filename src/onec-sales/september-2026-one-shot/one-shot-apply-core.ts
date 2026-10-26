@@ -109,6 +109,7 @@ export async function runSeptember2026OneShotApply(input: {
       scopeFilePath: input.operatorDataScopePath,
       expectedSha256: input.operatorDataScopeSha256,
       skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin,
+      skipTargetFingerprintPin: input.testContext?.skipTargetFingerprintPin,
     });
     if (!loaded.ok) return loaded;
     scope = loaded.scope;

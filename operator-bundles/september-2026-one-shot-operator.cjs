@@ -3264,7 +3264,7 @@ function validateOperatorDataScopeDocument(doc, options) {
   if (doc.appId !== TIMEWEB_APP_ID || doc.databaseId !== TIMEWEB_DB_ID) {
     return { ok: false, code: "SCOPE_TARGET_IDS", message: "App/DB id mismatch." };
   }
-  if (doc.targetFingerprint !== EXPECTED_TARGET_DB_FINGERPRINT) {
+  if (!options?.skipTargetFingerprintPin && doc.targetFingerprint !== EXPECTED_TARGET_DB_FINGERPRINT) {
     return { ok: false, code: "SCOPE_TARGET_FINGERPRINT", message: "Target fingerprint mismatch." };
   }
   if (doc.appRelease !== APP_RELEASE_REF_FOR_COMPATIBILITY) {
@@ -3292,18 +3292,22 @@ function validateOperatorDataScopeDocument(doc, options) {
     if (!options?.skipProductionPins && (src.sha256 !== pin.sha256 || src.rawRows !== pin.counts.full)) {
       return { ok: false, code: "SCOPE_SOURCE_PIN", message: `Source pin mismatch: ${key}` };
     }
-    if (counts.full !== pin.counts.full || counts.matched !== pin.counts.matched || counts.excluded !== pin.counts.excluded) {
-      return { ok: false, code: "SCOPE_SOURCE_COUNTS", message: `Source counts mismatch: ${key}` };
+    if (!options?.skipProductionPins) {
+      if (counts.full !== pin.counts.full || counts.matched !== pin.counts.matched || counts.excluded !== pin.counts.excluded) {
+        return { ok: false, code: "SCOPE_SOURCE_COUNTS", message: `Source counts mismatch: ${key}` };
+      }
     }
   }
-  if (doc.catalog.count !== EXPECTED_CATALOG_LEGAL_ENTITY_COUNT) {
-    return { ok: false, code: "SCOPE_CATALOG_COUNT", message: "Catalog count mismatch." };
-  }
-  if (doc.catalog.sha256 !== EXPECTED_CATALOG_GUID_SET_SHA256) {
-    return { ok: false, code: "SCOPE_CATALOG_SHA", message: "Catalog SHA mismatch." };
-  }
-  if (doc.unknownUniqueGuidCount !== EXPECTED_UNKNOWN_CATALOG_GUID_COUNT) {
-    return { ok: false, code: "SCOPE_UNKNOWN_COUNT", message: "Unknown GUID count mismatch." };
+  if (!options?.skipProductionPins) {
+    if (doc.catalog.count !== EXPECTED_CATALOG_LEGAL_ENTITY_COUNT) {
+      return { ok: false, code: "SCOPE_CATALOG_COUNT", message: "Catalog count mismatch." };
+    }
+    if (doc.catalog.sha256 !== EXPECTED_CATALOG_GUID_SET_SHA256) {
+      return { ok: false, code: "SCOPE_CATALOG_SHA", message: "Catalog SHA mismatch." };
+    }
+    if (doc.unknownUniqueGuidCount !== EXPECTED_UNKNOWN_CATALOG_GUID_COUNT) {
+      return { ok: false, code: "SCOPE_UNKNOWN_COUNT", message: "Unknown GUID count mismatch." };
+    }
   }
   if (!options?.skipProductionPins && doc.beforeStateDigest !== EXPECTED_EMPTY_BEFORE_STATE_DIGEST) {
     return { ok: false, code: "SCOPE_BEFORE_DIGEST", message: "Before digest mismatch." };
@@ -3312,11 +3316,13 @@ function validateOperatorDataScopeDocument(doc, options) {
   if (bc.saleAggregateLinesJson !== 0 || bc.saleItemLinesJson !== 0 || bc.returnLinesJson !== 0 || bc.returnItemLinesJson !== 0 || bc.importStatesJson !== 0 || bc.monthActivationsJson !== 0) {
     return { ok: false, code: "SCOPE_BEFORE_COUNTS", message: "Before counts must be empty." };
   }
-  if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.excludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
-    return { ok: false, code: "SCOPE_ROW_TOTALS", message: "Matched/excluded totals mismatch." };
-  }
-  if (doc.migrationsAllowed !== false || doc.sourceFtpRefreshAllowed !== false || doc.backupBusinessValuesAuthorized !== false || doc.applyAuthorized !== false || doc.rollbackAuthorized !== false) {
-    return { ok: false, code: "CANDIDATE_NOT_WRITE_AUTHORIZATION", message: "Write flags must remain false." };
+  if (!options?.skipProductionPins) {
+    if (doc.expectedMatchedRows !== EXPECTED_MATCHED_ROW_TOTAL || doc.excludedRows !== EXPECTED_EXCLUDED_ROW_TOTAL) {
+      return { ok: false, code: "SCOPE_ROW_TOTALS", message: "Matched/excluded totals mismatch." };
+    }
+    if (doc.migrationsAllowed !== false || doc.sourceFtpRefreshAllowed !== false || doc.backupBusinessValuesAuthorized !== false || doc.applyAuthorized !== false || doc.rollbackAuthorized !== false) {
+      return { ok: false, code: "CANDIDATE_NOT_WRITE_AUTHORIZATION", message: "Write flags must remain false." };
+    }
   }
   if (!isRecord(doc.financialTotals)) {
     return { ok: false, code: "SCOPE_FINANCIAL_TOTALS", message: "financialTotals must be an object." };
@@ -3333,7 +3339,10 @@ async function loadAndVerifyOperatorDataScope(input) {
     return { ok: false, code: "OPERATOR_DATA_SCOPE_SHA_MISMATCH", message: "Pinned operator data scope SHA mismatch." };
   }
   const doc = JSON.parse(bytes.toString("utf8"));
-  const valid = validateOperatorDataScopeDocument(doc, { skipProductionPins: input.skipProductionShaPin });
+  const valid = validateOperatorDataScopeDocument(doc, {
+    skipProductionPins: input.skipProductionShaPin,
+    skipTargetFingerprintPin: input.skipTargetFingerprintPin
+  });
   if (!valid.ok) return valid;
   return { ok: true, scope: doc, sha256: sha };
 }
@@ -4110,7 +4119,8 @@ async function runSeptember2026OneShotApply(input) {
     const loaded = await loadAndVerifyOperatorDataScope({
       scopeFilePath: input.operatorDataScopePath,
       expectedSha256: input.operatorDataScopeSha256,
-      skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin
+      skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin,
+      skipTargetFingerprintPin: input.testContext?.skipTargetFingerprintPin
     });
     if (!loaded.ok) return loaded;
     scope = loaded.scope;
@@ -4347,7 +4357,8 @@ async function runSeptember2026OneShotBackup(input) {
   const loaded = await loadAndVerifyOperatorDataScope({
     scopeFilePath: input.operatorDataScopePath,
     expectedSha256: input.operatorDataScopeSha256,
-    skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin
+    skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin,
+    skipTargetFingerprintPin: input.testContext?.skipTargetFingerprintPin
   });
   if (!loaded.ok) return loaded;
   const scope = loaded.scope;

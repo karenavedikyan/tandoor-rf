@@ -35,7 +35,7 @@ Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 | Item | Value |
 |------|--------|
 | File | `operator-bundles/september-2026-one-shot-operator.cjs` |
-| SHA-256 (file bytes) | `d1905703e44d2c42b4858f3d954700f81897691d1eb5212bfaf099e8184383ab` |
+| SHA-256 (file bytes) | `b7048b1b9498a70944ebee4f3dea232cc25974cdab09462d0d5ca1458f4dc065` |
 | Rebuild | `npm run september-2026-read-only-preflight:build` |
 | Verify SHA | `npm run september-2026-read-only-preflight:sha` |
 
@@ -125,7 +125,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 `test/integration/september-2026-read-only-preflight.test.ts` — missing sources, wrong target before private SELECT, URL bypass, sanitization, `.cjs` SHA reproducibility (**RUN**).
 
-`test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (5): file-byte SHA vs compact digest, `runSeptember2026OneShotBackup` → apply, private root required / `0755` / symlink refusal (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
+`test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (6): file-byte SHA vs compact digest, `runSeptember2026OneShotBackup` → apply, private root required / `0755` / symlink refusal (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
 
 `npm run typecheck` — **RUN** after changes. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 
