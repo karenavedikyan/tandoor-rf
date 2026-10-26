@@ -381,6 +381,13 @@
       : "";
     detailRoot.innerHTML = renderV3CardChrome(backHref, buildV3SessionContext(currentUser)) + cardHtml;
     detailRoot.ClientDetailV3LazyRequest = requestV3LegalDetail;
+    var drill = null;
+    if ((payload.entityType === "holding" || payload.entityType === "legal") && window.ClientSalesDrilldown &&
+        (payload.entityType !== "legal" || new URLSearchParams(window.location.search).get("salesView") !== "financial")) {
+      drill = window.ClientSalesDrilldown.mount(detailRoot.querySelector('[data-testid="v3-sales-host"]'), {
+        api: api, entity: payload.entityType, guid: ent.guid || ent.guid_client,
+      });
+    }
     if (window.ClientDetailV3 && window.ClientDetailV3.bindTabs) {
       var legalGuid = payload.entityType === "legal" ? ent.guid || ent.guid_client : null;
       if (legalGuid) {
@@ -396,6 +403,10 @@
               ? "Юрлицо"
               : "Торговая точка",
         onSalesTabSelected: function () {
+          if (drill) {
+            drill.load();
+            return;
+          }
           if (legalGuid) {
             var monthFromOverview =
               window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.monthFromUrl

@@ -38,6 +38,7 @@ import {
   CLIENT_SALES_BATCH_MAX_IDS,
   listClientSalesMonths,
   loadClientSalesCardSummary,
+  loadClientSalesDrilldown,
   parseClientSalesBatchTargets,
   parseClientSalesBatchTargetsFromQueryStrings,
   parseClientSalesMonthStrict,
@@ -750,6 +751,29 @@ export async function v3ClientSalesCardHandler(req: AccessRequest, res: Response
     return;
   }
   setNoStore(res);
+  if (req.path.endsWith("/detail")) {
+    const rawLegal = req.query.legalGuid;
+    const legalGuid = rawLegal ? parseGuidParam(rawLegal) : null;
+    const productType = req.query.productType ?? null;
+    const search = req.query.q ?? "";
+    const rawPage = req.query.page ?? "1";
+    if ((rawLegal && !legalGuid) || (productType !== null && (typeof productType !== "string" || productType.length > 200)) ||
+        typeof search !== "string" || search.length > 120 || typeof rawPage !== "string" ||
+        !/^[1-9]\d{0,3}$/.test(rawPage) || Number(rawPage) > 1000) {
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные параметры детализации."));
+      return;
+    }
+    const details = await loadClientSalesDrilldown(summary, {
+      legalGuid, productType, search: search.trim(), page: Number(rawPage),
+    });
+    if ("error" in details) {
+      if (details.error === "legal_unavailable") notFoundForAccess(res);
+      else res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Категория недоступна."));
+      return;
+    }
+    res.json(details);
+    return;
+  }
   res.json({ summary });
 }
 

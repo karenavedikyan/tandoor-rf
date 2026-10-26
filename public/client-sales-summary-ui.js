@@ -358,9 +358,14 @@
   }
 
   function salesDetailsPath(path) {
-    var target = new URL(path, window.location.origin);
-    var parentReturn = new URLSearchParams(window.location.search).get("return");
-    if (parentReturn) target.searchParams.set("return", parentReturn);
+    var target = new URL(window.location.href);
+    target.searchParams.set("cardTab", "sales");
+    ["salesView", "salesCategory", "salesQ", "salesPage", "salesLegal"].forEach(function (key) {
+      target.searchParams.delete(key);
+    });
+    if (path) {
+      target.searchParams.set("salesLegal", new URL(path, window.location.origin).pathname.split("/").pop());
+    }
     return target.pathname + target.search;
   }
 
@@ -417,6 +422,8 @@
       "</div>" +
       note +
       renderTiles(shell, summary) +
+      '<p><a class="btn btn--primary" data-testid="v3-sales-open-detail" href="' +
+      esc(shell, salesDetailsPath("")) + '">Смотреть детализацию</a></p>' +
       renderBreakdownTable(shell, summary, entityType) +
       "</section>"
     );
@@ -618,6 +625,7 @@
     territoryQueryFromListReturn: territoryQueryFromListReturn,
     parseStrictSalesMonth: parseStrictSalesMonth,
     fetchBatch: fetchBatch,
+    fetchMonths: fetchMonths,
     formatListSalesCell: formatListSalesCell,
   };
 })();

@@ -103,6 +103,25 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
       `,
       [LEGAL_A, "a".repeat(64), LEGAL_B],
     );
+    await pool.query(`
+      INSERT INTO onec_v3_legal_sale_item_import_state(id,source_sha256,row_count)
+      VALUES(1,$1,52) ON CONFLICT(id) DO UPDATE SET source_sha256=$1,row_count=52
+    `, ["b".repeat(64)]);
+    await pool.query(`
+      INSERT INTO onec_v3_legal_sales_month_activation(dataset,sale_month,source_sha256)
+      VALUES('sale_items','2026-09-01',$1)
+      ON CONFLICT(dataset,sale_month) DO UPDATE SET source_sha256=$1
+    `, ["b".repeat(64)]);
+    await pool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+        (source_sha256,source_row_index,legal_guid,sale_month,product_type,guid_item,name_item,
+         quantity,income,manual_discount,automatic_discount,total_discount,cost_price,additional_expenses,
+         gross_profit,profitability,catalog_matched)
+      SELECT $1,n,$2::uuid,'2026-09-01','Doors',
+        ('aaaaaaaa-aaaa-4aaa-8aaa-'||LPAD(n::text,12,'0'))::uuid,
+        'Model '||LPAD(n::text,3,'0'),1,1,0,0,0,900,0,900,900,TRUE
+      FROM generate_series(1,52) n
+    `, ["b".repeat(64), LEGAL_A]);
     await pool.end();
   }
 
@@ -178,7 +197,7 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     const back = await page.locator('[data-testid="v3-back-to-list"]').getAttribute("href");
     assert.ok(back?.includes("v3salesMonth=2026-09") && back.includes("v3cols="));
     await page.locator('[data-testid="v3-sales-details-link"]').first().click();
-    await page.waitForURL((url) => url.pathname.includes(LEGAL_A));
+    await page.waitForURL((url) => url.searchParams.get("cardTab") === "sales" && url.searchParams.get("salesLegal") === LEGAL_A);
     assert.ok(new URL(page.url()).searchParams.get("return")?.includes("v3cols="));
     await page.locator('[data-testid="v3-back-to-list"]').click();
     await page.waitForSelector("#clients-table-body tr");
@@ -212,7 +231,7 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.close();
   });
 
-  it("details link opens legal sales with guid and month", async () => {
+  it("details link opens sales inside the same holding card with the chosen legal and month", async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await login(page);
     await page.goto(
@@ -223,8 +242,9 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     assert.ok(href && href.includes(LEGAL_A));
     assert.ok(href.includes("v3salesMonth=2026-09"));
     await page.click('[data-testid="v3-sales-details-link"]');
-    await page.waitForURL((url) => url.pathname.includes(LEGAL_A), { timeout: 15000 });
-    assert.match(page.url(), /v3Entity=legal/);
+    await page.waitForURL((url) => url.searchParams.get("cardTab") === "sales" && url.searchParams.get("salesLegal") === LEGAL_A, { timeout: 15000 });
+    assert.match(new URL(page.url()).pathname, new RegExp(HOLDING));
+    assert.equal(new URL(page.url()).searchParams.get("v3Entity"), "holding");
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "details-legal-sales.png"), fullPage: true });
     await page.close();
   });
@@ -238,6 +258,85 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     const back = await page.locator('[data-testid="v3-back-to-list"]').getAttribute("href");
     assert.ok(back?.startsWith("/sales?"));
     assert.equal(new URL(back!, baseUrl).searchParams.get("month"), "2026-09");
+    await page.close();
+  });
+
+  it("holding categories drill down to real models with legal selection, search, pages and reload", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await login(page);
+    await page.goto(`${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-09&return=${encodeURIComponent("?v3mode=1&view=all&v3salesMonth=2026-09")}`,
+      { waitUntil: "networkidle" });
+    await page.locator('[data-testid="v3-sales-open-detail"]').click();
+    await page.locator('[data-testid="csd-legal"]').selectOption(LEGAL_A);
+    await page.locator('[data-csd-category="Doors"]').click();
+    await page.locator(".csd-products tbody tr").first().waitFor();
+    assert.equal(await page.locator(".csd-products tbody tr").count(), 50);
+    assert.match(new URL(page.url()).pathname, new RegExp(HOLDING));
+    assert.equal(new URL(page.url()).searchParams.get("salesLegal"), LEGAL_A);
+    await page.locator("[data-csd-next]").click();
+    await page.waitForFunction(() => document.querySelectorAll(".csd-products tbody tr").length === 2);
+    assert.equal(new URL(page.url()).searchParams.get("salesPage"), "2");
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(await page.locator(".csd-products tbody tr").count(), 2);
+    await page.locator('[data-testid="csd-search"] input').fill("Model 052");
+    await page.locator('[data-testid="csd-search"] button').click();
+    await page.waitForFunction(() => document.querySelectorAll(".csd-products tbody tr").length === 1);
+    assert.match(await page.locator(".csd-products").innerText(), /Model 052/);
+    assert.equal(new URL(page.url()).searchParams.get("salesPage"), null);
+    assert.equal(new URL(page.url()).searchParams.get("salesQ"), "Model 052");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "models-desktop.png"), fullPage: true });
+    await page.locator("[data-csd-back]").click();
+    await page.locator('[data-testid="csd-legal"]').selectOption(LEGAL_B);
+    await page.locator('[data-csd-category="Doors"]').click();
+    await page.getByText("Товарные строки не найдены.", { exact: false }).waitFor();
+    assert.equal(await page.locator(".csd-products tbody tr").count(), 0);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+  it("mobile model drilldown is readable and legacy legal finance remains reachable", async () => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+    await login(page);
+    await page.goto(`${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-09`, { waitUntil: "networkidle" });
+    await page.locator('[data-testid="v3-sales-open-detail"]').click();
+    await page.locator('[data-csd-category="Doors"]').click();
+    await page.locator(".csd-products tbody tr").first().waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.locator(".csd-products tbody tr").first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "models-mobile-375.png"), fullPage: false });
+    await page.goto(`${baseUrl}/clients/${LEGAL_A}?v3Entity=legal&cardTab=sales&v3salesMonth=2026-09`, { waitUntil: "networkidle" });
+    await page.getByRole("link", { name: "Расширенная сводка по категориям с финансовыми показателями" }).click();
+    await page.locator('[data-testid="v3-sales-month-select"]').waitFor();
+    assert.equal(new URL(page.url()).searchParams.get("salesView"), "financial");
+    await page.close();
+  });
+
+  it("drilldown keeps list-return territory and escapes model names", async () => {
+    const pool = new (await import("pg")).Pool({ connectionString: getIntegrationDatabaseUrl() });
+    try {
+      await pool.query(`UPDATE onec_v3_legal_sale_item_lines SET name_item=$1
+        WHERE source_sha256=$2 AND source_row_index=51`,
+        ['</td><img src=x onerror="window.__salesXss=1">', "b".repeat(64)]);
+    } finally { await pool.end(); }
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await login(page);
+    const ret = encodeURIComponent(`?v3mode=1&v3manager=${MGR_A}&v3salesMonth=2026-09`);
+    await page.goto(`${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-09&return=${ret}`,
+      { waitUntil: "networkidle" });
+    await page.locator('[data-testid="v3-sales-open-detail"]').click();
+    await page.locator('[data-testid="csd-legal"]').waitFor();
+    const legalOptions = await page.locator('[data-testid="csd-legal"] option').allTextContents();
+    assert.ok(legalOptions.some(text => text.includes("Legal A")));
+    assert.ok(!legalOptions.some(text => text.includes("Legal B")));
+    await page.locator('[data-csd-category="Doors"]').click();
+    await page.locator('[data-testid="csd-search"] input').fill("aaaaaaaa-aaaa-4aaa-8aaa-000000000051");
+    await page.locator('[data-testid="csd-search"] button').click();
+    await page.waitForFunction(() => document.querySelectorAll(".csd-products tbody tr").length === 1);
+    assert.match(await page.locator(".csd-products").innerText(), /<img/);
+    assert.equal(await page.locator(".csd-products img").count(), 0);
+    assert.equal(await page.evaluate(() => (window as Window & { __salesXss?: number }).__salesXss), undefined);
     await page.close();
   });
 });
