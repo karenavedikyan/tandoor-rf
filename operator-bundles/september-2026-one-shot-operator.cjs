@@ -686,6 +686,19 @@ async function capturePgJsonRowset(client, sql, params = []) {
   }
   return text;
 }
+async function restorePgJsonRowset(client, tableName, jsonText) {
+  if (jsonText === "[]") {
+    return;
+  }
+  await client.query(
+    `
+      INSERT INTO ${tableName}
+      SELECT *
+      FROM json_populate_recordset(null::${tableName}, $1::json)
+    `,
+    [jsonText]
+  );
+}
 
 // src/onec-sales/september-2026-one-shot/before-state-047-048.ts
 async function captureSeptember047048BeforeState(client) {
@@ -4084,6 +4097,63 @@ async function verifySeptemberBackupReceiptForApply(input) {
   if (!payload.ok) return payload;
   return { ok: true, receipt };
 }
+async function verifySeptemberBackupReceiptForRollback(input) {
+  let bytes;
+  try {
+    bytes = await (0, import_promises6.readFile)(input.receiptFilePath);
+  } catch {
+    return { ok: false, code: "BACKUP_RECEIPT_MISSING", message: "Backup receipt file not found." };
+  }
+  const computedSha = (0, import_node_crypto13.createHash)("sha256").update(bytes).digest("hex");
+  if (computedSha !== input.expectedReceiptSha256) {
+    return { ok: false, code: "BACKUP_RECEIPT_SHA_MISMATCH", message: "Backup receipt SHA mismatch." };
+  }
+  const receipt = JSON.parse(bytes.toString("utf8"));
+  if (receipt.v !== 1 || receipt.kind !== "september-2026-047-048-backup-receipt") {
+    return { ok: false, code: "BACKUP_RECEIPT_INVALID", message: "Invalid backup receipt version/kind." };
+  }
+  if (receipt.targetDbFingerprint !== input.liveTargetFingerprint) {
+    return { ok: false, code: "BACKUP_RECEIPT_TARGET_MISMATCH", message: "Backup receipt target fingerprint mismatch." };
+  }
+  if (receipt.operatorDataScopeSha256 !== input.scopeFileSha256) {
+    return { ok: false, code: "BACKUP_RECEIPT_SCOPE_MISMATCH", message: "Backup receipt scope SHA mismatch." };
+  }
+  if (receipt.beforeStateSha256 !== input.scope.beforeStateDigest) {
+    return { ok: false, code: "BACKUP_RECEIPT_BEFORE_SCOPE_MISMATCH", message: "Backup receipt before digest mismatch vs scope." };
+  }
+  const canonicalSha = backupReceiptSha256(receipt);
+  if (canonicalSha !== computedSha) {
+    return { ok: false, code: "BACKUP_RECEIPT_BINDING_INVALID", message: "Backup receipt canonical binding invalid." };
+  }
+  if (!receipt.backupPayloadSha256?.trim()) {
+    return { ok: false, code: "BACKUP_RECEIPT_PAYLOAD_MISSING", message: "Backup payload SHA missing from receipt." };
+  }
+  if (!input.backupPayloadFilePath?.trim()) {
+    return { ok: false, code: "BACKUP_PAYLOAD_FILE_MISSING", message: "Backup payload file path required." };
+  }
+  const payloadRead = await readSeptember047048BackupPayloadFile({
+    backupPayloadFilePath: input.backupPayloadFilePath,
+    approvedPrivateRoot: input.approvedPrivateBackupRoot,
+    skipPathSecurity: input.skipBackupPayloadPathSecurity
+  });
+  if (!payloadRead.ok) return payloadRead;
+  const payloadSha256 = (0, import_node_crypto13.createHash)("sha256").update(payloadRead.bytes).digest("hex");
+  if (payloadSha256 !== receipt.backupPayloadSha256) {
+    return { ok: false, code: "BACKUP_PAYLOAD_SHA_MISMATCH", message: "Backup payload file SHA mismatch vs receipt." };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(payloadRead.bytes.toString("utf8"));
+  } catch {
+    return { ok: false, code: "BACKUP_PAYLOAD_PARSE", message: "Backup payload is not valid JSON." };
+  }
+  const valid = validateSeptember047048BackupDocument(parsed, {
+    targetDbFingerprint: input.liveTargetFingerprint,
+    beforeStateSha256: receipt.beforeStateSha256
+  });
+  if (!valid.ok) return valid;
+  return { ok: true, receipt, backup: valid.backup };
+}
 function buildSeptemberBackupReceiptFromVerifiedPayload(input) {
   return {
     v: 1,
@@ -4450,12 +4520,224 @@ async function runSeptember2026OneShotBackup(input) {
   }
 }
 
+// src/onec-sales/september-2026-one-shot/rollback-047-048.ts
+var IMPORT_STATE_TABLES = [
+  "onec_v3_legal_sales_import_state",
+  "onec_v3_legal_sale_item_import_state",
+  "onec_v3_legal_return_import_state",
+  "onec_v3_legal_return_item_import_state"
+];
+var IMPORT_STATE_DATASET_TABLE = {
+  sale_aggregate: "onec_v3_legal_sales_import_state",
+  sale_items: "onec_v3_legal_sale_item_import_state",
+  return_aggregate: "onec_v3_legal_return_import_state",
+  return_items: "onec_v3_legal_return_item_import_state"
+};
+async function restoreSeptember047048Backup(client, backup) {
+  if (backup.snapshot.v !== 2) {
+    throw new Error("BACKUP_SNAPSHOT_VERSION_UNSUPPORTED");
+  }
+  const months = [backup.snapshot.saleMonthIso];
+  await client.query(`DELETE FROM onec_v3_legal_sales_lines WHERE sale_month = ANY($1::date[])`, [months]);
+  await client.query(`DELETE FROM onec_v3_legal_sale_item_lines WHERE sale_month = ANY($1::date[])`, [months]);
+  await client.query(`DELETE FROM onec_v3_legal_return_lines WHERE sale_month = ANY($1::date[])`, [months]);
+  await client.query(`DELETE FROM onec_v3_legal_return_item_lines WHERE sale_month = ANY($1::date[])`, [months]);
+  await client.query(`DELETE FROM onec_v3_legal_sales_month_activation WHERE sale_month = ANY($1::date[])`, [months]);
+  await restorePgJsonRowset(client, "onec_v3_legal_sales_lines", backup.snapshot.saleAggregateLinesJson);
+  await restorePgJsonRowset(client, "onec_v3_legal_sale_item_lines", backup.snapshot.saleItemLinesJson);
+  await restorePgJsonRowset(client, "onec_v3_legal_return_lines", backup.snapshot.returnLinesJson);
+  await restorePgJsonRowset(client, "onec_v3_legal_return_item_lines", backup.snapshot.returnItemLinesJson);
+  await restorePgJsonRowset(
+    client,
+    "onec_v3_legal_sales_month_activation",
+    backup.snapshot.monthActivationsJson
+  );
+  for (const table of IMPORT_STATE_TABLES) {
+    await client.query(`DELETE FROM ${table} WHERE id = 1`);
+  }
+  for (const [dataset, table] of Object.entries(IMPORT_STATE_DATASET_TABLE)) {
+    await client.query(
+      `
+        INSERT INTO ${table} (id, source_sha256, row_count, imported_at)
+        SELECT 1, r.source_sha256, r.row_count, r.imported_at
+        FROM json_to_recordset($1::json) AS r(
+          dataset text,
+          source_sha256 char(64),
+          row_count integer,
+          imported_at timestamptz
+        )
+        WHERE r.dataset = $2
+      `,
+      [backup.snapshot.importStatesJson, dataset]
+    );
+  }
+}
+
+// src/onec-sales/september-2026-one-shot/one-shot-rollback-core.ts
+async function runSeptember2026OneShotRollback(input) {
+  const urlCheck = assertProductionReadOnlyPreflightDatabaseUrl(input.databaseUrl, input.testContext);
+  if (!urlCheck.ok) return urlCheck;
+  const auth = assertExternalWriteAuthorization();
+  if (!auth.ok) return auth;
+  if (auth.ref !== input.externalAuthorizationRef.trim()) {
+    return { ok: false, code: "EXTERNAL_AUTHORIZATION_MISMATCH", message: "External authorization ref mismatch." };
+  }
+  const expectedLiveAfter = input.expectedLiveAfterStateDigest?.trim();
+  if (!expectedLiveAfter) {
+    return {
+      ok: false,
+      code: "EXPECTED_LIVE_AFTER_REQUIRED",
+      message: "SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST is required for rollback."
+    };
+  }
+  if (!input.backupReceiptSha256?.trim() || !input.backupReceiptFilePath?.trim() || !input.backupPayloadFilePath?.trim()) {
+    return {
+      ok: false,
+      code: "BACKUP_RECEIPT_REQUIRED",
+      message: "Verified backup receipt path/SHA and backup payload path required for rollback."
+    };
+  }
+  let scope;
+  let scopeSha;
+  if (input.testContext?.syntheticOperatorScope) {
+    scope = input.testContext.syntheticOperatorScope;
+    scopeSha = input.operatorDataScopeSha256;
+  } else {
+    const loaded = await loadAndVerifyOperatorDataScope({
+      scopeFilePath: input.operatorDataScopePath,
+      expectedSha256: input.operatorDataScopeSha256,
+      skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin,
+      skipTargetFingerprintPin: input.testContext?.skipTargetFingerprintPin
+    });
+    if (!loaded.ok) return loaded;
+    scope = loaded.scope;
+    scopeSha = loaded.sha256;
+  }
+  const grant = assertSeptemberWriteGrant("rollback", scope, input.rollbackGrantRef);
+  if (!grant.ok) return grant;
+  const privateRoot = process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim();
+  if (!input.testContext?.skipBackupPayloadPathSecurity && !privateRoot) {
+    return {
+      ok: false,
+      code: "BACKUP_PRIVATE_ROOT_REQUIRED",
+      message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required for production rollback."
+    };
+  }
+  const pool = createImportPool(input.databaseUrl);
+  const client = await pool.connect();
+  let txOpen = false;
+  try {
+    await client.query("BEGIN");
+    txOpen = true;
+    const identity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+    const fingerprintOk = input.testContext?.skipTargetFingerprintPin === true || identity.fingerprint === EXPECTED_TARGET_DB_FINGERPRINT;
+    if (!fingerprintOk) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "TARGET_FINGERPRINT_MISMATCH", message: "Database fingerprint mismatch." };
+    }
+    const locked = await tryAcquireImportLock(client);
+    if (!locked) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+    }
+    const gates = await assertWritePreflightGatesAfterImportLock(client, input.testContext);
+    if (!gates.ok) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return gates;
+    }
+    const liveAfter = await captureSeptember047048BeforeState(client);
+    if (liveAfter.digest !== expectedLiveAfter) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "LIVE_AFTER_DRIFT", message: "Live after-state digest drift." };
+    }
+    const backupVerify = await verifySeptemberBackupReceiptForRollback({
+      receiptFilePath: input.backupReceiptFilePath,
+      expectedReceiptSha256: input.backupReceiptSha256.trim(),
+      backupPayloadFilePath: input.backupPayloadFilePath,
+      scope,
+      scopeFileSha256: scopeSha,
+      liveTargetFingerprint: identity.fingerprint,
+      approvedPrivateBackupRoot: privateRoot,
+      skipBackupPayloadPathSecurity: input.testContext?.skipBackupPayloadPathSecurity
+    });
+    if (!backupVerify.ok) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return backupVerify;
+    }
+    await restoreSeptember047048Backup(client, backupVerify.backup);
+    const restored = await captureSeptember047048BeforeState(client);
+    if (restored.digest !== backupVerify.backup.beforeStateSha256) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "ROLLBACK_VERIFY_FAILED", message: "Restored state digest mismatch." };
+    }
+    const restoredDigest = restored.digest;
+    try {
+      await client.query("COMMIT");
+      txOpen = false;
+    } catch (commitError) {
+      if (isCommitTransportUncertainty(commitError)) {
+        return {
+          ok: false,
+          code: "COMMIT_UNCERTAIN",
+          message: `Commit outcome uncertain; restored digest ${restoredDigest}. Do not retry rollback or blind apply.`
+        };
+      }
+      await client.query("ROLLBACK").catch(() => void 0);
+      txOpen = false;
+      throw commitError;
+    }
+    let postCommitVerifyOk = true;
+    if (input.testContext?.injectPostCommitReadFailure) {
+      postCommitVerifyOk = false;
+    } else {
+      try {
+        const afterPost = await captureSeptember047048BeforeState(client);
+        if (afterPost.digest !== restoredDigest) {
+          postCommitVerifyOk = false;
+        }
+      } catch {
+        postCommitVerifyOk = false;
+      }
+    }
+    return {
+      ok: true,
+      receipt: {
+        v: 1,
+        kind: "september-2026-rollback-receipt",
+        commitStatus: "committed",
+        expectedLiveAfterStateDigest: expectedLiveAfter,
+        liveAfterStateDigestBeforeRestore: liveAfter.digest,
+        restoredBeforeStateDigest: restoredDigest,
+        backupBeforeStateDigest: backupVerify.backup.beforeStateSha256,
+        operatorDataScopeSha256: scopeSha,
+        rollbackGrantRef: input.rollbackGrantRef,
+        backupReceiptSha256: input.backupReceiptSha256.trim(),
+        postCommitVerifyOk
+      }
+    };
+  } catch (e) {
+    if (txOpen) {
+      await client.query("ROLLBACK").catch(() => void 0);
+    }
+    return { ok: false, code: "ROLLBACK_FAILED", message: e instanceof Error ? e.message : "Rollback failed." };
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
 // src/onec-sales/september-2026-one-shot/one-shot-operator-cli-entry.ts
 async function main() {
   if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS) {
     fail("OPERATOR_BYPASS_FORBIDDEN", "SYNTHETIC_HARNESS not accepted.");
   }
-  const mode = process.argv.includes("--apply") ? "apply" : process.argv.includes("--backup") ? "backup" : "read-only-preflight";
+  const mode = process.argv.includes("--apply") ? "apply" : process.argv.includes("--backup") ? "backup" : process.argv.includes("--rollback") ? "rollback" : "read-only-preflight";
   if (mode === "backup") {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_BACKUP_GRANT_REF?.trim();
@@ -4477,6 +4759,37 @@ async function main() {
       backupPayloadDestinationPath: payloadPath,
       backupReceiptDestinationPath: receiptPath,
       approvedPrivateRoot: privateRoot
+    });
+    console.log(JSON.stringify(result2, null, 2));
+    if (!result2.ok) process.exit(1);
+    return;
+  }
+  if (mode === "rollback") {
+    const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
+    const grant = process.env.SEPTEMBER_2026_ROLLBACK_GRANT_REF?.trim();
+    const backupReceipt = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_SHA256?.trim();
+    const backupReceiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
+    const backupPayloadPath = process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_PATH?.trim();
+    const expectedLiveAfter = process.env.SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST?.trim();
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    const auth = assertExternalWriteAuthorization();
+    if (!auth.ok) fail(auth.code, auth.message);
+    if (!scopePath || !grant || !databaseUrl || !backupReceipt || !backupReceiptPath || !backupPayloadPath || !expectedLiveAfter) {
+      fail(
+        "ROLLBACK_CONFIG_INCOMPLETE",
+        "DATABASE_URL, scope path, SEPTEMBER_2026_ROLLBACK_GRANT_REF, backup receipt SHA/path, backup payload path, SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST required."
+      );
+    }
+    const result2 = await runSeptember2026OneShotRollback({
+      databaseUrl,
+      operatorDataScopePath: scopePath,
+      operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
+      rollbackGrantRef: grant,
+      externalAuthorizationRef: auth.ref,
+      backupReceiptSha256: backupReceipt,
+      backupReceiptFilePath: backupReceiptPath,
+      backupPayloadFilePath: backupPayloadPath,
+      expectedLiveAfterStateDigest: expectedLiveAfter
     });
     console.log(JSON.stringify(result2, null, 2));
     if (!result2.ok) process.exit(1);

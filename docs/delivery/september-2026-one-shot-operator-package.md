@@ -35,7 +35,7 @@ Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 | Item | Value |
 |------|--------|
 | File | `operator-bundles/september-2026-one-shot-operator.cjs` |
-| SHA-256 (file bytes) | `b7048b1b9498a70944ebee4f3dea232cc25974cdab09462d0d5ca1458f4dc065` |
+| SHA-256 (file bytes) | `60289b5191ccea14612aeb1a605b506b7b53294d95894363df73605714a62676` |
 | Rebuild | `npm run september-2026-read-only-preflight:build` |
 | Verify SHA | `npm run september-2026-read-only-preflight:sha` |
 
@@ -87,20 +87,20 @@ Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
 
 Apply path: `runSeptember2026OneShotApply` / `--apply` (fail-closed `APPLY_NOT_AUTHORIZED` until production channel + authorized scope + backup receipt). Order under lock: target identity → import lock → gates (schema, all pending/running import **and** diagnostic jobs, nightly scheduler env disabled, catalog) → empty before + receipt binding → writes; after-digest computed inside the open transaction before `COMMIT`. Snapshot loader: directory `0700`, files `0600`, no symlinks, 32 MiB cap, manifest/sources bound to scope.
 
-**Rollback CLI mode:** restore helpers exist (`rollback-047-048.ts`) but there is **no** production-ready bundled rollback operator mode yet — only-empty-before / strict after-guard apply to future rollback grants.
+**Rollback CLI mode (`--rollback`):** requires `SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF`, `SEPTEMBER_2026_ROLLBACK_GRANT_REF`, pinned scope bytes `f1daa…`, verified backup receipt + payload under `SEPTEMBER_2026_BACKUP_PRIVATE_ROOT` (`0700`/`0600`), and **required** `SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST`. Under one transaction: target fingerprint → import lock → gates → live-after digest (must match expected) → receipt/payload binding → scoped restore (`rollback-047-048.ts`) → restored digest must equal `backup.beforeStateSha256` before `COMMIT`. `COMMIT_UNCERTAIN` if transport fails after ACK — do not blind retry rollback/apply.
 
 Legacy TS manifest hash (`code-bundle-manifest.ts`) is for dev traceability only — **operator handoff uses the `.cjs` file SHA above**.
 
 ## Backup / apply / rollback (code only)
 
-Implemented in `september-2026-one-shot/` modules; default CLI remains read-only — **`--backup`** and **`--apply`** are explicit modes after authorization:
+Implemented in `september-2026-one-shot/` modules; default CLI remains read-only — **`--backup`**, **`--apply`**, and **`--rollback`** are explicit modes after authorization:
 
 | Operation | Scope |
 |-----------|--------|
 | Backup | Four line tables month 9; four `*_import_state` id=1; `month_activation` month 9. Row payloads: **PostgreSQL `json_agg(row_to_json)` as raw text** (snapshot `v: 2`) — no JS `Number`/`Date` coercion; restore via `json_populate_recordset` / `json_to_recordset`. **Global sequences are not restored.** |
 | Apply | Single transaction + lock; `sidecar049: false` (no 049 quarantine/stats/apply_runs); matched rows only in line tables; full materialization verify before COMMIT |
 | Audit receipt | External private JSON (not 049) |
-| Rollback | `rollback-047-048.ts` — separate authorization; identity + backup SHA + optional live-after guard; drift → STOP |
+| Rollback | `runSeptember2026OneShotRollback` / `--rollback` — lock-first gates; required live-after digest; receipt + file-byte payload binding; restore verify before COMMIT |
 
 Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback hash, cleanup on failure.
 
@@ -125,9 +125,11 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 `test/integration/september-2026-read-only-preflight.test.ts` — missing sources, wrong target before private SELECT, URL bypass, sanitization, `.cjs` SHA reproducibility (**RUN**).
 
-`test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (6): file-byte SHA vs compact digest, `runSeptember2026OneShotBackup` → apply, private root required / `0755` / symlink refusal (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
+`test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (6), `september-2026-one-shot-rollback.test.ts` (6): file-byte SHA vs compact digest, backup → apply → rollback, live-after / target / receipt / lock negatives (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic shape only — **not** pinned `f1daa…` bytes).
 
-`npm run typecheck` — **RUN** after changes. All `test/integration/september-2026-*.test.ts` (**34** cases, Node 22, `TEST_DATABASE_URL`, `--test-concurrency=1`, non-root) — **RUN** on localhost test DB. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
+`npm run typecheck` — **RUN** after changes. All `test/integration/september-2026-*.test.ts` (**40** cases, Node 22, `TEST_DATABASE_URL`, `--test-concurrency=1`, non-root) — **RUN** on localhost test DB. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
+
+**Frozen operator scope evidence:** pinned SHA `f1daa71dce9172f93ab8590148634c0d09013ae07b60f5f8a6675392c793d9aa` — exact JSON bytes are **not** in this repository; operator must supply `contracts/evidence/one-shot-sales-202609/frozen-apply-scope-candidate.json` from the Computer-prepared artifact when available.
 
 ## Explicitly out of scope
 

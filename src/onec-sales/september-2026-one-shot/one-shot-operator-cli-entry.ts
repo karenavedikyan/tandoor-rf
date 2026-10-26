@@ -4,7 +4,9 @@ import { runSeptember2026ReadOnlyPreflight } from "./read-only-preflight-core";
 import { parseSeptemberReadOnlyRuntimeConfig } from "./read-only-preflight-runtime-config";
 import { runSeptember2026OneShotApply } from "./one-shot-apply-core";
 import { runSeptember2026OneShotBackup } from "./one-shot-backup-core";
+import { runSeptember2026OneShotRollback } from "./one-shot-rollback-core";
 import { EXPECTED_OPERATOR_DATA_SCOPE_SHA256 } from "./scope-pins";
+import { assertExternalWriteAuthorization } from "./operator-guard";
 
 async function main(): Promise<void> {
   if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS) {
@@ -14,7 +16,9 @@ async function main(): Promise<void> {
     ? "apply"
     : process.argv.includes("--backup")
       ? "backup"
-      : "read-only-preflight";
+      : process.argv.includes("--rollback")
+        ? "rollback"
+        : "read-only-preflight";
   if (mode === "backup") {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_BACKUP_GRANT_REF?.trim();
@@ -36,6 +40,37 @@ async function main(): Promise<void> {
       backupPayloadDestinationPath: payloadPath,
       backupReceiptDestinationPath: receiptPath,
       approvedPrivateRoot: privateRoot,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exit(1);
+    return;
+  }
+  if (mode === "rollback") {
+    const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
+    const grant = process.env.SEPTEMBER_2026_ROLLBACK_GRANT_REF?.trim();
+    const backupReceipt = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_SHA256?.trim();
+    const backupReceiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_PATH?.trim();
+    const backupPayloadPath = process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_PATH?.trim();
+    const expectedLiveAfter = process.env.SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST?.trim();
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    const auth = assertExternalWriteAuthorization();
+    if (!auth.ok) fail(auth.code, auth.message);
+    if (!scopePath || !grant || !databaseUrl || !backupReceipt || !backupReceiptPath || !backupPayloadPath || !expectedLiveAfter) {
+      fail(
+        "ROLLBACK_CONFIG_INCOMPLETE",
+        "DATABASE_URL, scope path, SEPTEMBER_2026_ROLLBACK_GRANT_REF, backup receipt SHA/path, backup payload path, SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST required.",
+      );
+    }
+    const result = await runSeptember2026OneShotRollback({
+      databaseUrl,
+      operatorDataScopePath: scopePath,
+      operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
+      rollbackGrantRef: grant,
+      externalAuthorizationRef: auth.ref,
+      backupReceiptSha256: backupReceipt,
+      backupReceiptFilePath: backupReceiptPath,
+      backupPayloadFilePath: backupPayloadPath,
+      expectedLiveAfterStateDigest: expectedLiveAfter,
     });
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exit(1);
