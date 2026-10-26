@@ -578,7 +578,7 @@
     }
     if (colId === "sales_income_total") {
       return sales.dataState === "loaded"
-        ? esc(shell, formatMoney(sales.incomeTotal)) + partialScopeSuffix(sales)
+        ? '<span class="sales-amount">' + esc(shell, formatMoney(sales.incomeTotal)) + partialScopeSuffix(sales) + "</span>" + salesInsightHtml(sales.insight, shell)
         : '<span class="clients-no-data">—</span>';
     }
     if (colId === "sales_quantity_total") {
@@ -613,7 +613,87 @@
     return '<span class="clients-no-data">—</span>';
   }
 
+  function salesInsightHtml(insight, shell) {
+    if (!insight) return "";
+    var labels = { large: "Крупный", middle: "Средний", low: "Низкие продажи", zero: "Нет продаж",
+      adjustment: "Корректировка", unavailable: "Нет полных данных", unrated: "Без оценки" };
+    var title = insight.manager
+      ? "База менеджера " + (insight.manager_name || "") + "; клиентов с положительными продажами: " + insight.peers +
+        ". Нижняя граница: " + formatMoney(insight.low) + "; верхняя: " + formatMoney(insight.high) + "."
+      : "Нет единственного менеджера для сравнения. Выберите конкретного менеджера и его территорию.";
+    return '<button type="button" data-sales-info class="sales-band sales-band--' + esc(shell, insight.band) + '" title="' + esc(shell, title) + '">' +
+      esc(shell, labels[insight.band] || "Без оценки") + "</button>";
+  }
+
+  function renderSalesHeading(shell, state) {
+    var arrow = state.salesSort === "desc" ? " ↓" : state.salesSort === "asc" ? " ↑" : " ↕";
+    return '<button type="button" class="sales-sort" data-sales-sort aria-label="Сортировать продажи: ' +
+      (state.salesSort === "desc" ? "от меньших к большим" : "от больших к меньшим") + '">Продажи, ₽' + arrow + "</button>";
+  }
+
+  function renderSalesRange(shell, state) {
+    return '<div class="sales-range"><div class="sales-range__inputs">' +
+      '<input type="text" inputmode="decimal" data-sales-min aria-label="Продажи от, рублей" placeholder="От ₽" value="' + esc(shell, state.salesMin || "") + '">' +
+      '<input type="text" inputmode="decimal" data-sales-max aria-label="Продажи до, рублей" placeholder="До ₽" value="' + esc(shell, state.salesMax || "") + '"></div>' +
+      '<button type="button" class="sales-range__apply" data-sales-apply>Применить</button>' +
+      '<button type="button" class="sales-help" data-sales-help>О группах</button></div>';
+  }
+
+  function bindSalesControls(root, onChange) {
+    root.querySelectorAll("[data-sales-sort], [data-sales-apply]").forEach(function (button) {
+      if (button.dataset.salesBound) return;
+      button.dataset.salesBound = "1";
+      button.addEventListener("click", function () {
+        var patch = { page: 1 };
+        if (button.hasAttribute("data-sales-sort")) {
+          patch.salesSort = window.ClientsV3.readState().salesSort === "desc" ? "asc" : "desc";
+        } else {
+          var container = button.closest(".sales-range");
+          var min = container.querySelector("[data-sales-min]");
+          var max = container.querySelector("[data-sales-max]");
+          var valid = true;
+          [min, max].forEach(function (input) {
+            input.value = input.value.replace(/\s/g, "").replace(",", ".");
+            input.setCustomValidity(input.value && !/^-?\d{1,15}(?:\.\d{1,2})?$/.test(input.value) ? "Введите сумму в рублях, до двух знаков после запятой." : "");
+            if (!input.reportValidity()) valid = false;
+          });
+          if (!valid) return;
+          patch.salesMin = min.value; patch.salesMax = max.value;
+        }
+        onChange(window.ClientsV3.mergeListStateForUserAction(patch));
+      });
+    });
+    root.querySelectorAll("[data-sales-min], [data-sales-max]").forEach(function (input) {
+      if (input.dataset.salesBound) return;
+      input.dataset.salesBound = "1";
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") { event.preventDefault(); input.closest(".sales-range").querySelector("[data-sales-apply]").click(); }
+      });
+    });
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-sales-help], [data-sales-info]");
+    if (!button) return;
+    var dialog = document.createElement("dialog");
+    dialog.className = "sales-info-dialog";
+    dialog.setAttribute("aria-label", "Сравнение продаж внутри базы менеджера");
+    var text = document.createElement("p");
+    text.textContent = button.hasAttribute("data-sales-info") ? button.getAttribute("title") :
+      "Сравнение за выбранный месяц только внутри базы менеджера на выбранной территории, до поиска и фильтров. Нижняя и верхняя границы — 25-й и 75-й процентили положительной выручки: около четверти клиентов с каждой стороны. Одинаковые суммы не разделяются. При менее четырёх клиентах оценки нет; при равных границах все средние. Нулевые продажи, корректировки и отсутствие данных показываются отдельно. Холдинг с несколькими менеджерами сравнивается только после выбора одного менеджера. Это не постоянный статус клиента.";
+    var close = document.createElement("button");
+    close.type = "button"; close.textContent = "Понятно";
+    close.addEventListener("click", function () { dialog.close(); });
+    dialog.addEventListener("close", function () { dialog.remove(); });
+    dialog.append(text, close);
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+
   window.ClientSalesSummaryUi = {
+    renderSalesHeading: renderSalesHeading,
+    renderSalesRange: renderSalesRange,
+    bindSalesControls: bindSalesControls,
     monthFromUrl: monthFromUrl,
     setMonthInUrl: setMonthInUrl,
     mountOverview: mountOverview,

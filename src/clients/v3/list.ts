@@ -48,6 +48,13 @@ export type V3ListQuery = {
   colCity?: string;
   colStatus?: string;
   fieldRules?: V3FilterRule[];
+  salesMonth?: string;
+  salesSort?: "asc" | "desc";
+  salesMin?: string;
+  salesMax?: string;
+  salesInsights?: boolean;
+  /** Server-resolved only; never accepted as a request parameter. */
+  salesRanking?: import("./sales-ranking").SalesRanking;
 };
 
 function appendTextContainsFilter(
@@ -253,6 +260,38 @@ export async function isExchangeV3Active(): Promise<boolean> {
 export async function listV3Entities(
   context: AccessContext,
   input: V3ListQuery,
+): Promise<{ total: number; items: Record<string, unknown>[]; salesMonth?: string }> {
+  if (input.salesInsights || input.salesSort || input.salesMin !== undefined || input.salesMax !== undefined) {
+    const { loadSalesRanking } = await import("./sales-ranking");
+    const ranking = await loadSalesRanking(context, input);
+    const result = await listV3EntitiesBase(context, { ...input, salesRanking: ranking ?? undefined });
+    if (ranking) {
+      for (const item of result.items) {
+        const kind = item.detail_entity ?? (input.entity === "holdings" ? "holding" : "legal");
+        item._salesInsight = ranking.cells.get(`${kind}:${item.guid}`) ?? null;
+      }
+      return { ...result, salesMonth: ranking.month };
+    }
+    return result;
+  }
+  return listV3EntitiesBase(context, input);
+}
+
+export function salesRangeSql(input: V3ListQuery, params: unknown[], key: string): string {
+  if (!input.salesRanking || (input.salesMin === undefined && input.salesMax === undefined)) return "";
+  params.push(input.salesRanking.keys);
+  return ` AND (${key}) = ANY($${params.length}::text[])`;
+}
+
+export function salesOrderSql(input: V3ListQuery, params: unknown[], key: string): string {
+  if (!input.salesRanking || !input.salesSort) return "";
+  params.push(JSON.stringify(Object.fromEntries(input.salesRanking.keys.map((entry, index) => [entry, index]))));
+  return `($${params.length}::jsonb ->> (${key}))::int ASC NULLS LAST, `;
+}
+
+async function listV3EntitiesBase(
+  context: AccessContext,
+  input: V3ListQuery,
 ): Promise<{ total: number; items: Record<string, unknown>[] }> {
   const offset = (input.page - 1) * input.pageSize;
   const q = input.q.trim();
@@ -262,8 +301,10 @@ export async function listV3Entities(
     const scope = v3HoldingVisibilityScope(context, "h");
     const params = [...scope.params];
     const search = qPattern ? ` AND h.name_holding ILIKE $${params.push(qPattern)} ESCAPE '\\'` : "";
-    const filters = appendAssignmentFilters(input, "h", params);
+    const filters = appendAssignmentFilters(input, "h", params) +
+      salesRangeSql(input, params, "'holding:' || h.guid_holding::text");
     const countParams = [...params];
+    const salesOrder = salesOrderSql(input, params, "'holding:' || h.guid_holding::text");
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM onec_v3_holdings h WHERE (${scope.clause})${search}${filters}`,
@@ -274,7 +315,7 @@ export async function listV3Entities(
         SELECT h.guid_holding::text AS guid, h.name_holding AS name
         FROM onec_v3_holdings h
         WHERE (${scope.clause})${search}${filters}
-        ORDER BY h.name_holding ASC, h.guid_holding::text ASC
+        ORDER BY ${salesOrder}h.name_holding ASC, h.guid_holding::text ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,
@@ -295,7 +336,9 @@ export async function listV3Entities(
       appendAssignmentFilters(input, "le", params) + appendV3ColumnFilters(input, "legal", params);
     const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "le", input.fieldRules);
     filters = rulesApplied.sql;
+    filters += salesRangeSql(input, params, "'legal:' || le.guid_client::text");
     const countParams = [...params];
+    const salesOrder = salesOrderSql(input, params, "'legal:' || le.guid_client::text");
     params.push(input.pageSize, offset);
     const total = await query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM onec_v3_legal_entities le WHERE (${scope.clause})${search}${filters}`,
@@ -319,7 +362,7 @@ export async function listV3Entities(
                ${legalInnSql("le")} AS inn
         FROM onec_v3_legal_entities le
         WHERE (${scope.clause})${search}${filters}
-        ORDER BY le.name_client ASC, le.guid_client::text ASC
+        ORDER BY ${salesOrder}le.name_client ASC, le.guid_client::text ASC
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       params,

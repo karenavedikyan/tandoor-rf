@@ -353,20 +353,24 @@
     var labelRow = visibleCols
       .map(function (col) {
         return (
-          '<th scope="col" class="x13-col x13-col-' +
+          '<th scope="col"' + (col.id === "sales_income_total" ? ' aria-sort="' + (state.salesSort === "asc" ? "ascending" : state.salesSort === "desc" ? "descending" : "none") + '"' : "") + ' class="x13-col x13-col-' +
           shell.escapeHtml(col.id) +
           '">' +
-          shell.escapeHtml(col.label) +
+          (col.id === "sales_income_total" && window.ClientSalesSummaryUi ? window.ClientSalesSummaryUi.renderSalesHeading(shell, state) : shell.escapeHtml(col.label)) +
           "</th>"
         );
       })
       .join("");
     var filterRow = skipColumnFilters
-      ? visibleCols.map(function () {
-          return "<th></th>";
+      ? visibleCols.map(function (col) {
+          return col.id === "sales_income_total" && window.ClientSalesSummaryUi
+            ? "<th>" + window.ClientSalesSummaryUi.renderSalesRange(shell, state) + "</th>" : "<th></th>";
         }).join("")
       : visibleCols
       .map(function (col) {
+        if (col.id === "sales_income_total" && window.ClientSalesSummaryUi) {
+          return '<th class="clients-v3-col-filter">' + window.ClientSalesSummaryUi.renderSalesRange(shell, state) + "</th>";
+        }
         if (!col.filterKey) {
           return "<th></th>";
         }
@@ -396,7 +400,10 @@
       tableHeadRow.parentElement?.appendChild(filterRowEl);
     }
     filterRowEl.innerHTML = filterRow;
-    if (skipColumnFilters) {
+    if (window.ClientSalesSummaryUi) window.ClientSalesSummaryUi.bindSalesControls(tableHeadRow.parentElement, function (next) {
+      onFilterInput("__sales", { salesSort: next.salesSort, salesMin: next.salesMin, salesMax: next.salesMax });
+    });
+    if (skipColumnFilters && !visibleCols.some(function (col) { return col.id === "sales_income_total"; })) {
       filterRowEl.classList.add("clients-hidden");
       return;
     }

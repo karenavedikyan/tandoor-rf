@@ -22,6 +22,8 @@ import {
   appendCatalogAssignmentFilters,
   appendTerritoryAssignmentFilters,
   appendV3ColumnFilters,
+  salesRangeSql,
+  salesOrderSql,
   type V3ListQuery,
 } from "./list";
 import { appendV3FieldRulesSql, type V3FilterRule } from "./list-field-rules";
@@ -294,6 +296,7 @@ export async function listV3LegalGrouped(
   const { filterSql: matchSql } = appendEligibilityFilters(input, countParams, holdingScope, context);
 
   const groupKey = readableGroupKey(context, countParams);
+  const countSalesRange = salesRangeSql(input, countParams, "s.group_key");
   const countResult = await query<{ count: string }>(
     `
       WITH scoped AS (
@@ -305,7 +308,7 @@ export async function listV3LegalGrouped(
         SELECT DISTINCT s.group_key
         FROM onec_v3_legal_entities le
         INNER JOIN scoped s ON s.guid_client = le.guid_client
-        WHERE TRUE${matchSql}
+        WHERE TRUE${matchSql}${countSalesRange}
       )
       SELECT COUNT(*)::text AS count FROM eligible
     `,
@@ -322,6 +325,8 @@ export async function listV3LegalGrouped(
   const selectMatch = selectFilters.filterSql;
   const selectMemberLegalNameSql = selectFilters.memberLegalNameSql;
   const selectGroupKey = readableGroupKey(context, selectParams);
+  const selectSalesRange = salesRangeSql(input, selectParams, "s.group_key");
+  const salesOrder = salesOrderSql(input, selectParams, "eg.group_key");
 
   const holdingScopeJoin = v3HoldingVisibilityScope(context, "h");
   selectParams.push(...holdingScopeJoin.params);
@@ -342,12 +347,13 @@ export async function listV3LegalGrouped(
         SELECT DISTINCT s.group_key
         FROM onec_v3_legal_entities le
         INNER JOIN scoped s ON s.guid_client = le.guid_client
-        WHERE TRUE${selectMatch}
+        WHERE TRUE${selectMatch}${selectSalesRange}
       ),
       page_groups AS (
         SELECT eg.group_key
         FROM eligible eg
         ORDER BY
+          ${salesOrder}
           lower(CASE
             WHEN eg.group_key LIKE 'holding:%' THEN (
               SELECT COALESCE(
@@ -456,6 +462,7 @@ export async function listV3LegalGrouped(
         AND (${holdingVisibleClause})
       GROUP BY pg.group_key
       ORDER BY
+        ${salesOrder.replace(/\beg\./g, "pg.")}
         lower(CASE
           WHEN pg.group_key LIKE 'holding:%' THEN COALESCE(
             NULLIF(TRIM(MAX(h.name_holding)), ''),

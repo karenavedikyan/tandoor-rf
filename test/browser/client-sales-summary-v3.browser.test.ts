@@ -358,6 +358,62 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     } finally { await pool.end(); }
   }
 
+  async function seedRankingClients() {
+    const pool = new (await import("pg")).Pool({ connectionString: getIntegrationDatabaseUrl() });
+    try {
+      await pool.query(`INSERT INTO onec_v3_holdings
+        (guid_holding,name_holding,type_category,managers,last_source_sha256)
+        SELECT ('dddddddd-dddd-4ddd-8ddd-'||LPAD(n::text,12,'0'))::uuid,
+          'Rank '||CASE WHEN n<=8 THEN 'A' WHEN n<=16 THEN 'B' WHEN n<=20 THEN 'C'
+            WHEN n<=23 THEN 'A special' WHEN n<=93 THEN 'Z' ELSE 'Money' END||' '||LPAD(n::text,3,'0'),
+          '{}','{}','synthetic-ranking'
+        FROM generate_series(1,95) n ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO onec_v3_legal_entities
+        (guid_client,name_client,inn,guid_holding,type_category,managers,other_fields,last_source_sha256)
+        SELECT ('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid,
+          'Rank legal '||n,'77111'||LPAD(n::text,5,'0'),
+          ('dddddddd-dddd-4ddd-8ddd-'||LPAD(n::text,12,'0'))::uuid, '{}',
+          jsonb_build_object('guidManager','55555555-5555-4555-8555-'||
+            LPAD((CASE WHEN n<=8 OR n BETWEEN 21 AND 23 THEN 1 WHEN n<=16 THEN 2 WHEN n<=20 THEN 3 WHEN n<=93 THEN 4 ELSE 5 END)::text,12,'0'),
+            'nameManager',CASE WHEN n<=8 OR n BETWEEN 21 AND 23 THEN 'Менеджер A' WHEN n<=16 THEN 'Менеджер B' ELSE 'Менеджер тестовый' END),
+          '{}','synthetic-ranking'
+        FROM generate_series(1,95) n ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO onec_v3_legal_sales_lines
+        (legal_guid,sale_month,product_type,quantity,income,manual_discount,automatic_discount,total_discount,
+         cost_price,additional_expenses,gross_profit,profitability,source_sha256,imported_at)
+        SELECT ('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid,'2026-09-01','Doors',1,
+          CASE WHEN n<=8 THEN n*100 WHEN n<=16 THEN (n-8)*10000 WHEN n<=20 THEN 500
+            WHEN n=21 THEN 0 WHEN n=23 THEN -50 WHEN n<=93 THEN (n-23)*1000000
+            WHEN n=94 THEN 1.23 ELSE 1.24 END,
+          0,0,0,0,0,0,0,$1,NOW()
+        FROM generate_series(1,95) n WHERE n<>22
+          AND NOT EXISTS (SELECT 1 FROM onec_v3_legal_sales_lines sl WHERE
+            sl.legal_guid=('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid AND sl.sale_month='2026-09-01')`,
+        ["a".repeat(64)]);
+      await pool.query(`INSERT INTO onec_v3_holdings
+        (guid_holding,name_holding,type_category,managers,last_source_sha256)
+        SELECT ('dddddddd-dddd-4ddd-8ddd-'||LPAD(n::text,12,'0'))::uuid,
+          'Peer F '||n,'{}','{}','synthetic-ranking'
+        FROM generate_series(96,100) n ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO onec_v3_legal_entities
+        (guid_client,name_client,inn,guid_holding,type_category,managers,other_fields,last_source_sha256)
+        SELECT ('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid,
+          'Peer legal '||n,'77111'||LPAD(n::text,5,'0'),
+          ('dddddddd-dddd-4ddd-8ddd-'||LPAD(LEAST(n,100)::text,12,'0'))::uuid,'{}',
+          jsonb_build_object('guidManager','55555555-5555-4555-8555-'||LPAD((CASE WHEN n<=100 THEN 6 ELSE 7 END)::text,12,'0')),
+          '{}','synthetic-ranking'
+        FROM generate_series(96,101) n ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO onec_v3_legal_sales_lines
+        (legal_guid,sale_month,product_type,quantity,income,manual_discount,automatic_discount,total_discount,
+         cost_price,additional_expenses,gross_profit,profitability,source_sha256,imported_at)
+        SELECT ('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid,'2026-09-01','Doors',1,
+          CASE WHEN n<=100 THEN (n-95)*1000000 ELSE 20 END,0,0,0,0,0,0,0,$1,NOW()
+        FROM generate_series(96,101) n WHERE NOT EXISTS (SELECT 1 FROM onec_v3_legal_sales_lines sl
+          WHERE sl.legal_guid=('eeeeeeee-eeee-4eee-8eee-'||LPAD(n::text,12,'0'))::uuid AND sl.sale_month='2026-09-01')`,
+        ["a".repeat(64)]);
+    } finally { await pool.end(); }
+  }
+
   it("a many-client fullscreen register scrolls both axes and keeps paging visible", async () => {
     await seedScrollClients();
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -472,4 +528,142 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "scroll-card-overview-mobile.png") });
     await context.close();
   });
+  it("sales ranking is global, exact and manager-relative before filters and pagination", async () => {
+    await seedRankingClients();
+    const page = await browser.newPage();
+    await login(page);
+    const endpoint = "/api/clients/v3/list?entity=legal_grouped&salesInsights=1&salesMonth=2026-09";
+    async function get(extra: string) {
+      const response = await page.request.get(baseUrl + endpoint + extra);
+      assert.equal(response.status(), 200, await response.text());
+      return response.json();
+    }
+    const desc = await get("&salesSort=desc&pageSize=1");
+    assert.equal(desc.items[0].name, "Rank Z 093"); // alphabetically beyond the first 50
+    const asc = await get("&salesSort=asc&pageSize=1");
+    assert.equal(asc.items[0].name, "Rank A special 023");
+    const last = await get(`&salesSort=asc&pageSize=1&page=${desc.total}`);
+    assert.equal(last.items[0]._salesInsight.income, null);
+    const a = (await get("&q=Rank%20A%20008")).items[0]._salesInsight;
+    const b = (await get("&q=Rank%20B%20016")).items[0]._salesInsight;
+    assert.equal(a.band, "large"); assert.equal(b.band, "large");
+    assert.equal(a.peers, 8); assert.equal(b.peers, 8);
+    assert.equal(Number(a.low), 275); assert.equal(Number(a.high), 625);
+    assert.equal(Number(b.high), 62500);
+    const f = (await get("&q=Peer%20F%2099")).items[0]._salesInsight;
+    const fScoped = (await get("&q=Peer%20F%2099&managerGuid=55555555-5555-4555-8555-000000000006")).items[0]._salesInsight;
+    assert.equal(f.peers,5); assert.equal(Number(f.high),4000000);
+    assert.equal(fScoped.peers,f.peers); assert.equal(fScoped.high,f.high);
+    assert.equal((await get("&q=Peer%20F%20100")).items[0]._salesInsight.band, "unrated");
+    const low = (await get("&q=Rank%20A%20001")).items[0]._salesInsight;
+    assert.equal(low.band, "low");
+    const range = await get("&salesMin=600&salesMax=800&q=Rank%20A&salesSort=desc");
+    assert.equal(range.total, 3);
+    assert.deepEqual(range.items.map((i: any) => i._salesInsight.peers), [8,8,8]);
+    const territory = await get("&managerGuid=55555555-5555-4555-8555-000000000001&salesSort=desc&pageSize=100");
+    assert.equal(territory.total, 11);
+    assert.ok(territory.items.every((i: any) => i.name.startsWith("Rank A")));
+    const ties = await get("&q=Rank%20C");
+    assert.ok(ties.items.every((i: any) => i._salesInsight.band === "middle"));
+    assert.equal((await get("&q=Rank%20A%20special%20021")).items[0]._salesInsight.band, "zero");
+    assert.equal((await get("&q=Rank%20A%20special%20022")).items[0]._salesInsight.band, "unavailable");
+    const cents = await get("&salesMin=1.23&salesMax=1.24&salesSort=asc");
+    assert.equal(cents.total, 2);
+    assert.deepEqual(cents.items.map((i: any) => Number(i._salesInsight.income)), [1.23,1.24]);
+    assert.ok(cents.items.every((i: any) => i._salesInsight.band === "unrated"));
+    for (const entity of ["legal", "holdings"]) {
+      const response = await page.request.get(baseUrl + endpoint.replace("entity=legal_grouped", "entity="+entity) + "&salesSort=desc&salesMin=600&pageSize=2");
+      assert.equal(response.status(), 200, await response.text());
+      assert.equal((await response.json()).items.length, 2);
+    }
+    for (const invalid of ["&salesSort=DROP", "&salesMin=NaN", "&salesMin=2&salesMax=1",
+      "&salesMin=999999999999999.02&salesMax=999999999999999.01"]) {
+      assert.equal((await page.request.get(baseUrl + endpoint + invalid)).status(), 400);
+    }
+    assert.equal((await page.request.get(baseUrl + endpoint.replace("2026-09","2026-08") + "&salesSort=desc")).status(), 409);
+    const { loadSalesRanking } = await import("../../src/clients/v3/sales-ranking");
+    const own = await loadSalesRanking({ userId:"00000000-0000-4000-8000-000000000099",role:"manager",status:"active",
+      employeeId:"55555555-5555-4555-8555-000000000001",employeeLinkConflict:false,hasEmployeeLink:true,
+      hasScopedClientAccess:true,fullClientBase:false,explicitlyDeniedAll:false },
+      { entity:"legal_grouped",page:1,pageSize:50,q:"",salesMonth:"2026-09",salesInsights:true });
+    assert.equal(own?.keys.length,11);
+    assert.ok([...own!.cells.values()].every(cell => cell.manager === "55555555-5555-4555-8555-000000000001"));
+    assert.ok([...own!.cells.values()].filter(cell => Number(cell.income)>0).every(cell => cell.peers === 8));
+    const denied = await loadSalesRanking({ userId:"00000000-0000-4000-8000-000000000099",role:"manager",status:"active",
+      employeeId:null,employeeLinkConflict:false,hasEmployeeLink:false,hasScopedClientAccess:false,fullClientBase:false,explicitlyDeniedAll:true },
+      { entity:"legal_grouped",page:1,pageSize:50,q:"",salesMonth:"2026-09",salesInsights:true });
+    assert.equal(denied?.keys.length, 0);
+    await page.close();
+  });
+
+  it("sales header sorts, filters, preserves state and explains manager-relative colours on mobile", async () => {
+    await seedRankingClients();
+    const page = await browser.newPage({ viewport: {width:1440,height:900} });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await login(page);
+    await page.goto(`${baseUrl}/clients?v3mode=1&view=all&v3view=all&v3entity=legal_grouped&v3salesMonth=2026-09&v3focuscols=name,sales_income_total,manager_name&v3cols=name,sales_income_total,manager_name`, {waitUntil:"networkidle"});
+    await page.locator('[data-testid="v3-focus-enter"]').click();
+    await page.locator("#v3-focus-host [data-sales-sort]").click();
+    await page.waitForFunction(() => document.querySelector("#x14-focus-scroll tbody tr")?.textContent?.includes("Rank Z 093"));
+    assert.equal(await page.locator('#x14-focus-scroll th[aria-sort="descending"]').count(), 1);
+    await page.locator("#v3-focus-host [data-sales-sort]").click();
+    await page.waitForFunction(() => document.querySelector("#x14-focus-scroll tbody tr")?.textContent?.includes("Rank A special 023"));
+    await page.locator("#v3-focus-host [data-sales-min]").fill("600");
+    await page.locator("#v3-focus-host [data-sales-max]").fill("800");
+    await page.locator("#v3-focus-host [data-sales-apply]").click();
+    await page.waitForFunction(() => document.querySelectorAll("#x14-focus-scroll tbody tr").length === 3);
+    assert.equal(new URL(page.url()).searchParams.get("salesMin"),"600");
+    await page.reload({waitUntil:"networkidle"});
+    await page.locator('#x14-focus-scroll [data-sales-info]').first().waitFor();
+    assert.equal(await page.locator("#v3-focus-host [data-sales-max]").inputValue(), "800");
+    await page.setViewportSize({width:375,height:812});
+    await page.locator('#x14-focus-scroll [data-sales-info]').first().click();
+    assert.match(await page.locator(".sales-info-dialog").innerText(), /Менеджер A.*8/s);
+    await page.locator(".sales-info-dialog button").click();
+    await page.locator("#v3-focus-host [data-sales-help]").click();
+    assert.match(await page.locator(".sales-info-dialog").innerText(), /только внутри базы менеджера/);
+    await page.locator(".sales-info-dialog button").click();
+    await page.screenshot({path:path.join(SCREENSHOT_DIR,"sales-ranking-mobile.png")});
+    await page.locator("#v3-focus-host [data-sales-min]").fill("");
+    await page.locator("#v3-focus-host [data-sales-max]").fill("");
+    await page.locator("#v3-focus-host [data-sales-apply]").click();
+    await page.waitForFunction(() => document.querySelectorAll("#x14-focus-scroll tbody tr").length === 50);
+    await page.locator("#x14-focus-scroll").hover();
+    await page.mouse.wheel(0,450);
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollTop > 100);
+    await page.mouse.wheel(450,0);
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollLeft > 0);
+    await page.mouse.wheel(-3000,-3000);
+    await page.waitForFunction(() => {
+      const el = document.getElementById("x14-focus-scroll")!;
+      return el.scrollTop === 0 && el.scrollLeft === 0;
+    });
+    await page.locator("#v3-focus-host [data-sales-min]").fill("600");
+    await page.locator("#v3-focus-host [data-sales-max]").fill("800");
+    await page.locator("#v3-focus-host [data-sales-apply]").click();
+    await page.waitForFunction(() => document.querySelectorAll("#x14-focus-scroll tbody tr").length === 3);
+    await page.setViewportSize({width:1440,height:900});
+    await page.locator("#v3-focus-exit").click();
+    await page.locator("#clients-table-head-row [data-sales-sort]").waitFor();
+    await page.locator("#clients-table-head-row [data-sales-sort]").click();
+    await page.waitForFunction(() => new URLSearchParams(location.search).get("salesSort") === "desc");
+    await page.locator("#clients-v3-column-filter-row [data-sales-min]").fill("700");
+    await page.locator("#clients-v3-column-filter-row [data-sales-apply]").click();
+    await page.waitForFunction(() => document.querySelectorAll("#clients-table-body tr").length === 2);
+    await page.locator("#clients-table-body tr a").first().click();
+    const back = page.locator('[data-testid="v3-back-to-list"]');
+    await back.waitFor();
+    const returnUrl = new URL(await back.getAttribute("href") ?? "", baseUrl);
+    assert.equal(returnUrl.searchParams.get("salesMin"), "700");
+    assert.equal(returnUrl.searchParams.get("salesMax"), "800");
+    assert.equal(returnUrl.searchParams.get("salesSort"), "desc");
+    assert.equal(returnUrl.searchParams.get("v3salesMonth"), "2026-09");
+    await back.click();
+    await page.waitForFunction(() => document.querySelectorAll("#clients-table-body tr").length === 2);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+
 });
