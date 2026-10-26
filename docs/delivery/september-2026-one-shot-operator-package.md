@@ -127,7 +127,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 `test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (6): file-byte SHA vs compact digest, `runSeptember2026OneShotBackup` → apply, private root required / `0755` / symlink refusal (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
 
-`npm run typecheck` — **RUN** after changes. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
+`npm run typecheck` — **RUN** after changes. All `test/integration/september-2026-*.test.ts` (**34** cases, Node 22, `TEST_DATABASE_URL`, `--test-concurrency=1`, non-root) — **RUN** on localhost test DB. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 
 ## Explicitly out of scope
 
