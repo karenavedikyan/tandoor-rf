@@ -73,7 +73,9 @@ body.x14-focus-mode .legacy-app.sidebar-collapsed .legacy-frame {
   margin-left: 0 !important;
 }
 body.x14-focus-mode #clients-app.clients-lktandoor-list {
+  height: 100vh;
   height: 100dvh;
+  max-height: 100vh;
   max-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -101,18 +103,31 @@ body.x14-focus-mode .clients-results-shell {
   border: none;
   box-shadow: none;
 }
-body.x14-focus-mode #results-panel {
+body.x14-focus-mode #results-panel,
+body.x14-focus-mode #results-content:not(.clients-hidden) {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+}
+/* Every wrapper must pass the bounded height to the table scroll region. */
+body.x14-focus-mode #results-content {
+  overflow: hidden;
 }
 body.x14-focus-mode #v3-focus-host {
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
-body.x14-focus-mode #v3-focus-host:not(.clients-hidden) .x14-focus {
-  min-height: 12rem;
+body.x14-focus-mode #v3-focus-host:not(.clients-hidden) {
+  display: flex;
+  overflow: hidden;
+}
+body.x14-focus-mode #v3-focus-host .x14-focus {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .x14-focus {
@@ -247,9 +262,16 @@ body.x14-focus-mode #v3-focus-host:not(.clients-hidden) .x14-focus {
 }
 .x14-focus-scroll {
   min-height: 0;
+  min-width: 0;
   width: 100%;
   overflow: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+.x14-focus-scroll:focus-visible {
+  outline: 2px solid var(--rf-primary, #507f22);
+  outline-offset: -2px;
 }
 .x14-focus-scroll table {
   display: table;
@@ -322,15 +344,55 @@ body.x14-focus-mode #v3-focus-host:not(.clients-hidden) .x14-focus {
   background: var(--rf-row-hover, #fafbfc);
 }
 .x14-focus-pagination {
-  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 12px max(8px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--rf-border, #e1e6e9);
   background: var(--rf-surface, #fff);
+  font-size: 12px;
+}
+.x14-focus-pagination__range {
+  margin-right: auto;
+}
+.x14-focus-pagination__controls,
+.x14-focus-pagination label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.x14-focus-pagination button,
+.x14-focus-pagination select {
+  min-height: 44px;
+}
+.x14-focus-pagination select {
+  font: inherit;
+  color: inherit;
+  background: var(--rf-surface, #fff);
+  border: 1px solid var(--rf-border, #e1e6e9);
+  border-radius: 6px;
+  padding: 6px;
+}
+.x14-focus-pagination__hint {
+  color: var(--rf-text-muted, #697683);
+}
+@media (max-width: 600px) {
+  .x14-focus-pagination { gap: 4px 10px; padding: 6px 8px max(6px, env(safe-area-inset-bottom)); }
+  .x14-focus-pagination__hint { display: none; }
+  .x14-focus-pagination__controls { justify-content: space-between; width: 100%; }
 }
 .x14-focus-enter {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 767px) {
+  .x14-focusbar .x15-search input,
+  .x14-focus-scroll th input,
+  .x14-focus-scroll th select,
+  .x14-focus-pagination select {
+    font-size: 16px;
+  }
   .x14-focusbar {
     padding: 6px 8px;
     gap: 6px;
@@ -341,14 +403,14 @@ body.x14-focus-mode #v3-focus-host:not(.clients-hidden) .x14-focus {
     max-width: none;
   }
   .x14-focusbar > span {
-    font-size: 11px;
+    font-size: 12px;
   }
   .x14-focusbar kbd {
     display: none;
   }
   .x14-focus-scroll td:first-child,
   .x14-focus-scroll th:first-child {
-    min-width: 160px !important;
-    width: 180px;
+    min-width: 136px !important;
+    width: 152px;
   }
 }

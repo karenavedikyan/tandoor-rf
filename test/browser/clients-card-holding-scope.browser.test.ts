@@ -100,7 +100,7 @@ describe("v3 card holding outlets respect scoped composition", { concurrency: fa
     const page = await browser.newPage();
     await openLegalCard(page, [OUTLET_A]);
     var kpis = await page.locator('[data-testid="v3-overview-kpis"] b').allTextContents();
-    assert.deepEqual(kpis, ["1", "1", "Дилер / ТОП-150"]);
+    assert.deepEqual(kpis, ["1", "1", "ТОП: Дилер · категория: ТОП-150"]);
     assert.equal(await page.locator('[data-testid="v3-related-outlets"] a.x13-related-line').count(), 1);
     await page.close();
   });
