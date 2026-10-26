@@ -17,7 +17,7 @@
   function visibleTabs(entityType) {
     return TABS.filter(function (t) {
       if (t[0] === "sales") {
-        return entityType === "legal";
+        return entityType === "legal" || entityType === "holding";
       }
       return true;
     });
@@ -1157,7 +1157,7 @@
       ">" +
       dataHtml +
       "</section>" +
-      (entityType === "legal" ? renderSalesPanelShell(initialTab === "sales") : "");
+      (entityType === "legal" || entityType === "holding" ? renderSalesPanelShell(initialTab === "sales") : "");
     TABS.forEach(function (t) {
       var tabId = t[0];
       if (tabId === "overview" || tabId === "data" || tabId === "sales") {

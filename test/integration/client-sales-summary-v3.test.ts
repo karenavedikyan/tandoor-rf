@@ -341,6 +341,95 @@ describe("client sales summary v3", () => {
     assert.equal(bad.status, 400);
   });
 
+  it("drilldown authorizes the legal selector, validates pagination and keeps unavailable months empty", async () => {
+    const base = { entity: "holding", guid: HOLDING, month: "2026-09",
+      managerGuid: "99999999-9999-4999-8999-111111111111" };
+    const get = (params: Record<string, string>) => request(app).get("/api/clients/v3/client-sales/detail")
+      .query({ ...base, ...params }).set("Cookie", adminCookie);
+    const cats = await get({});
+    assert.equal(cats.status, 200);
+    assert.equal(cats.body.categories.length, 1);
+    assert.equal(cats.body.categories[0].productType, "Doors");
+    assert.equal(cats.body.itemState, "choose_category");
+    assert.equal((await get({ legalGuid: LEGAL_B })).status, 404);
+    assert.equal((await get({ legalGuid: "------------------------------------" })).status, 400);
+    for (const page of ["0", "-1", "1.5", "1001", "abc"]) {
+      assert.equal((await get({ page })).status, 400);
+    }
+    assert.equal((await get({ productType: "Hidden category" })).status, 400);
+    const absent = await get({ month: "2026-08" });
+    assert.equal(absent.status, 200);
+    assert.deepEqual(absent.body.categories, []);
+    assert.equal(absent.body.summary.month, "2026-08");
+    assert.doesNotMatch(JSON.stringify(cats.body), /cost_price|gross_profit|profitability/);
+  });
+
+  it("drilldown groups real models, pins the active snapshot, searches literally and paginates", async () => {
+    const sha = "b".repeat(64);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_import_state(id,source_sha256,row_count)
+      VALUES(1,$1,53) ON CONFLICT(id) DO UPDATE SET source_sha256=$1,row_count=53
+    `, [sha]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sales_month_activation(dataset,sale_month,source_sha256)
+      VALUES('sale_items','2026-09-01',$1)
+      ON CONFLICT(dataset,sale_month) DO UPDATE SET source_sha256=$1
+    `, [sha]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+        (source_sha256,source_row_index,legal_guid,sale_month,product_type,guid_item,name_item,
+         quantity,income,manual_discount,automatic_discount,total_discount,cost_price,additional_expenses,
+         gross_profit,profitability,catalog_matched)
+      SELECT $1,n,$2::uuid,'2026-09-01','Doors',
+        ('aaaaaaaa-aaaa-4aaa-8aaa-'||LPAD(n::text,12,'0'))::uuid,
+        'Model '||LPAD(n::text,3,'0'),1,1,0,0,0,900,0,900,900,TRUE
+      FROM generate_series(1,52) n
+    `, [sha, LEGAL_A]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+      SELECT source_sha256,53,legal_guid,sale_month,product_type,guid_item,'Earlier name',
+        2,2,0,0,0,900,0,900,900,TRUE,NOW()
+      FROM onec_v3_legal_sale_item_lines WHERE source_sha256=$1 AND source_row_index=1
+    `, [sha]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+      SELECT $2,source_row_index,legal_guid,sale_month,product_type,guid_item,'WRONG SNAPSHOT',
+        999,999,0,0,0,0,0,0,0,TRUE,NOW()
+      FROM onec_v3_legal_sale_item_lines WHERE source_sha256=$1 AND source_row_index=1
+    `, [sha, "c".repeat(64)]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+      SELECT source_sha256,54,$2::uuid,sale_month,product_type,guid_item,'Hidden Legal Model',
+        999,999,0,0,0,0,0,0,0,TRUE,NOW()
+      FROM onec_v3_legal_sale_item_lines WHERE source_sha256=$1 AND source_row_index=1
+    `, [sha, LEGAL_B]);
+    await dbPool.query(`
+      INSERT INTO onec_v3_legal_sale_item_lines
+      SELECT source_sha256,55,legal_guid,sale_month,product_type,guid_item,'Unmatched Model',
+        9999,9999,0,0,0,0,0,0,0,FALSE,NOW()
+      FROM onec_v3_legal_sale_item_lines WHERE source_sha256=$1 AND source_row_index=1
+    `, [sha]);
+    const get = (params: Record<string, string>) => request(app).get("/api/clients/v3/client-sales/detail")
+      .query({ entity: "holding", guid: HOLDING, month: "2026-09", productType: "Doors",
+        managerGuid: "99999999-9999-4999-8999-111111111111", ...params })
+      .set("Cookie", adminCookie);
+    const first = await get({});
+    assert.equal(first.status, 200);
+    assert.equal(first.body.items.length, 50);
+    assert.equal(first.body.hasMore, true);
+    assert.equal(Number(first.body.itemTotals.incomeTotal), 54);
+    assert.equal(first.body.totalsDiffer, true);
+    assert.equal(Number(first.body.items.find((row: { name: string }) => row.name === "Model 001").incomeTotal), 3);
+    const second = await get({ page: "2" });
+    assert.equal(second.body.items.length, 2);
+    assert.equal(second.body.hasMore, false);
+    assert.ok(!first.body.items.some((a: { modelGuid: string }) =>
+      second.body.items.some((b: { modelGuid: string }) => a.modelGuid === b.modelGuid)));
+    assert.equal((await get({ q: "Model 052" })).body.items.length, 1);
+    assert.equal((await get({ q: "%" })).body.items.length, 0);
+    assert.doesNotMatch(JSON.stringify(first.body), /WRONG SNAPSHOT|cost_price|gross_profit|profitability/);
+  });
+
   it("real employee preview permits scoped GET batch while POST remains blocked", async () => {
     const manager = await createTestUser({
       databaseUrl: url, email: "sales-preview-manager@example.test",
@@ -361,6 +450,10 @@ describe("client sales summary v3", () => {
       assert.equal(batch.status, 200);
       assert.match(JSON.stringify(batch.body), /100.50/);
       assert.doesNotMatch(JSON.stringify(batch.body), new RegExp(LEGAL_B));
+      const detail = await request(app).get("/api/clients/v3/client-sales/detail")
+        .query({ entity: "holding", guid: HOLDING, month: "2026-09", productType: "Doors" }).set(headers);
+      assert.equal(detail.status, 200);
+      assert.doesNotMatch(JSON.stringify(detail.body), new RegExp(LEGAL_B));
       const write = await request(app).post("/api/clients/v3/client-sales/batch")
         .set(headers).send({ month: "2026-09", targets: [{ kind: "holding", guid: HOLDING }] });
       assert.equal(write.status, 403);

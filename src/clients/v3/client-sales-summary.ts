@@ -1,7 +1,7 @@
 import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { addSaleMoneyStrings, addSaleQuantityStrings } from "../../onec-sales/decimal-sum";
-import { loadSalesImportSnapshotState, monthHasSaleAggregate } from "../../onec-sales/import-snapshot";
+import { loadSalesImportSnapshotState, monthHasSaleAggregate, resolveMonthDatasetSha } from "../../onec-sales/import-snapshot";
 import { isValidUuidParam } from "../uuid-param";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
 import { resolveV3EntityAccess } from "./detail";
@@ -385,6 +385,66 @@ export type ClientSalesBatchTarget = {
   kind: "holding" | "legal";
   guid: string;
 };
+
+/** Only accepts a summary already authorized by loadClientSalesCardSummary. */
+export async function loadClientSalesDrilldown(
+  summary: ClientSalesCardSummary,
+  options: { legalGuid: string | null; productType: string | null; search: string; page: number },
+) {
+  const allowed = summary.breakdown.map((row) => row.legalGuid);
+  if (options.legalGuid && !allowed.includes(options.legalGuid)) {
+    return { error: "legal_unavailable" as const };
+  }
+  const guids = options.legalGuid ? [options.legalGuid] : allowed;
+  const snapshot = await loadSalesImportSnapshotState();
+  const empty = { summary, selectedLegalGuid: options.legalGuid, categories: [], items: [],
+    itemState: "not_imported", itemTotals: null, page: options.page, hasMore: false };
+  if (!guids.length || !snapshot.schemaReady) return empty;
+  const categories = await query<{
+    productType: string; quantityTotal: string; incomeTotal: string;
+  }>(`
+    SELECT product_type AS "productType", SUM(quantity)::text AS "quantityTotal",
+           SUM(income)::text AS "incomeTotal"
+    FROM onec_v3_legal_sales_lines
+    WHERE legal_guid = ANY($1::uuid[]) AND sale_month = $2::date
+    GROUP BY product_type ORDER BY product_type
+  `, [guids, `${summary.month}-01`]);
+  const base = { ...empty, categories: categories.rows };
+  if (options.productType === null) return { ...base, itemState: "choose_category" };
+  if (!categories.rows.some((row) => row.productType === options.productType)) {
+    return { error: "category_unavailable" as const };
+  }
+  const sha = await resolveMonthDatasetSha("sale_items", `${summary.month}-01`, snapshot.saleItemsSha);
+  if (!sha) return base;
+  const params = [guids, `${summary.month}-01`, sha, options.productType];
+  const predicate = `legal_guid = ANY($1::uuid[]) AND sale_month = $2::date
+    AND source_sha256 = $3 AND product_type = $4 AND catalog_matched = TRUE`;
+  const totals = await query<{ quantityTotal: string | null; incomeTotal: string | null }>(`
+    SELECT SUM(quantity)::text AS "quantityTotal", SUM(income)::text AS "incomeTotal"
+    FROM onec_v3_legal_sale_item_lines WHERE ${predicate}
+  `, params);
+  const result = await query<{
+    modelGuid: string; name: string | null; productType: string; quantityTotal: string; incomeTotal: string;
+  }>(`
+    SELECT guid_item::text AS "modelGuid", MAX(NULLIF(name_item, '')) AS name,
+      product_type AS "productType", SUM(quantity)::text AS "quantityTotal",
+      SUM(income)::text AS "incomeTotal"
+    FROM onec_v3_legal_sale_item_lines WHERE ${predicate}
+    GROUP BY guid_item, product_type
+    HAVING $5 = '' OR STRPOS(LOWER(COALESCE(MAX(name_item), '')), LOWER($5)) > 0
+      OR STRPOS(guid_item::text, LOWER($5)) > 0
+    ORDER BY name NULLS LAST, guid_item
+    LIMIT 51 OFFSET $6
+  `, [...params, options.search, (options.page - 1) * 50]);
+  const categoryTotal = categories.rows.find((row) => row.productType === options.productType);
+  const itemTotal = totals.rows[0];
+  const totalsDiffer = categoryTotal && itemTotal?.incomeTotal != null && itemTotal.quantityTotal != null
+    ? addSaleMoneyStrings([categoryTotal.incomeTotal]) !== addSaleMoneyStrings([itemTotal.incomeTotal]) ||
+      addSaleQuantityStrings([categoryTotal.quantityTotal]) !== addSaleQuantityStrings([itemTotal.quantityTotal])
+    : null;
+  return { ...base, items: result.rows.slice(0, 50), hasMore: result.rows.length > 50, totalsDiffer,
+    itemState: "loaded", itemTotals: totals.rows[0] ?? null };
+}
 
 export type ClientSalesBatchTargetParse =
   | { ok: true; targets: ClientSalesBatchTarget[] }
