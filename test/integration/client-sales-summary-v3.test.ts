@@ -6,9 +6,15 @@ import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrat
 import type { AccessContext } from "../../src/access/types";
 import {
   batchClientSalesListSummaries,
+  buildClientSalesTabPath,
   CLIENT_SALES_BATCH_MAX_IDS,
   loadClientSalesCardSummary,
+  parseClientSalesBatchTargets,
+  parseClientSalesMonthStrict,
 } from "../../src/clients/v3/client-sales-summary";
+import request from "supertest";
+
+const ORIGIN = "http://127.0.0.1:3000";
 
 function adminContext(userId: string): AccessContext {
   return {
@@ -44,10 +50,12 @@ const HOLDING = "33333333-3333-4333-8333-333333333333";
 
 let url: string;
 let adminCtx: AccessContext;
+let app: Awaited<ReturnType<typeof import("../../src/server").createApp>>;
+let adminCookie = "";
 
 before(async () => {
   url = getIntegrationDatabaseUrl();
-  setIntegrationEnv(url);
+  setIntegrationEnv(url, ORIGIN);
   await resetPoolForTests();
   await prepareDatabase(url);
   const admin = await createTestUser({
@@ -102,6 +110,15 @@ before(async () => {
     [LEGAL_A, "a".repeat(64)],
   );
   await pool.end();
+
+  const { createApp } = await import("../../src/server");
+  app = createApp();
+  const loginRes = await request(app)
+    .post("/api/auth/login")
+    .set({ Origin: ORIGIN, "Content-Type": "application/json" })
+    .send({ email: "admin-client-sales-summary@example.test", password: "StrongPass123!" });
+  assert.equal(loginRes.status, 200);
+  adminCookie = loginRes.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 });
 
 after(async () => {
@@ -109,16 +126,61 @@ after(async () => {
 });
 
 describe("client sales summary v3", () => {
-  it("loads holding card summary with accessible legal breakdown", async () => {
+  it("parses strict month only as YYYY-MM", () => {
+    assert.equal(parseClientSalesMonthStrict("2026-09").ok, true);
+    assert.equal(parseClientSalesMonthStrict("2026-09-01").ok, false);
+  });
+
+  it("holding with missing legal line data is incomplete without partial totals", async () => {
     const summary = await loadClientSalesCardSummary(adminCtx, "holding", HOLDING, "2026-09", {});
     assert.ok(summary && typeof summary === "object");
-    assert.equal(summary!.dataState, "loaded");
-    assert.equal(Number(summary!.incomeTotal), 100.5);
-    assert.equal(summary!.legalEntitiesWithSalesCount, 1);
-    assert.equal(summary!.breakdown.length, 2);
-    const rowA = summary!.breakdown.find((r) => r.legalGuid === LEGAL_A);
-    assert.ok(rowA);
-    assert.equal(rowA!.rowStatus, "has_sales");
+    assert.equal(summary!.dataState, "incomplete");
+    assert.equal(summary!.incomeTotal, null);
+    assert.equal(summary!.quantityTotal, null);
+    assert.equal(summary!.legalEntitiesWithSalesCount, null);
+    const rowB = summary!.breakdown.find((r) => r.legalGuid === LEGAL_B);
+    assert.equal(rowB?.rowStatus, "unavailable");
+    assert.equal(
+      summary!.breakdown.some((r) => r.sharePercent != null && r.legalGuid === LEGAL_A),
+      false,
+    );
+  });
+
+  it("legal explicit zero remains loaded with zero row", async () => {
+    const pool = new Pool({ connectionString: url });
+    await pool.query(
+      `
+        INSERT INTO onec_v3_legal_sales_lines (
+          legal_guid, sale_month, product_type, quantity, income,
+          manual_discount, automatic_discount, total_discount,
+          cost_price, additional_expenses, gross_profit, profitability,
+          source_sha256, imported_at
+        ) VALUES ($1::uuid, '2026-09-01'::date, 'Doors', 0, 0, 0,0,0,0,0,0,0, $2, NOW())
+      `,
+      [LEGAL_B, "a".repeat(64)],
+    );
+    await pool.end();
+    const summary = await loadClientSalesCardSummary(adminCtx, "holding", HOLDING, "2026-09", {});
+    assert.equal(summary && typeof summary === "object" ? summary.dataState : null, "loaded");
+    const rowB = summary && typeof summary === "object"
+      ? summary.breakdown.find((r) => r.legalGuid === LEGAL_B)
+      : null;
+    assert.equal(rowB?.rowStatus, "known_zero");
+  });
+
+  it("does not expose hidden holding totals in API shape", async () => {
+    const summary = await loadClientSalesCardSummary(adminCtx, "holding", HOLDING, "2026-09", {});
+    assert.ok(summary && typeof summary === "object");
+    assert.equal("holdingLegalTotalCount" in summary!, false);
+    assert.equal("accessibleLegalCount" in summary!, false);
+  });
+
+  it("builds sales tab path with legal guid", () => {
+    const path = buildClientSalesTabPath(LEGAL_A, "2026-09", "?v3mode=1");
+    assert.match(path, new RegExp(`/clients/${LEGAL_A}`));
+    assert.match(path, /v3Entity=legal/);
+    assert.match(path, /cardTab=sales/);
+    assert.match(path, /v3salesMonth=2026-09/);
   });
 
   it("rejects batch over 100 ids", async () => {
@@ -128,6 +190,22 @@ describe("client sales summary v3", () => {
     }));
     const r = await batchClientSalesListSummaries(adminCtx, "2026-09", targets, {});
     assert.equal(r, "batch_too_large");
+  });
+
+  it("batch GET rejects invalid targets and accepts valid", async () => {
+    const bad = await request(app)
+      .get("/api/clients/v3/client-sales/batch?month=2026-09&target=bad")
+      .set("Cookie", adminCookie);
+    assert.equal(bad.status, 400);
+    const parsed = parseClientSalesBatchTargets([{ kind: "holding", guid: HOLDING }]);
+    assert.equal(parsed.ok, true);
+    const ok = await request(app)
+      .get(`/api/clients/v3/client-sales/batch?month=2026-09&target=holding:${HOLDING}`)
+      .set("Cookie", adminCookie);
+    assert.equal(ok.status, 200);
+    assert.ok(ok.body.summaries[`holding:${HOLDING.toLowerCase()}`]);
+    const cache = String(ok.headers["cache-control"] || "");
+    assert.match(cache, /no-store/i);
   });
 
   it("withheld legal returns null without leaking", async () => {

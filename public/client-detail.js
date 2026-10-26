@@ -391,7 +391,11 @@
               : "Торговая точка",
         onSalesTabSelected: function () {
           if (legalGuid) {
-            loadV3LegalSales(detailRoot, legalGuid, v3SalesState.month);
+            var monthFromOverview =
+              window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.monthFromUrl
+                ? window.ClientSalesSummaryUi.monthFromUrl()
+                : "";
+            loadV3LegalSales(detailRoot, legalGuid, monthFromOverview || v3SalesState.month);
           }
         },
       });
@@ -411,12 +415,17 @@
     ) {
       var cardGuid = ent.guid || ent.guid_client;
       if (cardGuid) {
+        var listReturn = new URLSearchParams(window.location.search).get("return") || "";
         window.ClientSalesSummaryUi.mountOverview(salesHost, {
           api: api,
           shell: shell,
           entityType: payload.entityType,
           guid: cardGuid,
+          returnQuery: listReturn,
           onOpenSalesTab: function () {
+            if (payload.entityType !== "legal") {
+              return;
+            }
             var salesTab = detailRoot.querySelector('[data-card-tab="sales"]');
             if (salesTab) {
               salesTab.click();

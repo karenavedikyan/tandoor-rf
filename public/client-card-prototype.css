@@ -262,6 +262,15 @@
 .client-card-page .v3-sales-breakdown-table th,.client-card-page .v3-sales-breakdown-table td{border-bottom:1px solid var(--rf-border);padding:8px 10px;text-align:left;vertical-align:top;}
 .client-card-page .v3-sales-breakdown-total td{border-top:2px solid var(--rf-border);}
 .client-card-page .v3-sales-scope-note{margin:0 0 10px;}
+.client-card-page .v3-sales-breakdown-wrap{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;}
+.client-card-page .v3-sales-breakdown-table{min-width:480px;}
+.client-card-page .v3-sales-breakdown-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.clients-v3-sales-by-legal{font-size:12px;line-height:1.45;display:inline-block;max-width:100%;}
+.clients-v3-sales-partial-note{font-size:11px;color:var(--rf-muted,#666);}
+@media (max-width:480px){
+.client-card-page .v3-sales-summary-tiles{grid-template-columns:1fr;}
+.client-card-page .v3-sales-summary-head{flex-direction:column;align-items:flex-start;}
+}
 .client-card-page .x13-card-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;}
 .client-card-page .x6-assignment{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:8px 12px;padding:10px 0;border-bottom:1px solid var(--rf-border);font-size:13px;}
 .client-card-page .x6-assignment:last-child{border-bottom:0;}

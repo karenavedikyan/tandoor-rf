@@ -57,6 +57,7 @@
     sales_income_total: { label: "Продажи, ₽", filterKey: null },
     sales_quantity_total: { label: "Продажи, ед.", filterKey: null },
     sales_legal_count: { label: "Юрлица с продажами", filterKey: null },
+    sales_by_legal: { label: "Продажи по юрлицам", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -105,6 +106,7 @@
           "sales_income_total",
           "sales_quantity_total",
           "sales_legal_count",
+          "sales_by_legal",
         ];
     return ids
       .map(function (id) {
@@ -293,24 +295,16 @@
         ? shell.escapeHtml(structured)
         : '<span class="clients-no-data">Нет данных</span>';
     }
-    if (colId === "sales_income_total" || colId === "sales_quantity_total" || colId === "sales_legal_count") {
-      var sales = item._clientSales;
-      if (!sales || sales.dataState !== "loaded") {
-        return '<span class="clients-no-data">—</span>';
+    if (
+      colId === "sales_income_total" ||
+      colId === "sales_quantity_total" ||
+      colId === "sales_legal_count" ||
+      colId === "sales_by_legal"
+    ) {
+      if (window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.formatListSalesCell) {
+        return window.ClientSalesSummaryUi.formatListSalesCell(item._clientSales, colId, shell);
       }
-      if (colId === "sales_income_total") {
-        return window.ClientSalesSummaryUi
-          ? shell.escapeHtml(window.ClientSalesSummaryUi.formatMoney(sales.incomeTotal))
-          : shell.escapeHtml(String(sales.incomeTotal || "—"));
-      }
-      if (colId === "sales_quantity_total") {
-        return window.ClientSalesSummaryUi
-          ? shell.escapeHtml(window.ClientSalesSummaryUi.formatQty(sales.quantityTotal))
-          : shell.escapeHtml(String(sales.quantityTotal || "—"));
-      }
-      return sales.legalWithSalesCount != null
-        ? shell.escapeHtml(String(sales.legalWithSalesCount))
-        : '<span class="clients-no-data">—</span>';
+      return '<span class="clients-no-data">—</span>';
     }
     if (colId === "category_name") {
       var topLabel =

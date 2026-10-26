@@ -158,7 +158,7 @@ export function createClientsRouter(): express.Router {
     void v3ClientSalesCardHandler(req, res).catch(next);
   });
 
-  router.post("/v3/client-sales/batch", ...readChain, (req, res, next) => {
+  router.get("/v3/client-sales/batch", ...readChain, (req, res, next) => {
     void v3ClientSalesBatchHandler(req, res).catch(next);
   });
 
