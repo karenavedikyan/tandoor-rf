@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
+import * as dbPool from "../../src/db/pool";
 import { resetPoolForTests, closePool } from "../../src/db/pool";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import type { AccessContext } from "../../src/access/types";
@@ -8,10 +9,12 @@ import {
   batchClientSalesListSummaries,
   buildClientSalesTabPath,
   CLIENT_SALES_BATCH_MAX_IDS,
+  CLIENT_SALES_BATCH_QUERY_BUDGET,
   loadClientSalesCardSummary,
   parseClientSalesBatchTargets,
   parseClientSalesMonthStrict,
 } from "../../src/clients/v3/client-sales-summary";
+import { denyClientAccess } from "../helpers/access-db-fixtures";
 import request from "supertest";
 
 const ORIGIN = "http://127.0.0.1:3000";
@@ -225,5 +228,101 @@ describe("client sales summary v3", () => {
     const outsider = managerContext("00000000-0000-4000-8000-000000000099", "99999999-9999-4999-8999-999999999999");
     const summary = await loadClientSalesCardSummary(outsider, "legal", LEGAL_A, "2026-09", {});
     assert.equal(summary, null);
+  });
+
+  it("rejects invalid UUID in batch targets", () => {
+    const r = parseClientSalesBatchTargets([{ kind: "legal", guid: "------------------------------------" }]);
+    assert.equal(r.ok, false);
+  });
+
+  it("rejects malformed managerGuid on client-sales endpoints", async () => {
+    const months = await request(app)
+      .get("/api/clients/v3/client-sales/months?managerGuid=not-a-uuid")
+      .set("Cookie", adminCookie);
+    assert.equal(months.status, 400);
+    const batch = await request(app)
+      .post("/api/clients/v3/client-sales/batch?managerGuid=not-a-uuid")
+      .set("Cookie", adminCookie)
+      .send({ month: "2026-09", targets: [{ kind: "holding", guid: HOLDING }] });
+    assert.equal(batch.status, 400);
+  });
+
+  it("manager territory narrows holding breakdown without broadening full base", async () => {
+    const pool = new Pool({ connectionString: url });
+    const mgrA = "99999999-9999-4999-8999-111111111111";
+    const mgrB = "99999999-9999-4999-8999-222222222222";
+    await pool.query(
+      `UPDATE onec_v3_legal_entities SET managers = jsonb_build_object('guidManager', $1::text) WHERE guid_client = $2::uuid`,
+      [mgrA, LEGAL_A],
+    );
+    await pool.query(
+      `UPDATE onec_v3_legal_entities SET managers = jsonb_build_object('guidManager', $1::text) WHERE guid_client = $2::uuid`,
+      [mgrB, LEGAL_B],
+    );
+    await pool.end();
+    const scoped = await loadClientSalesCardSummary(adminCtx, "holding", HOLDING, "2026-09", {
+      managerGuid: mgrA,
+    });
+    assert.ok(scoped && typeof scoped === "object");
+    assert.equal(scoped!.breakdown.length, 1);
+    assert.equal(scoped!.breakdown[0]!.legalGuid, LEGAL_A);
+    const full = await loadClientSalesCardSummary(adminCtx, "holding", HOLDING, "2026-09", {});
+    assert.ok(full && typeof full === "object");
+    assert.equal(full!.breakdown.length, 2);
+  });
+
+  it("batch authorization uses bounded query count", async () => {
+    const originalQuery = dbPool.query;
+    let queryCount = 0;
+    (dbPool as { query: typeof dbPool.query }).query = async (text, params) => {
+      queryCount += 1;
+      return originalQuery(text, params);
+    };
+    try {
+      const one = [{ kind: "holding" as const, guid: HOLDING }];
+      queryCount = 0;
+      await batchClientSalesListSummaries(adminCtx, "2026-09", one, {});
+      const countOne = queryCount;
+      const many = Array.from({ length: 100 }, (_, i) => ({
+        kind: "legal" as const,
+        guid:
+          i === 0
+            ? LEGAL_A
+            : `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      }));
+      queryCount = 0;
+      await batchClientSalesListSummaries(adminCtx, "2026-09", many, {});
+      const countMany = queryCount;
+      assert.ok(countOne <= CLIENT_SALES_BATCH_QUERY_BUDGET);
+      assert.ok(countMany <= CLIENT_SALES_BATCH_QUERY_BUDGET);
+      assert.ok(countMany <= countOne + 2);
+    } finally {
+      (dbPool as { query: typeof dbPool.query }).query = originalQuery;
+    }
+  });
+
+  it("explicit denial blocks card without hidden sibling disclosure fields", async () => {
+    const pool = new Pool({ connectionString: url });
+    const deniedUser = await createTestUser({
+      databaseUrl: url,
+      email: "denied-sales@example.test",
+      password: "StrongPass123!",
+      fullName: "Denied Sales",
+      role: "director",
+    });
+    await denyClientAccess({
+      databaseUrl: url,
+      userId: deniedUser.id,
+      scopeType: "client",
+      objectId: LEGAL_A,
+      deniedByUserId: adminCtx.userId,
+    });
+    await pool.end();
+    const deniedCtx = adminContext(deniedUser.id);
+    deniedCtx.role = "director";
+    const summary = await loadClientSalesCardSummary(deniedCtx, "holding", HOLDING, "2026-09", {});
+    assert.ok(summary && typeof summary === "object");
+    assert.equal(summary!.breakdown.some((r) => r.legalGuid === LEGAL_A), false);
+    assert.equal("holdingLegalTotalCount" in summary!, false);
   });
 });

@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  var UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
   function esc(shell, value) {
     return shell && shell.escapeHtml ? shell.escapeHtml(String(value)) : String(value);
   }
@@ -29,18 +32,73 @@
     return { ok: ok, status: status, data: result.data != null ? result.data : null };
   }
 
+  function parseStrictSalesMonth(value) {
+    if (!value || typeof value !== "string") {
+      return { ok: false };
+    }
+    var trimmed = value.trim();
+    var m = /^(\d{4})-(\d{2})$/.exec(trimmed);
+    if (!m) {
+      return { ok: false };
+    }
+    var monthNum = Number(m[2]);
+    if (monthNum < 1 || monthNum > 12) {
+      return { ok: false };
+    }
+    return { ok: true, yyyyMm: m[1] + "-" + m[2] };
+  }
+
+  function isValidUuid(value) {
+    return typeof value === "string" && UUID_RE.test(value.trim());
+  }
+
   function monthFromUrl() {
     return new URLSearchParams(window.location.search).get("v3salesMonth") || "";
   }
 
-  function setMonthInUrl(month) {
+  function resolveBackHrefFromLocation() {
+    var raw = new URLSearchParams(window.location.search).get("return");
+    if (typeof raw === "string" && raw !== "") {
+      if (raw.startsWith("/clients") || raw.startsWith("/sales")) {
+        return raw;
+      }
+      if (raw.startsWith("?")) {
+        return "/clients" + raw;
+      }
+      return "/clients?" + raw;
+    }
+    return "/clients?v3mode=1";
+  }
+
+  function setMonthInUrl(month, options) {
+    options = options || {};
     var url = new URL(window.location.href);
     if (month) {
       url.searchParams.set("v3salesMonth", month);
     } else {
       url.searchParams.delete("v3salesMonth");
     }
+    var ret = url.searchParams.get("return");
+    if (ret) {
+      var retSearch = ret.charAt(0) === "?" ? ret : "?" + ret;
+      var retParams = new URLSearchParams(retSearch.slice(1));
+      if (month) {
+        retParams.set("v3salesMonth", month);
+      } else {
+        retParams.delete("v3salesMonth");
+      }
+      url.searchParams.set("return", "?" + retParams.toString());
+    }
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    if (options.syncBackHref !== false) {
+      var back = document.querySelector('[data-testid="v3-back-to-list"]');
+      if (back) {
+        back.setAttribute("href", resolveBackHrefFromLocation());
+      }
+    }
+    if (options.onMonthChange) {
+      options.onMonthChange(month, url);
+    }
   }
 
   function returnQueryFromLocation() {
@@ -50,10 +108,45 @@
     return ret.startsWith("?") ? ret : "?" + ret;
   }
 
+  function normalizeListReturnSearch(returnRaw) {
+    if (!returnRaw) {
+      return returnQueryFromLocation();
+    }
+    if (returnRaw.startsWith("?")) {
+      return returnRaw;
+    }
+    return "?" + returnRaw;
+  }
+
+  function assertTerritoryStateValid(state) {
+    if (!state) return;
+    if (state.v3manager && !isValidUuid(state.v3manager)) {
+      throw new Error("invalid_territory");
+    }
+    if (state.ropEmployee && !isValidUuid(state.ropEmployee)) {
+      throw new Error("invalid_territory");
+    }
+    if (state.orgTeamGuid && !isValidUuid(state.orgTeamGuid)) {
+      throw new Error("invalid_territory");
+    }
+    if (state.responsibleGuid && !isValidUuid(state.responsibleGuid)) {
+      throw new Error("invalid_territory");
+    }
+    if (state.orgCatalogEntry && !isValidUuid(state.orgCatalogEntry)) {
+      throw new Error("invalid_territory");
+    }
+    if (
+      state.responsibleKind &&
+      ["manager", "regional", "hardware"].indexOf(state.responsibleKind) < 0
+    ) {
+      throw new Error("invalid_territory");
+    }
+  }
+
   function territoryQueryFromState(state) {
     var q = new URLSearchParams();
     if (!state) {
-      return territoryQueryFromLocation();
+      return "";
     }
     if (state.ropEmployee) q.set("ropBranchGuid", state.ropEmployee);
     if (state.orgTeamGuid) q.set("teamGuid", state.orgTeamGuid);
@@ -74,13 +167,50 @@
     return s ? "?" + s : "";
   }
 
+  function listReturnParamsToState(search) {
+    var params = new URLSearchParams(search.charAt(0) === "?" ? search.slice(1) : search);
+    var v3manager = params.get("v3manager") || "";
+    var responsibleGuid = params.get("responsibleGuid") || "";
+    if (!responsibleGuid && v3manager) {
+      responsibleGuid = v3manager;
+    }
+    var responsibleKind = params.get("responsibleKind") || params.get("teamKind") || "manager";
+    return {
+      v3manager: v3manager,
+      ropEmployee: params.get("ropEmployee") || "",
+      orgTeamGuid: params.get("orgTeamGuid") || "",
+      orgCatalogEntry: params.get("orgCatalogEntry") || "",
+      responsibleGuid: responsibleGuid,
+      responsibleKind: responsibleGuid ? responsibleKind : "",
+      v3view: params.get("v3view") || "all",
+    };
+  }
+
+  function territoryQueryFromListReturn(returnRaw) {
+    var search = normalizeListReturnSearch(returnRaw);
+    if (search) {
+      var state =
+        window.ClientsV3 && window.ClientsV3.readState
+          ? window.ClientsV3.readState(search)
+          : listReturnParamsToState(search);
+      assertTerritoryStateValid(state);
+      return territoryQueryFromState(state);
+    }
+    return territoryQueryFromLocation();
+  }
+
   function territoryQueryFromLocation() {
     var params = new URLSearchParams(window.location.search);
     var q = new URLSearchParams();
     ["responsibleGuid", "responsibleKind", "ropBranchGuid", "managerGuid", "teamGuid", "employeePortfolioGuid"].forEach(
       function (key) {
         var v = params.get(key);
-        if (v) q.set(key, v);
+        if (v) {
+          if (!isValidUuid(v) && key.indexOf("Kind") < 0) {
+            throw new Error("invalid_territory");
+          }
+          q.set(key, v);
+        }
       },
     );
     var s = q.toString();
@@ -88,7 +218,7 @@
   }
 
   function fetchMonths(api, territoryQuery) {
-    var q = territoryQuery || territoryQueryFromLocation();
+    var q = territoryQuery || "";
     return api.apiRequest("/api/clients/v3/client-sales/months" + q).then(function (result) {
       var unwrapped = unwrapApiResult(result);
       if (unwrapped.status === 401) {
@@ -105,7 +235,8 @@
     });
   }
 
-  function fetchCardSummary(api, entity, guid, month, territoryQuery, returnQuery) {
+  function fetchCardSummary(api, entity, guid, month, territoryQuery) {
+    var tq = (territoryQuery || "").replace(/^\?/, "&");
     var q =
       "?entity=" +
       encodeURIComponent(entity) +
@@ -113,7 +244,7 @@
       encodeURIComponent(guid) +
       "&month=" +
       encodeURIComponent(month) +
-      (territoryQuery || territoryQueryFromLocation()).replace(/^\?/, "&");
+      tq;
     return api.apiRequest("/api/clients/v3/client-sales/card" + q).then(function (result) {
       var unwrapped = unwrapApiResult(result);
       if (unwrapped.status === 401) {
@@ -185,13 +316,13 @@
         "<td>" +
         (row.inn ? esc(shell, row.inn) : '<span class="pc-unavailable">—</span>') +
         "</td>" +
-        "<td class=\"num\">" +
+        '<td class="num">' +
         incomeCell +
         "</td>" +
-        "<td class=\"num\">" +
+        '<td class="num">' +
         qtyCell +
         "</td>" +
-        "<td class=\"num\">" +
+        '<td class="num">' +
         share +
         "</td>" +
         '<td><a class="pc-link" href="' +
@@ -222,6 +353,29 @@
     );
   }
 
+  function buildMonthSelectOptions(shell, months, selectedMonth, requestedUnavailable) {
+    var html = "";
+    if (requestedUnavailable && selectedMonth && months.indexOf(selectedMonth) < 0) {
+      html +=
+        '<option value="' +
+        esc(shell, selectedMonth) +
+        '" selected>' +
+        esc(shell, selectedMonth) +
+        " (нет данных)</option>";
+    }
+    (months || []).forEach(function (m) {
+      html +=
+        '<option value="' +
+        esc(shell, m) +
+        '"' +
+        (m === selectedMonth ? " selected" : "") +
+        ">" +
+        esc(shell, m) +
+        "</option>";
+    });
+    return html;
+  }
+
   function renderBlock(shell, summary, entityType, months, monthUnavailable) {
     var note = "";
     if (summary.scopeLimited) {
@@ -239,21 +393,9 @@
       note += '<p class="pc-unavailable">Нет доступных юрлиц для расчёта продаж.</p>';
     }
     if (monthUnavailable) {
-      note += '<p class="pc-unavailable">Запрошенный месяц недоступен; выберите другой из списка.</p>';
+      note += '<p class="pc-unavailable" data-testid="v3-sales-month-unavailable">За выбранный месяц нет данных в вашей области видимости.</p>';
     }
-    var monthOptions = (months || [])
-      .map(function (m) {
-        return (
-          '<option value="' +
-          esc(shell, m) +
-          '"' +
-          (m === summary.month ? " selected" : "") +
-          ">" +
-          esc(shell, m) +
-          "</option>"
-        );
-      })
-      .join("");
+    var monthOptions = buildMonthSelectOptions(shell, months, summary.month, monthUnavailable);
     return (
       '<section class="v3-sales-summary-block" aria-label="Продажи за месяц" data-testid="v3-client-sales-summary">' +
       '<div class="v3-sales-summary-head">' +
@@ -273,8 +415,16 @@
     if (!host || !options.api || !options.entityType) return;
     if (options.entityType === "retail") return;
     var loadSeq = 0;
-    var territoryQuery = options.territoryQuery || territoryQueryFromLocation();
-    var returnQuery = options.returnQuery || returnQueryFromLocation();
+    var territoryQuery;
+    try {
+      territoryQuery =
+        options.territoryQuery ||
+        territoryQueryFromListReturn(options.returnQuery || returnQueryFromLocation());
+    } catch (_err) {
+      host.innerHTML =
+        '<section class="v3-sales-summary-block"><p class="pc-unavailable">Некорректные параметры территории в ссылке возврата.</p></section>';
+      return;
+    }
     host.innerHTML = '<p class="pc-unavailable">Загрузка продаж…</p>';
 
     function renderError(message, retry) {
@@ -294,18 +444,18 @@
       }
     }
 
-    function bindMonthSelect(select, months, summary) {
+    function bindMonthSelect(select, months, summary, requestedUnavailable) {
       if (!select) return;
       select.addEventListener("change", function () {
         var v = select.value;
-        setMonthInUrl(v);
-        load(v, months);
+        setMonthInUrl(v, { syncBackHref: true, onMonthChange: options.onMonthChange });
+        load(v, months, months.indexOf(v) < 0);
       });
     }
 
-    function load(month, months) {
+    function load(month, months, requestedUnavailable) {
       var seq = ++loadSeq;
-      return fetchCardSummary(options.api, options.entityType, options.guid, month, territoryQuery, returnQuery)
+      return fetchCardSummary(options.api, options.entityType, options.guid, month, territoryQuery)
         .then(function (payload) {
           if (seq !== loadSeq || !host.isConnected) return;
           if (payload.denied || !payload.summary) {
@@ -313,9 +463,13 @@
             return;
           }
           var summary = payload.summary;
-          var monthUnavailable = Boolean(monthFromUrl() && months.indexOf(monthFromUrl()) < 0);
-          host.innerHTML = renderBlock(options.shell, summary, options.entityType, months, monthUnavailable);
-          bindMonthSelect(host.querySelector("[data-testid='v3-client-sales-month']"), months, summary);
+          host.innerHTML = renderBlock(options.shell, summary, options.entityType, months, requestedUnavailable);
+          bindMonthSelect(
+            host.querySelector("[data-testid='v3-client-sales-month']"),
+            months,
+            summary,
+            requestedUnavailable,
+          );
         })
         .catch(function () {
           if (seq !== loadSeq || !host.isConnected) return;
@@ -329,18 +483,23 @@
         .then(function (monthsPayload) {
           if (seq !== loadSeq || !host.isConnected) return;
           var months = monthsPayload.months || [];
-          if (!months.length) {
+          var fromUrl = monthFromUrl();
+          var parsed = parseStrictSalesMonth(fromUrl);
+          if (fromUrl && !parsed.ok) {
+            renderError("Некорректный месяц в адресе (ожидается YYYY-MM).", false);
+            return;
+          }
+          if (!fromUrl && !months.length) {
             host.innerHTML =
               '<section class="v3-sales-summary-block"><p class="pc-unavailable">Нет доступных месяцев продаж.</p></section>';
             return;
           }
-          var fromUrl = monthFromUrl();
-          var requestedMissing = fromUrl && months.indexOf(fromUrl) < 0;
-          var month = fromUrl && months.indexOf(fromUrl) >= 0 ? fromUrl : months[0];
-          if (!requestedMissing) {
-            setMonthInUrl(month);
+          var monthToLoad = fromUrl || months[0];
+          if (!fromUrl && months[0]) {
+            setMonthInUrl(months[0], { syncBackHref: true, onMonthChange: options.onMonthChange });
           }
-          return load(month, months);
+          var requestedUnavailable = Boolean(fromUrl && months.indexOf(monthToLoad) < 0);
+          return load(monthToLoad, months, requestedUnavailable);
         })
         .catch(function () {
           if (seq !== loadSeq || !host.isConnected) return;
@@ -352,24 +511,31 @@
   }
 
   function fetchBatch(api, month, targets, territoryQuery) {
-    var tq = territoryQuery || territoryQueryFromLocation();
-    var url = "/api/clients/v3/client-sales/batch" + (tq || "");
+    var tq = territoryQuery || "";
+    var url = "/api/clients/v3/client-sales/batch" + tq;
     return api
       .apiRequest(url, {
         method: "POST",
         body: { month: month, targets: targets || [] },
       })
       .then(function (result) {
-      var unwrapped = unwrapApiResult(result);
-      if (unwrapped.status === 401) {
-        window.location.replace("/login");
-        return Promise.reject(new Error("unauthorized"));
-      }
-      if (!unwrapped.ok) {
-        return Promise.reject(new Error("batch_load_failed"));
-      }
-      return unwrapped.data || { summaries: {} };
-    });
+        var unwrapped = unwrapApiResult(result);
+        if (unwrapped.status === 401) {
+          window.location.replace("/login");
+          return Promise.reject(new Error("unauthorized"));
+        }
+        if (!unwrapped.ok) {
+          return Promise.reject(new Error("batch_load_failed"));
+        }
+        return unwrapped.data || { summaries: {} };
+      });
+  }
+
+  function partialScopeSuffix(sales) {
+    if (sales && sales.scopeLimited && sales.dataState === "loaded") {
+      return ' <span class="clients-v3-sales-partial-note" title="Доступная часть">*</span>';
+    }
+    return "";
   }
 
   function formatListSalesCell(sales, colId, shell) {
@@ -383,23 +549,27 @@
       return '<span class="clients-no-data">н/д</span>';
     }
     if (sales.dataState === "incomplete") {
-      if (colId === "sales_income_total" || colId === "sales_quantity_total" || colId === "sales_legal_count") {
+      if (
+        colId === "sales_income_total" ||
+        colId === "sales_quantity_total" ||
+        colId === "sales_legal_count"
+      ) {
         return '<span class="clients-no-data">—</span>';
       }
     }
     if (colId === "sales_income_total") {
       return sales.dataState === "loaded"
-        ? esc(shell, formatMoney(sales.incomeTotal))
+        ? esc(shell, formatMoney(sales.incomeTotal)) + partialScopeSuffix(sales)
         : '<span class="clients-no-data">—</span>';
     }
     if (colId === "sales_quantity_total") {
       return sales.dataState === "loaded"
-        ? esc(shell, formatQty(sales.quantityTotal))
+        ? esc(shell, formatQty(sales.quantityTotal)) + partialScopeSuffix(sales)
         : '<span class="clients-no-data">—</span>';
     }
     if (colId === "sales_legal_count") {
       return sales.dataState === "loaded" && sales.legalWithSalesCount != null
-        ? esc(shell, String(sales.legalWithSalesCount))
+        ? esc(shell, String(sales.legalWithSalesCount)) + partialScopeSuffix(sales)
         : '<span class="clients-no-data">—</span>';
     }
     if (colId === "sales_by_legal") {
@@ -419,9 +589,7 @@
       var note = sales.scopeLimited
         ? ' <span class="clients-v3-sales-partial-note">(доступная часть)</span>'
         : "";
-      return (
-        '<span class="clients-v3-sales-by-legal">' + parts.join("<br>") + note + "</span>"
-      );
+      return '<span class="clients-v3-sales-by-legal">' + parts.join("<br>") + note + "</span>";
     }
     return '<span class="clients-no-data">—</span>';
   }
@@ -430,10 +598,13 @@
     monthFromUrl: monthFromUrl,
     setMonthInUrl: setMonthInUrl,
     mountOverview: mountOverview,
+    listReturnParamsToState: listReturnParamsToState,
     formatMoney: formatMoney,
     formatQty: formatQty,
     unwrapApiResult: unwrapApiResult,
     territoryQueryFromState: territoryQueryFromState,
+    territoryQueryFromListReturn: territoryQueryFromListReturn,
+    parseStrictSalesMonth: parseStrictSalesMonth,
     fetchBatch: fetchBatch,
     formatListSalesCell: formatListSalesCell,
   };

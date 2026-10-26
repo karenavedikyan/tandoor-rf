@@ -2,9 +2,11 @@ import { query } from "../../db/pool";
 import type { AccessContext } from "../../access/types";
 import { addSaleMoneyStrings, addSaleQuantityStrings } from "../../onec-sales/decimal-sum";
 import { loadSalesImportSnapshotState, monthHasSaleAggregate } from "../../onec-sales/import-snapshot";
-import { v3EntityAssignmentScope } from "./access-scope";
+import { isValidUuidParam } from "../uuid-param";
+import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
 import { resolveV3EntityAccess } from "./detail";
 import { appendAssignmentFilters, type V3ListQuery, type V3ResponsibleKind } from "./list";
+import { renumberV3ScopeClause } from "./list-legal-grouped";
 
 export const CLIENT_SALES_BATCH_MAX_IDS = 100;
 
@@ -405,7 +407,7 @@ export function parseClientSalesBatchTargets(raw: unknown): ClientSalesBatchTarg
     if (kind !== "holding" && kind !== "legal") {
       return { ok: false, code: "invalid_entry" };
     }
-    if (typeof guidRaw !== "string" || !/^[0-9a-f-]{36}$/i.test(guidRaw.trim())) {
+    if (typeof guidRaw !== "string" || !isValidUuidParam(guidRaw.trim())) {
       return { ok: false, code: "invalid_entry" };
     }
     normalized.push({ kind, guid: guidRaw.trim().toLowerCase() });
@@ -434,17 +436,51 @@ export function parseClientSalesBatchTargetsFromQueryStrings(raw: unknown): Clie
   return parseClientSalesBatchTargets(asObjects);
 }
 
-async function filterVisibleTargets(
+/** Max DB round-trips for batch auth + aggregates (not linear in target count). */
+export const CLIENT_SALES_BATCH_QUERY_BUDGET = 8;
+
+async function visibleBatchTargetKeys(
   context: AccessContext,
   targets: ClientSalesBatchTarget[],
-): Promise<ClientSalesBatchTarget[]> {
-  const visible: ClientSalesBatchTarget[] = [];
-  for (const target of targets) {
-    const access = await resolveV3EntityAccess(context, target.kind, target.guid);
-    if (access === "visible") {
-      visible.push(target);
+): Promise<Set<string>> {
+  const visible = new Set<string>();
+  const holdingGuids = [...new Set(targets.filter((t) => t.kind === "holding").map((t) => t.guid))];
+  const legalGuids = [...new Set(targets.filter((t) => t.kind === "legal").map((t) => t.guid))];
+
+  if (holdingGuids.length) {
+    const scope = v3HoldingVisibilityScope(context, "h");
+    const clause = renumberV3ScopeClause(scope.clause, 2);
+    const rows = await query<{ guid: string }>(
+      `
+        SELECT h.guid_holding::text AS guid
+        FROM onec_v3_holdings h
+        WHERE h.guid_holding = ANY($1::uuid[])
+          AND (${clause})
+      `,
+      [holdingGuids, ...scope.params],
+    );
+    for (const row of rows.rows) {
+      visible.add(`holding:${row.guid.toLowerCase()}`);
     }
   }
+
+  if (legalGuids.length) {
+    const scope = v3EntityAssignmentScope(context, "le", "legal");
+    const clause = renumberV3ScopeClause(scope.clause, 2);
+    const rows = await query<{ guid: string }>(
+      `
+        SELECT le.guid_client::text AS guid
+        FROM onec_v3_legal_entities le
+        WHERE le.guid_client = ANY($1::uuid[])
+          AND (${clause})
+      `,
+      [legalGuids, ...scope.params],
+    );
+    for (const row of rows.rows) {
+      visible.add(`legal:${row.guid.toLowerCase()}`);
+    }
+  }
+
   return visible;
 }
 
@@ -575,7 +611,8 @@ export async function batchClientSalesListSummaries(
   }
 
   const monthImported = await monthHasSaleAggregate(monthParsed.monthStartIso);
-  const visibleTargets = await filterVisibleTargets(context, targets);
+  const visibleKeys = await visibleBatchTargetKeys(context, targets);
+  const visibleTargets = targets.filter((t) => visibleKeys.has(`${t.kind}:${t.guid}`));
   const memberMap = await loadMemberRowsForTargets(
     context,
     territory,
@@ -586,7 +623,7 @@ export async function batchClientSalesListSummaries(
   const summaries: Record<string, ClientSalesListCell> = {};
   for (const target of targets) {
     const key = `${target.kind}:${target.guid}`;
-    const access = visibleTargets.some((t) => t.kind === target.kind && t.guid === target.guid);
+    const access = visibleKeys.has(key);
     if (!access) {
       summaries[key] = {
         incomeTotal: null,

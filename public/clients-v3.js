@@ -816,7 +816,8 @@
       entity === "retail" ||
       entity === "orphan_retail"
     ) {
-      return Promise.resolve(items);
+      syncSalesScopeNote(visibleCols);
+      return Promise.resolve({ items: items, effectiveMonth: state.v3salesMonth || "" });
     }
     var targets = items
       .map(function (item) {
@@ -853,7 +854,7 @@
     var month = state.v3salesMonth;
     if (month) {
       return window.ClientSalesSummaryUi.fetchBatch(api, month, targets, territoryQ).then(function (payload) {
-        return applySummaries(month, payload);
+        return { items: applySummaries(month, payload), effectiveMonth: month };
       });
     }
     var monthsUrl = "/api/clients/v3/client-sales/months" + territoryQ;
@@ -861,12 +862,18 @@
       var months = (monthsResult.data && monthsResult.data.months) || [];
       var picked = months[0];
       if (!picked) {
-        return items;
+        return { items: items, effectiveMonth: "" };
       }
       return window.ClientSalesSummaryUi.fetchBatch(api, picked, targets, territoryQ).then(function (payload) {
-        return applySummaries(picked, payload);
+        return { items: applySummaries(picked, payload), effectiveMonth: picked };
       });
     });
+  }
+
+  function syncSalesScopeNote(visibleCols) {
+    var el = document.getElementById("v3-sales-scope-note");
+    if (!el) return;
+    el.classList.toggle("clients-hidden", !visibleColsNeedSales(visibleCols));
   }
 
   function syncSalesMonthFilter(shell, state, months) {
@@ -1521,14 +1528,23 @@
             liveListState,
             visibleColsForSales,
             liveListState.v3entity,
-          ).then(function (enrichedItems) {
+          ).then(function (enriched) {
             if (isStaleListLoad()) {
               return;
             }
-            items = enrichedItems || items;
+            if (enriched && enriched.items) {
+              items = enriched.items;
+              if (enriched.effectiveMonth && !liveListState.v3salesMonth) {
+                liveListState.v3salesMonth = enriched.effectiveMonth;
+                writeState(liveListState, true);
+              }
+            }
+            syncSalesScopeNote(visibleColsForSales);
             return continueAfterListItems();
           });
           function continueAfterListItems() {
+          var visibleColsRendered = resolveVisibleListColumns(liveListState, ctx.currentUserId);
+          syncSalesScopeNote(visibleColsRendered);
           var lktandoorListMode = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
           var focusMode =
             lktandoorListMode &&

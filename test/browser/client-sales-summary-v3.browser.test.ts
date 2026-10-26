@@ -11,6 +11,7 @@ const TEST_PASSWORD = "StrongPass123!";
 const LEGAL_A = "11111111-1111-4111-8111-111111111101";
 const LEGAL_B = "22222222-2222-4222-8222-222222222222";
 const HOLDING = "33333333-3333-4333-8333-333333333333";
+const MGR_A = "99999999-9999-4999-8999-111111111111";
 const SCREENSHOT_DIR =
   process.env.CLIENT_SALES_SUMMARY_BROWSER_DIR ??
   "/cursor/stores/bc-01a0c95b-ccc6-786a-8dc8-f91f60a1cd82/media/client-sales-summary-v3";
@@ -74,11 +75,11 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
       `
         INSERT INTO onec_v3_legal_entities (guid_client, name_client, inn, guid_holding, type_category, managers, other_fields, last_source_sha256)
         VALUES
-          ($1::uuid, 'Legal A Sales', '7700000001', $3::uuid, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 't'),
+          ($1::uuid, 'Legal A Sales', '7700000001', $3::uuid, '{}'::jsonb, jsonb_build_object('guidManager', $4::text), '{}'::jsonb, 't'),
           ($2::uuid, 'Legal B Sales', '7700000002', $3::uuid, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 't')
         ON CONFLICT DO NOTHING
       `,
-      [LEGAL_A, LEGAL_B, HOLDING],
+      [LEGAL_A, LEGAL_B, HOLDING, MGR_A],
     );
     await pool.query(
       `
@@ -111,52 +112,111 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile", { timeout: 30000 });
   }
 
-  it("card overview uses apiRequest wrapper and shows months", async () => {
+  it("card uses list return territory and requested missing month", async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const cardUrls: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/api/clients/v3/client-sales/")) {
+        cardUrls.push(req.url());
+      }
+    });
+    await login(page);
+    const returnQ = encodeURIComponent(`?v3mode=1&v3manager=${MGR_A}&v3salesMonth=2026-08`);
+    await page.goto(
+      `${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-08&return=${returnQ}`,
+      { waitUntil: "networkidle" },
+    );
+    await page.waitForSelector('[data-testid="v3-client-sales-summary"]', { timeout: 20000 });
+    assert.ok(cardUrls.some((u) => u.includes("managerGuid=" + MGR_A)));
+    assert.ok(cardUrls.some((u) => u.includes("month=2026-08")));
+    await page.waitForSelector('[data-testid="v3-sales-month-unavailable"]', { timeout: 10000 });
+    const tiles = await page.locator('[data-testid="v3-sales-summary-tiles"]').innerText();
+    assert.match(tiles, /—/);
+    assert.doesNotMatch(tiles, /100,50/);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "card-territory-missing-month.png"), fullPage: true });
+    await page.close();
+  });
+
+  it("month change updates nested return on Back href", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await login(page);
+    const returnRaw = `?v3mode=1&v3entity=legal_grouped&v3salesMonth=2026-08`;
+    await page.goto(
+      `${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-08&return=${encodeURIComponent(returnRaw)}`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.waitForSelector('[data-testid="v3-client-sales-month"]', { timeout: 20000 });
+    await page.evaluate(function () {
+      window.ClientSalesSummaryUi.setMonthInUrl("2026-09", { syncBackHref: true });
+    });
+    await page.waitForFunction(() => {
+      var back = document.querySelector('[data-testid="v3-back-to-list"]');
+      return back && back.getAttribute("href") && back.getAttribute("href").includes("v3salesMonth=2026-09");
+    });
+    const backHref = await page.locator('[data-testid="v3-back-to-list"]').getAttribute("href");
+    assert.ok(backHref && backHref.includes("v3salesMonth=2026-09"));
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "back-href-month-sync.png"), fullPage: true });
+    await page.close();
+  });
+
+  it("list shows four sales column headers and scope note", async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await login(page);
+    await page.goto(`${baseUrl}/clients?v3mode=1&v3entity=holdings`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => window.ClientsV3List && window.ClientsShell);
+    await page.evaluate(function () {
+      var shell = window.ClientsShell;
+      var row = document.getElementById("clients-table-head-row");
+      var cols = [
+        { id: "name", label: "Название клиента" },
+        { id: "sales_income_total", label: "Продажи, ₽" },
+        { id: "sales_quantity_total", label: "Продажи, ед." },
+        { id: "sales_legal_count", label: "Юрлица с продажами" },
+        { id: "sales_by_legal", label: "Продажи по юрлицам" },
+      ];
+      window.ClientsV3List.renderTableHead(shell, row, cols, { v3entity: "holdings" }, function () {}, false);
+      var note = document.getElementById("v3-sales-scope-note");
+      if (note) note.classList.remove("clients-hidden");
+      var picker = document.getElementById("columns-picker");
+      if (picker) {
+        picker.classList.remove("clients-hidden");
+        window.ClientsV3List.renderColumnPicker(
+          shell,
+          picker,
+          "holdings",
+          ["name", "sales_income_total", "sales_quantity_total", "sales_legal_count", "sales_by_legal"],
+          "browser-test",
+          function () {},
+        );
+      }
+    });
+    const headers = await page.locator("#clients-table-head-row th").allTextContents();
+    const pickerHtml = await page.locator("#columns-picker").innerHTML();
+    assert.match(pickerHtml, /sales_by_legal/);
+    assert.ok(headers.some((h) => h.includes("Продажи, ₽")));
+    assert.ok(headers.some((h) => h.includes("юрлицам")));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "list-sales-columns-mobile-375.png"),
+      fullPage: true,
+    });
+    await page.close();
+  });
+
+  it("details link opens legal sales with guid and month", async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await login(page);
     await page.goto(
       `${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-09`,
       { waitUntil: "networkidle" },
     );
-    await page.waitForSelector('[data-testid="v3-client-sales-summary"]', { timeout: 20000 });
-    const monthSelect = page.locator('[data-testid="v3-client-sales-month"]');
-    await monthSelect.waitFor();
-    const options = await monthSelect.locator("option").allTextContents();
-    assert.ok(options.some((o) => o.includes("2026-09")));
-    const breakdown = page.locator('[data-testid="v3-sales-breakdown"]');
-    await breakdown.waitFor();
-    const breakdownText = await breakdown.innerText();
-    assert.match(breakdownText, /100,50|100\.50/);
-    const summaryText = await page.locator('[data-testid="v3-client-sales-summary"]').innerText();
-    assert.match(summaryText, /Не все юрлица|доступная часть/i);
-    const details = page.locator('[data-testid="v3-sales-details-link"]').first();
-    const href = await details.getAttribute("href");
+    const href = await page.locator('[data-testid="v3-sales-details-link"]').first().getAttribute("href");
     assert.ok(href && href.includes(LEGAL_A));
-    assert.ok(href.includes("cardTab=sales"));
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "holding-overview.png"), fullPage: true });
-    await page.close();
-  });
-
-  it("list columns enrich via POST batch wrapper", async () => {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await login(page);
-    await page.goto(`${baseUrl}/clients?v3mode=1&v3entity=legal`, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.ClientSalesSummaryUi && window.TandoorRf);
-    const batch = await page.evaluate(async function (ids) {
-      const api = window.TandoorRf;
-      const payload = await window.ClientSalesSummaryUi.fetchBatch(api, "2026-09", [
-        { kind: "holding", guid: ids.holdingId },
-        { kind: "legal", guid: ids.legalId },
-      ]);
-      return payload;
-    }, { holdingId: HOLDING, legalId: LEGAL_A });
-    assert.ok(batch.summaries);
-    const holdingCell = batch.summaries[`holding:${HOLDING.toLowerCase()}`];
-    assert.equal(holdingCell.dataState, "incomplete");
-    const legalCell = batch.summaries[`legal:${LEGAL_A.toLowerCase()}`];
-    assert.equal(legalCell.dataState, "loaded");
-    assert.match(String(legalCell.incomeTotal), /100/);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "list-mobile-sales-columns.png"), fullPage: true });
+    assert.ok(href.includes("v3salesMonth=2026-09"));
+    await page.click('[data-testid="v3-sales-details-link"]');
+    await page.waitForURL((url) => url.pathname.includes(LEGAL_A), { timeout: 15000 });
+    assert.match(page.url(), /v3Entity=legal/);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "details-legal-sales.png"), fullPage: true });
     await page.close();
   });
 });

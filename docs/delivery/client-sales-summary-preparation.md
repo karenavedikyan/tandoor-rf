@@ -23,6 +23,6 @@ Deploy app bundle after review; no DB migration. Verify card overview + list col
 ## Verification (agent run)
 
 - `npm run typecheck` / `npm run build`
-- `node --import tsx --test test/integration/client-sales-summary-v3.test.ts` (8 tests)
-- `node --import tsx --test test/browser/client-sales-summary-v3.browser.test.ts` (Chromium; screenshots under store `media/client-sales-summary-v3/`)
+- `node --import tsx --test test/integration/client-sales-summary-v3.test.ts` (14 tests: territory, denial, batch query budget, UUID validation)
+- `node --import tsx --test test/browser/client-sales-summary-v3.browser.test.ts` (4 Chromium UI tests; screenshots under store `media/client-sales-summary-v3/`)
 - Production deploy / September import: **not run** (preparation-only).

@@ -419,12 +419,25 @@
       var cardGuid = ent.guid || ent.guid_client;
       if (cardGuid) {
         var listReturn = new URLSearchParams(window.location.search).get("return") || "";
+        var salesTerritoryQuery = "";
+        try {
+          salesTerritoryQuery = window.ClientSalesSummaryUi.territoryQueryFromListReturn(listReturn);
+        } catch (_territoryErr) {
+          salesTerritoryQuery = "";
+        }
         window.ClientSalesSummaryUi.mountOverview(salesHost, {
           api: api,
           shell: shell,
           entityType: payload.entityType,
           guid: cardGuid,
           returnQuery: listReturn,
+          territoryQuery: salesTerritoryQuery,
+          onMonthChange: function () {
+            var back = detailRoot.querySelector('[data-testid="v3-back-to-list"]');
+            if (back) {
+              back.setAttribute("href", resolveV3BackHref());
+            }
+          },
           onOpenSalesTab: function () {
             if (payload.entityType !== "legal") {
               return;

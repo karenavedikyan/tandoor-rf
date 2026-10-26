@@ -666,11 +666,51 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
   });
 }
 
+async function resolveClientSalesTerritoryStrict(
+  req: AccessRequest,
+  res: Response,
+): Promise<
+  | {
+      ropBranchGuid?: string;
+      responsibleGuid?: string;
+      responsibleKind?: V3ResponsibleKind;
+      managerGuid?: string;
+      teamMemberGuids?: string[];
+    }
+  | undefined
+> {
+  const responsibleKindRaw =
+    typeof req.query.responsibleKind === "string" ? req.query.responsibleKind.trim() : "";
+  if (
+    responsibleKindRaw &&
+    !["manager", "regional", "hardware"].includes(responsibleKindRaw)
+  ) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleKind."));
+    return undefined;
+  }
+  const teamKindRaw = typeof req.query.teamKind === "string" ? req.query.teamKind.trim() : "";
+  if (teamKindRaw && !["manager", "regional", "hardware"].includes(teamKindRaw)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый teamKind."));
+    return undefined;
+  }
+  if (req.query.teamGuid !== undefined) {
+    const teamParsed = parseOptionalGuidQuery(req.query.teamGuid);
+    if (!teamParsed.ok) {
+      setNoStore(res);
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый teamGuid."));
+      return undefined;
+    }
+  }
+  return resolveSalesSectionTerritory(req, res);
+}
+
 export async function v3ClientSalesMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
   if (!(await requireV3Active(res))) {
     return;
   }
-  const territory = await resolveSalesSectionTerritory(req, res);
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
   if (!territory) {
     return;
   }
@@ -695,7 +735,7 @@ export async function v3ClientSalesCardHandler(req: AccessRequest, res: Response
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month (ожидается YYYY-MM)."));
     return;
   }
-  const territory = await resolveSalesSectionTerritory(req, res);
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
   if (!territory) {
     return;
   }
@@ -738,7 +778,7 @@ export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Respons
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
     return;
   }
-  const territory = await resolveSalesSectionTerritory(req, res);
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
   if (!territory) {
     return;
   }
