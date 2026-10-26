@@ -352,6 +352,9 @@
         var selectEl = host.querySelector('[data-testid="v3-sales-month-select"]');
         if (selectEl) {
           selectEl.addEventListener("change", function () {
+            if (window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.setMonthInUrl) {
+              window.ClientSalesSummaryUi.setMonthInUrl(selectEl.value);
+            }
             loadV3LegalSales(detailRoot, legalGuid, selectEl.value);
           });
         }
