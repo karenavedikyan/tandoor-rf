@@ -8,7 +8,7 @@
 - Optional list columns: `sales_income_total`, `sales_quantity_total`, `sales_legal_count`, `sales_by_legal` (not in default column sets).
 - List filter bar: month selector (`v3salesMonth`) synced with card Back link and batch API territory params.
 - Month persistence: URL `v3salesMonth=YYYY-MM` on list and card; legal Sales tab reads the same month from URL.
-- API: `GET /api/clients/v3/client-sales/months`, `GET /api/clients/v3/client-sales/card`, `GET /api/clients/v3/client-sales/batch?month=&target=holding:…` (≤100 targets; preview-safe read).
+- API: `GET /api/clients/v3/client-sales/months`, `GET /api/clients/v3/client-sales/card`, `POST /api/clients/v3/client-sales/batch` on **readChain** (≤100 targets; body `{ month, targets[] }`).
 - Incomplete holdings: missing import row for any in-scope legal ⇒ `dataState=incomplete`, no partial totals/shares.
 - Source: `onec_v3_legal_sales_lines` aggregate only; no migration 049; no returns netting.
 

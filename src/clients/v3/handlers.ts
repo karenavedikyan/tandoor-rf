@@ -39,8 +39,8 @@ import {
   listClientSalesMonths,
   loadClientSalesCardSummary,
   parseClientSalesBatchTargets,
-  parseClientSalesBatchTargetsFromQueryStrings,
   parseClientSalesMonthStrict,
+  type ClientSalesBatchTarget,
 } from "./client-sales-summary";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
@@ -716,7 +716,8 @@ export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Respons
   if (!(await requireV3Active(res))) {
     return;
   }
-  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  const body = req.body as { month?: string; targets?: ClientSalesBatchTarget[] } | undefined;
+  const month = typeof body?.month === "string" ? body.month.trim() : "";
   if (!month) {
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
     return;
@@ -725,15 +726,15 @@ export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Respons
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month (ожидается YYYY-MM)."));
     return;
   }
-  const rawTargets = req.query.target ?? req.query.targets;
-  const parsedTargets = parseClientSalesBatchTargetsFromQueryStrings(rawTargets);
+  const rawTargets = body?.targets;
+  const parsedTargets = parseClientSalesBatchTargets(rawTargets);
   if (!parsedTargets.ok) {
     const message =
       parsedTargets.code === "too_many"
         ? `Не более ${CLIENT_SALES_BATCH_MAX_IDS} объектов в одном запросе.`
         : parsedTargets.code === "not_array"
-          ? "Укажите target (holding:uuid или legal:uuid), можно несколько."
-          : "Некорректный target: ожидается holding:uuid или legal:uuid.";
+          ? "Укажите targets (массив {kind, guid})."
+          : "Некорректный элемент targets: ожидается kind holding|legal и guid UUID.";
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
     return;
   }

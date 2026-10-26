@@ -352,21 +352,14 @@
   }
 
   function fetchBatch(api, month, targets, territoryQuery) {
-    var params = new URLSearchParams();
-    params.set("month", month);
-    (targets || []).forEach(function (t) {
-      if (t && t.kind && t.guid) {
-        params.append("target", t.kind + ":" + t.guid);
-      }
-    });
     var tq = territoryQuery || territoryQueryFromLocation();
-    if (tq) {
-      var tParams = new URLSearchParams(tq.replace(/^\?/, ""));
-      tParams.forEach(function (value, key) {
-        params.set(key, value);
-      });
-    }
-    return api.apiRequest("/api/clients/v3/client-sales/batch?" + params.toString()).then(function (result) {
+    var url = "/api/clients/v3/client-sales/batch" + (tq || "");
+    return api
+      .apiRequest(url, {
+        method: "POST",
+        body: { month: month, targets: targets || [] },
+      })
+      .then(function (result) {
       var unwrapped = unwrapApiResult(result);
       if (unwrapped.status === 401) {
         window.location.replace("/login");

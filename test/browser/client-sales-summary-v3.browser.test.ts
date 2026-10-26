@@ -137,7 +137,7 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.close();
   });
 
-  it("list columns enrich via GET batch wrapper", async () => {
+  it("list columns enrich via POST batch wrapper", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await login(page);
     await page.goto(`${baseUrl}/clients?v3mode=1&v3entity=legal`, { waitUntil: "domcontentloaded" });

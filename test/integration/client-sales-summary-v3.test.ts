@@ -192,20 +192,33 @@ describe("client sales summary v3", () => {
     assert.equal(r, "batch_too_large");
   });
 
-  it("batch GET rejects invalid targets and accepts valid", async () => {
+  it("batch POST on readChain rejects invalid targets and accepts valid", async () => {
     const bad = await request(app)
-      .get("/api/clients/v3/client-sales/batch?month=2026-09&target=bad")
-      .set("Cookie", adminCookie);
+      .post("/api/clients/v3/client-sales/batch")
+      .set("Cookie", adminCookie)
+      .send({ month: "2026-09", targets: "not-an-array" });
     assert.equal(bad.status, 400);
     const parsed = parseClientSalesBatchTargets([{ kind: "holding", guid: HOLDING }]);
     assert.equal(parsed.ok, true);
     const ok = await request(app)
-      .get(`/api/clients/v3/client-sales/batch?month=2026-09&target=holding:${HOLDING}`)
-      .set("Cookie", adminCookie);
+      .post("/api/clients/v3/client-sales/batch")
+      .set("Cookie", adminCookie)
+      .send({
+        month: "2026-09",
+        targets: [{ kind: "holding", guid: HOLDING }],
+      });
     assert.equal(ok.status, 200);
     assert.ok(ok.body.summaries[`holding:${HOLDING.toLowerCase()}`]);
     const cache = String(ok.headers["cache-control"] || "");
     assert.match(cache, /no-store/i);
+  });
+
+  it("batch POST rejects non-array targets without silent empty accept", async () => {
+    const missing = await request(app)
+      .post("/api/clients/v3/client-sales/batch")
+      .set("Cookie", adminCookie)
+      .send({ month: "2026-09" });
+    assert.equal(missing.status, 400);
   });
 
   it("withheld legal returns null without leaking", async () => {

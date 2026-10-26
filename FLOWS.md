@@ -9,7 +9,7 @@
 
 ## Сводка продаж на карточке и в списке (PR client-sales-summary)
 
-1. `/clients?v3mode=1&v3entity=legal_grouped` — при включённых колонках «Продажи» (в т.ч. «По юрлицам») подгружается `GET /api/clients/v3/client-sales/batch` (только текущая страница, territory query как у v3 list).
+1. `/clients?v3mode=1&v3entity=legal_grouped` — при включённых колонках «Продажи» (в т.ч. «По юрлицам») подгружается `POST /api/clients/v3/client-sales/batch` (readChain; territory query как у v3 list).
 2. Селектор «Месяц продаж» в filterbar + `v3salesMonth=YYYY-MM` в URL → карточка `?v3salesMonth=` → Back сохраняет месяц.
 3. Карточка holding/legal, вкладка **Обзор**: три плитки + таблица юрлиц; «Подробнее» → `/clients/{legalGuid}?v3Entity=legal&cardTab=sales&v3salesMonth=…` (не перехват на holding).
 4. Retail / orphan_retail: без колонок продаж и без блока на обзоре.
