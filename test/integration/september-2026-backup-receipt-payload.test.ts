@@ -82,6 +82,7 @@ it("backup receipt: metadata-only receipt with fake payload SHA fails without pa
 
 it("backup receipt: wrong payload bytes refuse binding", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sep-backup-wrong-"));
+  await chmod(dir, 0o700);
   scratch.push(dir);
   const pool = new Pool({ connectionString: url });
   const client = await pool.connect();
@@ -91,6 +92,7 @@ it("backup receipt: wrong payload bytes refuse binding", async () => {
   await pool.end();
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir,
+    approvedPrivateRoot: dir,
     backup,
     scopeFileSha256: "synthetic-scope",
   });
@@ -111,7 +113,7 @@ it("backup receipt: wrong payload bytes refuse binding", async () => {
     scopeFileSha256: "synthetic-scope",
     liveTargetFingerprint: identity.fingerprint,
     liveBeforeStateDigest: backup.beforeStateSha256,
-    skipBackupPayloadPathSecurity: true,
+    approvedPrivateBackupRoot: dir,
   });
   assert.equal(r.ok, false);
   assert.equal(r.code, "BACKUP_PAYLOAD_SHA_MISMATCH");
@@ -119,6 +121,7 @@ it("backup receipt: wrong payload bytes refuse binding", async () => {
 
 it("backup receipt: payload before digest mismatch refuses", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sep-backup-before-"));
+  await chmod(dir, 0o700);
   scratch.push(dir);
   const pool = new Pool({ connectionString: url });
   const client = await pool.connect();
@@ -128,6 +131,7 @@ it("backup receipt: payload before digest mismatch refuses", async () => {
   await pool.end();
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir,
+    approvedPrivateRoot: dir,
     backup,
     scopeFileSha256: "synthetic-scope",
   });
@@ -146,7 +150,7 @@ it("backup receipt: payload before digest mismatch refuses", async () => {
     scopeFileSha256: "synthetic-scope",
     liveTargetFingerprint: identity.fingerprint,
     liveBeforeStateDigest: "deadbeef".repeat(8),
-    skipBackupPayloadPathSecurity: true,
+    approvedPrivateBackupRoot: dir,
   });
   assert.equal(r.ok, false);
   assert.match(r.code, /BACKUP_RECEIPT_BEFORE_LIVE|BACKUP_PAYLOAD_BEFORE/);
@@ -166,6 +170,7 @@ it("backup receipt: verified synthetic payload passes binding", async () => {
   await pool.end();
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir,
+    approvedPrivateRoot: dir,
     backup,
     scopeFileSha256: "synthetic-scope",
   });
@@ -184,7 +189,7 @@ it("backup receipt: verified synthetic payload passes binding", async () => {
     scopeFileSha256: "synthetic-scope",
     liveTargetFingerprint: identity.fingerprint,
     liveBeforeStateDigest: before.digest,
-    skipBackupPayloadPathSecurity: true,
+    approvedPrivateBackupRoot: dir,
   });
   assert.equal(r.ok, true);
   assert.equal(r.receipt.backupPayloadSha256, pair.backupPayloadSha256);

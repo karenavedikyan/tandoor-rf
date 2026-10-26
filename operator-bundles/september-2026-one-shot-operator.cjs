@@ -1548,6 +1548,24 @@ async function verifyMatchedCountsFromSources(client, sources) {
 }
 
 // src/onec-sales/september-2026-one-shot/operator-guard.ts
+function assertExternalWriteAuthorization() {
+  const ref = process.env.SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF?.trim();
+  if (!ref) {
+    return {
+      ok: false,
+      code: "EXTERNAL_AUTHORIZATION_REQUIRED",
+      message: "Set SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF after separate human approval before backup/apply/rollback."
+    };
+  }
+  if (process.env.TEST_DATABASE_URL?.trim() && process.env.DATABASE_URL?.trim() === process.env.TEST_DATABASE_URL?.trim()) {
+    return {
+      ok: false,
+      code: "PRODUCTION_URL_TEST_MIXED",
+      message: "DATABASE_URL must not equal TEST_DATABASE_URL for operator write paths."
+    };
+  }
+  return { ok: true, ref };
+}
 function assertProductionReadOnlyPreflightDatabaseUrl(databaseUrl, testContext) {
   if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS?.trim()) {
     return {
@@ -3438,10 +3456,10 @@ async function loadVerifiedSourceSnapshotFromDirectory(input) {
   return { ok: true, buffers, manifestSha256 };
 }
 async function readFileUnsafe(directory, fileName) {
-  const { readFile: readFile5 } = await import("node:fs/promises");
+  const { readFile: readFile6 } = await import("node:fs/promises");
   const { join: joinPath } = await import("node:path");
   try {
-    const bytes = await readFile5(joinPath(directory, fileName));
+    const bytes = await readFile6(joinPath(directory, fileName));
     return { ok: true, bytes };
   } catch {
     return { ok: false, code: "SOURCE_FILE_MISSING", message: `Missing snapshot file ${fileName}.` };
@@ -3770,33 +3788,147 @@ function assertSeptemberProductionApplyChannelOpen() {
 }
 
 // src/onec-sales/september-2026-one-shot/backup-receipt-verify.ts
-var import_node_crypto12 = require("node:crypto");
-var import_promises5 = require("node:fs/promises");
+var import_node_crypto13 = require("node:crypto");
+var import_promises6 = require("node:fs/promises");
 
 // src/onec-sales/september-2026-one-shot/backup-payload-verify.ts
+var import_node_crypto12 = require("node:crypto");
+var import_promises5 = require("node:fs/promises");
+var import_node_path3 = require("node:path");
+
+// src/onec-sales/september-2026-one-shot/private-backup-publish.ts
 var import_node_crypto11 = require("node:crypto");
 var import_promises4 = require("node:fs/promises");
 var import_node_path2 = require("node:path");
+function formatPrivateBackupFileText(payload) {
+  return `${JSON.stringify(payload, null, 2)}
+`;
+}
+async function assertApprovedPrivateBackupRoot(approvedRoot) {
+  try {
+    const root = (0, import_node_path2.resolve)(approvedRoot);
+    const stat = await (0, import_promises4.lstat)(root);
+    if (stat.isSymbolicLink()) {
+      return { ok: false, code: "BACKUP_PRIVATE_ROOT_SYMLINK", message: "Backup private root must not be a symlink." };
+    }
+    const mode = stat.mode & 511;
+    if (mode & 63) {
+      return { ok: false, code: "BACKUP_PRIVATE_ROOT_NOT_PRIVATE", message: "Backup private root must be mode 0700." };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, code: "BACKUP_PRIVATE_ROOT_MISSING", message: "Backup private root directory missing." };
+  }
+}
+async function assertPrivatePathUnderRoot(destinationPath, approvedRoot) {
+  const root = (0, import_node_path2.resolve)(approvedRoot);
+  const dest = (0, import_node_path2.resolve)(destinationPath);
+  if (dest !== root && !dest.startsWith(`${root}${import_node_path2.sep}`)) {
+    throw new Error("CAPTURE_DESTINATION_OUTSIDE_ROOT");
+  }
+  const rootCheck = await assertApprovedPrivateBackupRoot(approvedRoot);
+  if (!rootCheck.ok) {
+    throw new Error(rootCheck.code);
+  }
+}
+async function publishPrivateBackupJson(input) {
+  try {
+    await assertPrivatePathUnderRoot(input.destinationPath, input.approvedPrivateRoot);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Invalid destination.";
+    if (message === "BACKUP_PRIVATE_ROOT_SYMLINK" || message === "BACKUP_PRIVATE_ROOT_NOT_PRIVATE" || message === "BACKUP_PRIVATE_ROOT_MISSING" || message === "CAPTURE_DESTINATION_OUTSIDE_ROOT") {
+      return { ok: false, code: message, message: "Backup private root or destination invalid." };
+    }
+    return {
+      ok: false,
+      code: "BACKUP_DESTINATION_INVALID",
+      message
+    };
+  }
+  const text = formatPrivateBackupFileText(input.payload);
+  let handle = null;
+  try {
+    handle = await (0, import_promises4.open)(input.destinationPath, "wx", 384);
+    await handle.writeFile(text, { encoding: "utf8" });
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    const readback = await (0, import_promises4.readFile)(input.destinationPath, "utf8");
+    const fileSha256 = (0, import_node_crypto11.createHash)("sha256").update(readback).digest("hex");
+    const expectedSha = (0, import_node_crypto11.createHash)("sha256").update(text).digest("hex");
+    if (fileSha256 !== expectedSha) {
+      await (0, import_promises4.unlink)(input.destinationPath).catch(() => void 0);
+      return { ok: false, code: "BACKUP_READBACK_FAILED", message: "Readback hash mismatch." };
+    }
+    return { ok: true, fileSha256 };
+  } catch (e) {
+    await handle?.close().catch(() => void 0);
+    if (e.code === "EEXIST") {
+      return { ok: false, code: "BACKUP_DESTINATION_EXISTS", message: "Destination exists." };
+    }
+    await (0, import_promises4.unlink)(input.destinationPath).catch(() => void 0);
+    return { ok: false, code: "BACKUP_PUBLISH_FAILED", message: e instanceof Error ? e.message : "Publish failed." };
+  }
+}
+async function publishPrivateTextFile(input) {
+  try {
+    await assertPrivatePathUnderRoot(input.destinationPath, input.approvedPrivateRoot);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Invalid destination.";
+    return { ok: false, code: "BACKUP_DESTINATION_INVALID", message };
+  }
+  let handle = null;
+  try {
+    handle = await (0, import_promises4.open)(input.destinationPath, "wx", 384);
+    await handle.writeFile(input.text, { encoding: "utf8" });
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    const readback = await (0, import_promises4.readFile)(input.destinationPath, "utf8");
+    const fileSha256 = (0, import_node_crypto11.createHash)("sha256").update(readback).digest("hex");
+    const expectedSha = (0, import_node_crypto11.createHash)("sha256").update(input.text).digest("hex");
+    if (fileSha256 !== expectedSha) {
+      await (0, import_promises4.unlink)(input.destinationPath).catch(() => void 0);
+      return { ok: false, code: "BACKUP_READBACK_FAILED", message: "Readback hash mismatch." };
+    }
+    return { ok: true, fileSha256 };
+  } catch (e) {
+    await handle?.close().catch(() => void 0);
+    if (e.code === "EEXIST") {
+      return { ok: false, code: "BACKUP_DESTINATION_EXISTS", message: "Destination exists." };
+    }
+    await (0, import_promises4.unlink)(input.destinationPath).catch(() => void 0);
+    return { ok: false, code: "BACKUP_PUBLISH_FAILED", message: e instanceof Error ? e.message : "Publish failed." };
+  }
+}
+
+// src/onec-sales/september-2026-one-shot/backup-payload-verify.ts
 var BACKUP_PAYLOAD_MAX_BYTES = 64 * 1024 * 1024;
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function assertPrivatePathUnderRoot(filePath, approvedRoot) {
-  const root = (0, import_node_path2.resolve)(approvedRoot);
-  const dest = (0, import_node_path2.resolve)(filePath);
-  if (dest !== root && !dest.startsWith(`${root}${import_node_path2.sep}`)) {
+function assertPrivatePathUnderRoot2(filePath, approvedRoot) {
+  const root = (0, import_node_path3.resolve)(approvedRoot);
+  const dest = (0, import_node_path3.resolve)(filePath);
+  if (dest !== root && !dest.startsWith(`${root}${import_node_path3.sep}`)) {
     return { ok: false, code: "BACKUP_PAYLOAD_PATH_OUTSIDE_ROOT", message: "Backup payload path outside approved private root." };
   }
   return { ok: true };
 }
 async function readSeptember047048BackupPayloadFile(input) {
-  const filePath = (0, import_node_path2.resolve)(input.backupPayloadFilePath);
-  if (!input.skipPathSecurity && input.approvedPrivateRoot?.trim()) {
-    const rootCheck = assertPrivatePathUnderRoot(filePath, input.approvedPrivateRoot.trim());
+  const filePath = (0, import_node_path3.resolve)(input.backupPayloadFilePath);
+  if (!input.skipPathSecurity) {
+    const rootValue = input.approvedPrivateRoot?.trim();
+    if (!rootValue) {
+      return { ok: false, code: "BACKUP_PRIVATE_ROOT_REQUIRED", message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required." };
+    }
+    const rootSec = await assertApprovedPrivateBackupRoot(rootValue);
+    if (!rootSec.ok) return rootSec;
+    const rootCheck = assertPrivatePathUnderRoot2(filePath, rootValue);
     if (!rootCheck.ok) return rootCheck;
   }
   try {
-    const stat = await (0, import_promises4.lstat)(filePath);
+    const stat = await (0, import_promises5.lstat)(filePath);
     if (stat.isSymbolicLink()) {
       return { ok: false, code: "BACKUP_PAYLOAD_SYMLINK", message: "Backup payload must not be a symlink." };
     }
@@ -3809,7 +3941,7 @@ async function readSeptember047048BackupPayloadFile(input) {
     if (stat.size > BACKUP_PAYLOAD_MAX_BYTES) {
       return { ok: false, code: "BACKUP_PAYLOAD_TOO_LARGE", message: "Backup payload exceeds size bound." };
     }
-    const bytes = await (0, import_promises4.readFile)(filePath);
+    const bytes = await (0, import_promises5.readFile)(filePath);
     if (bytes.length > BACKUP_PAYLOAD_MAX_BYTES) {
       return { ok: false, code: "BACKUP_PAYLOAD_TOO_LARGE", message: "Backup payload exceeds size bound." };
     }
@@ -3873,7 +4005,7 @@ async function verifySeptember047048BackupPayloadBinding(input) {
     skipPathSecurity: input.skipPathSecurity
   });
   if (!read.ok) return read;
-  const payloadSha256 = (0, import_node_crypto11.createHash)("sha256").update(read.bytes).digest("hex");
+  const payloadSha256 = (0, import_node_crypto12.createHash)("sha256").update(read.bytes).digest("hex");
   if (payloadSha256 !== input.expectedPayloadSha256) {
     return { ok: false, code: "BACKUP_PAYLOAD_SHA_MISMATCH", message: "Backup payload file SHA mismatch vs receipt." };
   }
@@ -3893,16 +4025,16 @@ async function verifySeptember047048BackupPayloadBinding(input) {
 
 // src/onec-sales/september-2026-one-shot/backup-receipt-verify.ts
 function backupReceiptSha256(receipt) {
-  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(receipt), "utf8").digest("hex");
+  return (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(receipt), "utf8").digest("hex");
 }
 async function verifySeptemberBackupReceiptForApply(input) {
   let bytes;
   try {
-    bytes = await (0, import_promises5.readFile)(input.receiptFilePath);
+    bytes = await (0, import_promises6.readFile)(input.receiptFilePath);
   } catch {
     return { ok: false, code: "BACKUP_RECEIPT_MISSING", message: "Backup receipt file not found." };
   }
-  const computedSha = (0, import_node_crypto12.createHash)("sha256").update(bytes).digest("hex");
+  const computedSha = (0, import_node_crypto13.createHash)("sha256").update(bytes).digest("hex");
   if (computedSha !== input.expectedReceiptSha256) {
     return { ok: false, code: "BACKUP_RECEIPT_SHA_MISMATCH", message: "Backup receipt SHA mismatch." };
   }
@@ -3942,6 +4074,17 @@ async function verifySeptemberBackupReceiptForApply(input) {
   });
   if (!payload.ok) return payload;
   return { ok: true, receipt };
+}
+function buildSeptemberBackupReceiptFromVerifiedPayload(input) {
+  return {
+    v: 1,
+    kind: "september-2026-047-048-backup-receipt",
+    targetDbFingerprint: input.targetDbFingerprint,
+    operatorDataScopeSha256: input.scopeFileSha256,
+    beforeStateSha256: input.beforeStateSha256,
+    backupPayloadSha256: input.backupPayloadFileSha256,
+    capturedAt: input.capturedAt ?? (/* @__PURE__ */ new Date(0)).toISOString()
+  };
 }
 
 // src/onec-sales/september-2026-one-shot/one-shot-apply-core.ts
@@ -4040,6 +4183,16 @@ async function runSeptember2026OneShotApply(input) {
       txOpen = false;
       return { ok: false, code: "SCOPE_BEFORE_MISMATCH", message: "Live before digest does not match scope." };
     }
+    const privateRoot = process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim();
+    if (!synthetic && !input.testContext?.skipBackupPayloadPathSecurity && !privateRoot) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return {
+        ok: false,
+        code: "BACKUP_PRIVATE_ROOT_REQUIRED",
+        message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required for production apply."
+      };
+    }
     const backupVerify = await verifySeptemberBackupReceiptForApply({
       receiptFilePath: receiptPath,
       expectedReceiptSha256: input.backupReceiptSha256.trim(),
@@ -4048,7 +4201,7 @@ async function runSeptember2026OneShotApply(input) {
       scopeFileSha256: scopeSha,
       liveTargetFingerprint: identity.fingerprint,
       liveBeforeStateDigest: beforeDigest,
-      approvedPrivateBackupRoot: process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim(),
+      approvedPrivateBackupRoot: privateRoot,
       skipBackupPayloadPathSecurity: input.testContext?.skipBackupPayloadPathSecurity
     });
     if (!backupVerify.ok) {
@@ -4169,12 +4322,155 @@ async function runSeptember2026OneShotApply(input) {
   }
 }
 
+// src/onec-sales/september-2026-one-shot/backup.ts
+async function captureSeptember047048Backup(client, targetDbFingerprint) {
+  const before = await captureSeptember047048BeforeState(client);
+  return {
+    v: 1,
+    kind: "september-2026-047-048-backup",
+    capturedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    targetDbFingerprint,
+    beforeStateSha256: before.digest,
+    snapshot: before.snapshot
+  };
+}
+
+// src/onec-sales/september-2026-one-shot/one-shot-backup-core.ts
+async function runSeptember2026OneShotBackup(input) {
+  const urlCheck = assertProductionReadOnlyPreflightDatabaseUrl(input.databaseUrl, input.testContext);
+  if (!urlCheck.ok) return urlCheck;
+  const auth = assertExternalWriteAuthorization();
+  if (!auth.ok) return auth;
+  if (!input.approvedPrivateRoot?.trim()) {
+    return { ok: false, code: "BACKUP_PRIVATE_ROOT_REQUIRED", message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required." };
+  }
+  const loaded = await loadAndVerifyOperatorDataScope({
+    scopeFilePath: input.operatorDataScopePath,
+    expectedSha256: input.operatorDataScopeSha256,
+    skipProductionShaPin: input.testContext?.skipOperatorDataScopeShaPin
+  });
+  if (!loaded.ok) return loaded;
+  const scope = loaded.scope;
+  const scopeSha = loaded.sha256;
+  const grant = assertSeptemberWriteGrant("backup", scope, input.backupGrantRef);
+  if (!grant.ok) return grant;
+  const pool = createImportPool(input.databaseUrl);
+  const client = await pool.connect();
+  let txOpen = false;
+  try {
+    await client.query("BEGIN");
+    txOpen = true;
+    const identity = await readTargetDbIdentityFromClient(client, input.databaseUrl);
+    const fingerprintOk = input.testContext?.skipTargetFingerprintPin === true || identity.fingerprint === EXPECTED_TARGET_DB_FINGERPRINT;
+    if (!fingerprintOk) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "TARGET_FINGERPRINT_MISMATCH", message: "Database fingerprint mismatch." };
+    }
+    const locked = await tryAcquireImportLock(client);
+    if (!locked) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "IMPORT_LOCK_BUSY", message: "Import lock busy." };
+    }
+    const gates = await assertWritePreflightGatesAfterImportLock(client, input.testContext);
+    if (!gates.ok) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return gates;
+    }
+    const resolvedBeforeDigest = input.testContext?.skipBeforeDigestPin ? (await captureSeptember047048BeforeState(client)).digest : EXPECTED_EMPTY_BEFORE_STATE_DIGEST;
+    const beforeCheck = await assertSeptember047048EmptyBeforeState(client, resolvedBeforeDigest);
+    if (!beforeCheck.ok) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return beforeCheck;
+    }
+    if (resolvedBeforeDigest !== scope.beforeStateDigest) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return { ok: false, code: "SCOPE_BEFORE_MISMATCH", message: "Live before digest does not match scope." };
+    }
+    const backup = await captureSeptember047048Backup(client, identity.fingerprint);
+    await client.query("COMMIT");
+    txOpen = false;
+    const published = await publishPrivateBackupJson({
+      destinationPath: input.backupPayloadDestinationPath,
+      approvedPrivateRoot: input.approvedPrivateRoot,
+      payload: backup
+    });
+    if (!published.ok) return published;
+    const receipt = buildSeptemberBackupReceiptFromVerifiedPayload({
+      targetDbFingerprint: identity.fingerprint,
+      scopeFileSha256: scopeSha,
+      beforeStateSha256: resolvedBeforeDigest,
+      backupPayloadFileSha256: published.fileSha256,
+      capturedAt: backup.capturedAt
+    });
+    const receiptText = JSON.stringify(receipt);
+    const receiptPublished = await publishPrivateTextFile({
+      destinationPath: input.backupReceiptDestinationPath,
+      approvedPrivateRoot: input.approvedPrivateRoot,
+      text: receiptText
+    });
+    if (!receiptPublished.ok) return receiptPublished;
+    return {
+      ok: true,
+      result: {
+        v: 1,
+        kind: "september-2026-backup-result",
+        targetDbFingerprint: identity.fingerprint,
+        beforeStateDigest: resolvedBeforeDigest,
+        operatorDataScopeSha256: scopeSha,
+        backupPayloadPath: input.backupPayloadDestinationPath,
+        backupPayloadSha256: published.fileSha256,
+        backupReceiptPath: input.backupReceiptDestinationPath,
+        backupReceiptSha256: receiptPublished.fileSha256
+      }
+    };
+  } catch (e) {
+    if (txOpen) {
+      await client.query("ROLLBACK").catch(() => void 0);
+    }
+    return { ok: false, code: "BACKUP_FAILED", message: e instanceof Error ? e.message : "Backup failed." };
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
 // src/onec-sales/september-2026-one-shot/one-shot-operator-cli-entry.ts
 async function main() {
   if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS) {
     fail("OPERATOR_BYPASS_FORBIDDEN", "SYNTHETIC_HARNESS not accepted.");
   }
-  const mode = process.argv.includes("--apply") ? "apply" : "read-only-preflight";
+  const mode = process.argv.includes("--apply") ? "apply" : process.argv.includes("--backup") ? "backup" : "read-only-preflight";
+  if (mode === "backup") {
+    const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
+    const grant = process.env.SEPTEMBER_2026_BACKUP_GRANT_REF?.trim();
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    const privateRoot = process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim();
+    const payloadPath = process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_DESTINATION_PATH?.trim();
+    const receiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_DESTINATION_PATH?.trim();
+    if (!scopePath || !grant || !databaseUrl || !privateRoot || !payloadPath || !receiptPath) {
+      fail(
+        "BACKUP_CONFIG_INCOMPLETE",
+        "DATABASE_URL, scope path, SEPTEMBER_2026_BACKUP_GRANT_REF, SEPTEMBER_2026_BACKUP_PRIVATE_ROOT, payload and receipt destination paths required."
+      );
+    }
+    const result2 = await runSeptember2026OneShotBackup({
+      databaseUrl,
+      operatorDataScopePath: scopePath,
+      operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
+      backupGrantRef: grant,
+      backupPayloadDestinationPath: payloadPath,
+      backupReceiptDestinationPath: receiptPath,
+      approvedPrivateRoot: privateRoot
+    });
+    console.log(JSON.stringify(result2, null, 2));
+    if (!result2.ok) process.exit(1);
+    return;
+  }
   if (mode === "apply") {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_APPLY_GRANT_REF?.trim();

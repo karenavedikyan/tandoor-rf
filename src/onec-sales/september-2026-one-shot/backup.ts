@@ -13,6 +13,7 @@ export type September047048Backup = {
   snapshot: September047048Snapshot;
 };
 
+/** Logical backup digest (canonical JSON); not the on-disk private file SHA. */
 export function septemberBackupSha256(backup: September047048Backup): string {
   return createHash("sha256").update(JSON.stringify(backup), "utf8").digest("hex");
 }
@@ -37,16 +38,15 @@ export async function runSeptember2026BackupToPrivateFile(input: {
   targetDbFingerprint: string;
   destinationPath: string;
   approvedPrivateRoot: string;
-}): Promise<{ ok: true; sha256: string } | { ok: false; code: string; message: string }> {
+}): Promise<{ ok: true; fileSha256: string } | { ok: false; code: string; message: string }> {
   const auth = assertExternalWriteAuthorization();
   if (!auth.ok) return auth;
   const backup = await captureSeptember047048Backup(input.client, input.targetDbFingerprint);
-  const sha = septemberBackupSha256(backup);
   const published = await publishPrivateBackupJson({
     destinationPath: input.destinationPath,
     approvedPrivateRoot: input.approvedPrivateRoot,
     payload: backup,
   });
   if (!published.ok) return published;
-  return { ok: true, sha256: sha };
+  return { ok: true, fileSha256: published.fileSha256 };
 }

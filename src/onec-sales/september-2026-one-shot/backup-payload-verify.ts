@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
+import { assertApprovedPrivateBackupRoot } from "./private-backup-publish";
 import { sha256CanonicalJson } from "../matched-only/canonical-json";
 import type { September047048Backup } from "./backup";
 import { SEPTEMBER_2026_SALE_MONTH_ISO } from "./scope-pins";
@@ -27,8 +28,14 @@ export async function readSeptember047048BackupPayloadFile(input: {
   skipPathSecurity?: boolean;
 }): Promise<{ ok: true; bytes: Buffer } | { ok: false; code: string; message: string }> {
   const filePath = resolve(input.backupPayloadFilePath);
-  if (!input.skipPathSecurity && input.approvedPrivateRoot?.trim()) {
-    const rootCheck = assertPrivatePathUnderRoot(filePath, input.approvedPrivateRoot.trim());
+  if (!input.skipPathSecurity) {
+    const rootValue = input.approvedPrivateRoot?.trim();
+    if (!rootValue) {
+      return { ok: false, code: "BACKUP_PRIVATE_ROOT_REQUIRED", message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required." };
+    }
+    const rootSec = await assertApprovedPrivateBackupRoot(rootValue);
+    if (!rootSec.ok) return rootSec;
+    const rootCheck = assertPrivatePathUnderRoot(filePath, rootValue);
     if (!rootCheck.ok) return rootCheck;
   }
   try {

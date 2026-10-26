@@ -3,13 +3,44 @@ import { readFileSync } from "node:fs";
 import { runSeptember2026ReadOnlyPreflight } from "./read-only-preflight-core";
 import { parseSeptemberReadOnlyRuntimeConfig } from "./read-only-preflight-runtime-config";
 import { runSeptember2026OneShotApply } from "./one-shot-apply-core";
+import { runSeptember2026OneShotBackup } from "./one-shot-backup-core";
 import { EXPECTED_OPERATOR_DATA_SCOPE_SHA256 } from "./scope-pins";
 
 async function main(): Promise<void> {
   if (process.env.SEPTEMBER_2026_SYNTHETIC_HARNESS) {
     fail("OPERATOR_BYPASS_FORBIDDEN", "SYNTHETIC_HARNESS not accepted.");
   }
-  const mode = process.argv.includes("--apply") ? "apply" : "read-only-preflight";
+  const mode = process.argv.includes("--apply")
+    ? "apply"
+    : process.argv.includes("--backup")
+      ? "backup"
+      : "read-only-preflight";
+  if (mode === "backup") {
+    const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
+    const grant = process.env.SEPTEMBER_2026_BACKUP_GRANT_REF?.trim();
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    const privateRoot = process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim();
+    const payloadPath = process.env.SEPTEMBER_2026_BACKUP_PAYLOAD_DESTINATION_PATH?.trim();
+    const receiptPath = process.env.SEPTEMBER_2026_BACKUP_RECEIPT_DESTINATION_PATH?.trim();
+    if (!scopePath || !grant || !databaseUrl || !privateRoot || !payloadPath || !receiptPath) {
+      fail(
+        "BACKUP_CONFIG_INCOMPLETE",
+        "DATABASE_URL, scope path, SEPTEMBER_2026_BACKUP_GRANT_REF, SEPTEMBER_2026_BACKUP_PRIVATE_ROOT, payload and receipt destination paths required.",
+      );
+    }
+    const result = await runSeptember2026OneShotBackup({
+      databaseUrl,
+      operatorDataScopePath: scopePath,
+      operatorDataScopeSha256: EXPECTED_OPERATOR_DATA_SCOPE_SHA256,
+      backupGrantRef: grant,
+      backupPayloadDestinationPath: payloadPath,
+      backupReceiptDestinationPath: receiptPath,
+      approvedPrivateRoot: privateRoot,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exit(1);
+    return;
+  }
   if (mode === "apply") {
     const scopePath = process.env.SEPTEMBER_2026_OPERATOR_DATA_SCOPE_PATH?.trim();
     const grant = process.env.SEPTEMBER_2026_APPLY_GRANT_REF?.trim();

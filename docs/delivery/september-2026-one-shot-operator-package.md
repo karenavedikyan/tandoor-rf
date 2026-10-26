@@ -35,7 +35,7 @@ Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 | Item | Value |
 |------|--------|
 | File | `operator-bundles/september-2026-one-shot-operator.cjs` |
-| SHA-256 (file bytes) | _see `npm run september-2026-read-only-preflight:sha` on HEAD_ |
+| SHA-256 (file bytes) | `d1905703e44d2c42b4858f3d954700f81897691d1eb5212bfaf099e8184383ab` |
 | Rebuild | `npm run september-2026-read-only-preflight:build` |
 | Verify SHA | `npm run september-2026-read-only-preflight:sha` |
 
@@ -79,7 +79,9 @@ Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
 
 **Operator data scope (candidate, not write authorization):** bytes SHA `f1daa71dce9172f93ab8590148634c0d09013ae07b60f5f8a6675392c793d9aa` — kind `FROZEN_SEPTEMBER_MATCHED_ONLY_SCOPE_CANDIDATE_NOT_WRITE_AUTHORIZATION`; `sources[*].guidFields` / `legacyIdFields` are numeric counters; `beforeCounts.*Json`; `excludedRows: 4024`; `allowedMetadata` is a single string. **All write flags stay false on this pinned candidate** (validator rejects `applyAuthorized: true` on bytes matching `f1daa…`). Human authorization is **not** flipping flags on the candidate file — it is a **separate** future grant/channel plus verified backup artifacts while the candidate scope remains read-only metadata.
 
-**Production apply channel (future, not enabled in this task):** `SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF` (pinned constant), `SEPTEMBER_2026_APPLY_GRANT_REF`, unchanged candidate scope path/SHA `f1daa…`, `SEPTEMBER_2026_BACKUP_RECEIPT_PATH` + receipt SHA, and **`SEPTEMBER_2026_BACKUP_PAYLOAD_PATH`** private backup JSON whose **file bytes SHA** matches `backupPayloadSha256` in the receipt (native 047–048 `v:1` backup, month `2026-09-01`, raw PG JSON text fields, digest binding). Optional `SEPTEMBER_2026_BACKUP_PRIVATE_ROOT` constrains payload path. CLI `--apply` without channel ref → `APPLY_NOT_AUTHORIZED` before scope; with channel but without payload → `BACKUP_RECEIPT_REQUIRED` / payload errors before writes. Tests: `testContext.syntheticApplyAllowed` only.
+**Backup CLI (`--backup`, after human approval):** requires `SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF`, `SEPTEMBER_2026_BACKUP_GRANT_REF`, `SEPTEMBER_2026_BACKUP_PRIVATE_ROOT` (directory `0700`, not symlink), destination paths for payload + receipt, and pinned candidate scope path. Same preflight as apply under lock (target fingerprint, jobs, catalog, empty before). Payload written via `publishPrivateBackupJson` (pretty JSON + newline); returned **`fileSha256` is readback file bytes**, not compact `JSON.stringify(backup)`. Receipt built with `buildSeptemberBackupReceiptFromVerifiedPayload`. Stdout: paths + SHA only (no business values).
+
+**Production apply channel (future):** `SEPTEMBER_2026_PRODUCTION_APPLY_CHANNEL_REF`, `SEPTEMBER_2026_APPLY_GRANT_REF`, candidate scope `f1daa…`, `SEPTEMBER_2026_BACKUP_RECEIPT_PATH` + SHA, `SEPTEMBER_2026_BACKUP_PAYLOAD_PATH`, and **mandatory** `SEPTEMBER_2026_BACKUP_PRIVATE_ROOT` (payload must live under `0700` root). CLI `--apply` without channel → `APPLY_NOT_AUTHORIZED` before scope. Integration tests may set `skipBackupPayloadPathSecurity` only in `testContext`.
 
 **Empty before-state digest (September scope only):** `b8b0946873bc8079c559c9b5f746e7388bfa6c4555c2d33bcc611947b14b8ce5`.
 
@@ -91,7 +93,7 @@ Legacy TS manifest hash (`code-bundle-manifest.ts`) is for dev traceability only
 
 ## Backup / apply / rollback (code only)
 
-Implemented in `september-2026-one-shot/` modules; **not** wired to default CLI (explicit separate invocation after authorization):
+Implemented in `september-2026-one-shot/` modules; default CLI remains read-only — **`--backup`** and **`--apply`** are explicit modes after authorization:
 
 | Operation | Scope |
 |-----------|--------|
@@ -123,7 +125,7 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 `test/integration/september-2026-read-only-preflight.test.ts` — missing sources, wrong target before private SELECT, URL bypass, sanitization, `.cjs` SHA reproducibility (**RUN**).
 
-`test/integration/september-2026-one-shot-apply-core.test.ts` (8 cases) and `september-2026-backup-receipt-payload.test.ts` (4 cases): receipt-only/fake payload refusal, payload SHA/before/target binding, verified synthetic backup pair + apply core (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
+`test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (5): file-byte SHA vs compact digest, `runSeptember2026OneShotBackup` → apply, private root required / `0755` / symlink refusal (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic money only).
 
 `npm run typecheck` — **RUN** after changes. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, it } from "node:test";
 import { Pool } from "pg";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -220,14 +220,17 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
     targetFingerprint: identity.fingerprint,
   });
   const workDir = join(snapDir, "..");
+  await chmod(workDir, 0o700);
   const backupClient = await new Pool({ connectionString: url }).connect();
   const backup = await captureSeptember047048Backup(backupClient, identity.fingerprint);
   backupClient.release();
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
     dir: workDir,
+    approvedPrivateRoot: workDir,
     backup,
     scopeFileSha256: "synthetic",
   });
+  process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT = workDir;
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
   const r = await runSeptember2026OneShotApply({
@@ -245,13 +248,13 @@ it("one-shot apply: non-empty before state stops under lock without matched writ
       skipCatalogPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
-      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,
     },
   });
   delete process.env.SEPTEMBER_2026_APPLY_GRANT_REF;
+  delete process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT;
   assert.equal(r.ok, false);
   assert.match(r.code, /BEFORE_STATE|SCOPE_BEFORE/);
   const verifyPool = new Pool({ connectionString: url });
@@ -276,6 +279,8 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
   const backup = await captureSeptember047048Backup(client, identity.fingerprint);
   client.release();
   await pool.end();
+  const workDir = join(snapDir, "..");
+  await chmod(workDir, 0o700);
   const scope = buildSyntheticOperatorScope({
     beforeStateDigest: before.digest,
     known,
@@ -284,10 +289,12 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
     targetFingerprint: identity.fingerprint,
   });
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
-    dir: join(snapDir, ".."),
+    dir: workDir,
+    approvedPrivateRoot: workDir,
     backup,
     scopeFileSha256: "synthetic",
   });
+  process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT = workDir;
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
   const r = await runSeptember2026OneShotApply({
@@ -306,13 +313,13 @@ it("one-shot apply: synthetic core path commits matched rows", async () => {
       skipBeforeDigestPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
-      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,
     },
   });
   delete process.env.SEPTEMBER_2026_APPLY_GRANT_REF;
+  delete process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT;
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.receipt.commitStatus, "committed");
   const verifyPool = new Pool({ connectionString: url });
@@ -351,11 +358,15 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
     applyAuthorized: true,
     targetFingerprint: identity.fingerprint,
   });
+  const workDir = join(snapDir, "..");
+  await chmod(workDir, 0o700);
   const pair = await writeSyntheticVerifiedBackupReceiptPair({
-    dir: join(snapDir, ".."),
+    dir: workDir,
+    approvedPrivateRoot: workDir,
     backup,
     scopeFileSha256: "synthetic",
   });
+  process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT = workDir;
   process.env.SEPTEMBER_2026_APPLY_GRANT_REF = "synthetic-apply-grant";
   delete process.env.TEST_DATABASE_URL;
   const r = await runSeptember2026OneShotApply({
@@ -374,7 +385,6 @@ it("one-shot apply: post-COMMIT read failure still reports committed (no rollbac
       skipBeforeDigestPin: true,
       skipSnapshotManifestSha: true,
       skipSnapshotPathSecurity: true,
-      skipBackupPayloadPathSecurity: true,
       skipNightlySchedulerPin: true,
       syntheticApplyAllowed: true,
       syntheticOperatorScope: scope,

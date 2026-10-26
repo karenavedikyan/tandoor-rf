@@ -210,6 +210,17 @@ export async function runSeptember2026OneShotApply(input: {
       return { ok: false, code: "SCOPE_BEFORE_MISMATCH", message: "Live before digest does not match scope." };
     }
 
+    const privateRoot = process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim();
+    if (!synthetic && !input.testContext?.skipBackupPayloadPathSecurity && !privateRoot) {
+      await client.query("ROLLBACK");
+      txOpen = false;
+      return {
+        ok: false,
+        code: "BACKUP_PRIVATE_ROOT_REQUIRED",
+        message: "SEPTEMBER_2026_BACKUP_PRIVATE_ROOT is required for production apply.",
+      };
+    }
+
     const backupVerify = await verifySeptemberBackupReceiptForApply({
       receiptFilePath: receiptPath,
       expectedReceiptSha256: input.backupReceiptSha256.trim(),
@@ -218,7 +229,7 @@ export async function runSeptember2026OneShotApply(input: {
       scopeFileSha256: scopeSha,
       liveTargetFingerprint: identity.fingerprint,
       liveBeforeStateDigest: beforeDigest,
-      approvedPrivateBackupRoot: process.env.SEPTEMBER_2026_BACKUP_PRIVATE_ROOT?.trim(),
+      approvedPrivateBackupRoot: privateRoot,
       skipBackupPayloadPathSecurity: input.testContext?.skipBackupPayloadPathSecurity,
     });
     if (!backupVerify.ok) {

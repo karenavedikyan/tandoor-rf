@@ -23,6 +23,7 @@ import {
   buildSeptemberBackupReceiptFromVerifiedPayload,
   type SeptemberBackupReceiptV1,
 } from "../../src/onec-sales/september-2026-one-shot/backup-receipt-verify";
+import { publishPrivateBackupJson, publishPrivateTextFile } from "../../src/onec-sales/september-2026-one-shot/private-backup-publish";
 
 export async function writeSyntheticSeptemberSnapshot(dir: string): Promise<{ buffers: SeptemberSourceBuffers }> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -150,6 +151,7 @@ export function buildSyntheticOperatorScope(input: {
 /** Writes on-disk backup payload (private publish shape) and matching receipt; payload SHA is file bytes. */
 export async function writeSyntheticVerifiedBackupReceiptPair(input: {
   dir: string;
+  approvedPrivateRoot: string;
   backup: September047048Backup;
   scopeFileSha256: string;
 }): Promise<{
@@ -159,11 +161,16 @@ export async function writeSyntheticVerifiedBackupReceiptPair(input: {
   receiptSha256: string;
   receipt: SeptemberBackupReceiptV1;
 }> {
-  const payloadText = `${JSON.stringify(input.backup, null, 2)}\n`;
   const backupPayloadPath = join(input.dir, "september-047-048-backup.json");
-  await writeFile(backupPayloadPath, payloadText, { encoding: "utf8", mode: 0o600 });
-  await chmod(backupPayloadPath, 0o600);
-  const backupPayloadSha256 = createHash("sha256").update(payloadText, "utf8").digest("hex");
+  const published = await publishPrivateBackupJson({
+    destinationPath: backupPayloadPath,
+    approvedPrivateRoot: input.approvedPrivateRoot,
+    payload: input.backup,
+  });
+  if (!published.ok) {
+    throw new Error(`${published.code}: ${published.message}`);
+  }
+  const backupPayloadSha256 = published.fileSha256;
   const receipt = buildSeptemberBackupReceiptFromVerifiedPayload({
     targetDbFingerprint: input.backup.targetDbFingerprint,
     scopeFileSha256: input.scopeFileSha256,
@@ -173,9 +180,15 @@ export async function writeSyntheticVerifiedBackupReceiptPair(input: {
   });
   const receiptText = JSON.stringify(receipt);
   const receiptPath = join(input.dir, "backup-receipt.json");
-  await writeFile(receiptPath, receiptText, { encoding: "utf8", mode: 0o600 });
-  await chmod(receiptPath, 0o600);
-  const receiptSha256 = createHash("sha256").update(receiptText, "utf8").digest("hex");
+  const receiptPublished = await publishPrivateTextFile({
+    destinationPath: receiptPath,
+    approvedPrivateRoot: input.approvedPrivateRoot,
+    text: receiptText,
+  });
+  if (!receiptPublished.ok) {
+    throw new Error(`${receiptPublished.code}: ${receiptPublished.message}`);
+  }
+  const receiptSha256 = receiptPublished.fileSha256;
   if (receiptSha256 !== backupReceiptSha256(receipt)) {
     throw new Error("backup receipt file SHA must match canonical receipt hash");
   }
