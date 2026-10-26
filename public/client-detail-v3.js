@@ -864,6 +864,7 @@
     return (
       freshnessMeta(shell, ent) +
       overviewKpis(shell, entityType, typeCat, {}) +
+      '<div id="v3-client-sales-overview-host" data-testid="v3-client-sales-overview-host"></div>' +
       '<div class="x6-responsibilities v3-responsibilities-wrap">' +
       renderResponsibilitySection(shell, ent.managers, entityType === "retail" ? "outlet" : "client") +
       "</div>" +

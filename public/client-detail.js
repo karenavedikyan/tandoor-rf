@@ -27,6 +27,9 @@
   function resolveV3BackHref() {
     var raw = new URLSearchParams(window.location.search).get("return");
     if (typeof raw === "string" && raw !== "") {
+      if (raw.startsWith("?")) {
+        return "/clients" + raw;
+      }
       // URLSearchParams already decoded the outer return value; do not decodeURIComponent
       // the whole string or nested query inside return= will break (e.g. &v3manager=).
       if (raw.startsWith("/clients") || raw.startsWith("/sales")) {
@@ -295,6 +298,9 @@
     if (!detailRoot || !legalGuid || !window.ClientDetailV3) {
       return;
     }
+    if (!month && window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.monthFromUrl) {
+      month = window.ClientSalesSummaryUi.monthFromUrl();
+    }
     var host = detailRoot.querySelector('[data-testid="v3-sales-host"]');
     if (!host) {
       return;
@@ -349,6 +355,9 @@
         var selectEl = host.querySelector('[data-testid="v3-sales-month-select"]');
         if (selectEl) {
           selectEl.addEventListener("change", function () {
+            if (window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.setMonthInUrl) {
+              window.ClientSalesSummaryUi.setMonthInUrl(selectEl.value);
+            }
             loadV3LegalSales(detailRoot, legalGuid, selectEl.value);
           });
         }
@@ -388,7 +397,11 @@
               : "Торговая точка",
         onSalesTabSelected: function () {
           if (legalGuid) {
-            loadV3LegalSales(detailRoot, legalGuid, v3SalesState.month);
+            var monthFromOverview =
+              window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.monthFromUrl
+                ? window.ClientSalesSummaryUi.monthFromUrl()
+                : "";
+            loadV3LegalSales(detailRoot, legalGuid, monthFromOverview || v3SalesState.month);
           }
         },
       });
@@ -399,6 +412,46 @@
       });
     } else {
       loadV3HoldingRelated(detailRoot, payload);
+    }
+    var salesHost = document.getElementById("v3-client-sales-overview-host");
+    if (
+      salesHost &&
+      window.ClientSalesSummaryUi &&
+      (payload.entityType === "holding" || payload.entityType === "legal")
+    ) {
+      var cardGuid = ent.guid || ent.guid_client;
+      if (cardGuid) {
+        var listReturn = new URLSearchParams(window.location.search).get("return") || "";
+        var salesTerritoryQuery = "";
+        try {
+          salesTerritoryQuery = window.ClientSalesSummaryUi.territoryQueryFromListReturn(listReturn);
+        } catch (_territoryErr) {
+          salesTerritoryQuery = "";
+        }
+        window.ClientSalesSummaryUi.mountOverview(salesHost, {
+          api: api,
+          shell: shell,
+          entityType: payload.entityType,
+          guid: cardGuid,
+          returnQuery: listReturn,
+          territoryQuery: salesTerritoryQuery,
+          onMonthChange: function () {
+            var back = detailRoot.querySelector('[data-testid="v3-back-to-list"]');
+            if (back) {
+              back.setAttribute("href", resolveV3BackHref());
+            }
+          },
+          onOpenSalesTab: function () {
+            if (payload.entityType !== "legal") {
+              return;
+            }
+            var salesTab = detailRoot.querySelector('[data-card-tab="sales"]');
+            if (salesTab) {
+              salesTab.click();
+            }
+          },
+        });
+      }
     }
   }
 

@@ -214,6 +214,12 @@
                     <option value="">Все города</option>
                   </select>
                 </label>
+                <label class="clients-field clients-field--inline clients-hidden" id="v3-sales-month-filter-wrap">
+                  <span class="clients-field__label">Месяц продаж</span>
+                  <select id="v3-sales-month-filter" class="clients-field__select" data-testid="v3-list-sales-month">
+                    <option value="">Авто (последний)</option>
+                  </select>
+                </label>
                 <label class="clients-field clients-field--inline" id="v3-lktandoor-category-wrap">
                   <span class="clients-field__label">Категория</span>
                   <select id="v3-lktandoor-category-filter" class="clients-field__select">
@@ -228,6 +234,13 @@
                   Сбросить фильтры
                 </button>
                 <p class="clients-v3-list-filterbar__hint x13-territory-note">Только выбранная территория</p>
+                <p
+                  id="v3-sales-scope-note"
+                  class="clients-v3-list-filterbar__hint clients-hidden"
+                  data-testid="v3-sales-scope-note"
+                >
+                  Суммы в колонках продаж — по доступной части юрлиц в выбранной территории (*).
+                </p>
               </div>
               <nav
                 id="v3-lktandoor-secondary-entities"
@@ -794,6 +807,7 @@
     <script src="/clients-shell.js" defer></script>
     <script src="/clients-teams-compact.js" defer></script>
     <script src="/clients-onec-teams.js" defer></script>
+    <script src="/client-sales-summary-ui.js" defer></script>
     <script src="/clients-v3-list.js" defer></script>
     <script src="/clients-v3-filter-number.js" defer></script>
     <script src="/clients-v3-field-rules.js" defer></script>

@@ -71,6 +71,9 @@ import {
   v3SalesSectionOverviewHandler,
   v3SalesSectionSkuHandler,
   v3SalesSectionClientsHandler,
+  v3ClientSalesMonthsHandler,
+  v3ClientSalesCardHandler,
+  v3ClientSalesBatchHandler,
 } from "./v3/handlers";
 
 export function createClientsRouter(): express.Router {
@@ -145,6 +148,21 @@ export function createClientsRouter(): express.Router {
 
   router.get("/v3/sales/clients", ...readChain, (req, res, next) => {
     void v3SalesSectionClientsHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/client-sales/months", ...readChain, (req, res, next) => {
+    void v3ClientSalesMonthsHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/client-sales/card", ...readChain, (req, res, next) => {
+    void v3ClientSalesCardHandler(req, res).catch(next);
+  });
+
+  router.get("/v3/client-sales/batch", ...readChain, (req, res, next) => {
+    void v3ClientSalesBatchHandler(req, res).catch(next);
+  });
+  router.post("/v3/client-sales/batch", ...readChain, (req, res, next) => {
+    void v3ClientSalesBatchHandler(req, res).catch(next);
   });
 
   router.get("/v3/field-catalog", requireDatabaseReady, requireAuth, requireAdmin, (req, res, next) => {

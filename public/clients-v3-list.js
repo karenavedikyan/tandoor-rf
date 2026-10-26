@@ -54,6 +54,10 @@
     discount_amount: { label: "Значение скидки", filterKey: null },
     markup_percentage: { label: "Значение наценки", filterKey: null },
     inn: { label: "ИНН", filterKey: null },
+    sales_income_total: { label: "Продажи, ₽", filterKey: null },
+    sales_quantity_total: { label: "Продажи, ед.", filterKey: null },
+    sales_legal_count: { label: "Юрлица с продажами", filterKey: null },
+    sales_by_legal: { label: "Продажи по юрлицам", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -99,6 +103,10 @@
           "discount_amount",
           "markup_percentage",
           "inn",
+          "sales_income_total",
+          "sales_quantity_total",
+          "sales_legal_count",
+          "sales_by_legal",
         ];
     return ids
       .map(function (id) {
@@ -286,6 +294,17 @@
       return structured
         ? shell.escapeHtml(structured)
         : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (
+      colId === "sales_income_total" ||
+      colId === "sales_quantity_total" ||
+      colId === "sales_legal_count" ||
+      colId === "sales_by_legal"
+    ) {
+      if (window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.formatListSalesCell) {
+        return window.ClientSalesSummaryUi.formatListSalesCell(item._clientSales, colId, shell);
+      }
+      return '<span class="clients-no-data">—</span>';
     }
     if (colId === "category_name") {
       var topLabel =

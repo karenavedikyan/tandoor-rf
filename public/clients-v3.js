@@ -137,6 +137,7 @@
         window.ClientsV3FieldRules && window.ClientsV3FieldRules.readRulesFromUrl
           ? window.ClientsV3FieldRules.readRulesFromUrl(search)
           : [],
+      v3salesMonth: params.get("v3salesMonth") || "",
     };
   }
 
@@ -335,6 +336,7 @@
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,
       v3cols: url.v3cols || "",
+      v3salesMonth: url.v3salesMonth || "",
       v3dense: url.v3dense,
       city: dom.city || url.city || "",
       colManager: url.colManager || "",
@@ -498,6 +500,7 @@
       : v3FilterFallback("closed", legacy, fromUrl, urlFilters, domFilters);
     return {
       v3entity: v3entity,
+      v3salesMonth: urlFilters.v3salesMonth || "",
       v3view: v3ViewFromLegacyView(view),
       page: legacy.page != null ? legacy.page : fromUrl ? urlFilters.page || 1 : 1,
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
@@ -631,6 +634,8 @@
     if (window.ClientsV3FieldRules) {
       window.ClientsV3FieldRules.appendRulesToParams(params, state);
     }
+    if (state.v3salesMonth) params.set("v3salesMonth", state.v3salesMonth);
+    else params.delete("v3salesMonth");
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -679,7 +684,15 @@
     if (window.ClientsV3FieldRules) {
       window.ClientsV3FieldRules.appendRulesToParams(params, s);
     }
+    if (s.v3salesMonth) params.set("v3salesMonth", s.v3salesMonth);
     return "?" + params.toString();
+  }
+
+  function clientSalesTerritoryQuery(state) {
+    if (window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.territoryQueryFromState) {
+      return window.ClientSalesSummaryUi.territoryQueryFromState(state);
+    }
+    return "";
   }
 
   function fillSelect(shell, selectEl, items, selected) {
@@ -769,14 +782,150 @@
   }
 
   function detailHref(guid, detailEntity, state) {
+    var monthPart =
+      state && state.v3salesMonth
+        ? "&v3salesMonth=" + encodeURIComponent(state.v3salesMonth)
+        : "";
     return (
       "/clients/" +
       encodeURIComponent(guid) +
       "?v3Entity=" +
       encodeURIComponent(detailEntity) +
+      monthPart +
       "&return=" +
       encodeURIComponent(buildListReturnQuery(state))
     );
+  }
+
+  function visibleColsNeedSales(visibleCols) {
+    if (!visibleCols || !visibleCols.length) {
+      return false;
+    }
+    return visibleCols.some(function (col) {
+      return (
+        col.id === "sales_income_total" ||
+        col.id === "sales_quantity_total" ||
+        col.id === "sales_legal_count" ||
+        col.id === "sales_by_legal"
+      );
+    });
+  }
+
+  function enrichListItemsWithClientSales(api, items, state, visibleCols, entity) {
+    if (
+      !window.ClientSalesSummaryUi ||
+      !visibleColsNeedSales(visibleCols) ||
+      entity === "retail" ||
+      entity === "orphan_retail"
+    ) {
+      syncSalesScopeNote(visibleCols);
+      return Promise.resolve({ items: items, effectiveMonth: state.v3salesMonth || "" });
+    }
+    var targets = items
+      .map(function (item) {
+        var kind =
+          item.detail_entity === "holding" || state.v3entity === "holdings"
+            ? "holding"
+            : "legal";
+        if (state.v3entity === "holdings") {
+          kind = "holding";
+        }
+        return { kind: kind, guid: item.guid };
+      })
+      .filter(function (t) {
+        return t.guid;
+      });
+    if (!targets.length) {
+      return Promise.resolve(items);
+    }
+    function applySummaries(month, payload) {
+      var map = (payload && payload.summaries) || {};
+      return items.map(function (item) {
+        var kind =
+          item.detail_entity === "holding" || state.v3entity === "holdings" ? "holding" : "legal";
+        if (state.v3entity === "holdings") {
+          kind = "holding";
+        }
+        var key = kind + ":" + String(item.guid).toLowerCase();
+        var copy = Object.assign({}, item);
+        copy._clientSales = map[key] || null;
+        return copy;
+      });
+    }
+    var territoryQ = clientSalesTerritoryQuery(state);
+    var month = state.v3salesMonth;
+    if (month) {
+      return window.ClientSalesSummaryUi.fetchBatch(api, month, targets, territoryQ).then(function (payload) {
+        return { items: applySummaries(month, payload), effectiveMonth: month };
+      });
+    }
+    var monthsUrl = "/api/clients/v3/client-sales/months" + territoryQ;
+    return api.apiRequest(monthsUrl).then(function (monthsResult) {
+      var months = (monthsResult.data && monthsResult.data.months) || [];
+      var picked = months[0];
+      if (!picked) {
+        return { items: items, effectiveMonth: "" };
+      }
+      return window.ClientSalesSummaryUi.fetchBatch(api, picked, targets, territoryQ).then(function (payload) {
+        return { items: applySummaries(picked, payload), effectiveMonth: picked };
+      });
+    });
+  }
+
+  function syncSalesScopeNote(visibleCols) {
+    var el = document.getElementById("v3-sales-scope-note");
+    if (!el) return;
+    el.classList.toggle("clients-hidden", !visibleColsNeedSales(visibleCols));
+  }
+
+  function syncSalesMonthFilter(shell, state, months) {
+    var wrap = document.getElementById("v3-sales-month-filter-wrap");
+    var select = document.getElementById("v3-sales-month-filter");
+    if (!wrap || !select) return;
+    var legalLike =
+      state.v3entity === "legal" ||
+      state.v3entity === "legal_grouped" ||
+      state.v3entity === "holdings";
+    if (!legalLike) {
+      wrap.classList.add("clients-hidden");
+      return;
+    }
+    wrap.classList.remove("clients-hidden");
+    var list = months || [];
+    var html = '<option value="">Авто (последний)</option>';
+    list.forEach(function (m) {
+      html +=
+        '<option value="' +
+        shell.escapeHtml(m) +
+        '"' +
+        (state.v3salesMonth === m ? " selected" : "") +
+        ">" +
+        shell.escapeHtml(m) +
+        "</option>";
+    });
+    select.innerHTML = html;
+    if (state.v3salesMonth && list.indexOf(state.v3salesMonth) < 0) {
+      html +=
+        '<option value="' +
+        shell.escapeHtml(state.v3salesMonth) +
+        '" selected disabled>' +
+        shell.escapeHtml(state.v3salesMonth) +
+        " (недоступен)</option>";
+      select.innerHTML = html;
+    }
+  }
+
+  function bindSalesMonthFilter(ctx, reload) {
+    var select = document.getElementById("v3-sales-month-filter");
+    if (!select || select.dataset.v3Bound) return;
+    select.dataset.v3Bound = "1";
+    select.addEventListener("change", function () {
+      var next = readState();
+      next.v3salesMonth = select.value || "";
+      next.page = 1;
+      writeState(next, false);
+      reload(ctx, next, false);
+    });
   }
 
   window.ClientsV3 = {
@@ -1262,6 +1411,17 @@
         window.ClientsV3FieldRules.appendRulesToParams(params, state);
       }
       if (state.missingManager) params.set("missingManager", "true");
+      bindSalesMonthFilter(ctx, window.ClientsV3.loadList);
+      var salesMonthsPromise = api
+        .apiRequest("/api/clients/v3/client-sales/months" + clientSalesTerritoryQuery(state))
+        .then(function (monthsResult) {
+          if (isStaleListLoad()) return;
+          var months = (monthsResult.data && monthsResult.data.months) || [];
+          syncSalesMonthFilter(shell, state, months);
+        })
+        .catch(function () {
+          if (!isStaleListLoad()) syncSalesMonthFilter(shell, state, []);
+        });
       var optionsPromise = api.apiRequest(
         "/api/clients/v3/options?entity=" + encodeURIComponent(state.v3entity) +
         ["managerGuid", "responsibleGuid", "responsibleKind", "ropBranchGuid", "teamGuid", "employeePortfolioGuid"].map(function (key) {
@@ -1363,6 +1523,30 @@
           var data = result.data || { items: [], total: 0 };
           var items = data.items || [];
           var liveListState = readState();
+          var visibleColsForSales = resolveVisibleListColumns(liveListState, ctx.currentUserId);
+          return enrichListItemsWithClientSales(
+            api,
+            items,
+            liveListState,
+            visibleColsForSales,
+            liveListState.v3entity,
+          ).then(function (enriched) {
+            if (isStaleListLoad()) {
+              return;
+            }
+            if (enriched && enriched.items) {
+              items = enriched.items;
+              if (enriched.effectiveMonth && !liveListState.v3salesMonth) {
+                liveListState.v3salesMonth = enriched.effectiveMonth;
+                writeState(liveListState, true);
+              }
+            }
+            syncSalesScopeNote(visibleColsForSales);
+            return continueAfterListItems();
+          });
+          function continueAfterListItems() {
+          var visibleColsRendered = resolveVisibleListColumns(liveListState, ctx.currentUserId);
+          syncSalesScopeNote(visibleColsRendered);
           var lktandoorListMode = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
           var focusMode =
             lktandoorListMode &&
@@ -1553,6 +1737,7 @@
               window.ClientsV3.loadList(ctx, nextState, false);
             },
           };
+          }
         })
         .catch(function (err) {
           if (isStaleListLoad()) {
@@ -1573,7 +1758,7 @@
           }
           showV3ListLoadFailure(readState(), title, message);
         });
-      return Promise.all([optionsPromise, listPromise]).finally(function () {
+      return Promise.all([optionsPromise, listPromise, salesMonthsPromise]).finally(function () {
         if (!isStaleListLoad()) ctx.tableBody.setAttribute("aria-busy", "false");
       });
     },
@@ -2018,6 +2203,7 @@
     mergeFromLegacyState: mergeFromLegacyState,
     legacyStateToV3: legacyStateToV3,
     buildListReturnQuery: buildListReturnQuery,
+    clientSalesTerritoryQuery: clientSalesTerritoryQuery,
     detailHref: detailHref,
     listFilterTokens: listFilterTokens,
     appendTypeCategoryParams: appendTypeCategoryParams,

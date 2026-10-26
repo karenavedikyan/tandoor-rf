@@ -33,6 +33,16 @@ import {
   SALES_SOURCE_FINANCE_AVAILABILITY,
 } from "./sales-field-policy";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
+import {
+  batchClientSalesListSummaries,
+  CLIENT_SALES_BATCH_MAX_IDS,
+  listClientSalesMonths,
+  loadClientSalesCardSummary,
+  parseClientSalesBatchTargets,
+  parseClientSalesBatchTargetsFromQueryStrings,
+  parseClientSalesMonthStrict,
+  type ClientSalesBatchTarget,
+} from "./client-sales-summary";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -50,6 +60,26 @@ async function requireV3Active(res: Response): Promise<boolean> {
 function parseGuidParam(value: unknown): string | null {
   const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
   return isValidUuidParam(raw) ? raw : null;
+}
+
+function parseOptionalGuidQuery(
+  value: unknown,
+): { ok: true; guid: string | null } | { ok: false } {
+  if (value === undefined) {
+    return { ok: true, guid: null };
+  }
+  if (typeof value !== "string") {
+    return { ok: false };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: true, guid: null };
+  }
+  const guid = parseGuidParam(trimmed);
+  if (!guid) {
+    return { ok: false };
+  }
+  return { ok: true, guid };
 }
 
 function notFoundForAccess(res: Response): void {
@@ -488,10 +518,34 @@ async function resolveSalesSectionTerritory(
   const responsibleKind = ["manager", "regional", "hardware"].includes(responsibleKindRaw)
     ? (responsibleKindRaw as V3ResponsibleKind)
     : undefined;
-  const responsibleGuid = parseGuidParam(req.query.responsibleGuid);
-  const ropBranchGuid = parseGuidParam(req.query.ropBranchGuid);
-  const managerGuid = parseGuidParam(req.query.managerGuid);
-  const employeePortfolioGuid = parseGuidParam(req.query.employeePortfolioGuid);
+  const responsibleParsed = parseOptionalGuidQuery(req.query.responsibleGuid);
+  if (!responsibleParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleGuid."));
+    return undefined;
+  }
+  const ropParsed = parseOptionalGuidQuery(req.query.ropBranchGuid);
+  if (!ropParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый ropBranchGuid."));
+    return undefined;
+  }
+  const managerParsed = parseOptionalGuidQuery(req.query.managerGuid);
+  if (!managerParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый managerGuid."));
+    return undefined;
+  }
+  const portfolioParsed = parseOptionalGuidQuery(req.query.employeePortfolioGuid);
+  if (!portfolioParsed.ok) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый employeePortfolioGuid."));
+    return undefined;
+  }
+  const responsibleGuid = responsibleParsed.guid;
+  const ropBranchGuid = ropParsed.guid;
+  const managerGuid = managerParsed.guid;
+  const employeePortfolioGuid = portfolioParsed.guid;
   let teamMemberGuids: string[] | undefined;
   if (employeePortfolioGuid) {
     if (req.query.teamGuid !== undefined || ropBranchGuid) {
@@ -611,6 +665,143 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
     financeAvailability:
       kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
   });
+}
+
+async function resolveClientSalesTerritoryStrict(
+  req: AccessRequest,
+  res: Response,
+): Promise<
+  | {
+      ropBranchGuid?: string;
+      responsibleGuid?: string;
+      responsibleKind?: V3ResponsibleKind;
+      managerGuid?: string;
+      teamMemberGuids?: string[];
+    }
+  | undefined
+> {
+  const responsibleKindRaw =
+    typeof req.query.responsibleKind === "string" ? req.query.responsibleKind.trim() : "";
+  if (
+    responsibleKindRaw &&
+    !["manager", "regional", "hardware"].includes(responsibleKindRaw)
+  ) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый responsibleKind."));
+    return undefined;
+  }
+  const teamKindRaw = typeof req.query.teamKind === "string" ? req.query.teamKind.trim() : "";
+  if (teamKindRaw && !["manager", "regional", "hardware"].includes(teamKindRaw)) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый teamKind."));
+    return undefined;
+  }
+  if (req.query.teamGuid !== undefined) {
+    const teamParsed = parseOptionalGuidQuery(req.query.teamGuid);
+    if (!teamParsed.ok) {
+      setNoStore(res);
+      res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый teamGuid."));
+      return undefined;
+    }
+  }
+  return resolveSalesSectionTerritory(req, res);
+}
+
+export async function v3ClientSalesMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
+  if (!territory) {
+    return;
+  }
+  const result = await listClientSalesMonths(req.accessContext!, territory);
+  setNoStore(res);
+  res.json(result);
+}
+
+export async function v3ClientSalesCardHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const entityRaw = typeof req.query.entity === "string" ? req.query.entity.trim() : "";
+  const entity = entityRaw === "holding" || entityRaw === "legal" ? entityRaw : null;
+  const guid = parseGuidParam(req.query.guid);
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  if (!entity || !guid || !month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите entity (holding|legal), guid и month."));
+    return;
+  }
+  if (!parseClientSalesMonthStrict(month).ok) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month (ожидается YYYY-MM)."));
+    return;
+  }
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
+  if (!territory) {
+    return;
+  }
+  const summary = await loadClientSalesCardSummary(req.accessContext!, entity, guid, month, territory);
+  if (summary === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (!summary) {
+    notFoundForAccess(res);
+    return;
+  }
+  setNoStore(res);
+  res.json({ summary });
+}
+
+export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const body = req.body as { month?: string; targets?: ClientSalesBatchTarget[] } | undefined;
+  const rawMonth = req.method === "GET" ? req.query.month : body?.month;
+  const month = typeof rawMonth === "string" ? rawMonth.trim() : "";
+  if (!month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
+    return;
+  }
+  if (!parseClientSalesMonthStrict(month).ok) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month (ожидается YYYY-MM)."));
+    return;
+  }
+  const rawTargets = body?.targets;
+  const parsedTargets = req.method === "GET"
+    ? parseClientSalesBatchTargetsFromQueryStrings(req.query.target)
+    : parseClientSalesBatchTargets(rawTargets);
+  if (!parsedTargets.ok) {
+    const message =
+      parsedTargets.code === "too_many"
+        ? `Не более ${CLIENT_SALES_BATCH_MAX_IDS} объектов в одном запросе.`
+        : parsedTargets.code === "not_array"
+          ? "Укажите targets (массив {kind, guid})."
+          : "Некорректный элемент targets: ожидается kind holding|legal и guid UUID.";
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
+    return;
+  }
+  const territory = await resolveClientSalesTerritoryStrict(req, res);
+  if (!territory) {
+    return;
+  }
+  const result = await batchClientSalesListSummaries(
+    req.accessContext!,
+    month,
+    parsedTargets.targets,
+    territory,
+  );
+  if (result === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (result === "batch_too_large") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Слишком много объектов в batch."));
+    return;
+  }
+  setNoStore(res);
+  res.json(result);
 }
 
 export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Response): Promise<void> {

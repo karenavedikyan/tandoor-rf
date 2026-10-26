@@ -308,6 +308,25 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   min-width: 140px;
 }
 
+@media (min-width: 768px) {
+  .clients-lktandoor-list .x13-col-sales_income_total,
+  .clients-lktandoor-list .x13-col-sales_quantity_total,
+  .clients-lktandoor-list .x13-col-sales_legal_count {
+    min-width: 140px;
+    word-break: normal;
+  }
+  .clients-lktandoor-list .x13-col-sales_by_legal {
+    min-width: 220px;
+    word-break: normal;
+  }
+}
+.clients-lktandoor-list td[data-label="Продажи, ₽"],
+.clients-lktandoor-list td[data-label="Продажи, ед."],
+.clients-lktandoor-list td[data-label="Юрлица с продажами"] {
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .clients-lktandoor-list .x13-col-legal_name {
   min-width: 200px;
   max-width: 320px;
