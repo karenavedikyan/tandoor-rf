@@ -42,6 +42,7 @@
 .client-card-page .client-detail-breadcrumb {font-size:12px;margin-bottom:8px;}
 .pc-subtitle,.pc-label,.pc-source,.pc-unavailable {color:var(--rf-text-muted);}
 .csd { min-width:0; }
+.csd a { color:var(--rf-primary-hover); font-weight:600; text-underline-offset:3px; }
 .csd .pc-source { white-space:normal; overflow-wrap:anywhere; }
 .client-card-page [data-testid="v3-sales-open-detail"] {
   display:inline-flex; align-items:center; justify-content:center; min-height:44px;
@@ -50,7 +51,7 @@
 }
 .csd-toolbar,.csd-search,.csd-pages { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:16px 0; }
 .csd label { display:grid; gap:6px; min-width:0; max-width:100%; flex:1 1 180px; }
-.csd select,.csd input { min-width:0; max-width:100%; width:100%; padding:10px; border:1px solid var(--rf-border); border-radius:8px; background:var(--rf-surface); color:var(--rf-text); }
+.csd select,.csd input { font:inherit; font-size:16px; min-width:0; max-width:100%; width:100%; padding:10px; border:1px solid var(--rf-border); border-radius:8px; background:var(--rf-surface); color:var(--rf-text); }
 .csd button { padding:10px 14px; border:1px solid var(--rf-border); border-radius:8px; background:var(--rf-surface); color:var(--rf-text); cursor:pointer; font:inherit; }
 .csd button:disabled { opacity:.45; cursor:default; }
 .csd button:focus-visible,.csd a:focus-visible { outline:2px solid var(--rf-primary); outline-offset:3px; }
@@ -61,7 +62,7 @@
 .csd-products th,.csd-products td { text-align:left; padding:12px 8px; border-bottom:1px solid var(--rf-border); }
 .csd-products td:first-child { overflow-wrap:anywhere; }
 .csd-products td:not(:first-child) { white-space:nowrap; font-variant-numeric:tabular-nums; }
-.csd-products small { display:block; color:var(--rf-text-muted); margin-top:5px; font-size:11px; }
+.csd-products small { display:block; color:var(--rf-text-muted); margin-top:5px; font-size:12px; }
 .csd-pages { align-items:center; justify-content:space-between; }
 @media(max-width:600px) {
   .csd-products thead { display:none; }
@@ -293,6 +294,8 @@
 .client-card-page .v3-sales-scope-note{margin:0 0 10px;}
 .client-card-page .v3-sales-breakdown-wrap{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;}
 .client-card-page .v3-sales-breakdown-table{min-width:480px;}
+.client-card-page .v3-sales-breakdown-table td:first-child{min-width:140px;}
+.client-card-page .v3-sales-breakdown-table td:nth-child(2){white-space:nowrap;overflow-wrap:normal;word-break:normal;font-variant-numeric:tabular-nums;}
 .client-card-page .v3-sales-breakdown-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .clients-v3-sales-by-legal{font-size:12px;line-height:1.45;display:inline-block;max-width:100%;}
 .clients-v3-sales-partial-note{font-size:11px;color:var(--rf-muted,#666);}

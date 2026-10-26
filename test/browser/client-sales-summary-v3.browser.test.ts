@@ -339,4 +339,137 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     assert.equal(await page.evaluate(() => (window as Window & { __salesXss?: number }).__salesXss), undefined);
     await page.close();
   });
+
+  async function seedScrollClients() {
+    const pool = new (await import("pg")).Pool({ connectionString: getIntegrationDatabaseUrl() });
+    try {
+      await pool.query(`INSERT INTO onec_v3_holdings
+        (guid_holding,name_holding,type_category,managers,last_source_sha256)
+        SELECT ('bbbbbbbb-bbbb-4bbb-8bbb-'||LPAD(n::text,12,'0'))::uuid,
+          'Scroll client '||LPAD(n::text,3,'0'),'{}','{}','synthetic-scroll'
+        FROM generate_series(1,70) n ON CONFLICT DO NOTHING`);
+      await pool.query(`INSERT INTO onec_v3_legal_entities
+        (guid_client,name_client,inn,guid_holding,type_category,managers,other_fields,last_source_sha256)
+        SELECT ('cccccccc-cccc-4ccc-8ccc-'||LPAD(n::text,12,'0'))::uuid,
+          'Scroll legal '||LPAD(n::text,3,'0'),'77000'||LPAD(n::text,5,'0'),
+          ('bbbbbbbb-bbbb-4bbb-8bbb-'||LPAD(n::text,12,'0'))::uuid,
+          '{}','{}','{}','synthetic-scroll'
+        FROM generate_series(1,70) n ON CONFLICT DO NOTHING`);
+    } finally { await pool.end(); }
+  }
+
+  it("a many-client fullscreen register scrolls both axes and keeps paging visible", async () => {
+    await seedScrollClients();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await login(page);
+    await page.goto(`${baseUrl}/clients?v3mode=1&view=all&v3view=all&v3entity=legal_grouped&v3cols=name,inn,manager,team,address,phone,sales_income_total,sales_quantity_total,sales_legal_count,sales_by_legal&v3salesMonth=2026-09`, { waitUntil: "networkidle" });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.locator('[data-testid="v3-focus-enter"]').click();
+    await page.locator("#x14-focus-scroll tbody tr").first().waitFor();
+    const geometry = await page.locator("#x14-focus-scroll").evaluate(el => ({
+      height: el.clientHeight, content: el.scrollHeight, width: el.clientWidth, contentWidth: el.scrollWidth,
+      bottom: el.getBoundingClientRect().bottom, viewport: window.innerHeight,
+    }));
+    console.log("Fullscreen scroll geometry", geometry);
+    assert.ok(geometry.content > geometry.height, "rows must scroll inside a bounded viewport");
+    assert.ok(geometry.bottom <= geometry.viewport, "table must not extend below viewport");
+    await page.locator("#x14-focus-scroll").hover();
+    await page.mouse.wheel(0, 650);
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollTop > 100, null, { timeout: 5000 });
+    const pager = await page.locator("#v3-focus-pagination").boundingBox();
+    assert.ok(pager && pager.y + pager.height <= 901, "pagination must stay on screen");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "scroll-register-desktop.png") });
+    for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }, { width: 375, height: 500 }]) {
+      await page.setViewportSize(viewport);
+      const pane = page.locator("#x14-focus-scroll");
+      const box = await pane.boundingBox();
+      assert.ok(box && box.height > 60 && box.y + box.height < viewport.height, "table retains usable scroll area");
+      await pane.hover();
+      await page.mouse.wheel(700, 0);
+      await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollLeft > 0, null, { timeout: 5000 });
+      await page.mouse.wheel(-3000, -3000);
+      await page.waitForFunction(() => {
+        const el = document.getElementById("x14-focus-scroll")!;
+        return el.scrollLeft === 0 && el.scrollTop === 0;
+      }, null, { timeout: 5000 });
+      const footer = await page.locator("#v3-focus-pagination").boundingBox();
+      assert.ok(footer && footer.y + footer.height <= viewport.height + 1);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, `scroll-register-${viewport.width}x${viewport.height}.png`) });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator("#v3-focus-page-next").click();
+    await page.waitForFunction(() => new URLSearchParams(location.search).get("page") === "2");
+    await page.waitForFunction(() => document.querySelectorAll("#x14-focus-scroll tbody tr").length === 21);
+    assert.match(await page.locator("#v3-focus-pagination").innerText(), /51–71 из 71/);
+    await page.locator("#v3-focus-page-size").selectOption("100");
+    await page.waitForFunction(() => document.querySelectorAll("#x14-focus-scroll tbody tr").length === 71);
+    assert.equal(new URL(page.url()).searchParams.get("v3salesMonth"), "2026-09");
+    assert.equal(new URL(page.url()).searchParams.get("v3pageSize"), "100");
+    assert.match(await page.locator("#v3-focus-pagination").innerText(), /1–71 из 71/);
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(await page.locator("#v3-focus-page-size").inputValue(), "100");
+    await page.locator("#x14-focus-scroll").focus();
+    await page.keyboard.press("PageDown");
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollTop > 100);
+    await page.locator("#v3-focus-exit").click();
+    await page.waitForFunction(() => !document.body.classList.contains("x14-focus-mode"));
+    await page.locator("#clients-table-body tr").nth(70).waitFor();
+    await page.locator(".clients-page-header").hover();
+    await page.mouse.wheel(0, 700);
+    await page.waitForFunction(() => window.scrollY > 100, null, { timeout: 5000 });
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+  it("touch scrolling works both ways in the register and down long product details", async () => {
+    await seedScrollClients();
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+    const page = await context.newPage();
+    await login(page);
+    await page.goto(`${baseUrl}/clients?v3mode=1&view=all&v3view=all&v3entity=legal_grouped&v3focus=1`, { waitUntil: "networkidle" });
+    const cdp = await context.newCDPSession(page);
+    async function swipe(x: number, y: number, dx: number, dy: number) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 20; step++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + dx * step / 20, y: y + dy * step / 20 }] });
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    }
+    await page.locator("#x14-focus-scroll tbody tr").first().waitFor();
+    await swipe(300, 560, 0, -250);
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollTop > 80);
+    const top = await page.locator("#x14-focus-scroll").evaluate(el => el.scrollTop);
+    await swipe(300, 300, 0, 250);
+    await page.waitForFunction(value => document.getElementById("x14-focus-scroll")!.scrollTop < value, top);
+    await swipe(330, 450, -150, 0);
+    await page.waitForFunction(() => document.getElementById("x14-focus-scroll")!.scrollLeft > 30);
+    const left = await page.locator("#x14-focus-scroll").evaluate(el => el.scrollLeft);
+    await swipe(180, 450, 150, 0);
+    await page.waitForFunction(value => document.getElementById("x14-focus-scroll")!.scrollLeft < value, left);
+    await page.goto(`${baseUrl}/clients/${HOLDING}?v3Entity=holding&cardTab=sales&v3salesMonth=2026-09&salesLegal=${LEGAL_A}&salesCategory=Doors`, { waitUntil: "networkidle" });
+    await page.locator(".csd-products tbody tr").first().waitFor();
+    assert.equal(await page.locator(".csd-products tbody tr").count(), 50);
+    await swipe(300, 650, 0, -350);
+    await page.waitForFunction(() => window.scrollY > 100);
+    await page.locator("[data-csd-next]").click();
+    await page.waitForFunction(() => document.querySelectorAll(".csd-products tbody tr").length === 2);
+    await swipe(300, 250, 0, 350);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "scroll-card-mobile.png") });
+    await page.goto(`${baseUrl}/clients/${HOLDING}?v3Entity=holding&v3salesMonth=2026-09`, { waitUntil: "networkidle" });
+    const breakdown = page.locator(".v3-sales-breakdown-wrap");
+    await breakdown.scrollIntoViewIfNeeded();
+    const box = await breakdown.boundingBox();
+    assert.ok(box);
+    await swipe(310, box.y + box.height / 2, -150, 0);
+    await page.waitForFunction(() => document.querySelector(".v3-sales-breakdown-wrap")!.scrollLeft > 30);
+    const breakdownLeft = await breakdown.evaluate(el => el.scrollLeft);
+    await swipe(155, box.y + box.height / 2, 150, 0);
+    await page.waitForFunction(value => document.querySelector(".v3-sales-breakdown-wrap")!.scrollLeft < value, breakdownLeft);
+    const previousY = await page.evaluate(() => window.scrollY);
+    await swipe(280, box.y + box.height / 2, 0, -150);
+    await page.waitForFunction(value => window.scrollY > value, previousY);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "scroll-card-overview-mobile.png") });
+    await context.close();
+  });
 });

@@ -1207,13 +1207,21 @@
     }
     var pageSize = state.pageSize || 50;
     var totalPages = Math.max(1, Math.ceil(total / pageSize));
-    if (totalPages <= 1) {
-      pagEl.innerHTML = "";
-      return;
-    }
+    var firstRow = total ? (state.page - 1) * pageSize + 1 : 0;
+    var lastRow = Math.min(total, state.page * pageSize);
     var prevDisabled = state.page <= 1;
     var nextDisabled = state.page >= totalPages;
     pagEl.innerHTML =
+      '<span class="x14-focus-pagination__range" role="status">Показаны ' +
+      firstRow + "–" + lastRow + " из " + total + "</span>" +
+      '<label>Строк: <select id="v3-focus-page-size" aria-label="Клиентов на странице">' +
+      [20, 50, 100].concat([20, 50, 100].indexOf(pageSize) < 0 ? [pageSize] : [])
+        .sort(function (a, b) { return a - b; })
+        .map(function (size) {
+          return '<option value="' + size + '"' + (size === pageSize ? " selected" : "") + ">" + size + "</option>";
+        }).join("") + "</select></label>" +
+      '<span class="x14-focus-pagination__hint">Таблица прокручивается вверх-вниз и влево-вправо</span>' +
+      '<div class="x14-focus-pagination__controls">' +
       '<button type="button" class="workspace-button workspace-button--secondary" id="v3-focus-page-prev"' +
       (prevDisabled ? " disabled" : "") +
       ">Назад</button><span>Страница " +
@@ -1222,7 +1230,11 @@
       totalPages +
       '</span><button type="button" class="workspace-button workspace-button--secondary" id="v3-focus-page-next"' +
       (nextDisabled ? " disabled" : "") +
-      ">Вперёд</button>";
+      ">Вперёд</button></div>";
+    pagEl.querySelector("#v3-focus-page-size").addEventListener("change", function (event) {
+      writeScroll(state, pane);
+      reload(window.ClientsV3.mergeListStateForUserAction({ page: 1, pageSize: Number(event.target.value) }), null);
+    });
     document.getElementById("v3-focus-page-prev")?.addEventListener("click", function () {
       if (state.page <= 1) {
         return;
