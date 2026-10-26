@@ -80,14 +80,15 @@
     }
     var ret = url.searchParams.get("return");
     if (ret) {
-      var retSearch = ret.charAt(0) === "?" ? ret : "?" + ret;
-      var retParams = new URLSearchParams(retSearch.slice(1));
+      var returnIsPath = ret.charAt(0) === "/";
+      var returnUrl = new URL(returnIsPath ? ret : "/clients" + (ret.charAt(0) === "?" ? ret : "?" + ret), window.location.origin);
+      var retParams = returnUrl.searchParams;
       if (month) {
         retParams.set("v3salesMonth", month);
       } else {
         retParams.delete("v3salesMonth");
       }
-      url.searchParams.set("return", "?" + retParams.toString());
+      url.searchParams.set("return", (returnIsPath ? returnUrl.pathname : "") + "?" + retParams.toString());
     }
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
     if (options.syncBackHref !== false) {
@@ -114,6 +115,9 @@
     }
     if (returnRaw.startsWith("?")) {
       return returnRaw;
+    }
+    if (returnRaw.startsWith("/clients") || returnRaw.startsWith("/sales")) {
+      return new URL(returnRaw, window.location.origin).search;
     }
     return "?" + returnRaw;
   }
@@ -326,7 +330,7 @@
         share +
         "</td>" +
         '<td><a class="pc-link" href="' +
-        esc(shell, row.salesTabPath) +
+        esc(shell, salesDetailsPath(row.salesTabPath)) +
         '" data-testid="v3-sales-details-link">Подробнее</a></td>' +
         "</tr>";
     });
@@ -351,6 +355,13 @@
       body +
       "</tbody></table></div>"
     );
+  }
+
+  function salesDetailsPath(path) {
+    var target = new URL(path, window.location.origin);
+    var parentReturn = new URLSearchParams(window.location.search).get("return");
+    if (parentReturn) target.searchParams.set("return", parentReturn);
+    return target.pathname + target.search;
   }
 
   function buildMonthSelectOptions(shell, months, selectedMonth, requestedUnavailable) {
@@ -511,13 +522,14 @@
   }
 
   function fetchBatch(api, month, targets, territoryQuery) {
-    var tq = territoryQuery || "";
-    var url = "/api/clients/v3/client-sales/batch" + tq;
+    var params = new URLSearchParams((territoryQuery || "").replace(/^\?/, ""));
+    params.set("month", month);
+    (targets || []).forEach(function (target) {
+      params.append("target", target.kind + ":" + target.guid);
+    });
+    var url = "/api/clients/v3/client-sales/batch?" + params.toString();
     return api
-      .apiRequest(url, {
-        method: "POST",
-        body: { month: month, targets: targets || [] },
-      })
+      .apiRequest(url)
       .then(function (result) {
         var unwrapped = unwrapApiResult(result);
         if (unwrapped.status === 401) {

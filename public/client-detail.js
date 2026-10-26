@@ -27,6 +27,9 @@
   function resolveV3BackHref() {
     var raw = new URLSearchParams(window.location.search).get("return");
     if (typeof raw === "string" && raw !== "") {
+      if (raw.startsWith("?")) {
+        return "/clients" + raw;
+      }
       // URLSearchParams already decoded the outer return value; do not decodeURIComponent
       // the whole string or nested query inside return= will break (e.g. &v3manager=).
       if (raw.startsWith("/clients") || raw.startsWith("/sales")) {

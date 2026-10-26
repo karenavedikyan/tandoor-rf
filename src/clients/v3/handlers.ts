@@ -39,6 +39,7 @@ import {
   listClientSalesMonths,
   loadClientSalesCardSummary,
   parseClientSalesBatchTargets,
+  parseClientSalesBatchTargetsFromQueryStrings,
   parseClientSalesMonthStrict,
   type ClientSalesBatchTarget,
 } from "./client-sales-summary";
@@ -757,7 +758,8 @@ export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Respons
     return;
   }
   const body = req.body as { month?: string; targets?: ClientSalesBatchTarget[] } | undefined;
-  const month = typeof body?.month === "string" ? body.month.trim() : "";
+  const rawMonth = req.method === "GET" ? req.query.month : body?.month;
+  const month = typeof rawMonth === "string" ? rawMonth.trim() : "";
   if (!month) {
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
     return;
@@ -767,7 +769,9 @@ export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Respons
     return;
   }
   const rawTargets = body?.targets;
-  const parsedTargets = parseClientSalesBatchTargets(rawTargets);
+  const parsedTargets = req.method === "GET"
+    ? parseClientSalesBatchTargetsFromQueryStrings(req.query.target)
+    : parseClientSalesBatchTargets(rawTargets);
   if (!parsedTargets.ok) {
     const message =
       parsedTargets.code === "too_many"

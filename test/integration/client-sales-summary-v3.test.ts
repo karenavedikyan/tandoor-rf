@@ -14,7 +14,7 @@ import {
   parseClientSalesBatchTargets,
   parseClientSalesMonthStrict,
 } from "../../src/clients/v3/client-sales-summary";
-import { denyClientAccess } from "../helpers/access-db-fixtures";
+import { denyClientAccess, linkUserToEmployee } from "../helpers/access-db-fixtures";
 import request from "supertest";
 
 const ORIGIN = "http://127.0.0.1:3000";
@@ -324,5 +324,49 @@ describe("client sales summary v3", () => {
     assert.ok(summary && typeof summary === "object");
     assert.equal(summary!.breakdown.some((r) => r.legalGuid === LEGAL_A), false);
     assert.equal("holdingLegalTotalCount" in summary!, false);
+  });
+
+  it("GET batch validates targets and returns the same scoped data as card", async () => {
+    const response = await request(app)
+      .get("/api/clients/v3/client-sales/batch")
+      .query({ month: "2026-09", target: `holding:${HOLDING}`,
+        managerGuid: "99999999-9999-4999-8999-111111111111" })
+      .set("Cookie", adminCookie);
+    assert.equal(response.status, 200);
+    assert.match(JSON.stringify(response.body), /100.50/);
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(LEGAL_B));
+    const bad = await request(app).get("/api/clients/v3/client-sales/batch")
+      .query({ month: "2026-09", target: "legal:------------------------------------" })
+      .set("Cookie", adminCookie);
+    assert.equal(bad.status, 400);
+  });
+
+  it("real employee preview permits scoped GET batch while POST remains blocked", async () => {
+    const manager = await createTestUser({
+      databaseUrl: url, email: "sales-preview-manager@example.test",
+      password: "StrongPass123!", fullName: "Sales Preview Manager", role: "manager",
+    });
+    await linkUserToEmployee({
+      databaseUrl: url, userId: manager.id,
+      employeeId: "99999999-9999-4999-8999-111111111111",
+      confirmedByUserId: adminCtx.userId,
+    });
+    const headers = { Cookie: adminCookie, Origin: ORIGIN };
+    const start = await request(app).post("/api/admin/access/preview/start")
+      .set(headers).send({ userId: manager.id });
+    assert.equal(start.status, 200);
+    try {
+      const batch = await request(app).get("/api/clients/v3/client-sales/batch")
+        .query({ month: "2026-09", target: `holding:${HOLDING}` }).set(headers);
+      assert.equal(batch.status, 200);
+      assert.match(JSON.stringify(batch.body), /100.50/);
+      assert.doesNotMatch(JSON.stringify(batch.body), new RegExp(LEGAL_B));
+      const write = await request(app).post("/api/clients/v3/client-sales/batch")
+        .set(headers).send({ month: "2026-09", targets: [{ kind: "holding", guid: HOLDING }] });
+      assert.equal(write.status, 403);
+    } finally {
+      const stop = await request(app).post("/api/admin/access/preview/stop").set(headers).send({});
+      assert.equal(stop.status, 200);
+    }
   });
 });

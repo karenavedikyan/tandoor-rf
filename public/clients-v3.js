@@ -336,6 +336,7 @@
       responsibleKind: url.responsibleKind,
       pageSize: url.pageSize || 50,
       v3cols: url.v3cols || "",
+      v3salesMonth: url.v3salesMonth || "",
       v3dense: url.v3dense,
       city: dom.city || url.city || "",
       colManager: url.colManager || "",
@@ -499,6 +500,7 @@
       : v3FilterFallback("closed", legacy, fromUrl, urlFilters, domFilters);
     return {
       v3entity: v3entity,
+      v3salesMonth: urlFilters.v3salesMonth || "",
       v3view: v3ViewFromLegacyView(view),
       page: legacy.page != null ? legacy.page : fromUrl ? urlFilters.page || 1 : 1,
       q: legacy.q != null ? legacy.q : fromUrl ? urlFilters.q || "" : "",
