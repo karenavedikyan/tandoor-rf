@@ -35,7 +35,7 @@ Any deviation in preflight → **STOP** and report; do not auto-expand scope.
 | Item | Value |
 |------|--------|
 | File | `operator-bundles/september-2026-one-shot-operator.cjs` |
-| SHA-256 (file bytes) | `60289b5191ccea14612aeb1a605b506b7b53294d95894363df73605714a62676` |
+| SHA-256 (file bytes) | `2099252073ebb09015b378fa1f005d1aaf3d5c8cbe47dceaaa7aa161242e4c98` |
 | Rebuild | `npm run september-2026-read-only-preflight:build` |
 | Verify SHA | `npm run september-2026-read-only-preflight:sha` |
 
@@ -85,7 +85,7 @@ Or `SEPTEMBER_2026_READ_ONLY_RUNTIME_CONFIG_JSON='…'` (inline JSON string).
 
 **Empty before-state digest (September scope only):** `b8b0946873bc8079c559c9b5f746e7388bfa6c4555c2d33bcc611947b14b8ce5`.
 
-Apply path: `runSeptember2026OneShotApply` / `--apply` (fail-closed `APPLY_NOT_AUTHORIZED` until production channel + authorized scope + backup receipt). Order under lock: target identity → import lock → gates (schema, all pending/running import **and** diagnostic jobs, nightly scheduler env disabled, catalog) → empty before + receipt binding → writes; after-digest computed inside the open transaction before `COMMIT`. Snapshot loader: directory `0700`, files `0600`, no symlinks, 32 MiB cap, manifest/sources bound to scope.
+Apply path: `runSeptember2026OneShotApply` / `--apply` (fail-closed `APPLY_NOT_AUTHORIZED` until production channel + authorized scope + backup receipt). Order under lock: target identity → import lock → gates (schema, all pending/running import **and** diagnostic jobs, nightly scheduler env disabled, catalog) → empty before + receipt binding → writes; after-digest computed inside the open transaction before `COMMIT`. Plan build uses **trusted native 047–048 before digest** (no migration 049 table probes). Snapshot loader: directory `0700`, files `0600`, no symlinks, 32 MiB cap, manifest/sources bound to scope.
 
 **Rollback CLI mode (`--rollback`):** requires `SEPTEMBER_2026_EXTERNAL_AUTHORIZATION_REF`, `SEPTEMBER_2026_ROLLBACK_GRANT_REF`, pinned scope bytes `f1daa…`, verified backup receipt + payload under `SEPTEMBER_2026_BACKUP_PRIVATE_ROOT` (`0700`/`0600`), and **required** `SEPTEMBER_2026_EXPECTED_LIVE_AFTER_DIGEST`. Under one transaction: target fingerprint → import lock → gates → live-after digest (must match expected) → receipt/payload binding → scoped restore (`rollback-047-048.ts`) → restored digest must equal `backup.beforeStateSha256` before `COMMIT`. `COMMIT_UNCERTAIN` if transport fails after ACK — do not blind retry rollback/apply.
 
@@ -127,7 +127,9 @@ Private backup file: approved root `0700`, file `0600`, `wx` exclusive, readback
 
 `test/integration/september-2026-one-shot-apply-core.test.ts` (8), `september-2026-backup-receipt-payload.test.ts` (4), `september-2026-one-shot-backup-flow.test.ts` (6), `september-2026-one-shot-rollback.test.ts` (6): file-byte SHA vs compact digest, backup → apply → rollback, live-after / target / receipt / lock negatives (**RUN**, `--test-concurrency=1`). Structural fixture: `test/fixtures/september-2026-operator-data-scope.structural.json` (synthetic shape only — **not** pinned `f1daa…` bytes).
 
-`npm run typecheck` — **RUN** after changes. All `test/integration/september-2026-*.test.ts` (**40** cases, Node 22, `TEST_DATABASE_URL`, `--test-concurrency=1`, non-root) — **RUN** on localhost test DB. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
+`test/integration/september-2026-one-shot-without-049.test.ts` (2): DROP 049 sidecar tables, backup → apply → rollback, assert plan build never issues 049 SQL (**RUN**).
+
+`npm run typecheck` — **RUN** after changes. All `test/integration/september-2026-*.test.ts` (**42** cases, Node 22, `TEST_DATABASE_URL`, `--test-concurrency=1`, non-root) — **RUN** on localhost test DB. Production console preflight — **NOTRUN** from Cursor (operator runs bundled `.cjs` manually with SHA check).
 
 **Frozen operator scope evidence:** pinned SHA `f1daa71dce9172f93ab8590148634c0d09013ae07b60f5f8a6675392c793d9aa` — exact JSON bytes are **not** in this repository; operator must supply `contracts/evidence/one-shot-sales-202609/frozen-apply-scope-candidate.json` from the Computer-prepared artifact when available.
 

@@ -22,9 +22,15 @@ export function businessDigestFromScopedTables(input: {
   return sha256CanonicalJson(payload);
 }
 
+export type CaptureScopedBeforeStateOptions = {
+  /** When true, treat 049 sidecar tables as absent without issuing SQL (avoids aborted transactions on 42P01). */
+  omit049SidecarTables?: boolean;
+};
+
 export async function captureScopedBeforeState(
   client: PoolClient,
   saleMonthsIso: string[],
+  options?: CaptureScopedBeforeStateOptions,
 ): Promise<{
   digest: string;
   businessDigest: string;
@@ -79,22 +85,26 @@ export async function captureScopedBeforeState(
        ORDER BY dataset, sale_month`,
       [months],
     ),
-    safeQuery(
-      client,
-      `SELECT dataset, sale_month::text, source_sha256, full_row_count, matched_row_count, excluded_row_count, last_plan_hash, updated_at::text
+    options?.omit049SidecarTables
+      ? Promise.resolve({ rows: [] as unknown[] })
+      : safeQuery(
+          client,
+          `SELECT dataset, sale_month::text, source_sha256, full_row_count, matched_row_count, excluded_row_count, last_plan_hash, updated_at::text
        FROM onec_v3_legal_sales_import_month_stats
        WHERE sale_month = ANY($1::date[])
        ORDER BY dataset, sale_month, source_sha256`,
-      [months],
-    ),
-    safeQuery(
-      client,
-      `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
+          [months],
+        ),
+    options?.omit049SidecarTables
+      ? Promise.resolve({ rows: [] as unknown[] })
+      : safeQuery(
+          client,
+          `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
        FROM onec_v3_legal_sales_import_quarantine_rows
        WHERE sale_month = ANY($1::date[])
        ORDER BY dataset, source_sha256, source_row_index, plan_hash, legal_guid`,
-      [months],
-    ),
+          [months],
+        ),
   ]);
 
   const payload = {
@@ -144,7 +154,8 @@ export function operationsDigest(plan: Pick<MatchedOnlyBundlePlanV1, "sourceHash
 export async function captureScopedAfterStateDigest(
   client: PoolClient,
   saleMonthsIso: string[],
+  options?: CaptureScopedBeforeStateOptions,
 ): Promise<string> {
-  const captured = await captureScopedBeforeState(client, saleMonthsIso);
+  const captured = await captureScopedBeforeState(client, saleMonthsIso, options);
   return captured.businessDigest;
 }

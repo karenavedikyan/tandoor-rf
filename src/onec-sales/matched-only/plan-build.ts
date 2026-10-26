@@ -21,6 +21,14 @@ export function planHashFromPlan(plan: MatchedOnlyBundlePlanV1): string {
   return sha256CanonicalJson(plan);
 }
 
+export type BuildMatchedOnlyBundlePlanOptions = {
+  /**
+   * When set (one-shot 047–048 path only), skips scoped before-state capture so no 049 sidecar tables are queried.
+   * Must be the native 047–048 digest already verified under import lock.
+   */
+  trustedBeforeStateSha256?: string;
+};
+
 export async function buildMatchedOnlyBundlePlan(
   client: PoolClient,
   input: {
@@ -30,6 +38,7 @@ export async function buildMatchedOnlyBundlePlan(
     returnItems: LegalReturnItemsRoster;
     targetDbFingerprint: string;
   },
+  options?: BuildMatchedOnlyBundlePlanOptions,
 ): Promise<{ plan: MatchedOnlyBundlePlanV1; planHash: string; report: ReturnType<typeof analyzeSalesBundle> }> {
   const known = await loadKnownLegalGuidSet(client);
   const report = analyzeSalesBundle({
@@ -66,7 +75,10 @@ export async function buildMatchedOnlyBundlePlan(
     ]),
   ].sort();
 
-  const before = await captureScopedBeforeState(client, saleMonthsIso);
+  const trustedBefore = options?.trustedBeforeStateSha256?.trim();
+  const beforeStateSha256 = trustedBefore
+    ? trustedBefore
+    : (await captureScopedBeforeState(client, saleMonthsIso)).businessDigest;
 
   const sourceHashes = {
     saleAggregate: input.saleAggregate.sourceSha256,
@@ -107,7 +119,7 @@ export async function buildMatchedOnlyBundlePlan(
       returnItems: partition.returnItems.counts,
     },
     scope,
-    beforeStateSha256: before.businessDigest,
+    beforeStateSha256,
   };
   return { plan, planHash: planHashFromPlan(plan), report };
 }

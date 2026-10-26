@@ -3039,7 +3039,7 @@ function computeOperationsDigest(sourceHashes, saleMonthsIso) {
 }
 
 // src/onec-sales/matched-only/state-digest.ts
-async function captureScopedBeforeState(client, saleMonthsIso) {
+async function captureScopedBeforeState(client, saleMonthsIso, options) {
   const months = [...saleMonthsIso].sort();
   const [
     saleAggregateLines,
@@ -3089,7 +3089,7 @@ async function captureScopedBeforeState(client, saleMonthsIso) {
        ORDER BY dataset, sale_month`,
       [months]
     ),
-    safeQuery(
+    options?.omit049SidecarTables ? Promise.resolve({ rows: [] }) : safeQuery(
       client,
       `SELECT dataset, sale_month::text, source_sha256, full_row_count, matched_row_count, excluded_row_count, last_plan_hash, updated_at::text
        FROM onec_v3_legal_sales_import_month_stats
@@ -3097,7 +3097,7 @@ async function captureScopedBeforeState(client, saleMonthsIso) {
        ORDER BY dataset, sale_month, source_sha256`,
       [months]
     ),
-    safeQuery(
+    options?.omit049SidecarTables ? Promise.resolve({ rows: [] }) : safeQuery(
       client,
       `SELECT plan_hash, dataset, source_sha256, source_row_index, lower(legal_guid::text) AS legal_guid, sale_month::text, quarantine_reason, source_path
        FROM onec_v3_legal_sales_import_quarantine_rows
@@ -3141,7 +3141,7 @@ async function safeQuery(client, sql, params) {
 function planHashFromPlan(plan) {
   return sha256CanonicalJson(plan);
 }
-async function buildMatchedOnlyBundlePlan(client, input) {
+async function buildMatchedOnlyBundlePlan(client, input, options) {
   const known = await loadKnownLegalGuidSet(client);
   const report = analyzeSalesBundle({
     salesAggregate: input.saleAggregate,
@@ -3174,7 +3174,8 @@ async function buildMatchedOnlyBundlePlan(client, input) {
       ...input.returnItems.lines.map((l) => l.saleMonthYyyyMm)
     ])
   ].sort();
-  const before = await captureScopedBeforeState(client, saleMonthsIso);
+  const trustedBefore = options?.trustedBeforeStateSha256?.trim();
+  const beforeStateSha256 = trustedBefore ? trustedBefore : (await captureScopedBeforeState(client, saleMonthsIso)).businessDigest;
   const sourceHashes = {
     saleAggregate: input.saleAggregate.sourceSha256,
     saleItems: input.saleItems.sourceSha256,
@@ -3210,7 +3211,7 @@ async function buildMatchedOnlyBundlePlan(client, input) {
       returnItems: partition.returnItems.counts
     },
     scope,
-    beforeStateSha256: before.businessDigest
+    beforeStateSha256
   };
   return { plan, planHash: planHashFromPlan(plan), report };
 }
@@ -4289,10 +4290,14 @@ async function runSeptember2026OneShotApply(input) {
       txOpen = false;
       return backupVerify;
     }
-    const { plan } = await buildMatchedOnlyBundlePlan(client, {
-      ...bundle,
-      targetDbFingerprint: identity.fingerprint
-    });
+    const { plan } = await buildMatchedOnlyBundlePlan(
+      client,
+      {
+        ...bundle,
+        targetDbFingerprint: identity.fingerprint
+      },
+      { trustedBeforeStateSha256: beforeDigest }
+    );
     const planHash = planHashFromPlan(plan);
     const known = await loadKnownLegalGuidSet(client);
     const partition = partitionSalesBundle({ ...bundle, known });

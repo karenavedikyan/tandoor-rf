@@ -239,10 +239,14 @@ export async function runSeptember2026OneShotApply(input: {
       return backupVerify;
     }
 
-    const { plan } = await buildMatchedOnlyBundlePlan(client, {
-      ...bundle,
-      targetDbFingerprint: identity.fingerprint,
-    });
+    const { plan } = await buildMatchedOnlyBundlePlan(
+      client,
+      {
+        ...bundle,
+        targetDbFingerprint: identity.fingerprint,
+      },
+      { trustedBeforeStateSha256: beforeDigest },
+    );
     const planHash = planHashFromPlan(plan);
     const known = await loadKnownLegalGuidSet(client);
     const partition = partitionSalesBundle({ ...bundle, known });
