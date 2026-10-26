@@ -7,6 +7,14 @@
 3. Fullscreen TOP → search → reset → Esc → reopen (scope + empty TOP)
 4. Карточка legal → вкладка «Продажи» → Back
 
+## Сводка продаж на карточке и в списке (PR client-sales-summary)
+
+1. `/clients?v3mode=1&v3entity=legal_grouped` — при включённых колонках «Продажи» подгружается batch `/api/clients/v3/client-sales/batch` (только текущая страница).
+2. `v3salesMonth=YYYY-MM` в URL списка → карточка `?v3salesMonth=` → Back сохраняет месяц.
+3. Карточка holding/legal, вкладка **Обзор**: три плитки (₽, ед., юрлица с продажами) + раскрытая таблица юрлиц; ссылка «Подробнее» → вкладка «Продажи».
+4. Retail / orphan_retail: без колонок продаж и без блока на обзоре.
+5. Месяц только из API (`/api/clients/v3/client-sales/months`), по умолчанию последний импортированный.
+
 ## Новый раздел «Продажи»
 
 1. Sidebar: **Клиенты** → **Продажи** (`/sales`)

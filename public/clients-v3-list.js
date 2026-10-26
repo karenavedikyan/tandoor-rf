@@ -54,6 +54,9 @@
     discount_amount: { label: "Значение скидки", filterKey: null },
     markup_percentage: { label: "Значение наценки", filterKey: null },
     inn: { label: "ИНН", filterKey: null },
+    sales_income_total: { label: "Продажи, ₽", filterKey: null },
+    sales_quantity_total: { label: "Продажи, ед.", filterKey: null },
+    sales_legal_count: { label: "Юрлица с продажами", filterKey: null },
   };
 
   function isRetailEntity(v3entity) {
@@ -99,6 +102,9 @@
           "discount_amount",
           "markup_percentage",
           "inn",
+          "sales_income_total",
+          "sales_quantity_total",
+          "sales_legal_count",
         ];
     return ids
       .map(function (id) {
@@ -286,6 +292,25 @@
       return structured
         ? shell.escapeHtml(structured)
         : '<span class="clients-no-data">Нет данных</span>';
+    }
+    if (colId === "sales_income_total" || colId === "sales_quantity_total" || colId === "sales_legal_count") {
+      var sales = item._clientSales;
+      if (!sales || sales.dataState !== "loaded") {
+        return '<span class="clients-no-data">—</span>';
+      }
+      if (colId === "sales_income_total") {
+        return window.ClientSalesSummaryUi
+          ? shell.escapeHtml(window.ClientSalesSummaryUi.formatMoney(sales.incomeTotal))
+          : shell.escapeHtml(String(sales.incomeTotal || "—"));
+      }
+      if (colId === "sales_quantity_total") {
+        return window.ClientSalesSummaryUi
+          ? shell.escapeHtml(window.ClientSalesSummaryUi.formatQty(sales.quantityTotal))
+          : shell.escapeHtml(String(sales.quantityTotal || "—"));
+      }
+      return sales.legalWithSalesCount != null
+        ? shell.escapeHtml(String(sales.legalWithSalesCount))
+        : '<span class="clients-no-data">—</span>';
     }
     if (colId === "category_name") {
       var topLabel =

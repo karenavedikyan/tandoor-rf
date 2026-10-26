@@ -137,6 +137,7 @@
         window.ClientsV3FieldRules && window.ClientsV3FieldRules.readRulesFromUrl
           ? window.ClientsV3FieldRules.readRulesFromUrl(search)
           : [],
+      v3salesMonth: params.get("v3salesMonth") || "",
     };
   }
 
@@ -631,6 +632,8 @@
     if (window.ClientsV3FieldRules) {
       window.ClientsV3FieldRules.appendRulesToParams(params, state);
     }
+    if (state.v3salesMonth) params.set("v3salesMonth", state.v3salesMonth);
+    else params.delete("v3salesMonth");
     var url = window.location.pathname + "?" + params.toString();
     if (replace) {
       window.history.replaceState(null, "", url);
@@ -769,14 +772,90 @@
   }
 
   function detailHref(guid, detailEntity, state) {
+    var monthPart =
+      state && state.v3salesMonth
+        ? "&v3salesMonth=" + encodeURIComponent(state.v3salesMonth)
+        : "";
     return (
       "/clients/" +
       encodeURIComponent(guid) +
       "?v3Entity=" +
       encodeURIComponent(detailEntity) +
+      monthPart +
       "&return=" +
       encodeURIComponent(buildListReturnQuery(state))
     );
+  }
+
+  function visibleColsNeedSales(visibleCols) {
+    if (!visibleCols || !visibleCols.length) {
+      return false;
+    }
+    return visibleCols.some(function (col) {
+      return (
+        col.id === "sales_income_total" ||
+        col.id === "sales_quantity_total" ||
+        col.id === "sales_legal_count"
+      );
+    });
+  }
+
+  function enrichListItemsWithClientSales(api, items, state, visibleCols, entity) {
+    if (
+      !window.ClientSalesSummaryUi ||
+      !visibleColsNeedSales(visibleCols) ||
+      entity === "retail" ||
+      entity === "orphan_retail"
+    ) {
+      return Promise.resolve(items);
+    }
+    var targets = items
+      .map(function (item) {
+        var kind =
+          item.detail_entity === "holding" || state.v3entity === "holdings"
+            ? "holding"
+            : "legal";
+        if (state.v3entity === "holdings") {
+          kind = "holding";
+        }
+        return { kind: kind, guid: item.guid };
+      })
+      .filter(function (t) {
+        return t.guid;
+      });
+    if (!targets.length) {
+      return Promise.resolve(items);
+    }
+    function applySummaries(month, payload) {
+      var map = (payload && payload.summaries) || {};
+      return items.map(function (item) {
+        var kind =
+          item.detail_entity === "holding" || state.v3entity === "holdings" ? "holding" : "legal";
+        if (state.v3entity === "holdings") {
+          kind = "holding";
+        }
+        var key = kind + ":" + String(item.guid).toLowerCase();
+        var copy = Object.assign({}, item);
+        copy._clientSales = map[key] || null;
+        return copy;
+      });
+    }
+    var month = state.v3salesMonth;
+    if (month) {
+      return window.ClientSalesSummaryUi.fetchBatch(api, month, targets).then(function (payload) {
+        return applySummaries(month, payload);
+      });
+    }
+    return api.apiRequest("/api/clients/v3/client-sales/months").then(function (monthsResult) {
+      var months = (monthsResult.data && monthsResult.data.months) || [];
+      var picked = months[0];
+      if (!picked) {
+        return items;
+      }
+      return window.ClientSalesSummaryUi.fetchBatch(api, picked, targets).then(function (payload) {
+        return applySummaries(picked, payload);
+      });
+    });
   }
 
   window.ClientsV3 = {
@@ -1363,6 +1442,18 @@
           var data = result.data || { items: [], total: 0 };
           var items = data.items || [];
           var liveListState = readState();
+          var visibleColsForSales = resolveVisibleListColumns(liveListState, ctx.currentUserId);
+          return enrichListItemsWithClientSales(
+            api,
+            items,
+            liveListState,
+            visibleColsForSales,
+            liveListState.v3entity,
+          ).then(function (enrichedItems) {
+            items = enrichedItems;
+            return continueAfterListItems();
+          });
+          function continueAfterListItems() {
           var lktandoorListMode = document.getElementById("clients-app")?.classList.contains("clients-lktandoor-list");
           var focusMode =
             lktandoorListMode &&
@@ -1553,6 +1644,7 @@
               window.ClientsV3.loadList(ctx, nextState, false);
             },
           };
+          }
         })
         .catch(function (err) {
           if (isStaleListLoad()) {

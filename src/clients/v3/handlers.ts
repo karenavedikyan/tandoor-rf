@@ -33,6 +33,13 @@ import {
   SALES_SOURCE_FINANCE_AVAILABILITY,
 } from "./sales-field-policy";
 import { resolveV3ListTeamMemberGuids } from "./team-assignment-counts";
+import {
+  batchClientSalesListSummaries,
+  CLIENT_SALES_BATCH_MAX_IDS,
+  listClientSalesMonths,
+  loadClientSalesCardSummary,
+  type ClientSalesBatchTarget,
+} from "./client-sales-summary";
 
 const LIST_ENTITIES = new Set<V3ListEntity>(["holdings", "legal", "legal_grouped", "retail", "orphan_retail"]);
 const DETAIL_ENTITIES = new Set<V3DetailEntity>(["holding", "legal", "retail"]);
@@ -611,6 +618,100 @@ export async function v3SalesSectionSkuHandler(req: AccessRequest, res: Response
     financeAvailability:
       kind === "returns" ? RETURNS_SOURCE_FINANCE_AVAILABILITY : SALES_SOURCE_FINANCE_AVAILABILITY,
   });
+}
+
+export async function v3ClientSalesMonthsHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const result = await listClientSalesMonths(req.accessContext!, territory);
+  setNoStore(res);
+  res.json(result);
+}
+
+export async function v3ClientSalesCardHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const entityRaw = typeof req.query.entity === "string" ? req.query.entity.trim() : "";
+  const entity = entityRaw === "holding" || entityRaw === "legal" ? entityRaw : null;
+  const guid = parseGuidParam(req.query.guid);
+  const month = typeof req.query.month === "string" ? req.query.month.trim() : "";
+  if (!entity || !guid || !month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите entity (holding|legal), guid и month."));
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const summary = await loadClientSalesCardSummary(req.accessContext!, entity, guid, month, territory);
+  if (summary === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (!summary) {
+    notFoundForAccess(res);
+    return;
+  }
+  setNoStore(res);
+  res.json({ summary });
+}
+
+export async function v3ClientSalesBatchHandler(req: AccessRequest, res: Response): Promise<void> {
+  if (!(await requireV3Active(res))) {
+    return;
+  }
+  const body = req.body as { month?: string; targets?: ClientSalesBatchTarget[] } | undefined;
+  const month = typeof body?.month === "string" ? body.month.trim() : "";
+  const targets = Array.isArray(body?.targets) ? body.targets : [];
+  if (!month) {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите month (YYYY-MM)."));
+    return;
+  }
+  const normalized: ClientSalesBatchTarget[] = [];
+  for (const t of targets) {
+    const kind = t?.kind === "holding" || t?.kind === "legal" ? t.kind : null;
+    const guid = typeof t?.guid === "string" ? parseGuidParam(t.guid) : null;
+    if (kind && guid) {
+      normalized.push({ kind, guid });
+    }
+  }
+  if (normalized.length > CLIENT_SALES_BATCH_MAX_IDS) {
+    res
+      .status(400)
+      .json(
+        apiError(
+          ERROR_CODES.VALIDATION_ERROR,
+          `Не более ${CLIENT_SALES_BATCH_MAX_IDS} объектов в одном запросе.`,
+        ),
+      );
+    return;
+  }
+  const territory = await resolveSalesSectionTerritory(req, res);
+  if (!territory) {
+    return;
+  }
+  const result = await batchClientSalesListSummaries(
+    req.accessContext!,
+    month,
+    normalized,
+    territory,
+  );
+  if (result === "invalid_month") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректный month."));
+    return;
+  }
+  if (result === "batch_too_large") {
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Слишком много объектов в batch."));
+    return;
+  }
+  setNoStore(res);
+  res.json(result);
 }
 
 export async function v3SalesSectionClientsHandler(req: AccessRequest, res: Response): Promise<void> {

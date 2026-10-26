@@ -295,6 +295,9 @@
     if (!detailRoot || !legalGuid || !window.ClientDetailV3) {
       return;
     }
+    if (!month && window.ClientSalesSummaryUi && window.ClientSalesSummaryUi.monthFromUrl) {
+      month = window.ClientSalesSummaryUi.monthFromUrl();
+    }
     var host = detailRoot.querySelector('[data-testid="v3-sales-host"]');
     if (!host) {
       return;
@@ -399,6 +402,28 @@
       });
     } else {
       loadV3HoldingRelated(detailRoot, payload);
+    }
+    var salesHost = document.getElementById("v3-client-sales-overview-host");
+    if (
+      salesHost &&
+      window.ClientSalesSummaryUi &&
+      (payload.entityType === "holding" || payload.entityType === "legal")
+    ) {
+      var cardGuid = ent.guid || ent.guid_client;
+      if (cardGuid) {
+        window.ClientSalesSummaryUi.mountOverview(salesHost, {
+          api: api,
+          shell: shell,
+          entityType: payload.entityType,
+          guid: cardGuid,
+          onOpenSalesTab: function () {
+            var salesTab = detailRoot.querySelector('[data-card-tab="sales"]');
+            if (salesTab) {
+              salesTab.click();
+            }
+          },
+        });
+      }
     }
   }
 
