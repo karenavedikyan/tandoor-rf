@@ -33,7 +33,7 @@
     app.innerHTML='<nav class="aa-tabs" aria-label="Представления назначений">'+
       button("list","Назначения",'aria-pressed="'+(view==="list")+'"')+
       (["manager","coordinator"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
-      (["coordinator","director"].includes(user.role)?button("activity","Активность координатора",'aria-pressed="'+(view==="activity")+'"'):"")+
+      (["coordinator","director"].includes(user.role)?button("activity","Активность РОА",'aria-pressed="'+(view==="activity")+'"'):"")+
       '</nav><p id="aa-status" class="aa-muted" role="status" aria-live="polite"></p><div id="aa-view"></div><div id="aa-detail"></div>'+
       '<dialog id="aa-decision" class="aa-dialog"><form id="aa-decision-form"><h2 id="aa-decision-title"></h2><p id="aa-decision-note"></p><label>Основание или комментарий<textarea id="aa-decision-reason" minlength="5" maxlength="2000" required></textarea></label><p id="aa-decision-error" class="aa-error" role="alert"></p><div class="aa-actions">'+button("close-dialog","Отмена")+'<button type="submit" class="aa-primary">Подтвердить</button></div></form></dialog>';
     app.onclick=function(ev){ var b=ev.target.closest("[data-aa]"); if(b) run(function(){return click(b.dataset.aa,b);}); };
@@ -44,7 +44,7 @@
   function renderList() {
     var activity=view==="activity";
     $("aa-view").innerHTML='<section class="aa-box" id="aa-list-box"><div class="aa-toolbar"><h2>'+ (activity?"Активность координатора":"Назначения и заявки")+"</h2>"+button("fullscreen","На весь экран")+'</div>'+
-      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия. Директору доступен только просмотр.</p>':user.role==="coordinator"?'<p class="aa-note">Вы руководитель ассистентов и единственный согласующий. В очереди заявки всех территорий.</p>':"")+
+      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия. Директору доступен только просмотр.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':"")+
       '<form id="aa-list-filter" class="aa-toolbar"><label>Поиск<input name="q" type="search" placeholder="'+(activity?"Сотрудник, основание":"Менеджер, ассистент, номер")+'" value="'+e(listQuery)+'"></label>'+
       (activity?'<label>Действие<select name="action"><option value="">Все действия</option>'+Object.keys(labels).map(function(k){return '<option value="'+k+'" '+(k===historyAction?"selected":"")+">"+e(labels[k])+"</option>";}).join("")+'</select></label>':
         '<label>Статус<select name="status">'+[["","Все назначения"],["queue","На согласовании"],["active","Согласованные"],["draft","Черновики и возвраты"],["archive","Архив"]].map(function(x){return '<option value="'+x[0]+'" '+(x[0]===listStatus?"selected":"")+">"+x[1]+"</option>";}).join("")+'</select></label>')+
@@ -59,7 +59,7 @@
     var data=await request((activity?"/assignments/activity?":"/assignments?")+p);
     if(seq!==listSeq||!$("aa-list-data"))return;
     var html="";
-    if(!activity&&data.coordinatorCount===0&&["manager","coordinator"].includes(user.role)) html+='<p class="aa-note">Координатор пока не назначен. Заявки сохранятся в очереди, но доступ не откроется до согласования.</p>';
+    if(!activity&&data.coordinatorCount===0&&["manager","coordinator"].includes(user.role)) html+='<p class="aa-note">РОА (координатор) пока не назначен. Заявки сохранятся в очереди, но доступ не откроется до согласования.</p>';
     if(!data.items.length) html+='<p class="aa-muted">Здесь пока нет '+(activity?"действий координатора":"назначений с выбранными условиями")+'. '+(!listQuery&&!listStatus&&user.role==="manager"?"Создайте новое назначение.":"Попробуйте изменить фильтры.")+"</p>";
     else html+='<div class="aa-scroll" tabindex="0" aria-label="Таблица назначений, прокрутка в двух направлениях"><table><thead><tr>'+
       (activity?"<th>Когда и кто</th><th>Действие</th><th>Назначение и условия</th><th>Основание</th>":"<th>Менеджер</th><th>Ассистент</th><th>Клиенты / юрлица</th><th>Период, МСК</th><th>Статус</th><th></th>")+

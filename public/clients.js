@@ -829,7 +829,7 @@
     analyst: "Аналитик",
     category_manager: "Категорийный менеджер",
     assistant: "Ассистент",
-    coordinator: "Координатор",
+    coordinator: "РОА (руководитель отдела ассистентов)",
   };
 
   var MANAGER_PAGE_SUBTITLE =
