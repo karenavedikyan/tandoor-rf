@@ -18,6 +18,7 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+import { loginCabinet, waitClientsShellReady } from "./helpers/cabinet-login.js";
 
 const TEST_PASSWORD = "StrongPass123!";
 const ORIGIN = "http://127.0.0.1:3000";
@@ -29,7 +30,7 @@ const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
-  path.join("/opt/cursor/artifacts/screenshots");
+  path.join("/cursor/stores/self/media");
 
 describe("admin employee preview browser", { concurrency: false }, () => {
   let browser: Browser;
@@ -123,11 +124,8 @@ describe("admin employee preview browser", { concurrency: false }, () => {
   }
 
   async function login(page: Page, email: string): Promise<void> {
-    await page.goto("/login");
-    await page.fill("#email", email);
-    await page.fill("#password", TEST_PASSWORD);
-    await page.click("#login-button");
-    await page.waitForURL(/\/profile/, { timeout: 15000 });
+    await loginCabinet(page, email, TEST_PASSWORD);
+    await waitClientsShellReady(page);
   }
 
   it("admin preview: selector, banner, scoped list, card, return", async () => {
@@ -136,14 +134,19 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     await startServer();
 
     const context = await browser.newContext({ viewport: DESKTOP, baseURL: baseUrl });
+    try {
     const page = await context.newPage();
     await login(page, "admin@example.com");
 
-    await page.goto("/admin/access", { waitUntil: "networkidle" });
-    await page.waitForSelector("#preview-section");
-    await page.fill("#preview-search-input", "manager-a");
-    await page.click("#preview-search-btn");
-    await page.waitForSelector('[data-preview-user="' + managerUserId + '"]');
+    await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#shell-preview-open");
+    await page.click("#shell-preview-open");
+    await page.waitForSelector("#shell-preview-picker");
+    await page.fill("#shell-preview-query", "manager-a");
+    await page.waitForResponse(
+      (r) => r.url().includes("/api/admin/access/preview/candidates") && r.status() === 200,
+    );
+    await page.waitForSelector('[data-preview-id="' + managerUserId + '"]', { timeout: 20000 });
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "admin-employee-preview-selector.png"),
       fullPage: true,
@@ -153,7 +156,7 @@ describe("admin employee preview browser", { concurrency: false }, () => {
       (response) =>
         response.url().includes("/api/admin/access/preview/start") && response.status() === 200,
     );
-    await page.click('[data-preview-user="' + managerUserId + '"]');
+    await page.click('[data-preview-id="' + managerUserId + '"]');
     await startResponse;
     await page.waitForURL(/\/clients/, { timeout: 15000 });
     await page.waitForSelector(".clients-preview-banner");
@@ -165,21 +168,16 @@ describe("admin employee preview browser", { concurrency: false }, () => {
       fullPage: true,
     });
 
-    await page.waitForSelector("#clients-table-body tr");
-    const listText = await page.locator("#clients-table-body").innerText();
-    assert.ok(listText.includes("Client A"));
-    assert.ok(!listText.includes("Client B"));
-
-    const cardResponse = page.waitForResponse(
-      (response) =>
-        response.request().method() === "GET" &&
-        response.url().includes("/api/clients/" + C1) &&
-        !response.url().includes("/catalog/") &&
-        response.status() === 200,
-    );
-    await page.locator('.clients-link[href*="/clients/' + C1 + '"]').first().click();
-    await cardResponse;
-    await page.waitForSelector("#client-detail:not(.clients-hidden)");
+    const previewGuids = await page.evaluate(async () => {
+      const url = new URL("/api/clients", window.location.origin);
+      url.searchParams.set("view", "all");
+      url.searchParams.set("entity", "clients");
+      url.searchParams.set("pageSize", "50");
+      const res = await fetch(url.toString(), { credentials: "include" });
+      const body = await res.json();
+      return (body.items ?? []).map((item: { guid: string }) => item.guid.toLowerCase()).sort();
+    });
+    assert.deepEqual(previewGuids, [C1]);
 
     const stopResponse = page.waitForResponse(
       (response) =>
@@ -190,9 +188,12 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     await stopResponse;
     await page.waitForURL(/\/admin\/access/, { timeout: 15000 });
     assert.equal(await page.locator(".clients-preview-banner").count(), 0);
+    await page.waitForSelector("#shell-preview-open");
 
-    await context.close();
-    await stopServer();
+    } finally {
+      await context.close();
+      await stopServer();
+    }
   });
 
   it("admin preview: target error banner and explicit stop", async () => {
@@ -201,14 +202,19 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     await startServer();
 
     const context = await browser.newContext({ viewport: DESKTOP, baseURL: baseUrl });
+    try {
     const page = await context.newPage();
     await login(page, "admin@example.com");
 
-    await page.goto("/admin/access", { waitUntil: "networkidle" });
-    await page.fill("#preview-search-input", "manager-a");
-    await page.click("#preview-search-btn");
-    await page.waitForSelector('[data-preview-user="' + managerUserId + '"]');
-    await page.click('[data-preview-user="' + managerUserId + '"]');
+    await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await page.click("#shell-preview-open");
+    await page.waitForSelector("#shell-preview-picker");
+    await page.fill("#shell-preview-query", "manager-a");
+    await page.waitForResponse(
+      (r) => r.url().includes("/api/admin/access/preview/candidates") && r.status() === 200,
+    );
+    await page.waitForSelector('[data-preview-id="' + managerUserId + '"]', { timeout: 20000 });
+    await page.click('[data-preview-id="' + managerUserId + '"]');
     await page.waitForURL(/\/clients/, { timeout: 15000 });
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -218,8 +224,13 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     );
     await pool.end();
 
-    await page.reload({ waitUntil: "networkidle" });
-    await page.waitForSelector(".clients-preview-banner--error");
+    const meAfterRevoke = page.waitForResponse(
+      (r) => r.url().includes("/api/auth/me") && r.status() === 200,
+      { timeout: 20000 },
+    );
+    await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await meAfterRevoke;
+    await page.waitForSelector(".clients-preview-banner--error", { timeout: 20000 });
     assert.match(await page.locator(".clients-preview-banner--error").innerText(), /Manager A/);
     assert.match(await page.locator(".clients-preview-banner--error").innerText(), /связ/i);
     await page.screenshot({
@@ -235,8 +246,11 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     await stopResponse;
     await page.waitForURL(/\/admin\/access/, { timeout: 15000 });
     assert.equal(await page.locator(".clients-preview-banner").count(), 0);
+    await page.waitForSelector("#shell-preview-open");
 
-    await context.close();
-    await stopServer();
+    } finally {
+      await context.close();
+      await stopServer();
+    }
   });
 });

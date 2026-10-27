@@ -281,7 +281,9 @@ export async function writeAssignment(actor: AssignmentActor, action: string, id
 }
 
 function visibility(actor: AssignmentActor, params: unknown[]): string {
-  if (actor.role === "coordinator" || actor.role === "director") return "TRUE";
+  // The technical admin already reads assignments in /api/admin/access/overview.
+  // Expose the same registry here; writer/reviewer checks remain separate.
+  if (["admin", "coordinator", "director"].includes(actor.role)) return "TRUE";
   if (!["manager", "assistant", "rop"].includes(actor.role)) return "FALSE";
   params.push(actor.id);
   const p = "$" + params.length;
@@ -464,7 +466,8 @@ export async function assignmentPicker(actor: AssignmentActor, managerId: string
   return { items: items.rows, total: count.rows[0]!.total, page: input.page, pageSize: 50, month, months: months.rows.map(r => r.month) };
 }
 
-export async function assignmentNotifications(actor: AssignmentActor, page = 1, unreadOnly = false) {
+export async function assignmentNotifications(actor: AssignmentActor, page = 1, unreadOnly = false, readOnly = false) {
+  if (!readOnly) {
   await ensureReviewNotifications(actor);
   const params: unknown[] = [];
   const where = ["manager", "assistant", "coordinator", "director"].includes(actor.role) ? visibility(actor, params) : "FALSE";
@@ -491,6 +494,7 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1, 
       VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,event_key) DO NOTHING`,
     [actor.id, d.id, d.event_key, d.kind, titles[d.kind],
       "Назначение №" + d.id.slice(0, 8) + ". Окончание: " + new Date(d.ends_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) + " МСК."]);
+  }
   }
   // A later role change must not expose old private review messages to an assistant/ROP.
   const privateScope = actor.role === "manager"

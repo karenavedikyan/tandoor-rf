@@ -948,8 +948,3 @@
 .clients-preview-banner__stop {
   flex-shrink: 0;
 }
-
-.clients-preview-active .workspace-button--primary:not(.clients-preview-banner__stop) {
-  pointer-events: none;
-  opacity: 0.55;
-}

@@ -13,12 +13,12 @@ export async function previewStateHandler(req: AuthenticatedRequest, res: Respon
 
 export async function previewCandidatesHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
   const q = String(req.query.q ?? "").trim();
-  if (q.length < 2) {
+  if (q.length === 1 || q.length > 200) {
     setNoStore(res);
     res.status(200).json({ items: [] });
     return;
   }
-  const items = await searchPreviewCandidates(q, 20);
+  const items = await searchPreviewCandidates(q, 100);
   setNoStore(res);
   res.status(200).json({ items });
 }

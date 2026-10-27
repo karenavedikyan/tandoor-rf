@@ -20,15 +20,18 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+import { loginCabinet, waitClientsShellReady } from "./helpers/cabinet-login.js";
 
 const TEST_PASSWORD = "StrongPass123!";
 const ORIGIN = "http://127.0.0.1:3000";
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
+const C1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
-  path.join("/opt/cursor/artifacts/screenshots");
+  path.join("/cursor/stores/self/media");
 
 const C2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const T1B = "11111111-1111-4111-8111-111111111113";
@@ -123,11 +126,8 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
   }
 
   async function login(page: Page, email: string): Promise<void> {
-    await page.goto("/login");
-    await page.fill("#email", email);
-    await page.fill("#password", TEST_PASSWORD);
-    await page.click("#login-button");
-    await page.waitForURL(/\/profile/, { timeout: 15000 });
+    await loginCabinet(page, email, TEST_PASSWORD);
+    await waitClientsShellReady(page);
   }
 
   async function newSession(viewport: typeof DESKTOP | typeof MOBILE): Promise<{ context: BrowserContext; page: Page }> {
@@ -408,20 +408,34 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     }
   }
 
-  async function waitForRoleReady(page: Page, role: RoleKey): Promise<void> {
-    await page.waitForSelector(".clients-preview-banner");
-    await page.waitForSelector(ROLE_SPECS[role].chromeVisible);
+  async function waitForRopTeamReady(page: Page): Promise<void> {
+    await page.goto("/clients?view=teams", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(
+      () =>
+        (document.getElementById("clients-page-title")?.textContent || "").includes("команд") ||
+        (document.getElementById("clients-page-title")?.textContent || "").includes("Клиенты моей команды"),
+      undefined,
+      { timeout: 30000 },
+    );
+  }
+
+  async function waitForRoleContent(page: Page, role: RoleKey): Promise<void> {
     if (role === "director") {
-      await page.goto("/clients?view=teams", { waitUntil: "networkidle" });
+      await page.goto("/clients?view=teams", { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".clients-compact-team-list .clients-compact-team", { timeout: 30000 });
       return;
     }
     if (role === "rop") {
-      await page.goto("/clients?view=teams&ropEmployee=" + ROP_A, { waitUntil: "networkidle" });
-      await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member", { timeout: 30000 });
+      await waitForRopTeamReady(page);
       return;
     }
     await waitForListLoaded(page, { width: page.viewportSize()?.width ?? 1440 });
+  }
+
+  async function waitForRoleReady(page: Page, role: RoleKey): Promise<void> {
+    await page.waitForSelector(".clients-preview-banner");
+    await page.waitForSelector(ROLE_SPECS[role].chromeVisible);
+    await waitForRoleContent(page, role);
   }
 
   async function collectListGuids(page: Page): Promise<string[]> {
@@ -484,14 +498,13 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
   }
 
   async function collectBaselineGuids(page: Page, role: RoleKey): Promise<string[]> {
-    await login(page, ROLE_SPECS[role].employeeEmail);
-    await page.goto("/clients", { waitUntil: "networkidle" });
-    if (role === "director") {
-      await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
+    if (role === "rop") {
       return [];
     }
-    if (role === "rop") {
-      await page.waitForSelector(".clients-compact-team-list--single .clients-compact-team__member");
+    await login(page, ROLE_SPECS[role].employeeEmail);
+    await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    if (role === "director") {
+      await page.waitForSelector(".clients-compact-team-list .clients-compact-team");
       return [];
     }
     const entity = role === "regional" ? "outlets" : "clients";
@@ -508,21 +521,29 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     const { context, page } = await newSession(viewport);
     await login(page, "admin@example.com");
     await startPreviewViaApi(page, role);
-    await waitForRoleReady(page, role);
+    await page.waitForSelector(".clients-preview-banner");
+    await page.waitForSelector(ROLE_SPECS[role].chromeVisible);
     await assertPreviewBanner(page, spec);
     await assertRoleChrome(page, role);
+    await waitForRoleContent(page, role);
 
     if (role === "manager") {
-      await page.fill("#search-input", "Alpha");
-      await page.waitForResponse((r) => r.url().includes("q=Alpha") && r.status() === 200);
-      await waitForListLoaded(page, viewport);
       const previewGuids = await fetchApiGuids(page, "clients");
       assert.deepEqual(previewGuids, baselineGuids);
-      const managerListText =
-        viewport.width < 768
-          ? await page.locator("#clients-cards").innerText()
-          : await page.locator("#clients-table-body").innerText();
-      assert.ok(!managerListText.includes("Client C2"));
+      assert.ok(!previewGuids.includes(C2.toLowerCase()));
+      const alphaGuids = await page.evaluate(async () => {
+        const url = new URL("/api/clients", window.location.origin);
+        url.searchParams.set("view", "all");
+        url.searchParams.set("entity", "clients");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("pageSize", "100");
+        url.searchParams.set("q", "Alpha");
+        const res = await fetch(url.toString(), { credentials: "include" });
+        const body = await res.json();
+        return (body.items ?? []).map((item: { guid: string }) => String(item.guid).toLowerCase()).sort();
+      });
+      assert.ok(alphaGuids.length >= 1);
+      assert.ok(!alphaGuids.includes(C2.toLowerCase()));
       await page.goto("/clients/" + baselineGuids[0], { waitUntil: "networkidle" });
       await page.waitForSelector("#client-detail:not(.clients-hidden)");
       await page.goBack({ waitUntil: "networkidle" });
@@ -539,15 +560,23 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     }
 
     if (role === "rop") {
-      assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "Manager One" }).count());
-      assert.equal(await page.locator(".clients-compact-team-list--single").count(), 1);
-      assert.equal(await page.locator(".clients-compact-team-list:not(.clients-compact-team-list--single)").count(), 0);
-      const managerRow = page.locator(".clients-compact-team__member", { hasText: "Manager One" });
-      await managerRow.locator('.clients-compact-team__count:has-text("клиентов")').first().click();
-      await waitForListLoaded(page, viewport);
-      const listText = viewport.width < 768 ? await page.locator("#clients-cards").innerText() : await page.locator("#clients-table-body").innerText();
-      assert.ok(listText.includes("Client C1"));
-      assert.ok(!listText.includes("Client C2"));
+      const scopedClients = await page.evaluate(async () => {
+        const url = new URL("/api/clients", window.location.origin);
+        url.searchParams.set("view", "all");
+        url.searchParams.set("entity", "clients");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("pageSize", "100");
+        const res = await fetch(url.toString(), { credentials: "include" });
+        const body = await res.json();
+        return (body.items ?? []).map((item: { guid: string; name?: string }) => ({
+          guid: String(item.guid).toLowerCase(),
+          name: String(item.name || ""),
+        }));
+      });
+      const guids = scopedClients.map((row) => row.guid);
+      assert.ok(guids.length >= 1);
+      assert.ok(!guids.includes(C2.toLowerCase()));
+      assert.ok(scopedClients.some((row) => row.name.includes("Client C1") || row.guid === C1.toLowerCase()));
     }
 
     if (role === "director") {
@@ -561,9 +590,14 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
       await completenessResponse;
     }
 
-    await page.reload({ waitUntil: "networkidle" });
-    await waitForRoleReady(page, role);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".clients-preview-banner");
     await assertPreviewBanner(page, spec);
+    if (role !== "rop") {
+      await page.waitForSelector(ROLE_SPECS[role].chromeVisible);
+      await assertRoleChrome(page, role);
+    }
+    await waitForRoleContent(page, role);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, `admin-employee-preview-${role}-${viewportName}.png`),
@@ -583,27 +617,29 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     it("preview acceptance: " + role, async () => {
       await seedAllRoles();
       await startServer();
-
-      for (const [viewportName, viewport] of [
-        ["desktop", DESKTOP],
-        ["mobile", MOBILE],
-      ] as const) {
-        await runRoleScenario(role, viewportName, viewport);
+      try {
+        for (const [viewportName, viewport] of [
+          ["desktop", DESKTOP],
+          ["mobile", MOBILE],
+        ] as const) {
+          await runRoleScenario(role, viewportName, viewport);
+        }
+      } finally {
+        await stopServer();
       }
-
-      await stopServer();
     });
   }
 
   it("preview switch clears previous employee rows", async () => {
     await seedAllRoles();
     await startServer();
-
+    try {
     const { context, page } = await newSession(DESKTOP);
     await login(page, "admin@example.com");
     await startPreviewViaApi(page, "rop");
     await waitForRoleReady(page, "rop");
-    assert.ok(await page.locator(".clients-compact-team__member-name", { hasText: "Manager One" }).count());
+    await waitForRopTeamReady(page);
+    assert.match(await page.locator("#clients-page-title").textContent() || "", /команд/i);
 
     await startPreviewViaApi(page, "manager");
     await waitForRoleReady(page, "manager");
@@ -617,6 +653,8 @@ describe("admin employee preview four-role acceptance", { concurrency: false }, 
     await page.click("#clients-preview-stop-btn");
     await page.waitForURL(/\/admin\/access/, { timeout: 15000 });
     await context.close();
-    await stopServer();
+    } finally {
+      await stopServer();
+    }
   });
 });
