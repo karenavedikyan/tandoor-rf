@@ -9,7 +9,7 @@ import { isValidUuidParam } from "../clients/uuid-param";
 import { AccessServiceError } from "./db";
 import * as assignments from "./assignments";
 import { searchAssistants } from "./service";
-import { attachAccessContext, blockPreviewWrites } from "./middleware";
+import { attachAccessContext, blockPreviewWrites, type AccessRequest } from "./middleware";
 import { assignmentSchemaReady, prepareAssignmentSchema } from "./assignment-schema";
 import { appointAssignmentCoordinator } from "./assignment-coordinator";
 import * as reviews from "./assignment-reviews";
@@ -34,7 +34,9 @@ function numeric(value: unknown): string | undefined {
   if (!/^-?\d{1,16}([.,]\d{1,4})?$/.test(v)) throw new AccessServiceError("Некорректная сумма.", "VALIDATION");
   return v.replace(",", ".");
 }
-function actor(req: AuthenticatedRequest) { return { id: req.authUser!.id, role: req.authUser!.role }; }
+function actor(req: AccessRequest) {
+  return { id: req.accessContext?.userId ?? req.authUser!.id, role: req.accessContext?.role ?? req.authUser!.role };
+}
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 function handle(fn: Handler): express.RequestHandler {
   return (req, res, next) => {
@@ -101,7 +103,7 @@ export function assignmentRouter(): express.Router {
     res.json({ managers: await assignments.assignmentManagers(actor(req)) });
   }));
   router.get("/assignments/assistants", ...auth, handle(async (req, res) => {
-    if (!["manager", "coordinator"].includes(req.authUser!.role)) {
+    if (!["manager", "coordinator"].includes(actor(req).role)) {
       res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Недостаточно прав.")); return;
     }
     res.json({ users: await searchAssistants(str(req.query.q), 100) });
@@ -154,7 +156,8 @@ export function assignmentRouter(): express.Router {
   }));
   router.get("/notifications", ...auth, handle(async (req, res) => {
     if (req.query.unread !== undefined && req.query.unread !== "1") throw new AccessServiceError("Некорректный фильтр уведомлений.", "VALIDATION");
-    res.json(await assignments.assignmentNotifications(actor(req), page(req.query.page), req.query.unread === "1"));
+    res.json(await assignments.assignmentNotifications(actor(req), page(req.query.page), req.query.unread === "1",
+      Boolean((req as AccessRequest).accessContext?.preview?.active)));
   }));
   router.post("/notifications/read-all", csrfProtection, ...auth, handle(async (req, res) => {
     await assignments.readAssignmentNotifications(actor(req)); res.json({ ok: true });

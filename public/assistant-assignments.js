@@ -14,6 +14,7 @@
   function button(action,title,extra,cls) { return '<button type="button" data-aa="'+action+'" '+(extra||"")+' class="'+(cls||"")+'">'+e(title)+"</button>"; }
   function note(message, error) { if(!$("aa-status")){app.className="aa";app.innerHTML='<p id="aa-status" role="status"></p>';} $("aa-status").textContent=message; $("aa-status").className=error?"aa-error":"aa-muted"; }
   async function request(path, body) {
+    if(body!==undefined && shell.getPreviewState && shell.getPreviewState().active)throw Error("Изменения запрещены в режиме просмотра от имени сотрудника.");
     var r=await api.apiRequest("/api/access"+path,body === undefined?{}:{method:"POST",body:body});
     if(r.response.status===401){window.location.replace("/login");throw Error("Войдите в кабинет.");}
     if(r.response.status===403&&r.data&&r.data.error&&r.data.error.code==="PASSWORD_CHANGE_REQUIRED"){window.location.replace("/change-password");}
@@ -47,7 +48,7 @@
   function renderList() {
     var activity=view==="activity";
     $("aa-view").innerHTML='<section class="aa-box" id="aa-list-box"><div class="aa-toolbar"><h2>'+ (activity?"Активность координатора":"Назначения и заявки")+"</h2>"+button("fullscreen","На весь экран")+'</div>'+
-      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия. Директору доступен только просмотр.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':"")+
+      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия. Директору доступен только просмотр.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':user.role==="admin"?'<p class="aa-note">Технический просмотр назначений. Согласование выполняет РОА. Оценки доступны автору оценки, РОА и директору.</p>':"")+
       '<form id="aa-list-filter" class="aa-toolbar"><label>Поиск<input name="q" type="search" placeholder="'+(activity?"Сотрудник, основание":"Менеджер, ассистент, номер")+'" value="'+e(listQuery)+'"></label>'+
       (activity?'<label>Действие<select name="action"><option value="">Все действия</option>'+Object.keys(labels).map(function(k){return '<option value="'+k+'" '+(k===historyAction?"selected":"")+">"+e(labels[k])+"</option>";}).join("")+'</select></label>':
         '<label>Статус<select name="status">'+[["","Все назначения"],["queue","На согласовании"],["active","Согласованные"],["draft","Черновики и возвраты"],["archive","Архив"]].map(function(x){return '<option value="'+x[0]+'" '+(x[0]===listStatus?"selected":"")+">"+x[1]+"</option>";}).join("")+'</select></label>')+
@@ -208,7 +209,7 @@
   document.addEventListener("keydown",function(ev){if(ev.key==="Escape"){var full=document.querySelector(".aa-fullscreen");if(full){full.classList.remove("aa-fullscreen");var b=full.querySelector('[data-aa="fullscreen"]');if(b)b.textContent="На весь экран";}}});
   shell.mountAuthenticatedShell("access-workspace",function(u,reason){
     if(reason||!u){app.className="aa";app.innerHTML='<p role="alert">Не удалось открыть назначения. Обновите страницу или войдите заново.</p>';return;}
-    user=u;if(!["manager","coordinator","director","rop","assistant"].includes(u.role)){app.className="aa";app.textContent="Назначения недоступны для этой роли.";return;}
+    user=u;if(!["admin","manager","coordinator","director","rop","assistant"].includes(u.role)){app.className="aa";app.textContent="Назначения недоступны для этой роли.";return;}
     window.AssignmentWorkspace={user:u,request:request,formatDate:dt.formatMskDisplay,
       reviews:function(){view="reviews";mount();},detail:openDetail,note:note};
     view=u.role==="director"?"activity":"list";listStatus=u.role==="coordinator"?"queue":"";

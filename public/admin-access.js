@@ -323,6 +323,8 @@
     regional_manager: "Региональный менеджер",
     rop: "РОП",
     director: "Директор",
+    assistant: "Ассистент",
+    coordinator: "РОА",
   };
 
   function startEmployeePreview(userId) {
@@ -335,7 +337,7 @@
         if (result.response.status !== 200) {
           throw new Error(api.extractErrorMessage(result.data, "Не удалось начать просмотр."));
         }
-        window.location.href = "/clients";
+        window.location.href = result.data.preview.targetUser.role === "coordinator" ? "/access" : "/clients";
       });
   }
 
