@@ -94,7 +94,7 @@
   }
   const labels={draft:"Черновик",pending:"На согласовании",revision:"Нужно уточнение",rejected:"Отклонено",cancelled:"Отменено автором",active:"Действует",planned:"Ожидает начала",completed:"Завершено",revoked:"Доступ отозван",change_pending:"Изменения на согласовании"};
   const tones={active:"good",pending:"warn",revision:"warn",change_pending:"warn",planned:"blue",rejected:"bad",revoked:"bad"};
-  const badge=a=>`<span class="as-badge ${tones[effective(a)]||""}">${labels[effective(a)]}</span>`;
+  const badge=a=>`<span class="as-badge ${tones[effective(a)]||""}">${labels[effective(a)]}</span>${window.AssistantFeedback?.closure(a)?`<small class="as-feedback-closure">${E(window.AssistantFeedback.closure(a))}</small>`:""}`;
   const actor=()=>person(state.person);
   const teamOf=id=>people[id]?.team;
   function canSee(a) {

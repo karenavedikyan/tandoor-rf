@@ -1,5 +1,24 @@
 # Main flows
 
+## Required star feedback
+- Completion of the access period always revokes access on time. Business closure
+  remains "Ожидает обязательной оценки" until the assigning manager sends a valid
+  1–5-star score and comment. Returning from the form or reading a notification
+  does not close the obligation. Other work in the cabinet remains accessible.
+- A persistent personal reminder links to outstanding reviews; ROA/director see
+  pending and closed-with-review status. Existing role privacy stays unchanged.
+- Five SVG stars support hover/focus preview, selected fill through the chosen
+  star, explicit numeric/text feedback and keyboard selection. Show stars in
+  submitted reviews, tables and average summaries, light/dark and 375px.
+- Check no-score/no-comment submission, returning without feedback, unread
+  controls not clearing obligations, successful submission clearing only the
+  matching obligation and keeping assistant access closed.
+- Verified 23 new star/required-closure assertions plus all 141 prior feedback,
+  scope, decision, audit, directory, fullscreen and picker assertions. No page
+  errors. Global manager reminder also opens the correct form from Clients.
+- Reviewed light/dark desktop and 375px star form and assistant summaries;
+  1280x600 dialog scrolls to submit. New form labels measured at least 4.5:1.
+
 ## Notifications and completed-assignment feedback
 - Preserve manager picker, coordinator-only decisions, director audit and assistant
   41/20-client shared directory, cards, sales, full screen and both scroll axes.

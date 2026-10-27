@@ -14,6 +14,10 @@
   const canRead=r=>["coordinator","director"].includes(S.role)||S.role==="manager"&&r.manager===S.person;
   const mine=()=>notes.filter(n=>n.user===ctx().id&&n.at<=S.clock);
   const fmt=P.dt,scoreWords=["","Очень слабо","Ниже ожиданий","Нужно улучшить","Хорошо","Отлично"];
+  const starIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.84 5.76 6.36.92-4.6 4.48 1.09 6.33L12 17.3l-5.69 2.99 1.09-6.33-4.6-4.48 6.36-.92Z"/></svg>';
+  const stars=value=>`<span class="af-stars" role="img" aria-label="${Number(value).toFixed(1)} из 5">${[1,2,3,4,5].map(v=>`<span class="af-star-glyph">${starIcon}<span class="af-star-fill" style="clip-path:inset(0 ${Math.round(100-100*Math.max(0,Math.min(1,value-v+1)))}% 0 0)">${starIcon}</span></span>`).join("")}</span>`;
+  const outstanding=()=>source.filter(a=>canRate(a));
+  const closure=a=>!["manager","coordinator","director"].includes(S.role)||S.role==="manager"&&a.manager!==S.person||!ended(a)?"":reviews.some(r=>r.assignment===a.id)?"Закрыто с оценкой":"Ожидает обязательной оценки";
   function add(user,key,title,text,id,kind="detail",at=S.clock){
     const uid=user+":"+key;if(seen.has(uid))return;seen.add(uid);
     notes.push({key:uid,user,title,text,id,kind,at,read:false,seq:++seq});
@@ -92,7 +96,7 @@
   function select(key,label,values){return `<label>${label}<select data-af-filter="${key}"><option value="">Все</option>${values.map(([v,t])=>`<option value="${E(v)}" ${filters[key]===v?"selected":""}>${E(t)}</option>`).join("")}</select></label>`;}
   function reviewCard(r){
     if(!canRead(r))return "";
-    return `<div class="af-review ${r.score<=3?"af-attention":""}"><div class="af-line"><h3>${E(P.person(r.assistant))}</h3><strong class="af-score">${r.score}/5 · ${scoreWords[r.score]}</strong></div>
+    return `<div class="af-review ${r.score<=3?"af-attention":""}"><div class="af-line"><h3>${E(P.person(r.assistant))}</h3><div class="af-score">${stars(r.score)}<strong>${r.score}/5 · ${scoreWords[r.score]}</strong></div></div>
       <p>${E(r.comment)}</p><p class="af-muted">Оценил ${E(r.author)} · ${fmt(r.at)} МСК · ${r.assignment}</p><p class="af-muted">Период: ${fmt(r.start)} → ${fmt(r.end)} МСК · клиентов: ${r.clients.length}</p>
       <details><summary>Состав клиентов на момент оценки</summary><ul>${r.clients.map(id=>`<li>${E(P.byClient(id).name)}</li>`).join("")}</ul></details></div>`;
   }
@@ -100,17 +104,18 @@
     sync();
     if(!["manager","coordinator","director"].includes(S.role))return `<section class="as-panel">Оценки недоступны для этой роли.</section>`;
     const all=visibleReviews(),rows=filtered(),pending=source.filter(a=>ended(a)&&(S.role!=="manager"||a.manager===S.person)&&!reviews.some(r=>r.assignment===a.id)).length;
-    return `<section class="as-panel af"><div class="as-between"><h2>${S.role==="manager"?"Оценка завершённой работы":"Оценки ассистентов"}</h2><span class="as-badge">После завершения периода</span></div>
+    return `<section class="as-panel af"><div class="as-between"><h2>${S.role==="manager"?"Оценка завершённой работы":"Оценки ассистентов"}</h2><span class="as-badge">Обязательная оценка после работы</span></div>
+      <p class="af-required-copy">Период доступа завершается автоматически. Назначение считается закрытым только после оценки передающего менеджера: звёзды и комментарий.</p>
       <p>${S.role==="manager"?"Вы оцениваете только свои завершённые назначения. Отправленная оценка доступна вам, РОА и директору; ассистенту и другим менеджерам не показывается.":"Оценки передающих менеджеров, а не автоматический рейтинг по продажам. РОА и директор видят все результаты; редактировать чужую оценку нельзя."}</p>
-      <div class="af-stats"><div><strong>${all.length?(all.reduce((s,r)=>s+r.score,0)/all.length).toFixed(1):"Нет оценок"}</strong><span>Средняя из 5</span></div><div><strong>${all.length}</strong><span>Получено оценок</span></div><div><strong>${all.filter(r=>r.score<=3).length}</strong><span>Зона внимания: 1–3</span></div><div><strong>${pending}</strong><span>Ожидают оценки</span></div></div>
-      ${["coordinator","director"].includes(S.role)?`<div class="af-assistants">${["a1","a2"].map(id=>{const rr=all.filter(r=>r.assistant===id);return `<article><h3>${E(P.person(id))}</h3><strong>${rr.length?(rr.reduce((s,r)=>s+r.score,0)/rr.length).toFixed(1)+" / 5":"Нет оценок"}</strong><p class="af-muted">${rr.length} оценок · ${rr.filter(r=>r.score<=3).length} в зоне внимания</p></article>`;}).join("")}</div>`:""}
+      <div class="af-stats"><div><strong>${all.length?(all.reduce((s,r)=>s+r.score,0)/all.length).toFixed(1):"Нет оценок"}</strong>${all.length?stars(all.reduce((s,r)=>s+r.score,0)/all.length):""}<span>Средняя из 5</span></div><div><strong>${all.length}</strong><span>Получено оценок</span></div><div><strong>${all.filter(r=>r.score<=3).length}</strong><span>Зона внимания: 1–3</span></div><div><strong>${pending}</strong><span>Ожидают обязательной оценки</span></div></div>
+      ${["coordinator","director"].includes(S.role)?`<div class="af-assistants">${["a1","a2"].map(id=>{const rr=all.filter(r=>r.assistant===id);return `<article><h3>${E(P.person(id))}</h3><strong>${rr.length?(rr.reduce((s,r)=>s+r.score,0)/rr.length).toFixed(1)+" / 5":"Нет оценок"}</strong>${rr.length?stars(rr.reduce((s,r)=>s+r.score,0)/rr.length):""}<p class="af-muted">${rr.length} оценок · ${rr.filter(r=>r.score<=3).length} в зоне внимания</p></article>`;}).join("")}</div>`:""}
       <div class="af-filters"><label>Поиск<input data-af-filter="q" value="${E(filters.q)}" placeholder="Сотрудник, клиент, номер, комментарий"></label>
       ${select("assistant","Ассистент",[["a1",P.person("a1")],["a2",P.person("a2")]])}
       ${S.role!=="manager"?select("manager","Передающий менеджер",["m1","m2","m3"].map(id=>[id,P.person(id)])):""}
       ${select("score","Оценка",[["low","Зона внимания: 1–3"],...Array.from({length:5},(_,i)=>[String(i+1),String(i+1)+" / 5"])])}
       ${select("status","Наличие оценки",[["pending","Ожидает оценки"],["rated","Оценено"]])}${action("reset-filters","Сбросить фильтры")}</div>
       <p class="af-muted" role="status">Найдено назначений: ${rows.length}. Сводные показатели выше относятся ко всей доступной истории.</p>
-      <div class="as-table-scroll" tabindex="0" aria-label="Оценки и завершённые назначения"><table class="as-table af-table"><thead><tr><th>Назначение и период, МСК</th><th>Ассистент / менеджер</th><th>Клиенты</th><th>Оценка</th><th>Действие</th></tr></thead><tbody>${rows.map(({a,r})=>`<tr><td><strong>${a.id}</strong><small>${fmt(a.start)} → ${fmt(a.end)}<br>${a.status==="revoked"?"Досрочно отозвано":"Период завершён"}</small></td><td>${E(P.person(a.assistant))}<small>${E(P.person(a.manager))}</small></td><td>${a.clients.length}</td><td>${r?`<span class="af-grade ${r.score<=3?"af-low":""}">${r.score}/5</span>`:"Ожидает оценки"}</td><td>${r?action("review","Посмотреть",a.id):canRate(a)?action("rate","Оценить",a.id,"primary"):"Ожидается от менеджера"}</td></tr>`).join("")||'<tr><td colspan="5">По фильтрам ничего не найдено. Измените условия поиска.</td></tr>'}</tbody></table></div></section>`;
+      <div class="as-table-scroll" tabindex="0" aria-label="Оценки и завершённые назначения"><table class="as-table af-table"><thead><tr><th>Назначение и период, МСК</th><th>Ассистент / менеджер</th><th>Клиенты</th><th>Оценка и закрытие</th><th>Действие</th></tr></thead><tbody>${rows.map(({a,r})=>`<tr><td><strong>${a.id}</strong><small>${fmt(a.start)} → ${fmt(a.end)}<br>${a.status==="revoked"?"Досрочно отозвано":"Период завершён"}</small></td><td>${E(P.person(a.assistant))}<small>${E(P.person(a.manager))}</small></td><td>${a.clients.length}</td><td>${r?`${stars(r.score)}<span class="af-grade ${r.score<=3?"af-low":""}">${r.score}/5</span>`:""}<small class="${r?"":"af-pending-label"}">${closure(a)}</small></td><td>${r?action("review","Посмотреть",a.id):canRate(a)?action("rate","Оценить",a.id,"primary"):"Ожидается от менеджера"}</td></tr>`).join("")||'<tr><td colspan="5">По фильтрам ничего не найдено. Измените условия поиска.</td></tr>'}</tbody></table></div></section>`;
   }
   function paint(){
     sync();
@@ -125,11 +130,18 @@
       const block=document.createElement("div");block.id="af-context";block.className="af";
       const a=source.find(a=>a.id===S.detail),r=reviews.find(r=>r.assignment===a?.id);
       if(a&&r&&canRead(r))block.innerHTML=reviewCard(r);
-      else if(a&&canRate(a))block.innerHTML=`<div class="af-callout"><strong>Работа в этом периоде завершена</strong><p>Оцените сопровождение ${a.clients.length} клиентов. Доступ ассистенту не продлевается.</p>${action("rate","Оценить работу ассистента",a.id,"primary")}</div>`;
+      else if(a&&canRate(a))block.innerHTML=`<div class="af-callout"><strong>Ожидает обязательной оценки</strong><p>Оцените сопровождение ${a.clients.length} клиентов, чтобы закрыть назначение. Доступ ассистенту уже закрыт и не продлевается.</p>${action("rate","Оценить работу ассистента",a.id,"primary")}</div>`;
       else if(S.role==="manager"&&!S.detail&&!S.client&&S.view==="list"){
-        const count=source.filter(a=>canRate(a)).length;if(count)block.innerHTML=`<div class="af-callout"><strong>Завершённые назначения ждут вашей оценки: ${count}</strong><p>Ваш отзыв увидят РОА и директор.</p>${action("ratings","Оценить завершённую работу")}</div>`;
+        const count=outstanding().length;if(count)block.innerHTML=`<div class="af-callout"><strong>Обязательная оценка: ${count} назначений</strong><p>Работа завершена. Без звёзд и комментария назначения не считаются закрытыми. Ваш отзыв увидят РОА и директор.</p>${action("ratings","Оценить завершённую работу")}</div>`;
       }
       if(block.innerHTML)container.prepend(block);
+    }
+    document.getElementById("af-required-reminder")?.remove();
+    const c=ctx(),pending=source.filter(a=>ended(a)&&a.manager===c.id&&!reviews.some(r=>r.assignment===a.id));
+    if(c.role==="manager"&&pending.length){
+      const reminder=document.createElement("div");reminder.id="af-required-reminder";reminder.className="af af-required-reminder";
+      reminder.innerHTML=`<div><strong>Оцените завершённую работу · ${pending.length}</strong><span>Обязательный шаг для закрытия назначения</span></div>${action("required-rate","Поставить оценку",pending[0].id)}`;
+      document.getElementById("app").append(reminder);
     }
     drawInbox();
   }
@@ -154,12 +166,12 @@
   function openDialog(a,r){
     document.getElementById("af-review-dialog")?.remove();dialog={id:a.id,readonly:!!r,score:0};
     const el=document.createElement("dialog");el.id="af-review-dialog";el.className="af af-dialog";el.setAttribute("aria-labelledby","af-review-title");
-    el.innerHTML=`<div class="af-line"><h2 id="af-review-title">${r?"Оценка работы ассистента":"Оценить работу ассистента"}</h2>${action("close-review","Закрыть")}</div>
+    el.innerHTML=`<div class="af-line"><div><span class="af-eyebrow">${r?"Результат работы":"Обязательный итог периода"}</span><h2 id="af-review-title">${r?"Оценка работы ассистента":"Как поработал ассистент?"}</h2></div>${action("close-review",r?"Закрыть":"К списку")}</div>
       <p><strong>${E(P.person(a.assistant))}</strong> · ${a.id} · клиентов: ${a.clients.length}</p><p class="af-muted">${fmt(a.start)} → ${fmt(snapshot(a).end)} МСК. ${a.status==="revoked"?"Работа завершена досрочно; доступ отозван.":"Доступ уже закрыт."}</p>
-      ${r?reviewCard(r):`<form id="af-rating-form"><fieldset><legend>Общая оценка сопровождения, от 1 до 5</legend><div class="af-rating-buttons">${[1,2,3,4,5].map(v=>`<button type="button" data-af="score" data-id="${v}" aria-pressed="false" aria-label="${v} из 5: ${scoreWords[v]}">${v}<small>${scoreWords[v]}</small></button>`).join("")}</div></fieldset>
-      <p id="af-score-hint" aria-live="polite">1: очень слабо, 5: отлично. Выберите подходящий балл.</p><label>Комментарий к работе<textarea id="af-comment" maxlength="2000" rows="4" placeholder="Что получилось хорошо и что стоит улучшить. Не менее 10 символов." required minlength="10"></textarea></label>
+      ${r?reviewCard(r):`<form id="af-rating-form"><div class="af-required-copy">Чтобы закрыть назначение, поставьте оценку и оставьте комментарий. Возврат к списку не отменяет эту обязанность.</div><fieldset class="af-star-field"><legend>Ваша оценка · обязательно</legend><div class="af-rating-buttons af-stars-input" role="group" aria-label="Оценка от одной до пяти звёзд" aria-describedby="af-score-hint">${[1,2,3,4,5].map(v=>`<button type="button" data-af="score" data-id="${v}" aria-pressed="false" aria-label="${v} из 5: ${scoreWords[v]}" title="${v} из 5: ${scoreWords[v]}">${starIcon}</button>`).join("")}</div><p id="af-score-hint" aria-live="polite">Выберите от 1 до 5 звёзд</p></fieldset>
+      <label>Комментарий к работе · обязательно<textarea id="af-comment" maxlength="2000" rows="3" placeholder="Что получилось хорошо и что стоит улучшить. Не менее 10 символов." required minlength="10"></textarea></label>
       <p class="af-muted">Оценку увидят только автор, РОА и директор. Ассистенту, РОП и другим менеджерам она не показывается. После отправки редактирование не предусмотрено.</p>
-      <p id="af-rating-error" role="alert"></p><div class="af-actions"><button type="submit" class="primary">Отправить оценку</button>${action("close-review","Отмена")}</div></form>`}`;
+      <p id="af-rating-error" role="alert"></p><div class="af-actions"><button type="submit" class="primary">Отправить оценку</button>${action("close-review","Вернуться к списку")}</div></form>`}`;
     document.body.append(el);el.addEventListener("cancel",e=>{e.preventDefault();closeDialog();});el.showModal();el.querySelector(r?"button":"[data-af=score]").focus();
   }
   function closeDialog(){document.getElementById("af-review-dialog")?.close();document.getElementById("af-review-dialog")?.remove();dialog=null;document.querySelector("[data-af=ratings],[data-af=rate],#af-bell")?.focus();}
@@ -184,12 +196,21 @@
     if(k==="read"){const n=mine().find(n=>n.key===id);if(n)n.read=true;paint();}
     if(k==="open-note"){const n=mine().find(n=>n.key===id);if(n)openNote(n);}
     if(k==="ratings")refreshRatings();
+    if(k==="required-rate"){
+      if(!P.routeActive()){location.hash="#handover?as_role=manager&as_person="+ctx().id+"&as_view=ratings";requestAnimationFrame(()=>{if(canRate(a))openDialog(a);});}
+      else if(canRate(a)){refreshRatings();openDialog(a);}
+    }
     if(k==="reset-filters"){filters={q:"",assistant:"",manager:"",score:"",status:""};refreshRatings();}
     if(k==="rate"&&canRate(a))openDialog(a);
     if(k==="review"){const r=reviews.find(r=>r.assignment===id);if(r&&canRead(r))openDialog(a,r);}
     if(k==="close-review")closeDialog();
-    if(k==="score"&&dialog&&!dialog.readonly){dialog.score=+id;document.querySelectorAll("[data-af=score]").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.id===id)));document.getElementById("af-score-hint").textContent=`${id} из 5: ${scoreWords[+id]}`;}
+    if(k==="score"&&dialog&&!dialog.readonly){dialog.score=+id;document.querySelectorAll("[data-af=score]").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.id===id)));paintStars(dialog.score);document.getElementById("af-score-hint").textContent=`${id} из 5: ${scoreWords[+id]}`;}
   });
+  function paintStars(value){document.querySelectorAll(".af-stars-input button").forEach(b=>b.classList.toggle("af-star-on",+b.dataset.id<=value));}
+  document.addEventListener("pointerover",e=>{const b=e.target.closest?.(".af-stars-input button");if(b)paintStars(+b.dataset.id);});
+  document.addEventListener("pointerout",e=>{const g=e.target.closest?.(".af-stars-input");if(g&&!g.contains(e.relatedTarget))paintStars(dialog?.score||0);});
+  document.addEventListener("focusin",e=>{if(e.target.matches?.(".af-stars-input button"))paintStars(+e.target.dataset.id);});
+  document.addEventListener("focusout",e=>{if(e.target.closest?.(".af-stars-input")&&!e.relatedTarget?.closest?.(".af-stars-input"))paintStars(dialog?.score||0);});
   document.addEventListener("change",e=>{const k=e.target.dataset.afFilter;if(k){filters[k]=e.target.value;refreshRatings();}});
   document.addEventListener("input",e=>{
     if(e.target.dataset.afFilter!=="q")return;
@@ -207,12 +228,16 @@
     closeDialog();S.toast="Оценка отправлена РОА и директору. Ассистенту не показывается.";refreshRatings();
   });
   document.addEventListener("keydown",e=>{
+    if(e.target.matches?.(".af-stars-input button")&&["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(e.key)){
+      e.preventDefault();const value=e.key==="Home"?1:e.key==="End"?5:Math.min(5,Math.max(1,+e.target.dataset.id+(["ArrowRight","ArrowUp"].includes(e.key)?1:-1)));
+      const b=document.querySelector(`.af-stars-input [data-id="${value}"]`);b.focus();b.click();
+    }
     if(e.key==="Escape"&&inbox&&!dialog){inbox=false;paint();document.getElementById("af-bell")?.focus();}
     if(e.key==="Tab"&&inbox&&!dialog){const nodes=[...document.querySelectorAll("#af-inbox button")];const first=nodes[0],last=nodes.at(-1);
       if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
   });
   document.addEventListener("assistant:paint",()=>{if(ctx().id!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=ctx().id;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
-  window.AssistantFeedback={view};
+  window.AssistantFeedback={view,closure};
   init();P.render();paint();
 })();

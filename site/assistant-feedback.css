@@ -29,6 +29,24 @@
 .af-rating-buttons button{padding:12px 5px;font-size:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.af-rating-buttons small{font-size:11px;line-height:1.3}
 .af-rating-buttons [aria-pressed=true] small{color:inherit}.af-dialog textarea{resize:vertical;padding:12px;line-height:1.5}#af-rating-error{color:#9b352a}
 .af-rating-buttons small{font-size:12px}
+.af-eyebrow{display:block;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--af-muted);margin-bottom:6px;font-weight:600}
+.af-required-copy{padding:12px 14px;border-radius:8px;background:var(--bg);border:1px solid var(--line);line-height:1.6}
+.af input,.af select,.af textarea{background:var(--surface,#fff);color:var(--ink);border:1px solid var(--line);border-radius:8px}.af input::placeholder,.af textarea::placeholder{color:var(--af-muted);opacity:1}
+.af-stars{display:inline-flex;gap:3px;vertical-align:middle;--af-gold:#996611;color:var(--af-gold)}
+.af-star-glyph{display:inline-block!important;width:19px;height:19px;position:relative;margin:0!important}.af-star-glyph svg{position:absolute;inset:0;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.5}
+.af-star-fill{position:absolute;inset:0;margin:0!important}.af-star-fill svg{fill:currentColor}
+.af-stats .af-stars{margin-top:8px;display:inline-flex;color:var(--af-gold)}.af-stars span{color:inherit}.af-stats .af-stars span{color:inherit}.af-score .af-stars{display:flex;justify-content:flex-end;margin-bottom:5px}.af-grade{margin-left:8px}
+.af .af-star-field{text-align:center;padding:20px 16px;background:var(--bg);border:1px solid var(--line);border-radius:12px}.af-star-field legend{float:left;width:100%;margin-bottom:4px;color:var(--af-muted);font-size:13px;font-weight:500}
+.af .af-stars-input{display:flex;justify-content:center;gap:7px;clear:both}
+.af .af-stars-input button,.af .af-stars-input button[aria-pressed=true]{padding:8px;min-width:48px;min-height:56px;background:transparent!important;color:#8b7347!important;border:1px solid transparent;box-shadow:none;border-radius:9px}
+.af .af-stars-input button svg{width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.35}
+.af .af-stars-input button.af-star-on{color:#996611!important}.af .af-stars-input .af-star-on svg{fill:currentColor}.af .af-stars-input button:hover{border-color:var(--line)}
+#af-score-hint{margin:12px 0 0;font-size:15px;font-weight:600;min-height:24px}
+.af-required-reminder{position:fixed;z-index:100;right:24px;bottom:18px;display:flex;align-items:center;gap:24px;padding:14px 18px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:10px;background:var(--surface,#fff);box-shadow:0 5px 24px #0002}
+.af-required-reminder span{display:block;font-size:12px;color:var(--af-muted);margin-top:3px}#app:has(#af-required-reminder){padding-bottom:112px}
+.as-feedback-closure{display:block;margin-top:6px;line-height:1.5;font-weight:600}.af-pending-label{font-weight:600;color:var(--ink)!important}
+[data-theme=dark] .af-stars{--af-gold:#e6bb63}[data-theme=dark] .af .af-stars-input button{color:#b6a47f!important}[data-theme=dark] .af .af-stars-input button.af-star-on{color:#e6bb63!important}[data-theme=dark] .af .af-stars-input button[aria-pressed=true]{background:transparent!important}
+@media(max-width:700px){.af .af-stars-input{gap:0}.af .af-stars-input button{min-width:48px;padding:6px}.af .af-stars-input button svg{width:36px;height:36px}.af .af-star-field{padding:16px 8px}.af-required-reminder{left:12px;right:12px;bottom:12px;gap:10px;padding:12px}.af-required-reminder strong{font-size:13px}.af-required-reminder span{font-size:12px}.af-required-reminder button{font-size:13px;flex:0 0 100px}#app:has(#af-required-reminder){padding-bottom:140px}}
 @media(max-width:700px){.af-rating-buttons small{display:none}.af-rating-buttons button{min-height:54px}.af-dialog label{font-size:14px}}
 [data-theme=dark] .af-low{background:#403421;color:#f1d098;border-color:#a77c33}[data-theme=dark] #af-rating-error{color:#ffb7ac}
 [data-theme=dark] .af button[aria-pressed=true],[data-theme=dark] .af-selected{background:#b6d78c!important;color:#172410!important}
