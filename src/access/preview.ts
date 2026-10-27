@@ -1,8 +1,8 @@
 import { query } from "../db/pool";
-import { isClientReadRole, toUserDto, type UserDto, type UserRole } from "../shared/user";
+import { toUserDto, type UserDto, type UserRole } from "../shared/user";
 import type { AccessContext } from "./types";
 
-export const PREVIEW_ELIGIBLE_ROLES = ["manager", "regional_manager", "rop", "director"] as const;
+export const PREVIEW_ELIGIBLE_ROLES = ["manager", "regional_manager", "rop", "director", "assistant", "coordinator"] as const;
 
 export type PreviewEligibleRole = (typeof PREVIEW_ELIGIBLE_ROLES)[number];
 
@@ -10,7 +10,7 @@ export type PreviewTargetValidation =
   | {
       ok: true;
       user: UserDto;
-      employeeId: string;
+      employeeId: string | null;
     }
   | {
       ok: false;
@@ -80,11 +80,11 @@ export async function validatePreviewTarget(userId: string): Promise<PreviewTarg
   if (row.status !== "active") {
     return { ok: false, code: "DISABLED", message: "Пользователь отключён. Просмотр недоступен." };
   }
-  if (!isPreviewEligibleRole(row.role) || !isClientReadRole(row.role)) {
+  if (!isPreviewEligibleRole(row.role)) {
     return {
       ok: false,
       code: "INELIGIBLE_ROLE",
-      message: "Просмотр доступен только для менеджера, регионального, РОПа или директора.",
+      message: "Выберите действующего сотрудника: менеджера, ассистента, РОА, регионального, РОПа или директора.",
     };
   }
 
@@ -98,7 +98,17 @@ export async function validatePreviewTarget(userId: string): Promise<PreviewTarg
     [userId],
   );
   const employeeId = linkResult.rows[0]?.employee_id ?? null;
-  if (!employeeId) {
+  // ROA works across territories, without a client/1C employee scope.
+  // Directors outside 1C need the same explicit grant as their real login.
+  let unlinkedAllowed = row.role === "coordinator";
+  if (!employeeId && row.role === "director") {
+    const schema = await query("SELECT to_regclass('public.director_base_access_grants') AS present");
+    if (schema.rows[0]?.present) {
+      const grant = await query("SELECT 1 FROM director_base_access_grants WHERE user_id=$1 AND revoked_at IS NULL", [userId]);
+      unlinkedAllowed = Boolean(grant.rowCount);
+    }
+  }
+  if (!employeeId && !unlinkedAllowed) {
     return {
       ok: false,
       code: "NO_LINK",
@@ -158,7 +168,7 @@ export async function searchPreviewCandidates(queryText: string, limit = 20) {
           HAVING COUNT(*) > 1
         ) AS link_conflict
       FROM users u
-      INNER JOIN user_onec_employee_links l
+      LEFT JOIN user_onec_employee_links l
         ON l.user_id = u.id AND l.revoked_at IS NULL
       WHERE u.status = 'active'
         AND u.role = ANY($2::text[])

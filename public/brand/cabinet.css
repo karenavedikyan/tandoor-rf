@@ -1,5 +1,33 @@
 @import url("/fonts/golos/fonts.css");
 
+.shell-preview-trigger, .shell-preview-picker button, .shell-preview-picker input, .shell-preview-picker select {
+  font: inherit; font-size: var(--rf-ui-small); color: var(--rf-text);
+  border: 1px solid var(--rf-border); border-radius: .5rem;
+  padding: var(--rf-space-2) var(--rf-space-3); background: var(--rf-surface); min-height: 44px;
+}
+.shell-preview-trigger, .shell-preview-picker button { cursor: pointer; }
+.shell-preview-trigger:hover, .shell-preview-picker button:hover { background: var(--rf-row-hover); }
+.shell-preview-picker button:disabled { opacity: .55; cursor: wait; }
+.shell-preview-trigger { white-space: nowrap; font-weight: 600; }
+.shell-preview-picker { width: min(44rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); margin: auto; overflow: auto; padding: var(--rf-space-6); border: 1px solid var(--rf-border); border-radius: 1rem; background: var(--rf-surface); color: var(--rf-text); font-family: "Golos", var(--rf-font), sans-serif; }
+.shell-preview-picker::backdrop { background: rgb(0 0 0 / .42); }
+.shell-preview-picker header { display: flex; justify-content: space-between; align-items: start; gap: var(--rf-space-4); }
+.shell-preview-picker h2 { font-size: var(--rf-ui-title); margin: 0; }
+.shell-preview-picker p { font-size: var(--rf-ui-small); color: var(--rf-text-muted); line-height: 1.5; }
+.shell-preview-picker form { display: flex; gap: var(--rf-space-3); flex-wrap: wrap; align-items: end; }
+.shell-preview-picker label { display: grid; gap: var(--rf-space-2); flex: 1; min-width: 9rem; font-size: var(--rf-ui-small); }
+.shell-preview-picker input, .shell-preview-picker select { width: 100%; min-width: 0; }
+.shell-preview-results { display: grid; gap: var(--rf-space-2); }
+.shell-preview-picker .shell-preview-person { display: flex; align-items: center; justify-content: space-between; gap: var(--rf-space-3); width: 100%; padding: var(--rf-space-3); text-align: left; }
+.shell-preview-person > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.shell-preview-person small { display: block; color: var(--rf-text-muted); font-size: .75rem; margin-top: .25rem; }
+.shell-preview-role { color: var(--rf-text-muted); font-size: .75rem; white-space: nowrap; }
+@media (max-width: 600px) {
+  .shell-preview-trigger { padding-inline: var(--rf-space-2); }
+  .shell-preview-picker { padding: var(--rf-space-4); }
+  .shell-preview-picker .shell-preview-person { align-items: start; flex-direction: column; }
+}
+
 /* Shared finishing layer. No sizing/overflow overrides on the full-screen register. */
 :root {
   --rf-bg: #f3f5f6;

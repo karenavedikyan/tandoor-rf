@@ -6,7 +6,8 @@
   var time=function(v){try{return new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",dateStyle:"short",timeStyle:"short"}).format(new Date(v));}catch(_){return String(v||"");}};
   window.mountAssignmentNotifications=function(user){
     var host=document.getElementById("assignment-notifications-mount");
-    if(!host||!user||!["manager","coordinator","director","rop","assistant"].includes(user.role)||document.documentElement.dataset.preview==="true")return;
+    if(!host||!user||!["manager","coordinator","director","rop","assistant"].includes(user.role))return;
+    var preview=Boolean(window.TandoorShell&&window.TandoorShell.getPreviewState&&window.TandoorShell.getPreviewState().active);
     if(host.dataset.mounted)return;host.dataset.mounted="true";host.hidden=false;
     var currentPage=1,unreadOnly=false,data=null,loading=0,expiryTimer=null,inboxOpen=false,revision=null,initial=true;
     var style=document.createElement("link");style.rel="stylesheet";style.href="/assignment-notifications.css?v=reviews1";document.head.appendChild(style);
@@ -39,12 +40,12 @@
       bell.setAttribute("aria-label","Уведомления: "+data.unread+" непрочитанных");
       host.querySelector('[data-an="all"]').setAttribute("aria-pressed",String(!unreadOnly));
       host.querySelector('[data-an="unread"]').setAttribute("aria-pressed",String(unreadOnly));
-      host.querySelector('[data-an="read-all"]').disabled=!data.unread;
+      host.querySelector('[data-an="read-all"]').disabled=preview||!data.unread;
       var box=host.querySelector("#an-items"),scroll=box.scrollTop,focused=document.activeElement&&document.activeElement.dataset.anId;
       box.innerHTML=data.items.length?data.items.map(function(n){
         var link=destination(n);
         return '<article class="an-item '+(n.read_at?"":"an-unread")+'"><div class="an-line"><strong>'+enc(n.title)+'</strong><small>'+(n.read_at?"Прочитано":"Новое")+'</small></div><p>'+enc(n.message)+'</p><time>'+enc(time(n.created_at))+' МСК</time><div class="an-actions"><a href="'+link.href+'" data-an-link="'+enc(n.id)+'">'+link.label+'</a>'+
-          (n.read_at?"":'<button type="button" data-an="read" data-an-id="'+enc(n.id)+'">Прочитано</button>')+"</div></article>";
+          (n.read_at?"":'<button type="button" data-an="read" '+(preview?'disabled title="Изменения запрещены в режиме просмотра" ':"")+'data-an-id="'+enc(n.id)+'">Прочитано</button>')+"</div></article>";
       }).join(""):'<p class="an-empty">'+(unreadOnly?"Все уведомления прочитаны.":"Уведомлений пока нет.")+"</p>";
       box.scrollTop=scroll;if(focused){var f=box.querySelector('[data-an-id="'+focused+'"]');if(f)f.focus();else if(inboxOpen)panel.querySelector('[data-an="close"]').focus();}
       host.querySelector("#an-page").textContent="Всего: "+data.total+" · "+currentPage+" / "+Math.max(1,Math.ceil(data.total/30));
@@ -75,14 +76,14 @@
     }
     host.addEventListener("click",function(ev){
       var b=ev.target.closest("[data-an],#an-bell"),link=ev.target.closest("[data-an-link]");
-      if(link){ev.preventDefault();void read("/"+link.dataset.anLink+"/read").catch(function(){}).finally(function(){window.location.assign(link.href);});return;}
+      if(link){ev.preventDefault();if(preview){window.location.assign(link.href);return;}void read("/"+link.dataset.anLink+"/read").catch(function(){}).finally(function(){window.location.assign(link.href);});return;}
       if(!b)return;
       if(b.id==="an-bell"){if(inboxOpen){close();return;}inboxOpen=true;panel.showModal();bell.setAttribute("aria-expanded","true");void load();return;}
       var a=b.dataset.an;
       if(a==="close"){close();return;}
       if(a==="all"||a==="unread"){unreadOnly=a==="unread";currentPage=1;void load();return;}
       if(a==="prev"||a==="next"){currentPage+=a==="next"?1:-1;void load();return;}
-      if(a==="read"||a==="read-all"){b.disabled=true;void read(a==="read-all"?"/read-all":"/"+b.dataset.anId+"/read").then(function(){if(a==="read-all")currentPage=1;return load();}).catch(function(err){noticeError(err.message);}).finally(function(){if(b.isConnected)b.disabled=false;});}
+      if(a==="read"||a==="read-all"){if(preview)return;b.disabled=true;void read(a==="read-all"?"/read-all":"/"+b.dataset.anId+"/read").then(function(){if(a==="read-all")currentPage=1;return load();}).catch(function(err){noticeError(err.message);}).finally(function(){if(b.isConnected)b.disabled=false;});}
     });
     document.addEventListener("visibilitychange",function(){if(!document.hidden)void load();});
     window.addEventListener("focus",function(){void load();});

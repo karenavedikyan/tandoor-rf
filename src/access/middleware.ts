@@ -60,7 +60,7 @@ export function blockPreviewWrites(
   res: Response,
   next: NextFunction,
 ): void {
-  if (req.accessContext?.preview?.active) {
+  if (req.accessContext?.preview?.active && !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())) {
     setNoStore(res);
     res.status(403).json(
       apiError(ERROR_CODES.FORBIDDEN, "Изменения запрещены в режиме просмотра от имени сотрудника."),

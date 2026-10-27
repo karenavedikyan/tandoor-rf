@@ -54,6 +54,30 @@ describe("assistant assignments: coordinator-only decisions and scoped access", 
     assert.equal(await total(), 1);
     assert.equal((await decide(id, "approve")).status, 409);
   });
+  it("technical admin reads the registry and detail without author, approval or review permissions", async () => {
+    const id = await create();
+    const list = await get("admin", "/api/access/assignments?page=1");
+    assert.equal(list.status, 200);
+    assert.equal(list.body.total, 1);
+    assert.equal(list.body.items[0].id, id);
+    assert.ok(!("review" in list.body.items[0]));
+    const detail = await get("admin", "/api/access/delegations/" + id);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.delegation.canAuthor, false);
+    assert.equal(detail.body.delegation.canReview, false);
+    assert.ok(!("review" in detail.body.delegation));
+    assert.ok(Array.isArray(detail.body.delegation.history));
+    assert.equal((await get("admin", "/api/access/assignments?q=no-such-person")).body.total, 0);
+    assert.equal((await get("admin", "/api/access/assignments?status=archive")).body.total, 0);
+    assert.equal((await get("admin", "/api/access/assignments/activity")).status, 403);
+    assert.equal((await get("admin", "/api/access/assignments/reviews")).status, 403);
+    assert.equal((await get("admin", "/api/access/assignments/" + id + "/review")).status, 403);
+    assert.equal((await post("admin", "/delegations", terms())).status, 403);
+    for (const action of ["approve", "reject", "return", "revoke", "cancel", "submit"]) {
+      assert.equal((await decide(id, action, "admin")).status, 403, action);
+    }
+    assert.equal((await get("admin", "/api/auth/me")).body.user.role, "admin");
+  });
   it("foreign manager IDs and foreign client IDs cannot grant or reveal data", async () => {
     assert.equal((await post("manager", "/delegations", terms({ delegatorUserId: users.manager2!.id }))).status, 403);
     assert.equal((await post("manager", "/delegations", terms({ clientGuids: [FOREIGN_LEGAL] }))).status, 403);
