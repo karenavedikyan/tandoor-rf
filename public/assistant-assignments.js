@@ -28,17 +28,20 @@
       button(prefix+"-prev","Назад",data.page<=1?"disabled":"")+button(prefix+"-next","Далее",data.page*data.pageSize>=data.total?"disabled":"")+"</div></div>";
   }
   function mount() {
+    if(window.AssignmentReviews)window.AssignmentReviews.close();
     detailSeq++;
     app.className="aa";
     app.innerHTML='<nav class="aa-tabs" aria-label="Представления назначений">'+
       button("list","Назначения",'aria-pressed="'+(view==="list")+'"')+
       (["manager","coordinator"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
       (["coordinator","director"].includes(user.role)?button("activity","Активность РОА",'aria-pressed="'+(view==="activity")+'"'):"")+
+      (["manager","coordinator","director"].includes(user.role)?button("reviews",user.role==="manager"?"Оценить работу":"Оценки ассистентов",'aria-pressed="'+(view==="reviews")+'"'):"")+
       '</nav><p id="aa-status" class="aa-muted" role="status" aria-live="polite"></p><div id="aa-view"></div><div id="aa-detail"></div>'+
       '<dialog id="aa-decision" class="aa-dialog"><form id="aa-decision-form"><h2 id="aa-decision-title"></h2><p id="aa-decision-note"></p><label>Основание или комментарий<textarea id="aa-decision-reason" minlength="5" maxlength="2000" required></textarea></label><p id="aa-decision-error" class="aa-error" role="alert"></p><div class="aa-actions">'+button("close-dialog","Отмена")+'<button type="submit" class="aa-primary">Подтвердить</button></div></form></dialog>';
     app.onclick=function(ev){ var b=ev.target.closest("[data-aa]"); if(b) run(function(){return click(b.dataset.aa,b);}); };
     $("aa-decision-form").onsubmit=decisionSubmit;
-    if(view==="new") renderForm(); else renderList();
+    if(view==="reviews"&&window.AssignmentReviews)run(function(){return window.AssignmentReviews.render($("aa-view"),user);});
+    else if(view==="new") renderForm(); else renderList();
   }
   async function run(fn) { try{await fn();}catch(err){note(err.message||"Ошибка запроса.",true);} }
   function renderList() {
@@ -70,6 +73,11 @@
         return "<tr><td>"+e(d.delegator_name)+'</td><td>'+e(d.assistant_name)+"</td><td>"+d.client_count+" юрлиц</td><td>"+e(dt.formatMskDisplay(d.starts_at))+"<small>до "+e(dt.formatMskDisplay(d.ends_at))+'</small></td><td><span class="aa-tag '+(d.effective_status==="active"?"aa-tag--active":"")+'">'+e(d.effective_label)+'</span></td><td>'+button("open","Открыть",'data-id="'+e(d.id)+'"')+"</td></tr>";
       }).join("")+"</tbody></table></div>";
     $("aa-list-data").innerHTML=html+pager(data,"list");
+    if(!activity)data.items.forEach(function(d){
+      if(!d.review||!d.review.label)return;
+      var b=$("aa-list-data").querySelector('[data-id="'+d.id+'"]');
+      if(b){var cell=b.closest("tr").children[4],small=document.createElement("small");small.className="aa-review-status";small.textContent=d.review.label;cell.appendChild(small);}
+    });
   }
   function clientNames(rows) {
     if(!Array.isArray(rows))return '<p class="aa-muted">Состав клиентов ограничен правами.</p>';
@@ -89,6 +97,7 @@
       (p?'<div class="aa-note"><h3>Предложенные условия</h3><p>До решения координатора доступ приостановлен.</p><p>'+e(p.assistant_name)+" · "+e(dt.formatMskDisplay(p.starts_at))+" — "+e(dt.formatMskDisplay(p.ends_at))+"</p><p>"+e(p.basis)+"</p>"+clientNames(p.clients)+"</div>":d.returnedProposal?'<p class="aa-note">Последние изменения возвращены на уточнение. Прежние согласованные условия сохранены; возвращённые условия можно исправить и отправить снова.</p>':"")+
       '<h3>Согласованный / текущий состав</h3>'+clientNames(d.clients)+'<div class="aa-actions">'+actions+'</div>'+
       (d.history&&d.history.length?'<h3>История назначения</h3><ol class="aa-history">'+d.history.map(function(h){var s=h.snapshot;return "<li><strong>"+e(labels[h.change_type]||h.change_type)+"</strong><time>"+e(dt.formatMskDisplay(h.changed_at))+"</time><span class=\"aa-muted\">"+e(h.actor_name||"Событие прежней версии")+"</span><p>"+e(h.comment)+"</p>"+(s?'<details><summary>Условия на момент действия</summary><p>'+e(s.delegator_name)+" → "+e(s.assistant_name)+"</p><p>"+e(dt.formatMskDisplay(s.starts_at))+" — "+e(dt.formatMskDisplay(s.ends_at))+"</p>"+clientNames(s.clients)+(s.proposal?"<h3>Предложенные изменения</h3><p>"+e(s.proposal.assistant_name)+" · "+e(dt.formatMskDisplay(s.proposal.starts_at))+" — "+e(dt.formatMskDisplay(s.proposal.ends_at))+"</p>"+clientNames(s.proposal.clients):"")+"</details>":"")+"</li>";}).join("")+"</ol>":"")+"</section>";
+    if(window.AssignmentReviews)$("aa-detail").querySelector(".aa-grid").insertAdjacentHTML("afterend",window.AssignmentReviews.summary(d));
     $("aa-detail").scrollIntoView({behavior:"smooth",block:"start"});
   }
   function formTerms() {
@@ -173,6 +182,7 @@
     }catch(err){$("aa-decision-error").textContent=err.message;}finally{submit.disabled=false;}
   }
   async function click(action,b) {
+    if(action==="reviews"){editing=null;view="reviews";mount();return;}
     if(action==="new"){editing=null;view="new";mount();return;}
     if(action==="list"||action==="activity"){view=action;listPage=1;current=null;mount();return;}
     if(action==="open"){await openDetail(b.dataset.id);return;}
@@ -199,11 +209,16 @@
   shell.mountAuthenticatedShell("access-workspace",function(u,reason){
     if(reason||!u){app.className="aa";app.innerHTML='<p role="alert">Не удалось открыть назначения. Обновите страницу или войдите заново.</p>';return;}
     user=u;if(!["manager","coordinator","director","rop","assistant"].includes(u.role)){app.className="aa";app.textContent="Назначения недоступны для этой роли.";return;}
+    window.AssignmentWorkspace={user:u,request:request,formatDate:dt.formatMskDisplay,
+      reviews:function(){view="reviews";mount();},detail:openDetail,note:note};
     view=u.role==="director"?"activity":"list";listStatus=u.role==="coordinator"?"queue":"";
     run(async function(){
       if(["manager","coordinator"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
       if(u.role==="coordinator")managers=(await request("/coordinator-managers")).managers;
-      mount();var id=new URLSearchParams(window.location.search).get("assignment");if(id)await openDetail(id);
+      var params=new URLSearchParams(window.location.search);
+      if(["manager","coordinator","director"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
+      mount();var id=params.get("assignment");if(id)await openDetail(id);
+      var reviewId=params.get("review");if(reviewId&&/^[0-9a-f-]{36}$/i.test(reviewId)&&window.AssignmentReviews)await window.AssignmentReviews.open(reviewId);
     });
   });
 })();

@@ -16,7 +16,8 @@ export async function assignmentSchemaReady(): Promise<boolean> {
   return knownReady;
 }
 /** Fixed additive migration only. No account/1C edits and no arbitrary SQL input. */
-export async function prepareAssignmentSchema(actorId: string, confirm: unknown) {
+export async function prepareAssignmentSchema(actorId: string, confirm: unknown, filename: string = FILENAME) {
+  if (![FILENAME, "051_assistant_assignment_reviews.sql"].includes(filename)) throw new AccessServiceError("Неизвестная миграция.", "VALIDATION");
   if (confirm !== true) throw new AccessServiceError("Подтвердите подготовку схемы назначений.", "VALIDATION");
   return withTransaction(async c => {
     const actor = await getActiveUser(c, actorId);
@@ -36,7 +37,7 @@ export async function prepareAssignmentSchema(actorId: string, confirm: unknown)
     const known = new Set(applied.rows.map(r => r.filename));
     const pending = fs.readdirSync(dir).filter(n => n.endsWith(".sql") && !known.has(n)).sort();
     if (!pending.length) return { ready: true, applied: false };
-    if (pending.length !== 1 || pending[0] !== FILENAME) {
+    if (pending.length !== 1 || pending[0] !== filename) {
       throw new AccessServiceError("Есть другие неприменённые миграции. Подготовка запрещена.", "CONFLICT");
     }
     const counts = async () => {
@@ -49,16 +50,19 @@ export async function prepareAssignmentSchema(actorId: string, confirm: unknown)
         (SELECT COUNT(*)::int FROM delegation_change_history) AS history`)).rows[0]!;
       const exists = (await c.query("SELECT to_regclass('public.assistant_assignment_notifications') IS NOT NULL AS present")).rows[0]?.present;
       base.notifications = exists ? (await c.query("SELECT COUNT(*)::int AS n FROM assistant_assignment_notifications")).rows[0]!.n : 0;
+      const reviewExists = (await c.query("SELECT to_regclass('public.assistant_assignment_reviews') IS NOT NULL AS present")).rows[0]?.present;
+      base.reviews = reviewExists ? (await c.query("SELECT COUNT(*)::int AS n FROM assistant_assignment_reviews")).rows[0]!.n : 0;
       return base;
     };
     const before = await counts();
-    await c.query(fs.readFileSync(path.join(dir, FILENAME), "utf8"));
+    await c.query(fs.readFileSync(path.join(dir, filename), "utf8"));
     const after = await counts();
     if (JSON.stringify(before) !== JSON.stringify(after)) throw new AccessServiceError("Количество записей изменилось. Транзакция отменена.", "CONFLICT");
-    await c.query("INSERT INTO schema_migrations(filename) VALUES($1)", [FILENAME]);
+    await c.query("INSERT INTO schema_migrations(filename) VALUES($1)", [filename]);
     await c.query(`INSERT INTO access_audit_log(actor_user_id,action,entity_type,entity_id,after_json,basis)
-      VALUES($1,'ASSIGNMENT_SCHEMA_READY','user',$1,$2::jsonb,$3)`,
-    [actorId, JSON.stringify({ migration: FILENAME, before, after }), "Explicit preparation: assistant assignments, internal notifications only"]);
+      VALUES($1,$2,'user',$1,$3::jsonb,$4)`,
+    [actorId, filename === FILENAME ? "ASSIGNMENT_SCHEMA_READY" : "ASSIGNMENT_REVIEW_SCHEMA_READY",
+      JSON.stringify({ migration: filename, before, after }), "Explicit preparation: assistant assignments, internal notifications only"]);
     return { ready: true, applied: true, before, after };
   });
 }

@@ -14,6 +14,7 @@ import { isExchangeV3Active } from "../clients/v3/list";
 import { v3EntityAssignmentScope } from "../clients/v3/access-scope";
 import { v3JsonManagerField } from "../clients/v3/json-paths";
 import type { ActiveUserRow } from "./types";
+import { assignmentReviewStates, ensureReviewNotifications, pendingAssignmentReviews } from "./assignment-reviews";
 
 type Row = Record<string, any>;
 export type AssignmentActor = { id: string; role: string };
@@ -42,7 +43,7 @@ function requireAuthor(user: AssignmentActor, d: Row): void {
 function requireCoordinator(user: AssignmentActor): void {
   if (user.role !== "coordinator") fail("Решения принимает только координатор, руководитель ассистентов.", "FORBIDDEN");
 }
-async function assignmentClientsAccess(input: {
+export async function assignmentClientsAccess(input: {
   actorUserId: string; actorRole: string; delegatorUserId: string; entries: DelegationClientEntry[];
 }): Promise<DelegationClientsAccess> {
   if (!(await isExchangeV3Active())) return resolveDelegationClientsAccess(input);
@@ -307,7 +308,9 @@ export async function listAssignments(actor: AssignmentActor, input: { page: num
     EXISTS(SELECT 1 FROM delegation_change_requests r WHERE r.delegation_id=d.id AND r.status='pending_approval') AS pending_change
     ${from} ORDER BY d.created_at DESC,d.id DESC LIMIT 30 OFFSET $${params.length + 1}`, [...params, (input.page - 1) * 30]);
   const coordinators = await query("SELECT COUNT(*)::int AS count FROM users WHERE role='coordinator' AND status='active'");
-  return { items: result.rows.map(presentStatus), total: count.rows[0]!.total, page: input.page, pageSize: 30, coordinatorCount: coordinators.rows[0]!.count };
+  const states = await assignmentReviewStates(actor, result.rows.map(r => String(r.id)));
+  return { items: result.rows.map(r => ({ ...presentStatus(r), ...(states.has(String(r.id)) ? { review: states.get(String(r.id)) } : {}) })),
+    total: count.rows[0]!.total, page: input.page, pageSize: 30, coordinatorCount: coordinators.rows[0]!.count };
 }
 function presentStatus(row: Row): Row {
   const result = enrichDelegationRow(row);
@@ -355,6 +358,8 @@ export async function assignmentDetail(actor: AssignmentActor, id: string) {
     d.pending_change = Boolean(d.proposal);
     d.canAuthor = isAuthor(actor, d);
     d.canReview = actor.role === "coordinator";
+    const reviewStates = await assignmentReviewStates(actor, [id], c);
+    if (reviewStates.has(id)) d.review = reviewStates.get(id);
     return presentStatus(d);
   });
 }
@@ -459,7 +464,8 @@ export async function assignmentPicker(actor: AssignmentActor, managerId: string
   return { items: items.rows, total: count.rows[0]!.total, page: input.page, pageSize: 50, month, months: months.rows.map(r => r.month) };
 }
 
-export async function assignmentNotifications(actor: AssignmentActor, page = 1) {
+export async function assignmentNotifications(actor: AssignmentActor, page = 1, unreadOnly = false) {
+  await ensureReviewNotifications(actor);
   const params: unknown[] = [];
   const where = ["manager", "assistant", "coordinator", "director"].includes(actor.role) ? visibility(actor, params) : "FALSE";
   params.push(actor.id);
@@ -486,10 +492,15 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1) 
     [actor.id, d.id, d.event_key, d.kind, titles[d.kind],
       "Назначение №" + d.id.slice(0, 8) + ". Окончание: " + new Date(d.ends_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) + " МСК."]);
   }
-  const items = await query(`SELECT id,delegation_id,kind,title,message,created_at,read_at FROM assistant_assignment_notifications
-    WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET $2`, [actor.id, (page - 1) * 30]);
-  const count = await query(`SELECT COUNT(*)::int AS total,COUNT(*) FILTER(WHERE read_at IS NULL)::int AS unread
-    FROM assistant_assignment_notifications WHERE user_id=$1`, [actor.id]);
+  // A later role change must not expose old private review messages to an assistant/ROP.
+  const privateScope = actor.role === "manager"
+    ? `(n.kind IN('review_required','review_submitted') AND EXISTS(SELECT 1 FROM delegations rd WHERE rd.id=n.delegation_id AND rd.delegator_user_id=$1))`
+    : ["coordinator", "director"].includes(actor.role) ? `n.kind='review_received'` : "FALSE";
+  const inboxWhere = `n.user_id=$1 AND (n.kind NOT IN('review_required','review_submitted','review_received') OR ${privateScope})`;
+  const items = await query(`SELECT n.id,n.delegation_id,n.kind,n.title,n.message,n.created_at,n.read_at FROM assistant_assignment_notifications n
+    WHERE ${inboxWhere}${unreadOnly ? " AND n.read_at IS NULL" : ""} ORDER BY n.created_at DESC,n.id DESC LIMIT 30 OFFSET $2`, [actor.id, (page - 1) * 30]);
+  const count = await query(`SELECT COUNT(*) FILTER(WHERE ${unreadOnly ? "read_at IS NULL" : "TRUE"})::int AS total,
+    COUNT(*) FILTER(WHERE read_at IS NULL)::int AS unread FROM assistant_assignment_notifications n WHERE ${inboxWhere}`, [actor.id]);
   const boundaries = actor.role === "assistant" ? await query(`SELECT MIN(t.at) AS next FROM delegations d
     CROSS JOIN LATERAL (VALUES(d.starts_at),(d.ends_at)) t(at)
     WHERE d.assistant_user_id=$1 AND d.status='active' AND d.revoked_at IS NULL AND t.at>NOW()`, [actor.id]) : null;
@@ -497,7 +508,9 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1) 
     d.id::text||':'||d.row_version||':'||(d.starts_at<=NOW() AND d.ends_at>NOW())::text||':'||
     EXISTS(SELECT 1 FROM delegation_change_requests r WHERE r.delegation_id=d.id AND r.status='pending_approval')::text,
     ',' ORDER BY d.id),'')) AS value FROM delegations d WHERE d.assistant_user_id=$1`, [actor.id]) : null;
+  const pendingReviews = await pendingAssignmentReviews(actor);
   return { items: items.rows, ...count.rows[0], page, pageSize: 30, serverNow: new Date().toISOString(),
+    reviewPendingCount: pendingReviews.count, reviewPendingAssignmentId: pendingReviews.assignmentId, nextReviewDueAt: pendingReviews.nextDueAt,
     nextScopeChangeAt: boundaries?.rows[0]?.next || null, scopeRevision: revision?.rows[0]?.value || null };
 }
 export async function readAssignmentNotifications(actor: AssignmentActor, id?: string) {
