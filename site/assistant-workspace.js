@@ -2,7 +2,7 @@
   "use strict";
   // Self-contained synthetic workflow. No API calls, storage, real identities or rights.
   const routes = new Set(["handover", "assistant", "coordinator", "assistant-clients", "assistant-tasks"]);
-  const roles = { manager:"Менеджер", coordinator:"Координатор", rop:"РОП", director:"Директор", assistant:"Ассистент" };
+  const roles = { manager:"Менеджер", coordinator:"РОА / координатор", rop:"РОП", director:"Директор", assistant:"Ассистент" };
   const people = {
     m1:{name:"Алексей Морозов",team:"Юг"}, m2:{name:"Дмитрий Петров",team:"Юг"},
     m3:{name:"Иван Орлов",team:"Восток"}, a1:{name:"Анна Белова"}, a2:{name:"Павел Черняк"},
@@ -113,7 +113,7 @@
   const isAssistant=()=>state.role==="assistant";
   const isWriter=()=>["manager","coordinator"].includes(state.role);
   function decisionSnapshot(a,value=a){return {manager:a.manager,assistant:value.assistant,clients:[...value.clients],start:value.start,end:value.end};}
-  function history(a,text,value=a,kind="") { a.history.push({at:state.clock,seq:++state.eventSeq,actor:actor(),actorId:state.person,role:state.role,kind:kind||(state.role==="coordinator"?"request":""),text,snapshot:decisionSnapshot(a,value)}); }
+  function history(a,text,value=a,kind="") { a.history.push({at:state.clock,seq:++state.eventSeq,actor:actor(),actorId:state.person,role:state.role,kind:kind||(state.role==="coordinator"?"request":""),text,snapshot:decisionSnapshot(a,value)}); document.dispatchEvent(new CustomEvent("assistant:event",{detail:{id:a.id,kind:kind||"request",text}})); }
   function notify(text) {state.toast=text;}
   function empty(title,text,button="") {return `<section class="as-panel as-empty"><h2>${E(title)}</h2><p>${E(text)}</p>${button}</section>`;}
   function button(action,text,attrs="",cls="") {return `<button type="button" data-as-action="${action}" ${attrs} class="${cls}">${text}</button>`;}
@@ -124,9 +124,9 @@
   function historyReplace(hash) {window.history.replaceState(null,"",hash);}
   function tabs() {
     if(isAssistant()) return [["clients","Клиенты"],["list","Условия доступа"],["archive","История доступа"]];
-    if(state.role==="coordinator")return [["review","На согласовании"],["list","Все назначения"],["create","Создать назначение"],["load","Доступы по датам"],["audit","История моей работы"]];
-    if(state.role==="manager") return [["list","Мои назначения"],["create","Создать назначение"]];
-    if(state.role==="director")return [["audit","Активность координатора"],["list","Все назначения"],["load","Доступы по датам"]];
+    if(state.role==="coordinator")return [["review","На согласовании"],["list","Все назначения"],["create","Создать назначение"],["load","Доступы по датам"],["audit","История моей работы"],["ratings","Оценки ассистентов"]];
+    if(state.role==="manager") return [["list","Мои назначения"],["create","Создать назначение"],["ratings","Оценить работу"]];
+    if(state.role==="director")return [["audit","Активность координатора"],["list","Все назначения"],["load","Доступы по датам"],["ratings","Оценки ассистентов"]];
     return [["list","Назначения команды"],["load","Доступы по датам"]];
   }
   function scopeText() {
@@ -161,7 +161,7 @@
       <div class="as-scope"><span><strong>${E(actor())}</strong> · ${roles[state.role]}</span><span>${E(scopeText())}</span></div>
       <nav class="as-tabs" aria-label="Сценарии назначений">${tabs().map(([k,v])=>button("view",v,`data-view="${k}" ${state.view===k?'aria-current="page"':""}`)).join("")}</nav>
       ${state.toast?`<div class="as-toast" role="status">${E(state.toast)}</div>`:""}
-      <div id="as-content">${state.client?clientView():state.detail?detailView():state.view==="audit"?auditView():state.view==="create"?formView():state.view==="load"?loadView():state.view==="clients"?clientsView():isAssistant()?assistantView():listView()}</div>
+      <div id="as-content">${state.client?clientView():state.detail?detailView():state.view==="ratings"?(window.AssistantFeedback?.view()||""):state.view==="audit"?auditView():state.view==="create"?formView():state.view==="load"?loadView():state.view==="clients"?clientsView():isAssistant()?assistantView():listView()}</div>
       <details class="as-clock"><summary>Демо-время: ${dt(state.clock)} МСК · проверить начало и окончание доступа</summary><div><label>Дата и время в Москве<input id="as-clock-value" type="datetime-local" value="${local(state.clock)}"></label>${button("clock","Применить время")}${button("clock-reset","27 октября, 11:00")}</div><p class="as-muted">Начало включительно, окончание не включительно. Изменение времени влияет только на этот прототип.</p></details>
       <p class="as-muted">Ролевой просмотр является демонстрацией интерфейса, а не системой авторизации. Другие разделы прототипа остаются самостоятельными примерами.</p>
       ${state.modal?modalView():""}
@@ -176,6 +176,7 @@
       requestAnimationFrame(()=>(document.querySelector("#as-dialog-reason")||document.querySelector("[data-as-action=modal-cancel]"))?.focus());
     } else document.body.style.overflow="";
     writeUrl();
+    document.dispatchEvent(new CustomEvent("assistant:paint"));
   }
   function listView() {
     let rows=visible().filter(a=>state.view!=="review" || a.status==="pending" || a.change);
@@ -591,7 +592,10 @@
     if(routes.has(current))renderWorkspace();else{state.modal=null;document.body.style.overflow="";}
   };
   // Expose only synthetic model helpers to the local regression harness.
-  window.AssistantPrototype={effective,availableClients,roles};
+  window.AssistantPrototype={effective,availableClients,roles,state,people,person,byClient,assignments:()=>assignments,render:renderWorkspace,
+    routeActive:()=>routes.has(current),initialClock,dt,
+    open:id=>{const a=assignments.find(x=>x.id===id);if(!a||!canSee(a))return false;state.detail=id;state.client=null;state.form=null;renderWorkspace();return true;},
+    go:view=>{state.detail=null;state.client=null;state.form=null;state.view=view;renderWorkspace();}};
   window.AssistantDirectory={
     active:()=>routes.has(current)&&isAssistant()&&state.view==="clients"&&!state.detail,
     rows:entity=>{

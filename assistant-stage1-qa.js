@@ -61,7 +61,7 @@ var STAGE1_RESULT=await(async function(){
   await page.locator("[data-as-action=client]").click();
   await clock("2026-10-31T18:00");
   ok(await page.locator(".as-client-row").count()===0&&!await page.locator(".as-card-tabs").count(),"exact end closes client card and directory");
-  await role("Координатор");await view("Создать назначение");
+  await role("РОА / координатор");await view("Создать назначение");
   ok(await page.locator("[data-as-field=manager] option").count()===2,"coordinator can assign only own team");
   await view("Назначения команды");await open("Н-101");
   ok(!await page.getByRole("button",{name:"Согласовать",exact:true}).count(),"coordinator cannot approve");

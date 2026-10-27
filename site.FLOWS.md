@@ -1,5 +1,36 @@
 # Main flows
 
+## Notifications and completed-assignment feedback
+- Preserve manager picker, coordinator-only decisions, director audit and assistant
+  41/20-client shared directory, cards, sales, full screen and both scroll axes.
+- Every role has a header bell, personal unread count, notification drawer,
+  all/unread filters, individual/read-all controls and contextual navigation.
+- Role/person changes isolate inbox/read flags. ROP receives information only,
+  never approval requests. Assistant never sees scores, comments or rating notices.
+- Assignment submit/decision/change/revocation and demo-time boundaries generate
+  role-appropriate messages without duplicates; reset restores synthetic fixtures.
+- Only the assigning manager may rate a completed assignment, once, 1–5 and
+  a meaningful comment. Active, future, rejected/cancelled and paused assignments
+  cannot be rated. Previously active revoked access may be rated after revocation.
+- ROA and director have realistic multi-assistant review summaries, score/assistant/
+  manager/search filters and full comments/period/client details. Manager sees own
+  submissions only. ROP/assistant have no rating controls or results.
+- Test invalid and duplicate submission, low-score attention, contextual links,
+  privacy through role switching, read/unread cycles, time advancement and reset.
+- Check 1440px/375px, light/dark, short-height and desktop/mobile transitions,
+  readable labels, independent drawer/table scroll, Escape and focus return.
+- Prototype only: no production changes, APIs, external channels or persistence.
+- Feedback acceptance: 44 browser assertions cover role privacy, immutable reviews,
+  contextual notification links, read states, reset, expiry reminders and deduplication.
+  Revoked-before-start periods stay unrateable after clock advancement; actually
+  started revoked periods use the real closing date in the review snapshot.
+- Visual review: desktop/mobile, light/dark, inbox, editable/read-only review,
+  short desktop window; no unexpected page overflow or page errors. Secondary
+  labels in the review overview measured at least 5.52:1 light and 8.21:1 dark.
+- Header bell also checked outside assignments in the main client directory.
+- Synthetic only: no persistent ratings, real employee messages, external delivery,
+  backend authorization or production deployment are asserted by this prototype.
+
 ## Role correction: coordinator is the head of assistants
 - User clarified these are ONE role, not two people. Canonical role `coordinator`
   now owns the global review queue, approvals/returns/rejections/revocations,
