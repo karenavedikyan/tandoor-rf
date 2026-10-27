@@ -1,5 +1,21 @@
 # Main flows
 
+## Role correction: coordinator is the head of assistants
+- User clarified these are ONE role, not two people. Canonical role `coordinator`
+  now owns the global review queue, approvals/returns/rejections/revocations,
+  assignment preparation, access overview and work history.
+- Remove the duplicate assistant-lead button/person. Old `assistant_lead` links
+  alias to coordinator. One synthetic coordinator is used consistently in all
+  sample decisions, new history events and the director journal.
+- Coordinator covers all territories, not just the former South-team sample.
+  Managers remain limited to their own clients; director/ROP stay read-only.
+- Coordinator-created drafts are visible to their author, not treated as submitted
+  review requests. Director journal also includes coordinator's preparation and
+  submission activity, separately from decision types.
+- Latest acceptance supersedes the earlier split-role design below.
+- Verified: 24 coordinator/decision/audit assertions, 46 shared-directory scope
+  assertions and 27 assignment-picker assertions passed without page errors.
+
 ## Current approval policy: single head of assistants
 - Supersedes every earlier ROP/director-approval scenario below. All submitted
   requests and amendments from every territory enter the assistant lead's queue.

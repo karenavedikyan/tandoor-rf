@@ -7,7 +7,8 @@ var LEAD_RESULT=await(async()=>{
   const act=k=>page.locator(`[data-as-action="${k}"]`);
   async function decision(name,reason){await page.getByRole("button",{name,exact:true}).click();if(reason)await page.locator("#as-dialog-reason").fill(reason);await act("modal-confirm").click();}
   await page.setViewportSize({width:1440,height:1000});
-  await page.goto("http://127.0.0.1:4317/#handover?as_role=assistant_lead");await page.reload();
+  await page.goto("http://127.0.0.1:4317/#handover?as_role=coordinator");await page.reload();
+  ok(await page.locator('.as-roles [data-role="coordinator"]').count()===1&&!await page.locator('.as-roles [data-role="assistant_lead"]').count(),"coordinator and assistant lead are one role, no duplicate button");
   ok(await page.locator(".as-table tbody tr").count()===3,"lead has one global queue with two requests and one amendment");
   ok(await page.locator(".as-table tbody tr").filter({hasText:"Н-107"}).count()===1,"other-territory request reaches same lead");
   await view("Все назначения");
@@ -23,21 +24,21 @@ var LEAD_RESULT=await(async()=>{
   ok(!await page.locator('[data-as-action="decision"]').count(),"director cannot approve, reject or return pending request");
   await act("back").click();await open("Н-102");
   ok(!await page.locator('[data-as-action="decision"]').count(),"director cannot revoke active assignment");
-  await role("Руководитель ассистентов");await open("Н-107");await decision("Согласовать","Подтверждена нагрузка по восточной территории.");
+  await role("Координатор");await open("Н-107");await decision("Согласовать","Подтверждена нагрузка по восточной территории.");
   await role("Ассистент");await page.locator("[data-as-person]").selectOption("a2");
   ok(Number(await page.locator(".x6-count b").innerText())===21,"cross-territory approval grants only its single client");
-  await role("Руководитель ассистентов");await open("Н-101");await decision("Вернуть на уточнение","Уточните период временного доступа.");
+  await role("Координатор");await open("Н-101");await decision("Вернуть на уточнение","Уточните период временного доступа.");
   await role("Менеджер");await open("Н-101");
   ok((await page.locator("#as-content").innerText()).includes("Нужно уточнение")&&await page.getByRole("button",{name:"Редактировать",exact:true}).count()===1,"lead return reaches request author for editing");
   await page.getByRole("button",{name:"Редактировать",exact:true}).click();
   await page.locator('[data-as-field="reason"]').fill("Уточнённое назначение на период командировки.");
   await act("submit").click();
-  await role("Руководитель ассистентов");await open("Н-101");await decision("Отклонить","Нагрузка ассистента уже заполнена.");
+  await role("Координатор");await open("Н-101");await decision("Отклонить","Нагрузка ассистента уже заполнена.");
   ok((await page.locator("#as-content").innerText()).includes("Отклонено"),"only lead rejection finalizes resubmitted request");
   await act("back").click();await open("Н-108");await decision("Отклонить изменения","Сохраняем доступ Анны, перевод Павлу не согласован.");
   await role("Ассистент");
   ok(Number(await page.locator(".x6-count b").innerText())===42,"rejected amendment restores previous approved scope");
-  await role("Руководитель ассистентов");await view("Все назначения");await open("Н-102");await decision("Отозвать доступ","Менеджер вернулся, доступ больше не нужен.");
+  await role("Координатор");await view("Все назначения");await open("Н-102");await decision("Отозвать доступ","Менеджер вернулся, доступ больше не нужен.");
   await role("Ассистент");
   ok(Number(await page.locator(".x6-count b").innerText())===41,"lead revocation removes exactly one client immediately");
   await role("Директор");
@@ -67,6 +68,8 @@ var LEAD_RESULT=await(async()=>{
   ok(await page.locator(".as-audit-table").count()===1&&!await page.locator('[data-as-action="decision"]').count(),"forged director review URL still opens read-only audit");
   await page.goto("http://127.0.0.1:4317/#handover?as_role=rop&as_view=audit");
   ok(!await page.locator(".as-audit-table").count(),"ROP direct audit URL cannot expose lead-wide activity");
+  await page.goto("http://127.0.0.1:4317/#handover?as_role=assistant_lead&as_person=l1");
+  ok(await page.locator('[data-as-person]').inputValue()==="c1"&&await page.locator('.as-table tbody tr').count()===3,"legacy lead link maps to coordinator and same global queue");
   return {passed:checks.length,checks};
 })();
 console.log(JSON.stringify(LEAD_RESULT,null,2));

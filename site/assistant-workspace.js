@@ -2,12 +2,12 @@
   "use strict";
   // Self-contained synthetic workflow. No API calls, storage, real identities or rights.
   const routes = new Set(["handover", "assistant", "coordinator", "assistant-clients", "assistant-tasks"]);
-  const roles = { manager:"Менеджер", coordinator:"Координатор", assistant_lead:"Руководитель ассистентов", rop:"РОП", director:"Директор", assistant:"Ассистент" };
+  const roles = { manager:"Менеджер", coordinator:"Координатор", rop:"РОП", director:"Директор", assistant:"Ассистент" };
   const people = {
     m1:{name:"Алексей Морозов",team:"Юг"}, m2:{name:"Дмитрий Петров",team:"Юг"},
     m3:{name:"Иван Орлов",team:"Восток"}, a1:{name:"Анна Белова"}, a2:{name:"Павел Черняк"},
     r1:{name:"Елена Волкова",team:"Юг"}, r2:{name:"Максим Серов",team:"Восток"},
-    c1:{name:"Наталья Савельева",team:"Юг"}, d1:{name:"Андрей Власов"}, l1:{name:"Ольга Смирнова"},
+    c1:{name:"Наталья Савельева"}, d1:{name:"Андрей Власов"},
   };
   const clients = [
     ["c1","Южный дом","Краснодар","m1",2,2],["c2","Дверной квартал","Армавир","m1",1,2],
@@ -54,7 +54,7 @@
   }
   const state = {role:"manager",person:"m1",view:"list",clock:initialClock,query:"",filter:"all",detail:null,client:null,clientTab:"overview",legal:"",form:null,modal:null,toast:"",next:110,eventSeq:0,audit:{q:"",kind:"",assistant:"",from:"",to:""}};
   let assignments = [];
-  const rolePerson = {manager:"m1",coordinator:"c1",assistant_lead:"l1",rop:"r1",director:"d1",assistant:"a1"};
+  const rolePerson = {manager:"m1",coordinator:"c1",rop:"r1",director:"d1",assistant:"a1"};
   function seed() {
     const make=(id,manager,assistant,ids,start,end,status,reason)=>({
       id,manager,assistant,clients:ids,start:T(start),end:T(end),status,reason,createdBy:manager,
@@ -76,12 +76,12 @@
       make("Н-093","m2","a2",volume.m2.slice(8),"2026-10-26T09:00","2026-10-31T18:00","approved","Рабочая группа клиентов на период отсутствия менеджера."),
     ];
     assignments.filter(a=>["approved","revoked"].includes(a.status)).forEach(a=>a.history.push({
-      at:Math.min(a.start-3600000,initialClock-10800000),actor:person("l1"),actorId:"l1",role:"assistant_lead",kind:"approve",
+      at:Math.min(a.start-3600000,initialClock-10800000),actor:person("c1"),actorId:"c1",role:"coordinator",kind:"approve",
       text:"Назначение согласовано руководителем ассистентов.",snapshot:decisionSnapshot(a)
     }));
-    assignments[4].history.push({at:initialClock-7200000,actor:person("l1"),actorId:"l1",role:"assistant_lead",kind:"reject",text:"Отклонено: согласуйте нагрузку ассистента.",snapshot:decisionSnapshot(assignments[4])});
-    assignments[4].history.push({at:initialClock-18000000,actor:person("l1"),actorId:"l1",role:"assistant_lead",kind:"return",text:"Возвращено на уточнение: укажите цель и объём временного доступа.",snapshot:decisionSnapshot(assignments[4])});
-    assignments[5].history.push({at:initialClock-3600000,actor:person("l1"),actorId:"l1",role:"assistant_lead",kind:"revoke",text:"Доступ отозван: менеджер вернулся раньше срока.",snapshot:decisionSnapshot(assignments[5])});
+    assignments[4].history.push({at:initialClock-7200000,actor:person("c1"),actorId:"c1",role:"coordinator",kind:"reject",text:"Отклонено: согласуйте нагрузку ассистента.",snapshot:decisionSnapshot(assignments[4])});
+    assignments[4].history.push({at:initialClock-18000000,actor:person("c1"),actorId:"c1",role:"coordinator",kind:"return",text:"Возвращено на уточнение: укажите цель и объём временного доступа.",snapshot:decisionSnapshot(assignments[4])});
+    assignments[5].history.push({at:initialClock-3600000,actor:person("c1"),actorId:"c1",role:"coordinator",kind:"revoke",text:"Доступ отозван: менеджер вернулся раньше срока.",snapshot:decisionSnapshot(assignments[5])});
     assignments[7].change={assistant:"a2",clients:["c6"],start:T("2026-10-26T09:00"),end:T("2026-10-30T18:00"),reason:"Передать замещение Павлу: Анна перегружена."};
     assignments[7].history.push({at:initialClock-1800000,actor:person("m1"),text:"Предложено изменение. Доступ приостановлен до решения руководителя."});
   }
@@ -99,13 +99,13 @@
   const teamOf=id=>people[id]?.team;
   function canSee(a) {
     if(state.role==="director") return true;
-    if(state.role==="assistant_lead") return a.status!=="draft";
+    if(state.role==="coordinator") return a.status!=="draft"||a.createdBy===state.person;
     if(state.role==="assistant") return a.assistant===state.person && ["approved","revoked"].includes(a.status);
     if(state.role==="manager") return a.manager===state.person;
     return teamOf(a.manager)===teamOf(state.person);
   }
   const visible=()=>assignments.filter(canSee);
-  const canReview=a=>a && state.role==="assistant_lead";
+  const canReview=a=>a && state.role==="coordinator";
   const canAuthor=a=>a && (state.role==="manager"&&a.manager===state.person || state.role==="coordinator"&&a.createdBy===state.person);
   const canRevoke=a=>a && (canAuthor(a)||canReview(a));
   const active=a=>a && canSee(a)&&effective(a)==="active";
@@ -113,7 +113,7 @@
   const isAssistant=()=>state.role==="assistant";
   const isWriter=()=>["manager","coordinator"].includes(state.role);
   function decisionSnapshot(a,value=a){return {manager:a.manager,assistant:value.assistant,clients:[...value.clients],start:value.start,end:value.end};}
-  function history(a,text,value=a,kind="") { a.history.push({at:state.clock,seq:++state.eventSeq,actor:actor(),actorId:state.person,role:state.role,kind,text,snapshot:decisionSnapshot(a,value)}); }
+  function history(a,text,value=a,kind="") { a.history.push({at:state.clock,seq:++state.eventSeq,actor:actor(),actorId:state.person,role:state.role,kind:kind||(state.role==="coordinator"?"request":""),text,snapshot:decisionSnapshot(a,value)}); }
   function notify(text) {state.toast=text;}
   function empty(title,text,button="") {return `<section class="as-panel as-empty"><h2>${E(title)}</h2><p>${E(text)}</p>${button}</section>`;}
   function button(action,text,attrs="",cls="") {return `<button type="button" data-as-action="${action}" ${attrs} class="${cls}">${text}</button>`;}
@@ -124,22 +124,22 @@
   function historyReplace(hash) {window.history.replaceState(null,"",hash);}
   function tabs() {
     if(isAssistant()) return [["clients","Клиенты"],["list","Условия доступа"],["archive","История доступа"]];
-    if(isWriter()) return [["list",state.role==="manager"?"Мои назначения":"Назначения команды"],["create","Создать назначение"],...(state.role==="coordinator"?[["load","Доступы по датам"]]:[])];
-    if(state.role==="assistant_lead")return [["review","На согласовании"],["list","Все назначения"],["load","Доступы по датам"],["audit","История решений"]];
-    if(state.role==="director")return [["audit","Активность руководителя"],["list","Все назначения"],["load","Доступы по датам"]];
+    if(state.role==="coordinator")return [["review","На согласовании"],["list","Все назначения"],["create","Создать назначение"],["load","Доступы по датам"],["audit","История моей работы"]];
+    if(state.role==="manager") return [["list","Мои назначения"],["create","Создать назначение"]];
+    if(state.role==="director")return [["audit","Активность координатора"],["list","Все назначения"],["load","Доступы по датам"]];
     return [["list","Назначения команды"],["load","Доступы по датам"]];
   }
   function scopeText() {
-    return {manager:"Только ваши клиенты. Все заявки направляются руководителю ассистентов.",coordinator:"Только порученная команда «Юг». Заявку согласовывает руководитель ассистентов.",assistant_lead:"Единая очередь заявок всех территорий. Согласование назначений и изменений, контроль доступа и нагрузки.",rop:"Просмотр назначений своей команды. Согласование выполняет руководитель ассистентов; от РОПа действий не требуется.",director:"Контроль всей активности руководителя ассистентов и всех назначений. Только просмотр, без согласования.",assistant:"Только клиенты из действующих согласованных назначений. Без назначения база пуста."}[state.role];
+    return {manager:"Только ваши клиенты. Все заявки направляются координатору — руководителю ассистентов.",coordinator:"Координатор — руководитель ассистентов. Единая очередь всех территорий, согласование назначений и изменений, контроль доступа и нагрузки.",rop:"Просмотр назначений своей команды. Согласование выполняет координатор; от РОПа действий не требуется.",director:"Контроль всей активности координатора — руководителя ассистентов. Только просмотр, без согласования.",assistant:"Только клиенты из действующих согласованных назначений. Без назначения база пуста."}[state.role];
   }
   function personOptions() {
-    const ids={manager:["m1","m2"],coordinator:["c1"],assistant_lead:["l1"],rop:["r1","r2"],director:["d1"],assistant:["a1","a2"]}[state.role];
+    const ids={manager:["m1","m2"],coordinator:["c1"],rop:["r1","r2"],director:["d1"],assistant:["a1","a2"]}[state.role];
     return ids.map(id=>`<option value="${id}" ${state.person===id?"selected":""}>${E(person(id))}${teamOf(id)?" · "+teamOf(id):""}</option>`).join("");
   }
   function renderWorkspace() {
     if(!routes.has(current)) return;
-    if(state.view==="review"&&state.role!=="assistant_lead")state.view=defaultView(state.role);
-    if(state.view==="audit"&&!["assistant_lead","director"].includes(state.role))state.view="list";
+    if(state.view==="review"&&state.role!=="coordinator")state.view=defaultView(state.role);
+    if(state.view==="audit"&&!["coordinator","director"].includes(state.role))state.view="list";
     if(state.detail&&!canSee(assignments.find(a=>a.id===state.detail)||{})) state.detail=null;
     if(isAssistant()&&state.client&&!availableClients().includes(state.client)) state.client=null;
     document.title="Тандор · Назначения ассистентам · "+roles[state.role];
@@ -191,9 +191,9 @@
     if(!rows.length)return empty("Назначений не найдено","Измените поиск или статус. Руководитель ассистентов видит заявки всех территорий.");
     return `<div class="as-table-scroll" tabindex="0" aria-label="Таблица назначений, можно прокручивать"><table class="as-table"><thead><tr><th>Назначение</th><th>Менеджер → ассистент</th><th>Период, МСК</th><th>Клиенты</th><th>Статус</th><th></th></tr></thead><tbody>${rows.map(a=>`<tr><td><strong>${a.id}</strong><small>Команда «${teamOf(a.manager)}»</small></td><td><strong>${E(person(a.manager))}</strong><small>${E(person(a.assistant))}</small></td><td>${dt(a.start)}<small>до ${dt(a.end)}</small></td><td>${a.clients.length}<small>${E(a.clients.map(id=>byClient(id).name).join(", "))}</small></td><td>${badge(a)}</td><td>${button("detail","Открыть",`data-id="${a.id}"`)}</td></tr>`).join("")}</tbody></table></div>`;
   }
-  const auditKinds={approve:"Согласование",reject:"Отклонение",return:"Возврат на уточнение",revoke:"Отзыв доступа"};
+  const auditKinds={approve:"Согласование",reject:"Отклонение",return:"Возврат на уточнение",revoke:"Отзыв доступа",request:"Работа с заявкой"};
   function auditEvents(){
-    return assignments.flatMap(a=>a.history.filter(h=>h.role==="assistant_lead"&&h.kind in auditKinds).map(h=>({a,h,s:h.snapshot||decisionSnapshot(a)})))
+    return assignments.flatMap(a=>a.history.filter(h=>h.role==="coordinator"&&h.kind in auditKinds).map(h=>({a,h,s:h.snapshot||decisionSnapshot(a)})))
       .sort((a,b)=>b.h.at-a.h.at||(b.h.seq||0)-(a.h.seq||0));
   }
   function filteredAudit(){
@@ -208,9 +208,9 @@
     ${rows.length?`<div class="as-table-scroll" tabindex="0" aria-label="Журнал руководителя ассистентов, можно прокручивать"><table class="as-table as-audit-table"><thead><tr><th>Когда и кто</th><th>Заявка и решение</th><th>Менеджер → ассистент</th><th>Условия на момент решения</th><th>Комментарий и основание</th><th></th></tr></thead><tbody>${rows.map(({a,h,s})=>`<tr><td><strong>${dt(h.at)} МСК</strong><small>${E(h.actor)}<br>Руководитель ассистентов</small></td><td><strong>${a.id}</strong><small>${auditKinds[h.kind]}</small></td><td>${E(person(s.manager))}<small>→ ${E(person(s.assistant))} · ${E(teamOf(s.manager))}</small></td><td>${dt(s.start)} → ${dt(s.end)} МСК<details><summary>Клиентов: ${s.clients.length}</summary><ul>${s.clients.map(id=>`<li>${E(byClient(id).name)}</li>`).join("")}</ul></details></td><td>${E(h.text)}</td><td>${button("detail","Открыть заявку",`data-id="${a.id}"`)}</td></tr>`).join("")}</tbody></table></div>`:empty("Действий по фильтрам нет","Измените период, тип решения, ассистента или поисковый запрос.")}`;
   }
   function auditView(){
-    if(!["director","assistant_lead"].includes(state.role))return empty("Журнал недоступен","Журнал предназначен директору и руководителю ассистентов.");
+    if(!["director","coordinator"].includes(state.role))return empty("Журнал недоступен","Журнал предназначен директору и руководителю ассистентов.");
     const f=state.audit,events=auditEvents(),pending=assignments.filter(a=>a.status==="pending"||a.change).length;
-    return `<section class="as-panel"><h2>Активность руководителя ассистентов</h2><p>Все территории · ${E(person("l1"))}. Назначения и решения доступны директору только для наблюдения; согласование остаётся у руководителя ассистентов.</p>
+    return `<section class="as-panel"><h2>Активность координатора</h2><p>Координатор — руководитель ассистентов · все территории · ${E(person("c1"))}. Директор наблюдает за работой координатора, но не участвует в согласовании.</p>
     <div class="as-counts"><span>Ждут решения: <strong>${pending}</strong></span>${["approve","reject","return","revoke"].map(k=>`<span>${({approve:"Согласовано",reject:"Отклонено",return:"Возвращено",revoke:"Отозвано"})[k]}: <strong>${events.filter(e=>e.h.kind===k).length}</strong></span>`).join("")}</div>
     <p class="as-muted">Сводка выше за всю историю демонстрации. Фильтры ниже ограничивают только журнал действий.</p>
     <div class="as-audit-filters"><label>Поиск<input data-as-audit="q" value="${E(f.q)}" placeholder="Заявка, сотрудник, клиент или комментарий"></label>
@@ -289,7 +289,7 @@
   function formView() {
     if(!isWriter())return empty("Создание недоступно","Назначение готовит менеджер или координатор. Решение принимает только руководитель ассистентов; директор наблюдает.");
     if(!state.form)state.form=newForm();
-    const f=state.form,managerOptions=(state.role==="manager"?[state.person]:["m1","m2"]).map(id=>`<option value="${id}" ${id===f.manager?"selected":""}>${E(person(id))}</option>`).join("");
+    const f=state.form,managerOptions=(state.role==="manager"?[state.person]:["m1","m2","m3"]).map(id=>`<option value="${id}" ${id===f.manager?"selected":""}>${E(person(id))}</option>`).join("");
     return `<div class="as-grid"><section class="as-panel"><h2>${f.change?"Изменить согласованное назначение":f.id?"Редактировать заявку":"Новое назначение"}</h2>
     <form id="as-assignment-form" class="as-form" novalidate>
       <label>Чьих клиентов передаём<select data-as-field="manager" ${state.role==="manager"?"disabled":""}>${managerOptions}</select></label>
@@ -312,7 +312,7 @@
     return `<div class="as-notice"><strong>${E(person(assistant))}</strong><br>Пересечений по датам: ${rows.length}; клиентов в этих назначениях: ${new Set(rows.flatMap(a=>a.clients)).size}. Назначение предоставляет только просмотр информации.</div>`;
   }
   function validate(f,draft=false) {
-    if(!people[f.manager]||state.role==="manager"&&f.manager!==state.person||state.role==="coordinator"&&teamOf(f.manager)!==teamOf(state.person))return "Нельзя назначать клиентов другого менеджера или чужой команды.";
+    if(!["m1","m2","m3"].includes(f.manager)||state.role==="manager"&&f.manager!==state.person)return "Нельзя назначать клиентов другого менеджера.";
     if(!draft&&!["a1","a2"].includes(f.assistant))return "Выберите ассистента.";
     if(!f.clients.length)return "Выберите хотя бы одного клиента.";
     if(f.clients.some(id=>byClient(id)?.manager!==f.manager))return "В списке есть клиент вне выбранной базы.";
@@ -331,7 +331,7 @@
     let a=assignments.find(a=>a.id===f.id);
     if(f.change) {
       if(!a||!canAuthor(a)||a.status!=="approved"||a.end<=state.clock)return notifyAndRender("Назначение больше нельзя изменить.");
-      a.change=values;history(a,"Изменения отправлены на согласование. Доступ приостановлен.");
+      a.change=values;history(a,"Изменения отправлены на согласование. Доступ приостановлен.",values);
     } else if(a) {
       if(!canAuthor(a)||!["draft","revision"].includes(a.status))return notifyAndRender("Заявка недоступна для редактирования.");
       Object.assign(a,values,{status:draft?"draft":"pending"});history(a,draft?"Черновик сохранён":"Заявка отправлена на согласование");
@@ -418,7 +418,7 @@
     <nav class="as-card-tabs" aria-label="Информация о клиенте">${[["overview","Обзор"],["data","Данные клиента"],["sales","Продажи"]].map(([key,label])=>button("client-tab",label,`data-tab="${key}" aria-pressed="${state.clientTab===key}"`,state.clientTab===key?"as-selected":"")).join("")}</nav>${body}</section>`;
   }
   function loadView() {
-    if(!["coordinator","assistant_lead","rop","director"].includes(state.role))return empty("Нет доступа к обзору команды","Этот обзор предназначен координатору и руководителям.");
+    if(!["coordinator","rop","director"].includes(state.role))return empty("Нет доступа к обзору команды","Этот обзор предназначен координатору и руководителям.");
     const days=Array.from({length:5},(_,i)=>T("2026-10-27T00:00")+i*86400000);
     return `<section class="as-panel"><h2>Доступы по датам · 27–31 октября</h2><p class="as-muted">Только согласованные назначения в вашей области. Приостановленные изменения показаны отдельно, а не как действующий доступ.</p>
       <div class="as-table-scroll" tabindex="0" aria-label="Периоды доступа, горизонтальная прокрутка"><table class="as-table as-calendar"><thead><tr><th>Ассистент</th>${days.map(d=>`<th>${new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",day:"numeric",month:"short",weekday:"short"}).format(d)}</th>`).join("")}</tr></thead><tbody>
@@ -466,11 +466,11 @@
   }
   function notifyAndRender(text){notify(text);renderWorkspace();}
   function back(){state.detail=null;state.client=null;state.form=null;state.view=canReview({manager:"m1"})?"review":"list";state.query="";state.filter="all";renderWorkspace();}
-  function defaultView(role){return role==="assistant"?"clients":role==="assistant_lead"?"review":role==="director"?"audit":"list";}
+  function defaultView(role){return role==="assistant"?"clients":role==="coordinator"?"review":role==="director"?"audit":"list";}
   document.addEventListener("click",event=>{
     const b=event.target.closest("[data-as-action]");if(!b)return;
     const action=b.dataset.asAction,a=assignments.find(a=>a.id===b.dataset.id);
-    if(action==="audit-reset"){if(!["director","assistant_lead"].includes(state.role))return;state.audit={q:"",kind:"",assistant:"",from:"",to:""};renderWorkspace();return;}
+    if(action==="audit-reset"){if(!["director","coordinator"].includes(state.role))return;state.audit={q:"",kind:"",assistant:"",from:"",to:""};renderWorkspace();return;}
     if(action.startsWith("picker-")){
       if(!isWriter()||!state.form)return;
       const f=state.form,ids=new Set(pickerRows().map(c=>c.id));
@@ -524,7 +524,7 @@
     if(event.target.matches("[data-as-period]")&&isAssistant()&&availableClients().includes(state.client)){directory.sales.setMonth(event.target.value);state.legal="";renderWorkspace();return;}
     if(event.target.matches("[data-as-legal-select]")&&isAssistant()&&availableClients().includes(state.client)){state.legal=event.target.value;renderWorkspace();return;}
     const e=event.target;
-    if(e.dataset.asAudit&&["director","assistant_lead"].includes(state.role)){
+    if(e.dataset.asAudit&&["director","coordinator"].includes(state.role)){
       state.audit[e.dataset.asAudit]=e.value;document.getElementById("as-audit-results").innerHTML=auditResults();return;
     }
     if(e.dataset.asPick&&state.form&&isWriter()){
@@ -572,10 +572,10 @@
     return priorNav(items).map(row=>row[0]==="handover"?[row[0],"Назначения ассистентам",row[2],row[3]]:row);
   };
   function readRole() {
-    const p=new URLSearchParams(location.hash.split("?")[1]||""),role=p.get("as_role");
+    const p=new URLSearchParams(location.hash.split("?")[1]||""),requested=p.get("as_role"),role=requested==="assistant_lead"?"coordinator":requested;
     state.role=Object.hasOwn(roles,role)?role:current.startsWith("assistant")?"assistant":current==="coordinator"?"coordinator":Object.hasOwn(roles,prototypeRole)?prototypeRole:"manager";
     const id=p.get("as_person");
-    const allowed={manager:["m1","m2"],coordinator:["c1"],assistant_lead:["l1"],rop:["r1","r2"],director:["d1"],assistant:["a1","a2"]}[state.role];
+    const allowed={manager:["m1","m2"],coordinator:["c1"],rop:["r1","r2"],director:["d1"],assistant:["a1","a2"]}[state.role];
     state.person=allowed.includes(id)?id:rolePerson[state.role];
     state.view=p.get("as_view")|| (current==="assistant-clients"||current==="assistant-tasks"?"clients":defaultView(state.role));
     if(state.view==="tasks")state.view="clients";
