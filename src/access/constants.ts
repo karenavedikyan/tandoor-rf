@@ -28,6 +28,8 @@ export const ACCESS_AUDIT_ACTIONS = {
   DELEGATION_REVOKE: "delegation.revoke",
   PREVIEW_START: "preview.start",
   PREVIEW_STOP: "preview.stop",
+  PREVIEW_WORK_ENABLE: "preview.work_enable",
+  PREVIEW_WORK_DISABLE: "preview.work_disable",
   USER_CREATE: "user.create",
   USER_ROLE_ASSIGN: "user.role_assign",
   USER_PASSWORD_SET: "user.password_set",

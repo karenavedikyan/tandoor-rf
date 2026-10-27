@@ -4,6 +4,50 @@
   var app = document.getElementById("access-workspace-app"), user, view, current = null, editing = null;
   var listPage = 1, listQuery = "", listStatus = "", historyAction = "", listSeq = 0, pickerSeq = 0, detailSeq = 0;
   var assistants = [], managers = [], selected = new Map(), pickData = null, pickPage = 1, filters = {};
+  var TRANSFER_KEY = "tandoor:admin-assignment-transfer:v1";
+  function previewState() { return shell.getPreviewState && shell.getPreviewState() || { active: false }; }
+  function previewReadOnly() {
+    var p = previewState();
+    return Boolean(p.active && !p.workMode);
+  }
+  function previewWriteHint() {
+    return previewReadOnly()
+      ? '<p class="aa-note aa-preview-block" role="status">Изменения запрещены в режиме просмотра. Включите «Работать от имени сотрудника» в плашке сверху — данные не отправятся автоматически.</p>'
+      : "";
+  }
+  function saveTransferState() {
+    if (!document.getElementById("aa-assignment-form")) return;
+    try {
+      var terms = formTerms();
+      sessionStorage.setItem(TRANSFER_KEY, JSON.stringify({
+        managerId: $("aa-manager") && $("aa-manager").value,
+        assistantId: $("aa-assistant") && $("aa-assistant").value,
+        start: $("aa-start") && $("aa-start").value,
+        end: $("aa-end") && $("aa-end").value,
+        basis: $("aa-basis") && $("aa-basis").value,
+        selected: Array.from(selected.entries()),
+        filters: filters,
+        pickPage: pickPage,
+      }));
+    } catch (_err) { /* ignore */ }
+  }
+  function loadTransferState() {
+    try {
+      var raw = sessionStorage.getItem(TRANSFER_KEY);
+      if (!raw) return false;
+      var data = JSON.parse(raw);
+      sessionStorage.removeItem(TRANSFER_KEY);
+      if (data.selected && Array.isArray(data.selected)) {
+        selected = new Map(data.selected);
+      }
+      if (data.filters) filters = data.filters;
+      if (data.pickPage) pickPage = data.pickPage;
+      return data;
+    } catch (_err) {
+      sessionStorage.removeItem(TRANSFER_KEY);
+      return false;
+    }
+  }
   var labels = { create: "Создание", edit: "Исправление", submit: "Отправка заявки", approve: "Согласование",
     reject: "Отклонение", return: "Возврат на уточнение", cancel: "Отмена заявки", revoke: "Отзыв доступа",
     propose_change: "Изменение условий", approve_change: "Согласование изменений", reject_change: "Отклонение изменений",
@@ -14,7 +58,9 @@
   function button(action,title,extra,cls) { return '<button type="button" data-aa="'+action+'" '+(extra||"")+' class="'+(cls||"")+'">'+e(title)+"</button>"; }
   function note(message, error) { if(!$("aa-status")){app.className="aa";app.innerHTML='<p id="aa-status" role="status"></p>';} $("aa-status").textContent=message; $("aa-status").className=error?"aa-error":"aa-muted"; }
   async function request(path, body) {
-    if(body!==undefined && shell.getPreviewState && shell.getPreviewState().active)throw Error("Изменения запрещены в режиме просмотра от имени сотрудника.");
+    if (body !== undefined && previewReadOnly()) {
+      throw Error("Изменения запрещены в режиме просмотра от имени сотрудника.");
+    }
     var r=await api.apiRequest("/api/access"+path,body === undefined?{}:{method:"POST",body:body});
     if(r.response.status===401){window.location.replace("/login");throw Error("Войдите в кабинет.");}
     if(r.response.status===403&&r.data&&r.data.error&&r.data.error.code==="PASSWORD_CHANGE_REQUIRED"){window.location.replace("/change-password");}
@@ -25,8 +71,11 @@
     return '<option value="">'+e(empty||"Выберите")+'</option>'+rows.map(function(r){return '<option value="'+e(r.id)+'" '+(r.id===currentId?"selected":"")+">"+e(r.full_name)+(r.email?" · "+e(r.email):"")+"</option>";}).join("");
   }
   function pager(data, prefix) {
-    return '<div class="aa-pager"><span class="aa-muted">Всего: '+data.total+' · Страница '+data.page+" из "+Math.max(1,Math.ceil(data.total/data.pageSize))+'</span><div class="aa-actions">'+
-      button(prefix+"-prev","Назад",data.page<=1?"disabled":"")+button(prefix+"-next","Далее",data.page*data.pageSize>=data.total?"disabled":"")+"</div></div>";
+    var pageSize = data.pageSize || 50;
+    var totalPages = data.totalPages || Math.max(1, Math.ceil((data.total || 0) / pageSize));
+    var page = Math.min(Math.max(1, data.page || 1), totalPages);
+    return '<div class="aa-pager"><span class="aa-muted">Всего: '+(data.total||0)+' · Страница '+page+" из "+totalPages+'</span><div class="aa-actions">'+
+      button(prefix+"-prev","Назад",page<=1?"disabled":"")+button(prefix+"-next","Далее",page>=totalPages?"disabled":"")+"</div></div>";
   }
   function mount() {
     if(window.AssignmentReviews)window.AssignmentReviews.close();
@@ -97,7 +146,7 @@
     $("aa-detail").innerHTML='<section class="aa-box"><div class="aa-toolbar"><h2>Назначение №'+e(d.id.slice(0,8))+"</h2>"+button("close-detail","Закрыть")+'</div><div class="aa-grid"><div><span class="aa-muted">Передающий менеджер</span><p>'+e(d.delegator_name)+'</p></div><div><span class="aa-muted">Ассистент</span><p>'+e(d.assistant_name)+'</p></div></div><p><span class="aa-tag">'+e(d.effective_label)+'</span></p><p>'+e(dt.formatMskDisplay(d.starts_at))+" — "+e(dt.formatMskDisplay(d.ends_at))+' МСК, окончание не включая.</p><p>'+e(d.basis||"Основание сохранено в истории прежней версии.")+'</p>'+
       (p?'<div class="aa-note"><h3>Предложенные условия</h3><p>До решения координатора доступ приостановлен.</p><p>'+e(p.assistant_name)+" · "+e(dt.formatMskDisplay(p.starts_at))+" — "+e(dt.formatMskDisplay(p.ends_at))+"</p><p>"+e(p.basis)+"</p>"+clientNames(p.clients)+"</div>":d.returnedProposal?'<p class="aa-note">Последние изменения возвращены на уточнение. Прежние согласованные условия сохранены; возвращённые условия можно исправить и отправить снова.</p>':"")+
       '<h3>Согласованный / текущий состав</h3>'+clientNames(d.clients)+'<div class="aa-actions">'+actions+'</div>'+
-      (d.history&&d.history.length?'<h3>История назначения</h3><ol class="aa-history">'+d.history.map(function(h){var s=h.snapshot;return "<li><strong>"+e(labels[h.change_type]||h.change_type)+"</strong><time>"+e(dt.formatMskDisplay(h.changed_at))+"</time><span class=\"aa-muted\">"+e(h.actor_name||"Событие прежней версии")+"</span><p>"+e(h.comment)+"</p>"+(s?'<details><summary>Условия на момент действия</summary><p>'+e(s.delegator_name)+" → "+e(s.assistant_name)+"</p><p>"+e(dt.formatMskDisplay(s.starts_at))+" — "+e(dt.formatMskDisplay(s.ends_at))+"</p>"+clientNames(s.clients)+(s.proposal?"<h3>Предложенные изменения</h3><p>"+e(s.proposal.assistant_name)+" · "+e(dt.formatMskDisplay(s.proposal.starts_at))+" — "+e(dt.formatMskDisplay(s.proposal.ends_at))+"</p>"+clientNames(s.proposal.clients):"")+"</details>":"")+"</li>";}).join("")+"</ol>":"")+"</section>";
+      (d.history&&d.history.length?'<h3>История назначения</h3><ol class="aa-history">'+d.history.map(function(h){var s=h.snapshot;var adminNote=s&&s.performed_by_admin?"<p class=\"aa-note\">Выполнено администратором "+e(s.performed_by_admin.name)+" от имени "+e(s.performed_by_admin.effective_employee_name)+".</p>":"";return "<li><strong>"+e(labels[h.change_type]||h.change_type)+"</strong><time>"+e(dt.formatMskDisplay(h.changed_at))+"</time><span class=\"aa-muted\">"+e(h.actor_name||"Событие прежней версии")+(h.actor_role==="admin"?" (администратор)":"")+"</span><p>"+e(h.comment)+"</p>"+adminNote+(s?'<details><summary>Условия на момент действия</summary><p>'+e(s.delegator_name)+" → "+e(s.assistant_name)+"</p><p>"+e(dt.formatMskDisplay(s.starts_at))+" — "+e(dt.formatMskDisplay(s.ends_at))+"</p>"+clientNames(s.clients)+(s.proposal?"<h3>Предложенные изменения</h3><p>"+e(s.proposal.assistant_name)+" · "+e(dt.formatMskDisplay(s.proposal.starts_at))+" — "+e(dt.formatMskDisplay(s.proposal.ends_at))+"</p>"+clientNames(s.proposal.clients):"")+"</details>":"")+"</li>";}).join("")+"</ol>":"")+"</section>";
     if(window.AssignmentReviews)$("aa-detail").querySelector(".aa-grid").insertAdjacentHTML("afterend",window.AssignmentReviews.summary(d));
     $("aa-detail").scrollIntoView({behavior:"smooth",block:"start"});
   }
@@ -115,11 +164,13 @@
       '<label>Ассистент<select id="aa-assistant" required>'+opts(assistants,initial.assistant_user_id,"Выберите ассистента")+'</select></label>'+
       '<label>Начало, Москва (МСК)<input id="aa-start" type="datetime-local" value="'+e(dt.isoToMskLocalInput(starts))+'" required></label><label>Окончание, МСК (не включая)<input id="aa-end" type="datetime-local" value="'+e(dt.isoToMskLocalInput(ends))+'" required></label></div>'+
       '<h3>Выбор клиентов</h3><p class="aa-muted">Клиент выбирается вместе с доступными вам юрлицами. Скрытые фильтрами отметки сохраняются.</p><div id="aa-picker"></div>'+
-      '<label>Основание<textarea id="aa-basis" minlength="5" maxlength="2000" required placeholder="Для чего и на какой период нужен доступ">'+e(proposal?proposal.basis:d.basis||"")+'</textarea></label><div class="aa-actions" style="margin-top:16px">'+
-      '<button type="submit" class="aa-primary">'+(editing&&d.status==="active"?"Отправить изменения на согласование":"Отправить на согласование")+'</button>'+
-      (!editing||d.status==="draft"?'<button type="submit" data-draft="true">Сохранить черновик</button>':"")+button("abandon","Отменить редактирование")+'</div></form></section>';
+      '<label>Основание<textarea id="aa-basis" minlength="5" maxlength="2000" required placeholder="Для чего и на какой период нужен доступ">'+e(proposal?proposal.basis:d.basis||"")+'</textarea></label>'+
+      previewWriteHint()+
+      '<div class="aa-actions" style="margin-top:16px">'+
+      '<button type="submit" class="aa-primary" '+(previewReadOnly()?"disabled":"")+'>'+(editing&&d.status==="active"?"Отправить изменения на согласование":"Отправить на согласование")+'</button>'+
+      (!editing||d.status==="draft"?'<button type="submit" data-draft="true" '+(previewReadOnly()?"disabled":"")+'>Сохранить черновик</button>':"")+button("abandon","Отменить редактирование")+'</div></form></section>';
     $("aa-assignment-form").onsubmit=saveForm;
-    $("aa-manager").onchange=function(){selected.clear();pickPage=1;run(loadPicker);};
+    $("aa-manager").onchange=function(){selected.clear();pickPage=1;filters={};run(loadPicker);};
     $("aa-start").onchange=$("aa-end").onchange=function(){pickPage=1;run(loadPicker);};
     renderPickerShell();run(loadPicker);
   }
@@ -143,7 +194,9 @@
     $("aa-picker-data").textContent="Загружаем клиентов…";
     var data;
     try{data=await fetchPicker(pickPage);}catch(err){if(seq===pickerSeq&&$("aa-picker-data"))$("aa-picker-data").textContent="Не удалось загрузить клиентов. Нажмите «Применить фильтры», чтобы повторить.";throw err;}
-    if(seq!==pickerSeq||!$("aa-picker-data"))return;pickData=data;
+    if(seq!==pickerSeq||!$("aa-picker-data"))return;
+    if (data.page && data.page !== pickPage) pickPage = data.page;
+    pickData=data;
     if(!filters.month&&data.month){filters.month=data.month;document.querySelector('[data-picker-filter="month"]').value=data.month;}
     $("aa-picker-data").innerHTML=(data.items.length?'<div class="aa-scroll" id="aa-picker-scroll" tabindex="0" aria-label="Выбор клиентов">'+data.items.map(function(r){
       return '<label class="aa-check"><input type="checkbox" data-pick="'+e(r.key)+'" '+(r.guids.every(function(id){return selected.has(id);})?"checked":"")+'><span><strong>'+e(r.name)+'</strong><small>'+e(r.city||"Город не передан")+" · "+e(r.category||"Категория не передана")+" · "+r.legal_count+" юрлиц · "+r.tt_count+" ТТ</small><small>Продажи: "+e(money(r.sales))+(r.conflict?" · Есть пересечение периода":"")+"</small></span></label>";
@@ -211,14 +264,25 @@
     if(reason||!u){app.className="aa";app.innerHTML='<p role="alert">Не удалось открыть назначения. Обновите страницу или войдите заново.</p>';return;}
     user=u;if(!["admin","manager","coordinator","director","rop","assistant"].includes(u.role)){app.className="aa";app.textContent="Назначения недоступны для этой роли.";return;}
     window.AssignmentWorkspace={user:u,request:request,formatDate:dt.formatMskDisplay,
-      reviews:function(){view="reviews";mount();},detail:openDetail,note:note};
+      reviews:function(){view="reviews";mount();},detail:openDetail,note:note,saveTransferState:saveTransferState};
     view=u.role==="director"?"activity":"list";listStatus=u.role==="coordinator"?"queue":"";
     run(async function(){
       if(["manager","coordinator"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
       if(u.role==="coordinator")managers=(await request("/coordinator-managers")).managers;
       var params=new URLSearchParams(window.location.search);
       if(["manager","coordinator","director"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
-      mount();var id=params.get("assignment");if(id)await openDetail(id);
+      var transfer=loadTransferState();
+      if(transfer&&view!=="new"){view="new";}
+      mount();
+      if(transfer&&$("aa-manager")){
+        if(transfer.managerId)$("aa-manager").value=transfer.managerId;
+        if(transfer.assistantId&&$("aa-assistant"))$("aa-assistant").value=transfer.assistantId;
+        if(transfer.start&&$("aa-start"))$("aa-start").value=transfer.start;
+        if(transfer.end&&$("aa-end"))$("aa-end").value=transfer.end;
+        if(transfer.basis&&$("aa-basis"))$("aa-basis").value=transfer.basis;
+        await loadPicker();
+      }
+      var id=params.get("assignment");if(id)await openDetail(id);
       var reviewId=params.get("review");if(reviewId&&/^[0-9a-f-]{36}$/i.test(reviewId)&&window.AssignmentReviews)await window.AssignmentReviews.open(reviewId);
     });
   });

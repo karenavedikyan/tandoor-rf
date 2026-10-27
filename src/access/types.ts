@@ -5,7 +5,10 @@ export type AccessPreviewMeta = {
   actorUserId: string;
   targetUserId: string;
   targetUser: UserDto;
-  readOnly: true;
+  /** When true (default for preview), business mutations are blocked. */
+  readOnly: boolean;
+  workMode: boolean;
+  workExpiresAt?: string | null;
 };
 
 export type AccessContext = {

@@ -35,6 +35,8 @@ import {
   previewStartHandler,
   previewStateHandler,
   previewStopHandler,
+  previewWorkDisableHandler,
+  previewWorkEnableHandler,
 } from "./preview-handlers";
 import { listAccessOverview } from "./admin-repository";
 import { requireAnyRole } from "./role-middleware";
@@ -85,6 +87,14 @@ export function createAccessAdminRouter(): express.Router {
 
   router.post("/preview/stop", csrfProtection, ...adminChain, (req, res, next) => {
     void previewStopHandler(req, res).catch(next);
+  });
+
+  router.post("/preview/work/enable", csrfProtection, ...adminChain, (req, res, next) => {
+    void previewWorkEnableHandler(req, res).catch(next);
+  });
+
+  router.post("/preview/work/disable", csrfProtection, ...adminChain, (req, res, next) => {
+    void previewWorkDisableHandler(req, res).catch(next);
   });
 
   router.post("/employee-links", csrfProtection, ...adminChain, (req, res, next) => {

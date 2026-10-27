@@ -948,3 +948,34 @@
 .clients-preview-banner__stop {
   flex-shrink: 0;
 }
+
+.clients-preview-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.clients-preview-banner--work {
+  border-color: #b45309;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+[data-theme="dark"] .clients-preview-banner {
+  background: #2a2118;
+  border-color: #d97706;
+  color: #fde68a;
+}
+
+[data-theme="dark"] .clients-preview-banner--work {
+  background: #2d1f14;
+  border-color: #ea580c;
+  color: #fed7aa;
+}
+
+[data-theme="dark"] .clients-preview-banner--error {
+  background: #3f1d1d;
+  border-color: #f87171;
+  color: #fecaca;
+}

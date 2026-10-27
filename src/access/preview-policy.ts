@@ -2,7 +2,7 @@ import type { Response } from "express";
 import type { AuthenticatedRequest } from "../middleware/auth";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
-import { getSessionPreviewUserId } from "./preview";
+import { getSessionPreviewDetails } from "./preview";
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -13,6 +13,8 @@ const PREVIEW_ALLOWLIST: Array<{ method: string; pattern: RegExp }> = [
   { method: "GET", pattern: /^\/api\/admin\/access\/preview\/candidates$/ },
   { method: "POST", pattern: /^\/api\/admin\/access\/preview\/start$/ },
   { method: "POST", pattern: /^\/api\/admin\/access\/preview\/stop$/ },
+  { method: "POST", pattern: /^\/api\/admin\/access\/preview\/work\/enable$/ },
+  { method: "POST", pattern: /^\/api\/admin\/access\/preview\/work\/disable$/ },
 ];
 
 /** Lowercase path without query — matches Express case-insensitive route matching. */
@@ -37,8 +39,8 @@ export async function enforcePreviewBusinessPolicy(
     return false;
   }
 
-  const previewUserId = await getSessionPreviewUserId(req.sessionId);
-  if (!previewUserId) {
+  const details = await getSessionPreviewDetails(req.sessionId);
+  if (!details?.previewUserId) {
     return false;
   }
 
@@ -53,10 +55,16 @@ export async function enforcePreviewBusinessPolicy(
     res.status(403).json(
       apiError(
         ERROR_CODES.FORBIDDEN,
-        "Раздел недоступен в режиме просмотра от имени сотрудника.",
+        details.workEnabled
+          ? "Служебные разделы недоступны, пока вы работаете от имени сотрудника. Выйдите из режима."
+          : "Раздел недоступен в режиме просмотра от имени сотрудника.",
       ),
     );
     return true;
+  }
+
+  if (details.workEnabled) {
+    return false;
   }
 
   if (MUTATING_METHODS.has(req.method.toUpperCase())) {
