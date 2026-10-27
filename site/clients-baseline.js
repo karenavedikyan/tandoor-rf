@@ -124,7 +124,10 @@
   return teamCache.get(key);
  };
  const roleEmployee=()=>({manager:'DEMO-M1',regional:'DEMO-R1',rop:'DEMO-ROP1'})[prototypeRole]||'';
+ const assistantDirectory=()=>Boolean(window.AssistantDirectory?.active());
+ const directoryOpen=()=>current==='exchange'||assistantDirectory();
  const baseRows=entity=>{
+  if(assistantDirectory())return window.AssistantDirectory.rows(entity);
   if(prototypeRole==='admin')return entity==='clients'?clientRows:outletRows;
   if(prototypeRole==='director'){const allowed=new Set(directorRopIds.flatMap(id=>teamRows(entity,id)).map(r=>r.id));return (entity==='clients'?clientRows:outletRows).filter(r=>allowed.has(r.id))}
   if(prototypeRole==='rop')return teamRows(entity,'DEMO-ROP1');
@@ -140,7 +143,7 @@
  const filterFields=()=>registry.filter(canSee);
  const find=id=>registry.find(f=>f.id===id);
  const empty=v=>v===null||v===undefined||v==='';
- const format=(v,f)=>sales.formatted(v,f)??(empty(v)?(f.group.startsWith('Ответственные')?'Не назначен в 1С':'Не передано'):f.type==='bool'?(v?'Да':'Нет'):String(v));
+ const format=(v,f)=>sales.formatted(v,f)??(empty(v)?(f.group.startsWith('Ответственные')?'Не назначен в 1С':assistantDirectory()?'Данные появятся после выгрузки из 1С':'Не передано'):f.type==='bool'?(v?'Да':'Нет'):String(v));
  const directorRopIds=demoScale.teams.map(t=>t.id);
  const defaultMode=()=>prototypeRole==='rop'?'staff':['director','admin'].includes(prototypeRole)?'teams':'list';
  const defaultColumns=entity=>entity==='clients'?['clientName','topCategory','salesRub','salesByLegal','client_manager','client_rop']:['clientName','storeAddress','outlet_manager','lprName','club'];
@@ -180,6 +183,14 @@
  }
  function allowedHeads(){return demoScale.teams.map(t=>employee(t.id)).filter(e=>prototypeRole==='admin'||prototypeRole==='rop'?prototypeRole==='admin'||e.id===roleEmployee():directorRopIds.includes(e.id))}
  function normalizeContext(){
+  if(assistantDirectory()){
+   state.team='';state.employee='';
+   if(!['list','card','fields'].includes(state.mode))state.mode='list';
+   if(['work','plan'].includes(state.tab))state.tab='overview';
+   if(state.mode==='card'&&!baseRows(state.entity).some(r=>r.id===state.selected)){state.mode='list';state.selected=''}
+   if(!['list','card'].includes(state.mode))state.focus=false;
+   return;
+  }
   if(prototypeRole==='rop')state.team='DEMO-ROP1';
   if(['manager','regional'].includes(prototypeRole)){state.team='';state.employee='';if(['teams','staff'].includes(state.mode))state.mode='list'}
   if(state.team&&!allowedHeads().some(e=>e.id===state.team)){state.team='';state.employee='';state.mode=defaultMode()}
@@ -213,11 +224,23 @@
  function filtered(){
   const own=state.rules.filter(rule=>isClientField(find(rule.field))),tt=state.rules.filter(rule=>!isClientField(find(rule.field)));
   const matchingClientIds=state.entity==='clients'&&tt.length?new Set(portfolioRows('outlets').filter(o=>tt.every(rule=>matches(o,rule))).map(o=>o.clientId)):null;
-  return scoped().filter(r=>{
+  const rows=scoped().filter(r=>{
    if(state.q&&!availableFields().some(f=>values(r,f).some(v=>!empty(v)&&String(v).toLowerCase().includes(state.q.toLowerCase()))))return false;
    if(state.entity==='outlets')return matchesWithRelations(r,state.rules);
    return matchesWithRelations(r,own)&&(!matchingClientIds||matchingClientIds.has(r.id));
   });
+  const f=find(state.sort);
+  if(f)rows.sort((a,b)=>{
+   const key=r=>{
+    if(f.type!=='number')return displayValue(r,f);
+    const nums=values(r,f).filter(v=>!empty(v)).map(Number).filter(Number.isFinite);
+    return nums.length?Math.max(...nums):null;
+   };
+   const av=key(a),bv=key(b);
+   if(empty(av)||empty(bv))return empty(av)===empty(bv)?0:empty(av)?1:-1;
+   return (f.type==='number'?Number(av)-Number(bv):String(av).localeCompare(String(bv),'ru',{numeric:true}))*(state.sortDir==='asc'?1:-1);
+  });
+  return rows;
  }
  function write(push=false){
   captureFocusScroll();
@@ -229,8 +252,10 @@
   p.set('page',state.page);if(state.tab!=='overview')p.set('tab',state.tab);
   p.set('filterOpen',state.filterOpen?'1':'0');
   p.set('month',sales.month);if(state.salesLegal)p.set('salesLegal',state.salesLegal);
+  if(state.sort){p.set('sort',state.sort);p.set('sortDir',state.sortDir||'desc')}
   if(state.focus){p.set('focus','1');p.set('focusCols',state.focusColumns.join(','))}
-  history[push?'pushState':'replaceState']({territoryTrail:trail,role:prototypeRole,focusScroll:state.focusScroll},'',`#exchange?${p}`);paint();
+  if(assistantDirectory())Object.entries(window.AssistantDirectory.params()).forEach(([k,v])=>p.set(k,v));
+  history[push?'pushState':'replaceState']({territoryTrail:trail,role:prototypeRole,focusScroll:state.focusScroll},'',`#${assistantDirectory()?current:'exchange'}?${p}`);paint();
  }
  function read(){
   cancelFocusFilterTimer();
@@ -243,6 +268,8 @@
   state.selected=p.get('record')||'';
   state.page=Math.max(1,Number(p.get('page'))||1);state.tab=p.get('tab')||'overview';state.filterOpen=p.get('filterOpen')==='1';
   sales.setMonth(p.get('month'));state.salesLegal=p.get('salesLegal')||'';
+  state.sort=availableFields().some(f=>f.id===p.get('sort'))?p.get('sort'):'';
+  state.sortDir=p.get('sortDir')==='asc'?'asc':'desc';
   state.focus=p.get('focus')==='1'&&['list','card'].includes(state.mode);
   state.focusColumns=(p.get('focusCols')||'').split(',').filter((id,i,all)=>all.indexOf(id)===i&&availableFields().some(f=>f.id===id));
   if(state.focus){if(!state.focusColumns.length)state.focusColumns=defaultFocusColumns();state.focusColumns=['clientName',...state.focusColumns.filter(id=>id!=='clientName')]}
@@ -304,9 +331,11 @@
  }
  function scopeIntro(){
   const who=employee(state.employee||roleEmployee()),cs=portfolioRows('clients'),os=portfolioRows('outlets');
+  if(assistantDirectory())return `<section class="x6-scopebar"><div><b>Назначенные мне клиенты</b><span>Только действующие согласованные назначения. Информация доступна для просмотра до окончания периода.</span></div><div>${button(`Клиенты · ${cs.length}`,'entity','clients',state.entity==='clients'?'selected':'')}${button(`ТТ · ${os.length}`,'entity','outlets',state.entity==='outlets'?'selected':'')}</div></section>`;
   return `<section class="x6-scopebar"><div><b>${state.employee?`Территория: ${esc(who?.name||'Недоступный сотрудник')}`:state.team?`Территория команды: ${esc(employee(state.team)?.name)}`:prototypeRole==='admin'?'Вся база':'Моя клиентская база'}</b><span>Только записи этой территории. Поиск и фильтры не расширяют область.</span></div><div>${button(`Клиенты · ${cs.length}`,'entity','clients',state.entity==='clients'?'selected':'')}${button(`ТТ · ${os.length}`,'entity','outlets',state.entity==='outlets'?'selected':'')}</div></section>`;
  }
  function reason(r){
+  if(assistantDirectory())return 'Временный доступ · только просмотр';
   const id=state.employee||roleEmployee(),scope=state.entity==='clients'?'client':'outlet';
   if(id&&direct(r,scope,id))return `Прямое назначение: ${assignments(r,scope,id).join(' + ')}`;
   if(prototypeRole==='rop'||state.team)return 'Назначения подтверждённой команды';
@@ -426,18 +455,36 @@
   return `<div class="x6 x13">${contextNav()}<div class="x13-section-heading"><div><span class="x7-eyebrow">КЛИЕНТЫ И ТЕРРИТОРИИ</span><h2>${state.mode==='card'?'Карточка клиента':state.mode==='staff'?'Сотрудники команды':state.mode==='teams'?'РОПы и команды':state.mode==='fields'?'Карта полей':'Клиентская база'}</h2><p>${state.mode==='card'?'Полная информация по выбранной записи':state.mode==='staff'?'Выберите сотрудника, чтобы открыть его территорию':state.mode==='teams'?'Выберите своего РОПа, чтобы открыть его команду':'Поиск, фильтры и карточки в пределах выбранной территории'}</p></div>${state.mode!=='card'?button('Карта полей','mode','fields','link'):''}</div>${state.mode==='fields'?fieldRegistry():state.mode==='card'?recordView():state.mode==='staff'?staffView():state.mode==='teams'?teamView():scopeIntro()+sales.toolbar()+list()}<p class="x13-prototype-note">Интерактивный прототип · вымышленные данные · рабочий ЛК, 1С и права не изменяются</p></div>`;
  }
  function paint(){
-  const target=document.querySelector('.screenbody');
-  document.body.classList.toggle('x14-focus-mode',current==='exchange'&&isFocus());
-  if(!target||current!=='exchange')return;
+  const embedded=assistantDirectory(),target=document.querySelector(embedded?'.as-directory':'.screenbody');
+  document.body.classList.toggle('x14-focus-mode',directoryOpen()&&isFocus());
+  if(!target||!directoryOpen())return;
   target.innerHTML=html();
-  if(!isFocus()){
+  const sortable=isFocus()?state.focusColumns:state.columns;
+  target.querySelectorAll(isFocus()?'.x14-focus thead th':'.x13-desktop-list thead th').forEach((th,i)=>{
+   const f=find(sortable[i]);if(!f)return;
+   th.setAttribute('aria-sort',state.sort===f.id?(state.sortDir==='asc'?'ascending':'descending'):'none');
+   const control=button(esc(f.label)+(state.sort===f.id?(state.sortDir==='asc'?' ↑':' ↓'):''),'sort',f.id,'x17-sort');
+   const label=th.querySelector('.x15-col-heading>span');
+   if(label)label.outerHTML=control;else if(!isFocus())th.innerHTML=control;
+   const sortButton=th.querySelector('[data-x6="sort"]');
+   if(sortButton)sortButton.title=f.type==='number'?'Сортировать. Если значений несколько, используется наибольшее.':'Сортировать по этому полю';
+  });
+  if(!isFocus()&&!embedded){
    const details=document.createElement('details');details.className='cs-demo-details';
    details.innerHTML='<summary>О прототипе и демонстрационных данных</summary><p data-demo-scale>Масштаб ЛК: 6 РОПов · 43 сотрудника ОПТ · 13 ответственных вне ОПТ. В командах: 20 / 16 / 18 / 0 / 0 / 0. База: 2 206 клиентов · 2 743 юрлица · 3 773 ТТ (1 550 без холдинга). Размеры команд соответствуют ЛК; имена, карточки и назначения клиентов вымышленные.</p>';
    target.querySelector('.x13')?.append(details);
   }
-  syncOperator();document.querySelector('.heading h1').textContent='Клиенты';
+  syncOperator();const heading=document.querySelector('.heading h1');if(heading)heading.textContent='Клиенты';
   document.querySelector('.heading .sub')?.remove();
   document.title=`Tandoor RF · ${roleProfile().label} · Клиенты`;
+  if(embedded){
+   document.title='Тандор · Ассистент · Клиенты';
+   const context=target.querySelector('.x13-context-nav');
+   if(context)context.innerHTML=`<nav aria-label="Область доступа">${state.mode==='list'?'':button('← К списку','back')}<span>Назначенные клиенты</span></nav><span>Ассистент · временный доступ · только просмотр</span>`;
+   target.querySelector('.x13-scope-title')?.remove();
+   target.querySelectorAll('[data-x6="card-tab"][data-value="work"],[data-x6="card-tab"][data-value="plan"]').forEach(b=>b.remove());
+   window.AssistantDirectory.onPaint?.();
+  }
   if(state.mode==='card')target.querySelectorAll('[data-x6="related-outlet"]').forEach(b=>{if(!portfolioRows('outlets').some(o=>o.id===b.dataset.value))b.remove()});
   if(isFocus()){const pane=document.getElementById('x14-focus-scroll');if(pane){pane.scrollTop=state.focusScroll.top;pane.scrollLeft=state.focusScroll.left}}
  }
@@ -469,6 +516,7 @@
  };
  document.addEventListener('click',e=>{
   const b=e.target.closest('[data-x6]');if(!b)return;const a=b.dataset.x6,v=b.dataset.value;
+  if(a==='sort'){const f=find(v);if(!f)return;state.sortDir=state.sort===v?(state.sortDir==='asc'?'desc':'asc'):(f.type==='number'?'desc':'asc');state.sort=v;state.page=1;write();return}
   if(isFocus()&&focusFilterTimer)refreshFocusResults();
   if(a==='focus-clear-field'){state.rules=state.rules.filter(r=>r.field!==v);refreshFocusResults();return}
   if(a==='focus-reset'){state.q='';state.rules=[];refreshFocusResults();return}
@@ -476,7 +524,7 @@
   if(a==='focus-exit'){toggleFocus(false);return}
   if(a==='enter'){change('exchange');return}
   if(a==='choose-field'){document.querySelector('.x6-filter').open=true;document.getElementById('x6-field').value=v;syncOperator();document.getElementById('x6-value').focus();return}
-  if(a==='close'){document.getElementById('dialog').close();state.selected='';if(current==='exchange')write();return}
+  if(a==='close'){document.getElementById('dialog').close();state.selected='';if(directoryOpen())write();return}
   if(a==='columns'){columns();return}
   if(a==='columns-default'){
    if(!document.getElementById('dialog').open)return;
@@ -540,10 +588,10 @@
   if(e.target.id==='x15-search'||e.target.dataset.focusField){if(!['date','time'].includes(e.target.type))editFocusFilter(e.target);return}
   if(e.target.id==='x6-value')e.target.setCustomValidity('');
   if(!['x6-search','x6-field-search'].includes(e.target.id))return;const id=e.target.id,value=e.target.value,position=e.target.selectionStart;
-  clearTimeout(timer);timer=setTimeout(()=>{if(current!=='exchange')return;if(id==='x6-search'){state.q=value;state.page=1;write()}else{state.fieldSearch=value;paint()}const el=document.getElementById(id);el?.focus();el?.setSelectionRange(position,position)},180);
+  clearTimeout(timer);timer=setTimeout(()=>{if(!directoryOpen())return;if(id==='x6-search'){state.q=value;state.page=1;write()}else{state.fieldSearch=value;paint()}const el=document.getElementById(id);el?.focus();el?.setSelectionRange(position,position)},180);
  });
- window.exchangePrototype={registry,filtered,baseRows,teamRows,employees,clientRows,outletRows,legalRows,sales,teams:demoScale.teams,totals:demoScale.totals,getState:()=>state};
- document.getElementById('dialog').addEventListener('cancel',()=>{if(current==='exchange'){state.selected='';write()}});
+ window.exchangePrototype={registry,filtered,baseRows,teamRows,employees,clientRows,outletRows,legalRows,sales,teams:demoScale.teams,totals:demoScale.totals,getState:()=>state,mountAssistant:()=>{read();paint()}};
+ document.getElementById('dialog').addEventListener('cancel',()=>{if(directoryOpen()){state.selected='';write()}});
  if(!location.hash){current='exchange';prototypeRole='manager';history.replaceState(null,'','#exchange?role=manager')}
  if(location.hash.split('?')[0]==='#exchange')current='exchange';
  render();

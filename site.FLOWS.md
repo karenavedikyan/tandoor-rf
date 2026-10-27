@@ -1,5 +1,29 @@
 # Main flows
 
+## Current change: shared manager/assistant client directory
+- Inspect existing manager fullscreen and assistant compact list before editing.
+- Replace compact assistant list/card with the same client-directory engine as
+  manager: list, TT, columns/order, all fields, typed filters, fullscreen search,
+  per-column filters, sorting, card, legal sales detail, period and back.
+- Scope all rows, totals, field suggestions, related TT and direct card links to
+  active approved assigned client IDs. Reset/filter/fullscreen must not broaden it.
+- No early/expired/revoked access; no task queue or real data writes.
+- Validate scope under URL tampering, assistant switching and a scope change
+  while fullscreen/card is open. Keep original manager/director workflows.
+- Implemented by mounting the shared `exchangePrototype` directory in the
+  assistant workspace. The row provider restricts both clients and trading points
+  to active approved assignments. Direct card URLs are revalidated on every mount.
+- Latest regression: `assistant-directory-qa.js`, 42 browser assertions passed,
+  no page errors. Covers shared fields/columns, numeric sorting both directions,
+  fullscreen filters/reset, actual two-axis scroll, legal sales drilldown, periods,
+  mobile layout, dark theme, changed/revoked/future/expired assignments, actor
+  switching and URL tampering. Original manager fullscreen still shows 116 clients.
+- Direct assistant-client links survive a full reload; assistant-only routes are
+  restored after the base app's earlier initialization. Numeric multivalue fields
+  sort by the largest value in the cell, with the rule shown in the header tooltip.
+- Previous compact assistant UI checks below are historical; the shared-directory
+  suite supersedes their list/card selectors.
+
 ## First-stage assistant access, current acceptance criteria
 - Supersedes the earlier assistant-task/report scenarios below.
 - Assistant opens Clients by default; only active approved selected clients.

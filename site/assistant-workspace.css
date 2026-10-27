@@ -106,6 +106,13 @@
 .as-info-field dd { margin:0;overflow-wrap:anywhere; }
 .as-sales { min-width:0; }
 .as-sales .cs3-scroll { overflow:auto;max-width:100%; }
+.as-directory { min-width:0; }
+.as-directory .x6-scopebar button.selected { color:var(--text); }
+.x14-focus-mode.as-active .as-work { height:100dvh;max-width:none;margin:0;padding:0; }
+.x14-focus-mode.as-active .as-work>*:not(#as-content) { display:none!important; }
+.x14-focus-mode.as-active #as-content,.x14-focus-mode.as-active .as-directory { height:100%;min-height:0; }
+.x17-sort { border:0;background:transparent;color:inherit;padding:2px 0;min-height:36px;text-align:left;font:inherit;font-weight:600; }
+.x17-sort:hover { color:var(--green);background:transparent; }
 @media(max-width:600px){.as-info-field{grid-template-columns:1fr;gap:6px}}
 .as-toast { padding:12px 16px; margin:16px 0; border:1px solid var(--as-good); background:var(--as-good-bg); color:var(--as-good); border-radius:8px; font-size:var(--as-sm); }
 .as-work .as-danger { color:var(--as-bad); border-color:var(--as-bad); }

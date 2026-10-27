@@ -131,6 +131,11 @@
       <p class="as-muted">Ролевой просмотр является демонстрацией интерфейса, а не системой авторизации. Другие разделы прототипа остаются самостоятельными примерами.</p>
       ${state.modal?modalView():""}
     </div>`;
+    document.body.classList.toggle("x7-active",window.AssistantDirectory.active());
+    if(window.AssistantDirectory.active()){
+      document.getElementById("as-content").innerHTML='<div class="as-directory"></div>';
+      directory.mountAssistant();
+    }else document.body.classList.remove("x14-focus-mode");
     if(state.modal) {
       document.body.style.overflow="hidden";
       requestAnimationFrame(()=>(document.querySelector("#as-dialog-reason")||document.querySelector("[data-as-action=modal-cancel]"))?.focus());
@@ -360,7 +365,12 @@
     if(action==="modal-cancel"){state.modal=null;}
     if(action==="modal-confirm"){decide();return;}
     if(action==="reset"){state.modal={kind:"reset"};}
-    if(action==="client"){if(!isAssistant()||!availableClients().includes(b.dataset.client))return;state.client=b.dataset.client;state.clientTab="overview";state.legal="";state.detail=null;}
+    if(action==="client"){
+      if(!isAssistant()||!availableClients().includes(b.dataset.client))return;
+      state.client=null;state.detail=null;state.view="clients";
+      const p=new URLSearchParams(location.hash.split("?")[1]||"");p.set("record",byClient(b.dataset.client).record.id);p.set("mode","card");p.set("entity","clients");p.set("tab","overview");
+      historyReplace("#"+current+"?"+p);
+    }
     if(action==="client-back"){state.client=null;state.view="clients";}
     if(action==="client-tab"){if(!isAssistant()||!availableClients().includes(state.client))return;state.clientTab=b.dataset.tab;state.legal="";}
     if(action==="legal"||action==="legal-clear"){if(!isAssistant()||!availableClients().includes(state.client))return;state.legal=action==="legal"?b.dataset.legal:"";}
@@ -437,5 +447,25 @@
   };
   // Expose only synthetic model helpers to the local regression harness.
   window.AssistantPrototype={effective,availableClients,roles};
+  window.AssistantDirectory={
+    active:()=>routes.has(current)&&isAssistant()&&state.view==="clients"&&!state.detail,
+    rows:entity=>{
+      const allowed=availableClients().map(id=>byClient(id).record);
+      if(entity==="clients")return allowed;
+      const ids=new Set(allowed.map(r=>r.clientId));
+      return directory.outletRows.filter(r=>ids.has(r.clientId));
+    },
+    params:()=>({as_role:"assistant",as_person:state.person,as_view:"clients"}),
+    onPaint:()=>{
+      const target=document.querySelector(".as-directory");
+      if(!availableClients().length&&target){
+        const notice=document.createElement("div");notice.className="as-notice";notice.textContent="Нет доступных клиентов. Для просмотра нужно действующее согласованное назначение.";target.prepend(notice);
+      }
+    }
+  };
+  // The base app renders before this module registers assistant-only routes.
+  // Restore a direct link after registration rather than keeping its fallback.
+  const requestedRoute=location.hash.slice(1).split("?")[0];
+  if(routes.has(requestedRoute))current=requestedRoute;
   render();
 })();
