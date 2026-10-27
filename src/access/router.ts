@@ -41,6 +41,7 @@ import { requireAnyRole } from "./role-middleware";
 import type { Response } from "express";
 import type { AuthenticatedRequest } from "../middleware/auth";
 import { setNoStore } from "../http/no-store";
+import { employeeRolloutRouter } from "./employee-rollout-router";
 
 async function adminOverviewHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
   const overview = await listAccessOverview();
@@ -50,6 +51,7 @@ async function adminOverviewHandler(req: AuthenticatedRequest, res: Response): P
 
 export function createAccessAdminRouter(): express.Router {
   const router = express.Router();
+  router.use("/users/rollouts", employeeRolloutRouter());
   const adminChain = [requireDatabaseReady, requireAuth, requireAdmin] as const;
 
   router.get("/overview", ...adminChain, (req, res, next) => {

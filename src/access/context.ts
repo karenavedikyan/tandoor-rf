@@ -106,9 +106,25 @@ export async function loadAccessContext(
 
   const hasEmployeeLink = employeeId !== null && !employeeLinkConflict;
   const isReadRole = isClientReadRole(resolvedRole);
+  // Only explicit, audited grants may authorize a director outside the 1C export.
+  // Fail closed on older schemas until the additive migration has been applied.
+  let explicitDirectorBase = false;
+  if (resolvedRole === "director" && !hasEmployeeLink && !employeeLinkConflict && !explicitlyDeniedAll) {
+    const schema = await runAccessQuery<{ present: string | null }>(client,
+      "SELECT to_regclass('public.director_base_access_grants')::text AS present", []);
+    if (schema.rows[0]?.present) {
+      const grant = await runAccessQuery(client,
+        "SELECT 1 FROM director_base_access_grants WHERE user_id=$1 AND revoked_at IS NULL", [userId]);
+      explicitDirectorBase = grant.rows.length > 0;
+    }
+  }
 
   let hasScopedClientAccess = false;
   let fullClientBase = false;
+  if (explicitDirectorBase) {
+    hasScopedClientAccess = true;
+    fullClientBase = true;
+  }
 
   if (isReadRole && hasEmployeeLink && !explicitlyDeniedAll) {
     if (resolvedRole === "director") {

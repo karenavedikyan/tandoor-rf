@@ -703,11 +703,11 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.locator("#email").fill("  admin-sales-ui@example.test  ");
     await page.locator("#password").fill(TEST_PASSWORD);
     await page.locator("#login-button").click();
-    await page.waitForURL("**/clients");
+    await page.waitForURL(url => url.pathname === "/clients");
     await page.locator("#legacy-sidebar").waitFor({ state: "attached" });
     assert.equal(await page.locator("#legacy-sidebar a[href='/work'], #legacy-sidebar a[href='/access']").count(), 0);
     await page.goto(baseUrl + "/");
-    await page.waitForURL("**/clients");
+    await page.waitForURL(url => url.pathname === "/clients");
     assert.deepEqual(errors, []);
     await context.close();
   });
@@ -808,7 +808,7 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.locator("[data-theme-toggle]").click();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-change-password-light-mobile.png") });
     await page.locator("#change-password-button").click();
-    await page.waitForURL("**/clients");
+    await page.waitForURL(url => url.pathname === "/clients");
     const me = await page.request.get(baseUrl + "/api/auth/me");
     assert.equal(me.status(), 200);
     // The DTO only includes this optional flag while a change is required.

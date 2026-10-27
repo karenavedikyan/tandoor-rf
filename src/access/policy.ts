@@ -111,7 +111,7 @@ export async function explainClientAccess(
     };
   }
 
-  if (!context.hasEmployeeLink) {
+  if (!context.hasEmployeeLink && !context.fullClientBase) {
     return {
       allowed: false,
       reason: "no_employee_link",

@@ -183,7 +183,7 @@
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
     var workspaceLink = showAccessWorkspace && (!launch || launch.navigation.substitution)
-      ? navLink("/access", "Замещение", "substitution", active, "access-workspace")
+      ? navLink("/access", "Назначения ассистентам", "substitution", active, "access-workspace")
       : "";
     var adminLink = showAdminAccess
       ? navLink("/admin/access", "Настройка доступа", "profile", active, "admin-access")
