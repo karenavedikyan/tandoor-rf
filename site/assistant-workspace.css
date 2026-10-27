@@ -57,6 +57,10 @@
 .as-client-picker { max-height:285px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
 .as-picker-filters { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px; }
 .as-picker-toolbar { display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;margin:14px 0; }
+.as-audit-filters { display:grid;grid-template-columns:2fr 1fr 1fr;align-items:end;gap:14px;margin:20px 0; }
+.as-audit-table { min-width:1100px; }
+.as-audit-table details { margin-top:8px; }
+@media(max-width:767px){.as-audit-filters{grid-template-columns:1fr}}
 .as-work .as-pick-check { display:flex;align-items:center;gap:8px; }
 .as-work .as-pick-check input { width:18px;min-height:18px;margin:0;accent-color:var(--green); }
 @media(max-width:767px){.as-picker-filters{grid-template-columns:1fr 1fr}.as-picker-toolbar button{flex:1 1 auto}}

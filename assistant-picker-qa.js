@@ -82,7 +82,7 @@ var PICKER_RESULT=await(async()=>{
   await page.locator('[data-as-field="reason"]').fill("Временный доступ к отобранному клиенту.");
   await action("submit").click();
   ok((await page.locator("#as-content").innerText()).includes("Н-110")&&(await page.locator("#as-content").innerText()).includes(assignedName),"filtered selection submits one requested client, not whole result set");
-  await page.getByRole("button",{name:"РОП",exact:true}).click();
+  await page.getByRole("button",{name:"Руководитель ассистентов",exact:true}).click();
   await page.locator(".as-table tbody tr").filter({hasText:"Н-110"}).getByRole("button",{name:"Открыть",exact:true}).click();
   await page.getByRole("button",{name:"Согласовать",exact:true}).click();await action("modal-confirm").click();
   await page.getByRole("button",{name:"Ассистент",exact:true}).click();

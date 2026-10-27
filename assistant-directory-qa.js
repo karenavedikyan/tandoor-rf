@@ -36,7 +36,7 @@ var DIRECTORY_RESULT=await(async function(){
   ok(await page.locator("[data-cs-legal-select]").count()===1,"legal entity drilldown opens");
   await page.locator("[data-x6=back]").click();
   ok(await rows()===41,"return from card to assigned list works");
-  await role("РОП");await open("Н-101");await decide("Согласовать");await role("Ассистент");
+  await role("Руководитель ассистентов");await open("Н-101");await decide("Согласовать");await role("Ассистент");
   ok(await rows()===43,"approval grants only two newly assigned clients");
   await page.locator("[data-x6=focus-enter]").click();
   await page.locator("[data-x6=columns]").click();await page.locator("[data-x6=columns-all]").click();await page.locator("[data-x6=close]").click();
@@ -93,7 +93,7 @@ var DIRECTORY_RESULT=await(async function(){
   await page.locator("[data-as-field=reason]").fill("Временная замена получателя доступа.");
   await page.getByRole("button",{name:"Отправить изменения на согласование",exact:true}).click();
   await role("Ассистент");ok(await rows()===41,"pending amendment pauses only changed access");
-  await role("РОП");await open("Н-101");await decide("Отклонить изменения","Сохраняем прежние условия.");
+  await role("Руководитель ассистентов");await open("Н-101");await decide("Отклонить изменения","Сохраняем прежние условия.");
   await role("Ассистент");ok(await rows()===43,"rejected amendment restores prior scope");
   await role("Менеджер");await open("Н-101");await decide("Отозвать доступ","Временный доступ завершён.");
   await role("Ассистент");ok(await rows()===41,"revocation removes clients immediately");
@@ -110,7 +110,8 @@ var DIRECTORY_RESULT=await(async function(){
   await view("Назначения команды");await open("Н-101");
   ok(!await page.getByRole("button",{name:"Согласовать",exact:true}).count(),"coordinator cannot approve");
   await role("Директор");
-  ok(await page.locator(".as-table tbody tr").filter({hasText:"Н-107"}).count()===1,"director retains cross-team review");
+  await view("Все назначения");
+  ok(await page.locator(".as-table tbody tr").filter({hasText:"Н-107"}).count()===1,"director retains read-only cross-team visibility");
   await clock("2026-10-27T11:00");
   await page.goto("http://127.0.0.1:4317/#assistant-clients?as_role=assistant&as_person=a1&as_view=clients&mode=card&record=foreign-record&team=DEMO-ROP2&employee=DEMO-E14&tab=work");
   ok(await rows()===41&&!await page.locator(".x13-record-title").count(),"foreign direct card URL and territory parameters cannot broaden scope");

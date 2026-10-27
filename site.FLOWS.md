@@ -1,5 +1,26 @@
 # Main flows
 
+## Current approval policy: single head of assistants
+- Supersedes every earlier ROP/director-approval scenario below. All submitted
+  requests and amendments from every territory enter the assistant lead's queue.
+  Only `assistant_lead` can approve, reject or return them. ROP has read-only
+  own-team visibility without a review queue; director is read-only globally.
+- Add a distinct synthetic head of assistants (Olga Smirnova), not a renamed
+  coordinator. Manager/coordinator remain request authors; coordinator still only
+  covers their team. Unsubmitted drafts do not appear in the lead queue.
+- Director opens a populated lead-activity journal by default: all decision types,
+  timestamps, actor, manager, assistant, comments and access terms/client IDs.
+  Snapshots retain proposed terms even for rejected amendments; later assignment
+  changes cannot rewrite historical decisions. Equal-time events have sequence.
+- Filter the journal by text, decision, assistant and inclusive decision dates;
+  expand client lists and open underlying requests without approval/revoke controls.
+- `assistant-lead-qa.js`: 22 assertions, including cross-territory approval, return,
+  resubmission, rejection, amendment rejection, revocation, immutable snapshots,
+  director/ROP restrictions, journal filtering and mobile containment.
+- Updated shared-directory (46) and picker (26) suites also passed. Fresh mobile
+  visual check confirms date filters and journal fit the screen; table scrolls
+  horizontally within its container. All identities/data remain synthetic.
+
 ## Filter clients when creating or changing an assignment
 - Manager's picker now covers the full synthetic 116-client owner portfolio;
   coordinator may choose either manager in their own team. Expanding this source
