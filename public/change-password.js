@@ -14,6 +14,22 @@
     return;
   }
 
+  var passwordToggles = Array.from(form.querySelectorAll("[data-password-toggle]"));
+  function setPasswordVisible(button, visible) {
+    var input = document.getElementById(button.dataset.passwordToggle);
+    if (!input) return;
+    input.type = visible ? "text" : "password";
+    button.textContent = visible ? "Скрыть" : "Показать";
+    button.setAttribute("aria-pressed", String(visible));
+    button.setAttribute("aria-label", (visible ? "Скрыть " : "Показать ") + button.dataset.passwordLabel);
+  }
+  passwordToggles.forEach(function (button) {
+    button.addEventListener("click", function () {
+      var input = document.getElementById(button.dataset.passwordToggle);
+      if (input) setPasswordVisible(button, input.type === "password");
+    });
+  });
+
   function redirectAfterChange(user) {
     window.location.href = window.ClientsShell && window.ClientsShell.canReadClients(user) ? "/clients" : "/profile";
   }
@@ -48,6 +64,7 @@
       return;
     }
 
+    passwordToggles.forEach(function (button) { setPasswordVisible(button, false); });
     submitting = true;
     submitButton.disabled = true;
     api.setStatus(statusEl, "Сохранение…", "loading");
