@@ -99,7 +99,7 @@
   window.TandoorRf = {
     // Presentation readiness only. API authorization remains authoritative.
     launch: Object.freeze({
-      navigation: Object.freeze({ work: false, substitution: false }),
+      navigation: Object.freeze({ work: false, substitution: true }),
     }),
     REQUEST_TIMEOUT_MS: REQUEST_TIMEOUT_MS,
     setStatus: setStatus,

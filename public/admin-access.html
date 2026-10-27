@@ -26,6 +26,33 @@
           <div id="access-panel" class="clients-panel" hidden></div>
 
           <div id="admin-access-app" class="clients-panel clients-hidden">
+            <section class="clients-card" id="employee-rollout-section">
+              <h2 class="clients-card__title">Выдача доступов сотрудникам</h2>
+              <p class="clients-subtitle">Сначала подготовьте и сохраните конфиденциальный файл паролей.
+                Только после подтверждения будут созданы аккаунты, изменены логины и отозваны старые сессии.
+                Новые пароли требуют смены при первом входе. Административные аккаунты не изменяются.</p>
+              <label class="field">
+                <span class="field__label">Список сотрудников (JSON) или ранее сохранённый файл выдачи (Markdown)</span>
+                <input id="rollout-file" class="field__input" type="file" accept=".json,.md" />
+              </label>
+              <details>
+                <summary>Ввести подготовленный список вручную</summary>
+                <label class="field"><span class="field__label">JSON со списком и основанием</span>
+                  <textarea id="rollout-plan" class="field__input" rows="5" spellcheck="false"></textarea>
+                </label>
+              </details>
+              <div class="clients-toolbar__row">
+                <button type="button" id="rollout-prepare" class="workspace-button workspace-button--primary">Подготовить файл паролей</button>
+                <button type="button" id="rollout-cancel" class="workspace-button" disabled>Отменить подготовку</button>
+              </div>
+              <p id="rollout-summary" class="clients-subtitle"></p>
+              <label class="field"><span>
+                <input type="checkbox" id="rollout-confirm" />
+                Файл паролей сохранён. Подтверждаю перевыпуск указанных аккаунтов и завершение их старых сессий.
+              </span></label>
+              <button type="button" id="rollout-activate" class="workspace-button workspace-button--primary" disabled>Активировать доступы</button>
+              <p id="rollout-status" class="status" role="status" aria-live="polite"></p>
+            </section>
             <section class="clients-card" id="preview-section">
               <h2 class="clients-card__title">Посмотреть как сотрудник</h2>
               <p class="clients-subtitle">
@@ -183,5 +210,6 @@
     <script src="/brand/shell-icons.js" defer></script>
     <script src="/clients-shell.js" defer></script>
     <script src="/admin-access.js" defer></script>
+    <script src="/employee-rollout.js" defer></script>
   </body>
 </html>
