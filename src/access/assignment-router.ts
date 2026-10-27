@@ -12,6 +12,7 @@ import { searchAssistants } from "./service";
 import { attachAccessContext, blockPreviewWrites } from "./middleware";
 import { assignmentSchemaReady, prepareAssignmentSchema } from "./assignment-schema";
 import { appointAssignmentCoordinator } from "./assignment-coordinator";
+import * as reviews from "./assignment-reviews";
 
 function uuid(value: unknown): string {
   if (typeof value !== "string" || !isValidUuidParam(value)) throw new AccessServiceError("Некорректный идентификатор.", "VALIDATION");
@@ -61,6 +62,30 @@ export function assignmentRouter(): express.Router {
   router.post("/assignments/coordinator", csrfProtection, ...auth, handle(async (req, res) => {
     res.json(await appointAssignmentCoordinator(req.authUser!.id, uuid(req.body?.userId),
       uuid(req.body?.employeeId), str(req.body?.basis, 2000) || "", req.body?.confirm));
+  }));
+  router.post("/assignments/reviews/schema", csrfProtection, ...auth, handle(async (req, res) => {
+    res.json(await prepareAssignmentSchema(req.authUser!.id, req.body?.confirm, "051_assistant_assignment_reviews.sql"));
+  }));
+  const reviewsReady: express.RequestHandler = (_req, res, next) => {
+    void reviews.reviewSchemaReady().then(ready => ready ? next() :
+      res.status(503).json(apiError("SERVICE_UNAVAILABLE", "Оценки ещё не подготовлены администратором."))).catch(next);
+  };
+  router.get("/assignments/reviews", ...auth, reviewsReady, handle(async (req, res) => {
+    const score = str(req.query.score, 4), status = str(req.query.status, 8);
+    if (score && !/^[1-5]$|^low$/.test(score) || status && !["required", "rated"].includes(status)) {
+      throw new AccessServiceError("Некорректный фильтр оценки.", "VALIDATION");
+    }
+    res.json(await reviews.listAssignmentReviews(actor(req), {
+      page: page(req.query.page), q: str(req.query.q), score, status,
+      assistantId: req.query.assistantId ? uuid(req.query.assistantId) : "",
+      managerId: req.query.managerId ? uuid(req.query.managerId) : "",
+    }));
+  }));
+  router.get("/delegations/:delegationId/review", ...auth, reviewsReady, handle(async (req, res) => {
+    res.json({ review: await reviews.assignmentReview(actor(req), uuid(req.params.delegationId)) });
+  }));
+  router.post("/delegations/:delegationId/review", csrfProtection, ...auth, reviewsReady, handle(async (req, res) => {
+    res.status(201).json(await reviews.submitAssignmentReview(actor(req), uuid(req.params.delegationId), req.body || {}));
   }));
   router.get("/assignments", ...auth, handle(async (req, res) => {
     res.json(await assignments.listAssignments(actor(req), { page: page(req.query.page), q: str(req.query.q), status: str(req.query.status) }));
@@ -128,7 +153,8 @@ export function assignmentRouter(): express.Router {
     res.status(409).json(apiError("CONFLICT", "Обновите назначение и согласуйте изменения из его карточки."));
   }));
   router.get("/notifications", ...auth, handle(async (req, res) => {
-    res.json(await assignments.assignmentNotifications(actor(req), page(req.query.page)));
+    if (req.query.unread !== undefined && req.query.unread !== "1") throw new AccessServiceError("Некорректный фильтр уведомлений.", "VALIDATION");
+    res.json(await assignments.assignmentNotifications(actor(req), page(req.query.page), req.query.unread === "1"));
   }));
   router.post("/notifications/read-all", csrfProtection, ...auth, handle(async (req, res) => {
     await assignments.readAssignmentNotifications(actor(req)); res.json({ ok: true });

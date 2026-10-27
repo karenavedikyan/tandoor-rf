@@ -686,7 +686,8 @@
     syncPreviewBanner();
     if (actorUser && !document.querySelector('script[data-assignment-notifications]')) {
       var notifications = document.createElement("script");
-      notifications.src = "/assignment-notifications.js";
+      notifications.src = "/assignment-notifications.js?v=reviews1";
+      notifications.onload = function () { if (window.mountAssignmentNotifications) window.mountAssignmentNotifications(actorUser); };
       notifications.setAttribute("data-assignment-notifications", "");
       document.head.appendChild(notifications);
     }

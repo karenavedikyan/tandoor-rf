@@ -1,4 +1,4 @@
-.aa { display: grid; gap: 20px; min-width: 0; color: var(--rf-text); --aa-soft: #eaf4de; --aa-success: #335815; }
+.aa { display: grid; grid-template-columns: minmax(0,1fr); gap: 20px; min-width: 0; color: var(--rf-text); --aa-soft: #eaf4de; --aa-success: #335815; }
 [data-theme="dark"] .aa { --aa-soft: #1b2914; --aa-success: #b6dd87; }
 .aa [hidden] { display: none !important; }
 .aa-tabs, .aa-actions, .aa-toolbar, .aa-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
