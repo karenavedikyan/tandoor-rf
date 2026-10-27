@@ -7,7 +7,8 @@
 }
 .shell-preview-trigger, .shell-preview-picker button { cursor: pointer; }
 .shell-preview-trigger:hover, .shell-preview-picker button:hover { background: var(--rf-row-hover); }
-.shell-preview-picker button:disabled { opacity: .55; cursor: wait; }
+.shell-preview-picker button.shell-preview-person:disabled { opacity: .55; cursor: not-allowed; }
+.shell-preview-picker button.shell-preview-person[data-can-select="true"]:disabled { cursor: wait; }
 .shell-preview-trigger { white-space: nowrap; font-weight: 600; }
 .shell-preview-picker { width: min(44rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); margin: auto; overflow: auto; padding: var(--rf-space-6); border: 1px solid var(--rf-border); border-radius: 1rem; background: var(--rf-surface); color: var(--rf-text); font-family: "Golos", var(--rf-font), sans-serif; }
 .shell-preview-picker::backdrop { background: rgb(0 0 0 / .42); }

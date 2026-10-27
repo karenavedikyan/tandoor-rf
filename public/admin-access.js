@@ -450,8 +450,12 @@
     });
   });
 
-  shell.mountShell("admin-access", { showClients: true, showAdminAccess: true });
   shell.ensureAdminAccess(function (_user, reason) {
+    shell.mountAuthenticatedChrome("admin-access", {
+      showClients: true,
+      showAdminAccess: true,
+      showAccessWorkspace: true,
+    });
     if (reason === "forbidden") {
       document.getElementById("admin-access-app").classList.add("clients-hidden");
       document.getElementById("access-panel").hidden = false;

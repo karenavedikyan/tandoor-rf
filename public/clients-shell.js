@@ -582,63 +582,85 @@
     return user;
   }
 
+  function openEmployeePreviewPicker(returnFocusEl) {
+    if (!api) return;
+    var old = document.getElementById("shell-preview-picker");
+    if (old) old.remove();
+    var dialog = document.createElement("dialog"), items = [], seq = 0, timer;
+    var returnFocus = returnFocusEl || document.getElementById("shell-preview-open");
+    dialog.id = "shell-preview-picker";
+    dialog.className = "shell-preview-picker";
+    dialog.setAttribute("aria-labelledby", "shell-preview-title");
+    dialog.innerHTML = '<header><div><h2 id="shell-preview-title">Войти как сотрудник</h2><p>Только просмотр. Пароль сотрудника не нужен, изменения запрещены.</p></div><button type="button" data-preview-close>Закрыть</button></header>'+
+      '<form id="shell-preview-search"><label>Имя или email<input id="shell-preview-query" type="search" maxlength="200" placeholder="Найти сотрудника" autocomplete="off"></label>'+
+      '<label>Роль<select id="shell-preview-role"><option value="">Все роли</option>'+Object.keys(PREVIEW_ROLE_LABELS).map(function(r){return '<option value="'+r+'">'+PREVIEW_ROLE_LABELS[r]+'</option>';}).join("")+'</select></label><button type="submit">Найти</button></form>'+
+      '<p id="shell-preview-status" role="status" aria-live="polite"></p><div id="shell-preview-results" class="shell-preview-results"></div>';
+    document.body.appendChild(dialog);
+    var status = dialog.querySelector("#shell-preview-status"), results = dialog.querySelector("#shell-preview-results");
+    function resetSelectableRows() {
+      results.querySelectorAll("button.shell-preview-person[data-can-select='true']").forEach(function (b) {
+        b.disabled = false;
+      });
+    }
+    function setSelectableRowsLoading(loading) {
+      results.querySelectorAll("button.shell-preview-person[data-can-select='true']").forEach(function (b) {
+        b.disabled = loading;
+      });
+    }
+    function draw() {
+      var role = dialog.querySelector("#shell-preview-role").value;
+      var rows = items.filter(function(u){return !role || u.role === role;});
+      status.textContent = rows.length ? "Найдено: "+rows.length+(items.length===100?". Уточните поиск, показаны первые 100.":"") : "Сотрудники не найдены. Измените поиск или роль.";
+      results.innerHTML = rows.map(function(u){
+        var blocked = u.canSelect === false;
+        var hint = blocked && u.blockReason ? '<small>'+escapeHtml(u.blockReason)+'</small>' : '';
+        return '<button type="button" class="shell-preview-person" data-can-select="'+(!blocked)+'" '+(blocked?'disabled title="'+escapeHtml(u.blockReason||"Недоступно")+'"':'data-preview-id="'+escapeHtml(u.id)+'"')+'><span><strong>'+escapeHtml(u.fullName)+'</strong><small>'+escapeHtml(u.email)+'</small>'+hint+'</span><span class="shell-preview-role">'+escapeHtml(PREVIEW_ROLE_LABELS[u.role]||u.role)+'</span></button>';
+      }).join("");
+    }
+    async function search() {
+      clearTimeout(timer);
+      var n = ++seq, q = dialog.querySelector("#shell-preview-query").value.trim();
+      results.innerHTML = "";
+      if(q.length===1){status.textContent="Введите минимум 2 символа или очистите поле, чтобы увидеть список.";return;}
+      status.textContent = "Загружаем сотрудников…";
+      try {
+        var r = await api.apiRequest("/api/admin/access/preview/candidates?q="+encodeURIComponent(q));
+        if(n!==seq || !dialog.open)return;
+        if(r.response.status!==200)throw Error(api.extractErrorMessage(r.data,"Не удалось загрузить сотрудников."));
+        items = r.data.items || []; draw();
+      } catch(err) { if(n===seq && dialog.open)status.textContent=err.message||"Ошибка запроса."; }
+    }
+    dialog.querySelector("#shell-preview-search").onsubmit=function(ev){ev.preventDefault();void search();};
+    dialog.querySelector("#shell-preview-query").oninput=function(){++seq;results.innerHTML="";clearTimeout(timer);timer=setTimeout(search,300);};
+    dialog.querySelector("#shell-preview-role").onchange=draw;
+    dialog.querySelector("[data-preview-close]").onclick=function(){dialog.close();};
+    dialog.onclose=function(){++seq;clearTimeout(timer);dialog.remove();if(returnFocus&&returnFocus.focus)returnFocus.focus();};
+    results.onclick=async function(ev){
+      var button=ev.target.closest("[data-preview-id]");
+      if(!button || button.disabled)return;
+      setSelectableRowsLoading(true);
+      status.textContent="Открываем профиль…";
+      try {
+        var r=await api.apiRequest("/api/admin/access/preview/start",{method:"POST",body:{userId:button.dataset.previewId}});
+        if(r.response.status!==200)throw Error(api.extractErrorMessage(r.data,"Не удалось включить просмотр."));
+        var role=r.data.preview.targetUser.role;
+        window.location.assign(role==="coordinator"?"/access":"/clients");
+      } catch(err) {
+        if(dialog.open){
+          status.textContent=err.message||"Ошибка запроса.";
+          resetSelectableRows();
+        }
+      }
+    };
+    dialog.showModal();void search();
+    dialog.querySelector("#shell-preview-query").focus();
+  }
+
   function bindPreviewPicker() {
     var trigger = document.getElementById("shell-preview-open");
     if (!trigger || !api) return;
     trigger.onclick = function () {
-      var old = document.getElementById("shell-preview-picker");
-      if (old) old.remove();
-      var dialog = document.createElement("dialog"), items = [], seq = 0, timer;
-      dialog.id = "shell-preview-picker";
-      dialog.className = "shell-preview-picker";
-      dialog.setAttribute("aria-labelledby", "shell-preview-title");
-      dialog.innerHTML = '<header><div><h2 id="shell-preview-title">Войти как сотрудник</h2><p>Только просмотр. Пароль сотрудника не нужен, изменения запрещены.</p></div><button type="button" data-preview-close>Закрыть</button></header>'+
-        '<form id="shell-preview-search"><label>Имя или email<input id="shell-preview-query" type="search" maxlength="200" placeholder="Найти сотрудника" autocomplete="off"></label>'+
-        '<label>Роль<select id="shell-preview-role"><option value="">Все роли</option>'+Object.keys(PREVIEW_ROLE_LABELS).map(function(r){return '<option value="'+r+'">'+PREVIEW_ROLE_LABELS[r]+'</option>';}).join("")+'</select></label><button type="submit">Найти</button></form>'+
-        '<p id="shell-preview-status" role="status" aria-live="polite"></p><div id="shell-preview-results" class="shell-preview-results"></div>';
-      document.body.appendChild(dialog);
-      var status = dialog.querySelector("#shell-preview-status"), results = dialog.querySelector("#shell-preview-results");
-      function draw() {
-        var role = dialog.querySelector("#shell-preview-role").value;
-        var rows = items.filter(function(u){return !role || u.role === role;});
-        status.textContent = rows.length ? "Найдено: "+rows.length+(items.length===100?". Уточните поиск, показаны первые 100.":"") : "Сотрудники не найдены. Измените поиск или роль.";
-        results.innerHTML = rows.map(function(u){
-          var blocked = u.canSelect === false;
-          var hint = blocked && u.blockReason ? '<small>'+escapeHtml(u.blockReason)+'</small>' : '';
-          return '<button type="button" class="shell-preview-person" '+(blocked?'disabled title="'+escapeHtml(u.blockReason||"Недоступно")+'"':'data-preview-id="'+escapeHtml(u.id)+'"')+'><span><strong>'+escapeHtml(u.fullName)+'</strong><small>'+escapeHtml(u.email)+'</small>'+hint+'</span><span class="shell-preview-role">'+escapeHtml(PREVIEW_ROLE_LABELS[u.role]||u.role)+'</span></button>';
-        }).join("");
-      }
-      async function search() {
-        clearTimeout(timer);
-        var n = ++seq, q = dialog.querySelector("#shell-preview-query").value.trim();
-        results.innerHTML = "";
-        if(q.length===1){status.textContent="Введите минимум 2 символа или очистите поле, чтобы увидеть список.";return;}
-        status.textContent = "Загружаем сотрудников…";
-        try {
-          var r = await api.apiRequest("/api/admin/access/preview/candidates?q="+encodeURIComponent(q));
-          if(n!==seq || !dialog.open)return;
-          if(r.response.status!==200)throw Error(api.extractErrorMessage(r.data,"Не удалось загрузить сотрудников."));
-          items = r.data.items || []; draw();
-        } catch(err) { if(n===seq && dialog.open)status.textContent=err.message||"Ошибка запроса."; }
-      }
-      dialog.querySelector("#shell-preview-search").onsubmit=function(ev){ev.preventDefault();void search();};
-      dialog.querySelector("#shell-preview-query").oninput=function(){++seq;results.innerHTML="";clearTimeout(timer);timer=setTimeout(search,300);};
-      dialog.querySelector("#shell-preview-role").onchange=draw;
-      dialog.querySelector("[data-preview-close]").onclick=function(){dialog.close();};
-      dialog.onclose=function(){++seq;clearTimeout(timer);dialog.remove();trigger.focus();};
-      results.onclick=async function(ev){
-        var button=ev.target.closest("[data-preview-id]");
-        if(!button)return;
-        results.querySelectorAll("button").forEach(function(b){b.disabled=true;});
-        status.textContent="Открываем профиль…";
-        try {
-          var r=await api.apiRequest("/api/admin/access/preview/start",{method:"POST",body:{userId:button.dataset.previewId}});
-          if(r.response.status!==200)throw Error(api.extractErrorMessage(r.data,"Не удалось включить просмотр."));
-          var role=r.data.preview.targetUser.role;
-          window.location.assign(role==="coordinator"?"/access":"/clients");
-        } catch(err) {if(dialog.open){status.textContent=err.message||"Ошибка запроса.";results.querySelectorAll("button").forEach(function(b){b.disabled=false;});}}
-      };
-      dialog.showModal();void search();
+      openEmployeePreviewPicker(trigger);
     };
   }
 
@@ -775,10 +797,16 @@
     var showClients = opts.showClients !== false;
     var showAdminAccess = opts.showAdminAccess === true;
     var showAccessWorkspace = opts.showAccessWorkspace === true;
-    mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace);
+    mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace, opts.clientsHref);
     if (typeof opts.onReady === "function") {
       opts.onReady();
     }
+  }
+
+  function mountAuthenticatedChrome(active, options) {
+    mountShell(active, options || {});
+    bindPreviewPicker();
+    syncPreviewBanner();
   }
 
   function ensureAuthenticated(onReady) {
@@ -953,6 +981,8 @@
     getActorUser: getActorUser,
     getEffectiveUser: getEffectiveUser,
     stopPreviewSession: stopPreviewSession,
+    openEmployeePreviewPicker: openEmployeePreviewPicker,
+    mountAuthenticatedChrome: mountAuthenticatedChrome,
     setPanelMessage: setPanelMessage,
     escapeHtml: escapeHtml,
     copyText: copyText,
