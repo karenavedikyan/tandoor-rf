@@ -32,6 +32,18 @@
     const r=pool.find(r=>!usedRecords.has(r.id)&&r.clientName.startsWith(c.name))||pool.find(r=>!usedRecords.has(r.id));
     if(r){usedRecords.add(r.id);c.record={...r,client_manager:person(c.manager)};c.name=r.clientName;c.city=(r.clientAddress||c.city).split(",")[0];c.legals=directory.sales.rowsFor(r).length;c.outlets=directory.outletRows.filter(o=>o.clientId===r.clientId).length;}
   });
+  // Default fixtures represent working-sized portfolios, not a one-row layout.
+  // Reuse canonical synthetic records so legal entities, TT and sales stay linked.
+  const volume={m1:[],m2:[]};
+  for(const [manager,owner,count] of [["m1","DEMO-M1",32],["m2","DEMO-E12",28]]){
+    directory.clientRows.filter(r=>r.client_managerId===owner&&!usedRecords.has(r.id)).slice(0,count).forEach((r,i)=>{
+      const id=`volume-${manager}-${i+1}`;
+      usedRecords.add(r.id);volume[manager].push(id);
+      clients.push({id,name:r.clientName,city:(r.clientAddress||"").split(",")[0],manager,
+        legals:directory.sales.rowsFor(r).length,outlets:directory.outletRows.filter(o=>o.clientId===r.id).length,
+        record:{...r,client_manager:person(manager)}});
+    });
+  }
   const state = {role:"manager",person:"m1",view:"list",clock:initialClock,query:"",filter:"all",detail:null,client:null,clientTab:"overview",legal:"",form:null,modal:null,toast:"",next:110};
   let assignments = [];
   const rolePerson = {manager:"m1",coordinator:"c1",rop:"r1",director:"d1",assistant:"a1"};
@@ -50,6 +62,10 @@
       make("Н-107","m3","a2",["c8"],"2026-10-27T09:00","2026-10-30T18:00","pending","Назначение другой команды для проверки границ РОПа."),
       make("Н-108","m1","a1",["c6"],"2026-10-26T09:00","2026-10-29T18:00","approved","Сопровождение выбранного клиента."),
       make("Н-109","m1","a2",["c9"],"2026-10-28T09:00","2026-10-30T18:00","draft","Подготовка подмены на время обучения."),
+      make("Н-090","m1","a1",volume.m1.slice(0,20),"2026-10-26T09:00","2026-10-29T18:00","approved","Временный доступ к группе клиентов на период командировки менеджера."),
+      make("Н-091","m1","a1",volume.m1.slice(20),"2026-10-27T09:00","2026-10-29T18:00","approved","Дополнительная группа клиентов для информационного сопровождения."),
+      make("Н-092","m2","a1",volume.m2.slice(0,8),"2026-10-26T09:00","2026-10-29T18:00","approved","Временный доступ к выбранным клиентам второго менеджера."),
+      make("Н-093","m2","a2",volume.m2.slice(8),"2026-10-26T09:00","2026-10-31T18:00","approved","Рабочая группа клиентов на период отсутствия менеджера."),
     ];
     assignments[4].history.push({at:initialClock-7200000,actor:person("r1"),text:"Отклонено: согласуйте нагрузку ассистента."});
     assignments[5].history.push({at:initialClock-3600000,actor:person("m2"),text:"Доступ отозван: менеджер вернулся раньше срока."});

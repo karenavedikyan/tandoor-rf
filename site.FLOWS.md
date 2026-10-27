@@ -1,5 +1,16 @@
 # Main flows
 
+## Realistic default demonstration data
+- Default assistant Anna has 41 active assigned clients across four approved
+  assignments from two managers. Pavel has 20 active assigned clients; the future
+  assignment adds one client at its start, rather than being his entire portfolio.
+- Reuse 60 additional unused canonical synthetic client records. Their legal
+  entities, sales, contacts and TT remain linked to the existing directory.
+- Empty access remains an explicit expiry/revocation scenario, not the normal
+  design preview. Reset restores the populated portfolios.
+- Default list pagination, fullscreen long-list scrolling, numeric sorting, narrow
+  screens and light/dark themes must be tested with this volume.
+
 ## Current change: shared manager/assistant client directory
 - Inspect existing manager fullscreen and assistant compact list before editing.
 - Replace compact assistant list/card with the same client-directory engine as
@@ -13,7 +24,7 @@
 - Implemented by mounting the shared `exchangePrototype` directory in the
   assistant workspace. The row provider restricts both clients and trading points
   to active approved assignments. Direct card URLs are revalidated on every mount.
-- Latest regression: `assistant-directory-qa.js`, 42 browser assertions passed,
+- Latest regression: `assistant-directory-qa.js`, 46 browser assertions passed,
   no page errors. Covers shared fields/columns, numeric sorting both directions,
   fullscreen filters/reset, actual two-axis scroll, legal sales drilldown, periods,
   mobile layout, dark theme, changed/revoked/future/expired assignments, actor

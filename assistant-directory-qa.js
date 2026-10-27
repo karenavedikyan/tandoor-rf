@@ -6,11 +6,17 @@ var DIRECTORY_RESULT=await(async function(){
   async function open(id){await page.locator(".as-table tbody tr").filter({hasText:id}).getByRole("button",{name:"Открыть",exact:true}).click();}
   async function decide(name,reason){await page.getByRole("button",{name,exact:true}).click();if(reason)await page.locator("#as-dialog-reason").fill(reason);await page.locator("[data-as-action=modal-confirm]").click();}
   async function clock(value){if(!await page.locator(".as-clock").getAttribute("open"))await page.locator(".as-clock summary").click();await page.locator("#as-clock-value").fill(value);await page.getByRole("button",{name:"Применить время",exact:true}).click();}
-  async function rows(){return page.locator(".x13-desktop-list tbody tr").count();}
+  async function rows(){return Number(await page.locator(".x6-count b").innerText());}
   await page.setViewportSize({width:1440,height:1000});
   await page.goto("http://127.0.0.1:4317/#assistant-clients?as_role=assistant&as_view=clients");await page.reload();
   ok(await page.locator(".as-directory").count()===1,"direct assistant Clients link survives a full page reload");
-  ok(await rows()===1,"assistant uses shared directory with only one active assigned client");
+  ok(await rows()===41,"assistant starts with realistic 41-client assigned portfolio");
+  ok(await page.locator(".x13-desktop-list tbody tr").count()===6,"populated directory uses pagination");
+  ok(await page.locator("#x13-city option").count()>5&&await page.locator("#x13-category option").count()>2,"default portfolio has diverse cities and client categories");
+  const firstPage=await page.locator(".x13-desktop-list [data-x6=record]").first().getAttribute("data-value");
+  await page.locator("[data-x6=page]").filter({hasText:"Следующая"}).click();
+  ok(await page.locator(".x13-desktop-list [data-x6=record]").first().getAttribute("data-value")!==firstPage,"next page shows different assigned clients");
+  await page.locator("[data-x6=page]").filter({hasText:"Предыдущая"}).click();
   ok(await page.locator(".sidebar nav button[data-go]:visible").count()===2,"assistant navigation remains limited");
   ok(await page.locator("[data-x6=columns]").count()===1&&await page.locator("[data-x6=focus-enter]").count()===1,"manager columns and fullscreen controls available");
   ok(!/Рабочая очередь|Задачи по клиенту|Передать итоги|Взять в работу/.test(await page.locator("body").innerText()),"no task workflows introduced");
@@ -29,23 +35,24 @@ var DIRECTORY_RESULT=await(async function(){
   await detail.first().click();
   ok(await page.locator("[data-cs-legal-select]").count()===1,"legal entity drilldown opens");
   await page.locator("[data-x6=back]").click();
-  ok(await rows()===1,"return from card to assigned list works");
+  ok(await rows()===41,"return from card to assigned list works");
   await role("РОП");await open("Н-101");await decide("Согласовать");await role("Ассистент");
-  ok(await rows()===3,"approval grants only two newly assigned clients");
+  ok(await rows()===43,"approval grants only two newly assigned clients");
   await page.locator("[data-x6=focus-enter]").click();
   await page.locator("[data-x6=columns]").click();await page.locator("[data-x6=columns-all]").click();await page.locator("[data-x6=close]").click();
   ok(await page.locator(".x14-focus thead th").count()===40,"all client columns available in fullscreen");
   await page.locator("[data-x6=sort][data-value=salesRub]").click();
-  async function amounts(){return page.locator(".x14-focus tbody tr").evaluateAll(rs=>rs.map(r=>Number(r.children[11].textContent.replace(/[^\d,.-]/g,"").replace(",","."))));}
-  let values=await amounts();ok(values.length===3&&values.every((v,i)=>!i||values[i-1]>=v),"sales sorted descending");
+  async function amounts(){return page.locator(".x14-focus tbody tr").evaluateAll(rs=>rs.map(r=>/\d/.test(r.children[11].textContent)?Number(r.children[11].textContent.replace(/[^\d,.-]/g,"").replace(",",".")):null));}
+  const ordered=(vs,asc)=>vs.every((v,i)=>v===null?vs.slice(i).every(x=>x===null):!i||(asc?vs[i-1]<=v:vs[i-1]>=v));
+  let values=await amounts();ok(values.length===43&&ordered(values,false),"sales sorted descending over all 43 clients, missing data last");
   await page.locator("[data-x6=sort][data-value=salesRub]").click();
-  values=await amounts();ok(values.every((v,i)=>!i||values[i-1]<=v),"sales sorted ascending");
+  values=await amounts();ok(ordered(values,true),"sales sorted ascending, missing data last");
   const firstName=await page.locator(".x14-focus tbody tr").first().locator("td").first().innerText();
   await page.locator('[data-focus-field=clientName]').fill(firstName);
   await page.waitForTimeout(250);
   ok(await page.locator(".x14-focus tbody tr[data-client-row]").count()===1,"per-column fullscreen filter works");
   await page.locator("[data-x6=focus-reset]").click();
-  ok(await page.locator(".x14-focus tbody tr[data-client-row]").count()===3,"filter reset retains assignment scope");
+  ok(await page.locator(".x14-focus tbody tr[data-client-row]").count()===43,"filter reset retains assignment scope");
   await page.locator("#x15-search").fill("Восточный квартал");
   await page.waitForTimeout(250);
   ok(await page.locator(".x14-focus tbody tr[data-client-row]").count()===0,"search cannot reveal an unassigned client");
@@ -57,15 +64,17 @@ var DIRECTORY_RESULT=await(async function(){
   const moved=await page.locator("#x14-focus-scroll").evaluate(e=>({top:e.scrollTop,left:e.scrollLeft}));
   ok(moved.top>0&&moved.left===600,"scroll moves on both axes");
   await page.screenshot({path:"/home/user/workspace/tandoor-client-sales/assistant-directory-short.png"});
+  const assignedIds=await page.locator(".x14-focus [data-x6=record]").evaluateAll(bs=>bs.map(b=>b.dataset.value));
   await page.keyboard.press("Escape");await page.setViewportSize({width:1440,height:1000});
-  const assignedIds=await page.locator(".x13-desktop-list [data-x6=record]").evaluateAll(bs=>bs.map(b=>b.dataset.value));
   await page.locator("[data-x6=entity][data-value=outlets]").first().click();
-  const outletIds=await page.locator(".x13-desktop-list [data-x6=record]").evaluateAll(bs=>bs.map(b=>b.dataset.value));
+  await page.locator("[data-x6=focus-enter]").click();
+  const outletIds=await page.locator(".x14-focus [data-x6=record]").evaluateAll(bs=>bs.map(b=>b.dataset.value));
   const outletScope=await page.evaluate(({assignedIds,outletIds})=>{
     const expected=exchangePrototype.outletRows.filter(o=>assignedIds.includes(o.clientId));
     return expected.length===outletIds.length&&expected.every(o=>outletIds.includes(o.id));
   },{assignedIds,outletIds});
   ok(outletScope,"only assigned clients' trading points exposed");
+  await page.keyboard.press("Escape");
   await page.locator("[data-x6=entity][data-value=clients]").first().click();
   await page.screenshot({path:"/home/user/workspace/tandoor-client-sales/assistant-directory-desktop.png"});
   await page.locator("button[data-theme]").click();
@@ -83,16 +92,16 @@ var DIRECTORY_RESULT=await(async function(){
   await page.locator("[data-as-field=assistant]").selectOption("a2");
   await page.locator("[data-as-field=reason]").fill("Временная замена получателя доступа.");
   await page.getByRole("button",{name:"Отправить изменения на согласование",exact:true}).click();
-  await role("Ассистент");ok(await rows()===1,"pending amendment pauses changed access");
+  await role("Ассистент");ok(await rows()===41,"pending amendment pauses only changed access");
   await role("РОП");await open("Н-101");await decide("Отклонить изменения","Сохраняем прежние условия.");
-  await role("Ассистент");ok(await rows()===3,"rejected amendment restores prior scope");
+  await role("Ассистент");ok(await rows()===43,"rejected amendment restores prior scope");
   await role("Менеджер");await open("Н-101");await decide("Отозвать доступ","Временный доступ завершён.");
-  await role("Ассистент");ok(await rows()===1,"revocation removes clients immediately");
+  await role("Ассистент");ok(await rows()===41,"revocation removes clients immediately");
   await page.locator(".x13-desktop-list [data-x6=record]").first().click();
   await page.locator("[data-as-person]").selectOption("a2");
-  ok(!await page.locator(".x13-record-title").count()&&(await page.locator("#as-content").innerText()).includes("Нет доступных клиентов"),"switching assistant clears inaccessible selected card");
-  await clock("2026-10-29T08:59");ok(await rows()===0,"future access remains closed before start");
-  await clock("2026-10-29T09:00");ok(await rows()===1,"access opens at inclusive start");
+  ok(!await page.locator(".x13-record-title").count()&&await rows()===20,"switching assistant clears foreign card and shows own 20 clients");
+  await clock("2026-10-29T08:59");ok(await rows()===20,"future access does not expand existing portfolio before start");
+  await clock("2026-10-29T09:00");ok(await rows()===21,"future access adds a client at inclusive start");
   await page.locator(".x13-desktop-list [data-x6=record]").first().click();
   await clock("2026-10-31T18:00");
   ok(await rows()===0&&!await page.locator(".x13-record-title").count(),"exclusive end removes card and directory access");
@@ -104,7 +113,10 @@ var DIRECTORY_RESULT=await(async function(){
   ok(await page.locator(".as-table tbody tr").filter({hasText:"Н-107"}).count()===1,"director retains cross-team review");
   await clock("2026-10-27T11:00");
   await page.goto("http://127.0.0.1:4317/#assistant-clients?as_role=assistant&as_person=a1&as_view=clients&mode=card&record=foreign-record&team=DEMO-ROP2&employee=DEMO-E14&tab=work");
-  ok(await rows()===1&&!await page.locator(".x13-record-title").count(),"foreign direct card URL and territory parameters cannot broaden scope");
+  ok(await rows()===41&&!await page.locator(".x13-record-title").count(),"foreign direct card URL and territory parameters cannot broaden scope");
+  await page.getByRole("button",{name:"Сбросить демо",exact:true}).click();
+  await page.locator("[data-as-action=modal-confirm]").click();
+  ok(await rows()===41,"reset restores realistic populated portfolio");
   await page.goto("http://127.0.0.1:4317/#exchange?role=manager&mode=list");
   ok(await page.locator(".x13-desktop-list tbody tr").count()===6,"manager retains own paginated directory");
   ok((await page.locator(".x6-scopebar").innerText()).includes("116"),"manager directory not reduced to assistant assignments");
