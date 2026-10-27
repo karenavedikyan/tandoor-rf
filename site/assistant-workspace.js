@@ -23,19 +23,28 @@
   const local = value => new Date(value+10800000).toISOString().slice(0,16);
   const dt = value => new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).format(value);
   const person = id => people[id]?.name || "Не выбран";
-  const state = {role:"manager",person:"m1",view:"list",clock:initialClock,query:"",filter:"all",detail:null,client:null,form:null,modal:null,toast:"",next:110};
-  let assignments = [], tasks = [];
+  // Use the same synthetic client records and read-only sales as the base directory.
+  const directory=window.exchangePrototype;
+  const usedRecords=new Set();
+  clients.forEach(c=>{
+    const owner={m1:"DEMO-M1",m2:"DEMO-E12",m3:"DEMO-E14"}[c.manager];
+    const pool=directory.clientRows.filter(r=>r.client_managerId===owner);
+    const r=pool.find(r=>!usedRecords.has(r.id)&&r.clientName.startsWith(c.name))||pool.find(r=>!usedRecords.has(r.id));
+    if(r){usedRecords.add(r.id);c.record={...r,client_manager:person(c.manager)};c.name=r.clientName;c.city=(r.clientAddress||c.city).split(",")[0];c.legals=directory.sales.rowsFor(r).length;c.outlets=directory.outletRows.filter(o=>o.clientId===r.clientId).length;}
+  });
+  const state = {role:"manager",person:"m1",view:"list",clock:initialClock,query:"",filter:"all",detail:null,client:null,clientTab:"overview",legal:"",form:null,modal:null,toast:"",next:110};
+  let assignments = [];
   const rolePerson = {manager:"m1",coordinator:"c1",rop:"r1",director:"d1",assistant:"a1"};
   function seed() {
     const make=(id,manager,assistant,ids,start,end,status,reason)=>({
       id,manager,assistant,clients:ids,start:T(start),end:T(end),status,reason,createdBy:manager,
-      history:[{at:T(start)-86400000,actor:person(manager),text:status==="draft"?"Сохранён черновик":"Подготовлено демонстрационное назначение"}],change:null,reports:[],
+      history:[{at:T(start)-86400000,actor:person(manager),text:status==="draft"?"Сохранён черновик":"Подготовлено демонстрационное назначение"}],change:null,
     });
     assignments=[
       make("Н-101","m1","a1",["c1","c2"],"2026-10-27T09:00","2026-10-30T18:00","pending","Командировка: сопровождение выбранных клиентов."),
       make("Н-102","m1","a1",["c3"],"2026-10-26T09:00","2026-10-29T18:00","approved","Отпуск менеджера, сопровождение клиентов."),
       make("Н-103","m2","a2",["c4"],"2026-10-29T09:00","2026-10-31T18:00","approved","Плановая командировка менеджера."),
-      make("Н-104","m1","a1",["c5"],"2026-10-20T09:00","2026-10-24T18:00","approved","Завершённое замещение, пример возврата дел."),
+      make("Н-104","m1","a1",["c5"],"2026-10-20T09:00","2026-10-24T18:00","approved","Завершённый период доступа к информации о клиенте."),
       make("Н-105","m1","a2",["c9"],"2026-10-27T09:00","2026-10-28T18:00","rejected","Помощь в сопровождении клиента."),
       make("Н-106","m2","a1",["c7"],"2026-10-25T09:00","2026-10-30T18:00","revoked","Менеджер вернулся раньше срока."),
       make("Н-107","m3","a2",["c8"],"2026-10-27T09:00","2026-10-30T18:00","pending","Назначение другой команды для проверки границ РОПа."),
@@ -46,10 +55,6 @@
     assignments[5].history.push({at:initialClock-3600000,actor:person("m2"),text:"Доступ отозван: менеджер вернулся раньше срока."});
     assignments[7].change={assistant:"a2",clients:["c6"],start:T("2026-10-26T09:00"),end:T("2026-10-30T18:00"),reason:"Передать замещение Павлу: Анна перегружена."};
     assignments[7].history.push({at:initialClock-1800000,actor:person("m1"),text:"Предложено изменение. Доступ приостановлен до решения руководителя."});
-    tasks=clients.flatMap(c=>[
-      {id:c.id+"-order",client:c.id,title:"Проверить готовность заказа",due:"Сегодня до 14:00",status:"todo"},
-      {id:c.id+"-docs",client:c.id,title:"Уточнить документы и дату приёмки",due:"До окончания замещения",status:"todo"},
-    ]);
   }
   seed();
   function effective(a) {
@@ -87,9 +92,9 @@
   }
   function historyReplace(hash) {window.history.replaceState(null,"",hash);}
   function tabs() {
-    if(isAssistant()) return [["list","Мои назначения"],["clients","Мои клиенты"],["tasks","Рабочая очередь"],["archive","Завершённые"]];
-    if(isWriter()) return [["list",state.role==="manager"?"Мои назначения":"Назначения команды"],["create","Создать назначение"],...(state.role==="coordinator"?[["load","Нагрузка"]]:[])];
-    return [["review","На согласовании"],["list","Все назначения"],["load","Нагрузка"]];
+    if(isAssistant()) return [["clients","Клиенты"],["list","Условия доступа"],["archive","История доступа"]];
+    if(isWriter()) return [["list",state.role==="manager"?"Мои назначения":"Назначения команды"],["create","Создать назначение"],...(state.role==="coordinator"?[["load","Доступы по датам"]]:[])];
+    return [["review","На согласовании"],["list","Все назначения"],["load","Доступы по датам"]];
   }
   function scopeText() {
     return {manager:"Только ваши клиенты. Постоянные назначения в 1С не меняются.",coordinator:"Только порученная команда «Юг». Заявку подтверждает РОП или директор.",rop:"Только команда вашего РОПа. Чужие заявки не отображаются.",director:"Все команды. Согласование не предоставляет права администратора.",assistant:"Только клиенты из действующих согласованных назначений. Без назначения база пуста."}[state.role];
@@ -107,19 +112,21 @@
     const avatar=document.querySelector(".head .avatar");if(avatar){avatar.textContent=actor().split(" ").map(x=>x[0]).join("");avatar.title=actor();}
     const sideNote=document.querySelector(".r-sidebar-note");
     if(sideNote)sideNote.innerHTML=E(actor())+"<br>"+E(scopeText());
+    const sourceNote=document.querySelector(".sidebar .source-note");
+    if(sourceNote)sourceNote.innerHTML="1С · информация о клиентах<br>ЛК · временный доступ для просмотра";
     if(isAssistant())document.querySelectorAll(".sidebar .nav button[data-go]").forEach(b=>{
       const pageView=state.client?"clients":state.view==="archive"?"list":state.view;
-      const match=pageView==="clients"?"assistant-clients":pageView==="tasks"?"assistant-tasks":"assistant";
+      const match=pageView==="clients"?"assistant-clients":"assistant";
       b.classList.toggle("active",b.dataset.go===match);
     });
     main.innerHTML=`<div class="as-work" data-testid="assistant-workspace">
-      <div class="as-head"><div><div class="as-kicker">Клиенты и временный доступ</div><h1>Назначения ассистентам</h1><p>Кто замещает, каких клиентов ведёт и до какого срока.</p></div>${button("reset","Сбросить демо")}</div>
+      <div class="as-head"><div><div class="as-kicker">Клиенты и временный доступ · первый этап</div><h1>${isAssistant()&&state.view==="clients"?"Клиенты":"Назначения ассистентам"}</h1><p>Доступ к информации по выбранным клиентам на определённый период. Только просмотр.</p></div>${button("reset","Сбросить демо")}</div>
       <p class="as-demo">Интерактивный прототип · вымышленные сотрудники и клиенты. Действия связаны между ролями только в этой вкладке; после перезагрузки примеры сбросятся. Реальные права, 1С и Битрикс24 не меняются.</p>
       <div class="as-rolebar"><div><p class="as-muted">Посмотреть сценарий роли</p><div class="as-roles">${Object.entries(roles).map(([k,v])=>button("role",v,`data-role="${k}" aria-pressed="${state.role===k}"`)).join("")}</div></div><label>Сотрудник в демо<select data-as-person aria-label="Сотрудник в демо">${personOptions()}</select></label></div>
       <div class="as-scope"><span><strong>${E(actor())}</strong> · ${roles[state.role]}</span><span>${E(scopeText())}</span></div>
       <nav class="as-tabs" aria-label="Сценарии назначений">${tabs().map(([k,v])=>button("view",v,`data-view="${k}" ${state.view===k?'aria-current="page"':""}`)).join("")}</nav>
       ${state.toast?`<div class="as-toast" role="status">${E(state.toast)}</div>`:""}
-      <div id="as-content">${state.client?clientView():state.detail?detailView():state.view==="create"?formView():state.view==="load"?loadView():state.view==="clients"?clientsView():state.view==="tasks"?tasksView():isAssistant()?assistantView():listView()}</div>
+      <div id="as-content">${state.client?clientView():state.detail?detailView():state.view==="create"?formView():state.view==="load"?loadView():state.view==="clients"?clientsView():isAssistant()?assistantView():listView()}</div>
       <details class="as-clock"><summary>Демо-время: ${dt(state.clock)} МСК · проверить начало и окончание доступа</summary><div><label>Дата и время в Москве<input id="as-clock-value" type="datetime-local" value="${local(state.clock)}"></label>${button("clock","Применить время")}${button("clock-reset","27 октября, 11:00")}</div><p class="as-muted">Начало включительно, окончание не включительно. Изменение времени влияет только на этот прототип.</p></details>
       <p class="as-muted">Ролевой просмотр является демонстрацией интерфейса, а не системой авторизации. Другие разделы прототипа остаются самостоятельными примерами.</p>
       ${state.modal?modalView():""}
@@ -163,7 +170,7 @@
       <label>Ассистент<select data-as-field="assistant" required><option value="">Выберите ассистента</option>${["a1","a2"].map(id=>`<option value="${id}" ${f.assistant===id?"selected":""}>${E(person(id))}</option>`).join("")}</select></label>
       <div class="as-fields"><label>Начало, МСК<input data-as-field="start" type="datetime-local" value="${f.start}" required></label><label>Окончание, МСК · не включая<input data-as-field="end" type="datetime-local" value="${f.end}" required></label></div>
       <div><label>Поиск по своим клиентам<input data-as-field="q" value="${E(f.q)}" placeholder="Название или город"></label><p class="as-muted" id="as-picked">Выбрано клиентов: ${f.clients.length}</p><div id="as-client-picker" class="as-client-picker">${picker()}</div></div>
-      <label>Основание назначения<textarea data-as-field="reason" placeholder="Например: командировка, сопровождение заказов и документов">${E(f.reason)}</textarea></label>
+      <label>Основание назначения<textarea data-as-field="reason" placeholder="Например: временный доступ к информации на время отпуска менеджера">${E(f.reason)}</textarea></label>
       <p class="as-error" id="as-form-error" role="alert">${E(f.error)}</p>
       <div class="as-actions">${button("submit",f.change?"Отправить изменения на согласование":"Отправить на согласование","","primary")}${!f.change?button("draft","Сохранить черновик"):""}${button("back","Отмена")}</div>
     </form></section><aside class="as-panel"><h2>Перед выдачей доступа</h2><p>Передаются только выбранные клиенты. Постоянный менеджер и кадровая структура не меняются.</p><ol class="as-history"><li>Менеджер или координатор готовит заявку.</li><li>РОП своей команды или директор проверяет и согласовывает.</li><li>Ассистент видит клиентов только в утверждённый период.</li></ol>
@@ -172,9 +179,9 @@
   }
   function overlap(a,start,end) {return a.start<end&&start<a.end;}
   function loadHint(assistant,start,end) {
-    if(!assistant)return `<p class="as-muted">Выберите ассистента, чтобы увидеть пересечения нагрузки.</p>`;
+    if(!assistant)return `<p class="as-muted">Выберите ассистента, чтобы увидеть пересечения периодов доступа.</p>`;
     const rows=assignments.filter(a=>a.id!==state.form?.id&&a.assistant===assistant&&["approved","pending"].includes(a.status)&&overlap(a,start,end));
-    return `<div class="as-notice ${rows.length>1?"warn":""}"><strong>${E(person(assistant))}</strong><br>Пересечений по датам: ${rows.length}; клиентов в этих назначениях: ${new Set(rows.flatMap(a=>a.clients)).size}.${rows.length>1?" Координатору стоит проверить нагрузку; это предупреждение, а не утверждённый лимит.":""}</div>`;
+    return `<div class="as-notice"><strong>${E(person(assistant))}</strong><br>Пересечений по датам: ${rows.length}; клиентов в этих назначениях: ${new Set(rows.flatMap(a=>a.clients)).size}. Назначение предоставляет только просмотр информации.</div>`;
   }
   function validate(f,draft=false) {
     if(!people[f.manager]||state.role==="manager"&&f.manager!==state.person||state.role==="coordinator"&&teamOf(f.manager)!==teamOf(state.person))return "Нельзя назначать клиентов другого менеджера или чужой команды.";
@@ -201,7 +208,7 @@
       if(!canAuthor(a)||!["draft","revision"].includes(a.status))return notifyAndRender("Заявка недоступна для редактирования.");
       Object.assign(a,values,{status:draft?"draft":"pending"});history(a,draft?"Черновик сохранён":"Заявка отправлена на согласование");
     } else {
-      a={...values,id:"Н-"+state.next++,manager:f.manager,status:draft?"draft":"pending",createdBy:state.person,history:[],change:null,reports:[]};
+      a={...values,id:"Н-"+state.next++,manager:f.manager,status:draft?"draft":"pending",createdBy:state.person,history:[],change:null};
       history(a,draft?"Создан черновик":"Заявка отправлена на согласование");assignments.unshift(a);
     }
     state.form=null;state.view="list";state.detail=a.id;notify(draft?"Черновик сохранён. Доступ не выдан.":"Отправлено руководителю. До согласования доступ не выдан.");renderWorkspace();
@@ -224,8 +231,7 @@
       ${author&&a.change?button("decision","Отменить изменения",`data-id="${a.id}" data-kind="withdraw-change"`):""}
       ${canRevoke(a)&&a.status==="approved"&&a.end>state.clock?button("decision","Отозвать доступ",`data-id="${a.id}" data-kind="revoke"`,"as-danger"):""}
       </div>${pending&&state.clock>=(a.change?.end||a.end)?`<div class="as-notice bad">Период заявки закончился. Выдать доступ задним числом нельзя.</div>`:""}
-      ${a.reports.length?`<h3 style="margin-top:24px">Итоги от ассистента</h3>${a.reports.map(r=>`<div class="as-notice">${E(r.text)}<br><small>${E(r.actor)} · ${dt(r.at)}</small></div>`).join("")}`:""}
-      ${["completed","revoked"].includes(status)?`<div class="as-notice"><strong>Возврат работы постоянному менеджеру</strong><br>Выполнено действий: ${tasks.filter(t=>a.clients.includes(t.client)&&t.status==="done").length}. Осталось у менеджера: ${tasks.filter(t=>a.clients.includes(t.client)&&t.status!=="done").length}. История и исходные сроки сохранены в демонстрации; в Битрикс24 ничего не переносилось.</div>`:""}
+      ${["completed","revoked"].includes(status)?`<div class="as-notice">Доступ ассистента к этим клиентам закрыт. Постоянный менеджер клиента не менялся.</div>`:""}
     </section><section class="as-panel"><h2>История решений</h2><ol class="as-history">${a.history.slice().reverse().map(h=>`<li>${E(h.text)}<small>${E(h.actor)} · ${dt(h.at)} МСК</small></li>`).join("")}</ol></section>`;
   }
   function diffView(a) {
@@ -236,16 +242,16 @@
     const rows=visible().filter(a=>state.view==="archive"?["completed","revoked"].includes(effective(a)):!["completed","revoked"].includes(effective(a)));
     const count=availableClients().length;
     return `<div class="as-counts"><span><strong>${count}</strong> клиентов доступны сейчас</span><span><strong>${visible().filter(a=>effective(a)==="planned").length}</strong> назначений ожидают начала</span></div>
-    ${!count&&state.view!=="archive"?`<div class="as-notice">Сейчас нет действующих назначений. Клиентская база и рабочие задачи недоступны.</div>`:""}
+    ${!count&&state.view!=="archive"?`<div class="as-notice">Сейчас нет действующих назначений. Клиентская база недоступна.</div>`:""}
     ${rows.length?rows.map(a=>`<article class="as-assignment"><div class="as-between"><div><h2>${E(person(a.manager))}</h2><small>${a.id} · команда «${teamOf(a.manager)}»</small></div>${badge(a)}</div><p>${dt(a.start)} → ${dt(a.end)} МСК</p>
     <p>${active(a)?E(a.clients.map(id=>byClient(id).name).join(" · ")):`Клиентов в назначении: ${a.clients.length}. ${effective(a)==="planned"?"Состав откроется с начала периода.":effective(a)==="change_pending"?"Состав скрыт, пока руководитель рассматривает изменения.":"Состав и карточки больше недоступны."}`}</p>
-    ${button("detail",active(a)?"Открыть клиентов и задачи":"Посмотреть условия",`data-id="${a.id}"`,active(a)?"primary":"")}</article>`).join(""):empty("Назначений нет",state.view==="archive"?"Здесь появятся завершённые и отозванные назначения.":"Попросите менеджера создать назначение и дождитесь согласования руководителем.")}`;
+    ${button("detail","Посмотреть условия",`data-id="${a.id}"`)}</article>`).join(""):empty("Назначений нет",state.view==="archive"?"Здесь появятся завершённые и отозванные назначения.":"Попросите менеджера создать назначение и дождитесь согласования руководителем.")}`;
   }
   function assistantDetail(a) {
-    const allowed=active(a),done=tasks.filter(t=>a.clients.includes(t.client)&&t.status==="done").length;
-    return `${button("back","← К назначениям")}<section class="as-panel" style="margin-top:16px"><div class="as-between"><h2>${a.id} · замещаю ${E(person(a.manager))}</h2>${badge(a)}</div><p>${dt(a.start)} → ${dt(a.end)} МСК</p>
-    ${allowed?`<p>Клиенты доступны только в этом периоде. Постоянный менеджер остаётся прежним.</p>${a.clients.map(id=>clientRow(id)).join("")}<div class="as-actions" style="margin-top:16px">${button("view","Рабочая очередь",'data-view="tasks"')}${button("decision","Передать итоги менеджеру",`data-id="${a.id}" data-kind="report"`)}</div>`:
-    `<div class="as-notice ${effective(a)==="change_pending"?"warn":""}">${effective(a)==="planned"?"Назначение согласовано, но ещё не началось.":effective(a)==="change_pending"?"Руководитель рассматривает изменения, доступ приостановлен.":"Доступ завершён. Незавершённая работа возвращается постоянному менеджеру в рамках демонстрации."} Карточки и задачи не открываются.</div><p>Клиентов: ${a.clients.length}. ${["completed","revoked"].includes(effective(a))?`Выполнено действий: ${done}; оставшиеся действия возвращены менеджеру.`:""}</p>`}</section>`;
+    const allowed=active(a);
+    return `${button("back","← К условиям доступа")}<section class="as-panel" style="margin-top:16px"><div class="as-between"><h2>${a.id} · клиенты ${E(person(a.manager))}</h2>${badge(a)}</div><p>${dt(a.start)} → ${dt(a.end)} МСК</p>
+    ${allowed?`<p>Доступ только для просмотра информации. Постоянный менеджер остаётся прежним.</p>${a.clients.map(id=>clientRow(id)).join("")}`:
+    `<div class="as-notice ${effective(a)==="change_pending"?"warn":""}">${effective(a)==="planned"?"Назначение согласовано, но ещё не началось.":effective(a)==="change_pending"?"Руководитель рассматривает изменения, доступ приостановлен.":"Доступ завершён."} Карточки клиентов не открываются.</div><p>Клиентов в назначении: ${a.clients.length}.</p>`}</section>`;
   }
   function clientRow(id) {
     const c=byClient(id),a=visible().find(a=>active(a)&&a.clients.includes(id));
@@ -254,38 +260,49 @@
   }
   function clientsView() {
     if(!isAssistant())return empty("Сценарий ассистента","Переключитесь на роль «Ассистент».");
-    const ids=availableClients();return ids.length?`<section class="as-panel"><h2>Мои назначенные клиенты · ${ids.length}</h2><p class="as-muted">Только действующие подтверждённые назначения, без дублей между замещениями.</p>${ids.map(clientRow).join("")}</section>`:empty("Нет доступных клиентов","Клиенты появятся после согласования назначения и наступления начала периода. Проверьте «Мои назначения».");
+    const ids=availableClients();return ids.length?`<section class="as-panel"><h2>Клиентская база · ${ids.length}</h2><p class="as-muted">Только выбранные клиенты из действующих согласованных назначений. Информация доступна для просмотра, без редактирования.</p>${ids.map(clientRow).join("")}</section>`:empty("Нет доступных клиентов","Клиенты появятся после согласования назначения и наступления начала периода. Проверьте «Условия доступа».");
   }
   function clientView() {
     const c=byClient(state.client);if(!isAssistant()||!c||!availableClients().includes(c.id))return empty("Доступ к карточке закрыт","Срок закончился, назначение отозвано или изменения ещё не согласованы.");
     const a=visible().find(a=>active(a)&&a.clients.includes(c.id));
-    return `${button("client-back","← К назначенным клиентам")}<section class="as-panel" style="margin-top:16px"><div class="as-kicker">Карточка в области временного доступа</div><h2>${E(c.name)}</h2>
-    <div class="as-notice">Основание: ${a.id} · замещаю ${E(person(a.manager))}. Доступ до ${dt(a.end)} МСК; изменение демо-времени сразу закроет карточку при окончании периода.</div>
-    <dl class="as-meta"><div><dt>Город</dt><dd>${c.city}</dd></div><div><dt>Юридические лица</dt><dd>${c.legals}</dd></div><div><dt>Торговые точки</dt><dd>${c.outlets}</dd></div></dl>
-    <h3>Задачи по клиенту</h3>${taskRows(tasks.filter(t=>t.client===c.id))}
-    <p class="as-muted">Это синтетическая карточка сценария замещения. Здесь не показаны реальные суммы продаж, контакты или документы из 1С.</p></section>`;
-  }
-  function taskRows(rows) {
-    return rows.map(t=>`<div class="as-task"><div><strong>${E(t.title)}</strong><small>${E(byClient(t.client).name)} · ${t.due}</small><small>${{todo:"Нужно выполнить",progress:"В работе",done:"Выполнено"}[t.status]}</small></div>${t.status==="done"?`<span class="as-badge good">Готово</span>`:button("task",t.status==="todo"?"Взять в работу":"Завершить",`data-task="${t.id}"`,t.status==="progress"?"primary":"")}</div>`).join("");
-  }
-  function tasksView() {
-    const ids=isAssistant()?availableClients():[],rows=tasks.filter(t=>ids.includes(t.client));
-    return rows.length?`<section class="as-panel"><h2>Рабочая очередь</h2><p class="as-muted">Демонстрационные действия по клиентам с действующим доступом. Ничего не отправляется в Битрикс24.</p>${taskRows(rows)}</section>`:empty("Нет доступных задач","Без действующего назначения клиентские задачи не показываются.");
+    const r=c.record;
+    const value=v=>v==null||v===""?"Данные появятся после выгрузки из 1С":typeof v==="boolean"?(v?"Да":"Нет"):Array.isArray(v)?v.join(", "):typeof v==="object"?"Данные появятся после выгрузки из 1С":String(v);
+    const field=(f,row)=>`<div class="as-info-field"><dt>${E(f.label)}</dt><dd>${E(value(row?.[f.id]))}</dd></div>`;
+    const groups=[...new Set(directory.registry.filter(f=>!["legal","contract"].includes(f.relation)&&f.group!=="Продажи за выбранный месяц").map(f=>f.group))];
+    let body;
+    if(state.clientTab==="sales"){
+      const panel=directory.sales.panel(r,{detail:!!state.legal,legalId:state.legal})
+        .replace(/data-x6="sales-legal"/g,'data-as-action="legal"')
+        .replace(/data-x6="sales-all"/g,'data-as-action="legal-clear"')
+        .replace(/data-value=/g,'data-legal=')
+        .replace(/data-cs-period/g,"data-as-period")
+        .replace(/data-cs-legal-select/g,"data-as-legal-select");
+      body=`<div class="as-sales">${state.legal?button("legal-clear","← Все юридические лица"):""}${panel}</div>`;
+    }else if(state.clientTab==="data"){
+      body=groups.map((g,i)=>`<details class="as-info-group" ${i===0?"open":""}><summary>${E(g)}</summary><dl>${directory.registry.filter(f=>f.group===g).map(f=>field(f,r)).join("")}</dl></details>`).join("");
+      const legalIds=new Set(directory.sales.rowsFor(r).map(s=>s.legalId));
+      body+=`<h3>Юридические лица и договоры</h3>`+directory.legalRows.filter(l=>legalIds.has(l.id)||l.clientId===r.clientId).map(l=>`<details class="as-info-group"><summary>${E(l.legalName)}</summary><dl>${directory.registry.filter(f=>f.relation==="legal").map(f=>field(f,l)).join("")}</dl>${(l.contracts||[]).map(contract=>`<h3>${E(contract.contractNumber||"Договор")}</h3><dl>${directory.registry.filter(f=>f.relation==="contract").map(f=>field(f,contract)).join("")}</dl>`).join("")}</details>`).join("");
+    }else{
+      body=`<dl class="as-meta"><div><dt>Город</dt><dd>${E(c.city)}</dd></div><div><dt>Постоянный менеджер</dt><dd>${E(person(a.manager))}</dd></div><div><dt>Юридические лица / ТТ</dt><dd>${c.legals} / ${c.outlets}</dd></div></dl><dl>${directory.registry.filter(f=>["clientName","clientAddress","topCategory","lprName","lprPhone","lprEmail"].includes(f.id)).map(f=>field(f,r)).join("")}</dl>`;
+    }
+    return `${button("client-back","← К клиентам")}<section class="as-panel" style="margin-top:16px"><div class="as-kicker">Карточка клиента · только просмотр</div><h2>${E(c.name)}</h2>
+    <div class="as-notice">Основание: ${a.id}. Доступ до ${dt(a.end)} МСК. Постоянный менеджер не меняется. Представлены вымышленные данные прототипа.</div>
+    <nav class="as-card-tabs" aria-label="Информация о клиенте">${[["overview","Обзор"],["data","Данные клиента"],["sales","Продажи"]].map(([key,label])=>button("client-tab",label,`data-tab="${key}" aria-pressed="${state.clientTab===key}"`,state.clientTab===key?"as-selected":"")).join("")}</nav>${body}</section>`;
   }
   function loadView() {
-    if(!["coordinator","rop","director"].includes(state.role))return empty("Нет доступа к нагрузке команды","Этот обзор предназначен координатору и руководителям.");
+    if(!["coordinator","rop","director"].includes(state.role))return empty("Нет доступа к обзору команды","Этот обзор предназначен координатору и руководителям.");
     const days=Array.from({length:5},(_,i)=>T("2026-10-27T00:00")+i*86400000);
-    return `<section class="as-panel"><h2>Нагрузка ассистентов · 27–31 октября</h2><p class="as-muted">Только согласованные назначения в вашей области. Приостановленные изменения показаны отдельно, а не как действующий доступ.</p>
-      <div class="as-table-scroll" tabindex="0" aria-label="Календарь нагрузки, горизонтальная прокрутка"><table class="as-table as-calendar"><thead><tr><th>Ассистент</th>${days.map(d=>`<th>${new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",day:"numeric",month:"short",weekday:"short"}).format(d)}</th>`).join("")}</tr></thead><tbody>
+    return `<section class="as-panel"><h2>Доступы по датам · 27–31 октября</h2><p class="as-muted">Только согласованные назначения в вашей области. Приостановленные изменения показаны отдельно, а не как действующий доступ.</p>
+      <div class="as-table-scroll" tabindex="0" aria-label="Периоды доступа, горизонтальная прокрутка"><table class="as-table as-calendar"><thead><tr><th>Ассистент</th>${days.map(d=>`<th>${new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",day:"numeric",month:"short",weekday:"short"}).format(d)}</th>`).join("")}</tr></thead><tbody>
       ${["a1","a2"].map(id=>`<tr><td><strong>${E(person(id))}</strong></td>${days.map(d=>{const rows=visible().filter(a=>a.assistant===id&&a.status==="approved"&&!a.change&&overlap(a,d,d+86400000));return `<td>${rows.length?`<div class="as-day ${rows.length>1?"warn":""}"><strong>${new Set(rows.flatMap(a=>a.clients)).size} клиентов</strong><small>${rows.map(a=>E(person(a.manager))).join("<br>")}</small>${rows.length>1?"<small>Проверить пересечение нагрузки</small>":""}</div>`:`<span class="as-muted">Нет назначений</span>`}</td>`;}).join("")}</tr>`).join("")}</tbody></table></div>
-      <div class="as-notice">Несколько назначений в один день не означают автоматический запрет. Координатор проверяет задачи, территорию и сроки; числовой норматив нагрузки здесь не утверждается.</div>
-      <h3>Заявки и изменения, которые ещё не учтены в действующей нагрузке</h3>${assignmentTable(visible().filter(a=>a.status==="pending"||a.change))}</section>`;
+      <div class="as-notice">Обзор показывает только периоды доступа к клиентской информации. Доступ к другим разделам не предоставляется.</div>
+      <h3>Заявки и изменения, по которым доступ ещё не действует</h3>${assignmentTable(visible().filter(a=>a.status==="pending"||a.change))}</section>`;
   }
   function modalView() {
     const {kind,id}=state.modal,a=assignments.find(a=>a.id===id);
-    const titles={approve:a?.change?"Согласовать изменения":"Согласовать назначение",reject:a?.change?"Отклонить изменения":"Отклонить назначение",return:"Вернуть на уточнение",cancel:"Отменить заявку",revoke:"Отозвать доступ",report:"Передать итоги менеджеру","withdraw-change":"Отменить предложенные изменения",reset:"Сбросить демонстрацию"};
+    const titles={approve:a?.change?"Согласовать изменения":"Согласовать назначение",reject:a?.change?"Отклонить изменения":"Отклонить назначение",return:"Вернуть на уточнение",cancel:"Отменить заявку",revoke:"Отозвать доступ","withdraw-change":"Отменить предложенные изменения",reset:"Сбросить демонстрацию"};
     const isApprove=kind==="approve",isReset=kind==="reset";
-    return `<div class="as-modal"><section class="as-dialog" role="dialog" aria-modal="true" aria-labelledby="as-dialog-title"><h2 id="as-dialog-title">${titles[kind]}</h2><p>${isReset?"Примеры, решения и задачи в этой вкладке вернутся в исходное состояние. Реальный ЛК не затрагивается.":isApprove?"Проверьте ассистента, список клиентов и период. Только после этого доступ может начать действовать.":kind==="report"?"Кратко укажите результат и что ещё нужно сделать. Отчёт не прекращает доступ досрочно.":kind==="revoke"?"Доступ прекратится немедленно, даже если исходный период ещё не закончился.":"Решение и основание сохранятся в истории этого демонстрационного назначения."}</p>
+    return `<div class="as-modal"><section class="as-dialog" role="dialog" aria-modal="true" aria-labelledby="as-dialog-title"><h2 id="as-dialog-title">${titles[kind]}</h2><p>${isReset?"Примеры и решения в этой вкладке вернутся в исходное состояние. Реальный ЛК не затрагивается.":isApprove?"Проверьте ассистента, список клиентов и период. Только после этого доступ может начать действовать.":kind==="revoke"?"Доступ прекратится немедленно, даже если исходный период ещё не закончился.":"Решение и основание сохранятся в истории этого демонстрационного назначения."}</p>
     ${!isReset?`<label class="as-form">Комментарий${isApprove?" (необязательно)":" / основание"}<textarea id="as-dialog-reason"></textarea></label>`:""}
     <p id="as-dialog-error" class="as-error" role="alert"></p><div class="as-actions">${button("modal-cancel","Отмена")}${button("modal-confirm",isReset?"Сбросить":isApprove?"Подтвердить":"Сохранить решение","",["revoke","reject"].includes(kind)?"as-danger":"primary")}</div></section></div>`;
   }
@@ -317,15 +334,12 @@
     } else if(m.kind==="revoke") {
       if(!canRevoke(a)||a.status!=="approved"||a.end<=state.clock)return error("Отзыв этого назначения недоступен.");
       a.status="revoked";a.change=null;history(a,"Доступ отозван немедленно: "+reason);
-    } else if(m.kind==="report") {
-      if(!isAssistant()||!active(a))return error("Отчёт доступен только во время действующего назначения.");
-      a.reports.push({actor:actor(),at:state.clock,text:reason});history(a,"Ассистент передал итоги: "+reason);
     }
     state.modal=null;notify("Решение сохранено только в прототипе.");renderWorkspace();
   }
   function notifyAndRender(text){notify(text);renderWorkspace();}
   function back(){state.detail=null;state.client=null;state.form=null;state.view=canReview({manager:"m1"})?"review":"list";state.query="";state.filter="all";renderWorkspace();}
-  function defaultView(role){return ["rop","director"].includes(role)?"review":"list";}
+  function defaultView(role){return role==="assistant"?"clients":["rop","director"].includes(role)?"review":"list";}
   document.addEventListener("click",event=>{
     const b=event.target.closest("[data-as-action]");if(!b)return;
     const action=b.dataset.asAction,a=assignments.find(a=>a.id===b.dataset.id);
@@ -346,12 +360,10 @@
     if(action==="modal-cancel"){state.modal=null;}
     if(action==="modal-confirm"){decide();return;}
     if(action==="reset"){state.modal={kind:"reset"};}
-    if(action==="client"){if(!isAssistant()||!availableClients().includes(b.dataset.client))return;state.client=b.dataset.client;state.detail=null;}
+    if(action==="client"){if(!isAssistant()||!availableClients().includes(b.dataset.client))return;state.client=b.dataset.client;state.clientTab="overview";state.legal="";state.detail=null;}
     if(action==="client-back"){state.client=null;state.view="clients";}
-    if(action==="task"){
-      const t=tasks.find(t=>t.id===b.dataset.task);if(!isAssistant()||!t||!availableClients().includes(t.client))return;
-      t.status=t.status==="todo"?"progress":"done";notify(t.status==="done"?"Действие отмечено выполненным только в демо.":"Действие взято в работу только в демо.");
-    }
+    if(action==="client-tab"){if(!isAssistant()||!availableClients().includes(state.client))return;state.clientTab=b.dataset.tab;state.legal="";}
+    if(action==="legal"||action==="legal-clear"){if(!isAssistant()||!availableClients().includes(state.client))return;state.legal=action==="legal"?b.dataset.legal:"";}
     if(action==="clock"){
       const value=document.getElementById("as-clock-value").value,ts=T(value);
       if(!Number.isFinite(ts))return notifyAndRender("Укажите корректное демо-время.");
@@ -361,6 +373,8 @@
     renderWorkspace();
   });
   document.addEventListener("input",event=>{
+    if(event.target.matches("[data-as-period]")&&isAssistant()&&availableClients().includes(state.client)){directory.sales.setMonth(event.target.value);state.legal="";renderWorkspace();return;}
+    if(event.target.matches("[data-as-legal-select]")&&isAssistant()&&availableClients().includes(state.client)){state.legal=event.target.value;renderWorkspace();return;}
     const e=event.target;
     if(e.hasAttribute("data-as-search")){
       state.query=e.value;
@@ -394,14 +408,11 @@
     }
   });
   add("assistant-clients","Клиенты ассистента","Только действующие назначения","Ассистент","handover","","");
-  add("assistant-tasks","Рабочая очередь ассистента","Действия по назначенным клиентам","Ассистент","handover","","");
   const priorNav=roleNav;
   roleNav=function(items){
     if(routes.has(current)&&state.role==="assistant")return [
-      ["assistant","Мои назначения","repeat-2","handover"],
-      ["assistant-clients","Мои клиенты","users","handover"],
-      ["assistant-tasks","Рабочая очередь","clipboard-list","handover"],
-      ["exchange","Другие разделы демо","layout-grid","clients"],
+      ["assistant-clients","Клиенты","users","handover"],
+      ["assistant","Условия доступа","repeat-2","handover"],
     ];
     return priorNav(items).map(row=>row[0]==="handover"?[row[0],"Назначения ассистентам",row[2],row[3]]:row);
   };
@@ -411,12 +422,14 @@
     const id=p.get("as_person");
     const allowed={manager:["m1","m2"],coordinator:["c1"],rop:["r1","r2"],director:["d1"],assistant:["a1","a2"]}[state.role];
     state.person=allowed.includes(id)?id:rolePerson[state.role];
-    state.view=p.get("as_view")|| (current==="assistant-clients"?"clients":current==="assistant-tasks"?"tasks":defaultView(state.role));
+    state.view=p.get("as_view")|| (current==="assistant-clients"||current==="assistant-tasks"?"clients":defaultView(state.role));
+    if(state.view==="tasks")state.view="clients";
     if(!tabs().some(([k])=>k===state.view))state.view=defaultView(state.role);
   }
   let lastRoute="";
   const beforeRender=render;
   render=function(){
+    if(current==="assistant-tasks"){current="assistant-clients";state.view="clients";}
     if(lastRoute!==current){state.detail=null;state.client=null;state.modal=null;lastRoute=current;}
     if(routes.has(current))readRole();
     beforeRender();document.body.classList.toggle("as-active",routes.has(current));

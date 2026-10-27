@@ -1,5 +1,22 @@
 # Main flows
 
+## First-stage assistant access, current acceptance criteria
+- Supersedes the earlier assistant-task/report scenarios below.
+- Assistant opens Clients by default; only active approved selected clients.
+- Cards are read-only information: overview, existing synthetic sales/legal
+  breakdown and all client fields. No task queue, task actions or handover reports.
+- Keep create/draft/submit/approve/reject/return/change/revoke and period checks.
+- No assignment means empty Clients; no early or expired card access.
+- Old assistant-tasks / tasks-view hashes resolve to Clients, not a task screen.
+- Existing manager client list/cards, sales, columns, fullscreen and navigation
+  remain unchanged. Check desktop/mobile, light/dark and fresh deployed context.
+- Current first-stage verification: assistant-stage1-qa.js, 31 browser checks
+  passed. Existing sales numerical suite 7/7 passed. All nine base card sections,
+  legal sales detail, period/list preservation, columns, fullscreen/Escape,
+  empty search/reset, team navigation, Sales/Distribution/route rerun in browser.
+  No pageerror events. Desktop light and 375px dark information/sales inspected;
+  mobile document width stayed 375px. Historical extended QA below is superseded.
+
 Baseline inspected in Chromium at 1440 × 1000 before editing. Existing synthetic
 client directory, role scope, fullscreen registry and client card tabs work.
 

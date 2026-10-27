@@ -1,3 +1,5 @@
+// Historical extended-workflow checks. First-stage acceptance now lives in
+// assistant-stage1-qa.js; task/report expectations below are intentionally retired.
 var QA_RESULT = await (async function () {
   var passed=[];
   function ok(value,label){if(!value)throw new Error("QA: "+label);passed.push(label);}

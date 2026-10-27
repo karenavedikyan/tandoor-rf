@@ -97,6 +97,16 @@
 .as-dialog .as-actions { justify-content:flex-end; margin-top:20px; }
 .as-error { color:var(--as-bad); font-size:var(--as-sm); margin:10px 0; min-height:20px; }
 .as-error:empty { display:none; }
+.as-card-tabs { display:flex;gap:8px;flex-wrap:wrap;margin:20px 0; }
+.as-info-group { border:1px solid var(--line);border-radius:6px;margin:12px 0; }
+.as-info-group summary { cursor:pointer;padding:14px;font-weight:600; }
+.as-info-group dl { margin:0;padding:0 14px 14px; }
+.as-info-field { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:16px;padding:12px 0;border-bottom:1px solid var(--line); }
+.as-info-field dt { color:var(--as-muted); }
+.as-info-field dd { margin:0;overflow-wrap:anywhere; }
+.as-sales { min-width:0; }
+.as-sales .cs3-scroll { overflow:auto;max-width:100%; }
+@media(max-width:600px){.as-info-field{grid-template-columns:1fr;gap:6px}}
 .as-toast { padding:12px 16px; margin:16px 0; border:1px solid var(--as-good); background:var(--as-good-bg); color:var(--as-good); border-radius:8px; font-size:var(--as-sm); }
 .as-work .as-danger { color:var(--as-bad); border-color:var(--as-bad); }
 .as-work .as-link { border:0; padding:0; min-height:32px; background:transparent; color:var(--as-good); text-align:left; text-decoration:underline; text-underline-offset:3px; }
