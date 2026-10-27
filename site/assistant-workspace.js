@@ -44,6 +44,14 @@
         record:{...r,client_manager:person(manager)}});
     });
   }
+  for(const [manager,owner] of [["m1","DEMO-M1"],["m2","DEMO-E12"],["m3","DEMO-E14"]]){
+    directory.clientRows.filter(r=>r.client_managerId===owner&&!usedRecords.has(r.id)).forEach(r=>{
+      usedRecords.add(r.id);
+      clients.push({id:`pool-${manager}-${r.id}`,name:r.clientName,city:(r.clientAddress||"").split(",")[0],manager,
+        legals:directory.sales.rowsFor(r).length,outlets:directory.outletRows.filter(o=>o.clientId===r.id).length,
+        record:{...r,client_manager:person(manager)}});
+    });
+  }
   const state = {role:"manager",person:"m1",view:"list",clock:initialClock,query:"",filter:"all",detail:null,client:null,clientTab:"overview",legal:"",form:null,modal:null,toast:"",next:110};
   let assignments = [];
   const rolePerson = {manager:"m1",coordinator:"c1",rop:"r1",director:"d1",assistant:"a1"};
@@ -172,14 +180,72 @@
     if(!rows.length)return empty("Назначений не найдено","Измените поиск или статус. Заявки другой команды не показываются РОПу.");
     return `<div class="as-table-scroll" tabindex="0" aria-label="Таблица назначений, можно прокручивать"><table class="as-table"><thead><tr><th>Назначение</th><th>Менеджер → ассистент</th><th>Период, МСК</th><th>Клиенты</th><th>Статус</th><th></th></tr></thead><tbody>${rows.map(a=>`<tr><td><strong>${a.id}</strong><small>Команда «${teamOf(a.manager)}»</small></td><td><strong>${E(person(a.manager))}</strong><small>${E(person(a.assistant))}</small></td><td>${dt(a.start)}<small>до ${dt(a.end)}</small></td><td>${a.clients.length}<small>${E(a.clients.map(id=>byClient(id).name).join(", "))}</small></td><td>${badge(a)}</td><td>${button("detail","Открыть",`data-id="${a.id}"`)}</td></tr>`).join("")}</tbody></table></div>`;
   }
+  const pickerDefaults=()=>({city:"",category:"",minSales:"",maxSales:"",legalMin:"",ttMin:"",access:"",selected:false,sort:"name",month:"2026-09"});
   function newForm(a,change=false) {
     const value=change&&a.change?a.change:a;
     return {id:a?.id||null,change,manager:a?.manager||(state.role==="manager"?state.person:"m1"),assistant:value?.assistant||"",
-      clients:[...(value?.clients||[])],start:local(value?.start||state.clock+3600000),end:local(value?.end||state.clock+86400000*2),reason:value?.reason||"",q:"",error:""};
+      clients:[...(value?.clients||[])],start:local(value?.start||state.clock+3600000),end:local(value?.end||state.clock+86400000*2),reason:value?.reason||"",q:"",filters:pickerDefaults(),error:""};
+  }
+  const pickerSales=c=>directory.sales.summary(directory.sales.rowsFor(c.record),state.form.filters.month).revenue;
+  const pickerConflict=c=>assignments.find(a=>a.id!==state.form.id&&a.status==="approved"&&overlap(a,T(state.form.start),T(state.form.end))&&a.clients.includes(c.id));
+  function pickerRows(){
+    const f=state.form,p=f.filters,q=f.q.trim().toLocaleLowerCase("ru");
+    const rows=clients.filter(c=>{
+      if(c.manager!==f.manager)return false;
+      const legal=directory.sales.rowsFor(c.record);
+      if(q&&![c.name,c.city,c.record.clientId,c.record.clientPhones,...legal.flatMap(l=>[l.legalName,l.inn,...l.contracts.map(d=>d.contractNumber)])].join(" ").toLocaleLowerCase("ru").includes(q))return false;
+      if(p.city&&c.city!==p.city||p.category&&(c.record.topCategory||"empty")!==p.category)return false;
+      const sales=pickerSales(c);
+      if((p.minSales!==""||p.maxSales!=="")&&(!Number.isFinite(sales)||(p.minSales!==""&&sales<Number(p.minSales))||(p.maxSales!==""&&sales>Number(p.maxSales))))return false;
+      if(p.legalMin!==""&&c.legals<Number(p.legalMin)||p.ttMin!==""&&c.outlets<Number(p.ttMin))return false;
+      if(p.selected&&!f.clients.includes(c.id))return false;
+      if(p.access==="free"&&pickerConflict(c)||p.access==="busy"&&!pickerConflict(c))return false;
+      return true;
+    });
+    return rows.sort((a,b)=>{
+      if(p.sort==="name")return a.name.localeCompare(b.name,"ru",{numeric:true});
+      const av=pickerSales(a),bv=pickerSales(b);
+      if(!Number.isFinite(av)||!Number.isFinite(bv))return Number.isFinite(av)===Number.isFinite(bv)?0:Number.isFinite(av)?-1:1;
+      return (av-bv)*(p.sort==="sales-asc"?1:-1);
+    });
+  }
+  function pickerSelectionText(){
+    const shown=new Set(pickerRows().map(c=>c.id)),hidden=state.form.clients.filter(id=>!shown.has(id)).length;
+    return `Выбрано клиентов: ${state.form.clients.length}${hidden?` · скрыто фильтрами: ${hidden}`:""}. Выбор сохраняется при смене фильтров.`;
+  }
+  function refreshPicker(preserve=false){
+    const list=document.getElementById("as-client-picker"),top=preserve?list.scrollTop:0;
+    const focused=document.activeElement?.dataset.asClient;
+    const index=focused?[...list.querySelectorAll("input")].findIndex(e=>e.dataset.asClient===focused):-1;
+    list.innerHTML=picker();list.scrollTop=top;
+    if(focused){
+      const boxes=[...list.querySelectorAll("input")],next=boxes.find(e=>e.dataset.asClient===focused)||boxes[Math.min(index,boxes.length-1)];
+      if(next)next.focus({preventScroll:true});else document.querySelector('[data-as-pick="selected"]').focus({preventScroll:true});
+    }
+    document.getElementById("as-picked").textContent=pickerSelectionText();
+    document.getElementById("as-picker-found").textContent=`Найдено: ${pickerRows().length} из ${clients.filter(c=>c.manager===state.form.manager).length}`;
+  }
+  function pickerFilters(){
+    const p=state.form.filters,own=clients.filter(c=>c.manager===state.form.manager);
+    const select=(key,label,items)=>`<label>${label}<select data-as-pick="${key}">${items.map(([v,t])=>`<option value="${E(v)}" ${p[key]===v?"selected":""}>${E(t)}</option>`).join("")}</select></label>`;
+    const minimum=(key,label)=>`<label>${label}<input type="number" min="0" step="1" data-as-pick="${key}" value="${E(p[key])}" placeholder="Не ограничено"></label>`;
+    return `<div class="as-picker-filters">
+      ${select("city","Город",[["","Все города"],...[...new Set(own.map(c=>c.city))].sort().map(v=>[v,v])])}
+      ${select("category","Категория",[["","Все категории"],...[...new Set(own.map(c=>c.record.topCategory).filter(Boolean))].sort().map(v=>[v,v]),["empty","Не передана"]])}
+      ${select("month","Период продаж",window.TandoorClientMetrics.months.map(v=>[v,`${window.TandoorClientMetrics.monthNames[+v.slice(5)-1]} ${v.slice(0,4)}`]))}
+      ${minimum("minSales","Продажи от, ₽")}${minimum("maxSales","Продажи до, ₽")}
+      ${select("access","Доступ в выбранные даты",[["","Все клиенты"],["free","Без пересечений доступа"],["busy","Есть пересечение доступа"]])}
+      ${minimum("legalMin","Юрлиц не меньше")}${minimum("ttMin","Торговых точек не меньше")}
+      ${select("sort","Сортировка",[["name","По названию"],["sales-desc","Продажи: сначала крупные"],["sales-asc","Продажи: сначала небольшие"]])}
+    </div><div class="as-picker-toolbar"><label class="as-pick-check"><input type="checkbox" data-as-pick="selected" ${p.selected?"checked":""}>Только выбранные</label>${button("picker-reset","Сбросить фильтры","","as-link")}</div>
+    <p class="as-muted">Все условия применяются одновременно. Сумма продаж за выбранный месяц; отсутствие данных не считается нулём.</p>`;
   }
   function picker() {
-    const f=state.form,rows=clients.filter(c=>c.manager===f.manager&&[c.name,c.city].join(" ").toLowerCase().includes(f.q.toLowerCase()));
-    return rows.length?rows.map(c=>`<label class="as-check"><input type="checkbox" data-as-client="${c.id}" ${f.clients.includes(c.id)?"checked":""}><span><strong>${E(c.name)}</strong><small>${E(c.city)} · ${c.legals} юрлиц · ${c.outlets} ТТ</small></span></label>`).join(""):`<p class="as-muted" style="padding:16px">По этому запросу клиентов нет.</p>`;
+    const f=state.form,rows=pickerRows();
+    return rows.length?rows.map(c=>{
+      const conflict=pickerConflict(c),sales=pickerSales(c);
+      return `<label class="as-check"><input type="checkbox" data-as-client="${c.id}" ${f.clients.includes(c.id)?"checked":""}><span><strong>${E(c.name)}</strong><small>${E(c.city)} · ${E(c.record.topCategory||"Категория не передана")} · ${c.legals} юрлиц · ${c.outlets} ТТ</small><small>Продажи: ${Number.isFinite(sales)?new Intl.NumberFormat("ru-RU").format(sales)+" ₽":"нет данных"}${conflict?` · пересечение с ${E(conflict.id)}`:""}</small></span></label>`;
+    }).join(""):`<p class="as-muted" style="padding:16px">Нет клиентов по выбранным условиям. Измените фильтры; ранее выбранные клиенты сохранены.</p>`;
   }
   function formView() {
     if(!isWriter())return empty("Создание недоступно","РОП и директор принимают решение по заявкам; назначение готовит менеджер или координатор.");
@@ -190,7 +256,9 @@
       <label>Чьих клиентов передаём<select data-as-field="manager" ${state.role==="manager"?"disabled":""}>${managerOptions}</select></label>
       <label>Ассистент<select data-as-field="assistant" required><option value="">Выберите ассистента</option>${["a1","a2"].map(id=>`<option value="${id}" ${f.assistant===id?"selected":""}>${E(person(id))}</option>`).join("")}</select></label>
       <div class="as-fields"><label>Начало, МСК<input data-as-field="start" type="datetime-local" value="${f.start}" required></label><label>Окончание, МСК · не включая<input data-as-field="end" type="datetime-local" value="${f.end}" required></label></div>
-      <div><label>Поиск по своим клиентам<input data-as-field="q" value="${E(f.q)}" placeholder="Название или город"></label><p class="as-muted" id="as-picked">Выбрано клиентов: ${f.clients.length}</p><div id="as-client-picker" class="as-client-picker">${picker()}</div></div>
+      <div><label>Поиск по своим клиентам<input data-as-field="q" value="${E(f.q)}" placeholder="Название, город, ИНН, юрлицо или договор"></label>
+      ${pickerFilters()}<div class="as-picker-toolbar"><strong id="as-picker-found" role="status">Найдено: ${pickerRows().length} из ${clients.filter(c=>c.manager===f.manager).length}</strong>${button("picker-select","Выбрать найденных")}${button("picker-unselect","Снять найденных")}${button("picker-clear","Очистить выбор","","as-link")}</div>
+      <p class="as-muted" id="as-picked" aria-live="polite">${pickerSelectionText()}</p><div id="as-client-picker" class="as-client-picker">${picker()}</div></div>
       <label>Основание назначения<textarea data-as-field="reason" placeholder="Например: временный доступ к информации на время отпуска менеджера">${E(f.reason)}</textarea></label>
       <p class="as-error" id="as-form-error" role="alert">${E(f.error)}</p>
       <div class="as-actions">${button("submit",f.change?"Отправить изменения на согласование":"Отправить на согласование","","primary")}${!f.change?button("draft","Сохранить черновик"):""}${button("back","Отмена")}</div>
@@ -364,6 +432,15 @@
   document.addEventListener("click",event=>{
     const b=event.target.closest("[data-as-action]");if(!b)return;
     const action=b.dataset.asAction,a=assignments.find(a=>a.id===b.dataset.id);
+    if(action.startsWith("picker-")){
+      if(!isWriter()||!state.form)return;
+      const f=state.form,ids=new Set(pickerRows().map(c=>c.id));
+      if(action==="picker-select")f.clients=[...new Set([...f.clients,...ids])];
+      if(action==="picker-unselect")f.clients=f.clients.filter(id=>!ids.has(id));
+      if(action==="picker-clear")f.clients=[];
+      if(action==="picker-reset"){f.q="";f.filters=pickerDefaults();renderWorkspace();return}
+      refreshPicker(true);return;
+    }
     if(action==="role") {
       state.role=b.dataset.role;state.person=rolePerson[state.role];state.view=defaultView(state.role);state.form=null;state.detail=null;state.client=null;state.modal=null;state.query="";state.filter="all";state.toast="";writeUrl();render();return;
     }
@@ -402,6 +479,9 @@
     if(event.target.matches("[data-as-period]")&&isAssistant()&&availableClients().includes(state.client)){directory.sales.setMonth(event.target.value);state.legal="";renderWorkspace();return;}
     if(event.target.matches("[data-as-legal-select]")&&isAssistant()&&availableClients().includes(state.client)){state.legal=event.target.value;renderWorkspace();return;}
     const e=event.target;
+    if(e.dataset.asPick&&state.form&&isWriter()){
+      state.form.filters[e.dataset.asPick]=e.type==="checkbox"?e.checked:e.value;refreshPicker();return;
+    }
     if(e.hasAttribute("data-as-search")){
       state.query=e.value;
       const rows=visible().filter(a=>(state.view!=="review"||a.status==="pending"||a.change)&&(state.filter==="all"||effective(a)===state.filter)&&[a.id,person(a.manager),person(a.assistant),...a.clients.map(id=>byClient(id).name)].join(" ").toLowerCase().includes(state.query.toLowerCase()));
@@ -409,8 +489,9 @@
     }
     if(!e.dataset.asField||!state.form)return;
     state.form[e.dataset.asField]=e.value;
-    if(e.dataset.asField==="q")document.getElementById("as-client-picker").innerHTML=picker();
+    if(e.dataset.asField==="q")refreshPicker();
     if(["assistant","start","end"].includes(e.dataset.asField))document.getElementById("as-load-hint").innerHTML=loadHint(state.form.assistant,T(state.form.start),T(state.form.end));
+    if(["start","end"].includes(e.dataset.asField))refreshPicker();
   });
   document.addEventListener("change",event=>{
     const e=event.target;
@@ -419,9 +500,9 @@
     }
     if(e.hasAttribute("data-as-status")){state.filter=e.value;renderWorkspace();return;}
     if(e.dataset.asClient&&state.form){
-      const ids=new Set(state.form.clients);e.checked?ids.add(e.dataset.asClient):ids.delete(e.dataset.asClient);state.form.clients=[...ids];document.getElementById("as-picked").textContent="Выбрано клиентов: "+ids.size;return;
+      const ids=new Set(state.form.clients);e.checked?ids.add(e.dataset.asClient):ids.delete(e.dataset.asClient);state.form.clients=[...ids];refreshPicker(true);return;
     }
-    if(e.dataset.asField==="manager"&&state.form){state.form.manager=e.value;state.form.clients=[];renderWorkspace();}
+    if(e.dataset.asField==="manager"&&state.form){state.form.manager=e.value;state.form.clients=[];state.form.q="";state.form.filters=pickerDefaults();renderWorkspace();}
   });
   document.addEventListener("submit",event=>{if(event.target.id==="as-assignment-form"){event.preventDefault();submit(false);}});
   document.addEventListener("keydown",event=>{

@@ -1,5 +1,24 @@
 # Main flows
 
+## Filter clients when creating or changing an assignment
+- Manager's picker now covers the full synthetic 116-client owner portfolio;
+  coordinator may choose either manager in their own team. Expanding this source
+  does not grant any additional assistant access.
+- Combine search by name/city/client ID/phone/INN/legal entity/contract with city,
+  TOP category, selected sales month, inclusive revenue bounds, minimum legal
+  entity and TT counts, and access-overlap status for the assignment dates.
+- Sort by name or numeric sales in either direction. Missing sales are not zero
+  and sort last; they are excluded when a revenue bound is set.
+- Bulk select/deselect affects only current results; hidden choices remain.
+  Show total selected and number hidden, offer selected-only and clear selection.
+  Reset filters preserves choices. Changing owner clears choices and filters.
+- Keep list scroll and keyboard focus when toggling a client. Recompute overlaps
+  when dates change; assignment validation still blocks conflicting approved
+  access. Requests/approval only grant the explicitly selected IDs.
+- `assistant-picker-qa.js`: 26 browser assertions, including end-to-end approval.
+  `assistant-directory-qa.js`: 46 shared directory/scope regression assertions.
+  Desktop, mobile, light/dark visual review and selection scroll/focus checked.
+
 ## Realistic default demonstration data
 - Default assistant Anna has 41 active assigned clients across four approved
   assignments from two managers. Pavel has 20 active assigned clients; the future

@@ -55,6 +55,12 @@
 .as-form { display:grid; gap:18px; }
 .as-fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .as-client-picker { max-height:285px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+.as-picker-filters { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px; }
+.as-picker-toolbar { display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;margin:14px 0; }
+.as-work .as-pick-check { display:flex;align-items:center;gap:8px; }
+.as-work .as-pick-check input { width:18px;min-height:18px;margin:0;accent-color:var(--green); }
+@media(max-width:767px){.as-picker-filters{grid-template-columns:1fr 1fr}.as-picker-toolbar button{flex:1 1 auto}}
+@media(max-width:420px){.as-picker-filters{grid-template-columns:1fr}}
 .as-work .as-check { display:flex; flex-direction:row; align-items:flex-start; gap:12px; padding:13px 14px; border-bottom:1px solid var(--line); cursor:pointer; font-size:var(--as-sm); }
 .as-work .as-check:last-child { border-bottom:0; }
 .as-work .as-check input { width:18px; height:18px; min-height:18px; margin:2px 0; accent-color:var(--green); flex-shrink:0; }
