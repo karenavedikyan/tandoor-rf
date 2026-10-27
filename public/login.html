@@ -3,9 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Вход — tandoor-rf</title>
+    <script src="/brand/theme-init.js"></script>
+    <title>Вход в личный кабинет | Тандор</title>
     <link rel="stylesheet" href="/fonts/exo-2/fonts.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/brand/cabinet.css" />
   </head>
   <body class="auth-body">
     <main class="page page--form">
@@ -18,9 +20,9 @@
           height="42"
           alt="Tandoor"
         />
-        <p class="subtitle">tandoor-rf</p>
       </div>
-      <h1 class="title">Вход в ЛК</h1>
+      <h1 class="title">Вход в кабинет</h1>
+      <p class="subtitle">Введите рабочий email и пароль.</p>
 
       <form id="login-form" class="form" novalidate>
         <label class="field">
@@ -30,6 +32,10 @@
             name="email"
             type="email"
             autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            inputmode="email"
+            aria-describedby="status-message"
             required
             class="field__input"
           />
@@ -75,9 +81,7 @@
         aria-atomic="true"
       ></p>
 
-      <p class="footer-link">
-        <a href="/">На тестовую страницу</a>
-      </p>
+      <p class="auth-help">Нет доступа или забыли пароль? Обратитесь к администратору кабинета.</p>
     </main>
     <script src="/common.js" defer></script>
     <script src="/brand/shell-icons.js" defer></script>

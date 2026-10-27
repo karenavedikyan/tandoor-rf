@@ -20,8 +20,9 @@ describe("server", () => {
   it("GET / returns HTML page", async () => {
     const res = await request(app).get("/");
     assert.equal(res.status, 200);
-    assert.match(res.text, /tandoor-rf/);
-    assert.match(res.text, /Проверить сервер/);
+    assert.match(res.text, /Личный кабинет/);
+    assert.match(res.text, /Перейти ко входу/);
+    assert.doesNotMatch(res.text, /Проверить сервер|Тестовый запуск/);
   });
 
   it("GET /api/health returns expected JSON with Cache-Control: no-store", async () => {

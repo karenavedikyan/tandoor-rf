@@ -31,6 +31,16 @@
       return;
     }
 
+    emailInput.value = emailInput.value.trim();
+    emailInput.removeAttribute("aria-invalid");
+    passwordInput.removeAttribute("aria-invalid");
+    if (!emailInput.value || !emailInput.validity.valid || !passwordInput.value) {
+      var invalid = !emailInput.value || !emailInput.validity.valid ? emailInput : passwordInput;
+      invalid.setAttribute("aria-invalid", "true");
+      api.setStatus(statusEl, invalid === emailInput ? "Введите корректный рабочий email." : "Введите пароль.", "error");
+      invalid.focus();
+      return;
+    }
     submitting = true;
     loginButton.disabled = true;
     api.setStatus(statusEl, "Вход…", "loading");
@@ -47,7 +57,7 @@
         if (result.response.status === 200 && result.data && result.data.user) {
           window.location.href = result.data.user.mustChangePassword
             ? "/change-password"
-            : "/profile";
+            : window.ClientsShell && window.ClientsShell.canReadClients(result.data.user) ? "/clients" : "/profile";
           return;
         }
 

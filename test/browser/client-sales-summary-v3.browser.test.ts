@@ -130,7 +130,7 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     await page.fill('input[name="email"]', "admin-sales-ui@example.test");
     await page.fill('input[name="password"]', TEST_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile", { timeout: 30000 });
+    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile" || url.pathname === "/clients", { timeout: 30000 });
   }
 
   it("card uses list return territory and requested missing month", async () => {
@@ -664,6 +664,156 @@ describe("client sales summary v3 UI", { concurrency: false }, () => {
     assert.deepEqual(errors, []);
     await page.close();
   });
+  it("launch login has compact themes, validation, real sign-in and no test links", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    await page.goto(baseUrl + "/");
+    await page.waitForURL("**/login");
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+    assert.equal(await page.locator("a[href='/']").count(), 0);
+    const theme = page.locator("[data-theme-toggle]");
+    const bounds = await theme.boundingBox();
+    assert.ok(bounds && bounds.height >= 44 && bounds.height < 60);
+    assert.equal(await theme.locator("svg").evaluate((el) => el.getBoundingClientRect().width), 20);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-login-dark-desktop.png") });
+    await theme.click();
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+    await page.reload();
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-login-light-desktop.png") });
+    await page.locator("#login-button").click();
+    assert.match(await page.locator("#status-message").innerText(), /корректный/);
+    assert.equal(await page.locator("#email").getAttribute("aria-invalid"), "true");
+    await page.locator("#email").fill("bad-address");
+    await page.locator("#login-button").click();
+    assert.equal(await page.locator("#email").getAttribute("aria-invalid"), "true");
+    await page.locator("#password").fill("example");
+    await page.locator("#toggle-password").click();
+    assert.equal(await page.locator("#password").getAttribute("type"), "text");
+    await page.locator("#toggle-password").click();
+    assert.equal(await page.locator("#password").getAttribute("type"), "password");
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-login-mobile-error.png") });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.setViewportSize({ width: 740, height: 360 });
+    await page.locator("#login-button").scrollIntoViewIfNeeded();
+    assert.ok(await page.locator("#login-button").isVisible());
+    await page.locator("#email").fill("  admin-sales-ui@example.test  ");
+    await page.locator("#password").fill(TEST_PASSWORD);
+    await page.locator("#login-button").click();
+    await page.waitForURL("**/clients");
+    await page.locator("#legacy-sidebar").waitFor({ state: "attached" });
+    assert.equal(await page.locator("#legacy-sidebar a[href='/work'], #legacy-sidebar a[href='/access']").count(), 0);
+    await page.goto(baseUrl + "/");
+    await page.waitForURL("**/clients");
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
 
-
+  it("launch theme matrix preserves every client-card tab and readable surfaces", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    const contrastFailures: unknown[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    await login(page);
+    const routes = [
+      ["clients", "/clients?v3mode=1&view=all&v3view=all&v3entity=legal_grouped&v3salesMonth=2026-09", "[data-testid='v3-lktandoor-chrome']"],
+      ["card", `/clients/${LEGAL_A}?v3Entity=legal&v3salesMonth=2026-09`, "[data-testid='v3-detail-title']"],
+      ["profile", "/profile", "#profile-form:not([hidden])"],
+      ["sales", "/sales?month=2026-09", "#sales-month-select option"],
+    ];
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {
+      await page.setViewportSize(viewport);
+      for (const theme of ["light", "dark"]) {
+        for (const [name, url, ready] of routes) {
+          await page.goto(baseUrl + url, { waitUntil: "networkidle" });
+          await page.locator(ready).first().waitFor({ state: name === "sales" ? "attached" : "visible" });
+          if (await page.locator("html").getAttribute("data-theme") !== theme) {
+            await page.locator(".legacy-topbar [data-theme-toggle]").click();
+          }
+          await page.evaluate(() => document.fonts.ready);
+          assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
+          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}/${theme}/${viewport.width} overflow`);
+          if (name === "card") {
+            assert.equal(await page.locator("[data-card-tab]").count(), 10, "User required all ten card tabs to remain");
+            await page.locator("#pc-tab-plan").click();
+            await page.locator("#pc-panel-plan:not([hidden])").waitFor();
+            await page.locator("#pc-tab-overview").click();
+          }
+          const bad = await page.evaluate(String.raw`(() => {
+            const rgb = (s) => s.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0];
+            const lum = (c) => c.slice(0, 3).map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+              .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+            const bg = (el) => {
+              if (!el) return [255, 255, 255];
+              const c = rgb(getComputedStyle(el).backgroundColor), a = c[3] ?? 1;
+              return a >= 1 ? c : bg(el.parentElement).map((v, i) => c[i] * a + v * (1 - a));
+            };
+            return Array.from(document.querySelectorAll(".field__label,.pc-label,.pc-source,.pc-unavailable,.sales-band,.sales-note,.sales-macro-card h3,.legacy-nav-link,.clients-page-subtitle"))
+              .filter(el => el.getBoundingClientRect().height && getComputedStyle(el).visibility !== "hidden")
+              .map(el => {
+                const s = getComputedStyle(el), a = lum(rgb(s.color)), b = lum(bg(el));
+                return { text: el.textContent?.trim().slice(0, 65), cls: el.className, ratio: (Math.max(a, b) + .05) / (Math.min(a, b) + .05), size: parseFloat(s.fontSize) };
+              }).filter(x => x.ratio < 4.5 || x.size < 12);
+          })()`);
+          if (bad.length) contrastFailures.push({ page: `${name}/${theme}/${viewport.width}`, bad });
+          await page.screenshot({ path: path.join(SCREENSHOT_DIR, `launch-${name}-${theme}-${viewport.width}.png`) });
+        }
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(baseUrl + routes[0][1], { waitUntil: "networkidle" });
+    await page.locator('[data-testid="v3-focus-enter"]').click();
+    await page.locator("#x14-focus-scroll").waitFor();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-fullscreen-dark.png") });
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.locator("#legacy-menu-toggle").click();
+    assert.equal(await page.locator("#legacy-menu-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(await page.locator("#legacy-sidebar a[href='/work'], #legacy-sidebar a[href='/access']").count(), 0);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForFunction(() => document.querySelector("#legacy-sidebar")?.getAttribute("aria-hidden") === null);
+    assert.equal(await page.locator("#legacy-sidebar").getAttribute("aria-hidden"), null);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(contrastFailures, [], "Text contrast and size across all screens/themes");
+    await context.close();
+  });
+  it("launch temporary password flow keeps mandatory change and returns to clients", async () => {
+    const databaseUrl = getIntegrationDatabaseUrl();
+    const user = await createTestUser({
+      databaseUrl, email: "launch-temp@example.test", password: TEST_PASSWORD,
+      fullName: "Тест первого входа", role: "admin",
+    });
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: databaseUrl });
+    await pool.query("UPDATE users SET password_must_change = TRUE WHERE id = $1", [user.id]);
+    await pool.end();
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.goto(baseUrl + "/login");
+    await page.locator("#email").fill("launch-temp@example.test");
+    await page.locator("#password").fill(TEST_PASSWORD);
+    await page.locator("#login-button").click();
+    await page.waitForURL("**/change-password");
+    await page.locator("#current-password").fill(TEST_PASSWORD);
+    await page.locator("#new-password").fill("LaunchNewPass234!");
+    await page.locator("#change-password-button").click();
+    assert.match(await page.locator("#status-message").innerText(), /не совпадают/);
+    await page.locator("#confirm-password").fill("LaunchNewPass234!");
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-change-password-dark-mobile.png") });
+    await page.locator("[data-theme-toggle]").click();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, "launch-change-password-light-mobile.png") });
+    await page.locator("#change-password-button").click();
+    await page.waitForURL("**/clients");
+    const me = await page.request.get(baseUrl + "/api/auth/me");
+    assert.equal(me.status(), 200);
+    // The DTO only includes this optional flag while a change is required.
+    assert.equal(Boolean((await me.json()).user.mustChangePassword), false);
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+    await context.close();
+  });
 });

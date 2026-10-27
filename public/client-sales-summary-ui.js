@@ -399,9 +399,9 @@
         '<p class="pc-label v3-sales-scope-note">Показаны продажи только по юрлицам в вашей области видимости (доступная часть).</p>';
     }
     if (summary.dataState === "schema_not_ready") {
-      note += '<p class="pc-unavailable">Данные продаж ещё не готовы (схема импорта).</p>';
+      note += '<p class="pc-unavailable">Данные продаж появятся после подключения и загрузки из 1С.</p>';
     } else if (summary.dataState === "month_not_imported") {
-      note += '<p class="pc-unavailable">За выбранный месяц нет загруженных агрегатов продаж.</p>';
+      note += '<p class="pc-unavailable">Данные за выбранный месяц появятся после загрузки продаж из 1С.</p>';
     } else if (summary.dataState === "incomplete") {
       note +=
         '<p class="pc-unavailable">Не все юрлица имеют загруженные данные за месяц; итоги и доли скрыты.</p>';

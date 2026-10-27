@@ -15,11 +15,7 @@
   }
 
   function redirectAfterChange(user) {
-    if (user && user.role === "admin") {
-      window.location.href = "/admin/access";
-      return;
-    }
-    window.location.href = "/profile";
+    window.location.href = window.ClientsShell && window.ClientsShell.canReadClients(user) ? "/clients" : "/profile";
   }
 
   api
