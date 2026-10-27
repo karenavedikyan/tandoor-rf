@@ -156,11 +156,33 @@ export function v3DelegationClientGrantSql(
     FROM delegation_clients dc
     WHERE dc.delegation_id = ${delegationAlias}.id
       AND dc.guid_client = ${clientGuidSql}
+      AND EXISTS (
+        SELECT 1 FROM onec_v3_legal_entities owned
+        JOIN user_onec_employee_links owner_link
+          ON owner_link.user_id=${delegationAlias}.delegator_user_id AND owner_link.revoked_at IS NULL
+        WHERE owned.guid_client=dc.guid_client
+          AND lower(${v3JsonManagerField("owned", "guidManager")})=lower(owner_link.employee_id::text)
+      )
       AND ${v3DelegationClientGrantDenialsSql(delegationAlias, clientGuidSql, assistantUserParam)}
   )`;
 }
 
-function v3AssistantDelegationClause(alias: string, objectGuidSql: string, userParam: string): string {
+function v3AssistantDelegationClause(alias: string, objectGuidSql: string, userParam: string, kind: V3EntityKind = "legal"): string {
+  if (kind === "retail") {
+    return `EXISTS (
+      SELECT 1 FROM delegations d
+      JOIN user_onec_employee_links owner_link ON owner_link.user_id=d.delegator_user_id AND owner_link.revoked_at IS NULL
+      WHERE ${v3ActiveDelegationRowSql("d", userParam)}
+        AND ${managerAssignmentClause(alias, "owner_link.employee_id")}
+        AND (
+          EXISTS(SELECT 1 FROM delegation_clients dc WHERE dc.delegation_id=d.id AND dc.guid_client=${objectGuidSql})
+          OR EXISTS(SELECT 1 FROM onec_v3_legal_entities assigned_le
+            WHERE assigned_le.guid_holding=${alias}.guid_holding
+              AND ${v3DelegationClientGrantSql("d", "assigned_le.guid_client", userParam)})
+        )
+        AND ${v3DelegationClientGrantDenialsSql("d", objectGuidSql, userParam)}
+    )`;
+  }
   return `EXISTS (
     SELECT 1
     FROM delegations d
@@ -225,7 +247,7 @@ export function v3EntityAssignmentScope(
     }
     case "assistant":
       base = {
-        clause: v3AssistantDelegationClause(alias, objectGuid, "$1"),
+        clause: v3AssistantDelegationClause(alias, objectGuid, "$1", kind),
         params: [userId],
       };
       break;

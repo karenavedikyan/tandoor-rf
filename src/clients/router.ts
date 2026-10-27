@@ -89,6 +89,13 @@ export function createClientsRouter(): express.Router {
   const writeChain = [
     requireDatabaseReady,
     requireAuth,
+    ((req, res, next) => {
+      if ((req as import("../middleware/auth").AuthenticatedRequest).authUser?.role === "assistant") {
+        res.status(403).json({ error: { code: "FORBIDDEN", message: "Ассистенту предоставлен только просмотр информации по назначенным клиентам." } });
+        return;
+      }
+      next();
+    }) as express.RequestHandler,
     attachAccessContext,
     blockPreviewWrites,
     requireClientReadAccess,

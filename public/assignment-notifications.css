@@ -1,0 +1,22 @@
+#assignment-notifications-mount { display:inline-flex;align-items:center;position:relative; }
+#assignment-bell { display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:44px;min-height:44px;border:1px solid var(--rf-border);background:var(--rf-surface);color:var(--rf-text);border-radius:8px;cursor:pointer; }
+#assignment-bell svg { width:21px;height:21px; }
+#assignment-badge { border-radius:12px;background:#416b1b;color:#fff;font:600 12px/1.4 "Golos",sans-serif;padding:2px 5px; }
+#assignment-notifications-mount [hidden] { display:none!important; }
+.an-inbox { position:fixed;z-index:160;top:76px;right:20px;width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 92px);overflow:auto;box-sizing:border-box;border:1px solid var(--rf-border);border-radius:12px;background:var(--rf-surface);color:var(--rf-text);box-shadow:0 12px 40px rgb(0 0 0 / .2);text-align:left;font-family:"Golos",sans-serif; }
+.an-head { display:flex;align-items:center;justify-content:space-between;padding:16px;gap:12px; }
+.an-head h2 { font-size:18px;margin:0; }
+.an-tools { display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 16px 12px; }
+.an-inbox button { min-height:40px;padding:8px 10px;border:1px solid var(--rf-border);border-radius:7px;background:var(--rf-surface);color:var(--rf-text);font:inherit;font-size:13px;cursor:pointer; }
+.an-inbox button:disabled { opacity:.6;cursor:not-allowed; }
+.an-item { padding:16px;border-top:1px solid var(--rf-border); }
+.an-item.an-unread { background:#eaf4de;border-left:3px solid var(--rf-primary);padding-left:13px; }
+[data-theme="dark"] .an-item.an-unread { background:#1b2914; }
+.an-item h3 { font-size:14px;line-height:1.5;margin:0 0 6px; }
+.an-item time { font-size:12px;color:var(--rf-text-muted); }
+.an-item p { font-size:14px;line-height:1.6;margin:10px 0;overflow-wrap:anywhere; }
+.an-item .an-tools { padding:0; }
+.an-empty,#assignment-inbox-error { padding:0 16px;font-size:14px;line-height:1.6;color:var(--rf-text-muted); }
+.an-pages { justify-content:space-between;padding-top:12px;border-top:1px solid var(--rf-border);font-size:13px; }
+[data-theme="dark"] #assignment-badge { background:#add17a;color:#182313; }
+@media(max-width:640px) { .an-inbox { top:66px;right:12px;max-height:calc(100dvh - 78px); } }

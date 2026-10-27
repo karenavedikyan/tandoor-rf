@@ -394,14 +394,14 @@ describe("assistant delegation presentation vs v3 list", { concurrency: false },
     assert.equal(listTotal, 1);
   });
 
-  it("same client in two delegations: both valid → multiple with one unique client", async () => {
+  it("same client in two delegations: only its current 1C owner can grant access", async () => {
     const ids = await seedV3Users();
     await dualDelegationSameClient(ids);
     const cookie = await login("deleg-pres-assistant@example.com");
     const { presentation, listTotal } = await presentationAndList(cookie);
     assert.ok(presentation);
-    assert.equal(presentation!.mode, "multiple");
-    assert.equal(presentation!.delegatorCount, 2);
+    assert.equal(presentation!.mode, "single");
+    assert.equal(presentation!.delegatorName, "Manager One");
     assert.equal(presentation!.clientCount, 1);
     assert.equal(listTotal, 1);
   });

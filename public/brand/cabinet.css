@@ -197,3 +197,13 @@ body.auth-body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+/* Leave room for the notification bell without logo/action overlap on phones. */
+@media (max-width: 640px) {
+  .legacy-topbar { padding-left: 12px; padding-right: 12px; gap: 8px; }
+  .legacy-topbar__menu { flex: 0 0 44px; width: 44px; min-height: 44px; }
+  .legacy-topbar__spacer { display: none; }
+  .legacy-topbar__brand { flex: 1 1 0%; min-width: 0; max-width: 160px; overflow: hidden; }
+  .legacy-topbar__logo { display: block; width: 100%; max-width: 100%; height: auto; max-height: 36px; object-fit: contain; }
+  .legacy-topbar__actions { gap: 6px; }
+  .legacy-topbar .legacy-theme-trigger { width: 44px; min-width: 44px; min-height: 44px; }
+}

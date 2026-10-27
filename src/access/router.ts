@@ -42,6 +42,7 @@ import type { Response } from "express";
 import type { AuthenticatedRequest } from "../middleware/auth";
 import { setNoStore } from "../http/no-store";
 import { employeeRolloutRouter } from "./employee-rollout-router";
+import { assignmentRouter } from "./assignment-router";
 
 async function adminOverviewHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
   const overview = await listAccessOverview();
@@ -123,7 +124,8 @@ export function createAccessAdminRouter(): express.Router {
     csrfProtection,
     ...adminChain,
     (req, res, next) => {
-      void approveDelegationHandler(req, res).catch(next);
+      setNoStore(res);
+      res.status(403).json({ error: { code: "FORBIDDEN", message: "Согласование выполняет только координатор в разделе назначений." } });
     },
   );
 
@@ -145,6 +147,7 @@ export function createAccessAdminRouter(): express.Router {
 
 export function createAccessRouter(): express.Router {
   const router = express.Router();
+  router.use(assignmentRouter());
   const authChain = [requireDatabaseReady, requireAuth] as const;
 
   router.get(
