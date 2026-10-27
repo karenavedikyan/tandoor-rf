@@ -22,7 +22,7 @@ describe("client-detail-v3 missing other keys", () => {
     };
     const shell = { escapeHtml: (v: string) => v };
     const notIngested = api.renderOtherFieldsFromKeys(shell, {}, ["Оптовик_КонтактноеЛицо"]);
-    assert.match(notIngested, /ещё не загружены в карточку/);
+    assert.match(notIngested, /Данные появятся после загрузки из 1С/);
     const empty1c = api.renderOtherFieldsFromKeys(
       shell,
       {},

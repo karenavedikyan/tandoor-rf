@@ -829,7 +829,7 @@
     analyst: "Аналитик",
     category_manager: "Категорийный менеджер",
     assistant: "Ассистент",
-    coordinator: "Координатор",
+    coordinator: "РОА (руководитель отдела ассистентов)",
   };
 
   var MANAGER_PAGE_SUBTITLE =
@@ -869,9 +869,9 @@
       showThirdStat: true,
     },
     assistant: {
-      subtitle: "Список клиентов по действующему замещению.",
-      scopeValue: "Только клиенты из утверждённого замещения",
-      statClientLabel: "Клиенты замещения",
+      subtitle: "Клиенты, назначенные вам на определённый период.",
+      scopeValue: "Только клиенты из согласованных назначений",
+      statClientLabel: "Назначенные клиенты",
       statOutletLabel: "Доступные ТТ",
       statNoOutletsLabel: "",
       showThirdStat: false,
@@ -1389,14 +1389,14 @@
     delegationBannerEl.classList.remove("clients-hidden");
     if (ctx.mode === "multiple") {
       delegationBannerEl.innerHTML =
-        "<strong>Действующие замещения</strong> · одновременно " +
+        "<strong>Временный доступ к клиентам</strong> · передающих менеджеров: " +
         shell.escapeHtml(String(ctx.delegatorCount)) +
-        " делегаторов. Доступно клиентов: " +
+        ". Доступно клиентов: " +
         shell.escapeHtml(String(ctx.clientCount)) +
         ".";
     } else {
       delegationBannerEl.innerHTML =
-        "<strong>Действующее замещение</strong> · вы работаете от имени " +
+        "<strong>Временный доступ к клиентам</strong> · передающий менеджер: " +
         shell.escapeHtml(ctx.delegatorName) +
         ". Доступно клиентов: " +
         shell.escapeHtml(String(ctx.clientCount)) +
@@ -4547,7 +4547,7 @@
         subtitleEl.textContent = "Список: " + entityMeta.label;
         subtitleEl.classList.remove("clients-hidden");
       } else if (role === "assistant" && rolePresentation.delegationContext) {
-        subtitleEl.textContent = "Режим замещения · только юрлица в вашей области";
+        subtitleEl.textContent = "Временный доступ · только назначенные клиенты";
         subtitleEl.classList.remove("clients-hidden");
       } else {
         subtitleEl.textContent = "";

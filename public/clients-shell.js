@@ -177,7 +177,7 @@
     var clientsLink = showClients
       ? navLink(clientsNavHref, "Клиенты", "clients", active, "clients")
       : "";
-    var salesLink = showClients ? navLink("/sales", "Продажи", "clients", active, "sales") : "";
+    var salesLink = showClients && (!actorUser || actorUser.role !== "assistant") ? navLink("/sales", "Продажи", "clients", active, "sales") : "";
     var launch = api && api.launch;
     var workLink = showClients && (!launch || launch.navigation.work)
       ? navLink("/work", "Моя работа", "work", active, "work")
@@ -231,6 +231,7 @@
       headerBrandMarkup(homeHref) +
       '<span class="legacy-topbar__spacer"></span>' +
       '<div class="legacy-topbar__actions">' +
+      '<div id="assignment-notifications-mount" data-role="' + escapeHtml(user && user.role || "") + '"></div>' +
       '<button type="button" class="legacy-topbar__theme" data-theme-toggle aria-label="Переключить тему"></button>' +
       '<a class="legacy-topbar__user" href="/profile" aria-label="' +
       profileLabel +
@@ -683,6 +684,12 @@
     bindViewportSync();
     syncSidebarLayout();
     syncPreviewBanner();
+    if (actorUser && !document.querySelector('script[data-assignment-notifications]')) {
+      var notifications = document.createElement("script");
+      notifications.src = "/assignment-notifications.js";
+      notifications.setAttribute("data-assignment-notifications", "");
+      document.head.appendChild(notifications);
+    }
   }
 
   var ACCESS_WORKSPACE_ROLES = {

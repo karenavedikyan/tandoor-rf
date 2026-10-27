@@ -11,7 +11,7 @@ describe("v3 retail list pagination order", () => {
 
   it("uses guid tie-breaker for legal and holdings lists", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/clients/v3/list.ts"), "utf8");
-    assert.match(source, /ORDER BY le\.name_client ASC, le\.guid_client::text ASC/);
-    assert.match(source, /ORDER BY h\.name_holding ASC, h\.guid_holding::text ASC/);
+    assert.match(source, /ORDER BY \$\{salesOrder\}le\.name_client ASC, le\.guid_client::text ASC/);
+    assert.match(source, /ORDER BY \$\{salesOrder\}h\.name_holding ASC, h\.guid_holding::text ASC/);
   });
 });

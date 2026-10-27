@@ -274,7 +274,7 @@
       admin: "Администратор",
       manager: "Менеджер",
       marketer: "Маркетолог",
-      coordinator: "Координатор",
+      coordinator: "РОА (руководитель отдела ассистентов)",
     };
     var roleLabel = roleNames[roleKey] || String(roleKey);
     var scopeByRole = {

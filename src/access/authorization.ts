@@ -136,13 +136,7 @@ export async function canBusinessApproveDelegation(
   approver: ActiveUserRow,
   delegatorUserId: string,
 ): Promise<boolean> {
-  if (approver.role === "director") {
-    return true;
-  }
-  if (approver.role === "rop") {
-    return ropManagesDelegator(client, approver.id, delegatorUserId);
-  }
-  return false;
+  return approver.role === "coordinator";
 }
 
 export async function getDelegationForUpdate(

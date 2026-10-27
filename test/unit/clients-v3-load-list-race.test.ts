@@ -16,6 +16,10 @@ type ClientsV3TestApi = {
 };
 
 function loadClientsV3Harness(search: string, apiRequest: (url: string) => Promise<unknown>): ClientsV3TestApi {
+  const originalApiRequest = apiRequest;
+  apiRequest = url => url.includes("/client-sales/months")
+    ? Promise.resolve({ response: { ok: true, status: 200 }, data: { months: [] } })
+    : originalApiRequest(url);
   const dom = new JSDOM(
     `<!DOCTYPE html><html><body>
       <div id="results-state"></div>

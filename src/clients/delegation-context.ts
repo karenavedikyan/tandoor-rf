@@ -3,6 +3,7 @@ import { query } from "../db/pool";
 import {
   v3ActiveDelegationRowSql,
   v3DelegationClientGrantDenialsSql,
+  v3DelegationClientGrantSql,
   v3EntityAssignmentScope,
 } from "./v3/access-scope";
 import { isExchangeV3Active } from "./v3/list";
@@ -122,7 +123,7 @@ async function delegatorsWithAccessibleClients(
             FROM delegation_clients dc
             JOIN onec_v3_legal_entities le ON le.guid_client = dc.guid_client
             WHERE dc.delegation_id = d.id
-              AND ${v3DelegationClientGrantDenialsSql("d", "le.guid_client", assistantParam)}
+              AND ${v3DelegationClientGrantSql("d", "le.guid_client", assistantParam)}
           )
         ORDER BY name ASC
       `,
