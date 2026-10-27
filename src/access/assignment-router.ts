@@ -11,6 +11,7 @@ import * as assignments from "./assignments";
 import { searchAssistants } from "./service";
 import { attachAccessContext, blockPreviewWrites } from "./middleware";
 import { assignmentSchemaReady, prepareAssignmentSchema } from "./assignment-schema";
+import { appointAssignmentCoordinator } from "./assignment-coordinator";
 
 function uuid(value: unknown): string {
   if (typeof value !== "string" || !isValidUuidParam(value)) throw new AccessServiceError("Некорректный идентификатор.", "VALIDATION");
@@ -56,6 +57,10 @@ export function assignmentRouter(): express.Router {
   const auth = [requireDatabaseReady, requireAuth, attachAccessContext, blockPreviewWrites] as const;
   router.post("/assignments/schema", csrfProtection, ...auth, handle(async (req, res) => {
     res.json(await prepareAssignmentSchema(req.authUser!.id, req.body?.confirm));
+  }));
+  router.post("/assignments/coordinator", csrfProtection, ...auth, handle(async (req, res) => {
+    res.json(await appointAssignmentCoordinator(req.authUser!.id, uuid(req.body?.userId),
+      uuid(req.body?.employeeId), str(req.body?.basis, 2000) || "", req.body?.confirm));
   }));
   router.get("/assignments", ...auth, handle(async (req, res) => {
     res.json(await assignments.listAssignments(actor(req), { page: page(req.query.page), q: str(req.query.q), status: str(req.query.status) }));

@@ -210,4 +210,23 @@ describe("assistant assignments: coordinator-only decisions and scoped access", 
     assert.equal((await post("admin", "/assignments/schema", { confirm: true })).status, 409);
     await pool.query("INSERT INTO schema_migrations(filename) VALUES('049_employee_access_rollouts.sql'),('050_assistant_assignments.sql')");
   });
+  it("appoints ROA admin-only, idempotently, preserving credentials, account fields and the employee link", async () => {
+    const target = users.manager2!.id;
+    const body = { userId: target, employeeId: EMP.manager2, confirm: true, basis: "Explicit owner approval: head of assistants" };
+    const before = (await pool.query("SELECT to_jsonb(u)-'role'-'updated_at' AS data FROM users u WHERE id=$1", [target])).rows[0]!.data;
+    try {
+      for (const role of ["manager", "director", "coordinator", "assistant"]) {
+        assert.equal((await post(role, "/assignments/coordinator", body)).status, 403);
+      }
+      assert.equal((await post("admin", "/assignments/coordinator", { ...body, confirm: false })).status, 400);
+      assert.equal((await post("admin", "/assignments/coordinator", { ...body, employeeId: EMP.manager })).status, 409);
+      const changed = await post("admin", "/assignments/coordinator", body);
+      assert.equal(changed.status, 200, JSON.stringify(changed.body)); assert.equal(changed.body.changed, true);
+      assert.equal((await post("admin", "/assignments/coordinator", body)).body.changed, false);
+      assert.deepEqual((await pool.query("SELECT to_jsonb(u)-'role'-'updated_at' AS data FROM users u WHERE id=$1", [target])).rows[0]!.data, before);
+      assert.equal((await get("manager2", "/api/access/assignments/activity")).status, 200);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM access_audit_log WHERE action='ASSIGNMENT_COORDINATOR_APPOINTED' AND entity_id=$1", [target])).rows[0]!.n, 1);
+      assert.equal((await pool.query("SELECT employee_id::text FROM user_onec_employee_links WHERE user_id=$1 AND revoked_at IS NULL", [target])).rows[0]!.employee_id, EMP.manager2);
+    } finally { await pool.query("UPDATE users SET role='manager' WHERE id=$1", [target]); }
+  });
 });
