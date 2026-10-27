@@ -46,10 +46,13 @@
   function readTheme() {
     try {
       var stored = localStorage.getItem(THEME_KEY);
-      return stored === "dark" ? "dark" : "light";
+      if (stored === "dark" || stored === "light") return stored;
     } catch (_err) {
-      return "light";
+      /* Fall back to the early theme, then system preference. */
     }
+    var initial = document.documentElement.getAttribute("data-theme");
+    if (initial === "dark" || initial === "light") return initial;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
   function writeTheme(theme) {
@@ -78,6 +81,7 @@
 
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.style.colorScheme = theme;
     document.querySelectorAll("[data-legacy-logo-full], [data-legacy-logo]").forEach(function (img) {
       img.setAttribute(
         "src",
@@ -86,8 +90,11 @@
     });
     document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
       var next = theme === "dark" ? "Светлая тема" : "Тёмная тема";
-      btn.setAttribute("aria-label", "Переключить на " + next.toLowerCase());
-      btn.innerHTML = theme === "dark" ? ICONS.themeLight || "" : ICONS.themeDark || "";
+      btn.setAttribute("aria-label", theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему");
+      btn.setAttribute("title", next);
+      btn.innerHTML = '<span class="theme-toggle__icon" aria-hidden="true">' +
+        (theme === "dark" ? ICONS.themeLight || "" : ICONS.themeDark || "") +
+        '</span><span class="theme-toggle__label">' + next + "</span>";
     });
   }
 
@@ -132,7 +139,7 @@
       logoImgMarkup("legacy-topbar__logo") +
       '<span class="legacy-topbar__titles">' +
       '<span class="legacy-topbar__title">ЛИЧНЫЙ КАБИНЕТ</span>' +
-      '<span class="legacy-topbar__subtitle">СОТРУДНИКА · RF</span>' +
+      '<span class="legacy-topbar__subtitle">ТАНДОР</span>' +
       "</span>" +
       "</a>"
     );
@@ -171,10 +178,11 @@
       ? navLink(clientsNavHref, "Клиенты", "clients", active, "clients")
       : "";
     var salesLink = showClients ? navLink("/sales", "Продажи", "clients", active, "sales") : "";
-    var workLink = showClients
+    var launch = api && api.launch;
+    var workLink = showClients && (!launch || launch.navigation.work)
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
-    var workspaceLink = showAccessWorkspace
+    var workspaceLink = showAccessWorkspace && (!launch || launch.navigation.substitution)
       ? navLink("/access", "Замещение", "substitution", active, "access-workspace")
       : "";
     var adminLink = showAdminAccess
@@ -239,6 +247,18 @@
   }
 
   function ensureTopbarPlacement() {
+    var main = document.querySelector(".legacy-content");
+    if (main) {
+      main.id = main.id || "cabinet-main";
+      main.setAttribute("tabindex", "-1");
+      if (!document.querySelector(".cabinet-skip")) {
+        var skip = document.createElement("a");
+        skip.className = "cabinet-skip";
+        skip.href = "#" + main.id;
+        skip.textContent = "К содержимому";
+        document.body.insertBefore(skip, document.body.firstChild);
+      }
+    }
     var topbarMount = document.getElementById("workspace-topbar");
     var app = document.querySelector(".legacy-app");
     if (topbarMount && app && topbarMount.parentElement !== app) {

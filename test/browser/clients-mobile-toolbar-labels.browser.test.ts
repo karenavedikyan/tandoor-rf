@@ -100,7 +100,7 @@ describe("ordinary mobile clients toolbar labels", { concurrency: false }, () =>
     await page.fill('input[name="email"]', "manager-mobile-toolbar@example.com");
     await page.fill('input[name="password"]', TEST_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile", { timeout: 30000 });
+    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile" || url.pathname === "/clients", { timeout: 30000 });
   }
 
   async function waitForOrdinaryList(page: Page) {

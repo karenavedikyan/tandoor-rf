@@ -76,7 +76,7 @@
   }
 
   function emptyOtherNotIngested() {
-    return '<span class="pc-unavailable">Данные из 1С ещё не загружены в карточку</span>';
+    return '<span class="pc-unavailable">Данные появятся после загрузки из 1С</span>';
   }
 
   function emptyOtherRestricted() {
@@ -726,9 +726,15 @@
     if (!ent.last_imported_at) {
       return "";
     }
+    var date = new Date(ent.last_imported_at);
+    var label = isNaN(date.getTime()) ? ent.last_imported_at :
+      new Intl.DateTimeFormat("ru-RU", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow",
+      }).format(date) + " МСК";
     return (
       '<div class="pc-meta"><span>Обновлено из 1С: ' +
-      esc(shell, ent.last_imported_at) +
+      esc(shell, label) +
       "</span></div>"
     );
   }

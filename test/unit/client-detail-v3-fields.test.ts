@@ -60,9 +60,30 @@ describe("client-detail-v3 field rendering", () => {
     assert.match(html, /Клиент и холдинг/);
     assert.doesNotMatch(html, /v3-role-context/);
     assert.match(html, /Не подключено/);
+    assert.match(html, /Данные появятся после загрузки из 1С/);
+    assert.match(html, /01\.01\.2026,?\s+03:00 МСК/);
     assert.doesNotMatch(html, /SHA/i);
     assert.doesNotMatch(html, /abc123sha/);
     assert.doesNotMatch(html, /guidType/);
+  });
+
+  it("keeps pending, imported-empty and restricted 1C fields distinct", () => {
+    const card = loadV3();
+    const shell = { escapeHtml: (v: string) => v };
+    const render = (fields: Record<string, unknown>) =>
+      card.renderCard(shell, "legal", { name_client: "Legal", ...fields }, null);
+    const pending = render({});
+    assert.match(pending, /Данные появятся после загрузки из 1С/);
+    assert.match(pending, /Контактное лицо/);
+    const imported = render({ other_fields_exchange_complete: true });
+    assert.match(imported, /Нет данных из 1С/);
+    assert.doesNotMatch(imported, /Данные появятся после загрузки из 1С/);
+    const restricted = render({
+      other_fields_exchange_complete: true,
+      other_field_states: { Оптовик_КонтактноеЛицо: "restricted" },
+    });
+    assert.match(restricted, /Скрыто политикой доступа/);
+    assert.match(restricted, /Контактное лицо/);
   });
 
   it("renders other_fields without object toString", () => {

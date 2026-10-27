@@ -217,7 +217,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   border-top: 1px solid var(--rf-border, var(--line));
   border-radius: 0;
   padding: 0 0 16px;
-  background: #f4f5f7;
+  background: var(--rf-row-hover, var(--rf-surface-muted));
 }
 
 .clients-lktandoor-list .x6-field-shortcuts {
@@ -241,7 +241,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 .clients-lktandoor-list .x6-field-shortcut--disabled {
   opacity: 1;
   color: #6b7280;
-  background: #f9fafb;
+  background: var(--rf-row-hover, var(--rf-surface-muted));
   cursor: not-allowed;
 }
 
@@ -296,7 +296,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 .clients-lktandoor-list .clients-entity-switcher--primary .clients-view-switcher__btn--active {
   background: var(--rf-primary, #527929);
   border-color: var(--rf-primary, #527929);
-  color: #fff;
+  color:var(--rf-primary-text);
 }
 
 .clients-lktandoor-list .clients-entity-switcher--primary .clients-view-switcher__btn {
@@ -379,7 +379,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 }
 
 .clients-lktandoor-list .clients-table th {
-  background: #f4f5f7 !important;
+  background: var(--rf-row-hover, var(--rf-surface-muted)) !important;
   font-weight: 400;
   color: var(--rf-text, #374151);
   font-size: 13px;
@@ -393,7 +393,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 }
 
 .clients-lktandoor-list .clients-table tbody tr:hover td {
-  background: #fafafa;
+  background: var(--rf-row-hover, var(--rf-surface-muted));
 }
 
 .clients-lktandoor-list .x13-client-card {
@@ -411,7 +411,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   width: min(800px, calc(100vw - 32px));
   max-height: 85vh;
   margin: auto;
-  background: #fff;
+  background: var(--rf-surface);
   color: inherit;
   overflow: hidden;
 }
@@ -427,7 +427,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   gap: 16px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--rf-border, var(--line));
-  background: #fff;
+  background: var(--rf-surface);
 }
 
 .x13-columns-dialog__title {
@@ -438,7 +438,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 
 .x13-columns-dialog__done {
   min-height: 40px;
-  background: #fff !important;
+  background: var(--rf-surface) !important;
   border: 1px solid var(--rf-border, var(--line)) !important;
   color: var(--rf-text, #111827) !important;
   font-weight: 600;
@@ -446,7 +446,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
 
 .x13-columns-dialog__body {
   padding: 16px 20px 20px;
-  background: #f4f5f7;
+  background: var(--rf-row-hover, var(--rf-surface-muted));
   overflow: auto;
   max-height: calc(85vh - 73px);
 }
@@ -625,7 +625,7 @@ body.clients-lktandoor-teams .clients-manager-chrome {
   padding: 0;
   margin: 0;
   border: 0;
-  background: #fff;
+  background: var(--rf-surface);
   gap: 0;
 }
 
@@ -681,7 +681,7 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
   padding: 8px 14px;
   border: 1px solid var(--rf-border, var(--line)) !important;
   border-radius: 6px !important;
-  background: #fff !important;
+  background: var(--rf-surface) !important;
   box-shadow: none !important;
   color: var(--rf-text, #111827);
 }
@@ -689,7 +689,7 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
 .clients-design-page .clients-lktandoor-list .clients-entity-switcher--primary .clients-view-switcher__btn--active {
   background: var(--rf-primary, #527929) !important;
   border-color: var(--rf-primary, #527929) !important;
-  color: #fff !important;
+  color:var(--rf-primary-text) !important;
 }
 
 .clients-design-page .clients-lktandoor-list .clients-columns-btn {
@@ -697,7 +697,7 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
   padding: 8px 14px;
   border: 1px solid var(--rf-border, var(--line));
   border-radius: 6px;
-  background: #fff;
+  background: var(--rf-surface);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -716,7 +716,7 @@ body.clients-lktandoor-mode.clients-design-page .clients-lktandoor-list-panel .c
 }
 .clients-lktandoor-list .clients-results-header h2 { display:none; }
 .clients-lktandoor-list #clients-results-title { display:none; }
-.clients-lktandoor-list .x6-builder .workspace-button--primary { color:#fff; }
+.clients-lktandoor-list .x6-builder .workspace-button--primary { color:var(--rf-primary-text); }
 
 .clients-lktandoor-list #v3-density-btn,
 .clients-lktandoor-list #clients-filters-toggle,

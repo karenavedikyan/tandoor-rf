@@ -179,7 +179,7 @@ describe("lktandoor stage3 teams navigation", { concurrency: false }, () => {
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="password"]', TEST_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile", { timeout: 30000 });
+    await page.waitForURL((url) => url.pathname === "/" || url.pathname === "/profile" || url.pathname === "/clients", { timeout: 30000 });
   }
 
   async function waitTeamsDirectoryReady(page: Page) {
