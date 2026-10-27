@@ -1,0 +1,89 @@
+/* Full-window client register. No browser Fullscreen API; works in the preview too. */
+.x6-column-grid.x16-columns { grid-template-columns:1fr; }
+.x16-column-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+.x16-column-actions button { flex:1; min-height:40px; }
+.x16-column { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--line); }
+.x16-column[draggable="true"] { cursor:grab; }
+.x16-column label { flex:1; min-width:0; border-bottom:0; }
+.x16-arrows { display:flex; gap:4px; flex-shrink:0; }
+.x16-arrows button { width:38px; min-height:40px; padding:4px; font-size:18px; }
+body.x14-focus-mode { overflow:hidden; }
+body.x14-focus-mode .head,
+body.x14-focus-mode .sidebar,
+body.x14-focus-mode .heading,
+body.x14-focus-mode .foot { display:none!important; }
+body.x14-focus-mode .layout { display:block; margin:0; padding:0; height:100dvh; }
+body.x14-focus-mode .layout .main {
+  width:100%; max-width:none; height:100%; min-width:0;
+  padding:0!important; margin:0!important;
+}
+body.x14-focus-mode .screenbody { height:100%; min-height:0; }
+.x14-focus {
+  display:grid; grid-template-rows:auto minmax(0,1fr);
+  height:100%; min-height:0; background:var(--surface); color:var(--text);
+}
+.x14-focusbar {
+  display:flex; align-items:center; gap:8px; padding:6px 12px;
+  min-width:0; border-bottom:1px solid var(--line); background:var(--surface);
+}
+.x14-focusbar>span { margin-right:auto; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.x14-focusbar button { flex-shrink:0; min-height:36px; padding:6px 12px; font-size:12px; }
+.x14-focusbar kbd { margin-left:8px; opacity:.75; font:inherit; }
+.x14-focusbar .x15-search { display:block; flex:1 1 260px; max-width:480px; margin:0; min-width:120px; }
+.x14-focusbar .x15-search input { width:100%; height:36px; min-height:36px; font-size:13px; }
+.x14-focusbar>span { flex:0 1 auto; min-width:0; }
+.x15-col-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:4px; min-height:40px; margin-bottom:7px; }
+.x14-focus .x14-focus-scroll th input,
+.x14-focus .x14-focus-scroll th select { width:100%; height:32px; min-height:32px; padding:4px 7px; font-size:12px; font-weight:400; background:var(--surface); }
+.x15-range { display:flex; gap:4px; }
+.x15-range input { flex:1; min-width:0; }
+.x14-focus .x14-focus-scroll th.x15-filtered { box-shadow:inset 0 -2px var(--green); }
+.x15-filtered .x15-col-heading { color:var(--green); }
+.x14-focus .x14-focus-scroll .x15-clear-field { flex-shrink:0; min-height:24px; height:24px; width:24px; padding:0; font-size:16px; line-height:1; }
+.x14-focus .x14-focus-scroll .x15-empty td { position:static; width:auto; max-width:none; text-align:center; padding:40px 20px; }
+.x15-empty h3 { margin-bottom:8px; }
+.x15-empty p { color:var(--muted); margin-bottom:14px; }
+.x14-focus .x14-focus-scroll .x15-empty button { width:auto; padding:8px 12px; min-height:40px; border:1px solid var(--line); }
+.x14-focus-scroll { min-height:0; width:100%; overflow:auto; overscroll-behavior:contain; }
+.x14-focus .x14-focus-scroll table {
+  display:table; width:100%; min-width:var(--focus-table-min,100%);
+  table-layout:auto; border-collapse:separate; border-spacing:0;
+}
+.x14-focus .x14-focus-scroll thead { display:table-header-group; }
+.x14-focus .x14-focus-scroll tbody { display:table-row-group; }
+.x14-focus .x14-focus-scroll tr { display:table-row; padding:0; }
+.x14-focus .x14-focus-scroll th,
+.x14-focus .x14-focus-scroll td {
+  display:table-cell; width:auto; min-width:120px; max-width:260px;
+  padding:9px 12px; font-size:13px; line-height:1.45;
+  white-space:normal; overflow-wrap:anywhere; vertical-align:top;
+  border-bottom:1px solid var(--line);
+}
+.x14-focus .x14-focus-scroll th { position:sticky; top:0; z-index:2; background:var(--bg); }
+.x14-focus .x14-focus-scroll td:first-child,
+.x14-focus .x14-focus-scroll th:first-child {
+  position:sticky; left:0; min-width:200px; width:220px;
+  border-right:1px solid var(--line); background:var(--surface);
+}
+.x14-focus .x14-focus-scroll td:first-child { z-index:1; }
+.x14-focus .x14-focus-scroll th:first-child { z-index:3; background:var(--bg); }
+.x14-focus .x14-focus-scroll td::before,
+.x14-focus .x14-focus-scroll td small { display:none; }
+.x14-focus .x14-focus-scroll td button { min-height:24px; margin:0; font-size:13px; }
+.x14-cell-content { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.x14-focus .x14-focus-scroll td button { width:100%; text-align:left; }
+.x14-focus .x14-focus-scroll tr:hover td { background:var(--tint); }
+.x14-focus .x14-focus-scroll:focus-visible { outline:2px solid var(--green); outline-offset:-2px; }
+.x14-focus .x6-empty { align-self:start; }
+@media(max-width:767px) {
+  .x13 .x6-tools .x14-focus-enter { grid-column:1/-1; }
+  .x14-focusbar { padding:6px 8px; gap:6px; }
+  .x14-focusbar { flex-wrap:wrap; }
+  .x14-focusbar .x15-search { flex-basis:100%; max-width:none; }
+  .x14-focusbar>span { font-size:11px; }
+  .x14-focusbar .x15-reset { font-size:11px; padding:6px; }
+  .x14-focusbar button { min-height:40px; padding:6px 10px; }
+  .x14-focusbar kbd { display:none; }
+  .x14-focus .x14-focus-scroll td:first-child,
+  .x14-focus .x14-focus-scroll th:first-child { min-width:160px!important; width:180px; margin:0; }
+}

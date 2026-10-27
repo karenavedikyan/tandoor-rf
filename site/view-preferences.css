@@ -1,0 +1,25 @@
+.x17-view-tabs{display:flex;gap:8px;margin:12px 0}
+.x17-view-tabs button{flex:1;min-height:42px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);padding:8px 12px}
+.x17-view-tabs button[aria-selected="true"]{border-color:var(--green);box-shadow:inset 0 -2px var(--green);font-weight:600}
+.x17-view-notice{font-size:12px;line-height:1.65;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+.x17-view-search{display:block;width:100%;box-sizing:border-box;margin:12px 0;padding:10px 12px;min-height:42px}
+.x17-card-settings{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0}
+.x17-card-settings small{font-size:12px;color:var(--muted)}
+.x17-groups h3{font-size:14px;margin:20px 0 8px}
+.x17-groups label{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:44px;padding:6px 8px;border-bottom:1px solid var(--line);line-height:1.5;font-size:14px;color:var(--text);text-align:left}
+.x17-groups input[type="checkbox"]{width:18px;height:18px;min-height:18px;flex:none;accent-color:var(--green)}
+.x17-groups label small{color:var(--muted);font-size:12px}
+.x17-view-stats{font-size:12px;color:var(--muted);line-height:1.65}
+.x17-personally-hidden,[data-personal-field][hidden],.x17-groups [hidden],.x16-column[hidden]{display:none!important}
+.x17-empty-card{padding:24px;border:1px dashed var(--line);border-radius:6px;line-height:1.7}
+.x17-no-revenue .m15-category,.x17-no-revenue .m15-table-heading,.x17-no-quantity .m15-category,.x17-no-quantity .m15-table-heading{grid-template-columns:minmax(150px,1fr) minmax(90px,1fr) auto}
+.x17-no-revenue.x17-no-quantity .m15-category,.x17-no-revenue.x17-no-quantity .m15-table-heading{grid-template-columns:minmax(150px,1fr) auto}
+.x17-no-revenue .m15-model,.x17-no-revenue .m15-model-heading,.x17-no-quantity .m15-model,.x17-no-quantity .m15-model-heading{grid-template-columns:minmax(150px,1fr) minmax(90px,1fr)}
+.x17-no-revenue.x17-no-quantity .m15-model,.x17-no-revenue.x17-no-quantity .m15-model-heading{grid-template-columns:minmax(150px,1fr)}
+.x6-dialog[open]:has(.x17-view-tabs){display:flex;flex-direction:column;max-height:calc(100dvh - 24px)}
+.x6-dialog:has(.x17-view-tabs) .x6-dialog-body{display:block;min-height:0;overflow:auto;max-height:none}
+.x6-dialog:has(.x17-view-tabs){--muted:#5d6b77}
+.x17-card-settings small{color:#5d6b77}
+[data-theme=dark] .x6-dialog:has(.x17-view-tabs){--muted:#b0bcb2}
+[data-theme=dark] .x17-card-settings small{color:#b0bcb2}
+@media(max-width:600px){.x17-view-tabs button{font-size:12px}.x17-card-settings button{min-height:42px}.x17-view-notice{padding:10px}}

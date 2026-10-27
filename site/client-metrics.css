@@ -1,0 +1,36 @@
+/* Extend the supplied Tandoor system without reskinning other screens. */
+.m14-toolbar{display:flex;gap:12px 18px;align-items:flex-end;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.m14-period{display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:12px;color:var(--muted);flex-shrink:0}
+.m14-period select{min-height:40px;min-width:170px;border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--surface);color:var(--text);font:inherit}
+.m14-demo{color:#78531e;background:#fff5df;font-size:11px;padding:4px 7px;border-radius:3px;line-height:1.5}
+.m14-toolbar>.m14-demo{margin-bottom:9px}
+.m14-quick{display:flex;gap:6px;flex-wrap:wrap;flex-basis:100%}.m14-quick button{min-height:34px!important;font-size:12px;border-color:var(--line);color:var(--green);background:var(--surface);padding:5px 10px}
+.m14-panel{margin:16px 0;overflow:hidden}.m14-panel>header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.m14-panel h3{margin:7px 0 0;font-size:18px}.m14-panel h4{font-size:14px;margin:0 0 10px}
+.m14-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0}.m14-facts>div{padding:18px 20px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-width:0}
+.m14-facts>div:nth-child(3n){border-right:0}.m14-facts dt{font-size:12px;color:var(--muted);margin-bottom:10px}
+.m14-facts dd{font-size:24px;font-weight:600;line-height:1.25;margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.m14-facts small{font-size:11px;color:var(--muted);display:block;margin-top:8px;line-height:1.5}.m14-facts dd.m14-text{font-size:15px;line-height:1.6;font-weight:500}.m14-text>span{display:block}
+.m14-table-scroll{overflow:auto;max-width:100%;border-bottom:1px solid var(--line)}.x6 .m14-table{width:100%;border-collapse:collapse;margin:0}
+.x6 .m14-table th,.x6 .m14-table td{padding:12px 20px;min-width:130px;max-width:300px;text-align:left;font-size:13px;vertical-align:top}
+.x6 .m14-table th{font-weight:500;background:var(--bg);color:var(--muted)}.x6 .m14-table tbody th{background:var(--surface);color:var(--text);min-width:220px}
+.m14-table small{display:block;color:var(--muted);font-size:11px;margin-top:5px}
+.m14-shipping{padding:18px 20px}.m14-shipping>div{display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(100px,1fr) 1fr;gap:12px;border-top:1px solid var(--line);padding:12px 0;font-size:12px}.m14-shipping b{font-weight:500}
+.m14-note{font-size:11px!important;line-height:1.6;color:var(--muted);margin:0;padding:12px 20px;background:var(--bg)}
+.m14-numeric{font-variant-numeric:tabular-nums;white-space:nowrap}.m14-debts{display:flex;flex-direction:column;gap:8px}.m14-debts span{display:block;line-height:1.45}.m14-debts small{font-size:10px!important;color:var(--muted);margin-top:3px!important}
+.x6 .x6-scroll table{min-width:100%}.x6-scroll td:first-child,.x6-scroll th:first-child{position:sticky;left:0;background:var(--surface);z-index:1}.x6-scroll th:first-child{background:var(--bg)}
+.x6 .m14-day-select{min-width:150px}.x6 .m14-day-select[multiple]{height:120px}
+.x14-focusbar .m14-period{flex-direction:row;align-items:center;gap:6px}.x14-focusbar .m14-period select{min-width:145px}
+.m14-scroll-hint{padding:8px 16px;margin:0;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+@media(max-width:900px){.m14-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.m14-facts>div:nth-child(3n){border-right:1px solid var(--line)}.m14-facts>div:nth-child(2n){border-right:0}}
+@media(max-width:767px){
+ .m14-toolbar{padding:12px;gap:10px}.m14-period{justify-content:flex-start;width:100%;font-size:12px}.m14-period select{min-width:0;width:100%;max-width:none}.m14-toolbar>.m14-demo{margin-bottom:0}
+ .m14-quick{display:grid;grid-template-columns:1fr 1fr;gap:6px}.m14-quick button{min-height:44px!important}
+ .m14-panel>header{padding:16px 14px;gap:14px}.m14-panel h3{font-size:17px}.m14-panel .m14-period{width:100%}
+ .m14-facts{grid-template-columns:1fr}.m14-facts>div{border-right:0!important;padding:14px}.m14-facts dd{font-size:23px}
+ .m14-shipping{padding:14px}.m14-shipping>div{grid-template-columns:1fr 1fr;gap:8px}.m14-shipping>div>span:first-child{grid-column:1/-1}
+ .m14-note{padding:12px 14px}.m14-scroll-hint{display:none}
+ .x6 .m14-table,.x6 .m14-table thead,.x6 .m14-table tbody{display:table;width:100%}.x6 .m14-table thead{display:table-header-group}.x6 .m14-table tbody{display:table-row-group}
+ .x6 .m14-table tr{display:table-row;padding:0}.x6 .m14-table th,.x6 .m14-table td{display:table-cell;padding:12px 14px;min-width:130px!important}.x6 .m14-table td:before{display:none}
+ .x14-focusbar .m14-period{width:auto;flex-wrap:wrap}.x14-focusbar .m14-period span{display:none}.x14-focusbar .m14-period select{width:145px}
+}
