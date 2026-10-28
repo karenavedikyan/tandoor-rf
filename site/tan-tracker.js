@@ -468,6 +468,7 @@
     ttPrototypeRole: "manager",
     ttRoleUnsupported: false,
     ttRequestedRole: "",
+    handoffReceipt: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -608,6 +609,7 @@
     closeAttachLightbox();
     resetPhoneIdentity();
     state.createPhase = "item";
+    state.handoffReceipt = null;
     ttShellMounted = false;
     TT_BODY.forEach((c) => document.body.classList.remove(c));
     document.dispatchEvent(new Event("assistant:paint"));
@@ -1087,13 +1089,79 @@
     return true;
   }
 
-  function afterConfirmedHandoff(o) {
+  function applyContactProfile(contactId) {
+    const c = contactById(contactId);
+    if (!c) return;
+    if (c.kind === "external") {
+      state.actingContactId = contactId;
+      return;
+    }
+    if (c.employeeId && employees[c.employeeId]) {
+      state.actingContactId = null;
+      state.employeeId = c.employeeId;
+      if (Sc()?.effectiveRoleForEmployee) {
+        state.ttPrototypeRole = Sc().effectiveRoleForEmployee(c.employeeId);
+        lastPrototypeRoleSynced = state.ttPrototypeRole;
+      }
+    }
+  }
+
+  function afterQrReceive(o) {
     state.recipientMode = false;
     state.recipientTicket = null;
-    state.view = "detail";
     state.codeInput = "";
-    if (state.actingContactId && state.actingContactId !== o.holderId) state.actingContactId = null;
+    state.handoffReceipt = null;
+    state.view = "detail";
+    applyContactProfile(o.holderId);
     ttShellMounted = false;
+  }
+
+  function afterCodeSend(o, senderContactId) {
+    state.recipientMode = false;
+    state.recipientTicket = null;
+    state.codeInput = "";
+    const sender = senderContactId || employeeContact(state.employeeId)?.id;
+    const senderContact = contactById(sender);
+    if (senderContact?.kind === "external") {
+      state.actingContactId = sender;
+      state.handoffReceipt = {
+        orderId: o.id,
+        senderId: sender,
+        receiverId: o.holderId,
+        item: o.item,
+        at: now(),
+        ver: o.handoffVer ?? 0,
+      };
+      state.view = "handoff-receipt";
+    } else {
+      state.handoffReceipt = null;
+      if (senderContact?.employeeId) applyContactProfile(sender);
+      else state.actingContactId = null;
+      state.view = "detail";
+    }
+    ttShellMounted = false;
+  }
+
+  function handoffReceiptValid(o) {
+    const r = state.handoffReceipt;
+    if (!r || !o || r.orderId !== o.id) return false;
+    if ((o.handoffVer ?? 0) !== r.ver) return false;
+    if (r.senderId !== (state.actingContactId || employeeContact(state.employeeId)?.id)) return false;
+    return true;
+  }
+
+  function handoffReceiptView(o) {
+    const r = state.handoffReceipt;
+    const recv = contactById(r?.receiverId || o.holderId);
+    const sender = contactById(r?.senderId);
+    return `<div class="tt-panel tt-handoff-receipt" data-tt="handoff-receipt">
+      <h2>Передача подтверждена</h2>
+      <p class="tt-success">Код принят · ${E(o.item)}</p>
+      <p><strong>Новый держатель:</strong> ${E(recv?.name || "—")}</p>
+      <p class="tt-muted">${E(dt(r?.at || now()))} МСК · ${E(o.id)}</p>
+      <p class="tt-muted">От имени: ${E(sender?.name || "—")}. Дальнейшие файлы и история передачи здесь не показываются.</p>
+      ${btn(isExternalShell() ? "Закрыть" : "← К реестру", 'data-tt="back-list"')}
+    </div>`;
   }
 
   function generateCode(o) {
@@ -1326,7 +1394,9 @@
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
-    if (state.employeeId && employees[state.employeeId] && !state.ttRoleUnsupported) p.set("tt_emp", state.employeeId);
+    const urlExtActing = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
+    if (state.employeeId && employees[state.employeeId] && !state.ttRoleUnsupported && !urlExtActing)
+      p.set("tt_emp", state.employeeId);
     else p.delete("tt_emp");
     if (state.view !== "list") p.set("tt_screen", state.view);
     else p.delete("tt_screen");
@@ -1334,6 +1404,15 @@
     else if (!state.recipientMode) p.delete("tt_id");
     if (state.view === "create" && state.createPhase) p.set("tt_cphase", state.createPhase);
     else p.delete("tt_cphase");
+    if (state.view === "handoff-receipt" && state.handoffReceipt) {
+      p.set("tt_screen", "handoff-receipt");
+      p.set(
+        "tt_receipt",
+        `${state.handoffReceipt.senderId}|${state.handoffReceipt.orderId}|${state.handoffReceipt.ver}`
+      );
+    } else {
+      if (state.view !== "handoff-receipt") p.delete("tt_receipt");
+    }
     history.replaceState(null, "", `#${ROUTE}?${p}`);
   }
 
@@ -1348,8 +1427,10 @@
     };
     state.ttRoleUnsupported = resolved.unsupported;
     state.ttRequestedRole = resolved.requested || "";
+    state.actingContactId = p.get("tt_act") || null;
+    const urlExternalActing = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
     const ttEmp = p.get("tt_emp");
-    if (!resolved.unsupported && ttEmp && employees[ttEmp]) {
+    if (!resolved.unsupported && ttEmp && employees[ttEmp] && !urlExternalActing) {
       state.employeeId = ttEmp;
       state.ttPrototypeRole = Sc().effectiveRoleForEmployee(ttEmp);
       lastPrototypeRoleSynced = state.ttPrototypeRole;
@@ -1359,7 +1440,6 @@
     state.recipientMode = p.get("tt_view") === "recipient";
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
-    state.actingContactId = p.get("tt_act") || null;
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
     if (state.recipientMode && oid) {
       state.recipientTicket = { hv: p.get("tt_hv"), rcv: p.get("tt_rcv"), order: oid };
@@ -1369,7 +1449,15 @@
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
-    if (!(ttEmp && employees[ttEmp] && !resolved.unsupported)) syncEmployeeFromRole(resolved.person || null);
+    if (state.view === "handoff-receipt") {
+      const ord = orders.find((x) => x.id === state.orderId);
+      if (!handoffReceiptValid(ord)) {
+        state.handoffReceipt = null;
+        state.view = oid ? "detail" : "list";
+      }
+    }
+    if (!(ttEmp && employees[ttEmp] && !resolved.unsupported && !urlExternalActing))
+      syncEmployeeFromRole(resolved.person || null);
     if (state.view === "create") {
       const ph = p.get("tt_cphase");
       const allowed = new Set([
@@ -1717,6 +1805,10 @@
   function bodyHtml() {
     if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (state.view === "handoff-receipt") {
+      if (!o || !handoffReceiptValid(o)) return deniedView();
+      return handoffReceiptView(o);
+    }
     if (state.view === "detail" && o && !orderVisible(o)) return deniedView();
     if (state.view === "create") return createView();
     if (state.view === "transfer" && o) return transferView(o);
@@ -2056,6 +2148,7 @@
       state.form = null;
       state.createPhase = "item";
       state.error = state.toast = "";
+      state.handoffReceipt = null;
       clearCompleteConfirm();
       clearAttachStaging();
       writeUrl();
@@ -2119,7 +2212,8 @@
       return;
     }
     if (action === "confirm-code" && o) {
-      if (tryConfirmCode(o, state.codeInput)) afterConfirmedHandoff(o);
+      const senderBefore = state.actingContactId || employeeContact(state.employeeId)?.id;
+      if (tryConfirmCode(o, state.codeInput)) afterCodeSend(o, senderBefore);
       writeUrl();
       renderTracker();
       return;
@@ -2219,7 +2313,7 @@
     }
     if (action === "confirm-qr-receive" && o) {
       const ticket = resolveInvitation(o, state.recipientTicket?.hv ?? o.activeInvitation?.hv);
-      if (tryConfirmQr(o, ticket)) afterConfirmedHandoff(o);
+      if (tryConfirmQr(o, ticket)) afterQrReceive(o);
       writeUrl();
       renderTracker();
       return;

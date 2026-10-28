@@ -114,8 +114,20 @@ var TT_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Смена QR"), "QR confirm handoff once");
-  ok((await page.locator('[data-tt="access-denied"]').count()) === 0, "QR receipt does not access-deny sender after new external holder");
-  ok((await page.evaluate(() => location.hash)).includes("tt_act=") === false, "QR receipt clears stale tt_act external sender");
+  ok((await page.locator('[data-tt="access-denied"]').count()) === 0, "QR receipt does not access-deny verified external receiver");
+  ok(await page.evaluate(() => document.body.classList.contains("tt-external-shell")), "external QR receiver stays external shell");
+  ok(await page.locator(".sidebar").isHidden(), "external QR receiver hides sidebar");
+  ok(await page.locator("#af-bell").isHidden(), "external QR receiver hides corporate bell");
+  ok((await page.evaluate(() => location.hash)).includes("tt_act="), "external QR receiver keeps tt_act on new holder not staff m1");
+  ok(
+    await page.evaluate(
+      () =>
+        window.TanTrackerPrototype.state.employeeId === "m1" &&
+        document.body.classList.contains("tt-external-shell") &&
+        !location.hash.includes("tt_emp=")
+    ),
+    "external QR receiver keeps external shell without staff m1 URL profile"
+  );
   const holderAfter = await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-004").holderId);
   const replayHash = usedQrPayload.startsWith("#") ? usedQrPayload : usedQrPayload.includes("#") ? usedQrPayload.slice(usedQrPayload.indexOf("#")) : "#" + usedQrPayload;
   await navHash(replayHash);

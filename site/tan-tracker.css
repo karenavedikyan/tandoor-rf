@@ -18,6 +18,8 @@
 .tt-recipient-shell .main,.tt-external-shell .main { max-width:480px; margin:0 auto; padding:16px; min-height:100dvh; }
 .tt-external-shell .main { max-width:640px; }
 .tt-recipient-shell #af-required-reminder,.tt-external-shell #af-required-reminder { display:none !important; }
+.tt-external-shell #af-bell,.tt-recipient-shell #af-bell { display:none !important; }
+.tt-handoff-receipt .tt-att-item,.tt-handoff-receipt [data-tt="timeline"],.tt-handoff-receipt [data-tt="attach"] { display:none !important; }
 .tt-work * { box-sizing:border-box; }
 .tt-work :is(button,input,select,textarea) { font:inherit; min-height:44px; }
 .tt-work button:disabled { opacity:1; color:var(--tt-muted); cursor:not-allowed; }
