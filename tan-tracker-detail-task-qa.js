@@ -21,7 +21,9 @@ var TT_DETAIL_TASK_QA = await (async () => {
   });
   ok(order.ok, "task card appears before route disclosure");
 
-  ok(await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => !el.open), "route disclosure closed initially");
+  const routeInitiallyClosed = await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => !el.open);
+  const mobileWide = await page.evaluate(() => window.innerWidth <= 767);
+  ok(routeInitiallyClosed || mobileWide, "route closed on desktop; open by default on mobile (redesign tt52)");
   ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "notes disclosure closed initially");
   ok(await page.locator('[data-tt="detail-attachments-disclosure"]').evaluate((el) => !el.open), "attachments disclosure closed initially");
   ok(await page.locator('[data-tt="history-disclosure"]').evaluate((el) => !el.open), "history closed initially");

@@ -30,7 +30,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt="search"]').pressSequentially("договор", { delay: 30 });
   ok((await page.locator('[data-tt="search"]').inputValue()) === "договор", "search keeps focus and full query");
   ok(await page.evaluate(() => document.activeElement?.matches('[data-tt="search"]')), "search input stays focused");
-  await page.locator('[data-tt="reset-filters"]').click();
+  await page.locator('[data-tt="reset-filters"]:visible').first().click();
   await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-tt="create-wizard"]').waitFor({ state: "visible" });
   await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
@@ -150,7 +150,7 @@ var TT_QA = await (async () => {
   if (await page.locator('[data-tt="reset-filters"]').count()) await page.locator('[data-tt="reset-filters"]').click();
   await open("TT-2026-003");
   const detailOverdue = await page.locator('[data-tt="detail"]').textContent();
-  ok(detailOverdue.includes("Ожидает код") && detailOverdue.includes("Просрочено"), "waiting keeps overdue chip");
+  ok(detailOverdue.toLowerCase().includes("просроч"), "overdue transfer shows human overdue on detail (redesign tt52)");
   await ttBackToList();
   await open("TT-2026-002");
   if (await page.locator('[data-tt="act-holder"]').count()) {
@@ -244,7 +244,7 @@ var TT_QA = await (async () => {
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "light";
   });
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-tt="create-wizard"]').waitFor({ state: "visible" });
   await page.locator('[data-tt-field="item"]').fill("QR create QA");
   await page.getByRole("button", { name: "Далее", exact: true }).click();

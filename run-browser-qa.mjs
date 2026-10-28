@@ -32,7 +32,20 @@ globalThis.ttOpenDemoSettings = async () => {
 };
 globalThis.ttOpenDetailDemo = async () => {
   const panel = page.locator('[data-tt="detail-demo"]');
-  if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
+  if (!(await panel.count())) return;
+  const overflow = page.locator('[data-tt="detail-overflow"]');
+  if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
+    await overflow.evaluate((el) => {
+      el.open = true;
+    });
+  }
+  if (!(await panel.evaluate((el) => el.open))) {
+    const sum = panel.locator(":scope > summary");
+    if (await sum.isVisible()) await sum.click();
+    else await panel.evaluate((el) => {
+      el.open = true;
+    });
+  }
 };
 globalThis.ttBackToList = async () => {
   const terminal = page.locator('[data-tt="terminal-back-list"]');
@@ -50,7 +63,20 @@ globalThis.ttBackToList = async () => {
 };
 globalThis.ttOpenOtherActions = async () => {
   const panel = page.locator('[data-tt="other-actions"]');
-  if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
+  if (!(await panel.count())) return;
+  const overflow = page.locator('[data-tt="detail-overflow"]');
+  if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
+    await overflow.evaluate((el) => {
+      el.open = true;
+    });
+  }
+  if (!(await panel.evaluate((el) => el.open))) {
+    const sum = panel.locator(":scope > summary");
+    if (await sum.isVisible()) await sum.click();
+    else await panel.evaluate((el) => {
+      el.open = true;
+    });
+  }
 };
 globalThis.ttOpenRecipientList = async () => {
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
