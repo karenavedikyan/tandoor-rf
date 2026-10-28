@@ -10,7 +10,7 @@ var TT_WIZ_RECIPIENT_QA = await (async () => {
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
 
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-tt-field="item"]').fill("Recipient choose QA");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
@@ -59,7 +59,7 @@ var TT_WIZ_RECIPIENT_QA = await (async () => {
   ok((await page.locator('[data-tt="route-stop-final"]').textContent()).includes("Ольга"), "change recipient updates review route");
 
   await ttExitWizardToRegistry();
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-tt-field="item"]').fill("Recipient new path");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();

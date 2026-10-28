@@ -8,10 +8,10 @@ var TT_ATT_QA = await (async () => {
   const png1x1 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
   const open = async (id) => {
-    const card = page.locator(`.tt-card[data-tt-open="${id}"]`);
-    const row = page.locator(`.tt-table [data-tt-open="${id}"]`);
-    if (await card.isVisible()) await card.click();
-    else await row.click();
+    const card = page.locator(`.tt-card-v2[data-tt-open="${id}"], .tt-card[data-tt-open="${id}"]`);
+    const row = page.locator(`tr[data-tt-open="${id}"], .tt-table [data-tt-open="${id}"]`);
+    if (await card.first().isVisible()) await card.first().click();
+    else await row.first().click();
     await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   };
 
@@ -26,7 +26,7 @@ var TT_ATT_QA = await (async () => {
   ok((await page.locator(".tt-att-doc").first().textContent()).match(/^(PDF|TXT|PNG|JPG|DOC|XLS|FILE)/), "short doc label not raw mime");
 
   await page.locator('[data-tt="back-list"]').click();
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-tt="create-wizard"]').waitFor({ state: "visible" });
   await page.locator('[data-tt-field="item"]').fill("Attach QA");
   await page.getByRole("button", { name: "Далее", exact: true }).click();

@@ -64,7 +64,7 @@ var TT_WIZ_ATT_CARDS_QA = await (async () => {
   };
 
   const goFiles = async () => {
-    await page.locator('[data-tt="create"]').click();
+    await page.locator('[data-tt-main-cta]').first().click();
     await page.locator('[data-tt-field="item"]').fill("Attach cards QA");
     await page.getByRole("button", { name: "Далее", exact: true }).click();
     await page.locator('[data-create-phase="files"]').waitFor({ state: "visible" });

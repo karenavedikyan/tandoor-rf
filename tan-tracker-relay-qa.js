@@ -55,7 +55,7 @@ var TT_RELAY_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"), "create keeps final recipient on detail");
 
   await ttOpenDemoSettings();
-  await page.locator('[data-tt="employee"]').selectOption("c1");
+  await page.locator('[data-tt="demo-settings"] select[data-tt="employee"]').selectOption("c1");
   await page.locator("#af-bell").waitFor({ state: "visible" });
   await page.locator("#af-bell").click();
   await page.locator("#af-inbox").waitFor({ state: "visible" });
@@ -79,7 +79,7 @@ var TT_RELAY_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Савельева"), "code handoff to relay employee");
 
   await ttOpenDemoSettings();
-  await page.locator('[data-tt="employee"]').selectOption("c1");
+  await page.locator('[data-tt="demo-settings"] select[data-tt="employee"]').selectOption("c1");
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   if (await page.locator('[data-tt="act-holder"]').count()) {
     await ttOpenDetailDemo();
@@ -143,7 +143,7 @@ var TT_RELAY_QA = await (async () => {
   ok(tlLen >= 3, "timeline keeps handoff history");
 
   await ttOpenDemoSettings();
-  await page.locator('[data-tt="employee"]').selectOption("m1");
+  await page.locator('[data-tt="demo-settings"] select[data-tt="employee"]').selectOption("m1");
   await page.evaluate((id) => {
     location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
   }, orderId);
@@ -152,7 +152,7 @@ var TT_RELAY_QA = await (async () => {
   ok((await page.getByRole("button", { name: "Передать другому человеку", exact: true }).count()) === 0, "historical view not editable after complete");
 
   await ttOpenDemoSettings();
-  await page.locator('[data-tt="employee"]').selectOption("m2");
+  await page.locator('[data-tt="demo-settings"] select[data-tt="employee"]').selectOption("m2");
   await page.evaluate(() => {
     location.hash = "#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-008";
   });

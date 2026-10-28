@@ -113,6 +113,11 @@ globalThis.ttWaitAttThumbLoaded = async () => {
   });
 };
 /** After pick or when summary card is shown: one «Далее» → review. */
+globalThis.ttClickCreate = async () => {
+  const fab = page.locator('[data-tt="create-fab"]');
+  if (await fab.isVisible()) await fab.click();
+  else await page.locator('.tt-head-cta-desktop [data-tt="create"], [data-tt="create"]').first().click();
+};
 globalThis.ttWizardRecipientToReview = async () => {
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
   if ((await page.locator('[data-tt="recipient-selected"]').count()) === 0) {

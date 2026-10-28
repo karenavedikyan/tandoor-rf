@@ -171,7 +171,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Review hierarchy QA"), "relay create succeeds");
 
   await page.locator('[data-tt="back-list"]').click();
-  await page.locator('[data-tt-main-cta]').first().click();
+  await ttClickCreate();
   await page.locator('[data-tt-field="item"]').fill("Review direct only");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
@@ -192,7 +192,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   );
 
   await page.locator('[data-tt="back-list"]').click();
-  await page.locator('[data-tt-main-cta]').first().click();
+  await ttClickCreate();
   await page.locator('[data-tt-field="item"]').fill("Review new recipient split");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();

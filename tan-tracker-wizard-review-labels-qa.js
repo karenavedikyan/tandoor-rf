@@ -121,7 +121,7 @@ var TT_WIZ_REVIEW_LABELS_QA = await (async () => {
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await ttBackToList();
-  await page.locator('[data-tt-main-cta]').first().click();
+  await ttClickCreate();
   await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-create-phase="review"]').count()) === 0, "new create starts at item not stale review");
   ok((await page.locator('[data-tt-field="item"]').inputValue()) === "", "new create clears prior item");

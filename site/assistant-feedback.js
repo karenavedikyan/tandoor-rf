@@ -183,10 +183,10 @@
     const hideFixedReminder=document.body.classList.contains("tt-create-wizard")||document.body.classList.contains("tt-detail-focus")||document.body.classList.contains("tt-code-view");
     if(!hideFixedReminder&&c.role==="manager"&&pending.length){
       const reminder=document.createElement("div");reminder.id="af-required-reminder";reminder.className="af af-required-reminder";
-      const ttCompact=document.body.classList.contains("tt-registry-list")&&window.matchMedia("(max-width:767px)").matches;
-      if(ttCompact){
-        reminder.classList.add("af-required-reminder--tt-bar");
-        reminder.innerHTML=`${action("required-rate",`★ Оценить · ${pending.length}`,pending[0].id,"af-tt-rate-pill")}`;
+      const ttRegistry=document.body.classList.contains("tt-registry-list");
+      if(ttRegistry){
+        reminder.classList.add("af-required-reminder--tt-compact");
+        reminder.innerHTML=`${action("required-rate",`★ Оценить · ${pending.length}`,pending[0].id,"af-tt-rate-pill")}<div class="af-required-reminder-expand" aria-hidden="true"><div><strong>Оцените завершённую работу · ${pending.length}</strong><span>Обязательный шаг для закрытия назначения</span></div></div>`;
       }else{
         reminder.innerHTML=`<div><strong>Оцените завершённую работу · ${pending.length}</strong><span>Обязательный шаг для закрытия назначения</span></div>${action("required-rate","Поставить оценку",pending[0].id)}`;
       }

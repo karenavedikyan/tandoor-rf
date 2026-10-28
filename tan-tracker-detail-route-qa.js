@@ -7,7 +7,8 @@ var TT_DETAIL_ROUTE_QA = await (async () => {
   const base = "http://127.0.0.1:4317";
 
   const openRoute = async () => {
-    await page.locator('[data-tt="detail-route-disclosure"] summary').click();
+    const disc = page.locator('[data-tt="detail-route-disclosure"]');
+    if (!(await disc.evaluate((el) => el.open))) await disc.locator("summary").click();
     await page.locator('[data-tt="detail-route-grid"]').waitFor({ state: "visible" });
   };
 
@@ -36,7 +37,7 @@ var TT_DETAIL_ROUTE_QA = await (async () => {
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  ok(await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => !el.open), "route closed by default");
+  ok(await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => el.open), "route open by default on desktop (tt54)");
   const taskFirst = await page.evaluate(() => {
     const task = document.querySelector('[data-tt="detail-task-card"]');
     const route = document.querySelector('[data-tt="detail-route-disclosure"]');
@@ -116,7 +117,10 @@ var TT_DETAIL_ROUTE_QA = await (async () => {
           : true;
       return { flexDir: style?.flexDirection, names, connInside, scrollW: document.documentElement.scrollWidth, vw: document.documentElement.clientWidth };
     });
-    ok(metrics.flexDir === "column", `${label}: triple route stays vertical in panel`);
+    ok(
+      metrics.flexDir === (label === "1440" ? "row" : "column"),
+      `${label}: triple route layout matches viewport (column mobile, row desktop)`
+    );
     ok(metrics.names.every((n) => n.w >= 72 && (n.text?.length || 0) >= 2), `${label}: route names readable width`);
     ok(metrics.connInside && metrics.scrollW <= metrics.vw + 2, `${label}: connectors in grid, no overflow`);
   };

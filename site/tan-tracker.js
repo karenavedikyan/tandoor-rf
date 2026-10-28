@@ -791,7 +791,11 @@
     const d = humanDueLabel(o);
     if (!o.dueAt) return "—";
     const cls = d.overdue ? "tt-due-human tt-due-human--over" : "tt-due-human";
-    return `<span class="${cls}">${E(d.primary)}</span><span class="tt-due-human-sub">${E(d.secondary || d.title)}</span>`;
+    let primary = d.primary;
+    if (d.overdue) {
+      primary = primary.startsWith("на ") ? `просрочено ${primary}` : "просрочено";
+    }
+    return `<span class="${cls}">${E(primary)}</span><span class="tt-due-human-sub">${E(d.secondary || d.title)}</span>`;
   }
 
   function registryActorContext(o, actor) {
@@ -807,11 +811,26 @@
     return { key: "route", label: "В пути", icon: "route" };
   }
 
+  function looksLikePersonalName(name) {
+    const n = (name || "").trim();
+    if (!n || /[«""]/.test(n)) return false;
+    if (/^(ООО|ИП|АО|ЗАО|ПАО|Курьер|ОАО)/i.test(n)) return false;
+    const parts = n.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return false;
+    return parts.every((p) => /^[\p{L}.-]+$/u.test(p) && p.length <= 24);
+  }
+
   function shortContactName(c) {
     if (!c?.name) return "—";
+    if (!looksLikePersonalName(c.name)) return c.name;
     const parts = c.name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
-    return parts[0].length > 14 ? `${parts[0].slice(0, 13)}…` : parts[0];
+    return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+  }
+
+  function routeDisplayName(c, { table = false } = {}) {
+    if (!c?.name) return "—";
+    if (table) return c.name;
+    return looksLikePersonalName(c.name) ? shortContactName(c) : c.name;
   }
 
   function statusChipIcon(ctx) {
@@ -838,7 +857,7 @@
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const next = p || (fin && fin.id !== o.holderId ? fin : null);
-    const name = table ? (c) => E(c?.name || "—") : (c) => E(shortContactName(c));
+    const name = (c) => E(routeDisplayName(c, { table }));
     return `<span class="tt-card-v2-route">${contactAvatarHtml(h)}<span class="tt-card-v2-route-name">${name(h)}</span>${
       next
         ? `<span class="tt-card-v2-route-arrow" aria-hidden="true">→</span>${contactAvatarHtml(next)}<span class="tt-card-v2-route-name">${name(next)}</span>`
@@ -1907,9 +1926,66 @@
       if (state.statusFilter === "active" && st !== "active") return false;
       if (state.statusFilter === "completed" && st !== "completed") return false;
       if (state.statusFilter === "overdue" && !isOverdue(o)) return false;
+      if (state.statusFilter === "route") {
+        const ctx = registryActorContext(o, actor);
+        if (ctx.key !== "route" || o.status === "completed") return false;
+      }
       return true;
     });
     return list;
+  }
+
+  function registryActivePreset() {
+    if (state.mineFilter === "handoff" && state.statusFilter === "all") return "handoff";
+    if (state.mineFilter === "receive" && state.statusFilter === "all") return "receive";
+    if (state.mineFilter === "all" && state.statusFilter === "waiting") return "waiting";
+    if (state.mineFilter === "all" && state.statusFilter === "route") return "route";
+    if (state.mineFilter === "all" && state.statusFilter === "overdue") return "overdue";
+    if (state.mineFilter === "all" && state.statusFilter === "completed") return "completed";
+    if (state.mineFilter === "all" && state.statusFilter === "all") return "all";
+    return "custom";
+  }
+
+  function registryFilterBadgeCount() {
+    let n = 0;
+    if (state.statusFilter !== "all") n += 1;
+    if (state.mineFilter !== "all") n += 1;
+    return n;
+  }
+
+  function demoHeadPopoverHtml(demoBody) {
+    return `<details class="tt-demo-head-popover" data-tt="demo-settings">
+      <summary class="tt-demo-head-pill">Демо</summary>
+      <div class="tt-demo-popover-body">${demoBody}</div>
+    </details>`;
+  }
+
+  function registryDesktopStatusChips() {
+    const desktop = typeof window === "undefined" || window.innerWidth >= 1024;
+    if (!desktop) return "";
+    const active = registryActivePreset();
+    const presets = [
+      ["all", "Все"],
+      ["waiting", "Ожидает код"],
+      ["handoff", "Нужно передать"],
+      ["receive", "Жду получения"],
+      ["route", "В пути"],
+      ["overdue", "Просрочено"],
+      ["completed", "Завершена"],
+    ];
+    return `<div class="tt-registry-status-chips" data-tt="registry-status-chips" role="group" aria-label="Статус передачи">${presets
+      .map(
+        ([key, label]) =>
+          `<button type="button" class="tt-registry-status-chip" data-tt="registry-preset" data-preset="${key}" aria-pressed="${active === key}">${E(label)}</button>`
+      )
+      .join("")}</div>`;
+  }
+
+  function statTileLabels() {
+    const narrow = typeof window !== "undefined" && window.innerWidth < 768;
+    return narrow
+      ? { handoff: "Передать", receive: "Получить", overdue: "Просрочено", active: "Активные" }
+      : { handoff: "Нужно передать", receive: "Жду получения", overdue: "Просрочено", active: "Всего активных" };
   }
 
   function writeUrl() {
@@ -2025,7 +2101,9 @@
 
   function registryStatTiles() {
     const c = registryCounts();
+    const labels = statTileLabels();
     const filtActive = state.statusFilter !== "all" || state.mineFilter !== "all" || !!state.query.trim();
+    const badge = registryFilterBadgeCount();
     const tile = (action, dim, pressed, warn, icon, label, statKey, val) =>
       `<button type="button" class="tt-stat-tile${dim ? " tt-stat-tile--dim" : ""}${warn ? " tt-stat-tile--warn" : ""}${warn && val > 0 ? " tt-stat-tile--warn-hot" : ""}" data-tt="${action}" aria-pressed="${pressed}">
         <i data-lucide="${icon}" class="tt-stat-tile-icon" aria-hidden="true"></i>
@@ -2033,21 +2111,22 @@
         <span class="tt-stat-tile-label">${E(label)}</span>
       </button>`;
     return `<div class="tt-stat-tiles" data-tt="registry-stats">
-      ${tile("mine-handoff", !c.handoff, state.mineFilter === "handoff", false, "send", "Нужно передать", "handoff", c.handoff)}
-      ${tile("mine-receive", !c.receive, state.mineFilter === "receive", false, "inbox", "Жду получения", "receive", c.receive)}
-      ${tile("mine-overdue", !c.overdue, state.statusFilter === "overdue", true, "alert-triangle", "Просрочено", "overdue", c.overdue)}
+      ${tile("mine-handoff", !c.handoff, state.mineFilter === "handoff", false, "send", labels.handoff, "handoff", c.handoff)}
+      ${tile("mine-receive", !c.receive, state.mineFilter === "receive", false, "inbox", labels.receive, "receive", c.receive)}
+      ${tile("mine-overdue", !c.overdue, state.statusFilter === "overdue", true, "alert-triangle", labels.overdue, "overdue", c.overdue)}
       <button type="button" class="tt-stat-tile tt-stat-tile--desktop-only tt-stat-tile--info" data-tt="mine-active" aria-pressed="false" tabindex="-1">
         <i data-lucide="layers" class="tt-stat-tile-icon" aria-hidden="true"></i>
         <span class="tt-stat-tile-value" data-tt-stat="active">${c.active}</span>
-        <span class="tt-stat-tile-label">Всего активных</span>
+        <span class="tt-stat-tile-label">${E(labels.active)}</span>
       </button>
     </div>
     <div class="tt-registry-toolbar">
       <div class="tt-registry-search-wrap"><span class="tt-registry-search-icon" aria-hidden="true"><i data-lucide="search"></i></span>
         <input data-tt="search" value="${E(state.query)}" placeholder="Предмет, номер, человек" autocomplete="off">
       </div>
-      <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i></button>
+      <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i>${badge ? `<span class="tt-filter-badge" data-tt="filter-badge">${badge}</span>` : ""}</button>
     </div>
+    ${registryDesktopStatusChips()}
     <div class="tt-toolbar tt-toolbar--legacy">
       <div class="tt-mine-filters tt-mine-filters--legacy" role="group" aria-label="Мои передачи">
         ${btn("Все", `data-tt="mine-all"${state.mineFilter === "all" ? ' aria-pressed="true"' : ""}`)}
@@ -2068,11 +2147,19 @@
       <div class="tt-filter-sheet-panel">
         <h3>Статус</h3>
         <div class="tt-filter-chips" role="group">
-          ${["all", "waiting", "active", "overdue", "completed"]
-            .map((v) => {
-              const labels = { all: "Все", waiting: "Ожидают код", active: "В работе", overdue: "Просрочка", completed: "Завершены" };
-              return `<button type="button" class="tt-filter-chip" data-tt="filter-chip" data-filter-value="${v}" aria-pressed="${state.statusFilter === v}">${labels[v]}</button>`;
-            })
+          ${[
+            ["all", "Все"],
+            ["waiting", "Ожидает код"],
+            ["handoff", "Нужно передать"],
+            ["receive", "Жду получения"],
+            ["route", "В пути"],
+            ["overdue", "Просрочено"],
+            ["completed", "Завершена"],
+          ]
+            .map(
+              ([key, label]) =>
+                `<button type="button" class="tt-filter-chip" data-tt="registry-preset" data-preset="${key}" aria-pressed="${registryActivePreset() === key}">${E(label)}</button>`
+            )
             .join("")}
         </div>
         ${btn("Готово", 'data-tt="registry-filter-close"', "tt-primary")}
@@ -2092,7 +2179,7 @@
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
       }
-      <button type="button" class="tt-primary tt-fab" data-tt="create" data-tt-main-cta=""><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>
+      <button type="button" class="tt-primary tt-fab" data-tt="create-fab"><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>
     </div>`;
   }
 
@@ -2346,7 +2433,7 @@
 
   function detailRouteDisclosure(o) {
     const w = typeof window !== "undefined" ? window.innerWidth : 1440;
-    const openDefault = w <= 767 || w >= 1024;
+    const openDefault = w >= 1024;
     return `<details class="tt-disclosure tt-detail-route-wrap${openDefault ? " tt-route-default-open" : ""}" data-tt="detail-route-disclosure"${openDefault ? " open" : ""}>
       ${disclosureSummary("Маршрут и контакты", { icon: "route" })}
       <div class="tt-disclosure-body tt-detail-route">${detailRouteGrid(o)}</div>
@@ -2377,7 +2464,7 @@
     const heroAttr = 'data-tt-detail-hero-primary=""';
     if (o.status === "completed" || !isHolder) return "";
     if (o.pendingId) {
-      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code" ${heroAttr}`, "tt-primary")}</div>`;
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code-dock" ${heroAttr}`, "tt-primary")}</div>`;
     }
     const canComplete =
       !o.pendingId && (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
@@ -2518,7 +2605,7 @@
       body = `<p class="tt-detail-done" data-tt="detail-completed" data-tt-terminal-audience="observer">Передача закрыта. Доступен только просмотр истории и материалов.</p>`;
     }
     return `<section class="tt-detail-task-card tt-detail-task-card--terminal" data-tt="detail-task-card">
-      <div class="tt-terminal-icon" aria-hidden="true"><i data-lucide="check-circle"></i></div>
+      <div class="tt-terminal-icon tt-terminal-icon--enter" aria-hidden="true"><i data-lucide="check-circle"></i></div>
       <h3 class="tt-detail-task-heading">Передача завершена</h3>
       ${body}
       <div class="tt-detail-monitor tt-detail-monitor--terminal" data-tt="detail-terminal-monitor">
@@ -2697,7 +2784,7 @@
     const metaBlock = desktopDetail
       ? ""
       : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>`;
-    return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail"${mobileDock ? ' data-tt-has-dock="true"' : ""}>
+    return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
         ${
           o.status === "completed"
@@ -2831,27 +2918,38 @@
     const verified = identityVerified(o);
     const qrMode = state.recipientVia === "qr";
     const stale = resolved.stale;
-    return `<div class="tt-recipient" data-tt="recipient-screen">
-      <p class="tt-demo">Демо-данные · изменения до обновления страницы</p>
+    const payload = inv ? handoffUrl(o, inv) : "";
+    const codeBlock =
+      !stale && !qrMode && verified && c && codeValid(o)
+        ? `<div class="tt-recipient-code-block">
+        <span class="tt-recipient-code-display" data-tt="shown-code">${E(c.code)}</span>
+        ${btn("Скопировать", 'data-tt="copy-recipient-code"', "tt-btn-ghost")}
+        <p class="tt-muted">Код действует 5 мин · до ${dt(c.expiresAt)}</p>
+      </div>`
+        : "";
+    const qrBlock =
+      !stale && qrMode && verified
+        ? `<div class="tt-recipient-qr" data-tt="recipient-qr"><div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div></div>`
+        : "";
+    return `<div class="tt-recipient-wrap"><article class="tt-recipient-card" data-tt="recipient-screen">
       ${stale ? `<p class="tt-warning">Это приглашение устарело (версия ${E(String(inv?.hv ?? ticketHv))}). Актуальный получатель мог измениться.</p>` : ""}
-      <h1>${E(inv?.item || o.item)}</h1>
-      <p>Трек ${E(o.id)}</p>
-      <p>От: <strong>${E(from?.name || "—")}</strong></p>
-      <p>Кому: <strong>${E(to?.name || "—")}</strong></p>
-      <p>Телефон: ${E(maskPhone(to?.phone || ""))}</p>
-      ${fin && intermediate ? `<p><strong>Конечный получатель:</strong> ${E(fin.name)} · ${E(maskPhone(fin.phone))}</p>` : ""}
-      ${fin && intermediate ? `<p><strong>Срок доставки:</strong> ${o.dueAt ? dt(o.dueAt) : "Срок не указан"}</p>` : ""}
-      ${intermediate ? `<div class="tt-reminder" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить «${E(o.item)}» нужно ${E(fin?.name || "конечному получателю")}${o.dueAt ? ` до ${dt(o.dueAt)}` : ""}.</p></div>` : ""}
-      <p class="tt-warning">Демонстрация: подтверждение телефона. СМС не отправляется.</p>
-      ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary") : `<p class="tt-success">Номер отмечен в демо (без реальной проверки).</p>`}
-      ${verified && !stale ? attachmentsSection(o, { readonly: true, items: Att() ? Att().listForOrder(o) : [] }) : stale ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>` : ""}
-      ${!stale && qrMode && verified ? btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary") : ""}
-      ${!stale && !qrMode && verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary") : ""}
-      ${!stale && !qrMode && verified && c && codeValid(o) ? `<div class="tt-code" data-tt="shown-code">${E(c.code)}</div><p>Код действует 5 мин · до ${dt(c.expiresAt)}</p><p class="tt-warning">Сообщайте код только после получения предмета.</p>` : ""}
-      ${!stale && !qrMode && verified && c && !codeValid(o) ? `<p class="tt-error">Код недоступен (истёк, использован или исчерпаны попытки).</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary")}` : ""}
+      <p class="tt-recipient-kicker">${E(o.id)}</p>
+      <h1 class="tt-recipient-title">${E(inv?.item || o.item)}</h1>
+      <p class="tt-recipient-from">От <strong>${E(from?.name || "—")}</strong></p>
+      <p class="tt-recipient-to">Вам · ${E(maskPhone(to?.phone || ""))}</p>
+      ${fin && intermediate ? `<p class="tt-recipient-fin">Конечный получатель: <strong>${E(fin.name)}</strong></p>` : ""}
+      ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
+      <p class="tt-warning tt-recipient-verify-hint">Демо: подтверждение телефона без СМС.</p>
+      ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary tt-btn-block") : `<p class="tt-success">Номер отмечен в демо.</p>`}
+      ${qrBlock}
+      ${codeBlock}
+      ${verified && !stale ? attachmentsSection(o, { readonly: true, items: Att() ? Att().listForOrder(o) : [], compact: true }) : stale ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>` : ""}
+      ${!stale && qrMode && verified ? btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary tt-btn-block") : ""}
+      ${!stale && !qrMode && verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block") : ""}
+      ${!stale && !qrMode && verified && c && !codeValid(o) ? `<p class="tt-error">Код недоступен.</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}` : ""}
       ${stale && qrMode ? `<p class="tt-error">Подтверждение по этому QR недоступно.</p>` : ""}
-      <div class="tt-demo-controls">${!qrMode ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"') : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"')}</div>
-    </div>`;
+      <div class="tt-recipient-foot">${!qrMode ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost") : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"', "tt-btn-ghost")}</div>
+    </article></div>`;
   }
 
   function bodyHtml() {
@@ -2900,9 +2998,12 @@
         !Sc() ||
         Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId });
       const allowed = o && rcvOk && scopeOk;
+      const recipDemo = demoHeadPopoverHtml(
+        `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>`
+      );
       main.innerHTML =
         o && allowed
-          ? `<div class="tt-work">${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
+          ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact tt-head-compact-demo"><span class="tt-head-compact-label">Тан-трекер</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
           : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
@@ -2925,7 +3026,8 @@
     const inCreateWizard = state.view === "create" && !ext;
     const inCreateReview = inCreateWizard && state.createPhase === "review";
     const inDetailFocus = !state.recipientMode && !ext && state.view === "detail" && !!state.orderId;
-    const inCompactHead = inDetailFocus || inCreateWizard;
+    const inCompactHead =
+      inDetailFocus || inCreateWizard || state.view === "code" || state.view === "transfer" || isExternalShell();
     const chrome = inCreateWizard
       ? ""
       : ext
@@ -2937,22 +3039,10 @@
             })
             .join("")}</select></label>`;
 
-    const demoOpen = inCreateWizard && !inCreateReview ? " open" : "";
     const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
-    const demoShell = ext
-      ? `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span><div data-tt="chrome">${chrome}</div>`
-      : onListRegistry || inCompactHead
-          ? ""
-          : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
-      <details class="tt-disclosure tt-demo-settings" data-tt="demo-settings"${demoOpen}>
-        <summary>Демо-настройки</summary>
-        <div class="tt-disclosure-body">${demoBody}</div>
-      </details>`;
+    const demoShell = "";
 
-    const demoHeadPopover = `<details class="tt-disclosure tt-demo-settings tt-demo-head-popover" data-tt="demo-settings">
-        <summary class="tt-demo-head-pill"><span class="tt-demo-pill">Демо</span></summary>
-        <div class="tt-disclosure-body tt-demo-popover-body">${demoBody}</div>
-      </details>`;
+    const demoHeadPopover = demoHeadPopoverHtml(demoBody);
 
     const headBlock = inCompactHead
       ? `<div class="tt-head tt-head-compact tt-head-compact-demo"><span class="tt-head-compact-label">Тан-трекер</span>${demoHeadPopover}</div>`
@@ -2989,6 +3079,8 @@
       } else {
         const cta = document.querySelector('[data-tt="head-cta"]');
         if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
+        const popBody = document.querySelector(".tt-demo-head-popover .tt-demo-popover-body");
+        if (popBody && (onListRegistry || inCompactHead)) popBody.innerHTML = demoBody;
       }
       const meta = document.querySelector(".tt-shell-meta");
       if (meta) {
@@ -3122,7 +3214,7 @@
       renderTracker();
       return;
     }
-    if (action === "create") {
+    if (action === "create" || action === "create-fab") {
       state.view = "create";
       state.createPhase = "item";
       state.createReturnPhase = null;
@@ -3288,6 +3380,34 @@
       renderTracker();
       return;
     }
+    if (action === "registry-preset") {
+      const preset = b.getAttribute("data-preset") || "all";
+      const map = {
+        all: ["all", "all"],
+        waiting: ["all", "waiting"],
+        handoff: ["handoff", "all"],
+        receive: ["receive", "all"],
+        route: ["all", "route"],
+        overdue: ["all", "overdue"],
+        completed: ["all", "completed"],
+      };
+      const [mine, status] = map[preset] || ["all", "all"];
+      state.mineFilter = mine;
+      state.statusFilter = status;
+      state.registryFilterSheet = false;
+      renderTracker();
+      return;
+    }
+    if (action === "copy-recipient-code") {
+      const o = orders.find((x) => x.id === state.orderId);
+      const code = o?.code?.code;
+      if (code && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(code).catch(() => {});
+        state.toast = "Код скопирован";
+      }
+      renderTracker();
+      return;
+    }
     if (action === "create-edit-comment") {
       state.createReturnPhase = "review";
       state.createPhase = "edit-comment";
@@ -3348,7 +3468,7 @@
       renderTracker();
       return;
     }
-    if (action === "enter-code" && o) {
+    if ((action === "enter-code" || action === "enter-code-dock") && o) {
       state.view = "code";
       state.codeInput = "";
       state.error = "";

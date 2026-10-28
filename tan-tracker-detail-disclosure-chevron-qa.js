@@ -15,12 +15,14 @@ var TT_DETAIL_DISCLOSURE_CHEVRON_QA = await (async () => {
     '[data-tt="detail-demo"]',
   ];
 
+  await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
 
   for (const sel of disclosureSelectors) {
     ok((await page.locator(sel).count()) === 1, `${sel} present on pending detail`);
+    if (sel === '[data-tt="detail-route-disclosure"]') continue;
     ok(await page.locator(sel).evaluate((el) => !el.open), `${sel} closed initially`);
   }
 

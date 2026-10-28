@@ -9,7 +9,7 @@ var TT_INGEST_QA = await (async () => {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
   const goFilesStep = async () => {
-    await page.locator('[data-tt="create"]').click();
+    await page.locator('[data-tt-main-cta]').first().click();
     await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
     await page.locator('[data-tt-field="item"]').fill("Ingest race QA");
     await page.getByRole("button", { name: "Далее", exact: true }).click();
@@ -40,7 +40,7 @@ var TT_INGEST_QA = await (async () => {
     "cancel during delayed ingest leaves empty staging"
   );
 
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
   await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
   await page.locator('[data-tt-field="item"]').fill("Fresh draft");
   await page.getByRole("button", { name: "Далее", exact: true }).click();

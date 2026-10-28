@@ -17,7 +17,7 @@ var TT_WIZ_QA = await (async () => {
   };
 
   const startCreate = async () => {
-    await page.locator('[data-tt="create"]').click();
+    await page.locator('[data-tt-main-cta]').first().click();
     await waitWizardTitle("item", "Что передаём");
     ok((await page.locator(".tt-wizard-progress").textContent()).includes("Шаг 1 из 4"), "step 1 progress label");
   };
@@ -116,7 +116,7 @@ var TT_WIZ_QA = await (async () => {
 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.locator('[data-tt="back-list"]').click();
-  await page.locator('[data-tt="create"]').click();
+  await page.locator('[data-tt="create-fab"]').click();
   await waitWizardTitle("item", "Что передаём");
   await page.evaluate(() => {
     if (document.getElementById("af-required-reminder")) return;
@@ -162,7 +162,7 @@ var TT_WIZ_QA = await (async () => {
   await page.goto(`${base}/#exchange?role=manager`);
   await page.locator('[data-go="tan-tracker"]').click();
   await page.locator("#tt-root").waitFor({ state: "visible" });
-  ok(await page.locator('[data-tt="create"]').isVisible(), "cold exchange entry shows create CTA");
+  ok(await page.locator('[data-tt-main-cta]').first().isVisible(), "cold exchange entry shows create CTA");
 
   return { passed: checks.length, checks };
 })();
