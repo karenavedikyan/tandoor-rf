@@ -118,6 +118,11 @@
       <div class="as-table-scroll" tabindex="0" aria-label="Оценки и завершённые назначения"><table class="as-table af-table"><thead><tr><th>Назначение и период, МСК</th><th>Ассистент / менеджер</th><th>Клиенты</th><th>Оценка и закрытие</th><th>Действие</th></tr></thead><tbody>${rows.map(({a,r})=>`<tr><td><strong>${a.id}</strong><small>${fmt(a.start)} → ${fmt(a.end)}<br>${a.status==="revoked"?"Досрочно отозвано":"Период завершён"}</small></td><td>${E(P.person(a.assistant))}<small>${E(P.person(a.manager))}</small></td><td>${a.clients.length}</td><td>${r?`${stars(r.score)}<span class="af-grade ${r.score<=3?"af-low":""}">${r.score}/5</span>`:""}<small class="${r?"":"af-pending-label"}">${closure(a)}</small></td><td>${r?action("review","Посмотреть",a.id):canRate(a)?action("rate","Оценить",a.id,"primary"):"Ожидается от менеджера"}</td></tr>`).join("")||'<tr><td colspan="5">По фильтрам ничего не найдено. Измените условия поиска.</td></tr>'}</tbody></table></div></section>`;
   }
   function paint(){
+    if(document.body.classList.contains("tt-recipient-shell")||document.body.classList.contains("tt-external-shell")){
+      document.getElementById("af-required-reminder")?.remove();
+      document.getElementById("af-context")?.remove();
+      return;
+    }
     sync();
     const head=document.querySelector(".head .right");if(!head)return;
     let bell=document.getElementById("af-bell");

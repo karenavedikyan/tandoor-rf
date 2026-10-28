@@ -346,6 +346,10 @@
   seedContacts();
   seedOrders();
 
+  const TT_BODY = ["tt-active", "tt-recipient-shell", "tt-external-shell"];
+  let ttShellMounted = false;
+  let lastViewKey = "";
+
   const state = {
     view: "list",
     orderId: null,
@@ -354,14 +358,204 @@
     employeeId: "m1",
     actingContactId: null,
     recipientMode: false,
+    recipientVia: "code",
+    recipientTicket: null,
+    handoffTab: "code",
     form: null,
     codeInput: "",
     toast: "",
     error: "",
     phoneVerified: false,
+    phoneVerifiedKey: "",
     contactSearch: "",
     newRecipient: false,
   };
+
+  function syncInvitation(o) {
+    if (!o.pendingId) {
+      o.activeInvitation = null;
+      return;
+    }
+    o.activeInvitation = {
+      hv: o.handoffVer ?? 0,
+      pendingId: o.pendingId,
+      holderId: o.holderId,
+      item: o.item,
+      id: o.id,
+    };
+  }
+  orders.forEach((o) => {
+    if (o.handoffVer == null) o.handoffVer = o.pendingId ? 1 : 0;
+    if (o.pendingId) syncInvitation(o);
+  });
+
+  function archiveInvitation(o) {
+    if (!o.activeInvitation) return;
+    o.pastInvitations = o.pastInvitations || [];
+    o.pastInvitations.push({ ...o.activeInvitation });
+  }
+
+  function recipientKey(o) {
+    return `${o.id}|${o.handoffVer ?? 0}|${o.pendingId || ""}`;
+  }
+
+  function resetPhoneIdentity() {
+    state.phoneVerified = false;
+    state.phoneVerifiedKey = "";
+  }
+
+  function identityVerified(o) {
+    return state.phoneVerified && state.phoneVerifiedKey === recipientKey(o);
+  }
+
+  function isExternalShell() {
+    if (state.recipientMode) return false;
+    const c = state.actingContactId && contactById(state.actingContactId);
+    return !!(c && c.kind === "external");
+  }
+
+  function handoffUrl(o, inv) {
+    const t = inv || o.activeInvitation;
+    if (!t) return `${location.pathname}#tan-tracker?role=${prototypeRole}`;
+    const p = new URLSearchParams({ role: prototypeRole, tt_view: "recipient", tt_order: t.id, tt_hv: String(t.hv), tt_rcv: t.pendingId, tt_via: "qr" });
+    return `${location.pathname}#tan-tracker?${p}`;
+  }
+
+  function qrSvg(text) {
+    if (typeof qrcode !== "function") return "";
+    const qr = qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const cell = Math.max(4, Math.ceil(252 / n));
+    return qr.createSvgTag(cell, 4);
+  }
+
+  function resolveInvitation(o, urlHv) {
+    const hv = Number(urlHv);
+    if (o.activeInvitation && o.activeInvitation.hv === hv) return { inv: o.activeInvitation, stale: false };
+    const past = (o.pastInvitations || []).find((x) => x.hv === hv);
+    if (past) return { inv: past, stale: true };
+    if (o.activeInvitation) return { inv: o.activeInvitation, stale: o.activeInvitation.hv !== hv };
+    return { inv: null, stale: true };
+  }
+
+  function leaveRouteCleanup() {
+    state.recipientMode = false;
+    state.recipientVia = "code";
+    state.recipientTicket = null;
+    state.actingContactId = null;
+    state.orderId = null;
+    state.view = "list";
+    resetPhoneIdentity();
+    ttShellMounted = false;
+    TT_BODY.forEach((c) => document.body.classList.remove(c));
+    document.dispatchEvent(new Event("assistant:paint"));
+  }
+
+  function applyBodyClasses() {
+    const on = current === ROUTE;
+    if (!on) {
+      TT_BODY.forEach((c) => document.body.classList.remove(c));
+      return;
+    }
+    const ext = isExternalShell();
+    document.body.classList.toggle("tt-active", !state.recipientMode && !ext);
+    document.body.classList.toggle("tt-recipient-shell", state.recipientMode);
+    document.body.classList.toggle("tt-external-shell", ext);
+  }
+
+  function captureFocus() {
+    const el = document.activeElement;
+    if (!el || !el.closest?.("#tt-root")) return null;
+    if (el.matches('[data-tt="search"]')) return { type: "search", start: el.selectionStart, end: el.selectionEnd };
+    if (el.dataset?.ttField) return { type: "field", field: el.dataset.ttField, start: el.selectionStart, end: el.selectionEnd };
+    return null;
+  }
+
+  function restoreFocus(snap) {
+    if (!snap) return;
+    requestAnimationFrame(() => {
+      const el =
+        snap.type === "search"
+          ? document.querySelector('[data-tt="search"]')
+          : document.querySelector(`[data-tt-field="${snap.field}"]`);
+      if (!el) return;
+      el.focus();
+      if (snap.start != null && el.setSelectionRange) el.setSelectionRange(snap.start, snap.end);
+    });
+  }
+
+  function registryRowsHtml(rows) {
+    return rows
+      .map((o) => {
+        const h = contactById(o.holderId);
+        const p = o.pendingId ? contactById(o.pendingId) : null;
+        return `<tr data-tt-open="${E(o.id)}"><td><strong>${E(o.id)}</strong></td><td>${E(o.item)}<small>${E(o.qty || "")}</small></td><td>${E(h?.name || "—")}</td><td>${p ? E(p.name) : "—"}</td><td>${statusBadge(o)}</td><td>${o.dueAt ? dt(o.dueAt) : "—"}</td><td>${o.holderSince ? dt(o.holderSince) : "—"}</td></tr>`;
+      })
+      .join("");
+  }
+
+  function registryCardsHtml(rows) {
+    return rows
+      .map((o) => {
+        const h = contactById(o.holderId);
+        return `<article class="tt-card" data-tt-open="${E(o.id)}"><h3>${E(o.id)} · ${E(o.item)}</h3><p>Держатель: ${E(h?.name)}</p><p>${statusBadge(o)}</p></article>`;
+      })
+      .join("");
+  }
+
+  function patchRegistry() {
+    const rows = visibleOrders();
+    const tbody = document.querySelector("#tt-registry-body");
+    const cards = document.querySelector('[data-tt="cards"]');
+    const empty = document.querySelector('[data-tt="empty"]');
+    const scroll = document.querySelector(".tt-table-scroll");
+    if (!tbody) return false;
+    if (rows.length) {
+      tbody.innerHTML = registryRowsHtml(rows);
+      if (cards) cards.innerHTML = registryCardsHtml(rows);
+      empty?.remove();
+      if (scroll && scroll.style.display === "none") scroll.style.display = "";
+    } else {
+      tbody.innerHTML = "";
+      if (cards) cards.innerHTML = "";
+      if (!empty) {
+        document.getElementById("tt-content")?.insertAdjacentHTML(
+          "beforeend",
+          `<div class="tt-empty" data-tt="empty"><p>Нет передач по фильтрам.</p><button type="button" class="tt-link" data-tt="reset-filters">Сбросить фильтры</button></div>`
+        );
+      }
+    }
+    return true;
+  }
+
+  function patchContactPick() {
+    const host = document.querySelector('[data-tt="contact-pick"]');
+    if (!host || !state.form) return false;
+    const f = state.form;
+    const pick = contacts.filter((c) => {
+      const q = f.pickQ || "";
+      if (!q) return true;
+      return (c.name + c.phone).toLowerCase().includes(q.toLowerCase());
+    });
+    host.innerHTML = pick
+      .slice(0, 12)
+      .map(
+        (c) =>
+          `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
+      )
+      .join("");
+    return true;
+  }
+
+  function paintQrHosts() {
+    document.querySelectorAll('[data-tt="qr-host"]').forEach((host) => {
+      const payload = host.getAttribute("data-payload");
+      if (!payload) return;
+      host.innerHTML = qrSvg(payload);
+    });
+  }
 
   function now() {
     return Date.now();
@@ -385,7 +579,45 @@
 
   function invalidateCode(o) {
     o.code = null;
-    state.phoneVerified = false;
+    resetPhoneIdentity();
+  }
+
+  function completeHandoff(o, via, ticket) {
+    state.error = "";
+    if (!o.pendingId) {
+      state.error = "Ожидание уже подтверждено или отменено.";
+      return false;
+    }
+    if (o.status === "completed") {
+      state.error = "Передача завершена.";
+      return false;
+    }
+    if (ticket) {
+      const cur = o.activeInvitation;
+      const ticketPending = ticket.pendingId ?? ticket.rcv;
+      if (!cur || cur.hv !== ticket.hv || cur.pendingId !== ticketPending) {
+        state.error = "Приглашение устарело: получатель или передача изменились.";
+        return false;
+      }
+    }
+    const from = o.holderId;
+    const to = o.pendingId;
+    o.holderId = to;
+    o.pendingId = null;
+    o.holderSince = now();
+    o.status = "active";
+    o.code = null;
+    archiveInvitation(o);
+    o.activeInvitation = null;
+    resetPhoneIdentity();
+    o.timeline.push({
+      at: now(),
+      from,
+      to,
+      note: via === "qr" ? "Подтверждено по QR" : "Подтверждено одноразовым кодом",
+    });
+    state.toast = "Держатель обновлён.";
+    return true;
   }
 
   function generateCode(o) {
@@ -452,22 +684,21 @@
       return false;
     }
     c.used = true;
-    const from = o.holderId;
-    const to = o.pendingId;
-    o.holderId = to;
-    o.pendingId = null;
-    o.holderSince = now();
-    o.status = "active";
-    o.code = null;
-    o.timeline.push({
-      at: now(),
-      from,
-      to,
-      note: "Подтверждено одноразовым кодом",
-    });
-    state.toast = "Держатель обновлён.";
+    const okHandoff = completeHandoff(o, "code");
     o._codeBusy = false;
-    return true;
+    return okHandoff;
+  }
+
+  function tryConfirmQr(o, ticket) {
+    if (!identityVerified(o)) {
+      state.error = "Сначала подтвердите номер (демо).";
+      return false;
+    }
+    if (ticket?.stale) {
+      state.error = "Это приглашение больше не действует. Запросите новый QR у передающего.";
+      return false;
+    }
+    return completeHandoff(o, "qr", ticket?.inv);
   }
 
   function cancelPending(o) {
@@ -479,7 +710,10 @@
       note: "Ожидание передачи отменено",
     });
     o.pendingId = null;
-    invalidateCode(o);
+    archiveInvitation(o);
+    o.activeInvitation = null;
+    o.code = null;
+    resetPhoneIdentity();
     o.status = "active";
     state.toast = "Ожидание отменено.";
   }
@@ -522,16 +756,20 @@
       state.error = "Завершённую передачу нельзя продолжить.";
       return;
     }
-    invalidateCode(o);
+    archiveInvitation(o);
     o.pendingId = recipientId;
     o.status = "waiting";
+    o.handoffVer = (o.handoffVer ?? 0) + 1;
+    o.code = null;
+    resetPhoneIdentity();
+    syncInvitation(o);
     o.timeline.push({
       at: now(),
       from: o.holderId,
       to: recipientId,
       note: "Назначен следующий получатель",
     });
-    state.toast = "Получатель выбран. Прежний код аннулирован.";
+    state.toast = "Получатель выбран. Прежний код и QR аннулированы.";
   }
 
   function addExternalContact(name, phoneRaw) {
@@ -577,9 +815,19 @@
     if (state.recipientMode && state.orderId) {
       p.set("tt_view", "recipient");
       p.set("tt_order", state.orderId);
+      const o = orders.find((x) => x.id === state.orderId);
+      if (o?.activeInvitation) {
+        p.set("tt_hv", String(o.activeInvitation.hv));
+        p.set("tt_rcv", o.activeInvitation.pendingId);
+      }
+      if (state.recipientVia === "qr") p.set("tt_via", "qr");
+      else p.delete("tt_via");
     } else {
       p.delete("tt_view");
       p.delete("tt_order");
+      p.delete("tt_hv");
+      p.delete("tt_rcv");
+      p.delete("tt_via");
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
@@ -596,6 +844,11 @@
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
     state.actingContactId = p.get("tt_act") || null;
+    state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
+    if (state.recipientMode && oid) {
+      state.recipientTicket = { hv: p.get("tt_hv"), rcv: p.get("tt_rcv"), order: oid };
+      resetPhoneIdentity();
+    } else state.recipientTicket = null;
     const scr = p.get("tt_screen");
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
@@ -622,13 +875,7 @@
     </div>
     ${rows.length ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table" data-tt="registry"><thead><tr>
       <th>Трек</th><th>Предмет</th><th>Держатель</th><th>Ожидает</th><th>Статус</th><th>Срок</th><th>У держателя</th>
-    </tr></thead><tbody>${rows
-      .map((o) => {
-        const h = contactById(o.holderId);
-        const p = o.pendingId ? contactById(o.pendingId) : null;
-        return `<tr data-tt-open="${E(o.id)}"><td><strong>${E(o.id)}</strong></td><td>${E(o.item)}<small>${E(o.qty || "")}</small></td><td>${E(h?.name || "—")}</td><td>${p ? E(p.name) : "—"}</td><td>${statusBadge(o)}</td><td>${o.dueAt ? dt(o.dueAt) : "—"}</td><td>${o.holderSince ? dt(o.holderSince) : "—"}</td></tr>`;
-      })
-      .join("")}</tbody></table></div>
+    </tr></thead><tbody id="tt-registry-body">${registryRowsHtml(rows)}</tbody></table></div>
     <div class="tt-cards" data-tt="cards">${rows
       .map((o) => {
         const h = contactById(o.holderId);
@@ -667,19 +914,39 @@
     </form></div>`;
   }
 
+  function pendingHandoffPanel(o) {
+    if (!o.pendingId || !o.activeInvitation) return "";
+    const tab = state.handoffTab || "code";
+    const inv = o.activeInvitation;
+    const payload = handoffUrl(o, inv);
+    return `<div class="tt-handoff" data-tt="handoff-panel">
+      <div class="tt-seg" role="tablist"><button type="button" data-tt="tab-code" aria-pressed="${tab === "code"}">По коду</button><button type="button" data-tt="tab-qr" aria-pressed="${tab === "qr"}">По QR</button></div>
+      ${
+        tab === "code"
+          ? `<p class="tt-muted">Получатель подтверждает номер и сообщает одноразовый код.</p>
+        ${btn("Открыть экран получателя", 'data-tt="open-recipient"')} ${btn("Ввести код", 'data-tt="enter-code"')}`
+          : `<div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
+        <p class="tt-muted tt-qr-note">Демо: сканирование и подтверждение в одном окне. Работа между устройствами будет подключена в ЛК.</p>
+        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"')}`
+      }
+    </div>`;
+  }
+
   function detailView(o) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
     const canComplete = isHolder && !o.pendingId && o.status !== "completed";
+    const showActHolder = o.holderId && o.holderId !== actor;
     return `<div class="tt-panel" data-tt="detail">
-      <div class="tt-actions">${btn("← К реестру", 'data-tt="back-list"')}</div>
+      <div class="tt-actions">${btn(isExternalShell() ? "← К передаче" : "← К реестру", 'data-tt="back-list"')}</div>
       <h2>${E(o.id)} · ${E(o.item)}</h2>
       <p>${E(o.qty || "")}${o.comment ? " · " + E(o.comment) : ""}</p>
       <p><strong>Текущий держатель:</strong> ${E(h?.name)} ${h ? `<small>${E(fmtPhone(h.phone))}</small>` : ""}</p>
       <p><strong>Следующий:</strong> ${p ? E(p.name) : "не назначен"}</p>
       <p><strong>Срок:</strong> ${o.dueAt ? dt(o.dueAt) : "не указан"} · ${statusBadge(o)}</p>
+      ${isHolder && o.pendingId ? pendingHandoffPanel(o) : ""}
       <div class="tt-timeline" data-tt="timeline">${o.timeline
         .slice()
         .reverse()
@@ -691,12 +958,10 @@
         .join("")}</div>
       <div class="tt-actions" style="margin-top:16px">
         ${isHolder && o.status !== "completed" ? btn("Передать", 'data-tt="transfer"') : ""}
-        ${isHolder && o.pendingId ? btn("Ввести код", 'data-tt="enter-code"') : ""}
-        ${btn("Открыть экран получателя", 'data-tt="open-recipient"')}
         ${canComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""}
         ${isHolder && o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""}
-        ${p && o.holderId !== p.id ? btn("Действовать как получатель", 'data-tt="act-recipient"') : ""}
-        ${contactById(o.holderId)?.kind === "external" && !state.actingContactId ? btn("Действовать как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
+        ${showActHolder ? btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
+        ${p && o.holderId !== p.id && !state.actingContactId ? btn("Действовать как получатель", 'data-tt="act-recipient"') : ""}
       </div>
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
@@ -718,7 +983,7 @@
     const pick = allowed.filter((c) => !f.pickQ || (c.name + c.phone).toLowerCase().includes(f.pickQ.toLowerCase()));
     return `<div class="tt-panel"><h2>Передать «${E(o.item)}»</h2>
       <label>Поиск<input data-tt-field="pickQ" value="${E(f.pickQ)}"></label>
-      <div class="tt-contact-pick">${pick
+      <div class="tt-contact-pick" data-tt="contact-pick">${pick
         .map(
           (c) =>
             `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
@@ -742,69 +1007,108 @@
   }
 
   function recipientScreen(o) {
-    const from = contactById(o.holderId);
-    const to = contactById(o.pendingId);
+    const ticketHv = state.recipientTicket?.hv;
+    const resolved = ticketHv != null ? resolveInvitation(o, ticketHv) : { inv: o.activeInvitation, stale: false };
+    const inv = resolved.inv || o.activeInvitation;
+    const from = contactById(inv?.holderId || o.holderId);
+    const to = contactById(inv?.pendingId || o.pendingId);
     const c = o.code;
-    const verified = state.phoneVerified;
+    const verified = identityVerified(o);
+    const qrMode = state.recipientVia === "qr";
+    const stale = resolved.stale;
     return `<div class="tt-recipient" data-tt="recipient-screen">
       <p class="tt-demo">Демо-данные · изменения до обновления страницы</p>
-      <h1>${E(o.item)}</h1>
+      ${stale ? `<p class="tt-warning">Это приглашение устарело (версия ${E(String(inv?.hv ?? ticketHv))}). Актуальный получатель мог измениться.</p>` : ""}
+      <h1>${E(inv?.item || o.item)}</h1>
       <p>Трек ${E(o.id)}</p>
       <p>От: <strong>${E(from?.name || "—")}</strong></p>
       <p>Кому: <strong>${E(to?.name || "—")}</strong></p>
       <p>Телефон: ${E(maskPhone(to?.phone || ""))}</p>
       <p class="tt-warning">Демонстрация: подтверждение телефона. СМС не отправляется.</p>
       ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary") : `<p class="tt-success">Номер отмечен в демо (без реальной проверки).</p>`}
-      ${verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary") : ""}
-      ${c && codeValid(o) ? `<div class="tt-code" data-tt="shown-code">${E(c.code)}</div><p>Код действует 5 мин · до ${dt(c.expiresAt)}</p><p class="tt-warning">Сообщайте код только после получения предмета.</p>` : ""}
-      ${c && !codeValid(o) ? `<p class="tt-error">Код недоступен (истёк, использован или исчерпаны попытки).</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary")}` : ""}
-      <div class="tt-demo-controls">${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"')}${btn("Вернуться к передаче", 'data-tt="exit-recipient"')}</div>
+      ${!stale && qrMode && verified ? btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary") : ""}
+      ${!stale && !qrMode && verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary") : ""}
+      ${!stale && !qrMode && verified && c && codeValid(o) ? `<div class="tt-code" data-tt="shown-code">${E(c.code)}</div><p>Код действует 5 мин · до ${dt(c.expiresAt)}</p><p class="tt-warning">Сообщайте код только после получения предмета.</p>` : ""}
+      ${!stale && !qrMode && verified && c && !codeValid(o) ? `<p class="tt-error">Код недоступен (истёк, использован или исчерпаны попытки).</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary")}` : ""}
+      ${stale && qrMode ? `<p class="tt-error">Подтверждение по этому QR недоступно.</p>` : ""}
+      <div class="tt-demo-controls">${!qrMode ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"') : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"')}</div>
     </div>`;
   }
 
-  function renderTracker() {
-    if (current !== ROUTE) return;
-    readUrl();
-    const main = document.querySelector(".main");
-    const app = document.getElementById("app");
-    if (!main && !app) return;
+  function bodyHtml() {
+    const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (state.view === "create") return createView();
+    if (state.view === "transfer" && o) return transferView(o);
+    if (state.view === "code" && o) return codeView(o);
+    if (state.view === "detail" && o) return detailView(o);
+    if (isExternalShell() && o) return detailView(o);
+    if (isExternalShell()) return `<div class="tt-empty"><p>Нет доступных передач для этого участника.</p></div>`;
+    return registryView();
+  }
 
-    document.body.classList.toggle("tt-recipient-shell", state.recipientMode);
-    document.body.classList.toggle("tt-active", !state.recipientMode);
+  function renderTracker(opts = {}) {
+    if (current !== ROUTE) return;
+    applyBodyClasses();
+    const main = document.querySelector(".main");
+    if (!main) return;
+
+    const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}`;
+    if (viewKey !== lastViewKey && !opts.soft) {
+      window.scrollTo(0, 0);
+      lastViewKey = viewKey;
+    }
 
     if (state.recipientMode) {
+      ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
-      if (!o) {
-        main.innerHTML = `<div class="tt-work tt-recipient"><p class="tt-error">Передача не найдена.</p></div>`;
-        return;
-      }
-      main.innerHTML = `<div class="tt-work">${recipientScreen(o)}</div>`;
+      main.innerHTML = o
+        ? `<div class="tt-work">${recipientScreen(o)}</div>`
+        : `<div class="tt-work tt-recipient"><p class="tt-error">Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа.</p></div>`;
+      document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
       return;
     }
 
-    const emp = employees[state.employeeId] || employees.m1;
-    let body = "";
-    const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
-    if (state.view === "create") body = createView();
-    else if (state.view === "transfer" && o) body = transferView(o);
-    else if (state.view === "code" && o) body = codeView(o);
-    else if (state.view === "detail" && o) body = detailView(o);
-    else body = registryView();
+    const snap = opts.soft ? captureFocus() : null;
+    if (opts.soft && state.view === "list" && patchRegistry()) {
+      restoreFocus(snap);
+      return;
+    }
+    if (opts.soft && (state.view === "create" || state.view === "transfer") && document.activeElement?.dataset?.ttField === "pickQ" && patchContactPick()) {
+      restoreFocus(snap);
+      return;
+    }
 
-    main.innerHTML = `<div class="tt-work" data-testid="tan-tracker" id="tt-root">
+    const ext = isExternalShell();
+    const chrome =
+      ext
+        ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
+        : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.entries(employees)
+            .map(([id, e]) => `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(e.name)}</option>`)
+            .join("")}</select></label>`;
+
+    if (!ttShellMounted) {
+      main.innerHTML = `<div class="tt-work" data-testid="tan-tracker" id="tt-root">
       <div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
-        ${state.view === "list" ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}
+        <span data-tt="head-cta">${state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
       </div>
       <p class="tt-demo">Демо-данные · изменения до обновления страницы</p>
-      <label>Текущий сотрудник (демо)<select data-tt="employee">${Object.entries(employees)
-        .map(([id, e]) => `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(e.name)}</option>`)
-        .join("")}</select></label>
-      ${state.actingContactId ? `<p class="tt-warning">Просмотр как внешний держатель: ${E(contactById(state.actingContactId)?.name || "")}. <button type="button" data-tt="clear-act" class="tt-link">Вернуться к сотруднику</button></p>` : ""}
-      ${body}
-    </div>`;
+      <div data-tt="chrome">${chrome}</div>
+      <div id="tt-content"></div></div>`;
+      ttShellMounted = true;
+    } else {
+      const cta = document.querySelector('[data-tt="head-cta"]');
+      if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
+      const ch = document.querySelector('[data-tt="chrome"]');
+      if (ch) ch.innerHTML = chrome;
+    }
+
+    const content = document.getElementById("tt-content");
+    if (content) content.innerHTML = bodyHtml();
+    paintQrHosts();
     document.title = "Tandoor RF · Тан-трекер";
     lucide.createIcons();
+    restoreFocus(snap);
   }
 
   function submitCreate() {
@@ -848,7 +1152,10 @@
       holderSince: now(),
       timeline: [{ at: now(), from: holder.id, to: recipientId, note: "Создана передача" }],
       code: null,
+      handoffVer: 1,
+      pastInvitations: [],
     };
+    syncInvitation(order);
     orders.unshift(order);
     state.orderId = id;
     state.view = "detail";
@@ -966,9 +1273,45 @@
       renderTracker();
       return;
     }
+    if (action === "tab-code") {
+      state.handoffTab = "code";
+      renderTracker();
+      return;
+    }
+    if (action === "tab-qr") {
+      state.handoffTab = "qr";
+      renderTracker();
+      return;
+    }
+    if (action === "scan-qr-demo" && o) {
+      state.recipientMode = true;
+      state.recipientVia = "qr";
+      resetPhoneIdentity();
+      if (o.activeInvitation) {
+        state.recipientTicket = {
+          hv: String(o.activeInvitation.hv),
+          rcv: o.activeInvitation.pendingId,
+          order: o.id,
+        };
+      }
+      writeUrl();
+      renderTracker();
+      return;
+    }
     if (action === "open-recipient" && o) {
       state.recipientMode = true;
-      state.phoneVerified = false;
+      state.recipientVia = state.handoffTab === "qr" ? "qr" : "code";
+      resetPhoneIdentity();
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "confirm-qr-receive" && o) {
+      const ticket = resolveInvitation(o, state.recipientTicket?.hv ?? o.activeInvitation?.hv);
+      if (tryConfirmQr(o, ticket)) {
+        state.recipientMode = false;
+        state.view = "detail";
+      }
       writeUrl();
       renderTracker();
       return;
@@ -991,12 +1334,16 @@
     if (action === "act-holder" && o) {
       state.actingContactId = o.holderId;
       state.view = "detail";
+      ttShellMounted = false;
+      lastViewKey = "";
       writeUrl();
       renderTracker();
       return;
     }
     if (action === "clear-act") {
       state.actingContactId = null;
+      ttShellMounted = false;
+      lastViewKey = "";
       renderTracker();
       return;
     }
@@ -1011,15 +1358,26 @@
       renderTracker();
       return;
     }
-    if (action === "demo-verify-phone") {
-      state.phoneVerified = true;
+    if (action === "gen-code") {
+      const order = o || orders.find((x) => x.id === state.orderId);
+      if (!order) return;
+      if (!identityVerified(order)) {
+        state.error = "Сначала подтвердите номер (демо).";
+      } else generateCode(order);
       renderTracker();
       return;
     }
-    if (action === "gen-code" && o) {
-      if (!state.phoneVerified) {
-        state.error = "Сначала подтвердите номер (демо).";
-      } else generateCode(o);
+    if (action === "demo-verify-phone") {
+      const order = o || orders.find((x) => x.id === state.orderId);
+      if (!order) return;
+      const hv = state.recipientTicket?.hv;
+      const resolved = hv != null ? resolveInvitation(order, hv) : null;
+      const keyOrder =
+        resolved?.inv && resolved.stale
+          ? { id: order.id, handoffVer: resolved.inv.hv, pendingId: resolved.inv.pendingId }
+          : order;
+      state.phoneVerified = true;
+      state.phoneVerifiedKey = recipientKey(keyOrder);
       renderTracker();
       return;
     }
@@ -1039,11 +1397,11 @@
     if (e.target.matches("[data-tt-field]")) {
       if (!state.form) state.form = {};
       state.form[e.target.getAttribute("data-tt-field")] = e.target.value;
-      if (e.target.getAttribute("data-tt-field") === "pickQ") renderTracker();
+      if (e.target.getAttribute("data-tt-field") === "pickQ") renderTracker({ soft: true });
     }
     if (e.target.matches('[data-tt="search"]')) {
       state.query = e.target.value;
-      renderTracker();
+      renderTracker({ soft: true });
     }
     if (e.target.matches('[data-tt="code-input"]')) {
       state.codeInput = e.target.value;
@@ -1076,18 +1434,22 @@
 
   const priorRender = render;
   render = function () {
-    if (current === ROUTE) readUrl();
-    priorRender();
-    document.body.classList.toggle("tt-active", current === ROUTE && !state.recipientMode);
-    if (current === ROUTE) {
-      const s = screens.find((x) => x.id === ROUTE);
-      if (s) {
-        const active = document.querySelector('.sidebar .nav button[data-go="tan-tracker"]');
-        if (active) active.classList.add("active");
-      }
-      renderTracker();
+    const onRoute = current === ROUTE;
+    if (!onRoute) {
+      leaveRouteCleanup();
+      priorRender();
+      return;
     }
+    readUrl();
+    priorRender();
+    const s = screens.find((x) => x.id === ROUTE);
+    if (s) document.querySelector('.sidebar .nav button[data-go="tan-tracker"]')?.classList.add("active");
+    renderTracker();
   };
+  window.addEventListener("hashchange", () => {
+    const route = location.hash.slice(1).split("?")[0] || "clients";
+    if (route !== ROUTE) leaveRouteCleanup();
+  });
 
   window.TanTrackerPrototype = {
     orders: () => orders,
