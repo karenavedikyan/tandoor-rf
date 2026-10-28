@@ -9,10 +9,8 @@ var TT_DETAIL_DISCLOSURE_CHEVRON_QA = await (async () => {
   const disclosureSelectors = [
     '[data-tt="detail-notes-disclosure"]',
     '[data-tt="detail-route-disclosure"]',
-    '[data-tt="other-actions"]',
     '[data-tt="detail-attachments-disclosure"]',
     '[data-tt="history-disclosure"]',
-    '[data-tt="detail-demo"]',
   ];
 
   await page.setViewportSize({ width: 375, height: 812 });
@@ -22,7 +20,7 @@ var TT_DETAIL_DISCLOSURE_CHEVRON_QA = await (async () => {
 
   for (const sel of disclosureSelectors) {
     ok((await page.locator(sel).count()) === 1, `${sel} present on pending detail`);
-    if (sel === '[data-tt="detail-route-disclosure"]') continue;
+    if (sel === '[data-tt="detail-route-disclosure"]' || sel === '[data-tt="other-actions"]') continue;
     ok(await page.locator(sel).evaluate((el) => !el.open), `${sel} closed initially`);
   }
 

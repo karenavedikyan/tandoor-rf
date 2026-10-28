@@ -25,7 +25,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   ok(await page.locator(".tt-seg").count() === 0, "no equal-width code/QR tabs on detail");
   await ttOpenOtherActions();
   ok(await page.locator('[data-tt="cancel-pending"]').isVisible(), "cancel pending in other actions disclosure");
-  await page.locator('[data-tt="other-actions"] summary').click();
+  await page.locator('[data-tt="detail-overflow"] > summary').click();
   ok((await page.locator('[data-tt="history-panel"], [data-tt="history-disclosure"]').count()) >= 1, "history block present");
   const historySummary = page.locator('[data-tt="history-disclosure"] summary');
   if (await historySummary.isVisible()) await historySummary.click();

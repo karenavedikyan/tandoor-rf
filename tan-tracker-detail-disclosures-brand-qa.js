@@ -50,7 +50,20 @@ var TT_DETAIL_DISCLOSURES_BRAND_QA = await (async () => {
   ok(light.histWhen && light.histWhen.length > 4, "history shows date line hierarchy");
   ok(light.primaries === 1, "only handoff primary in detail panel");
 
-  ok(true, "dark route name contrast covered by detail-route-qa");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
+  await page.reload();
+  const routeDisc = page.locator('[data-tt="detail-route-disclosure"]');
+  if (!(await routeDisc.evaluate((el) => el.open))) await routeDisc.locator("summary").click();
+  const dark = await page.evaluate(() => {
+    const name = document.querySelector('[data-tt="detail-route-grid"] .tt-route-name');
+    const ratio = typeof ttQaContrastRatioOnElement === "function" ? ttQaContrastRatioOnElement(name) : 0;
+    return ratio;
+  });
+  ok(dark >= 4.5, `1440 dark route name contrast (${dark.toFixed(2)})`);
 
   return { passed: checks.length, checks };
 })();

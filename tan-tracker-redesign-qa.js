@@ -142,6 +142,71 @@ var TT_REDESIGN_QA = await (async () => {
   const after = await page.locator(".tt-card-v2, .tt-table tbody tr").count();
   ok(after <= before + 2, "handoff tile filters registry list");
 
+  const overflowHeadStable = async (w, label) => {
+    await page.setViewportSize({ width: w, height: 812 });
+    await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
+    await page.reload();
+    const beforeOpen = await page.evaluate(() => {
+      const head = document.querySelector(".tt-detail-head-v2");
+      const sum = document.querySelector(".tt-detail-overflow > summary");
+      if (!head || !sum) return null;
+      return { headH: head.getBoundingClientRect().height, sumW: sum.getBoundingClientRect().width };
+    });
+    ok(beforeOpen && beforeOpen.headH <= 56, `${label}: detail head compact before overflow open`);
+    ok(beforeOpen && beforeOpen.sumW <= 46, `${label}: overflow summary stays icon-sized`);
+    await page.locator('[data-tt="detail-overflow"] > summary').click();
+    const afterOpen = await page.evaluate(() => {
+      const head = document.querySelector(".tt-detail-head-v2");
+      const panel = document.querySelector(".tt-detail-overflow-panel");
+      return { headH: head?.getBoundingClientRect().height, panelVisible: !!panel && getComputedStyle(panel).position === "absolute" };
+    });
+    ok(afterOpen && Math.abs(afterOpen.headH - beforeOpen.headH) < 2, `${label}: overflow popover does not grow header height`);
+    ok(afterOpen?.panelVisible, `${label}: overflow panel is absolute popover`);
+  };
+  await overflowHeadStable(390, "390");
+  await overflowHeadStable(1440, "1440");
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
+  await page.reload();
+  await page.locator('[data-tt-main-cta]').first().click();
+  await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
+  const wizardTop = await page.evaluate(() => {
+    const main = document.querySelector(".main");
+    const w = document.querySelector(".tt-wizard-shell-card");
+    if (!main || !w) return 9999;
+    return w.getBoundingClientRect().top - main.getBoundingClientRect().top;
+  });
+  ok(wizardTop < 120, "1440 wizard card near top of main (not vertically centered)");
+
+  await page.setViewportSize({ width: 390, height: 812 });
+  await page.goto(
+    `${base}/#tan-tracker?role=manager&tt_view=recipient&tt_order=TT-2026-001&tt_via=qr&tt_rcv=ext_01&tt_hv=1`
+  );
+  await page.reload();
+  await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  ok((await page.locator('[data-tt="qr-host"]').count()) === 0, "recipient QR flow has no empty qr-host block");
+
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
+  await page.reload();
+  await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => {
+    el.open = true;
+  });
+  const telHref = await page.locator('[data-tt="route-phone"]').first().getAttribute("href");
+  ok(telHref && /^tel:\+\d+$/.test(telHref), "route tel href contains digits only after plus");
+  const telText = await page.locator('[data-tt="route-phone"]').first().textContent();
+  ok(telText && !telText.includes("демо"), "route tel link text excludes demo suffix");
+
+  await page.setViewportSize({ width: 390, height: 812 });
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
+  await page.reload();
+  const overdueCard = await page.evaluate(() => {
+    const card = [...document.querySelectorAll(".tt-card-v2")].find((el) => el.textContent.includes("TT-2026-003"));
+    return card?.textContent?.includes("просрочено на") ?? false;
+  });
+  ok(overdueCard, "390 registry card shows просрочено на for overdue item");
+
   return { passed: checks.length, checks };
 })();
 console.log(JSON.stringify(TT_REDESIGN_QA, null, 2));

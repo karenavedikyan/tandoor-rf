@@ -23,6 +23,11 @@
     if (d.length < 11) return "+7 (900) 000-00-XX · демо";
     return `+7 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9, 11)} · демо`;
   };
+  const fmtPhoneCore = (digits) => {
+    const d = String(digits).replace(/\D/g, "");
+    if (d.length < 11) return "+7 (900) 000-00-XX";
+    return `+7 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9, 11)}`;
+  };
   const maskPhone = (digits) => {
     const d = String(digits).replace(/\D/g, "");
     if (d.length < 4) return "··· · демо";
@@ -673,6 +678,24 @@
     document.body.classList.toggle("tt-code-view", !state.recipientMode && !ext && state.view === "code");
   }
 
+  let detailOverflowListenersBound = false;
+  function setupDetailOverflowMenu() {
+    const overflow = document.querySelector('[data-tt="detail-overflow"]');
+    if (!overflow || detailOverflowListenersBound) return;
+    detailOverflowListenersBound = true;
+    document.addEventListener("click", (e) => {
+      const open = document.querySelector('[data-tt="detail-overflow"][open]');
+      if (!open || open.contains(e.target)) return;
+      open.open = false;
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      document.querySelectorAll('[data-tt="detail-overflow"][open]').forEach((el) => {
+        el.open = false;
+      });
+    });
+  }
+
   function setupDetailMobileDock() {
     detailDockObserver?.disconnect();
     detailDockObserver = null;
@@ -787,6 +810,12 @@
     return `<span class="${cls}" title="${E(d.title || d.secondary)}">${E(d.primary)}</span>${d.secondary && d.primary !== d.secondary ? `<span class="tt-due-human-sub">${E(d.secondary)}</span>` : ""}`;
   }
 
+  function registryCardDuePrimary(o) {
+    const d = humanDueLabel(o);
+    if (!d.overdue) return d.primary;
+    return d.primary.startsWith("на ") ? `просрочено ${d.primary}` : "просрочено";
+  }
+
   function humanDueTableCell(o) {
     const d = humanDueLabel(o);
     if (!o.dueAt) return "—";
@@ -892,7 +921,7 @@
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
       <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
-      <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(due.primary)}</span></div>
+      <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
     </button>`;
   }
@@ -1043,7 +1072,7 @@
           .slice(0, 40)
           .map(
             (c) =>
-              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+              wizardContactButton(c, sel === c.id)
           )
           .join("")
       : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
@@ -1172,7 +1201,7 @@
           .slice(0, 40)
           .map(
             (c) =>
-              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+              wizardContactButton(c, sel === c.id)
           )
           .join("")
       : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
@@ -2099,6 +2128,17 @@
     return `<button ${type} class="${cls}" ${attrs}>${E(label)}</button>`;
   }
 
+  function overflowActionBtn(label, action, icon = "circle") {
+    return `<button type="button" class="tt-detail-overflow-action" data-tt="${action}"><i data-lucide="${icon}" aria-hidden="true"></i><span>${E(label)}</span></button>`;
+  }
+
+  function wizardContactButton(c, selected) {
+    return `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${selected}">
+      <span class="tt-wizard-contact-body"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></span>
+      <i data-lucide="check" class="tt-wizard-contact-check" aria-hidden="true"></i>
+    </button>`;
+  }
+
   function registryStatTiles() {
     const c = registryCounts();
     const labels = statTileLabels();
@@ -2261,7 +2301,7 @@
           .slice(0, 20)
           .map(
             (c) =>
-              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${f.relayId === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+              wizardContactButton(c, f.relayId === c.id)
           )
           .join("")}</div>
         ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
@@ -2361,12 +2401,12 @@
   }
 
   function routeStepperNode(c, roleEyebrow, variant, planned, showLine) {
-    const phone = c?.phone ? fmtPhone(c.phone) : "";
+    const phoneCore = c?.phone ? fmtPhoneCore(c.phone) : "";
     const telDigits = c?.phone ? normPhone(c.phone) : "";
     const phoneHtml =
       telDigits && c?.phone
-        ? `<a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phone)}</a>`
-        : `<span class="tt-route-phone">${phone ? E(phone) : "—"}</span>`;
+        ? `<span class="tt-route-phone-line"><a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phoneCore)}</a><span class="tt-route-phone-suffix"> · демо</span></span>`
+        : `<span class="tt-route-phone">${phoneCore ? E(phoneCore) : "—"}</span>`;
     const plannedChip = planned
       ? `<span class="tt-route-planned" data-tt="route-planned">План · ждёт подтверждения</span>`
       : "";
@@ -2753,30 +2793,31 @@
       : [];
     const attCount = attItems.length;
 
-    const otherActions =
+    const otherActionBtns =
       isHolder && o.status !== "completed" && o.pendingId
-        ? `<details class="tt-disclosure tt-detail-other" data-tt="other-actions">
-        ${disclosureSummary("Другие действия")}
-        <div class="tt-disclosure-body tt-detail-secondary-actions tt-actions">${btn("Изменить получателя", 'data-tt="change-pending"', "tt-detail-quiet-btn")}${btn("Отменить ожидание", 'data-tt="cancel-pending"', "tt-detail-quiet-btn")}</div>
-      </details>`
+        ? `${overflowActionBtn("Выбрать другого получателя", "change-pending", "user-round-cog")}${overflowActionBtn("Отменить ожидание", "cancel-pending", "ban")}`
         : "";
 
     const demoBtns = [];
-    if (showActHolder) demoBtns.push(btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"', "tt-detail-quiet-btn"));
+    if (showActHolder) demoBtns.push(overflowActionBtn("Смотреть как текущий держатель (демо)", "act-holder", "eye"));
     if (p && o.holderId !== p.id && !state.actingContactId)
-      demoBtns.push(btn("Действовать как получатель", 'data-tt="act-recipient"', "tt-detail-quiet-btn"));
-    if (isHolder && o.pendingId) demoBtns.push(btn("Открыть экран получателя (демо)", 'data-tt="open-recipient"', "tt-detail-quiet-btn"));
-    const demoSection = demoBtns.length
-      ? `<details class="tt-disclosure tt-detail-demo" data-tt="detail-demo">
-        ${disclosureSummary("Демо-сценарии")}
-        <div class="tt-disclosure-body tt-detail-secondary-actions tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">${demoBtns.join("")}</div>
-      </details>`
-      : "";
+      demoBtns.push(overflowActionBtn("Действовать как получатель", "act-recipient", "user-check"));
+    if (isHolder && o.pendingId) demoBtns.push(overflowActionBtn("Открыть экран получателя (демо)", "open-recipient", "external-link"));
 
-    const overflowInner = `${otherActions}${demoSection}`;
-    const overflowBlock = overflowInner.trim()
-      ? `<details class="tt-detail-overflow" data-tt="detail-overflow"><summary aria-label="Другие действия">⋯</summary>
-        <div class="tt-detail-overflow-panel">${overflowInner}</div></details>`
+    const overflowGroups = [];
+    if (otherActionBtns) {
+      overflowGroups.push(
+        `<div class="tt-detail-overflow-group" data-tt="other-actions"><p class="tt-detail-overflow-label">Другие действия</p>${otherActionBtns}</div>`
+      );
+    }
+    if (demoBtns.length) {
+      overflowGroups.push(
+        `<div class="tt-detail-overflow-group" data-tt="detail-demo"><p class="tt-detail-overflow-label">Демо-сценарии</p><div data-tt="detail-secondary-actions">${demoBtns.join("")}</div></div>`
+      );
+    }
+    const overflowBlock = overflowGroups.length
+      ? `<details class="tt-detail-overflow" data-tt="detail-overflow"><summary aria-label="Ещё действия">⋯</summary>
+        <div class="tt-detail-overflow-panel" role="menu">${overflowGroups.join('<hr class="tt-detail-overflow-sep" aria-hidden="true">')}</div></details>`
       : "";
 
     const mobileDock =
@@ -2918,7 +2959,8 @@
     const verified = identityVerified(o);
     const qrMode = state.recipientVia === "qr";
     const stale = resolved.stale;
-    const payload = inv ? handoffUrl(o, inv) : "";
+    const attItems = Att() ? Att().listForOrder(o) : [];
+    const attCount = attItems.length;
     const codeBlock =
       !stale && !qrMode && verified && c && codeValid(o)
         ? `<div class="tt-recipient-code-block">
@@ -2927,28 +2969,49 @@
         <p class="tt-muted">Код действует 5 мин · до ${dt(c.expiresAt)}</p>
       </div>`
         : "";
-    const qrBlock =
-      !stale && qrMode && verified
-        ? `<div class="tt-recipient-qr" data-tt="recipient-qr"><div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div></div>`
-        : "";
+    const verifyStep = !verified
+      ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
+        <p class="tt-recipient-step-label">Шаг 1 · подтвердите, что это ваш номер</p>
+        ${btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary tt-btn-block")}
+        <p class="tt-muted tt-recipient-step-hint">Демо без СМС: нажмите кнопку, чтобы продолжить.</p>
+      </div>`
+      : `<p class="tt-success tt-recipient-verified">Номер подтверждён.</p>`;
+    const receiveStep =
+      verified && !stale && qrMode
+        ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-receive">
+        <p class="tt-recipient-step-label">Шаг 2 · примите предмет</p>
+        ${btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary tt-btn-block")}
+        <p class="tt-muted tt-recipient-step-hint">Нажмите, когда предмет у вас на руках.</p>
+      </div>`
+        : verified && !stale && !qrMode && !c
+          ? `<div class="tt-recipient-step" data-tt="recipient-step-code">${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>`
+          : verified && !stale && !qrMode && c && !codeValid(o)
+            ? `<div class="tt-recipient-step"><p class="tt-error">Код недоступен.</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>`
+            : "";
+    const attDisclosure =
+      verified && !stale && attCount
+        ? `<details class="tt-disclosure tt-recipient-att" data-tt="recipient-attachments-disclosure">
+        ${disclosureSummary("Фото и файлы", { icon: "paperclip", count: attCount })}
+        <div class="tt-disclosure-body">${attachmentsSection(o, { readonly: true, items: attItems, compact: true, omitTitle: true })}</div>
+      </details>`
+        : stale
+          ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>`
+          : "";
     return `<div class="tt-recipient-wrap"><article class="tt-recipient-card" data-tt="recipient-screen">
       ${stale ? `<p class="tt-warning">Это приглашение устарело (версия ${E(String(inv?.hv ?? ticketHv))}). Актуальный получатель мог измениться.</p>` : ""}
       <p class="tt-recipient-kicker">${E(o.id)}</p>
-      <h1 class="tt-recipient-title">${E(inv?.item || o.item)}</h1>
-      <p class="tt-recipient-from">От <strong>${E(from?.name || "—")}</strong></p>
+      <h1 class="tt-recipient-hero">Вам передают</h1>
+      <h2 class="tt-recipient-title">${E(inv?.item || o.item)}</h2>
+      <p class="tt-recipient-from">От кого: <strong>${E(from?.name || "—")}</strong></p>
       <p class="tt-recipient-to">Вам · ${E(maskPhone(to?.phone || ""))}</p>
       ${fin && intermediate ? `<p class="tt-recipient-fin">Конечный получатель: <strong>${E(fin.name)}</strong></p>` : ""}
       ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
-      <p class="tt-warning tt-recipient-verify-hint">Демо: подтверждение телефона без СМС.</p>
-      ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary tt-btn-block") : `<p class="tt-success">Номер отмечен в демо.</p>`}
-      ${qrBlock}
+      ${verifyStep}
+      ${receiveStep}
       ${codeBlock}
-      ${verified && !stale ? attachmentsSection(o, { readonly: true, items: Att() ? Att().listForOrder(o) : [], compact: true }) : stale ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>` : ""}
-      ${!stale && qrMode && verified ? btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary tt-btn-block") : ""}
-      ${!stale && !qrMode && verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block") : ""}
-      ${!stale && !qrMode && verified && c && !codeValid(o) ? `<p class="tt-error">Код недоступен.</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}` : ""}
+      ${attDisclosure}
       ${stale && qrMode ? `<p class="tt-error">Подтверждение по этому QR недоступно.</p>` : ""}
-      <div class="tt-recipient-foot">${!qrMode ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost") : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"', "tt-btn-ghost")}</div>
+      <div class="tt-recipient-foot">${!qrMode && verified ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost tt-recipient-foot-quiet") : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"', "tt-btn-ghost tt-recipient-foot-quiet")}</div>
     </article></div>`;
   }
 
@@ -3007,6 +3070,7 @@
           : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
+      setupDetailOverflowMenu();
       return;
     }
 
@@ -3102,6 +3166,7 @@
     }
     lucide.createIcons();
     setupDetailMobileDock();
+    setupDetailOverflowMenu();
     restoreFocus(snap);
   }
 

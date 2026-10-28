@@ -306,15 +306,32 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
   .tt-detail-aside .tt-disclosure-body { display:block !important; padding:0; }
 }
 
-.tt-detail-head-v2 { display:flex; align-items:center; gap:8px; margin-bottom:12px; min-height:44px; }
-.tt-back-v2 { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:8px 10px; border:0; background:transparent; font-weight:600; color:var(--green); cursor:pointer; }
+.tt-detail-head-v2 { display:flex; align-items:center; gap:8px; margin-bottom:12px; min-height:44px; flex-wrap:nowrap; }
+.tt-detail-id { flex:1 1 auto; min-width:0; font-size:13px; font-weight:600; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tt-back-v2 { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:8px 10px; border:0; background:transparent; font-weight:600; color:var(--green); cursor:pointer; flex-shrink:0; }
+.tt-detail-overflow { position:relative; flex-shrink:0; margin-left:auto; }
 .tt-detail-overflow > summary {
-  list-style:none; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;
+  list-style:none; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; margin:0;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
   border:1px solid var(--line); border-radius:var(--tt-radius-sm); cursor:pointer; font-size:20px; line-height:1;
+  background:var(--surface,var(--tt-panel));
 }
 .tt-detail-overflow > summary::-webkit-details-marker { display:none; }
-.tt-detail-overflow-panel { margin-top:8px; padding:8px; border:1px solid var(--line); border-radius:var(--tt-radius-md); background:var(--bg); }
-.tt-detail-overflow-panel .tt-disclosure > summary { min-height:44px; }
+.tt-detail-overflow-panel {
+  position:absolute; right:0; top:calc(100% + 6px); z-index:45; width:min(300px, calc(100vw - 32px));
+  padding:8px 0; border:1px solid var(--line); border-radius:var(--tt-radius-md); background:var(--surface,var(--tt-panel));
+  box-shadow:var(--tt-shadow); margin:0;
+}
+.tt-detail-overflow-label { margin:0; padding:8px 14px 4px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.tt-detail-overflow-sep { border:0; border-top:1px solid var(--line); margin:6px 0; }
+.tt-detail-overflow-action {
+  display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:10px 14px; border:0; border-radius:0;
+  background:transparent; text-align:left; font-weight:600; font-size:14px; color:var(--text); cursor:pointer;
+}
+.tt-detail-overflow-action:hover { background:var(--tint,#eef5e7); }
+.tt-detail-overflow-action i[data-lucide], .tt-detail-overflow-action svg.lucide { width:18px; height:18px; flex-shrink:0; color:var(--muted); }
+.tt-route-phone-suffix { color:var(--muted,var(--tt-muted)); font-size:13px; font-weight:500; }
+.tt-card-v2-due-inline { white-space:normal; text-align:right; max-width:46%; line-height:1.25; }
 
 .tt-disclosure-title { display:inline-flex; align-items:center; gap:8px; min-width:0; }
 .tt-disclosure-icon { width:18px; height:18px; flex-shrink:0; color:var(--green,#507f22); stroke-width:1.75; }
@@ -378,7 +395,12 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 }
 @media (prefers-reduced-motion:reduce) { .tt-terminal-icon--enter { animation:none; } }
 
-.tt-recipient-wrap { display:flex; justify-content:center; padding:8px 0 24px; }
+.tt-recipient-wrap { display:flex; justify-content:center; padding:8px 0 24px; align-items:flex-start; }
+.tt-work-recipient { width:100%; }
+@media (min-width:1024px) {
+  .tt-recipient-wrap { justify-content:center; padding-top:12px; }
+  .tt-recipient-card { max-width:480px; }
+}
 .tt-recipient-card {
   width:100%; max-width:440px; padding:22px 20px; border-radius:20px;
   background:linear-gradient(160deg, var(--tint,#eef5e7) 0%, var(--surface,#fff) 55%);
@@ -387,7 +409,15 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 [data-theme=dark] .tt-recipient-card {
   background:linear-gradient(160deg, color-mix(in srgb, var(--green) 14%, var(--surface)) 0%, var(--surface) 58%);
 }
-.tt-recipient-title { font-size:22px; margin:0 0 8px; }
+.tt-recipient-hero { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--green,#507f22); margin:0 0 6px; }
+.tt-recipient-title { font-size:22px; margin:0 0 8px; font-weight:750; }
+.tt-recipient-step { margin:14px 0; }
+.tt-recipient-step-label { margin:0 0 8px; font-size:14px; font-weight:650; color:var(--text); }
+.tt-recipient-step-hint { margin:8px 0 0; font-size:13px; }
+.tt-recipient-verified { margin:12px 0; }
+.tt-recipient-foot { margin-top:20px; display:flex; flex-direction:column; gap:8px; }
+.tt-recipient-foot-quiet { font-weight:500; color:var(--muted); border-color:transparent; background:transparent; }
+.tt-recipient-att { margin-top:12px; }
 .tt-recipient-code-display { font-size:36px; font-weight:800; letter-spacing:.12em; font-variant-numeric:tabular-nums; }
 .tt-recipient-code-block { text-align:center; margin:16px 0; }
 

@@ -69,6 +69,10 @@ var TT_ATT_QA = await (async () => {
   await page.locator('[data-tt="open-recipient"]').click();
   ok((await page.locator('[data-tt="attachments"]').count()) === 0, "recipient hides attachments before phone verify");
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  const recipAtt = page.locator('[data-tt="recipient-attachments-disclosure"]');
+  if (await recipAtt.count()) {
+    if (!(await recipAtt.evaluate((el) => el.open))) await recipAtt.locator("summary").click();
+  }
   ok((await page.locator('[data-tt="attachments"] .tt-att-item').count()) >= 1, "recipient sees attachments after verify");
 
   await page.locator('.tt-att-thumb[data-tt="attach-preview"]').first().click();

@@ -31,20 +31,10 @@ globalThis.ttOpenDemoSettings = async () => {
   if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
 };
 globalThis.ttOpenDetailDemo = async () => {
-  const panel = page.locator('[data-tt="detail-demo"]');
-  if (!(await panel.count())) return;
+  if (!(await page.locator('[data-tt="detail-demo"]').count())) return;
   const overflow = page.locator('[data-tt="detail-overflow"]');
   if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
-    await overflow.evaluate((el) => {
-      el.open = true;
-    });
-  }
-  if (!(await panel.evaluate((el) => el.open))) {
-    const sum = panel.locator(":scope > summary");
-    if (await sum.isVisible()) await sum.click();
-    else await panel.evaluate((el) => {
-      el.open = true;
-    });
+    await overflow.locator(":scope > summary").click();
   }
 };
 globalThis.ttBackToList = async () => {
@@ -62,20 +52,10 @@ globalThis.ttBackToList = async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
 };
 globalThis.ttOpenOtherActions = async () => {
-  const panel = page.locator('[data-tt="other-actions"]');
-  if (!(await panel.count())) return;
+  if (!(await page.locator('[data-tt="other-actions"]').count())) return;
   const overflow = page.locator('[data-tt="detail-overflow"]');
   if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
-    await overflow.evaluate((el) => {
-      el.open = true;
-    });
-  }
-  if (!(await panel.evaluate((el) => el.open))) {
-    const sum = panel.locator(":scope > summary");
-    if (await sum.isVisible()) await sum.click();
-    else await panel.evaluate((el) => {
-      el.open = true;
-    });
+    await overflow.locator(":scope > summary").click();
   }
 };
 globalThis.ttOpenRecipientList = async () => {
@@ -133,7 +113,17 @@ await page.addInitScript(contrastHelper);
 const script = process.argv[2];
 if (!script) throw new Error("usage: node run-browser-qa.mjs <qa.js>");
 const { pathToFileURL } = await import("url");
-await import(pathToFileURL(join(process.cwd(), script)).href);
+const { writeFile, unlink } = await import("fs/promises");
+const { tmpdir } = await import("os");
+const qaPath = join(process.cwd(), script);
+const qaSource = await readFile(qaPath, "utf8");
+const tmpQa = join(tmpdir(), `tan-tracker-qa-${Date.now()}.mjs`);
+await writeFile(tmpQa, qaSource);
+try {
+  await import(pathToFileURL(tmpQa).href);
+} finally {
+  await unlink(tmpQa).catch(() => {});
+}
 
 await browser.close();
 server.close();
