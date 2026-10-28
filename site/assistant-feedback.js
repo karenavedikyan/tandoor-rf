@@ -180,7 +180,8 @@
     }
     document.getElementById("af-required-reminder")?.remove();
     const c=ctx(),pending=source.filter(a=>ended(a)&&a.manager===c.id&&!reviews.some(r=>r.assignment===a.id));
-    if(c.role==="manager"&&pending.length){
+    const hideFixedReminder=document.body.classList.contains("tt-create-wizard")||document.body.classList.contains("tt-detail-focus");
+    if(!hideFixedReminder&&c.role==="manager"&&pending.length){
       const reminder=document.createElement("div");reminder.id="af-required-reminder";reminder.className="af af-required-reminder";
       reminder.innerHTML=`<div><strong>Оцените завершённую работу · ${pending.length}</strong><span>Обязательный шаг для закрытия назначения</span></div>${action("required-rate","Поставить оценку",pending[0].id)}`;
       document.getElementById("app").append(reminder);

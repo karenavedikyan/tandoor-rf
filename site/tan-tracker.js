@@ -619,7 +619,7 @@
     const on = current === ROUTE;
     if (!on) {
       TT_BODY.forEach((c) => document.body.classList.remove(c));
-      document.body.classList.remove("tt-create-wizard");
+      document.body.classList.remove("tt-create-wizard", "tt-detail-focus");
       return;
     }
     const ext = isExternalShell();
@@ -627,6 +627,10 @@
     document.body.classList.toggle("tt-recipient-shell", state.recipientMode);
     document.body.classList.toggle("tt-external-shell", ext);
     document.body.classList.toggle("tt-create-wizard", !state.recipientMode && !ext && state.view === "create");
+    document.body.classList.toggle(
+      "tt-detail-focus",
+      !state.recipientMode && !ext && state.view === "detail" && !!state.orderId
+    );
   }
 
   function captureFocus() {
@@ -1707,7 +1711,7 @@
       isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
-    const dueLabel = o.dueAt ? dt(o.dueAt) : "Срок не указан";
+    const dueLabel = o.dueAt ? `Доставить до ${dt(o.dueAt)}` : "Срок доставки не указан";
     const dueCls = isOverdue(o) ? "tt-due-overdue" : "tt-due-line";
     const tl = o.timeline.slice().reverse();
     const tlPreview = tl[0];
@@ -1723,15 +1727,22 @@
         </div>`;
       } else {
         const parts = [];
-        if (!mustRelay) parts.push(btn("Передать другому человеку", 'data-tt="transfer"', parts.length ? "" : "tt-primary tt-btn-block"));
-        if (canComplete && !confirmingComplete)
-          parts.push(btn("Завершить передачу", 'data-tt="complete"', parts.length === 1 ? "tt-primary tt-btn-block" : "tt-primary"));
+        if (canComplete && !confirmingComplete) {
+          parts.push(btn("Завершить передачу", 'data-tt="complete"', "tt-primary tt-btn-block"));
+          if (!mustRelay) parts.push(btn("Передать другому человеку", 'data-tt="transfer"'));
+        } else if (!mustRelay) {
+          parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-primary tt-btn-block"));
+        }
         if (parts.length)
           primaryHtml = `<div class="tt-detail-primary" data-tt="detail-primary-actions">${parts.join("")}</div>`;
       }
-    } else if (o.status === "completed") {
-      primaryHtml = `<p class="tt-detail-done tt-muted">Передача завершена · дальнейшие действия недоступны.</p>`;
     }
+    const completedHtml =
+      o.status === "completed"
+        ? `<p class="tt-detail-done tt-muted" data-tt="detail-completed">Передача завершена · дальнейшие действия недоступны.</p>`
+        : "";
+    const relayRem = shortRelayReminder(o, p, isHolder, mustRelay);
+    const showDoSection = isHolder && o.status !== "completed" && !!(relayRem || primaryHtml);
 
     const otherActions =
       isHolder && o.status !== "completed" && o.pendingId
@@ -1761,12 +1772,19 @@
       <h2 class="tt-detail-title">${E(o.item)}</h2>
       ${o.qty || o.comment ? `<p class="tt-detail-sub">${E(o.qty || "")}${o.comment ? (o.qty ? " · " : "") + E(o.comment) : ""}</p>` : ""}
       <div class="tt-detail-meta">${statusBadge(o)}<span class="${dueCls}">${E(dueLabel)}</span></div>
+      ${completedHtml}
       ${detailRouteSection(o)}
-      <section class="tt-detail-do" aria-label="Действия">
+      ${
+        showDoSection
+          ? `<section class="tt-detail-do" aria-label="Действия">
         <h3 class="tt-detail-section-title">Что сделать</h3>
-        ${shortRelayReminder(o, p, isHolder, mustRelay)}
+        ${relayRem}
         ${primaryHtml}
-      </section>
+      </section>`
+          : !isHolder && o.status === "active"
+            ? `<p class="tt-detail-readonly tt-muted">Только просмотр — действия доступны текущему держателю.</p>`
+            : ""
+      }
       ${otherActions}
       ${attachmentsSection(o, {
         readonly: !isHolder || o.status === "completed",
@@ -1945,6 +1963,7 @@
 
     const ext = isExternalShell();
     const inCreateWizard = state.view === "create" && !ext;
+    const inDetailFocus = !state.recipientMode && !ext && state.view === "detail" && !!state.orderId;
     const chrome = inCreateWizard
       ? ""
       : ext
@@ -1959,7 +1978,15 @@
     const demoOpen = inCreateWizard ? " open" : "";
     const demoShell = ext
       ? `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span><div data-tt="chrome">${chrome}</div>`
-      : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
+      : inDetailFocus
+        ? `<details class="tt-disclosure tt-demo-settings tt-demo-settings-compact" data-tt="demo-settings">
+        <summary><span class="tt-demo-pill">Демо</span> · настройки</summary>
+        <div class="tt-disclosure-body">
+          <p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>
+          <div data-tt="chrome">${chrome}</div>
+        </div>
+      </details>`
+        : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
       <details class="tt-disclosure tt-demo-settings" data-tt="demo-settings"${demoOpen}>
         <summary>Демо-настройки</summary>
         <div class="tt-disclosure-body">
@@ -1968,25 +1995,42 @@
         </div>
       </details>`;
 
-    if (!ttShellMounted) {
-      main.innerHTML = `<div class="tt-work" data-testid="tan-tracker" id="tt-root">
-      <div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
+    const headBlock = inDetailFocus
+      ? `<div class="tt-head tt-head-compact"><span class="tt-head-compact-label">Тан-трекер</span></div>`
+      : `<div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
         <span data-tt="head-cta">${state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
-      </div>
-      <div class="tt-shell-meta">${demoShell}</div>
+      </div>`;
+
+    if (!ttShellMounted) {
+      main.innerHTML = `<div class="tt-work${inDetailFocus ? " tt-work-detail" : ""}" data-testid="tan-tracker" id="tt-root">
+      ${headBlock}
+      <div class="tt-shell-meta${inDetailFocus ? " tt-shell-meta-compact" : ""}">${demoShell}</div>
       <div id="tt-content"></div>${Att() ? Att().lightboxHtml() : ""}</div>`;
       ttShellMounted = true;
     } else {
-      const cta = document.querySelector('[data-tt="head-cta"]');
-      if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
+      const root = document.getElementById("tt-root");
+      if (root) root.classList.toggle("tt-work-detail", inDetailFocus);
+      const head = document.querySelector(".tt-head");
+      if (head && inDetailFocus && !head.classList.contains("tt-head-compact")) {
+        head.outerHTML = headBlock;
+      } else if (head && !inDetailFocus && head.classList.contains("tt-head-compact")) {
+        head.outerHTML = headBlock;
+      } else {
+        const cta = document.querySelector('[data-tt="head-cta"]');
+        if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
+      }
       const meta = document.querySelector(".tt-shell-meta");
-      if (meta) meta.innerHTML = demoShell;
+      if (meta) {
+        meta.classList.toggle("tt-shell-meta-compact", inDetailFocus);
+        meta.innerHTML = demoShell;
+      }
     }
 
     const content = document.getElementById("tt-content");
     if (content) content.innerHTML = bodyHtml();
     paintQrHosts();
     document.title = "Tandoor RF · Тан-трекер";
+    applyBodyClasses();
     if (Sc() && !state.recipientMode) {
       Sc().syncReminders(orders, contacts, dt);
       document.dispatchEvent(new Event("assistant:paint"));

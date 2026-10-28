@@ -18,6 +18,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
   ok(await page.locator(".tt-detail-title").count() === 1, "detail shows prominent item title");
+  ok((await page.locator(".tt-detail-meta").textContent()).includes("Доставить до"), "detail due line labeled");
   ok(await page.locator(".tt-route-card").count() >= 2, "detail route cards for holder and destination");
   ok(await page.locator('[data-tt="enter-code"]').count() === 1, "pending holder primary enter-code visible");
   ok(await page.locator(".tt-seg").count() === 0, "no equal-width code/QR tabs on detail");
@@ -28,6 +29,11 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.locator('[data-tt="history-disclosure"] summary').click();
   ok((await page.locator('[data-tt="timeline"] div').count()) >= 1, "history opens timeline");
   await noOverflow();
+
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-002`);
+  await page.reload();
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  ok((await page.locator(".tt-detail-primary .tt-primary").count()) === 1, "holder sees exactly one primary CTA");
 
   await page.goto(`${base}/#tan-tracker?role=coordinator&tt_emp=c1&tt_id=TT-2026-012`);
   await page.reload();
@@ -40,17 +46,41 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok(await page.locator('[data-tt="enter-code"]').count() === 0, "non-holder read-only has no enter-code");
   ok(await page.locator('[data-tt="transfer"]').count() === 0, "non-holder has no transfer action");
+  ok(await page.locator(".tt-detail-do").count() === 0, "non-holder hides empty action section");
+  ok((await page.locator(".tt-detail-readonly").textContent()).includes("Только просмотр"), "non-holder read-only hint shown");
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-009`);
   await page.reload();
-  ok((await page.locator(".tt-detail-done").textContent()).includes("завершена"), "completed shows delivered state");
+  ok((await page.locator('[data-tt="detail-completed"]').textContent()).includes("завершена"), "completed shows delivered state");
+  ok(await page.locator(".tt-detail-do").count() === 0, "completed hides action section heading");
 
   await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${base}/#clients?role=manager`);
+  await page.locator(".main").waitFor({ state: "visible" });
+  if ((await page.locator("#af-required-reminder").count()) === 0) {
+    await page.evaluate(() => {
+      const r = document.createElement("div");
+      r.id = "af-required-reminder";
+      r.className = "af af-required-reminder";
+      r.innerHTML = "<div><strong>Оцените завершённую работу · 1</strong><span>Обязательный шаг</span></div><button type=\"button\">Поставить оценку</button>";
+      document.getElementById("app").append(r);
+    });
+  }
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
   await page.locator('[data-tt="enter-code"]').waitFor({ state: "visible" });
+  ok(await page.locator("#af-required-reminder").count() === 0, "required reminder suppressed on TT detail");
+  ok(await page.evaluate(() => document.body.classList.contains("tt-detail-focus")), "detail focus body class set");
+  const hitOk = await page.evaluate(() => {
+    const btn = document.querySelector('[data-tt="enter-code"]');
+    if (!btn) return false;
+    const r = btn.getBoundingClientRect();
+    const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return el === btn || btn.contains(el);
+  });
+  ok(hitOk, "375px enter-code hit-test not blocked by overlay");
   const box = await page.locator('[data-tt="enter-code"]').boundingBox();
-  ok(box && box.y < 812, "375px primary action in first viewport");
+  ok(box && box.y + box.height < 812, "375px primary action fully in first viewport");
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
