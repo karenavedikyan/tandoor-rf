@@ -12,7 +12,21 @@
     a.status==="revoked"&&Number.isFinite(revokedAt(a))&&a.start<revokedAt(a)&&S.clock>=revokedAt(a);
   const canRate=a=>!!a&&S.role==="manager"&&a.manager===S.person&&ended(a)&&!reviews.some(r=>r.assignment===a.id);
   const canRead=r=>["coordinator","director"].includes(S.role)||S.role==="manager"&&r.manager===S.person;
-  const mine=()=>notes.filter(n=>n.user===ctx().id&&n.at<=S.clock);
+  const tanTrackerActive=()=>typeof location!=="undefined"&&location.hash.includes("tan-tracker")&&window.TanTrackerPrototype?.routeActive?.();
+  const noticeUserId=()=>{
+    if(tanTrackerActive()&&window.TanTrackerPrototype?.employeeId)return window.TanTrackerPrototype.employeeId();
+    return ctx().id;
+  };
+  const noteVisibleAt=n=>n.kind==="tt-track"?n.at<=Date.now():n.at<=S.clock;
+  const mine=()=>notes.filter(n=>n.user===noticeUserId()&&noteVisibleAt(n));
+  const inboxContext=()=>{
+    if(tanTrackerActive()&&window.TanTrackerPrototype?.effectiveProfile){
+      const p=window.TanTrackerPrototype.effectiveProfile();
+      return {role:p.role,id:p.person,label:p.label||names[p.role]||p.role};
+    }
+    const c=ctx();
+    return {role:c.role,id:c.id,label:c.label||names[c.role]||c.role};
+  };
   const fmt=P.dt,scoreWords=["","Очень слабо","Ниже ожиданий","Нужно улучшить","Хорошо","Отлично"];
   const starIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.84 5.76 6.36.92-4.6 4.48 1.09 6.33L12 17.3l-5.69 2.99 1.09-6.33-4.6-4.48 6.36-.92Z"/></svg>';
   const stars=value=>`<span class="af-stars" role="img" aria-label="${Number(value).toFixed(1)} из 5">${[1,2,3,4,5].map(v=>`<span class="af-star-glyph">${starIcon}<span class="af-star-fill" style="clip-path:inset(0 ${Math.round(100-100*Math.max(0,Math.min(1,value-v+1)))}% 0 0)">${starIcon}</span></span>`).join("")}</span>`;
@@ -21,6 +35,28 @@
   function add(user,key,title,text,id,kind="detail",at=S.clock){
     const uid=user+":"+key;if(seen.has(uid))return;seen.add(uid);
     notes.push({key:uid,user,title,text,id,kind,at,read:false,seq:++seq});
+  }
+  function upsert(user,key,title,text,id,kind,at){
+    const uid=user+":"+key;seen.add(uid);
+    const n=notes.find(x=>x.key===uid);
+    if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;return n;}
+    const row={key:uid,user,title,text,id,kind,at,read:false,seq:++seq};notes.push(row);return row;
+  }
+  function inboxUserId(){return noticeUserId();}
+  function syncTrackerInbox(){
+    const TN=window.TanTrackerNotifications;
+    if(!TN?.forEmployee)return;
+    const user=inboxUserId(),items=TN.forEmployee(user)||[];
+    const keep=new Set(items.map(i=>user+":tt:"+i.key));
+    notes=notes.filter(n=>n.kind!=="tt-track"||n.user!==user||keep.has(n.key));
+    items.forEach(i=>{
+      const existing=notes.find(n=>n.key===user+":tt:"+i.key);
+      const at=Number.isFinite(i.at)?i.at:Date.now();
+      upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at);
+      if(existing?.read||i.read){
+        const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
+      }
+    });
   }
   function snapshot(a){return {assignment:a.id,manager:a.manager,assistant:a.assistant,clients:[...a.clients],start:a.start,
     end:a.status==="revoked"?Math.min(a.end,revokedAt(a)):a.end,agreedEnd:a.end,completion:a.status==="revoked"?"revoked":"period"};}
@@ -64,6 +100,7 @@
   function signature(a){return {status:a.status,effective:P.effective(a),assistant:a.assistant,end:a.end,change:!!a.change,n:a.history.length};}
   function remember(){source.forEach(a=>previous.set(a.id,signature(a)));}
   function sync(){
+    syncTrackerInbox();
     if(source!==P.assignments()){init();return;}
     source.forEach(a=>{
       if(P.effective(a)==="active"&&a.end-S.clock<=86400000){
@@ -118,6 +155,11 @@
       <div class="as-table-scroll" tabindex="0" aria-label="Оценки и завершённые назначения"><table class="as-table af-table"><thead><tr><th>Назначение и период, МСК</th><th>Ассистент / менеджер</th><th>Клиенты</th><th>Оценка и закрытие</th><th>Действие</th></tr></thead><tbody>${rows.map(({a,r})=>`<tr><td><strong>${a.id}</strong><small>${fmt(a.start)} → ${fmt(a.end)}<br>${a.status==="revoked"?"Досрочно отозвано":"Период завершён"}</small></td><td>${E(P.person(a.assistant))}<small>${E(P.person(a.manager))}</small></td><td>${a.clients.length}</td><td>${r?`${stars(r.score)}<span class="af-grade ${r.score<=3?"af-low":""}">${r.score}/5</span>`:""}<small class="${r?"":"af-pending-label"}">${closure(a)}</small></td><td>${r?action("review","Посмотреть",a.id):canRate(a)?action("rate","Оценить",a.id,"primary"):"Ожидается от менеджера"}</td></tr>`).join("")||'<tr><td colspan="5">По фильтрам ничего не найдено. Измените условия поиска.</td></tr>'}</tbody></table></div></section>`;
   }
   function paint(){
+    if(document.body.classList.contains("tt-recipient-shell")||document.body.classList.contains("tt-external-shell")){
+      document.getElementById("af-required-reminder")?.remove();
+      document.getElementById("af-context")?.remove();
+      return;
+    }
     sync();
     const head=document.querySelector(".head .right");if(!head)return;
     let bell=document.getElementById("af-bell");
@@ -153,11 +195,11 @@
     if(!S.modal)document.body.style.overflow=inbox?"hidden":"";
     if(!inbox)return;
     const shade=document.createElement("div");shade.id="af-shade";shade.dataset.af="close-inbox";shade.setAttribute("aria-hidden","true");document.body.append(shade);
-    const c=ctx(),rows=mine().filter(n=>!unreadOnly||!n.read).sort((a,b)=>b.at-a.at||b.seq-a.seq);
+    const c=inboxContext(),rows=mine().filter(n=>!unreadOnly||!n.read).sort((a,b)=>b.at-a.at||b.seq-a.seq);
     const el=document.createElement("aside");el.id="af-inbox";el.className="af af-inbox";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");el.setAttribute("aria-label","Уведомления");
     el.innerHTML=`<div class="af-inbox-head"><div><h2>Уведомления</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p></div>${action("close-inbox","Закрыть")}</div>
       <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}</div>
-      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||'<div class="af-empty"><h3>Новых уведомлений нет</h3><p>Все события останутся на вкладке «Все».</p></div>'}</div>
+      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||'<div class="af-empty"><h3>Новых уведомлений нет</h3><p>Все события останутся на вкладке «Все».</p></div>'}</div>
       <p class="af-inbox-foot">Только внутри прототипа. Внешней отправки нет.</p>`;
     document.body.append(el);
     el.querySelector(".af-inbox-list").scrollTop=scroll;
@@ -176,10 +218,31 @@
   }
   function closeDialog(){document.getElementById("af-review-dialog")?.close();document.getElementById("af-review-dialog")?.remove();dialog=null;document.querySelector("[data-af=ratings],[data-af=rate],#af-bell")?.focus();}
   function refreshRatings(){P.go("ratings");}
-  function openNote(n){
+  function openNote(n,frozenCtx){
+    const routeCtx=frozenCtx||inboxContext();
     n.read=true;inbox=false;
     if(n.kind==="info"){paint();return;}
-    if(!P.routeActive()){location.hash="#handover?as_role="+ctx().role+"&as_person="+ctx().id+"&as_view=list";requestAnimationFrame(()=>openNote(n));return;}
+    if(n.kind==="tt-track"){
+      const orderId=n.id;
+      const {role,id:person}=routeCtx;
+      if(window.TanTrackerNotifications?.markRead){
+        const pref=n.user+":tt:";
+        window.TanTrackerNotifications.markRead(inboxUserId(),n.key.startsWith(pref)?n.key.slice(pref.length):"");
+      }
+      const p=new URLSearchParams({role});
+      if(person)p.set("tt_emp",person);
+      if(orderId)p.set("tt_id",orderId);
+      location.hash="#tan-tracker?"+p.toString();
+      requestAnimationFrame(()=>{
+        if(window.TanTrackerPrototype?.canViewOrder&&!window.TanTrackerPrototype.canViewOrder(orderId)){
+          p.delete("tt_id");
+          location.hash="#tan-tracker?"+p.toString();
+        }
+        paint();
+      });
+      return;
+    }
+    if(!P.routeActive()){location.hash="#handover?as_role="+routeCtx.role+"&as_person="+routeCtx.id+"&as_view=list";requestAnimationFrame(()=>openNote(n,routeCtx));return;}
     if(n.kind==="clients"){P.go("clients");}
     else if(n.kind==="rate"){refreshRatings();const a=source.find(a=>a.id===n.id);if(canRate(a))openDialog(a);}
     else if(n.kind==="rating"){refreshRatings();const r=reviews.find(r=>r.assignment===n.id);if(r&&canRead(r))openDialog(source.find(a=>a.id===n.id),r);}
@@ -236,7 +299,7 @@
     if(e.key==="Tab"&&inbox&&!dialog){const nodes=[...document.querySelectorAll("#af-inbox button")];const first=nodes[0],last=nodes.at(-1);
       if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
   });
-  document.addEventListener("assistant:paint",()=>{if(ctx().id!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=ctx().id;}paint();});
+  document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=person;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
   window.AssistantFeedback={view,closure};
   init();P.render();paint();
