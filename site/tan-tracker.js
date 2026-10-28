@@ -1943,6 +1943,24 @@
     </details>`;
   }
 
+  function detailNotesDisclosure(o) {
+    if (!o.qty && !o.comment) return "";
+    const parts = [];
+    if (o.qty) {
+      parts.push(
+        `<p class="tt-detail-note-line"><span class="tt-detail-note-label">Количество</span> <span class="tt-detail-note-value">${E(o.qty)}</span></p>`
+      );
+    }
+    if (o.comment) {
+      parts.push(`<p class="tt-detail-note-line tt-detail-note-comment">${E(o.comment)}</p>`);
+    }
+    const summary = o.comment ? "Комментарий и детали" : "Детали передачи";
+    return `<details class="tt-disclosure tt-detail-notes" data-tt="detail-notes-disclosure">
+      <summary>${E(summary)}</summary>
+      <div class="tt-disclosure-body">${parts.join("")}</div>
+    </details>`;
+  }
+
   function shortRelayReminder(o, p, isHolder, mustRelay) {
     if (!isHolder || !mustRelay || o.status === "completed") return "";
     const text = o.pendingId
@@ -2093,8 +2111,8 @@
       </header>
       <h2 class="tt-detail-title">${E(o.item)}</h2>
       <div class="tt-detail-meta">${statusBadge(o)}<span class="${dueCls}">${E(dueLabel)}</span></div>
-      ${o.qty || o.comment ? `<p class="tt-detail-sub">${E(o.qty || "")}${o.comment ? (o.qty ? " · " : "") + E(o.comment) : ""}</p>` : ""}
       ${detailTaskSection(o)}
+      ${detailNotesDisclosure(o)}
       ${detailRouteDisclosure(o)}
       ${otherActions}
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
@@ -2923,14 +2941,34 @@
     }
   });
 
-  document.addEventListener("toggle", (e) => {
-    if (current !== ROUTE) return;
-    if (!e.target.matches('[data-tt="detail-attachments-disclosure"]')) return;
+  function syncDetailAttDisclosureFromToggle(det) {
+    if (!det?.matches?.('[data-tt="detail-attachments-disclosure"]')) return;
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
     if (!o || state.view !== "detail") return;
-    if (e.target.open) state.detailAttDisclosureOpen = { orderId: o.id, actorId: detailActorKey() };
+    if (det.open) state.detailAttDisclosureOpen = { orderId: o.id, actorId: detailActorKey() };
     else if (isDetailAttDisclosureOpen(o)) clearDetailAttDisclosure();
-  });
+  }
+
+  document.addEventListener(
+    "toggle",
+    (e) => {
+      if (current !== ROUTE) return;
+      syncDetailAttDisclosureFromToggle(e.target);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (current !== ROUTE) return;
+      if (!e.target.closest('[data-tt="detail-attachments-disclosure"] summary')) return;
+      const det = e.target.closest('[data-tt="detail-attachments-disclosure"]');
+      if (!det) return;
+      queueMicrotask(() => syncDetailAttDisclosureFromToggle(det));
+    },
+    true
+  );
 
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;

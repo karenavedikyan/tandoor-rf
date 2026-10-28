@@ -118,6 +118,35 @@ var TT_ATT_QA = await (async () => {
     "holder-added file listed inside open attachments disclosure at 375px"
   );
 
+  await page.locator('[data-tt="back-list"]').click();
+  await open("TT-2026-001");
+  const attTogglePanel = page.locator('[data-tt="detail-attachments-disclosure"]');
+  ok(await attTogglePanel.evaluate((el) => !el.open), "seed order attachments closed before explicit open");
+  await attTogglePanel.locator("summary").click();
+  ok(await attTogglePanel.evaluate((el) => el.open), "explicit summary opens attachments");
+  await page.waitForFunction(() => {
+    const k = window.TanTrackerPrototype.state.detailAttDisclosureOpen;
+    return k && k.orderId === "TT-2026-001" && k.actorId;
+  });
+  ok(true, "toggle capture records user-opened attachments for order and actor");
+  await page.locator('[data-tt="enter-code"]').click();
+  await page.locator('button[data-tt="detail"]').click();
+  ok(await attTogglePanel.evaluate((el) => el.open), "explicit open survives detail rerender same order");
+  const previewBtn = attTogglePanel.locator('[data-tt="attach-preview"]').first();
+  if (await previewBtn.count()) {
+    await previewBtn.click();
+    await page.locator('[data-tt="attach-lightbox"]').waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await page.locator('[data-tt="attach-lightbox"]').waitFor({ state: "hidden" });
+    ok(await attTogglePanel.evaluate((el) => el.open), "explicit open survives preview close");
+    await page.locator('[data-tt="enter-code"]').click();
+    await page.locator('button[data-tt="detail"]').click();
+    ok(await attTogglePanel.evaluate((el) => el.open), "explicit open survives preview and second rerender");
+  }
+  await page.locator('[data-tt="back-list"]').click();
+  await open("TT-2026-002");
+  ok(await page.locator('[data-tt="detail-attachments-disclosure"]').evaluate((el) => !el.open), "other order attachments closed by default");
+
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${base}/#tan-tracker?role=manager`);
   await page.reload();

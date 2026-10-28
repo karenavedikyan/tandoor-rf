@@ -22,10 +22,37 @@ var TT_DETAIL_TASK_QA = await (async () => {
   ok(order.ok, "task card appears before route disclosure");
 
   ok(await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => !el.open), "route disclosure closed initially");
+  ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "notes disclosure closed initially");
   ok(await page.locator('[data-tt="detail-attachments-disclosure"]').evaluate((el) => !el.open), "attachments disclosure closed initially");
   ok(await page.locator('[data-tt="history-disclosure"]').evaluate((el) => !el.open), "history closed initially");
+  ok((await page.locator(".tt-detail-sub").count()) === 0, "no inline comment block above task card");
+
+  const longComment = "Длинный комментарий для проверки первого экрана · ".repeat(12);
+  await page.evaluate(
+    (text) => {
+      const o = window.TanTrackerPrototype.orders().find((x) => x.id === "TT-2026-001");
+      if (o) {
+        o.comment = text;
+        o.qty = "3 коробки";
+      }
+    },
+    longComment.trim()
+  );
+  await page.locator('[data-tt="enter-code"]').click();
+  await page.locator('button[data-tt="detail"]').click();
+  await page.locator('[data-tt="detail-task-card"]').waitFor({ state: "visible" });
+  ok((await page.locator(".tt-detail-sub").count()) === 0, "long comment not inline above task after rerender");
+  ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "long comment hidden in closed notes disclosure");
+  ok(!(await page.locator(".tt-detail-note-comment").isVisible()), "comment body not visible until expand");
 
   await page.setViewportSize({ width: 375, height: 812 });
+  const taskBeforeNotes = await page.evaluate(() => {
+    const task = document.querySelector('[data-tt="detail-task-card"]');
+    const notes = document.querySelector('[data-tt="detail-notes-disclosure"]');
+    return !!(task && notes && task.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  ok(taskBeforeNotes, "task card precedes notes disclosure with long comment");
+
   const hit = await page.evaluate(() => {
     const btn = document.querySelector('[data-tt="enter-code"]');
     if (!btn) return false;
@@ -36,6 +63,10 @@ var TT_DETAIL_TASK_QA = await (async () => {
   ok(hit, "375px enter-code hit-test on first screen");
   const box = await page.locator('[data-tt="enter-code"]').boundingBox();
   ok(box && box.y + box.height <= 812, "375px primary in viewport");
+
+  await page.locator('[data-tt="detail-notes-disclosure"] summary').click();
+  ok((await page.locator(".tt-detail-note-comment").textContent()).includes("Длинный комментарий"), "expand notes reveals full long comment");
+  ok((await page.locator(".tt-detail-note-value").textContent()).includes("3 коробки"), "expand notes shows qty");
 
   await page.locator('[data-tt="detail-attachments-disclosure"] summary').click();
   ok((await page.locator(".tt-att-compact .tt-att-action").count()) >= 1, "attachments expand with action chips");
