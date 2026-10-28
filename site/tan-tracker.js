@@ -2471,6 +2471,7 @@
 
   function pendingHandoffPanel(o, p) {
     if (!o.pendingId || !o.activeInvitation) return "";
+    const dockPrimary = typeof window !== "undefined" && window.innerWidth <= 767 && !!detailMobilePrimaryDock(o);
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
     const payload = handoffUrl(o, inv);
@@ -2488,7 +2489,7 @@
       <p class="tt-detail-task-instructions">Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет.</p>
       <div class="tt-handoff" data-tt="handoff-panel">
         <div class="tt-handoff-actions">
-          ${btn("Ввести код", 'data-tt="enter-code"', "tt-primary tt-btn-block")}
+          ${dockPrimary ? "" : btn("Ввести код", 'data-tt="enter-code"', "tt-primary tt-btn-block")}
           ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
         </div>
         ${qrBlock}
@@ -2531,23 +2532,25 @@
     }
     if (o.pendingId) return pendingHandoffPanel(o, p);
     if (mustRelay) {
+      const dockPrimary = typeof window !== "undefined" && window.innerWidth <= 767 && !!detailMobilePrimaryDock(o);
       return `<section class="tt-detail-task-card" data-tt="detail-task-card">
         <h3 class="tt-detail-task-heading">Передайте дальше</h3>
         <p class="tt-detail-task-receiver">Конечный получатель: <strong>${E(fin?.name || "—")}</strong></p>
         <p class="tt-detail-task-instructions">Выберите, кому передать предмет сейчас — получатель подтвердит кодом или QR.</p>
         <div class="tt-detail-primary" data-tt="detail-primary-actions">
-          ${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary tt-btn-block")}
-          ${btn("Передать другому человеку", 'data-tt="transfer"', "tt-detail-alt-action")}
+          ${dockPrimary ? "" : btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary tt-btn-block")}
+          ${btn("Передать другому человеку", 'data-tt="transfer"', dockPrimary ? "tt-primary tt-btn-block" : "tt-detail-alt-action")}
         </div>
         ${shortRelayReminder(o, p, isHolder, mustRelay)}
       </section>`;
     }
+    const dockPrimary = typeof window !== "undefined" && window.innerWidth <= 767 && !!detailMobilePrimaryDock(o);
     const parts = [];
     if (canComplete && !confirmingComplete) {
-      parts.push(btn("Завершить передачу", 'data-tt="complete"', "tt-primary tt-btn-block"));
+      if (!dockPrimary) parts.push(btn("Завершить передачу", 'data-tt="complete"', "tt-primary tt-btn-block"));
       parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-detail-alt-action"));
     } else if (!mustRelay) {
-      parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-primary tt-btn-block"));
+      if (!dockPrimary) parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-primary tt-btn-block"));
     }
     if (!parts.length) return "";
     return `<section class="tt-detail-task-card" data-tt="detail-task-card">
@@ -2569,7 +2572,7 @@
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     const dueHuman = humanDueLabel(o);
-    const dueLabel = o.dueAt ? dueHuman.primary : "Срок доставки не указан";
+    const dueLabel = o.dueAt ? `Доставить до ${dueHuman.primary}` : "Срок доставки не указан";
     const dueCls = dueHuman.overdue ? "tt-due-overdue" : "tt-due-line";
     const tl = o.timeline.slice().reverse();
     const attItems = Att()
