@@ -24,32 +24,28 @@
       }
     </style>
   </head>
-  <body class="legacy-body tt-active">
+  <body class="legacy-body">
     <div class="legacy-app">
       <div id="workspace-sidebar"></div>
       <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
       <div class="legacy-frame">
         <div id="workspace-topbar"></div>
         <div id="tt-state-panel" class="clients-hidden" role="alert"></div>
-        <main class="legacy-content" id="tt-root-host">
+        <main class="legacy-content clients-hidden" id="tt-root-host">
           <div id="tt-root" class="tt-work" data-testid="tan-tracker"></div>
         </main>
       </div>
     </div>
-    <script src="/common.js"></script>
-    <script src="/clients-shell.js"></script>
-    <script src="/tan-tracker-lk-shell.js"></script>
-    <script src="/tan-tracker/assets/qrcode-generator.js"></script>
-    <script src="/tan-tracker/tan-tracker-scope.js"></script>
-    <script src="/tan-tracker/tan-tracker-attachments.js"></script>
-    <script src="/tan-tracker/tan-tracker.js?v=20261028-tt56"></script>
-    <script src="/tan-tracker-lk-boot.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", function () {
-        if (window.ClientsShell && window.ClientsShell.mount) {
-          window.ClientsShell.mount({ active: "tan-tracker" });
-        }
-      });
-    </script>
+    <script src="/common.js" defer></script>
+    <script src="/brand/shell-icons.js" defer></script>
+    <script src="/clients-shell.js" defer></script>
+    <script src="/tan-tracker-lk-shell.js" defer></script>
+    <script src="/tan-tracker/assets/lucide.js" defer></script>
+    <script src="/tan-tracker/assets/qrcode-generator.js" defer></script>
+    <script src="/tan-tracker/tan-tracker-scope.js" defer></script>
+    <script src="/tan-tracker/tan-tracker-attachments.js" defer></script>
+    <script src="/tan-tracker/tan-tracker.js?v=20261028-tt56" defer></script>
+    <script src="/tan-tracker-lk-api.js" defer></script>
+    <script src="/tan-tracker-lk-boot.js" defer></script>
   </body>
 </html>

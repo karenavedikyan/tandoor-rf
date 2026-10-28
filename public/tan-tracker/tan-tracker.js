@@ -77,8 +77,13 @@
     return contacts.find((c) => c.employeeId === empId);
   }
 
+  function actorContactId() {
+    if (TT_LK) return state.actingContactId || state.employeeId || null;
+    return state.actingContactId || employeeContact(state.employeeId)?.id;
+  }
+
   function scopeCtx() {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const role = state.ttRoleUnsupported ? null : state.ttPrototypeRole || "manager";
     return {
       prototypeRole: role,
@@ -1775,6 +1780,23 @@
 
   function tryConfirmCode(o, input) {
     state.error = "";
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.verifyHandoffCode) {
+      if (o._codeBusy) return false;
+      o._codeBusy = true;
+      window.TanTrackerLk.verifyHandoffCode(o.id, input)
+        .then(() => {
+          o._codeBusy = false;
+          state.toast = "Держатель обновлён.";
+          state.view = "detail";
+          renderTracker();
+        })
+        .catch((err) => {
+          o._codeBusy = false;
+          state.error = err?.message || "Неверный код.";
+          renderTracker();
+        });
+      return false;
+    }
     if (o._codeBusy) return false;
     if (!o.pendingId) {
       state.error = "Ожидание уже подтверждено или отменено.";
@@ -1837,6 +1859,18 @@
   }
 
   function cancelPending(o) {
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.cancelPending) {
+      void window.TanTrackerLk.cancelPending(o.id)
+        .then(() => {
+          state.toast = "Ожидание отменено.";
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось отменить ожидание.";
+          renderTracker();
+        });
+      return;
+    }
     if (!o.pendingId) return;
     const revoked = o.pendingId;
     o.timeline.push({
@@ -1883,6 +1917,21 @@
   }
 
   function startPending(o, recipientId) {
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.changePending) {
+      void window.TanTrackerLk.changePending(o.id, recipientId)
+        .then(() => {
+          state.view = "detail";
+          state.form = null;
+          state.toast = "Получатель выбран.";
+          writeUrl();
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось назначить получателя.";
+          renderTracker();
+        });
+      return;
+    }
     const holder = contactById(o.holderId);
     const selfEmp = employeeContact(state.employeeId);
     const actorId = state.actingContactId || selfEmp?.id;
@@ -3200,6 +3249,39 @@
       return;
     }
     const pendingId = f.relayId || finalId;
+    const holderId = TT_LK ? actorContactId() : employeeContact(state.employeeId)?.id;
+    if (finalId === holderId || pendingId === holderId) {
+      state.error = "Нельзя назначить себя получателем при создании.";
+      return;
+    }
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.createTransfer) {
+      window.TanTrackerLk.createTransfer({
+        item: f.item.trim(),
+        qty: f.qty?.trim() || "",
+        comment: f.comment?.trim() || "",
+        dueAt: f.due || null,
+        finalRecipientPartyId: finalId,
+        relayPartyId: f.relayId || null,
+      })
+        .then((code) => {
+          state.orderId = code;
+          state.view = "detail";
+          clearDetailAttDisclosure();
+          state.form = null;
+          state.createPhase = "item";
+          state.createReturnPhase = null;
+          state.attachStaging = [];
+          state.attachError = "";
+          state.toast = "Передача создана.";
+          writeUrl();
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось создать передачу.";
+          renderTracker();
+        });
+      return;
+    }
     const holder = employeeContact(state.employeeId);
     if (finalId === holder?.id || pendingId === holder?.id) {
       state.error = "Нельзя назначить себя получателем при создании.";
@@ -3625,7 +3707,7 @@
       return;
     }
     if (action === "change-pending" && o) {
-      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      const actor = actorContactId();
       if (o.holderId !== actor) {
         state.error = "Изменить получателя может только текущий держатель.";
         renderTracker();

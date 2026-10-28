@@ -2,9 +2,9 @@ import type { Response } from "express";
 import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
 import { apiError, ERROR_CODES } from "../shared/errors";
+import { resolveTanTrackerEffectiveUser } from "./effective-user";
 import { buildTanTrackerBootstrap } from "./service";
 import { tanTrackerNavAllowed } from "./scope";
-
 export async function getTanTrackerBootstrapHandler(
   req: AccessRequest,
   res: Response,
@@ -14,7 +14,8 @@ export async function getTanTrackerBootstrapHandler(
     res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
     return;
   }
-  if (!tanTrackerNavAllowed(req.authUser.role)) {
+  const effective = resolveTanTrackerEffectiveUser(req.authUser, req.accessContext);
+  if (!tanTrackerNavAllowed(effective.role)) {
     setNoStore(res);
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Раздел недоступен для этой роли."));
     return;

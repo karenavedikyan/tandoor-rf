@@ -42,7 +42,7 @@ export type TanTrackerScopeContext = {
   userId: string;
   role: string;
   employeeId: string | null;
-  actorPartyId: string;
+  actorPartyId: string | null;
   previewReadOnly: boolean;
 };
 

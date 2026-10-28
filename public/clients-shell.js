@@ -187,13 +187,17 @@
       : "";
     var ttRoles =
       effectiveUser &&
-      effectiveUser.role !== "assistant" &&
       effectiveUser.role !== "marketer" &&
       effectiveUser.role !== "analyst" &&
       effectiveUser.role !== "category_manager";
+    var showTanTracker =
+      ttRoles &&
+      (effectiveUser.role === "coordinator" ||
+        effectiveUser.role === "assistant" ||
+        showClients);
     var tanTrackerLink =
-      showClients && ttRoles && (!launch || launch.navigation.tanTracker !== false)
-        ? navLink("/tan-tracker", "Тан-трекер", "work", active, "tan-tracker")
+      showTanTracker && (!launch || launch.navigation.tanTracker !== false)
+        ? navLink("/tan-tracker", "Тан-трекер", "tanTracker", active, "tan-tracker")
         : "";
     var workspaceLink = showAccessWorkspace && (!launch || launch.navigation.substitution)
       ? navLink("/access", "Назначения ассистентам", "substitution", active, "access-workspace")

@@ -27,7 +27,8 @@ export function generateNumericOtp(length = 6): string {
 
 /** Production must wire a real provider; tests use TestPhoneVerificationProvider. */
 export function resolvePhoneVerificationProvider(): PhoneVerificationProvider {
-  if (process.env.TT_PHONE_VERIFICATION_PROVIDER === "test") {
+  const isTestEnv = process.env.NODE_ENV === "test";
+  if (isTestEnv && process.env.TT_PHONE_VERIFICATION_PROVIDER === "test") {
     return {
       async sendCode() {
         return { deliveryId: "test" };
