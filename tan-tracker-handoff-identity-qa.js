@@ -14,8 +14,10 @@ var TT_HANDOFF_IDENTITY_QA = await (async () => {
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-003`);
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
+  await ttOpenDetailDemo();
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
-  await page.getByRole("button", { name: "Открыть экран получателя", exact: true }).click();
+  await ttOpenDetailDemo();
+  await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
   const codeExt = (await page.locator('[data-tt="shown-code"]').textContent()).trim();
@@ -39,7 +41,7 @@ var TT_HANDOFF_IDENTITY_QA = await (async () => {
   await page.locator('[data-tt-field="pickQ"]').fill("Савельева");
   await page.locator('[data-tt-pick="emp_c1"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
-  await page.locator('[data-tt="tab-qr"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   const qrRaw = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   const recipientHash = qrRaw.includes("#") ? qrRaw.slice(qrRaw.indexOf("#")) : "#" + qrRaw;
   await navHash(recipientHash);
@@ -48,6 +50,7 @@ var TT_HANDOFF_IDENTITY_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.evaluate(() => location.hash)).includes("tt_emp=c1"), "employee QR receipt keeps verified c1 not default m1");
+  await ttOpenDemoSettings();
   ok((await page.locator('[data-tt="employee"]').inputValue()) === "c1", "employee QR receipt UI selector stays c1");
   ok(await page.locator(".sidebar").isVisible(), "employee QR receipt keeps corporate shell sidebar");
   ok(!(await page.evaluate(() => document.body.classList.contains("tt-external-shell"))), "employee QR receipt is not external shell");

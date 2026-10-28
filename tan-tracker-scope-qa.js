@@ -53,6 +53,7 @@ var TT_SCOPE_QA = await (async () => {
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_id=TT-2026-021`);
   await page.reload();
+  await ttOpenDetailDemo();
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"), "driver demo sees final recipient on TT-2026-021");
 
@@ -61,6 +62,7 @@ var TT_SCOPE_QA = await (async () => {
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="emp_a1"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
+  await ttOpenOtherActions();
   await page.locator('[data-tt="change-pending"]').click();
   await page.locator('[data-tt-pick="ext_02"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
@@ -92,6 +94,7 @@ var TT_SCOPE_QA = await (async () => {
     location.hash = "#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-016";
   });
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await ttOpenOtherActions();
   await page.locator('[data-tt="change-pending"]').click();
   await page.locator('[data-tt-pick="emp_a1"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();

@@ -26,6 +26,18 @@ await page.setViewportSize({ width: 1440, height: 900 });
 page.setDefaultTimeout(5000);
 page.on("pageerror", (e) => console.error("PAGEERROR:", e.message));
 globalThis.page = page;
+globalThis.ttOpenDemoSettings = async () => {
+  const panel = page.locator('[data-tt="demo-settings"]');
+  if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
+};
+globalThis.ttOpenDetailDemo = async () => {
+  const panel = page.locator('[data-tt="detail-demo"]');
+  if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
+};
+globalThis.ttOpenOtherActions = async () => {
+  const panel = page.locator('[data-tt="other-actions"]');
+  if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
+};
 
 const script = process.argv[2];
 if (!script) throw new Error("usage: node run-browser-qa.mjs <qa.js>");

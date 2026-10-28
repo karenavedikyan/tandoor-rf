@@ -46,8 +46,10 @@ var TT_ROLE_QA = await (async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
   const directorRows = await rowCount();
   ok(directorRows >= 21, "demo profile cycle starts with director full registry");
+  await ttOpenDemoSettings();
   ok((await page.locator('[data-tt="employee"]').inputValue()) === "d1", "director URL selects d1 employee");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m2");
   await page.locator("#tt-registry-body tr[data-tt-open]").first().waitFor({ state: "visible" });
   const mgrRows = await rowCount();
@@ -59,6 +61,7 @@ var TT_ROLE_QA = await (async () => {
   ok((await page.evaluate(() => location.hash)).includes("tt_emp=m2"), "m2 selection persisted in URL");
   ok((await page.evaluate(() => location.hash)).includes("role=manager"), "m2 selection sets effective manager role in URL");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("r2");
   await page.locator("#tt-registry-body tr[data-tt-open]").first().waitFor({ state: "visible" });
   const r2Ids = await page.evaluate(() =>
@@ -66,6 +69,7 @@ var TT_ROLE_QA = await (async () => {
   );
   ok(r2Ids.includes("TT-2026-008"), "r2 ROP sees orlov team order TT-2026-008");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("d1");
   await page.locator("#tt-registry-body tr[data-tt-open]").nth(Math.min(20, directorRows - 1)).waitFor({ state: "visible" });
   ok((await rowCount()) >= 21, "selecting d1 restores director full registry");
@@ -76,6 +80,7 @@ var TT_ROLE_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await page.locator('[data-tt="back-list"]').click();
   await page.locator("#tt-registry-body").waitFor({ state: "visible" });
+  await ttOpenDemoSettings();
   ok((await page.locator('[data-tt="employee"]').inputValue()) === "d1", "demo employee d1 preserved after detail and back");
   ok((await rowCount()) >= 21, "director scope preserved after detail and back");
 

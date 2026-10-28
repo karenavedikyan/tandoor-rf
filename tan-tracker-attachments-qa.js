@@ -62,6 +62,7 @@ var TT_ATT_QA = await (async () => {
   const orderId = await page.evaluate(() => window.TanTrackerPrototype.orders().find((x) => x.item === "Attach QA")?.id);
   ok(!!orderId, "created order in memory");
 
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   ok((await page.locator('[data-tt="attachments"]').count()) === 0, "recipient hides attachments before phone verify");
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();

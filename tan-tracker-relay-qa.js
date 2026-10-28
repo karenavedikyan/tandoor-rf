@@ -47,6 +47,7 @@ var TT_RELAY_QA = await (async () => {
   });
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"), "create keeps final recipient on detail");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("c1");
   await page.locator("#af-bell").waitFor({ state: "visible" });
   await page.locator("#af-bell").click();
@@ -59,6 +60,7 @@ var TT_RELAY_QA = await (async () => {
     location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
   }, orderId);
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -69,10 +71,13 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Савельева"), "code handoff to relay employee");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("c1");
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
-    await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
+  if (await page.locator('[data-tt="act-holder"]').count()) {
+    await ttOpenDetailDemo();
+    await page.locator('[data-tt="act-holder"]').click();
+  }
   const detailRelay = await page.locator('[data-tt="detail"]').textContent();
   ok(
     detailRelay.includes("Сергей") && (detailRelay.includes("79000000001") || detailRelay.includes("000-00-01")),
@@ -94,11 +99,11 @@ var TT_RELAY_QA = await (async () => {
   ok(inboxHold.includes("передать"), "bell still shows holder relay notice while pending");
   await page.locator('[data-af="open-note"]').first().click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  ok((await page.locator("h2").first().textContent()).includes(orderId), "open track navigates to tan-tracker detail not assignments");
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes(orderId), "open track navigates to tan-tracker detail not assignments");
   await page.locator("#af-bell").click();
   await page.locator("#af-inbox").getByRole("button", { name: "Закрыть", exact: true }).click();
 
-  await page.locator('[data-tt="tab-qr"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   await page.locator('[data-tt="scan-qr-demo"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
@@ -113,7 +118,7 @@ var TT_RELAY_QA = await (async () => {
     location.hash = `#tan-tracker?role=coordinator&tt_emp=c1&tt_id=${id}`;
   }, orderId);
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  await page.locator('[data-tt="employee"]').waitFor({ state: "visible" });
+  await ttOpenDemoSettings();
   await page.locator("#af-bell").waitFor({ state: "visible" });
   const c1UnreadAfter = await bellUnread();
   ok(c1UnreadAfter === 0 || !(await page.locator("#af-inbox").isVisible()), "c1 pending/holder TT notices cleared after handoff complete");
@@ -129,6 +134,7 @@ var TT_RELAY_QA = await (async () => {
   );
   ok(tlLen >= 3, "timeline keeps handoff history");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m1");
   await page.evaluate((id) => {
     location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
@@ -137,6 +143,7 @@ var TT_RELAY_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "historical participant reads completed order without reload");
   ok((await page.getByRole("button", { name: "Передать другому человеку", exact: true }).count()) === 0, "historical view not editable after complete");
 
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m2");
   await page.evaluate(() => {
     location.hash = "#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-008";

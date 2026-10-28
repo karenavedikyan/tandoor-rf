@@ -16,6 +16,7 @@ var TT_INBOX_ROUTE_QA = await (async () => {
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m2");
   await page.locator("#tt-root").waitFor({ state: "visible" });
   await openInbox();

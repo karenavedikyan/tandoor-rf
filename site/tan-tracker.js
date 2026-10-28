@@ -757,9 +757,9 @@
 
   function attachmentsSection(o, opts = {}) {
     if (!Att()) return "";
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const items = opts.items || Att().listForOrder(o);
     const stagedIds = new Set((state.attachOrderStaging || []).map((s) => s.id));
+    const compact = !!opts.compact;
     return Att().blockHtml({
       items,
       stagedIds,
@@ -769,6 +769,11 @@
       orderId: o?.id || "",
       error: opts.attachError || state.attachError,
       hint: opts.hint,
+      compact,
+      omitResetNote: compact,
+      title: compact ? "Файлы" : "Фото и файлы",
+      pickerLabel: compact ? "Добавить" : "Прикрепить фото или файл",
+      pickerMode: compact ? "button" : "native",
     });
   }
 
@@ -1320,6 +1325,7 @@
     o.code = null;
     resetPhoneIdentity();
     syncInvitation(o);
+    state.handoffTab = "code";
     o.timeline.push({
       at: now(),
       from: o.holderId,
@@ -1631,28 +1637,65 @@
     );
   }
 
+  function routePersonCard(c, label) {
+    if (!c) {
+      return `<div class="tt-route-card"><span class="tt-route-label">${E(label)}</span><span class="tt-route-name">—</span></div>`;
+    }
+    return `<div class="tt-route-card"><span class="tt-route-label">${E(label)}</span><strong class="tt-route-name">${E(c.name)}</strong><span class="tt-route-phone">${E(fmtPhone(c.phone))}</span></div>`;
+  }
+
+  function detailRouteSection(o) {
+    const h = contactById(o.holderId);
+    const p = o.pendingId ? contactById(o.pendingId) : null;
+    const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
+    let dest = "";
+    if (o.status === "completed" && fin) {
+      dest = routePersonCard(fin, "Доставлено");
+    } else if (o.pendingId && fin && o.pendingId === o.finalRecipientId) {
+      dest = routePersonCard(p, "Получатель · конечный");
+    } else if (o.pendingId && fin) {
+      dest = routePersonCard(p, "Следующий получатель") + routePersonCard(fin, "Конечный получатель");
+    } else if (fin && o.holderId !== o.finalRecipientId) {
+      dest = routePersonCard(fin, "Конечный получатель");
+    }
+    return `<section class="tt-detail-route" aria-label="Маршрут">
+      <h3 class="tt-detail-section-title">Маршрут</h3>
+      <div class="tt-route-grid">${routePersonCard(h, "Сейчас у · ответственный")}${dest}</div>
+    </section>`;
+  }
+
+  function shortRelayReminder(o, p, isHolder, mustRelay) {
+    if (!isHolder || !mustRelay || o.status === "completed") return "";
+    const text = o.pendingId
+      ? `Ждём подтверждения от ${p?.name || "получателя"} — вы ответственны.`
+      : `Передайте ${contactById(o.finalRecipientId)?.name || "конечному получателю"}.`;
+    return `<p class="tt-reminder tt-reminder-compact tt-holder-next" data-tt="relay-reminder">${E(text)}</p>`;
+  }
+
   function pendingHandoffPanel(o) {
     if (!o.pendingId || !o.activeInvitation) return "";
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
     const payload = handoffUrl(o, inv);
+    const qrBlock =
+      tab === "qr"
+        ? `<div class="tt-handoff-qr" data-tt="handoff-qr">
+        <div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
+        <p class="tt-muted tt-qr-note">Демо: «Сканировать QR» открывает экран получателя в этом окне.</p>
+        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"')} ${btn("Скрыть QR", 'data-tt="tab-code"')}
+      </div>`
+        : "";
     return `<div class="tt-handoff" data-tt="handoff-panel">
-      <div class="tt-seg" role="tablist"><button type="button" data-tt="tab-code" aria-pressed="${tab === "code"}">По коду</button><button type="button" data-tt="tab-qr" aria-pressed="${tab === "qr"}">По QR</button></div>
-      ${
-        tab === "code"
-          ? `<p class="tt-muted">Получатель подтверждает номер и сообщает одноразовый код.</p>
-        ${btn("Открыть экран получателя", 'data-tt="open-recipient"')} ${btn("Ввести код", 'data-tt="enter-code"')}`
-          : `<div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
-        <p class="tt-muted tt-qr-note">Демо: сканирование и подтверждение в одном окне. Работа между устройствами будет подключена в ЛК.</p>
-        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"')}`
-      }
+      <div class="tt-handoff-actions">
+        ${btn("Ввести код", 'data-tt="enter-code"', "tt-primary tt-btn-block")}
+        ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"')}
+      </div>
+      ${qrBlock}
     </div>`;
   }
 
   function detailView(o) {
-    const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
-    const fin = contactById(o.finalRecipientId);
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
     const canComplete =
@@ -1664,36 +1707,71 @@
       isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
-    const relayPrimary =
-      isHolder && mustRelay && !o.pendingId
-        ? `${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary")}${btn("Передать другому человеку", 'data-tt="transfer"')}`
+    const dueLabel = o.dueAt ? dt(o.dueAt) : "Срок не указан";
+    const dueCls = isOverdue(o) ? "tt-due-overdue" : "tt-due-line";
+    const tl = o.timeline.slice().reverse();
+    const tlPreview = tl[0];
+
+    let primaryHtml = "";
+    if (isHolder && o.status !== "completed") {
+      if (o.pendingId) {
+        primaryHtml = pendingHandoffPanel(o);
+      } else if (mustRelay) {
+        primaryHtml = `<div class="tt-detail-primary" data-tt="detail-primary-actions">
+          ${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary tt-btn-block")}
+          ${btn("Передать другому человеку", 'data-tt="transfer"')}
+        </div>`;
+      } else {
+        const parts = [];
+        if (!mustRelay) parts.push(btn("Передать другому человеку", 'data-tt="transfer"', parts.length ? "" : "tt-primary tt-btn-block"));
+        if (canComplete && !confirmingComplete)
+          parts.push(btn("Завершить передачу", 'data-tt="complete"', parts.length === 1 ? "tt-primary tt-btn-block" : "tt-primary"));
+        if (parts.length)
+          primaryHtml = `<div class="tt-detail-primary" data-tt="detail-primary-actions">${parts.join("")}</div>`;
+      }
+    } else if (o.status === "completed") {
+      primaryHtml = `<p class="tt-detail-done tt-muted">Передача завершена · дальнейшие действия недоступны.</p>`;
+    }
+
+    const otherActions =
+      isHolder && o.status !== "completed" && o.pendingId
+        ? `<details class="tt-disclosure" data-tt="other-actions">
+        <summary>Другие действия</summary>
+        <div class="tt-disclosure-body tt-actions">${btn("Изменить получателя", 'data-tt="change-pending"')}${btn("Отменить ожидание", 'data-tt="cancel-pending"')}</div>
+      </details>`
         : "";
-    const holderPrimary =
-      isHolder && o.status !== "completed"
-        ? `${!mustRelay && !o.pendingId ? btn("Передать другому человеку", 'data-tt="transfer"') : ""}${
-            canComplete && !confirmingComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""
-          }${o.pendingId ? btn("Изменить получателя", 'data-tt="change-pending"') : ""}${
-            o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""
-          }`
-        : "";
-    const primaryActions =
-      relayPrimary || holderPrimary
-        ? `<div class="tt-actions tt-actions-primary" data-tt="detail-primary-actions">${relayPrimary}${holderPrimary}</div>`
-        : "";
-    return `<div class="tt-panel" data-tt="detail">
-      <div class="tt-actions">${btn(isExternalShell() ? "← К передаче" : "← К реестру", 'data-tt="back-list"')}</div>
-      <h2>${E(o.id)} · ${E(o.item)}</h2>
-      <p>${E(o.qty || "")}${o.comment ? " · " + E(o.comment) : ""}</p>
-      <p><strong>Текущий держатель:</strong> ${E(h?.name)} ${h ? `<small>${E(fmtPhone(h.phone))}</small>` : ""}</p>
-      <p><strong>Кому доставить:</strong> ${fin ? `${E(fin.name)} <small>${E(fmtPhone(fin.phone))}</small>` : "—"}</p>
-      <p><strong>Ожидает подтверждения:</strong> ${p ? E(p.name) : "никого"}</p>
-      <p><strong>Срок доставки:</strong> ${o.dueAt ? dt(o.dueAt) : "Срок не указан"} · ${statusBadge(o)}</p>
-      ${mustRelay ? `<div class="tt-reminder tt-holder-next" data-tt="relay-reminder"><strong>Нужно передать дальше</strong><p>Конечный получатель — ${E(fin?.name || "—")}${fin ? ` · ${E(fmtPhone(fin.phone))}` : ""}.${o.pendingId ? ` Ожидается подтверждение от ${E(p?.name || "следующего участника")} — вы ответственны до подтверждения по коду или QR.` : " Передайте дальше и дождитесь подтверждения следующего участника."}</p>${relayPrimary ? `<div class="tt-actions tt-actions-primary" data-tt="detail-primary-actions">${relayPrimary}</div>` : ""}</div>` : !mustRelay ? primaryActions : ""}
-      ${mustRelay && o.pendingId && isHolder ? `<div class="tt-actions tt-actions-primary" data-tt="detail-pending-actions">${btn("Изменить получателя", 'data-tt="change-pending"')}${btn("Отменить ожидание", 'data-tt="cancel-pending"')}</div>` : ""}
-      ${isHolder && o.pendingId ? pendingHandoffPanel(o) : ""}
+
+    const demoBtns = [];
+    if (showActHolder) demoBtns.push(btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"'));
+    if (p && o.holderId !== p.id && !state.actingContactId)
+      demoBtns.push(btn("Действовать как получатель", 'data-tt="act-recipient"'));
+    if (isHolder && o.pendingId) demoBtns.push(btn("Открыть экран получателя (демо)", 'data-tt="open-recipient"'));
+    const demoSection = demoBtns.length
+      ? `<details class="tt-disclosure tt-detail-demo" data-tt="detail-demo">
+        <summary>Демо-сценарии</summary>
+        <div class="tt-disclosure-body tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">${demoBtns.join("")}</div>
+      </details>`
+      : "";
+
+    return `<div class="tt-panel tt-detail-panel" data-tt="detail">
+      <header class="tt-detail-head">
+        ${btn(isExternalShell() ? "← Назад" : "← К реестру", 'data-tt="back-list"', "tt-back")}
+        <span class="tt-detail-id">${E(o.id)}</span>
+      </header>
+      <h2 class="tt-detail-title">${E(o.item)}</h2>
+      ${o.qty || o.comment ? `<p class="tt-detail-sub">${E(o.qty || "")}${o.comment ? (o.qty ? " · " : "") + E(o.comment) : ""}</p>` : ""}
+      <div class="tt-detail-meta">${statusBadge(o)}<span class="${dueCls}">${E(dueLabel)}</span></div>
+      ${detailRouteSection(o)}
+      <section class="tt-detail-do" aria-label="Действия">
+        <h3 class="tt-detail-section-title">Что сделать</h3>
+        ${shortRelayReminder(o, p, isHolder, mustRelay)}
+        ${primaryHtml}
+      </section>
+      ${otherActions}
       ${attachmentsSection(o, {
         readonly: !isHolder || o.status === "completed",
         showPicker: isHolder && o.status !== "completed",
+        compact: true,
         inputKey: "detail",
         items: Att()
           ? Att().listForOrder(o).map((a) => ({
@@ -1702,19 +1780,17 @@
             }))
           : [],
       })}
-      <div class="tt-timeline" data-tt="timeline">${o.timeline
-        .slice()
-        .reverse()
-        .map((t) => {
-          const fr = contactById(t.from);
-          const to = contactById(t.to);
-          return `<div><strong>${E(fr?.name || "?")} → ${E(to?.name || "?")}</strong><small>${dt(t.at)} · ${E(t.note)}</small></div>`;
-        })
-        .join("")}</div>
-      <div class="tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">
-        ${showActHolder ? btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
-        ${p && o.holderId !== p.id && !state.actingContactId ? btn("Действовать как получатель", 'data-tt="act-recipient"') : ""}
-      </div>
+      <details class="tt-disclosure tt-history" data-tt="history-disclosure">
+        <summary>История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}</summary>
+        <div class="tt-timeline" data-tt="timeline">${tl
+          .map((t) => {
+            const fr = contactById(t.from);
+            const to = contactById(t.to);
+            return `<div><strong>${E(fr?.name || "?")} → ${E(to?.name || "?")}</strong><small>${dt(t.at)} · ${E(t.note)}</small></div>`;
+          })
+          .join("")}</div>
+      </details>
+      ${demoSection}
       ${
         confirmingComplete
           ? `<div class="tt-complete-confirm" data-tt="complete-confirm">
@@ -1880,20 +1956,31 @@
             })
             .join("")}</select></label>`;
 
+    const demoOpen = inCreateWizard ? " open" : "";
+    const demoShell = ext
+      ? `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span><div data-tt="chrome">${chrome}</div>`
+      : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
+      <details class="tt-disclosure tt-demo-settings" data-tt="demo-settings"${demoOpen}>
+        <summary>Демо-настройки</summary>
+        <div class="tt-disclosure-body">
+          <p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>
+          <div data-tt="chrome">${chrome}</div>
+        </div>
+      </details>`;
+
     if (!ttShellMounted) {
       main.innerHTML = `<div class="tt-work" data-testid="tan-tracker" id="tt-root">
       <div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
         <span data-tt="head-cta">${state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
       </div>
-      <p class="tt-demo">Демо-данные · изменения до обновления страницы</p>
-      <div data-tt="chrome">${chrome}</div>
+      <div class="tt-shell-meta">${demoShell}</div>
       <div id="tt-content"></div>${Att() ? Att().lightboxHtml() : ""}</div>`;
       ttShellMounted = true;
     } else {
       const cta = document.querySelector('[data-tt="head-cta"]');
       if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
-      const ch = document.querySelector('[data-tt="chrome"]');
-      if (ch) ch.innerHTML = chrome;
+      const meta = document.querySelector(".tt-shell-meta");
+      if (meta) meta.innerHTML = demoShell;
     }
 
     const content = document.getElementById("tt-content");

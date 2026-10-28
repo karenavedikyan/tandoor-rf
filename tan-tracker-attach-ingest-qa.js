@@ -87,6 +87,7 @@ var TT_INGEST_QA = await (async () => {
   const nw = await page.locator(".tt-att-thumb img").first().evaluate((img) => img.naturalWidth);
   ok(nw > 0, "attachment image still loads after create (URL retained on order)");
 
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   const nwR = await page.locator(".tt-att-thumb img").first().evaluate((img) => img.naturalWidth);

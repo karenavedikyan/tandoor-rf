@@ -273,7 +273,7 @@
   function itemHtml(a, { readonly, isStaged, orderId }) {
     const prev = canPreview(a.mime);
     const thumb = prev
-      ? `<button type="button" class="tt-att-thumb" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}"><img src="${E(a.url)}" alt="${E(a.name)}" loading="lazy"></button>`
+      ? `<button type="button" class="tt-att-thumb" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}"><img src="${E(a.url)}" alt="${E(a.name)}" loading="lazy" onerror="this.hidden=true;this.parentElement.classList.add('tt-att-broken')"><span class="tt-att-fallback" hidden>${E(shortDocLabel(a.mime, a.name))}</span></button>`
       : `<div class="tt-att-doc" aria-hidden="true">${E(shortDocLabel(a.mime, a.name))}</div>`;
     const meta = `<span class="tt-att-name">${E(a.name)}</span><span class="tt-att-meta">${E(fmtBytes(a.size))}${a.demo ? " · демо" : ""}${a.addedLabel ? ` · ${E(a.addedLabel)}` : ""}</span>`;
     const dl = `<a class="tt-link tt-att-dl" data-tt="attach-download" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" href="${E(a.url)}" download="${E(a.name)}">Скачать</a>`;
@@ -298,6 +298,8 @@
       omitTitle = false,
       stagedIds = null,
       pickerMode = "native",
+      compact = false,
+      omitResetNote = false,
     } = opts;
     const inputId = `tt-att-file-${inputKey}`;
     const stagedSet = stagedIds instanceof Set ? stagedIds : stagedIds ? new Set(stagedIds) : null;
@@ -315,14 +317,25 @@
         : `<p class="tt-muted tt-att-empty">Нет вложений.</p>`;
     const accept =
       ".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.heic,.heif,image/jpeg,image/png,image/webp,application/pdf,text/plain";
+    const hintHtml = compact || !hint ? "" : `<p class="tt-muted tt-att-hint">${E(hint)}</p>`;
+    const pickerBtnClass = compact ? "tt-link tt-att-add-btn" : "tt-att-file-btn tt-wizard-btn";
     const picker =
       showPicker && pickerMode === "button"
-        ? `<div class="tt-att-picker tt-att-picker-btn"><input type="file" id="${E(inputId)}" class="tt-att-input-sr" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"><label for="${E(inputId)}" class="tt-att-file-btn tt-wizard-btn">${E(pickerLabel)}</label><p class="tt-muted tt-att-hint">${E(hint)}</p></div>`
+        ? `<div class="tt-att-picker tt-att-picker-btn"><input type="file" id="${E(inputId)}" class="tt-att-input-sr" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"><label for="${E(inputId)}" class="${pickerBtnClass}">${E(pickerLabel)}</label>${hintHtml}</div>`
         : showPicker
-          ? `<div class="tt-att-picker"><label class="tt-att-file-label">${pickerLabel}<input type="file" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"></label><p class="tt-muted tt-att-hint">${E(hint)}</p></div>`
+          ? `<div class="tt-att-picker"><label class="tt-att-file-label">${pickerLabel}<input type="file" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"></label>${hintHtml}</div>`
           : "";
-    const titleHtml = omitTitle ? "" : `<h3 class="tt-att-title">${E(title)}</h3>`;
-    return `<section class="tt-att-block" data-tt="attachments"${orderId ? ` data-order-id="${E(orderId)}"` : ""}>${titleHtml}${picker}${list}${error ? `<p class="tt-error">${E(error)}</p>` : ""}<p class="tt-muted tt-att-reset-note">Вложения хранятся только в памяти демо и сбрасываются при обновлении страницы.</p></section>`;
+    const countLabel = items.length ? ` · ${items.length}` : "";
+    const titleHtml = omitTitle ? "" : `<h3 class="tt-att-title">${E(title)}${compact ? countLabel : ""}</h3>`;
+    const resetNote =
+      omitResetNote || compact
+        ? ""
+        : `<p class="tt-muted tt-att-reset-note">Вложения хранятся только в памяти демо и сбрасываются при обновлении страницы.</p>`;
+    const head =
+      compact && !omitTitle
+        ? `<div class="tt-att-head-row">${titleHtml}${showPicker ? picker : ""}</div>`
+        : `${titleHtml}${picker}`;
+    return `<section class="tt-att-block${compact ? " tt-att-compact" : ""}" data-tt="attachments"${orderId ? ` data-order-id="${E(orderId)}"` : ""}>${head}${list}${error ? `<p class="tt-error">${E(error)}</p>` : ""}${resetNote}</section>`;
   }
 
   function lightboxHtml() {

@@ -42,12 +42,14 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt-pick="ext_02"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Ожидает код"), "pending set");
+  await ttOpenOtherActions();
   await page.locator('[data-tt="cancel-pending"]').click();
   await page.locator('[data-tt="back-list"]').click();
   await open("TT-2026-004");
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="ext_01"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   if (await page.getByRole("button", { name: "Получить код", exact: true }).count())
@@ -58,6 +60,7 @@ var TT_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="code-error"]').textContent()).includes("Неверный"), "wrong code unchanged holder");
   await page.locator('button[data-tt="detail"]').click();
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   if (await page.getByRole("button", { name: "Получить код", exact: true }).count())
@@ -77,6 +80,7 @@ var TT_QA = await (async () => {
     (await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"),
     "code confirm sender still reads successful handoff detail"
   );
+  await ttOpenDetailDemo();
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
   await page.locator('[data-tt="transfer"]').click();
   await page.locator('[data-tt="confirm-transfer"]').waitFor({ state: "visible" });
@@ -84,19 +88,20 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt-field="newName"]').fill("Внешний QA");
   await page.locator('[data-tt-field="newPhone"]').fill("79000000101");
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
-  await page.locator('[data-tt="tab-qr"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   ok(await page.locator('[data-tt="qr-host"] svg').count() >= 1, "QR rendered on pending card");
   const oldQr = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   await page.locator('[data-tt="scan-qr-demo"]').click();
   ok(await page.locator('[data-tt="recipient-screen"]').count() === 1, "scan demo opens recipient");
   await page.locator('[data-tt="exit-recipient"]').click();
+  await ttOpenOtherActions();
   await page.locator('[data-tt="change-pending"]').click();
   await page.locator('[data-tt="confirm-transfer"]').waitFor({ state: "visible" });
   await page.locator('[data-tt="toggle-new"]').click();
   await page.locator('[data-tt-field="newName"]').fill("Смена QR");
   await page.locator('[data-tt-field="newPhone"]').fill("79000000102");
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
-  await page.locator('[data-tt="tab-qr"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   const newQr = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   ok(oldQr !== newQr, "QR payload changes when recipient changes");
   await navHash(oldQr);
@@ -106,9 +111,11 @@ var TT_QA = await (async () => {
   ok(staleBody.includes("устарело"), "stale QR shows old invitation");
   await navHash("#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-004");
   await page.locator("#tt-root").waitFor({ state: "visible" });
-  if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
-    await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
-  await page.locator('[data-tt="tab-qr"]').click();
+  if (await page.locator('[data-tt="act-holder"]').count()) {
+    await ttOpenDetailDemo();
+    await page.locator('[data-tt="act-holder"]').click();
+  }
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   const usedQrPayload = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   await page.locator('[data-tt="scan-qr-demo"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
@@ -146,8 +153,10 @@ var TT_QA = await (async () => {
   ok(detailOverdue.includes("Ожидает код") && detailOverdue.includes("Просрочено"), "waiting keeps overdue chip");
   await page.locator('[data-tt="back-list"]').click();
   await open("TT-2026-002");
-  if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
-    await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
+  if (await page.locator('[data-tt="act-holder"]').count()) {
+    await ttOpenDetailDemo();
+    await page.locator('[data-tt="act-holder"]').click();
+  }
   const confirmCalls = await page.evaluate(() => {
     window.__ttConfirmCalls = 0;
     const orig = window.confirm;
@@ -173,9 +182,11 @@ var TT_QA = await (async () => {
   await page.evaluate((orig) => {
     if (orig) window.confirm = orig;
   }, confirmCalls);
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m1");
   await page.locator('[data-tt="back-list"]').click();
   await open("TT-2026-001");
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -194,6 +205,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="ext_02"]').click();
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -249,11 +261,12 @@ var TT_QA = await (async () => {
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  await page.locator('[data-tt="tab-qr"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
   await page.locator('[data-tt="scan-qr-demo"]').click();
   ok(await page.locator('[data-tt="shown-code"]').count() === 0, "QR mode hides code until code path");
   await page.locator('[data-tt="exit-recipient"]').click();
-  await page.locator('[data-tt="tab-code"]').click();
+  if ((await page.locator('[data-tt="qr-host"]').count()) > 0) await page.locator('[data-tt="tab-code"]').click();
+  await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();

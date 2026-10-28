@@ -22,6 +22,7 @@ var TT_NAV_QA = await (async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
   ok((await page.locator("#tt-content").count()) === 1, "cold hash navigation mounts tt-content");
   ok((await page.locator(".tt-table tbody tr").count()) >= 21, "director cold entry registry at least 21 rows");
+  await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m2");
   await page.locator("#tt-root").waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="employee"]').inputValue()) === "m2", "profile role change keeps shell mounted");
