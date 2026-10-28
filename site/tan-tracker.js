@@ -427,8 +427,10 @@
     qr.addData(text);
     qr.make();
     const n = qr.getModuleCount();
-    const cell = Math.max(4, Math.ceil(252 / n));
-    return qr.createSvgTag(cell, 4);
+    const maxSide = 280;
+    const cell = Math.max(4, Math.min(8, Math.floor(maxSide / (n + 8))));
+    const margin = cell * 4;
+    return qr.createSvgTag({ cellSize: cell, margin, scalable: true });
   }
 
   function resolveInvitation(o, urlHv) {
