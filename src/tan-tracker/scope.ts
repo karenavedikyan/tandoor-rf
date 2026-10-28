@@ -35,13 +35,15 @@ export function canViewOrder(
   contacts: TanTrackerContactDto[],
   teamEmployeeIds: Set<string> | null,
   externalActing: boolean,
+  partyEmployeeMap?: Map<string, string | null>,
 ): boolean {
-  if (!o || !ctx.actorPartyId) return false;
+  if (!o) return false;
+  if (ctx.role === "director") return true;
+  if (!ctx.actorPartyId) return false;
   if (externalActing) {
     const allowed = [o.holderId, o.pendingId, o.finalRecipientId].filter(Boolean) as string[];
     return allowed.includes(ctx.actorPartyId);
   }
-  if (ctx.role === "director") return true;
   if (ctx.role === "admin") return false;
   const actor = ctx.actorPartyId;
   if ([o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
@@ -51,7 +53,9 @@ export function canViewOrder(
   if (ctx.role === "rop" || ctx.role === "regional_manager") {
     if (teamEmployeeIds && teamEmployeeIds.size > 0) {
       for (const cid of participants) {
-        const eid = contactEmployeeId(cid, contacts);
+        const eid =
+          partyEmployeeMap?.get(cid) ??
+          contactEmployeeId(cid, contacts);
         if (eid && teamEmployeeIds.has(eid.toLowerCase())) return true;
       }
     }

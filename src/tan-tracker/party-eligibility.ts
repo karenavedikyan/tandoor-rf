@@ -1,0 +1,121 @@
+import type { Pool, PoolClient } from "pg";
+import type { AccessContext } from "../access/types";
+import { normalizeRuPhoneE164, isUuid } from "./phone-normalize";
+import { createExternalParty, findExternalPartyByPhone } from "./repository";
+import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
+import { query } from "../db/pool";
+
+type Db = Pool | PoolClient;
+
+async function loadTeamUserIds(teamEmployeeGuids: Set<string> | null): Promise<string[]> {
+  if (!teamEmployeeGuids || teamEmployeeGuids.size === 0) return [];
+  const guids = [...teamEmployeeGuids];
+  const res = await query<{ user_id: string }>(
+    `SELECT DISTINCT user_id::text FROM user_onec_employee_links
+     WHERE revoked_at IS NULL AND lower(employee_id::text) = ANY($1::text[])`,
+    [guids.map((g) => g.toLowerCase())],
+  );
+  return res.rows.map((r) => r.user_id);
+}
+
+export async function assertPartyEligibleAsRecipient(
+  client: Db,
+  access: AccessContext,
+  userId: string,
+  partyId: string,
+): Promise<void> {
+  if (!isUuid(partyId)) {
+    throw Object.assign(new Error("Некорректный получатель."), { http: 400 });
+  }
+  if (access.role === "director") {
+    const row = await client.query(`SELECT id FROM tt_parties WHERE id = $1::uuid`, [partyId]);
+    if (!row.rowCount) throw Object.assign(new Error("Получатель не найден."), { http: 404 });
+    return;
+  }
+  const teamGuids = await loadTanTrackerTeamEmployeeGuids({ ...access, userId, role: access.role });
+  const teamUserIds = await loadTeamUserIds(teamGuids);
+  const employeeId = access.employeeId;
+  const res = await client.query<{ ok: boolean }>(
+    `
+      SELECT TRUE AS ok FROM tt_parties p
+      WHERE p.id = $1::uuid
+        AND (
+          (p.kind = 'external' AND p.created_by_user_id = $2::uuid)
+          OR (
+            p.kind = 'user'
+            AND p.user_id IS NOT NULL
+            AND (
+              (cardinality($3::uuid[]) > 0 AND p.user_id = ANY($3::uuid[]))
+              OR (
+                $4::uuid IS NOT NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM user_onec_employee_links actor_link
+                  JOIN onec_wholesale_employee_team_memberships tm
+                    ON tm.guid_manager = actor_link.employee_id
+                  JOIN onec_wholesale_employee_team_memberships peer
+                    ON peer.guid_team = tm.guid_team
+                  JOIN user_onec_employee_links peer_link
+                    ON peer_link.employee_id = peer.guid_manager
+                   AND peer_link.revoked_at IS NULL
+                  WHERE actor_link.user_id = $2::uuid
+                    AND actor_link.revoked_at IS NULL
+                    AND peer_link.user_id = p.user_id
+                )
+              )
+            )
+          )
+        )
+      LIMIT 1
+    `,
+    [partyId, userId, teamUserIds, employeeId],
+  );
+  if (!res.rowCount) {
+    throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
+  }
+}
+
+export type ExternalRecipientInput = { name: string; phone: string };
+
+export async function resolveExternalRecipientPartyId(
+  client: Db,
+  userId: string,
+  input: ExternalRecipientInput,
+): Promise<string> {
+  const name = input.name.trim();
+  if (!name) {
+    throw Object.assign(new Error("Введите имя получателя."), { http: 400 });
+  }
+  const phoneE164 = normalizeRuPhoneE164(input.phone);
+  if (!phoneE164) {
+    throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
+  }
+  const existing = await findExternalPartyByPhone(client, phoneE164, userId);
+  if (existing) return existing.id;
+  return createExternalParty(client, name, phoneE164, userId);
+}
+
+export async function resolveRecipientPartyId(
+  client: Db,
+  access: AccessContext,
+  userId: string,
+  partyId: string | undefined,
+  external: ExternalRecipientInput | undefined,
+): Promise<string> {
+  if (external && (external.name || external.phone)) {
+    const id = await resolveExternalRecipientPartyId(client, userId, external);
+    await assertPartyEligibleAsRecipient(client, access, userId, id);
+    return id;
+  }
+  const resolved = String(partyId ?? "").trim();
+  if (!resolved) {
+    throw Object.assign(new Error("Выберите конечного получателя."), { http: 400 });
+  }
+  if (!isUuid(resolved)) {
+    throw Object.assign(new Error("Выберите получателя из каталога или добавьте новый контакт."), {
+      http: 400,
+    });
+  }
+  await assertPartyEligibleAsRecipient(client, access, userId, resolved);
+  return resolved;
+}

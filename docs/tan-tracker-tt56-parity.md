@@ -22,7 +22,7 @@
 | `site/tan-tracker-attachments.js` | `public/tan-tracker/tan-tracker-attachments.js` (адаптация upload → API — **в работе**) |
 | `site/tan-tracker-scope.js` | `public/tan-tracker/tan-tracker-scope.js` (UI) + `src/tan-tracker/scope.ts` (сервер) |
 | `site/assets/qrcode-generator.js` | `public/tan-tracker/assets/qrcode-generator.js` |
-| `site/index.html` (порядок CSS/JS) | `public/tan-tracker.html` + `tan-tracker-lk-shell.js` + `tan-tracker-lk-boot.js` |
+| `site/index.html` (порядок CSS/JS) | `public/tan-tracker.html` + `tan-tracker-lk-shell.js` + `tan-tracker-lk-boot.js` + `tan-tracker-lk-theme.css` (мост `--rf-*` → `--surface`/`--text`) |
 | `run-browser-qa.mjs`, `tan-tracker-*-qa.js` | Перенос/адаптация к `/api/tan-tracker` — **следующий этап** |
 | Seed orders/contacts | PostgreSQL `052_tan_tracker.sql` + `/api/tan-tracker/bootstrap` |
 
@@ -31,10 +31,10 @@
 | Экран / состояние | Эталон | LK API / UI | Тест | Статус |
 |-------------------|--------|-------------|------|--------|
 | Реестр (таблица 1440, карточки 390, фильтры, поиск) | `registryView` | `tan-tracker.js` + `GET bootstrap` | `tan-tracker-redesign-qa.js` | UI скопирован; данные с сервера — **частично** (bootstrap) |
-| Мастер 4 шага | `createView` / `wizardShell` | `POST /transfers` | wizard QA | **501** (след. коммит) |
-| Карточка передачи | `detailView` | `tan-tracker.js` | detail-* QA | UI да; мутации — **нет API** |
+| Мастер 4 шага | `createView` / `wizardShell` | `POST /transfers` + `tan-tracker-lk-api.js` | wizard QA | API **да**; browser QA на LK — **нет** |
+| Карточка передачи | `detailView` | `tan-tracker.js` | detail-* QA | UI да; pending cancel/change + code verify — **API да** |
 | Меню «⋯» popover | tt56 overflow | CSS/JS tt56 | redesign QA | UI да |
-| Код / QR handoff | `codeView`, QR host | `tt_handoff_codes`, signed links | demo-code QA | **нет** (без демо-кода) |
+| Код / QR handoff | `codeView`, QR host | `POST .../code/generate|verify` | demo-code QA | Код **да**; QR signed links — **нет** |
 | Экран получателя | `recipientScreen` | `/tan-tracker/recipient` route | attachments/recipient QA | **нет** (отдельный public route) |
 | Terminal / former sender | `detailView` variants | server scope | former-sender QA | scope TS; UI — с данными |
 | Завершение цепочки | `completed` status | `tt_transfers.status` | relay/terminal QA | схема да; логика — **нет** |
@@ -52,8 +52,8 @@
 ## Блокеры (честно)
 
 1. **SMS/OTP:** провайдер не подключён; `TT_PHONE_VERIFICATION_PROVIDER=test` только в тестах.
-2. **Полный API** (create, handoff, cancel-pending, attachments stream): в реализации.
-3. **E2E против живого API:** после endpoints + seed fixtures.
+2. **Остаток API:** attachments upload/download, QR handoff, public recipient + phone verify, complete-order explicit.
+3. **E2E против живого API:** integration `test/integration/tan-tracker-bootstrap-scope.test.ts` (нужен `TEST_DATABASE_URL`); 26 прототипных QA — только на эталоне `7f28457`.
 
 ## Следующие шаги исполнителя
 

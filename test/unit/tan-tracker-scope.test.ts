@@ -39,6 +39,17 @@ describe("tan-tracker scope", () => {
     assert.equal(canViewOrder(baseOrder, ctx, [], null, false), true);
   });
 
+  it("director sees orders without own party", () => {
+    const ctx: TanTrackerScopeContext = {
+      userId: "u1",
+      role: "director",
+      employeeId: null,
+      actorPartyId: null,
+      previewReadOnly: false,
+    };
+    assert.equal(canViewOrder(baseOrder, ctx, [], null, false), true);
+  });
+
   it("holder sees own order", () => {
     const ctx: TanTrackerScopeContext = {
       userId: "u2",

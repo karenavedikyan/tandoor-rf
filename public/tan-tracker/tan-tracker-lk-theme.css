@@ -1,0 +1,58 @@
+/**
+ * LK shell bridge: map legacy cabinet tokens (--rf-*) to tt56 Tan-tracker variables.
+ * Prototype uses --surface/--text on #app; in LK those names are unset unless bridged here.
+ */
+body.legacy-body .legacy-content .tt-work,
+body.legacy-body #tt-root-host .tt-work {
+  --surface: var(--rf-surface, #ffffff);
+  --text: var(--rf-text, #1a1a1a);
+  --muted: var(--rf-text-muted, #58665e);
+  --line: var(--rf-border, #d8dce8);
+  --bg: var(--rf-bg, #f3f5f6);
+  --green: var(--rf-primary, #507f22);
+  --tint: var(--rf-green-soft, #eef5e7);
+}
+
+[data-theme="dark"] body.legacy-body .legacy-content .tt-work,
+[data-theme="dark"] body.legacy-body #tt-root-host .tt-work {
+  --tt-panel: var(--rf-surface);
+  --tt-ink: var(--rf-text);
+}
+
+body.legacy-body .legacy-content .tt-work .tt-registry-head h1,
+body.legacy-body .legacy-content .tt-work .tt-head h1,
+body.legacy-body #tt-root-host .tt-work .tt-registry-head h1,
+body.legacy-body #tt-root-host .tt-work .tt-head h1 {
+  color: var(--text, var(--tt-ink));
+}
+
+body.legacy-body .legacy-content .tt-work .tt-card-v2,
+body.legacy-body #tt-root-host .tt-work .tt-card-v2 {
+  background: var(--surface, var(--tt-panel));
+  color: var(--text, var(--tt-ink));
+}
+
+body.legacy-body .legacy-content .tt-work .tt-card-v2-title,
+body.legacy-body #tt-root-host .tt-work .tt-card-v2-title {
+  color: var(--text, var(--tt-ink));
+}
+
+body.legacy-body .legacy-content .tt-work .tt-stat-tile,
+body.legacy-body .legacy-content .tt-work .tt-registry-search-wrap input[data-tt="search"],
+body.legacy-body #tt-root-host .tt-work .tt-stat-tile,
+body.legacy-body #tt-root-host .tt-work .tt-registry-search-wrap input[data-tt="search"] {
+  background: var(--surface, var(--tt-panel));
+  color: var(--text, var(--tt-ink));
+}
+
+body.legacy-body .legacy-content .tt-work .tt-stat-tile-value,
+body.legacy-body #tt-root-host .tt-work .tt-stat-tile-value {
+  color: var(--text, var(--tt-ink));
+}
+
+body.tt-lk-mode .tt-work [data-tt="demo-reveal-code"],
+body.tt-lk-mode .tt-work [data-tt="demo-expire"],
+body.tt-lk-mode .tt-work #tt-code-demo-help,
+body.tt-lk-mode .tt-work .tt-code-secondary-actions {
+  display: none !important;
+}

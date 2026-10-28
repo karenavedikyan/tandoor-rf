@@ -3,9 +3,11 @@ import { withTransaction } from "../access/db";
 import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
 import { apiError, ERROR_CODES } from "../shared/errors";
-import { resolveTanTrackerAuditUserId, resolveTanTrackerEffectiveUser } from "./effective-user";
+import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { ensurePartyForUserOnWrite } from "./repository";
 import { buildTanTrackerBootstrap } from "./service";
+import { requireTanTrackerMutationAccess } from "./guards";
+import { assertPartyEligibleAsRecipient } from "./party-eligibility";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
@@ -27,19 +29,11 @@ async function loadTransfer(client: { query: Function }, id: string) {
 }
 
 export async function cancelPendingHandler(req: AccessRequest, res: Response): Promise<void> {
-  if (!req.authUser || !req.accessContext) {
-    setNoStore(res);
-    res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
-    return;
-  }
-  if (req.accessContext.preview?.readOnly) {
-    setNoStore(res);
-    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Изменения запрещены в режиме просмотра."));
-    return;
-  }
-  const user = resolveTanTrackerEffectiveUser(req.authUser, req.accessContext);
+  const gate = requireTanTrackerMutationAccess(req, res);
+  if (!gate) return;
+  const { user, access } = gate;
   const transferId = String(req.params.id ?? "");
-  const auditUserId = resolveTanTrackerAuditUserId(req.authUser, req.accessContext);
+  const auditUserId = resolveTanTrackerAuditUserId(req.authUser!, access);
 
   const done = await withTransaction(async (client) => {
     const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
@@ -74,39 +68,34 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
       .json(apiError(done.code === 403 ? ERROR_CODES.FORBIDDEN : ERROR_CODES.NOT_FOUND, "Не удалось отменить ожидание."));
     return;
   }
-  const bootstrap = await buildTanTrackerBootstrap(req.authUser, req.accessContext);
+  const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
   setNoStore(res);
   res.status(200).json({ ok: true, bootstrap });
 }
 
 export async function changePendingHandler(req: AccessRequest, res: Response): Promise<void> {
-  if (!req.authUser || !req.accessContext) {
-    setNoStore(res);
-    res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
-    return;
-  }
-  if (req.accessContext.preview?.readOnly) {
-    setNoStore(res);
-    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Изменения запрещены в режиме просмотра."));
-    return;
-  }
-  const user = resolveTanTrackerEffectiveUser(req.authUser, req.accessContext);
-  const transferId = String(req.params.id ?? "");
+  const gate = requireTanTrackerMutationAccess(req, res);
+  if (!gate) return;
+  const { user, access } = gate;
+  const transferId = String(req.params.id ?? "").trim().slice(0, 64);
   const pendingPartyId = String((req.body as { pendingPartyId?: string })?.pendingPartyId ?? "").trim();
-  const auditUserId = resolveTanTrackerAuditUserId(req.authUser, req.accessContext);
+  const auditUserId = resolveTanTrackerAuditUserId(req.authUser!, access);
   if (!pendingPartyId) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Выберите получателя."));
     return;
   }
 
-  const done = await withTransaction(async (client) => {
+  let done: { ok: true } | { ok: false; code: number };
+  try {
+    done = await withTransaction(async (client) => {
     const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
     const row = await loadTransfer(client, transferId);
     if (!row) return { ok: false as const, code: 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     if (pendingPartyId === row.holder_party_id) return { ok: false as const, code: 400 };
     if (row.status === "completed") return { ok: false as const, code: 400 };
+    await assertPartyEligibleAsRecipient(client, access, user.id, pendingPartyId);
     const prev = row.pending_party_id;
     if (prev && prev !== pendingPartyId) {
       await client.query(
@@ -134,7 +123,23 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
       [row.id, row.holder_party_id, pendingPartyId, "Назначен следующий получатель", auditUserId],
     );
     return { ok: true as const };
-  });
+    });
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http;
+    if (http === 403 || http === 400) {
+      setNoStore(res);
+      res
+        .status(http)
+        .json(
+          apiError(
+            http === 403 ? ERROR_CODES.FORBIDDEN : ERROR_CODES.VALIDATION_ERROR,
+            err instanceof Error ? err.message : "Не удалось сменить получателя.",
+          ),
+        );
+      return;
+    }
+    throw err;
+  }
 
   if (!done.ok) {
     const status = done.code;
@@ -147,7 +152,7 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
     );
     return;
   }
-  const bootstrap = await buildTanTrackerBootstrap(req.authUser, req.accessContext);
+  const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
   setNoStore(res);
   res.status(200).json({ ok: true, bootstrap });
 }

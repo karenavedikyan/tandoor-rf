@@ -602,7 +602,18 @@
   }
 
   function identityVerified(o) {
+    if (TT_LK) {
+      const actor = actorContactId();
+      if (o.pendingId && actor && o.pendingId === actor) {
+        const c = contactById(actor);
+        if (c && (c.employeeId || c.kind === "user")) return true;
+      }
+    }
     return state.phoneVerified && state.phoneVerifiedKey === recipientKey(o);
+  }
+
+  function isDraftPartyId(id) {
+    return !id || id.startsWith("ext_") || id.startsWith("draft-");
   }
 
   function isExternalShell() {
@@ -1762,6 +1773,25 @@
 
   function generateCode(o) {
     if (o.status === "completed" || !o.pendingId) return null;
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.generateHandoffCode) {
+      window.TanTrackerLk.generateHandoffCode(o.id)
+        .then((data) => {
+          o.code = {
+            code: data.code,
+            expiresAt: data.expiresAt,
+            attempts: 0,
+            used: false,
+            forContact: o.pendingId,
+          };
+          state.toast = "Код выпущен.";
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось выпустить код.";
+          renderTracker();
+        });
+      return null;
+    }
     const code = String(Math.floor(100000 + Math.random() * 900000));
     o.code = {
       code,
@@ -1972,11 +2002,21 @@
 
   function addExternalContact(name, phoneRaw) {
     const phone = normPhone(phoneRaw);
-    if (!phone) return { error: "Укажите демонстрационный телефон: 10 цифр после +7." };
-    const dup = contacts.find((c) => c.phone === phone);
+    if (!phone) {
+      return {
+        error: TT_LK ? "Введите телефон: 10 цифр после +7." : "Укажите демонстрационный телефон: 10 цифр после +7.",
+      };
+    }
+    const dup = contacts.find((c) => c.phone === phone || c.phone === `+7${phone}`);
     if (dup) return { error: `Контакт с этим номером уже есть: ${dup.name}.`, existing: dup };
-    const id = "ext_" + String(contacts.length + 1).padStart(2, "0");
-    const c = { id, kind: "external", name: name.trim() || "Внешний получатель", phone };
+    const id = TT_LK ? `draft-${phone}` : "ext_" + String(contacts.length + 1).padStart(2, "0");
+    const c = {
+      id,
+      kind: "external",
+      name: name.trim() || "Внешний получатель",
+      phone: TT_LK ? `+7${phone}` : phone,
+      draft: TT_LK,
+    };
     contacts.push(c);
     return { contact: c };
   }
@@ -2773,11 +2813,19 @@
     </section>`;
   }
 
+  function pendingRecipientDetailCard(o, holder) {
+    return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-pending-recipient">
+      <h3 class="tt-detail-task-heading">Примите передачу</h3>
+      <p class="tt-detail-task-instructions">От <strong>${E(holder?.name || "—")}</strong>. Получите одноразовый код и сообщите его держателю.</p>
+      <div class="tt-detail-primary" data-tt="detail-primary-actions">${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>
+    </section>`;
+  }
+
   function detailTaskSection(o) {
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const h = contactById(o.holderId);
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const canComplete =
       isHolder &&
@@ -2789,6 +2837,7 @@
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
 
     if (o.status === "completed") return completedTaskCard(o, actor);
+    if (o.pendingId === actor && o.status !== "completed") return pendingRecipientDetailCard(o, h);
     if (!isHolder) {
       if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
       const wait = p
@@ -3255,14 +3304,25 @@
       return;
     }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.createTransfer) {
-      window.TanTrackerLk.createTransfer({
+      const finalContact = contactById(finalId);
+      const relayContact = f.relayId ? contactById(f.relayId) : null;
+      const payload = {
         item: f.item.trim(),
         qty: f.qty?.trim() || "",
         comment: f.comment?.trim() || "",
         dueAt: f.due || null,
-        finalRecipientPartyId: finalId,
-        relayPartyId: f.relayId || null,
-      })
+        finalRecipientPartyId: isDraftPartyId(finalId) ? undefined : finalId,
+        finalRecipientExternal:
+          finalContact && (finalContact.draft || isDraftPartyId(finalId))
+            ? { name: finalContact.name, phone: finalContact.phone }
+            : undefined,
+        relayPartyId: f.relayId && !isDraftPartyId(f.relayId) ? f.relayId : undefined,
+        relayExternal:
+          relayContact && (relayContact.draft || isDraftPartyId(f.relayId))
+            ? { name: relayContact.name, phone: relayContact.phone }
+            : undefined,
+      };
+      window.TanTrackerLk.createTransfer(payload)
         .then((code) => {
           state.orderId = code;
           state.view = "detail";
@@ -3837,7 +3897,7 @@
     if (action === "gen-code") {
       const order = o || orders.find((x) => x.id === state.orderId);
       if (!order) return;
-      if (!identityVerified(order)) {
+      if (!TT_LK && !identityVerified(order)) {
         state.error = "Сначала подтвердите номер (демо).";
       } else generateCode(order);
       renderTracker();
@@ -4031,6 +4091,7 @@
       phone: c.phone || "",
       employeeId: c.employeeId || null,
       team: c.team || null,
+      kind: c.kind || (c.employeeId ? "user" : "external"),
     }));
     orders = (data.orders || []).map((o) => {
       const copy = { ...o, timeline: [...(o.timeline || [])] };
