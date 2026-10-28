@@ -835,12 +835,14 @@
     </div>`;
   }
 
-  function wizardBtn(label, action, primary = false) {
+  function wizardBtn(label, action, primary = false, extraClass = "") {
     const freeze =
       state.attachBusy &&
       (action === "create-wizard-next" || action === "create-wizard-submit" || action === "create-skip-files");
     const extra = freeze ? ' disabled aria-disabled="true"' : "";
-    return btn(label, `data-tt="${action}"${extra}`, primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary");
+    const base = primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary";
+    const cls = extraClass ? `${base} ${extraClass}` : base;
+    return btn(label, `data-tt="${action}"${extra}`, cls);
   }
 
   function recipientSummary(f) {
@@ -1599,10 +1601,14 @@
       );
     }
     if (phase === "relay-pick") {
+      const finPick = contactById(f.finalRecipientId || f.recipientId);
+      const relayHint = finPick
+        ? `Шаг 3 из 4 · водитель или коллега примет предмет и передаст его ${finPick.name}.`
+        : "Шаг 3 из 4 · кто примет предмет и передаст его конечному получателю.";
       return wizardShell(
         phase,
-        "Сначала передать",
-        "Шаг 3 из 4 · кто примет предмет первым (водитель, коллега).",
+        "Кому отдадите для дальнейшей передачи",
+        relayHint,
         `<label class="tt-wizard-field">Поиск<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Имя или телефон"></label>
         <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
           .slice(0, 20)
@@ -1654,7 +1660,17 @@
     const attCount = state.attachStaging.length;
     const attLabel = attCount ? `${attCount} файл(ов)` : "Без файлов";
     const relay = f.relayId ? contactById(f.relayId) : null;
-    const relayLine = relay ? `${relay.name} · ${fmtPhone(relay.phone)}` : "Напрямую конечному получателю";
+    const finId = f.finalRecipientId || f.recipientId;
+    const finContact = finId ? contactById(finId) : null;
+    const finLine = finContact ? `${finContact.name} · ${fmtPhone(finContact.phone)}` : recipientSummary(f);
+    const handoffValue = relay ? `${relay.name} · ${fmtPhone(relay.phone)}` : finLine;
+    const handoffHint = relay
+      ? finContact
+        ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
+        : "Должен передать предмет конечному получателю."
+      : "Отдайте предмет этому получателю напрямую, без посредника.";
+    const relayEditLabel = relay ? "Изменить" : "Передать через другого человека";
+    const relayBtnClass = relay ? "" : "tt-wizard-summary-btn-long";
     return wizardShell(
       "review",
       "Проверить и создать",
@@ -1662,7 +1678,7 @@
       `<dl class="tt-wizard-summary">
         <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd class="tt-wizard-summary-value">${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Кому доставить</dt><dd class="tt-wizard-summary-value">${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Сначала передать</dt><dd class="tt-wizard-summary-value">${E(relayLine)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relay ? "Изменить" : "Добавить", "create-edit-relay")}</dd></div>
+        <div class="tt-wizard-summary-row tt-wizard-summary-row--handoff"><dt>Кому отдать сейчас</dt><dd class="tt-wizard-summary-value">${E(handoffValue)}</dd><dd class="tt-wizard-summary-hint">${E(handoffHint)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relayEditLabel, "create-edit-relay", false, relayBtnClass)}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Срок доставки</dt><dd class="tt-wizard-summary-value">${f.due ? E(f.due.replace("T", " · ")) : "Срок не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd class="tt-wizard-summary-value">${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd class="tt-wizard-summary-value">${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>

@@ -32,6 +32,12 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-tt="create-edit-relay"]').click();
   await page.locator('[data-create-phase="relay-pick"]').waitFor({ state: "visible" });
+  ok(
+    (await page.locator('[data-create-phase="relay-pick"] .tt-wizard-title').textContent()).includes(
+      "Кому отдадите для дальнейшей передачи"
+    ),
+    "relay-pick title copy"
+  );
   await page.locator('[data-tt-pick="emp_c1"]').click();
   await page.getByRole("button", { name: "Готово", exact: true }).click();
   await page.locator('[data-tt="create-edit-due"]').click();
