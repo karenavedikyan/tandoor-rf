@@ -206,9 +206,14 @@ export async function submitAssignmentReview(actor: AssignmentActor, id: string,
       WHERE status='active' AND role IN('coordinator','director') ON CONFLICT(user_id,event_key) DO NOTHING`,
     [id, values.score <= 3 ? "Низкая оценка: зона внимания" : "Получена оценка работы ассистента",
       "Назначение №" + id.slice(0, 8) + ". " + values.score + " из 5. Откройте оценку для просмотра результата." + noticeSuffix]);
-    await c.query(`INSERT INTO assistant_assignment_notifications(user_id,delegation_id,event_key,kind,title,message)
-      VALUES($1::uuid,$2::uuid,'review-submitted:'||($2::uuid)::text,'review_submitted','Оценка передана РОА и директору',
-        'Назначение закрыто с оценкой. Доступ ассистента не продлён.'+noticeSuffix) ON CONFLICT(user_id,event_key) DO NOTHING`, [user.id, id]);
+    const managerSubmittedMessage =
+      "Назначение закрыто с оценкой. Доступ ассистента не продлён." + noticeSuffix;
+    await c.query(
+      `INSERT INTO assistant_assignment_notifications(user_id,delegation_id,event_key,kind,title,message)
+      VALUES($1::uuid,$2::uuid,'review-submitted:'||($2::uuid)::text,'review_submitted','Оценка передана РОА и директору',$3)
+      ON CONFLICT(user_id,event_key) DO NOTHING`,
+      [user.id, id, managerSubmittedMessage],
+    );
     return { delegationId: id, state: "rated", score: values.score };
   });
 }

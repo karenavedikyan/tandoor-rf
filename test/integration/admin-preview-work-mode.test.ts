@@ -21,11 +21,21 @@ async function loadApp() {
   return createApp();
 }
 
-async function login(email: string): Promise<string> {
-  const app = await loadApp();
-  const res = await request(app).post("/api/auth/login").set(authHeaders()).send({ email, password: QA_PASSWORD });
+async function login(email: string, app?: Awaited<ReturnType<typeof loadApp>>): Promise<string> {
+  const targetApp = app ?? (await loadApp());
+  const res = await request(targetApp).post("/api/auth/login").set(authHeaders()).send({ email, password: QA_PASSWORD });
   assert.equal(res.status, 200);
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+}
+
+async function resetAssignmentFixtures(pool: Pool, manager2Id: string): Promise<void> {
+  await pool.query("DELETE FROM assistant_assignment_reviews");
+  await pool.query("DELETE FROM assistant_assignment_notifications");
+  await pool.query("DELETE FROM delegation_change_request_clients");
+  await pool.query("DELETE FROM delegation_change_requests");
+  await pool.query("DELETE FROM delegation_clients");
+  await pool.query("DELETE FROM delegations");
+  await pool.query("UPDATE users SET role = 'manager' WHERE id = $1::uuid", [manager2Id]);
 }
 
 async function startPreview(app: Awaited<ReturnType<typeof loadApp>>, adminCookie: string, userId: string) {
@@ -78,6 +88,7 @@ describe("admin preview work mode", { concurrency: false }, () => {
   beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
     await resetPoolForTests();
+    await resetAssignmentFixtures(pool, users.manager2!.id);
   });
 
   after(async () => {
@@ -211,14 +222,18 @@ describe("admin preview work mode", { concurrency: false }, () => {
     assert.equal(plainAdmin.status, 200, JSON.stringify(plainAdmin.body));
     assert.equal(plainAdmin.body.changed, true);
     await pool.query("UPDATE users SET role='manager' WHERE id=$1", [users.manager2!.id]);
+    await pool.query(
+      "DELETE FROM access_audit_log WHERE action='ASSIGNMENT_COORDINATOR_APPOINTED' AND entity_id=$1",
+      [users.manager2!.id],
+    );
   });
 
   it("admin-as-assistant GET /api/work/tasks is forbidden like real assistant (P0)", async () => {
     const app = await loadApp();
-    const assistantCookie = await login(users.assistant!.email);
+    const assistantCookie = await login(users.assistant!.email, app);
     assert.equal((await request(app).get("/api/work/tasks").set(authHeaders(assistantCookie))).status, 403);
 
-    const adminCookie = await login(users.admin!.email);
+    const adminCookie = await login(users.admin!.email, app);
     assert.equal((await startPreview(app, adminCookie, users.assistant!.id)).status, 200);
     const previewTasks = await request(app).get("/api/work/tasks").set(authHeaders(adminCookie));
     assert.equal(previewTasks.status, 403, JSON.stringify(previewTasks.body));
@@ -314,28 +329,25 @@ describe("admin preview work mode", { concurrency: false }, () => {
     const adminCookie = await login(users.admin!.email);
     const app = await loadApp();
 
+    const coordCookie = await login(users.coordinator!.email, app);
     const create = await request(app)
       .post("/api/access/delegations")
       .set(authHeaders(managerCookie))
       .send({
         assistantUserId: users.assistant!.id,
-        startsAt: new Date(Date.now() - 3600000).toISOString(),
-        endsAt: new Date(Date.now() + 86400000).toISOString(),
+        startsAt: new Date(Date.now() - 7200000).toISOString(),
+        endsAt: new Date(Date.now() + 86400000 * 2).toISOString(),
         clientGuids: [LEGAL],
         basis: "Notification audit seed.",
         submit: true,
       });
-    assert.equal(create.status, 201);
+    assert.equal(create.status, 201, JSON.stringify(create.body));
     const id = create.body.id as string;
-    assert.equal(
-      (
-        await request(app)
-          .post("/api/access/delegations/" + id + "/approve")
-          .set(authHeaders(await login(users.coordinator!.email)))
-          .send({ basis: "ok" })
-      ).status,
-      200,
-    );
+    const approveRes = await request(app)
+      .post("/api/access/delegations/" + id + "/approve")
+      .set(authHeaders(coordCookie))
+      .send({ basis: "Согласовано для теста уведомлений." });
+    assert.equal(approveRes.status, 200, JSON.stringify(approveRes.body));
     await pool.query(
       `UPDATE delegations SET starts_at=NOW()-INTERVAL '3 hours',approved_at=NOW()-INTERVAL '2 hours',
        ends_at=NOW()-INTERVAL '1 hour' WHERE id=$1`,

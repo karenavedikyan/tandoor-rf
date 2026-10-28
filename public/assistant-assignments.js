@@ -45,29 +45,35 @@
       }));
     } catch (_err) { /* ignore */ }
   }
-  function transferMatches(data) {
+  function transferIdentityMatches(data) {
     if (!data || data.v !== 1 || !user) return false;
     var id = transferIdentity();
     if (data.targetUserId && data.targetUserId !== id.targetUserId) return false;
     if (data.actorUserId && data.actorUserId !== id.actorUserId) return false;
-    if (data.editingId) {
-      if (!editing || editing.id !== data.editingId) return false;
-      if (data.rowVersion != null && editing.row_version !== data.rowVersion) return false;
-    } else if (editing) return false;
+    return true;
+  }
+  function readStoredTransfer() {
+    var raw = sessionStorage.getItem(TRANSFER_KEY);
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (_err) { sessionStorage.removeItem(TRANSFER_KEY); return null; }
+  }
+  function clearStoredTransfer() {
+    sessionStorage.removeItem(TRANSFER_KEY);
+  }
+  function transferEditingMatches(data) {
+    if (!data.editingId) return !editing;
+    if (!editing || editing.id !== data.editingId) return false;
+    if (data.rowVersion != null && editing.row_version !== data.rowVersion) return false;
     return true;
   }
   function takePendingTransfer() {
-    var raw = sessionStorage.getItem(TRANSFER_KEY);
-    if (!raw) return null;
-    try {
-      var data = JSON.parse(raw);
-      sessionStorage.removeItem(TRANSFER_KEY);
-      if (!transferMatches(data)) return null;
-      return data;
-    } catch (_err) {
-      sessionStorage.removeItem(TRANSFER_KEY);
+    var data = readStoredTransfer();
+    if (!data || !transferIdentityMatches(data) || !transferEditingMatches(data)) {
+      if (data) clearStoredTransfer();
       return null;
     }
+    clearStoredTransfer();
+    return data;
   }
   var labels = { create: "Создание", edit: "Исправление", submit: "Отправка заявки", approve: "Согласование",
     reject: "Отклонение", return: "Возврат на уточнение", cancel: "Отмена заявки", revoke: "Отзыв доступа",
@@ -308,6 +314,26 @@
       if(u.role==="coordinator")managers=(await request("/coordinator-managers")).managers;
       var params=new URLSearchParams(window.location.search);
       if(["manager","coordinator","director"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
+      var storedTransfer = readStoredTransfer();
+      if (storedTransfer && transferIdentityMatches(storedTransfer) && storedTransfer.editingId) {
+        try {
+          var restored = await request("/delegations/" + encodeURIComponent(storedTransfer.editingId));
+          if (
+            storedTransfer.rowVersion == null ||
+            restored.delegation.row_version === storedTransfer.rowVersion
+          ) {
+            if (restored.delegation.canAuthor) {
+              editing = restored.delegation;
+            } else {
+              clearStoredTransfer();
+            }
+          } else {
+            clearStoredTransfer();
+          }
+        } catch (_restoreErr) {
+          clearStoredTransfer();
+        }
+      }
       pendingTransfer = takePendingTransfer();
       if (pendingTransfer) view = "new";
       mount();

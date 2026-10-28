@@ -13,7 +13,11 @@ export type AccessRequest = AuthenticatedRequest & {
 };
 
 export function effectiveBusinessRole(req: AccessRequest): string {
-  return req.accessContext?.role ?? req.authUser?.role ?? "";
+  const ctx = req.accessContext;
+  if (ctx?.preview?.active) {
+    return ctx.preview.targetUser.role;
+  }
+  return ctx?.role ?? req.authUser?.role ?? "";
 }
 
 export async function attachAccessContext(
