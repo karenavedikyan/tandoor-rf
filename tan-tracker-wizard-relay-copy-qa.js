@@ -14,9 +14,9 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
 
   const assertHandoffLayout = async (label) => {
     const layout = await page.evaluate(() => {
-      const row = document.querySelector(".tt-wizard-summary-row--handoff");
+      const row = document.querySelector('[data-tt="review-handoff"]');
       const btn = row?.querySelector('[data-tt="create-edit-relay"]');
-      const hint = row?.querySelector(".tt-wizard-summary-hint");
+      const hint = row?.querySelector(".tt-wizard-review-handoff-hint");
       if (!row || !btn || !hint) return { ok: false };
       const br = btn.getBoundingClientRect();
       const hr = hint.getBoundingClientRect();
@@ -43,7 +43,7 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
 
-  const reviewDirect = await page.locator(".tt-wizard-summary").textContent();
+  const reviewDirect = await page.locator('[data-tt="wizard-review"]').textContent();
   ok(reviewDirect.includes("Кому отдать сейчас"), "review handoff row heading");
   ok(reviewDirect.includes("Сергей Приёмка"), "direct handoff shows final recipient name");
   ok(reviewDirect.includes("79000000001") || reviewDirect.includes("+7"), "direct handoff shows final phone");
@@ -76,13 +76,16 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.getByRole("button", { name: "Готово", exact: true }).click();
   await waitReview();
 
-  const reviewRelay = await page.locator(".tt-wizard-summary").textContent();
+  const reviewRelay = await page.locator('[data-tt="wizard-review"]').textContent();
   ok(reviewRelay.includes("Наталья Савельева"), "relay handoff shows intermediary name");
   ok(reviewRelay.includes("передать предмет дальше"), "relay handoff helper");
   ok(reviewRelay.includes("Сергей Приёмка"), "relay helper names final recipient");
-  const deliverRow = await page.locator(".tt-wizard-summary-row").filter({ hasText: "Кому доставить" }).textContent();
+  const deliverRow = await page.locator(".tt-wizard-review-route-block").first().textContent();
   ok(deliverRow.includes("Сергей Приёмка"), "Кому доставить unchanged after relay pick");
-  ok((await page.getByRole("button", { name: "Изменить", exact: true }).count()) >= 1, "relay path uses Изменить on handoff row");
+  ok(
+    (await page.locator('[data-tt="review-handoff"] [data-tt="create-edit-relay"]').textContent()) === "Изменить",
+    "relay path uses Изменить on handoff row"
+  );
 
   await page.locator('[data-tt="create-edit-item"]').click();
   await page.locator('[data-tt-field="item"]').fill("Relay copy QA relay chain");
@@ -97,8 +100,8 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
-  ok((await page.locator(".tt-wizard-summary").textContent()).includes("relay chain"), "edit item preserved through relay flow");
-  ok((await page.locator(".tt-wizard-summary").textContent()).includes("1 файл"), "staged file preserved after edit loops");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("relay chain"), "edit item preserved through relay flow");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "staged file preserved after edit loops");
 
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
@@ -112,7 +115,7 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.locator(".tt-wizard-contact").filter({ hasText: "Ольга Магазин" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
-  ok((await page.locator(".tt-wizard-summary").textContent()).includes("Ольга Магазин"), "second order direct handoff name");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("Ольга Магазин"), "second order direct final on route card");
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("direct order"), "direct order created without relay");

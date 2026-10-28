@@ -43,7 +43,7 @@ var TT_WIZ_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
 
-  await page.getByRole("button", { name: "Изменить", exact: true }).first().click();
+  await page.locator('[data-tt="create-edit-item"]').click();
   await waitWizardTitle("item", "Что передаём");
   await page.locator('[data-tt-field="item"]').fill("Wizard QA item edited");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
@@ -52,7 +52,7 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
-  ok((await page.locator(".tt-wizard-summary").textContent()).includes("edited"), "edit from summary returns to step");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("edited"), "edit from summary returns to step");
 
   await page.locator('[data-tt="create-edit-comment"]').click();
   await waitWizardTitle("edit-comment", "Комментарий");
@@ -86,7 +86,7 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
-  ok((await page.locator(".tt-wizard-summary").textContent()).includes("1 файл"), "back/forward retains staged files");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "back/forward retains staged files");
 
   for (let i = 0; i < 4; i++) {
     const back = page.getByRole("button", { name: "Назад", exact: true });

@@ -203,6 +203,53 @@
 @media (min-width:480px) {
   .tt-wizard-summary-edit .tt-wizard-summary-btn-long { max-width:220px; font-size:13px !important; }
 }
+.tt-wizard--review .tt-wizard-hint { margin-bottom:14px; font-size:14px; }
+.tt-wizard-review { display:flex; flex-direction:column; gap:18px; min-width:0; }
+.tt-wizard-review-hero-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; }
+.tt-wizard-review-kicker { font-size:13px; font-weight:650; color:var(--tt-muted); }
+.tt-wizard-review-item-title { font-size:22px; line-height:1.25; font-weight:800; margin:8px 0 0; word-break:break-word; color:var(--tt-ink); }
+.tt-wizard-review-block-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:6px 10px; margin-bottom:6px; min-width:0; }
+.tt-wizard-review-route-card {
+  border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:var(--tt-panel);
+  display:flex; flex-direction:column; gap:0; box-shadow:0 1px 0 rgba(0,0,0,.04);
+}
+[data-theme=dark] .tt-wizard-review-route-card { box-shadow:none; background:var(--surface,var(--tt-panel)); }
+.tt-wizard-review-route-block { padding:2px 0; min-width:0; }
+.tt-wizard-review-handoff { margin-top:12px; padding-top:14px; border-top:1px solid var(--line); }
+.tt-wizard-review-person-label { font-size:12px; font-weight:650; letter-spacing:.04em; text-transform:uppercase; color:var(--tt-muted); }
+.tt-wizard-review-person { display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0; max-width:100%; }
+.tt-wizard-review-person-name { font-size:20px; line-height:1.3; font-weight:750; word-break:break-word; max-width:100%; }
+.tt-wizard-review-handoff .tt-wizard-review-person-name { font-size:18px; font-weight:700; }
+.tt-wizard-review-person-phone { font-size:14px; line-height:1.35; color:var(--tt-muted); font-weight:500; word-break:break-word; max-width:100%; }
+.tt-wizard-review-handoff-mode { margin:0; font-size:16px; line-height:1.35; font-weight:650; color:var(--tt-ink); }
+.tt-wizard-review-handoff-hint { margin:8px 0 0; font-size:13px; line-height:1.45; color:var(--tt-muted); word-break:break-word; }
+.tt-wizard-review-link {
+  flex-shrink:0; border:none; background:transparent; color:var(--green,#507f22); cursor:pointer;
+  font-size:14px; font-weight:600; line-height:1.3; padding:10px 6px; margin:-10px -6px; min-height:44px; min-width:44px;
+  text-decoration:underline; text-underline-offset:3px; text-align:right; max-width:100%; word-break:break-word; white-space:normal;
+}
+.tt-wizard-review-link-long { flex:1 1 9rem; max-width:100%; text-align:left; justify-self:flex-end; }
+.tt-wizard-review-link:hover { color:var(--tt-ink); }
+.tt-wizard-review-link:focus-visible { outline:3px solid var(--green,#507f22); outline-offset:2px; border-radius:4px; }
+.tt-wizard-review-link[disabled] { opacity:.45; cursor:not-allowed; pointer-events:none; }
+.tt-wizard-review-due { min-width:0; }
+.tt-wizard-review-due--set .tt-wizard-review-due-value { margin:0; font-size:18px; line-height:1.35; font-weight:700; color:var(--tt-ink); word-break:break-word; }
+.tt-wizard-review-due--empty .tt-wizard-review-due-value { margin:0; font-size:15px; line-height:1.4; font-weight:500; color:var(--tt-muted); }
+.tt-wizard-review-details { display:flex; flex-direction:column; gap:12px; padding-top:4px; border-top:1px solid var(--line); min-width:0; }
+.tt-wizard-review-detail-row { min-width:0; }
+.tt-wizard-review-detail-label { font-size:13px; font-weight:600; color:var(--tt-muted); }
+.tt-wizard-review-detail-value { margin:4px 0 0; font-size:15px; line-height:1.4; color:var(--tt-ink); opacity:.88; word-break:break-word; }
+.tt-wizard--review .tt-wizard-btn-quiet {
+  background:transparent !important; border:none !important; box-shadow:none !important; color:var(--tt-muted) !important;
+  font-weight:600 !important; font-size:15px !important; min-height:44px !important;
+}
+.tt-wizard--review .tt-wizard-btn-quiet:focus-visible { outline:3px solid var(--green,#507f22); outline-offset:2px; }
+@media (min-width:480px) {
+  .tt-wizard-review-item-title { font-size:26px; }
+}
+@media (max-width:767px) {
+  .tt-active:has(.tt-wizard--review) .tt-wizard-body { padding-bottom:calc(136px + env(safe-area-inset-bottom,0px)); }
+}
 .tt-att-picker-btn { margin-bottom:10px; }
 .tt-att-input-sr {
   position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;

@@ -52,26 +52,27 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
     ok((await last.getAttribute("aria-pressed")) === "true", "375px last contact row clickable after scroll");
   };
 
-  const assertReviewGrid = async () => {
-    const rows = await page.evaluate(() =>
-      [...document.querySelectorAll(".tt-wizard-summary-row")].map((row) => {
-        const val = row.querySelector(".tt-wizard-summary-value");
-        const edit = row.querySelector(".tt-wizard-summary-edit");
-        if (!val || !edit) return { ok: false };
-        const vr = val.getBoundingClientRect();
-        const er = edit.getBoundingClientRect();
-        return {
-          editRightOfValue: er.left >= vr.right - 8 || er.left > vr.left + vr.width * 0.35,
-          sameRow: Math.abs(vr.top - er.top) < 40,
-          editMinH: er.height >= 44,
-        };
-      })
-    );
-    ok(rows.length >= 5, "review summary rows present");
-    ok(rows.every((r) => r.editRightOfValue && r.sameRow), "review edit buttons align right on value row");
-    ok(rows.every((r) => r.editMinH), "review edit buttons min 44px tall");
-    const order = await page.locator(".tt-wizard-summary dt").allTextContents();
-    ok(order.indexOf("Кому доставить") < order.indexOf("Фото и файлы"), "delivery route before optional files on review");
+  const assertReviewHierarchy = async () => {
+    const report = await page.evaluate(() => {
+      const review = document.querySelector('[data-tt="wizard-review"]');
+      const item = document.querySelector(".tt-wizard-review-item-title");
+      const route = document.querySelector(".tt-wizard-review-route-card");
+      const details = document.querySelector(".tt-wizard-review-details");
+      const links = [...document.querySelectorAll(".tt-wizard-review-link")];
+      if (!review || !item || !route || !details || !links.length) return { ok: false };
+      const itemTop = item.getBoundingClientRect().top;
+      const detailsTop = details.getBoundingClientRect().top;
+      const linkHeights = links.map((l) => l.getBoundingClientRect().height);
+      const textLinks = links.every((l) => l.classList.contains("tt-wizard-review-link") && !l.classList.contains("tt-wizard-btn"));
+      return {
+        ok: itemTop < detailsTop && route.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING,
+        linkHeightsOk: linkHeights.every((h) => h >= 44),
+        textLinks,
+      };
+    });
+    ok(report.ok, "review item and route precede calmer details block");
+    ok(report.linkHeightsOk, "review text-link edits min 44px tall");
+    ok(report.textLinks, "review edits use text-link styling");
   };
 
   await page.goto(`${base}/#tan-tracker?role=manager`);
@@ -98,7 +99,7 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
   await page.locator(".tt-wizard-contact").first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
-  await assertReviewGrid();
+  await assertReviewHierarchy();
 
   return { passed: checks.length, checks };
 })();

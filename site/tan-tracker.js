@@ -630,6 +630,10 @@
     document.body.classList.toggle("tt-external-shell", ext);
     document.body.classList.toggle("tt-create-wizard", !state.recipientMode && !ext && state.view === "create");
     document.body.classList.toggle(
+      "tt-create-review",
+      !state.recipientMode && !ext && state.view === "create" && state.createPhase === "review"
+    );
+    document.body.classList.toggle(
       "tt-detail-focus",
       !state.recipientMode && !ext && state.view === "detail" && !!state.orderId
     );
@@ -824,7 +828,8 @@
 
   function wizardShell(phase, title, hint, body, actionsHtml) {
     const n = createStepNumber(phase);
-    return `<div class="tt-wizard" data-tt="create-wizard" data-create-phase="${E(phase)}">
+    const phaseClass = phase === "review" ? " tt-wizard--review" : "";
+    return `<div class="tt-wizard${phaseClass}" data-tt="create-wizard" data-create-phase="${E(phase)}">
       <p class="tt-wizard-progress">Шаг ${n} из 4</p>
       <h2 class="tt-wizard-title">${E(title)}</h2>
       <p class="tt-wizard-hint">${E(hint)}</p>
@@ -843,6 +848,29 @@
     const base = primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary";
     const cls = extraClass ? `${base} ${extraClass}` : base;
     return btn(label, `data-tt="${action}"${extra}`, cls);
+  }
+
+  function wizardReviewLink(label, action, ariaLabel = "", long = false) {
+    const freeze =
+      state.attachBusy &&
+      (action === "create-wizard-next" || action === "create-wizard-submit" || action === "create-skip-files");
+    const dis = freeze ? " disabled aria-disabled=\"true\"" : "";
+    const aria = ariaLabel ? ` aria-label="${E(ariaLabel)}"` : "";
+    const longCls = long ? " tt-wizard-review-link-long" : "";
+    return `<button type="button" class="tt-wizard-review-link${longCls}" data-tt="${action}"${aria}${dis}>${E(label)}</button>`;
+  }
+
+  function reviewPersonHtml(c, summaryFallback) {
+    if (c) {
+      return `<strong class="tt-wizard-review-person-name">${E(c.name)}</strong><span class="tt-wizard-review-person-phone">${E(fmtPhone(c.phone))}</span>`;
+    }
+    const s = summaryFallback || "—";
+    const sep = " · ";
+    if (s.includes(sep)) {
+      const idx = s.lastIndexOf(sep);
+      return `<strong class="tt-wizard-review-person-name">${E(s.slice(0, idx))}</strong><span class="tt-wizard-review-person-phone">${E(s.slice(idx + sep.length))}</span>`;
+    }
+    return `<strong class="tt-wizard-review-person-name">${E(s)}</strong>`;
   }
 
   function recipientSummary(f) {
@@ -1662,28 +1690,74 @@
     const relay = f.relayId ? contactById(f.relayId) : null;
     const finId = f.finalRecipientId || f.recipientId;
     const finContact = finId ? contactById(finId) : null;
-    const finLine = finContact ? `${finContact.name} · ${fmtPhone(finContact.phone)}` : recipientSummary(f);
-    const handoffValue = relay ? `${relay.name} · ${fmtPhone(relay.phone)}` : finLine;
+    const finSummary = recipientSummary(f);
     const handoffHint = relay
       ? finContact
         ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
         : "Должен передать предмет конечному получателю."
       : "Отдайте предмет этому получателю напрямую, без посредника.";
     const relayEditLabel = relay ? "Изменить" : "Передать через другого человека";
-    const relayBtnClass = relay ? "" : "tt-wizard-summary-btn-long";
+    const relayEditAria = relay
+      ? "Изменить промежуточного получателя"
+      : "Передать через другого человека";
+    const handoffBody = relay
+      ? `${reviewPersonHtml(relay)}<p class="tt-wizard-review-handoff-hint">${E(handoffHint)}</p>`
+      : `<p class="tt-wizard-review-handoff-mode">Напрямую, без посредника</p><p class="tt-wizard-review-handoff-hint">${E(handoffHint)}</p>`;
+    const dueValue = f.due ? f.due.replace("T", " · ") : "";
+    const reviewBody = `<div class="tt-wizard-review" data-tt="wizard-review">
+      <header class="tt-wizard-review-hero">
+        <div class="tt-wizard-review-hero-head">
+          <span class="tt-wizard-review-kicker">Предмет</span>
+          ${wizardReviewLink("Изменить", "create-edit-item", "Изменить предмет")}
+        </div>
+        <h3 class="tt-wizard-review-item-title">${E(f.item)}</h3>
+      </header>
+      <section class="tt-wizard-review-route-card" aria-label="Маршрут передачи">
+        <div class="tt-wizard-review-route-block">
+          <div class="tt-wizard-review-block-head">
+            <span class="tt-wizard-review-person-label">Кому доставить</span>
+            ${wizardReviewLink("Изменить", "create-edit-recipient", "Изменить конечного получателя")}
+          </div>
+          <div class="tt-wizard-review-person">${reviewPersonHtml(finContact, finSummary)}</div>
+        </div>
+        <div class="tt-wizard-review-route-block tt-wizard-review-handoff" data-tt="review-handoff">
+          <div class="tt-wizard-review-block-head">
+            <span class="tt-wizard-review-person-label">Кому отдать сейчас</span>
+            ${wizardReviewLink(relayEditLabel, "create-edit-relay", relayEditAria, !relay)}
+          </div>
+          ${handoffBody}
+        </div>
+      </section>
+      <section class="tt-wizard-review-due${f.due ? " tt-wizard-review-due--set" : " tt-wizard-review-due--empty"}">
+        <div class="tt-wizard-review-block-head">
+          <span class="tt-wizard-review-person-label">Срок доставки</span>
+          ${wizardReviewLink(f.due ? "Изменить" : "Добавить", "create-edit-due", f.due ? "Изменить срок доставки" : "Добавить срок доставки")}
+        </div>
+        <p class="tt-wizard-review-due-value">${f.due ? E(dueValue) : "Срок не указан"}</p>
+      </section>
+      <section class="tt-wizard-review-details" aria-label="Дополнительно">
+        <div class="tt-wizard-review-detail-row">
+          <div class="tt-wizard-review-block-head">
+            <span class="tt-wizard-review-detail-label">Фото и файлы</span>
+            ${wizardReviewLink("Изменить", "create-edit-files", "Изменить вложения")}
+          </div>
+          <p class="tt-wizard-review-detail-value">${E(attLabel)}</p>
+        </div>
+        <div class="tt-wizard-review-detail-row">
+          <div class="tt-wizard-review-block-head">
+            <span class="tt-wizard-review-detail-label">Комментарий</span>
+            ${wizardReviewLink(f.comment ? "Изменить" : "Добавить", "create-edit-comment", f.comment ? "Изменить комментарий" : "Добавить комментарий")}
+          </div>
+          <p class="tt-wizard-review-detail-value">${f.comment ? E(f.comment) : "Не указан"}</p>
+        </div>
+      </section>
+    </div>`;
     return wizardShell(
       "review",
       "Проверить и создать",
       "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
-      `<dl class="tt-wizard-summary">
-        <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd class="tt-wizard-summary-value">${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Кому доставить</dt><dd class="tt-wizard-summary-value">${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
-        <div class="tt-wizard-summary-row tt-wizard-summary-row--handoff"><dt>Кому отдать сейчас</dt><dd class="tt-wizard-summary-value">${E(handoffValue)}</dd><dd class="tt-wizard-summary-hint">${E(handoffHint)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relayEditLabel, "create-edit-relay", false, relayBtnClass)}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Срок доставки</dt><dd class="tt-wizard-summary-value">${f.due ? E(f.due.replace("T", " · ")) : "Срок не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd class="tt-wizard-summary-value">${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd class="tt-wizard-summary-value">${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>
-      </dl>`,
-      `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      reviewBody,
+      `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back", false, "tt-wizard-btn-quiet")}`
     );
   }
 
@@ -2021,6 +2095,7 @@
 
     const ext = isExternalShell();
     const inCreateWizard = state.view === "create" && !ext;
+    const inCreateReview = inCreateWizard && state.createPhase === "review";
     const inDetailFocus = !state.recipientMode && !ext && state.view === "detail" && !!state.orderId;
     const chrome = inCreateWizard
       ? ""
@@ -2033,10 +2108,10 @@
             })
             .join("")}</select></label>`;
 
-    const demoOpen = inCreateWizard ? " open" : "";
+    const demoOpen = inCreateWizard && !inCreateReview ? " open" : "";
     const demoShell = ext
       ? `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span><div data-tt="chrome">${chrome}</div>`
-      : inDetailFocus
+      : inDetailFocus || inCreateReview
         ? `<details class="tt-disclosure tt-demo-settings tt-demo-settings-compact" data-tt="demo-settings">
         <summary><span class="tt-demo-pill">Демо</span> · настройки</summary>
         <div class="tt-disclosure-body">
