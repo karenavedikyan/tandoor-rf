@@ -345,6 +345,10 @@
 
   seedContacts();
   seedOrders();
+  if (window.TanTrackerAttachments) TanTrackerAttachments.seedDemoAttachments(orders, contactById);
+  else orders.forEach((o) => {
+    if (!o.attachments) o.attachments = [];
+  });
 
   const TT_BODY = ["tt-active", "tt-recipient-shell", "tt-external-shell"];
   let ttShellMounted = false;
@@ -370,7 +374,25 @@
     contactSearch: "",
     newRecipient: false,
     completeConfirmOrderId: null,
+    createPhase: "item",
+    attachStaging: [],
+    attachOrderStaging: [],
+    attachError: "",
+    attachBusy: false,
+    lightboxReturn: null,
   };
+
+  const Att = () => window.TanTrackerAttachments;
+
+  function clearAttachStaging() {
+    if (!Att()) return;
+    Att().revokeStaging(state.attachStaging);
+    Att().revokeStaging(state.attachOrderStaging);
+    state.attachStaging = [];
+    state.attachOrderStaging = [];
+    state.attachError = "";
+    state.attachBusy = false;
+  }
 
   function clearCompleteConfirm() {
     state.completeConfirmOrderId = null;
@@ -455,7 +477,10 @@
     state.orderId = null;
     state.view = "list";
     clearCompleteConfirm();
+    clearAttachStaging();
+    closeAttachLightbox();
     resetPhoneIdentity();
+    state.createPhase = "item";
     ttShellMounted = false;
     TT_BODY.forEach((c) => document.body.classList.remove(c));
     document.dispatchEvent(new Event("assistant:paint"));
@@ -595,6 +620,210 @@
         requestAnimationFrame(() => nudge(el, 0));
       });
     });
+  }
+
+  function attachmentsSection(o, opts = {}) {
+    if (!Att()) return "";
+    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const items = opts.items || Att().listForOrder(o);
+    const stagedIds = new Set((state.attachOrderStaging || []).map((s) => s.id));
+    return Att().blockHtml({
+      items,
+      stagedIds,
+      readonly: !!opts.readonly,
+      showPicker: !!opts.showPicker,
+      inputKey: opts.inputKey || "detail",
+      orderId: o?.id || "",
+      error: opts.attachError || state.attachError,
+      hint: opts.hint,
+    });
+  }
+
+  function createAttachmentsSection() {
+    if (!Att()) return "";
+    const staged = [...state.attachStaging];
+    return Att().blockHtml({
+      items: staged,
+      stagedIds: new Set(staged.map((s) => s.id)),
+      showPicker: !state.attachBusy,
+      inputKey: "create",
+      omitTitle: true,
+      error: state.attachError,
+      hint: "Можно пропустить этот шаг, если фото не нужны.",
+    });
+  }
+
+  function createStepNumber(phase) {
+    if (phase === "item") return 1;
+    if (phase === "files") return 2;
+    if (phase.startsWith("recipient")) return 3;
+    return 4;
+  }
+
+  function defaultCreateForm() {
+    return { item: "", recipientId: "", comment: "", due: "", pickQ: "", newName: "", newPhone: "", mode: "list" };
+  }
+
+  function wizardShell(phase, title, hint, body, actionsHtml) {
+    const n = createStepNumber(phase);
+    return `<div class="tt-wizard" data-tt="create-wizard" data-create-phase="${E(phase)}">
+      <p class="tt-wizard-progress">Шаг ${n} из 4</p>
+      <h2 class="tt-wizard-title">${E(title)}</h2>
+      <p class="tt-wizard-hint">${E(hint)}</p>
+      <div class="tt-wizard-body">${body}</div>
+      ${state.error ? `<p class="tt-error" data-tt="form-error">${E(state.error)}</p>` : ""}
+      <div class="tt-wizard-actions">${actionsHtml}</div>
+    </div>`;
+  }
+
+  function wizardBtn(label, action, primary = false) {
+    return btn(label, `data-tt="${action}"`, primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary");
+  }
+
+  function recipientSummary(f) {
+    if (f.recipientId) {
+      const c = contactById(f.recipientId);
+      return c ? `${c.name} · ${fmtPhone(c.phone)}` : "—";
+    }
+    if (f.mode === "new" && f.newName && f.newPhone) {
+      const p = normPhone(f.newPhone);
+      return p ? `${f.newName} · ${fmtPhone(p)}` : f.newName;
+    }
+    return "Не выбран";
+  }
+
+  function wizardValidate(phase) {
+    const f = state.form || defaultCreateForm();
+    if (phase === "item") {
+      if (!f.item.trim()) return "Напишите, что передаёте. Это обязательное поле.";
+    }
+    if (phase === "recipient") {
+      if (!f.recipientId) return "Выберите получателя из списка или добавьте нового.";
+    }
+    if (phase === "recipient-new-name") {
+      if (!f.newName.trim()) return "Введите имя получателя.";
+    }
+    if (phase === "recipient-new-phone") {
+      if (!normPhone(f.newPhone)) return "Введите телефон: 10 цифр после +7 (демо).";
+    }
+    return "";
+  }
+
+  function syncWizardFieldsFromDom() {
+    if (state.view !== "create") return;
+    if (!state.form) state.form = defaultCreateForm();
+    document.querySelectorAll('[data-tt="create-wizard"] [data-tt-field]').forEach((el) => {
+      state.form[el.getAttribute("data-tt-field")] = el.value;
+    });
+  }
+
+  function wizardAdvance() {
+    syncWizardFieldsFromDom();
+    state.error = wizardValidate(state.createPhase);
+    if (state.error) return false;
+    const p = state.createPhase;
+    if (p === "item") state.createPhase = "files";
+    else if (p === "files") state.createPhase = "recipient";
+    else if (p === "recipient") state.createPhase = "review";
+    else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
+    else if (p === "recipient-new-phone") {
+      const r = addExternalContact(state.form.newName, state.form.newPhone);
+      if (r.error) {
+        state.error = r.error;
+        if (r.existing) state.form.recipientId = r.existing.id;
+        return false;
+      }
+      state.form.recipientId = r.contact.id;
+      state.form.mode = "list";
+      r.contact.addedBy = employeeContact(state.employeeId)?.id;
+      state.createPhase = "review";
+    } else if (p === "edit-comment" || p === "edit-due") state.createPhase = "review";
+    return true;
+  }
+
+  function wizardBack() {
+    state.error = "";
+    const p = state.createPhase;
+    if (p === "item") return "cancel";
+    if (p === "files") state.createPhase = "item";
+    else if (p === "recipient") state.createPhase = "files";
+    else if (p === "recipient-new-name") state.createPhase = "recipient";
+    else if (p === "recipient-new-phone") state.createPhase = "recipient-new-name";
+    else if (p === "review") state.createPhase = "recipient";
+    else if (p === "edit-comment" || p === "edit-due") state.createPhase = "review";
+    return "ok";
+  }
+
+  function closeAttachLightbox() {
+    const lb = document.querySelector('[data-tt="attach-lightbox"]');
+    if (!lb) return;
+    lb.hidden = true;
+    const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
+    if (img) img.removeAttribute("src");
+    if (state.lightboxReturn?.focus) {
+      try {
+        state.lightboxReturn.focus();
+      } catch (_) {}
+    }
+    state.lightboxReturn = null;
+  }
+
+  function openAttachLightbox(a, trigger) {
+    if (!Att()?.canPreview(a.mime)) return;
+    let lb = document.querySelector('[data-tt="attach-lightbox"]');
+    if (!lb && Att()) {
+      document.querySelector("#tt-root")?.insertAdjacentHTML("beforeend", Att().lightboxHtml());
+      lb = document.querySelector('[data-tt="attach-lightbox"]');
+    }
+    if (!lb) return;
+    state.lightboxReturn = trigger || document.activeElement;
+    const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
+    const cap = lb.querySelector('[data-tt="attach-lightbox-cap"]');
+    if (img) {
+      img.src = a.url;
+      img.alt = a.name;
+    }
+    if (cap) cap.textContent = `${a.name} · ${Att().fmtBytes(a.size)}`;
+    lb.hidden = false;
+    lb.querySelector('[data-tt="attach-lightbox-close"]')?.focus();
+  }
+
+  function resolveAttachment(orderId, attId) {
+    const o = orders.find((x) => x.id === orderId);
+    if (!o) return null;
+    return Att()?.findAttachment(o, attId);
+  }
+
+  async function ingestFiles(fileList, target) {
+    if (!Att() || state.attachBusy) return;
+    const files = [...fileList];
+    if (!files.length) return;
+    state.attachBusy = true;
+    state.attachError = "";
+    const order = target === "create" ? null : orders.find((x) => x.id === state.orderId);
+    const existing = target === "create" ? [] : Att().listForOrder(order);
+    const staging = target === "create" ? state.attachStaging : state.attachOrderStaging;
+    const addedBy = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const errors = [];
+    const accepted = [];
+    for (const file of files) {
+      const v = Att().validatePick(file, existing, [...staging, ...accepted]);
+      if (v.length) {
+        errors.push(...v);
+        continue;
+      }
+      const r = await Att().fileToStaging(file, target === "create" ? "staging:create" : `staging:${order?.id}`);
+      if (r.error) errors.push(r.error);
+      else accepted.push(r.item);
+    }
+    if (target === "create") state.attachStaging = [...staging, ...accepted];
+    else if (order && accepted.length) {
+      Att().mergeToOrder(order, accepted, addedBy);
+      state.toast = `Добавлено файлов: ${accepted.length}.`;
+    }
+    state.attachError = errors.length ? errors.slice(0, 3).join(" ") : "";
+    state.attachBusy = false;
+    renderTracker();
   }
 
   function now() {
@@ -885,6 +1114,8 @@
     else p.delete("tt_screen");
     if (state.orderId && !state.recipientMode) p.set("tt_id", state.orderId);
     else if (!state.recipientMode) p.delete("tt_id");
+    if (state.view === "create" && state.createPhase) p.set("tt_cphase", state.createPhase);
+    else p.delete("tt_cphase");
     history.replaceState(null, "", `#${ROUTE}?${p}`);
   }
 
@@ -903,6 +1134,21 @@
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
+    if (state.view === "create") {
+      const ph = p.get("tt_cphase");
+      const allowed = new Set([
+        "item",
+        "files",
+        "recipient",
+        "recipient-new-name",
+        "recipient-new-phone",
+        "review",
+        "edit-comment",
+        "edit-due",
+      ]);
+      state.createPhase = ph && allowed.has(ph) ? ph : state.createPhase || "item";
+      if (!state.form) state.form = defaultCreateForm();
+    }
   }
 
   function btn(label, attrs = "", cls = "tt-link") {
@@ -935,33 +1181,103 @@
   }
 
   function createView() {
-    const f = state.form || { item: "", recipientId: "", due: "", comment: "", newName: "", newPhone: "", mode: "list" };
+    const f = state.form || defaultCreateForm();
     state.form = f;
+    const phase = state.createPhase || "item";
+    const holder = employeeContact(state.employeeId);
     const pick = contacts.filter((c) => {
-      const q = f.pickQ || "";
+      if (c.id === holder?.id) return false;
+      const q = (f.pickQ || "").toLowerCase();
       if (!q) return true;
-      return (c.name + c.phone).toLowerCase().includes(q.toLowerCase());
+      return (c.name + c.phone + fmtPhone(c.phone)).toLowerCase().includes(q);
     });
-    return `<div class="tt-panel"><h2>Создать передачу</h2>
-    <form class="tt-form" data-tt="create-form">
-      <label>Что передаём (обязательно)<input data-tt-field="item" value="${E(f.item)}" placeholder="Договор, образцы, ключи…"></label>
-      <label>Комментарий<textarea data-tt-field="comment" placeholder="Необязательно">${E(f.comment)}</textarea></label>
-      <label>Срок (необязательно)<input type="datetime-local" data-tt-field="due" value="${E(f.due)}"></label>
-      <fieldset><legend>Получатель (обязательно)</legend>
-        <label>Поиск<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Имя или телефон"></label>
-        <div class="tt-contact-pick" data-tt="contact-pick">${pick
-          .slice(0, 12)
+
+    if (phase === "item") {
+      return wizardShell(
+        phase,
+        "Что передаём",
+        "Опишите одним предложением, что вы передаёте другому человеку.",
+        `<label class="tt-wizard-field">Предмет или документ<input data-tt-field="item" value="${E(f.item)}" placeholder="Например: договор, ключи, образцы ткани" autocomplete="off"></label>`,
+        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Отмена", "back-list")}`
+      );
+    }
+    if (phase === "files") {
+      return wizardShell(
+        phase,
+        "Фото и файлы",
+        "Покажите, как выглядит передача. Можно пропустить, если уже всё понятно.",
+        createAttachmentsSection(),
+        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Пропустить", "create-skip-files")}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "recipient") {
+      return wizardShell(
+        phase,
+        "Кому передаём",
+        "Выберите человека из списка или добавьте нового получателя.",
+        `<label class="tt-wizard-field">Поиск по имени или телефону<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Начните вводить имя или цифры телефона"></label>
+        <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
+          .slice(0, 20)
           .map(
             (c) =>
-              `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
+              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
           )
           .join("")}</div>
-        ${btn("Новый получатель", 'data-tt="toggle-new"')}
-        ${f.mode === "new" ? `<label>Имя<input data-tt-field="newName" value="${E(f.newName)}"></label><label>Телефон (демо)<input data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>` : ""}
-      </fieldset>
-      ${state.error ? `<p class="tt-error" data-tt="form-error">${E(state.error)}</p>` : ""}
-      <div class="tt-actions">${btn("Сохранить передачу", 'data-tt="submit-create" type="submit"', "tt-primary")}${btn("Отмена", 'data-tt="back-list"')}</div>
-    </form></div>`;
+        ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
+        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "recipient-new-name") {
+      return wizardShell(
+        phase,
+        "Имя нового получателя",
+        "Шаг 3 из 4 · как зовут человека, которому передаёте.",
+        `<label class="tt-wizard-field">Имя и фамилия<input data-tt-field="newName" value="${E(f.newName)}" placeholder="Например: Сергей Приёмка"></label>`,
+        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "recipient-new-phone") {
+      return wizardShell(
+        phase,
+        "Телефон нового получателя",
+        "Шаг 3 из 4 · демо-номер для связи в прототипе (без реальной СМС).",
+        `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>`,
+        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "edit-comment") {
+      return wizardShell(
+        phase,
+        "Комментарий",
+        "Необязательно · пояснение для получателя.",
+        `<label class="tt-wizard-field">Комментарий<textarea data-tt-field="comment" rows="4" placeholder="Необязательно">${E(f.comment)}</textarea></label>`,
+        `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "edit-due") {
+      return wizardShell(
+        phase,
+        "Срок передачи",
+        "Необязательно · когда нужно успеть передать.",
+        `<label class="tt-wizard-field">Дата и время<input type="datetime-local" data-tt-field="due" value="${E(f.due)}"></label>`,
+        `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    const attCount = state.attachStaging.length;
+    const attLabel = attCount ? `${attCount} файл(ов)` : "Без файлов";
+    return wizardShell(
+      "review",
+      "Проверить и создать",
+      "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
+      `<dl class="tt-wizard-summary">
+        <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd>${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd>${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Получатель</dt><dd>${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd>${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Срок</dt><dd>${f.due ? E(f.due.replace("T", " · ")) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
+      </dl>`,
+      `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back")}`
+    );
   }
 
   function pendingHandoffPanel(o) {
@@ -997,6 +1313,17 @@
       <p><strong>Текущий держатель:</strong> ${E(h?.name)} ${h ? `<small>${E(fmtPhone(h.phone))}</small>` : ""}</p>
       <p><strong>Следующий:</strong> ${p ? E(p.name) : "не назначен"}</p>
       <p><strong>Срок:</strong> ${o.dueAt ? dt(o.dueAt) : "не указан"} · ${statusBadge(o)}</p>
+      ${attachmentsSection(o, {
+        readonly: !isHolder || o.status === "completed",
+        showPicker: isHolder && o.status !== "completed",
+        inputKey: "detail",
+        items: Att()
+          ? Att().listForOrder(o).map((a) => ({
+              ...a,
+              addedLabel: `${dt(a.addedAt)} · ${contactById(a.addedBy)?.name || "—"}`,
+            }))
+          : [],
+      })}
       ${isHolder && o.pendingId ? pendingHandoffPanel(o) : ""}
       <div class="tt-timeline" data-tt="timeline">${o.timeline
         .slice()
@@ -1085,6 +1412,7 @@
       <p>Телефон: ${E(maskPhone(to?.phone || ""))}</p>
       <p class="tt-warning">Демонстрация: подтверждение телефона. СМС не отправляется.</p>
       ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary") : `<p class="tt-success">Номер отмечен в демо (без реальной проверки).</p>`}
+      ${verified && !stale ? attachmentsSection(o, { readonly: true, items: Att() ? Att().listForOrder(o) : [] }) : stale ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>` : ""}
       ${!stale && qrMode && verified ? btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary") : ""}
       ${!stale && !qrMode && verified && !c ? btn("Получить код", 'data-tt="gen-code"', "tt-primary") : ""}
       ${!stale && !qrMode && verified && c && codeValid(o) ? `<div class="tt-code" data-tt="shown-code">${E(c.code)}</div><p>Код действует 5 мин · до ${dt(c.expiresAt)}</p><p class="tt-warning">Сообщайте код только после получения предмета.</p>` : ""}
@@ -1111,7 +1439,7 @@
     const main = document.querySelector(".main");
     if (!main) return;
 
-    const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}`;
+    const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}|${state.createPhase}`;
     if (viewKey !== lastViewKey && !opts.soft) {
       window.scrollTo(0, 0);
       lastViewKey = viewKey;
@@ -1121,7 +1449,7 @@
       ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
       main.innerHTML = o
-        ? `<div class="tt-work">${recipientScreen(o)}</div>`
+        ? `<div class="tt-work">${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
         : `<div class="tt-work tt-recipient"><p class="tt-error">Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа.</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
@@ -1153,7 +1481,7 @@
       </div>
       <p class="tt-demo">Демо-данные · изменения до обновления страницы</p>
       <div data-tt="chrome">${chrome}</div>
-      <div id="tt-content"></div></div>`;
+      <div id="tt-content"></div>${Att() ? Att().lightboxHtml() : ""}</div>`;
       ttShellMounted = true;
     } else {
       const cta = document.querySelector('[data-tt="head-cta"]');
@@ -1171,8 +1499,13 @@
   }
 
   function submitCreate() {
+    syncWizardFieldsFromDom();
     const f = state.form;
     state.error = "";
+    if (state.attachBusy) {
+      state.error = "Дождитесь обработки файлов.";
+      return;
+    }
     if (!f.item.trim()) {
       state.error = "Укажите, что передаёте.";
       return;
@@ -1214,11 +1547,17 @@
       handoffVer: 1,
       pastInvitations: [],
     };
+    if (Att() && state.attachStaging.length) {
+      Att().mergeToOrder(order, state.attachStaging, holder.id);
+    } else order.attachments = [];
     syncInvitation(order);
     orders.unshift(order);
     state.orderId = id;
     state.view = "detail";
     state.form = null;
+    state.createPhase = "item";
+    state.attachStaging = [];
+    state.attachError = "";
     state.toast = "Передача создана. Держатель — создатель; получатель ожидает код.";
     writeUrl();
   }
@@ -1246,10 +1585,93 @@
     const action = b.getAttribute("data-tt");
     if (action === "create") {
       state.view = "create";
-      state.form = { item: "", recipientId: "", comment: "", due: "", mode: "list" };
+      state.createPhase = "item";
+      state.form = defaultCreateForm();
       state.error = "";
       clearCompleteConfirm();
+      clearAttachStaging();
       writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-wizard-next") {
+      if (wizardAdvance()) {
+        writeUrl();
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "create-wizard-back") {
+      const r = wizardBack();
+      if (r === "cancel") {
+        state.view = "list";
+        state.orderId = null;
+        state.form = null;
+        state.createPhase = "item";
+        state.error = state.toast = "";
+        clearCompleteConfirm();
+        clearAttachStaging();
+      }
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-skip-files") {
+      if (state.createPhase === "files") {
+        state.error = "";
+        state.createPhase = "recipient";
+        writeUrl();
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "create-new-recipient") {
+      if (!state.form) state.form = defaultCreateForm();
+      state.form.mode = "new";
+      state.form.recipientId = "";
+      state.error = "";
+      state.createPhase = "recipient-new-name";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-item") {
+      state.createPhase = "item";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-files") {
+      state.createPhase = "files";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-recipient") {
+      state.createPhase = "recipient";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-comment") {
+      state.createPhase = "edit-comment";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-due") {
+      state.createPhase = "edit-due";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-wizard-submit") {
+      submitCreate();
       renderTracker();
       return;
     }
@@ -1257,8 +1679,10 @@
       state.view = "list";
       state.orderId = null;
       state.form = null;
+      state.createPhase = "item";
       state.error = state.toast = "";
       clearCompleteConfirm();
+      clearAttachStaging();
       writeUrl();
       renderTracker();
       return;
@@ -1457,6 +1881,27 @@
       renderTracker();
       return;
     }
+    if (action === "attach-remove") {
+      const sid = b.getAttribute("data-staging-id");
+      const i = state.attachStaging.findIndex((x) => x.id === sid);
+      if (i >= 0 && Att()) {
+        Att().untrackUrl(state.attachStaging[i].url);
+        state.attachStaging.splice(i, 1);
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "attach-preview") {
+      const attId = b.getAttribute("data-att-id");
+      const oid = b.getAttribute("data-order") || state.orderId;
+      const a = resolveAttachment(oid, attId) || state.attachStaging.find((x) => x.id === attId);
+      if (a) openAttachLightbox(a, b);
+      return;
+    }
+    if (action === "attach-lightbox-close") {
+      closeAttachLightbox();
+      return;
+    }
     if (action === "demo-verify-phone") {
       const order = o || orders.find((x) => x.id === state.orderId);
       if (!order) return;
@@ -1470,15 +1915,6 @@
       state.phoneVerifiedKey = recipientKey(keyOrder);
       renderTracker();
       return;
-    }
-  });
-
-  document.addEventListener("submit", (e) => {
-    if (current !== ROUTE) return;
-    if (e.target.matches('[data-tt="create-form"]')) {
-      e.preventDefault();
-      submitCreate();
-      renderTracker();
     }
   });
 
@@ -1510,6 +1946,26 @@
       clearCompleteConfirm();
       renderTracker();
     }
+    if (e.target.matches('[data-tt="attach-input"]')) {
+      const key = e.target.getAttribute("data-input-key") || "create";
+      const files = [...e.target.files];
+      e.target.value = "";
+      ingestFiles(files, key === "create" ? "create" : "detail");
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (current !== ROUTE) return;
+    if (e.key === "Escape") closeAttachLightbox();
+    if (e.key !== "Enter" || e.isComposing || state.view !== "create") return;
+    const field = e.target.closest?.("[data-tt-field]");
+    if (!field || !field.closest('[data-tt="create-wizard"]')) return;
+    if (field.matches("textarea")) return;
+    e.preventDefault();
+    syncWizardFieldsFromDom();
+    if (state.createPhase === "review") return;
+    if (wizardAdvance()) writeUrl();
+    renderTracker();
   });
 
   add("tan-tracker", "Тан-трекер", "Передача документов и предметов", "Менеджер", "tan-tracker", "", "");
