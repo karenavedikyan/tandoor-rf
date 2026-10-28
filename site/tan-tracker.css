@@ -369,8 +369,8 @@
 .tt-detail-panel .tt-disclosure > summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(44px, auto);
   column-gap: 8px;
-  row-gap: 4px;
   align-items: center;
   width: 100%;
   box-sizing: border-box;
@@ -380,17 +380,26 @@
   -webkit-tap-highlight-color: transparent;
   min-width: 0;
   line-height: 1.35;
+}
+.tt-detail-panel .tt-disclosure > summary .tt-disclosure-title {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  text-align: left;
+  min-width: 0;
   word-break: break-word;
 }
 .tt-detail-panel .tt-disclosure > summary::before {
   content: "Показать";
   grid-column: 2;
+  grid-row: 1;
   font-size: 12px;
   font-weight: 500;
   color: var(--tt-muted);
   white-space: nowrap;
   line-height: 1.2;
   pointer-events: none;
+  justify-self: end;
 }
 .tt-detail-panel .tt-disclosure[open] > summary::before {
   content: "Скрыть";
@@ -398,6 +407,7 @@
 .tt-detail-panel .tt-disclosure > summary::after {
   content: "";
   grid-column: 3;
+  grid-row: 1;
   width: 9px;
   height: 9px;
   border-right: 2px solid var(--tt-muted);
@@ -407,6 +417,7 @@
   opacity: 0.9;
   flex-shrink: 0;
   align-self: center;
+  justify-self: end;
 }
 .tt-detail-panel .tt-disclosure[open] > summary::after {
   transform: rotate(-135deg);
@@ -458,6 +469,13 @@
 .tt-detail-task-receiver { margin:0 0 8px; font-size:15px; line-height:1.4; }
 .tt-detail-task-receiver strong { font-size:17px; font-weight:700; }
 .tt-detail-task-instructions { margin:0 0 12px; font-size:14px; line-height:1.45; color:var(--tt-muted); }
+.tt-detail-task-card--former { border-style:solid; border-color:color-mix(in srgb, var(--green,#507f22) 35%, var(--line)); background:color-mix(in srgb, var(--tt-panel) 90%, var(--tt-good-bg,#eef5e8)); }
+.tt-detail-task-follow { margin:0 0 12px; font-size:15px; line-height:1.4; }
+.tt-detail-monitor { display:grid; gap:8px; margin:0; padding:10px 12px; border-radius:8px; background:var(--bg); border:1px solid var(--line); }
+.tt-detail-monitor-row { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:6px 12px; min-width:0; }
+.tt-detail-monitor-label { font-size:12px; font-weight:650; letter-spacing:.03em; text-transform:uppercase; color:var(--tt-muted); flex:0 0 auto; }
+.tt-detail-monitor-value { font-size:14px; line-height:1.35; color:var(--tt-ink); text-align:right; min-width:0; word-break:break-word; }
+.tt-detail-monitor-status .tt-badge { vertical-align:middle; }
 .tt-detail-alt-action {
   background:transparent !important; border:1px solid var(--line) !important; color:var(--tt-ink) !important;
   font-weight:600 !important; min-height:44px !important; box-shadow:none !important;

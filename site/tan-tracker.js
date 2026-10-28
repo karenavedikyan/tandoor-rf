@@ -1936,9 +1936,13 @@
     return `<div class="tt-route-grid">${routePersonCard(h, "Сейчас у · ответственный")}${dest}</div>`;
   }
 
+  function disclosureSummary(titleHtml) {
+    return `<summary><span class="tt-disclosure-title">${titleHtml}</span></summary>`;
+  }
+
   function detailRouteDisclosure(o) {
     return `<details class="tt-disclosure tt-detail-route-wrap" data-tt="detail-route-disclosure">
-      <summary>Маршрут и контакты</summary>
+      ${disclosureSummary("Маршрут и контакты")}
       <div class="tt-disclosure-body tt-detail-route">${detailRouteGrid(o)}</div>
     </details>`;
   }
@@ -1956,7 +1960,7 @@
     }
     const summary = o.comment ? "Комментарий и детали" : "Детали передачи";
     return `<details class="tt-disclosure tt-detail-notes" data-tt="detail-notes-disclosure">
-      <summary>${E(summary)}</summary>
+      ${disclosureSummary(E(summary))}
       <div class="tt-disclosure-body">${parts.join("")}</div>
     </details>`;
   }
@@ -1967,6 +1971,49 @@
       ? `Ждём подтверждения от ${p?.name || "получателя"} — вы ответственны.`
       : `Передайте ${contactById(o.finalRecipientId)?.name || "конечному получателю"}.`;
     return `<p class="tt-reminder tt-reminder-compact tt-holder-next" data-tt="relay-reminder">${E(text)}</p>`;
+  }
+
+  function lastConfirmedHandoffEntry(o) {
+    return (
+      o.timeline
+        .filter((t) => /Подтверждено (одноразовым кодом|по QR)/.test(t.note || ""))
+        .sort((a, b) => a.at - b.at)
+        .pop() || null
+    );
+  }
+
+  function isFormerHolderAfterHandoff(o, actor) {
+    if (!actor || o.status === "completed" || o.holderId === actor) return false;
+    const last = lastConfirmedHandoffEntry(o);
+    return !!(last && last.from === actor);
+  }
+
+  function deliveryTargetContact(o) {
+    if (o.finalRecipientId) return contactById(o.finalRecipientId);
+    return null;
+  }
+
+  function formerHolderTaskCard(o) {
+    const h = contactById(o.holderId);
+    const fin = deliveryTargetContact(o);
+    const last = lastConfirmedHandoffEntry(o);
+    const finLine = fin
+      ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Куда доставляют</span><span class="tt-detail-monitor-value">${E(fin.name)}</span></div>`
+      : "";
+    const lastLine = last
+      ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Последнее подтверждение</span><span class="tt-detail-monitor-value">${E(dt(last.at))}</span></div>`
+      : "";
+    return `<section class="tt-detail-task-card tt-detail-task-card--former" data-tt="detail-task-former">
+      <h3 class="tt-detail-task-heading">Вы передали предмет</h3>
+      <p class="tt-detail-task-instructions">Ваш этап завершён. От вас больше не требуется действий.</p>
+      <p class="tt-detail-task-follow">Далее за передачу отвечает <strong>${E(h?.name || "—")}</strong>.</p>
+      <div class="tt-detail-monitor" data-tt="detail-monitor">
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Где предмет сейчас</span><span class="tt-detail-monitor-value">у <strong>${E(h?.name || "—")}</strong></span></div>
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Статус</span><span class="tt-detail-monitor-value tt-detail-monitor-status">${statusBadge(o)}</span></div>
+        ${finLine}
+        ${lastLine}
+      </div>
+    </section>`;
   }
 
   function pendingHandoffPanel(o, p) {
@@ -2023,6 +2070,7 @@
       </section>`;
     }
     if (!isHolder) {
+      if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
       const wait = p
         ? `Ожидается подтверждение от ${p.name}.`
         : fin && o.holderId !== o.finalRecipientId
@@ -2087,7 +2135,7 @@
     const otherActions =
       isHolder && o.status !== "completed" && o.pendingId
         ? `<details class="tt-disclosure" data-tt="other-actions">
-        <summary>Другие действия</summary>
+        ${disclosureSummary("Другие действия")}
         <div class="tt-disclosure-body tt-actions">${btn("Изменить получателя", 'data-tt="change-pending"')}${btn("Отменить ожидание", 'data-tt="cancel-pending"')}</div>
       </details>`
         : "";
@@ -2099,7 +2147,7 @@
     if (isHolder && o.pendingId) demoBtns.push(btn("Открыть экран получателя (демо)", 'data-tt="open-recipient"'));
     const demoSection = demoBtns.length
       ? `<details class="tt-disclosure tt-detail-demo" data-tt="detail-demo">
-        <summary>Демо-сценарии</summary>
+        ${disclosureSummary("Демо-сценарии")}
         <div class="tt-disclosure-body tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">${demoBtns.join("")}</div>
       </details>`
       : "";
@@ -2116,7 +2164,7 @@
       ${detailRouteDisclosure(o)}
       ${otherActions}
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
-        <summary>Фото и файлы${attCount ? ` · ${attCount}` : ""}</summary>
+        ${disclosureSummary(`Фото и файлы${attCount ? ` · ${attCount}` : ""}`)}
         <div class="tt-disclosure-body">${attachmentsSection(o, {
           readonly: !isHolder || o.status === "completed",
           showPicker: isHolder && o.status !== "completed",
@@ -2127,7 +2175,7 @@
         })}</div>
       </details>
       <details class="tt-disclosure tt-history" data-tt="history-disclosure">
-        <summary>История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}</summary>
+        ${disclosureSummary(`История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}`)}
         <div class="tt-timeline" data-tt="timeline">${tl
           .map((t) => {
             const fr = contactById(t.from);

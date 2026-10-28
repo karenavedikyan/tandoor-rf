@@ -47,6 +47,47 @@ var TT_DETAIL_DISCLOSURE_CHEVRON_QA = await (async () => {
   ok(chevronStyle.transform && chevronStyle.transform !== "none", "chevron pseudo has rotation transform");
   ok(chevronStyle.gridCols.split(" ").filter(Boolean).length >= 3, "summary uses title + label + chevron grid columns");
 
+  const summaryGeometry = async (sel) =>
+    page.evaluate((selector) => {
+      const summary = document.querySelector(selector + " summary");
+      const title = summary?.querySelector(".tt-disclosure-title");
+      if (!summary || !title) return { ok: false };
+      const padL = parseFloat(getComputedStyle(summary).paddingLeft) || 0;
+      const sr = summary.getBoundingClientRect();
+      const tr = title.getBoundingClientRect();
+      const before = document.createRange();
+      const tw = title.firstChild;
+      if (!tw) return { ok: false };
+      before.setStart(tw, 0);
+      before.setEnd(tw, Math.min(1, tw.textContent?.length || 0));
+      const textStart = before.getBoundingClientRect().left;
+      const sumH = sr.height;
+      const rows = Math.round(sumH / Math.max(tr.height, 1));
+      const labelStyle = getComputedStyle(summary, "::before");
+      const afterStyle = getComputedStyle(summary, "::after");
+      const labelBox = { right: sr.right - 20 };
+      const chevRight = sr.right - parseFloat(summary.style.paddingRight || "0");
+      const midY = sr.top + sr.height / 2;
+      const titleMidY = tr.top + tr.height / 2;
+      return {
+        ok:
+          textStart <= sr.left + padL + 6 &&
+          tr.left <= sr.left + padL + 8 &&
+          tr.right <= sr.right - 56 &&
+          Math.abs(midY - titleMidY) <= sr.height * 0.35,
+        textStart,
+        titleLeft: tr.left,
+        summaryLeft: sr.left,
+        padL,
+        sumH,
+        titleH: tr.height,
+        label: labelStyle.content,
+      };
+    }, sel);
+
+  const routeGeoClosed = await summaryGeometry('[data-tt="detail-route-disclosure"]');
+  ok(routeGeoClosed.ok, "route title text starts at left padding on desktop");
+
   const route = page.locator('[data-tt="detail-route-disclosure"]');
   await route.locator("summary").click();
   ok(await route.evaluate((el) => el.open), "click summary opens route disclosure");
@@ -79,21 +120,52 @@ var TT_DETAIL_DISCLOSURE_CHEVRON_QA = await (async () => {
   const historyLayout = await page.evaluate(() => {
     const det = document.querySelector('[data-tt="history-disclosure"]');
     const summary = det?.querySelector("summary");
-    if (!summary) return { ok: false };
+    const title = summary?.querySelector(".tt-disclosure-title");
+    if (!summary || !title) return { ok: false };
     const vw = document.documentElement.clientWidth;
     const sr = summary.getBoundingClientRect();
-    const after = summary;
+    const tr = title.getBoundingClientRect();
+    const padL = parseFloat(getComputedStyle(summary).paddingLeft) || 0;
+    const range = document.createRange();
+    const tw = title.firstChild;
+    if (!tw) return { ok: false };
+    range.setStart(tw, 0);
+    range.setEnd(tw, 1);
+    const textStart = range.getBoundingClientRect().left;
     const labelStyle = getComputedStyle(summary, "::before");
-    const chev = summary.getBoundingClientRect();
+    const pseudoAfter = getComputedStyle(summary, "::after");
+    const chevCenterY = sr.top + sr.height / 2;
+    const titleCenterY = tr.top + tr.height / 2;
     return {
-      ok: sr.right <= vw + 2 && sr.width <= vw + 2,
+      ok:
+        sr.right <= vw + 2 &&
+        sr.width <= vw + 2 &&
+        textStart <= sr.left + padL + 6 &&
+        tr.left <= sr.left + padL + 8 &&
+        Math.abs(chevCenterY - titleCenterY) <= sr.height * 0.35,
       summaryRight: sr.right,
       vw,
       label: labelStyle.content,
+      sumH: sr.height,
+      titleH: tr.height,
+      textStart,
+      titleLeft: tr.left,
+      summaryLeft: sr.left,
+      padL,
     };
   });
-  ok(historyLayout.ok, "375 long history summary wraps within viewport with trailing indicator");
+  ok(historyLayout.ok, "375 long history title left, indicators trailing, single-row height");
   ok(String(historyLayout.label).includes("Показать"), "375 history row shows visible Показать without hover");
+
+  const trailing375 = await page.evaluate(() => {
+    const summary = document.querySelector('[data-tt="detail-route-disclosure"] summary');
+    const title = summary?.querySelector(".tt-disclosure-title");
+    if (!summary || !title) return { ok: false };
+    const sr = summary.getBoundingClientRect();
+    const tr = title.getBoundingClientRect();
+    return { ok: tr.right < sr.right - 70, titleRight: tr.right, summaryRight: sr.right };
+  });
+  ok(trailing375.ok, "375 route title ends before trailing label+chevron band");
   const box = await page.locator('[data-tt="enter-code"]').boundingBox();
   ok(box && box.y + box.height <= 812, "375 light primary CTA on first screen");
 
