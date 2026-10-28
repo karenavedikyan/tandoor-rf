@@ -51,12 +51,9 @@ var TT_WIZ_QA = await (async () => {
   await page.locator('[data-tt="create-edit-item"]').click();
   await waitWizardTitle("item", "Что передаём");
   await page.locator('[data-tt-field="item"]').fill("Wizard QA item edited");
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await waitWizardTitle("files", "Фото и файлы");
-  await page.getByRole("button", { name: "Пропустить", exact: true }).click();
-  await waitWizardTitle("recipient", "Кому нужно доставить");
-  await ttWizardRecipientToReview();
-  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("edited"), "edit from summary returns to step");
+  await page.getByRole("button", { name: "Готово", exact: true }).click();
+  await waitWizardTitle("review", "Проверить и создать");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("edited"), "edit item from review returns to review with value retained");
 
   await page.locator('[data-tt="create-edit-comment"]').click();
   await waitWizardTitle("edit-comment", "Комментарий");

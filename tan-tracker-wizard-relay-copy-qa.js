@@ -108,7 +108,10 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
 
   await page.locator('[data-tt="create-edit-item"]').click();
   await page.locator('[data-tt-field="item"]').fill("Relay copy QA relay chain");
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.getByRole("button", { name: "Готово", exact: true }).click();
+  await waitReview();
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("relay chain"), "edit item from review returns with relay text retained");
+  await page.locator('[data-tt="create-edit-files"]').click();
   await page.locator('[data-create-phase="files"]').waitFor({ state: "visible" });
   await page.locator('[data-tt="attach-input"]').setInputFiles({
     name: "relay-copy.png",
@@ -117,9 +120,9 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   });
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await ttWizardRecipientToReview();
-  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("relay chain"), "edit item preserved through relay flow");
-  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "staged file preserved after edit loops");
+  await waitReview();
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("relay chain"), "relay item still on review after file edit loop");
+  ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "staged file preserved after edit-from-review loops");
 
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
