@@ -379,19 +379,59 @@
     attachOrderStaging: [],
     attachError: "",
     attachBusy: false,
+    attachOpGen: 0,
+    attachBusyGen: null,
     lightboxReturn: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
 
-  function clearAttachStaging() {
-    if (!Att()) return;
-    Att().revokeStaging(state.attachStaging);
-    Att().revokeStaging(state.attachOrderStaging);
+  function bumpAttachOpGen() {
+    state.attachOpGen += 1;
+  }
+
+  function captureAttachSnap(target) {
+    return {
+      gen: state.attachOpGen,
+      target,
+      orderId: state.orderId,
+      view: state.view,
+      createPhase: state.createPhase,
+      employeeId: state.employeeId,
+      actingContactId: state.actingContactId,
+    };
+  }
+
+  function attachSnapValid(snap) {
+    if (!snap || snap.gen !== state.attachOpGen) return false;
+    if (snap.target === "create") {
+      return state.view === "create";
+    }
+    return state.view === "detail" && snap.orderId === state.orderId;
+  }
+
+  function finishAttachIngest(opGen) {
+    if (state.attachBusyGen === opGen) {
+      state.attachBusy = false;
+      state.attachBusyGen = null;
+    }
+  }
+
+  function invalidateAttachContext() {
+    bumpAttachOpGen();
+    if (Att()) {
+      Att().revokeStaging(state.attachStaging);
+      Att().revokeStaging(state.attachOrderStaging);
+    }
     state.attachStaging = [];
     state.attachOrderStaging = [];
     state.attachError = "";
     state.attachBusy = false;
+    state.attachBusyGen = null;
+  }
+
+  function clearAttachStaging() {
+    invalidateAttachContext();
   }
 
   function clearCompleteConfirm() {
@@ -490,12 +530,14 @@
     const on = current === ROUTE;
     if (!on) {
       TT_BODY.forEach((c) => document.body.classList.remove(c));
+      document.body.classList.remove("tt-create-wizard");
       return;
     }
     const ext = isExternalShell();
     document.body.classList.toggle("tt-active", !state.recipientMode && !ext);
     document.body.classList.toggle("tt-recipient-shell", state.recipientMode);
     document.body.classList.toggle("tt-external-shell", ext);
+    document.body.classList.toggle("tt-create-wizard", !state.recipientMode && !ext && state.view === "create");
   }
 
   function captureFocus() {
@@ -671,13 +713,18 @@
       <h2 class="tt-wizard-title">${E(title)}</h2>
       <p class="tt-wizard-hint">${E(hint)}</p>
       <div class="tt-wizard-body">${body}</div>
+      ${state.attachBusy ? `<p class="tt-muted" data-tt="attach-busy">Обрабатываем файлы… Подождите — «Далее» и «Создать передачу» включатся сами.</p>` : ""}
       ${state.error ? `<p class="tt-error" data-tt="form-error">${E(state.error)}</p>` : ""}
       <div class="tt-wizard-actions">${actionsHtml}</div>
     </div>`;
   }
 
   function wizardBtn(label, action, primary = false) {
-    return btn(label, `data-tt="${action}"`, primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary");
+    const freeze =
+      state.attachBusy &&
+      (action === "create-wizard-next" || action === "create-wizard-submit" || action === "create-skip-files");
+    const extra = freeze ? ' disabled aria-disabled="true"' : "";
+    return btn(label, `data-tt="${action}"${extra}`, primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary");
   }
 
   function recipientSummary(f) {
@@ -798,32 +845,46 @@
     if (!Att() || state.attachBusy) return;
     const files = [...fileList];
     if (!files.length) return;
+    const snap = captureAttachSnap(target);
+    const opGen = snap.gen;
     state.attachBusy = true;
+    state.attachBusyGen = opGen;
     state.attachError = "";
+    renderTracker();
     const order = target === "create" ? null : orders.find((x) => x.id === state.orderId);
     const existing = target === "create" ? [] : Att().listForOrder(order);
     const staging = target === "create" ? state.attachStaging : state.attachOrderStaging;
     const addedBy = state.actingContactId || employeeContact(state.employeeId)?.id;
     const errors = [];
     const accepted = [];
-    for (const file of files) {
-      const v = Att().validatePick(file, existing, [...staging, ...accepted]);
-      if (v.length) {
-        errors.push(...v);
-        continue;
+    try {
+      for (const file of files) {
+        if (!attachSnapValid(snap)) break;
+        const v = Att().validatePick(file, existing, [...staging, ...accepted]);
+        if (v.length) {
+          errors.push(...v);
+          continue;
+        }
+        const r = await Att().fileToStaging(file, target === "create" ? "staging:create" : `staging:${order?.id}`);
+        if (!attachSnapValid(snap)) {
+          if (r.item) Att().revokeStagingItem(r.item);
+          break;
+        }
+        if (r.error) errors.push(r.error);
+        else accepted.push(r.item);
       }
-      const r = await Att().fileToStaging(file, target === "create" ? "staging:create" : `staging:${order?.id}`);
-      if (r.error) errors.push(r.error);
-      else accepted.push(r.item);
+      if (attachSnapValid(snap)) {
+        if (target === "create") state.attachStaging = [...staging, ...accepted];
+        else if (order && accepted.length) {
+          Att().mergeToOrder(order, accepted, addedBy);
+          state.toast = `Добавлено файлов: ${accepted.length}.`;
+        }
+        if (errors.length) state.attachError = errors.slice(0, 3).join(" ");
+      } else Att().revokeStagingItems(accepted);
+    } finally {
+      finishAttachIngest(opGen);
+      renderTracker();
     }
-    if (target === "create") state.attachStaging = [...staging, ...accepted];
-    else if (order && accepted.length) {
-      Att().mergeToOrder(order, accepted, addedBy);
-      state.toast = `Добавлено файлов: ${accepted.length}.`;
-    }
-    state.attachError = errors.length ? errors.slice(0, 3).join(" ") : "";
-    state.attachBusy = false;
-    renderTracker();
   }
 
   function now() {
@@ -1202,12 +1263,16 @@
       );
     }
     if (phase === "files") {
+      const hasFiles = state.attachStaging.length > 0;
+      const fileActions = hasFiles
+        ? `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+        : `${wizardBtn("Пропустить", "create-skip-files", true)}${wizardBtn("Назад", "create-wizard-back")}`;
       return wizardShell(
         phase,
         "Фото и файлы",
         "Покажите, как выглядит передача. Можно пропустить, если уже всё понятно.",
         createAttachmentsSection(),
-        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Пропустить", "create-skip-files")}${wizardBtn("Назад", "create-wizard-back")}`
+        fileActions
       );
     }
     if (phase === "recipient") {
@@ -1467,8 +1532,10 @@
     }
 
     const ext = isExternalShell();
-    const chrome =
-      ext
+    const inCreateWizard = state.view === "create" && !ext;
+    const chrome = inCreateWizard
+      ? ""
+      : ext
         ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
         : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.entries(employees)
             .map(([id, e]) => `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(e.name)}</option>`)
@@ -1568,6 +1635,12 @@
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
 
     if (b.hasAttribute("data-tt-open")) {
+      bumpAttachOpGen();
+      if (Att() && state.attachStaging.length) Att().revokeStaging(state.attachStaging);
+      state.attachStaging = [];
+      state.attachError = "";
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.orderId = b.getAttribute("data-tt-open");
       state.view = "detail";
       state.error = state.toast = "";
@@ -1595,6 +1668,10 @@
       return;
     }
     if (action === "create-wizard-next") {
+      if (state.attachBusy) {
+        renderTracker();
+        return;
+      }
       if (wizardAdvance()) {
         writeUrl();
       }
@@ -1602,6 +1679,11 @@
       return;
     }
     if (action === "create-wizard-back") {
+      if (state.attachBusy) {
+        bumpAttachOpGen();
+        state.attachBusy = false;
+        state.attachBusyGen = null;
+      }
       const r = wizardBack();
       if (r === "cancel") {
         state.view = "list";
@@ -1617,6 +1699,10 @@
       return;
     }
     if (action === "create-skip-files") {
+      if (state.attachBusy) {
+        renderTracker();
+        return;
+      }
       if (state.createPhase === "files") {
         state.error = "";
         state.createPhase = "recipient";
@@ -1671,6 +1757,10 @@
       return;
     }
     if (action === "create-wizard-submit") {
+      if (state.attachBusy) {
+        renderTracker();
+        return;
+      }
       submitCreate();
       renderTracker();
       return;
@@ -1695,6 +1785,9 @@
       return;
     }
     if (action === "transfer" && o) {
+      bumpAttachOpGen();
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.view = "transfer";
       state.form = { pickQ: "", mode: "list" };
       state.error = "";
@@ -1835,6 +1928,9 @@
       return;
     }
     if (action === "act-recipient" && o && o.pendingId) {
+      bumpAttachOpGen();
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.actingContactId = o.pendingId;
       state.recipientMode = false;
       state.view = "detail";
@@ -1844,6 +1940,9 @@
       return;
     }
     if (action === "act-holder" && o) {
+      bumpAttachOpGen();
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.actingContactId = o.holderId;
       state.view = "detail";
       clearCompleteConfirm();
@@ -1854,6 +1953,9 @@
       return;
     }
     if (action === "clear-act") {
+      bumpAttachOpGen();
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.actingContactId = null;
       clearCompleteConfirm();
       ttShellMounted = false;
@@ -1941,6 +2043,9 @@
       renderTracker();
     }
     if (e.target.matches('[data-tt="employee"]')) {
+      bumpAttachOpGen();
+      state.attachBusy = false;
+      state.attachBusyGen = null;
       state.employeeId = e.target.value;
       state.actingContactId = null;
       clearCompleteConfirm();
@@ -1957,7 +2062,7 @@
   document.addEventListener("keydown", (e) => {
     if (current !== ROUTE) return;
     if (e.key === "Escape") closeAttachLightbox();
-    if (e.key !== "Enter" || e.isComposing || state.view !== "create") return;
+    if (e.key !== "Enter" || e.isComposing || state.view !== "create" || state.attachBusy) return;
     const field = e.target.closest?.("[data-tt-field]");
     if (!field || !field.closest('[data-tt="create-wizard"]')) return;
     if (field.matches("textarea")) return;

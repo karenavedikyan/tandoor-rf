@@ -22,6 +22,7 @@ await new Promise((r) => server.listen(4317, "127.0.0.1", r));
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+await page.setViewportSize({ width: 1440, height: 900 });
 page.setDefaultTimeout(5000);
 page.on("pageerror", (e) => console.error("PAGEERROR:", e.message));
 globalThis.page = page;

@@ -48,7 +48,7 @@ var TT_WIZ_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("Wizard QA item edited");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("files", "Фото и файлы");
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   await waitWizardTitle("recipient", "Кому передаём");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
@@ -132,20 +132,12 @@ var TT_WIZ_QA = await (async () => {
       "<div><strong>Оцените завершённую работу · 1</strong><span>Обязательный шаг</span></div><button type='button'>Поставить оценку</button>";
     document.getElementById("app")?.append(r);
   });
+  ok(await page.locator("#af-required-reminder").isHidden(), "required-review reminder hidden during create wizard");
   const nextBtn = page.locator('[data-tt="create-wizard-next"]');
   await nextBtn.waitFor({ state: "visible" });
   const box = await nextBtn.boundingBox();
   ok(box && box.height >= 48, "wizard primary button min 48px at 375");
   ok(box && box.y >= 0 && box.y + box.height <= 813, "Далее within viewport height at 375");
-  const remBox = await page.locator("#af-required-reminder").boundingBox();
-  if (box && remBox) {
-    const overlap =
-      box.x < remBox.x + remBox.width &&
-      box.x + box.width > remBox.x &&
-      box.y < remBox.y + remBox.height &&
-      box.y + box.height > remBox.y;
-    ok(!overlap, "Далее not overlapped by required-review reminder bounds");
-  }
 
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";

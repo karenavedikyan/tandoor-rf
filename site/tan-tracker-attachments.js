@@ -53,10 +53,25 @@
     } catch (_) {}
   }
 
+  function revokeStagingItem(f) {
+    const u = f?.url;
+    if (!u || String(u).startsWith("data:")) return;
+    const owner = urlOwners.get(u);
+    if (owner && String(owner).startsWith("order:")) return;
+    untrackUrl(u);
+  }
+
   function revokeStaging(staging) {
-    (staging || []).forEach((f) => {
-      if (f.blobUrl && !f.pinned) untrackUrl(f.blobUrl);
-    });
+    (staging || []).forEach(revokeStagingItem);
+  }
+
+  function revokeStagingItems(items) {
+    revokeStaging(items);
+  }
+
+  let rasterDelayMs = 0;
+  function setRasterDelayForTests(ms) {
+    rasterDelayMs = Math.max(0, Number(ms) || 0);
   }
 
   function makeDemoPng(label, hue) {
@@ -193,6 +208,7 @@
     let mime = (file.type || "").toLowerCase();
     if (PREVIEW_MIME.has(mime)) {
       try {
+        if (rasterDelayMs) await new Promise((r) => setTimeout(r, rasterDelayMs));
         const ok = await rasterProbe(blobUrl);
         if (!ok) {
           untrackUrl(blobUrl);
@@ -265,7 +281,7 @@
       !readonly && isStaged
         ? `<button type="button" class="tt-link tt-att-rm" data-tt="attach-remove" data-staging-id="${E(a.id)}">Убрать</button>`
         : "";
-    return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">PDF: скачайте файл (встроенный просмотр в песочнице может быть недоступен).</span>` : ""}<div class="tt-att-actions">${prev ? `<button type="button" class="tt-link" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}">Открыть</button>` : ""}${dl}${rm}</div></div></li>`;
+    return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">Скачайте PDF, чтобы открыть его на устройстве.</span>` : ""}<div class="tt-att-actions">${prev ? `<button type="button" class="tt-link" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}">Открыть</button>` : ""}${dl}${rm}</div></div></li>`;
   }
 
   function blockHtml(opts) {
@@ -316,6 +332,9 @@
     fileToStaging,
     attachRecord,
     revokeStaging,
+    revokeStagingItems,
+    revokeStagingItem,
+    setRasterDelayForTests,
     trackUrl,
     untrackUrl,
     canPreview,
