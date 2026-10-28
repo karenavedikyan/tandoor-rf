@@ -61,11 +61,12 @@
 ```bash
 npm ci
 cp .env.example .env
-# отредактируйте DATABASE_URL (только test/local) и APP_ORIGIN
+# DATABASE_URL — локальная демо-БД tandoor_rf_dev
+# TEST_DATABASE_URL — отдельная БД tandoor_rf_test для тестов, которые очищают данные
 
 npm run build
 npm run migrate:local
-npm run bootstrap-admin:local   # один раз, интерактивно
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_dev NODE_ENV=development npm run seed:dev
 npm run start:local
 ```
 
@@ -75,15 +76,19 @@ npm run start:local
 
 ### Тестовая PostgreSQL
 
-Изолированная БД для разработки и тестов:
+Две локальные базы. Интерактивный ЛК использует `tandoor_rf_dev`. Тесты, которые очищают схему, используют только `tandoor_rf_test`. Скрипты отказывают на внешнем хосте и на базе без суффикса `_test`.
 
 ```bash
 ./scripts/setup-test-db.sh
+sudo -u postgres createdb tandoor_rf_dev
 export TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test
-export DATABASE_URL="$TEST_DATABASE_URL"
+export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_dev
 export APP_ORIGIN=http://127.0.0.1:3000
 export PGSSLMODE=disable
+export NODE_ENV=development
 npm run migrate
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test npm run migrate
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_dev npm run seed:dev
 ```
 
 Интеграционные тесты и `scripts/smoke-local.sh` **отказываются** работать с БД без суффикса `_test`.
