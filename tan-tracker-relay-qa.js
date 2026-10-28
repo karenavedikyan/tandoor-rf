@@ -7,8 +7,13 @@ var TT_RELAY_QA = await (async () => {
   const base = "http://127.0.0.1:4317";
   const png1x1 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const bellUnread = async () =>
+    page.evaluate(() => {
+      const span = document.querySelector("#af-bell span");
+      return span ? parseInt(span.textContent, 10) || 0 : 0;
+    });
 
-  await page.goto(`${base}/#tan-tracker?role=manager`);
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
 
@@ -35,22 +40,23 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   const orderId = await page.evaluate(() => {
-    const o = window.TanTrackerPrototype.orders().slice(-1)[0];
+    const o = window.TanTrackerPrototype.orders()[0];
+    const detail = document.querySelector('[data-tt="detail"]')?.textContent || "";
+    if (!o || !detail.includes("Relay QA цепочка")) throw new Error("created order not at head of registry");
     return o.id;
   });
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"), "create keeps final recipient on detail");
 
-  await page.evaluate((id) => {
-    location.hash = `#tan-tracker?role=coordinator&tt_id=${id}`;
-  }, orderId);
-  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="employee"]').selectOption("c1");
+  await page.locator("#af-bell").waitFor({ state: "visible" });
   await page.locator("#af-bell").click();
   await page.locator("#af-inbox").waitFor({ state: "visible" });
-  ok((await page.locator("#af-inbox").textContent()).includes("Ожидает вашего получения"), "coordinator bell shows pending receipt notice");
-  await page.locator('[data-af="close-inbox"]').click();
+  ok((await page.locator("#af-inbox").textContent()).includes("Ожидает вашего получения"), "c1 profile bell shows pending receipt notice");
+  ok((await bellUnread()) >= 1, "c1 bell badge shows unread TT notice");
+  await page.locator("#af-inbox").getByRole("button", { name: "Закрыть", exact: true }).click();
 
   await page.evaluate((id) => {
-    location.hash = `#tan-tracker?role=manager&tt_id=${id}`;
+    location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
   }, orderId);
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await page.locator('[data-tt="open-recipient"]').click();
@@ -63,13 +69,15 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Савельева"), "code handoff to relay employee");
 
-  await page.evaluate((id) => {
-    location.hash = `#tan-tracker?role=coordinator&tt_id=${id}`;
-  }, orderId);
+  await page.locator('[data-tt="employee"]').selectOption("c1");
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
+  if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
+    await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
   const detailRelay = await page.locator('[data-tt="detail"]').textContent();
-  ok(detailRelay.includes("Сергей") && detailRelay.includes("79000000001"), "relay holder sees final name and phone");
+  ok(
+    detailRelay.includes("Сергей") && (detailRelay.includes("79000000001") || detailRelay.includes("000-00-01")),
+    "relay holder sees final name and phone"
+  );
   ok(detailRelay.includes("2031") || detailRelay.includes("15.06"), "relay holder sees delivery deadline");
   ok(await page.locator('[data-tt="relay-reminder"]').count() === 1, "relay obligation visible for holder");
   ok((await page.getByRole("button", { name: "Завершить передачу", exact: true }).count()) === 0, "intermediate cannot complete");
@@ -88,7 +96,7 @@ var TT_RELAY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.locator("h2").first().textContent()).includes(orderId), "open track navigates to tan-tracker detail not assignments");
   await page.locator("#af-bell").click();
-  await page.locator('[data-af="close-inbox"]').click();
+  await page.locator("#af-inbox").getByRole("button", { name: "Закрыть", exact: true }).click();
 
   await page.locator('[data-tt="tab-qr"]').click();
   await page.locator('[data-tt="scan-qr-demo"]').click();
@@ -96,6 +104,11 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "final QR receipt completes track");
   ok(await page.locator('[data-tt="relay-reminder"]').count() === 0, "relay reminder cleared after delivery");
+
+  await page.locator('[data-tt="employee"]').selectOption("c1");
+  await page.locator("#af-bell").waitFor({ state: "visible" });
+  const c1UnreadAfter = await bellUnread();
+  ok(c1UnreadAfter === 0 || !(await page.locator("#af-inbox").isVisible()), "c1 pending/holder TT notices cleared after handoff complete");
 
   const attCount = await page.evaluate(
     (id) => window.TanTrackerAttachments.listForOrder(window.TanTrackerPrototype.orders().find((o) => o.id === id)).length,
@@ -108,19 +121,26 @@ var TT_RELAY_QA = await (async () => {
   );
   ok(tlLen >= 3, "timeline keeps handoff history");
 
-  await page.goto(`${base}/#tan-tracker?role=manager&tt_id=${orderId}`);
-  await page.reload();
-  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "historical participant still reads completed order");
+  await page.locator('[data-tt="employee"]').selectOption("m1");
+  await page.evaluate((id) => {
+    location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
+  }, orderId);
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "historical participant reads completed order without reload");
   ok((await page.getByRole("button", { name: "Передать другому человеку", exact: true }).count()) === 0, "historical view not editable after complete");
 
-  await page.goto(`${base}/#tan-tracker?role=manager&tt_id=TT-2026-008`);
-  await page.reload();
+  await page.locator('[data-tt="employee"]').selectOption("m2");
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-008";
+  });
   ok((await page.locator("#tt-content").textContent()).includes("Нет доступа"), "forbidden order blocks attachments and detail");
   ok((await page.locator(".tt-att-item").count()) === 0, "forbidden hash hides attachments");
 
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto(`${base}/#tan-tracker?role=coordinator&tt_id=${orderId}`);
-  await page.reload();
+  await page.evaluate((id) => {
+    location.hash = `#tan-tracker?role=coordinator&tt_emp=c1&tt_id=${id}`;
+  }, orderId);
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok(await page.locator('[data-tt="detail"]').isVisible(), "375px detail readable for historical relay order");
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";

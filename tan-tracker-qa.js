@@ -12,6 +12,16 @@ var TT_QA = await (async () => {
     await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   };
   const visibleRows = () => page.locator(".tt-table tbody tr:visible").count();
+  const navHash = async (payload) => {
+    const hash = payload.startsWith("#")
+      ? payload
+      : payload.includes("#")
+        ? payload.slice(payload.indexOf("#"))
+        : "#" + payload;
+    await page.evaluate((h) => {
+      location.hash = h;
+    }, hash);
+  };
   await page.goto("http://127.0.0.1:4317/#tan-tracker?role=manager");
   await page.reload();
   ok(await page.locator("#tt-root").count() === 1, "tan-tracker shell mounts");
@@ -63,7 +73,7 @@ var TT_QA = await (async () => {
   ok(tlAfter === tlBefore + 1, "single handoff appends timeline once");
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей Приёмка"), "valid code updates holder");
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
-  await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
+  await page.locator('[data-tt="transfer"]').click();
   await page.locator('[data-tt="confirm-transfer"]').waitFor({ state: "visible" });
   await page.locator('[data-tt="toggle-new"]').click();
   await page.locator('[data-tt-field="newName"]').fill("Внешний QA");
@@ -84,9 +94,12 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt="tab-qr"]').click();
   const newQr = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   ok(oldQr !== newQr, "QR payload changes when recipient changes");
-  await page.goto(`http://127.0.0.1:4317${oldQr.startsWith("#") ? oldQr : oldQr.includes("#") ? oldQr.slice(oldQr.indexOf("#")) : "#" + oldQr}`);
-  ok((await page.textContent("body")).includes("устарело") || (await page.textContent("body")).includes("Внешний QA"), "stale QR shows old invitation");
-  await page.goto("http://127.0.0.1:4317/#tan-tracker?role=manager&tt_id=TT-2026-004");
+  await navHash(oldQr);
+  await page.waitForFunction(() => location.hash.includes("tt_view=recipient"), null, { timeout: 10000 });
+  await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible", timeout: 10000 });
+  const staleBody = await page.textContent("body");
+  ok(staleBody.includes("устарело"), "stale QR shows old invitation");
+  await navHash("#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-004");
   await page.locator("#tt-root").waitFor({ state: "visible" });
   if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
     await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
@@ -98,7 +111,7 @@ var TT_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Смена QR"), "QR confirm handoff once");
   const holderAfter = await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-004").holderId);
   const replayHash = usedQrPayload.startsWith("#") ? usedQrPayload : usedQrPayload.includes("#") ? usedQrPayload.slice(usedQrPayload.indexOf("#")) : "#" + usedQrPayload;
-  await page.goto(`http://127.0.0.1:4317${replayHash}`);
+  await navHash(replayHash);
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   ok((await page.getByRole("button", { name: "Подтвердить получение", exact: true }).count()) === 0, "QR replay has no confirm");
   ok((await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-004").holderId)) === holderAfter, "QR replay blocked");

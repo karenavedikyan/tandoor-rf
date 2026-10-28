@@ -13,6 +13,25 @@ var TT_NAV_QA = await (async () => {
     await page.locator("#tt-root").waitFor({ state: "visible" });
   };
 
+  await page.goto(`${base}/#clients?role=director`);
+  await page.locator(".main").waitFor({ state: "visible" });
+  ok((await page.locator("#tt-root").count()) === 0, "cold clients entry has no tracker placeholder shell");
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=director&tt_emp=d1";
+  });
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.locator("#tt-content").count()) === 1, "cold hash navigation mounts tt-content");
+  ok((await page.locator(".tt-table tbody tr").count()) >= 21, "director cold entry registry at least 21 rows");
+  await page.locator('[data-tt="employee"]').selectOption("m2");
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt="employee"]').inputValue()) === "m2", "profile role change keeps shell mounted");
+  const openId = await page.locator(".tt-table tbody tr[data-tt-open]").first().getAttribute("data-tt-open");
+  await page.locator(`.tt-table tbody tr[data-tt-open="${openId}"]`).click();
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="back-list"]').click();
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.locator("#tt-content .tt-table").count()) >= 1, "open/back returns registry in live shell");
+
   await page.goto(`${base}/#tan-tracker?role=director`);
   ok((await navCount()) === 1, "director hash entry shows tan-tracker nav once");
   await page.locator("#tt-root").waitFor({ state: "visible" });
@@ -49,6 +68,9 @@ var TT_NAV_QA = await (async () => {
   ok(await page.locator("#tt-root").count() === 0, "exchange nav leaves tracker");
   ok((await page.evaluate(() => (location.hash.split("?")[0] || "#").replace(/^#/, ""))) === "exchange", "exchange is clients target route");
   ok((await navCount()) === 1, "exchange view keeps single tan-tracker nav");
+  await openViaNav();
+  ok(await page.locator("#tt-root").count() === 1, "sidebar roundtrip remounts tracker after exchange");
+  ok((await page.locator("#tt-content").count()) === 1, "roundtrip restores tt-content not empty screen placeholder");
 
   await page.evaluate(() => {
     render();

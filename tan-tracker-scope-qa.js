@@ -66,16 +66,35 @@ var TT_SCOPE_QA = await (async () => {
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Ольга"), "pending recipient replaced before revoke check");
   await page.evaluate(() => {
-    location.hash = "#tan-tracker?role=assistant&tt_id=TT-2026-016";
+    location.hash = "#tan-tracker?role=assistant&tt_emp=a1&tt_id=TT-2026-016";
   });
   await page.locator('[data-tt="access-denied"]').waitFor({ state: "visible" });
   ok((await page.locator("#tt-content").textContent()).includes("Нет доступа"), "revoked pending employee cannot open order");
   ok((await page.locator(".tt-att-item").count()) === 0, "revoked pending employee sees no attachments");
   await page.evaluate(() => {
-    location.hash = "#tan-tracker?role=manager&tt_id=TT-2026-016";
+    location.hash = "#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-016";
   });
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("TT-2026-016"), "actual sender manager still reads order after recipient replace");
+
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=director&tt_emp=d1&tt_id=TT-2026-016";
+  });
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("TT-2026-016"), "director reads order even when revoked pending list populated");
+
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-016";
+  });
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="change-pending"]').click();
+  await page.locator('[data-tt-pick="emp_a1"]').click();
+  await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=assistant&tt_emp=a1&tt_id=TT-2026-016";
+  });
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("TT-2026-016"), "reselected pending employee regains access after revoke cleared");
 
   return { passed: checks.length, checks };
 })();

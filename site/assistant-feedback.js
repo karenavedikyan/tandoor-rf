@@ -12,7 +12,21 @@
     a.status==="revoked"&&Number.isFinite(revokedAt(a))&&a.start<revokedAt(a)&&S.clock>=revokedAt(a);
   const canRate=a=>!!a&&S.role==="manager"&&a.manager===S.person&&ended(a)&&!reviews.some(r=>r.assignment===a.id);
   const canRead=r=>["coordinator","director"].includes(S.role)||S.role==="manager"&&r.manager===S.person;
-  const mine=()=>notes.filter(n=>n.user===ctx().id&&n.at<=S.clock);
+  const tanTrackerActive=()=>typeof location!=="undefined"&&location.hash.includes("tan-tracker")&&window.TanTrackerPrototype?.routeActive?.();
+  const noticeUserId=()=>{
+    if(tanTrackerActive()&&window.TanTrackerPrototype?.employeeId)return window.TanTrackerPrototype.employeeId();
+    return ctx().id;
+  };
+  const noteVisibleAt=n=>n.kind==="tt-track"?n.at<=Date.now():n.at<=S.clock;
+  const mine=()=>notes.filter(n=>n.user===noticeUserId()&&noteVisibleAt(n));
+  const inboxContext=()=>{
+    if(tanTrackerActive()&&window.TanTrackerPrototype?.effectiveProfile){
+      const p=window.TanTrackerPrototype.effectiveProfile();
+      return {role:p.role,id:p.person,label:p.label||names[p.role]||p.role};
+    }
+    const c=ctx();
+    return {role:c.role,id:c.id,label:c.label||names[c.role]||c.role};
+  };
   const fmt=P.dt,scoreWords=["","Очень слабо","Ниже ожиданий","Нужно улучшить","Хорошо","Отлично"];
   const starIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.84 5.76 6.36.92-4.6 4.48 1.09 6.33L12 17.3l-5.69 2.99 1.09-6.33-4.6-4.48 6.36-.92Z"/></svg>';
   const stars=value=>`<span class="af-stars" role="img" aria-label="${Number(value).toFixed(1)} из 5">${[1,2,3,4,5].map(v=>`<span class="af-star-glyph">${starIcon}<span class="af-star-fill" style="clip-path:inset(0 ${Math.round(100-100*Math.max(0,Math.min(1,value-v+1)))}% 0 0)">${starIcon}</span></span>`).join("")}</span>`;
@@ -28,20 +42,17 @@
     if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;return n;}
     const row={key:uid,user,title,text,id,kind,at,read:false,seq:++seq};notes.push(row);return row;
   }
-  function inboxUserId(){
-    if(typeof location!=="undefined"&&location.hash.includes("tan-tracker")&&window.TanTrackerPrototype?.employeeId)
-      return window.TanTrackerPrototype.employeeId();
-    return ctx().id;
-  }
+  function inboxUserId(){return noticeUserId();}
   function syncTrackerInbox(){
     const TN=window.TanTrackerNotifications;
     if(!TN?.forEmployee)return;
-    const user=inboxUserId(),clock=S.clock,items=TN.forEmployee(user)||[];
+    const user=inboxUserId(),items=TN.forEmployee(user)||[];
     const keep=new Set(items.map(i=>user+":tt:"+i.key));
     notes=notes.filter(n=>n.kind!=="tt-track"||n.user!==user||keep.has(n.key));
     items.forEach(i=>{
       const existing=notes.find(n=>n.key===user+":tt:"+i.key);
-      upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",clock);
+      const at=Number.isFinite(i.at)?i.at:Date.now();
+      upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at);
       if(existing?.read||i.read){
         const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
       }
@@ -184,7 +195,7 @@
     if(!S.modal)document.body.style.overflow=inbox?"hidden":"";
     if(!inbox)return;
     const shade=document.createElement("div");shade.id="af-shade";shade.dataset.af="close-inbox";shade.setAttribute("aria-hidden","true");document.body.append(shade);
-    const c=ctx(),rows=mine().filter(n=>!unreadOnly||!n.read).sort((a,b)=>b.at-a.at||b.seq-a.seq);
+    const c=inboxContext(),rows=mine().filter(n=>!unreadOnly||!n.read).sort((a,b)=>b.at-a.at||b.seq-a.seq);
     const el=document.createElement("aside");el.id="af-inbox";el.className="af af-inbox";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");el.setAttribute("aria-label","Уведомления");
     el.innerHTML=`<div class="af-inbox-head"><div><h2>Уведомления</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p></div>${action("close-inbox","Закрыть")}</div>
       <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}</div>
@@ -211,15 +222,22 @@
     n.read=true;inbox=false;
     if(n.kind==="info"){paint();return;}
     if(n.kind==="tt-track"){
-      const orderId=n.id,role=typeof prototypeRole==="string"?prototypeRole:"manager";
+      const orderId=n.id;
+      const prof=window.TanTrackerPrototype?.effectiveProfile?.()||{role:typeof prototypeRole==="string"?prototypeRole:"manager",person:noticeUserId()};
+      const role=prof.role,person=prof.person;
       if(window.TanTrackerNotifications?.markRead){
         const pref=n.user+":tt:";
         window.TanTrackerNotifications.markRead(inboxUserId(),n.key.startsWith(pref)?n.key.slice(pref.length):"");
       }
-      location.hash="#tan-tracker?role="+role+(orderId?"&tt_id="+encodeURIComponent(orderId):"");
+      const p=new URLSearchParams({role});
+      if(person)p.set("tt_emp",person);
+      if(orderId)p.set("tt_id",orderId);
+      location.hash="#tan-tracker?"+p.toString();
       requestAnimationFrame(()=>{
-        if(window.TanTrackerPrototype?.canViewOrder&&!window.TanTrackerPrototype.canViewOrder(orderId))
-          location.hash="#tan-tracker?role="+role;
+        if(window.TanTrackerPrototype?.canViewOrder&&!window.TanTrackerPrototype.canViewOrder(orderId)){
+          p.delete("tt_id");
+          location.hash="#tan-tracker?"+p.toString();
+        }
         paint();
       });
       return;
@@ -281,7 +299,7 @@
     if(e.key==="Tab"&&inbox&&!dialog){const nodes=[...document.querySelectorAll("#af-inbox button")];const first=nodes[0],last=nodes.at(-1);
       if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
   });
-  document.addEventListener("assistant:paint",()=>{if(ctx().id!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=ctx().id;}paint();});
+  document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=person;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
   window.AssistantFeedback={view,closure};
   init();P.render();paint();

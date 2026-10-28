@@ -133,15 +133,17 @@
 
   function canViewOrder(o, ctx) {
     if (!o || !ctx || !ctx.prototypeRole) return false;
-    if ((o.revokedParticipants || []).includes(ctx.actorContactId)) return false;
     if (ctx.externalActing) {
       const allowed = [o.holderId, o.pendingId, o.finalRecipientId].filter(Boolean);
       return allowed.includes(ctx.actorContactId);
     }
     const role = ctx.prototypeRole || "manager";
+    const actor = ctx.actorContactId;
     if (role === "director") return true;
+    if (actor && [o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
     const participants = orderParticipantIds(o);
-    if (participants.has(ctx.actorContactId)) return true;
+    if (participants.has(actor)) return true;
+    if ((o.revokedParticipants || []).includes(actor)) return false;
     if (role === "rop" || role === "regional") {
       const team = teamOfEmployee(ctx.employeeId, ctx.employees);
       if (!team) return false;
@@ -152,7 +154,7 @@
       }
       return false;
     }
-    return participants.has(ctx.actorContactId);
+    return false;
   }
 
   function reconcileEmployeeInbox(employeeId, items) {
@@ -196,6 +198,7 @@
           title: "Нужно передать дальше",
           text: `Передайте «${o.item}» ${fin?.name || "конечному получателю"}${duePhrase}.${wait}`,
           orderId: o.id,
+          at: Date.now(),
         });
       }
 
@@ -205,6 +208,7 @@
           title: "Ожидает вашего получения",
           text: `Подтвердите получение «${o.item}»${duePhrase}.`,
           orderId: o.id,
+          at: Date.now(),
         });
       }
 
@@ -216,6 +220,7 @@
             title: "Просрочена передача",
             text: `«${o.item}» · ${fin?.name || "получатель"}${due ? " · " + due : ""}.`,
             orderId: o.id,
+            at: Date.now(),
           });
         } else {
           const urgency = dueUrgencyLabel(o.dueAt, now);
@@ -225,6 +230,7 @@
               title: urgency === "today" ? "Срок сегодня" : "Срок скоро",
               text: `«${o.item}» · ${fin?.name || "получатель"}${due ? " · " + due : ""}.`,
               orderId: o.id,
+              at: Date.now(),
             });
           }
         }

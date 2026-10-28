@@ -428,6 +428,14 @@
   let ttShellMounted = false;
   let lastViewKey = "";
 
+  function trackerShellLive(main) {
+    return !!(main && main.querySelector("#tt-root") && main.querySelector("#tt-content"));
+  }
+
+  function syncTrackerShellMountFlag(main) {
+    if (!trackerShellLive(main)) ttShellMounted = false;
+  }
+
   const state = {
     view: "list",
     orderId: null,
@@ -1228,6 +1236,7 @@
       o.revokedParticipants = o.revokedParticipants || [];
       if (!o.revokedParticipants.includes(prevPending)) o.revokedParticipants.push(prevPending);
     }
+    o.revokedParticipants = (o.revokedParticipants || []).filter((id) => id !== recipientId);
     o.pendingId = recipientId;
     o.status = "waiting";
     o.handoffVer = (o.handoffVer ?? 0) + 1;
@@ -1714,6 +1723,7 @@
     applyBodyClasses();
     const main = document.querySelector(".main");
     if (!main) return;
+    syncTrackerShellMountFlag(main);
 
     const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}|${state.createPhase}`;
     if (viewKey !== lastViewKey && !opts.soft) {
@@ -1725,10 +1735,18 @@
       ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
       const rcv = state.recipientTicket?.rcv;
-      const allowed =
-        o &&
-        (!rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv) &&
-        (!Sc() || Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId }));
+      const resolvedInv =
+        o && state.recipientTicket?.hv != null
+          ? resolveInvitation(o, state.recipientTicket.hv)
+          : { inv: o?.activeInvitation, stale: false };
+      const staleInvite = !!(resolvedInv?.stale && resolvedInv?.inv);
+      const rcvOk =
+        staleInvite || !rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv;
+      const scopeOk =
+        staleInvite ||
+        !Sc() ||
+        Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId });
+      const allowed = o && rcvOk && scopeOk;
       main.innerHTML =
         o && allowed
           ? `<div class="tt-work">${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
@@ -1781,7 +1799,10 @@
     if (content) content.innerHTML = bodyHtml();
     paintQrHosts();
     document.title = "Tandoor RF · Тан-трекер";
-    if (Sc() && !state.recipientMode) Sc().syncReminders(orders, contacts, dt);
+    if (Sc() && !state.recipientMode) {
+      Sc().syncReminders(orders, contacts, dt);
+      document.dispatchEvent(new Event("assistant:paint"));
+    }
     lucide.createIcons();
     restoreFocus(snap);
   }
@@ -2195,6 +2216,7 @@
       if (tryConfirmQr(o, ticket)) {
         state.recipientMode = false;
         state.view = "detail";
+        ttShellMounted = false;
       }
       writeUrl();
       renderTracker();
@@ -2203,6 +2225,7 @@
     if (action === "exit-recipient") {
       state.recipientMode = false;
       state.view = "detail";
+      ttShellMounted = false;
       writeUrl();
       renderTracker();
       return;
@@ -2388,6 +2411,7 @@
       return;
     }
     readUrl();
+    ttShellMounted = false;
     priorRender();
     const s = screens.find((x) => x.id === ROUTE);
     if (s) document.querySelector('.sidebar .nav button[data-go="tan-tracker"]')?.classList.add("active");
@@ -2402,11 +2426,20 @@
     }
   });
 
+  function effectiveProfile() {
+    if (state.ttRoleUnsupported) return { role: "manager", person: state.employeeId || "m1", label: "Менеджер" };
+    const role = state.ttPrototypeRole || "manager";
+    const person = state.employeeId || Sc()?.ROLE_EMPLOYEE?.[role] || "m1";
+    const label = Sc()?.DEMO_ROLE_LABEL?.[role] || role;
+    return { role, person, label };
+  }
+
   window.TanTrackerPrototype = {
     orders: () => orders,
     contacts: () => contacts,
     state,
     employeeId: () => state.employeeId,
+    effectiveProfile,
     canViewOrder: (orderId) => {
       const o = orders.find((x) => x.id === orderId);
       return o && orderVisible(o);
