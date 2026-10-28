@@ -87,8 +87,9 @@
 .tt-holder-demo-code { margin:0 0 12px; }
 .tt-code-inline { display:inline-block; font-size:24px; letter-spacing:.2em; padding:10px 14px; margin:8px 0; }
 @media (max-width:767px){
-  .tt-code-input-row { flex-direction:column; }
-  .tt-code-input-row button { width:100%; }
+  .tt-code-input-row { flex-direction:column; align-items:stretch; }
+  .tt-code-input-row input { flex:0 0 auto; width:100%; min-height:48px; max-height:64px; height:auto; }
+  .tt-code-input-row button { flex:0 0 auto; width:100%; }
 }
 .tt-warning { background:var(--tt-warn-bg); color:var(--tt-warn); padding:12px 14px; border-radius:8px; font-size:13px; margin:12px 0; }
 .tt-complete-confirm { margin-top:16px; padding-top:4px; }

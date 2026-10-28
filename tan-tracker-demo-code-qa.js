@@ -70,6 +70,19 @@ var TT_DEMO_CODE_QA = await (async () => {
   await page.reload();
   await page.locator('[data-tt="enter-code"]').click();
   ok(await page.getByRole("button", { name: "Получить демо-код", exact: true }).isVisible(), "375px demo code button visible");
+  const inputBox = await page.locator('[data-tt="code-input"]').boundingBox();
+  ok(inputBox && inputBox.height <= 64, "375px code input height at most 64px not flex-stretched");
+  const confirmBtn = page.getByRole("button", { name: "Подтвердить", exact: true });
+  const confirmBox = await confirmBtn.boundingBox();
+  ok(confirmBox && confirmBox.y + confirmBox.height <= 812, "375px confirm button in viewport");
+  const confirmHit = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Подтвердить");
+    if (!btn) return false;
+    const r = btn.getBoundingClientRect();
+    const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return el === btn || btn.contains(el);
+  });
+  ok(confirmHit, "375px confirm button hit-test reachable");
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
