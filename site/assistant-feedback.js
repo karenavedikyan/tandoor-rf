@@ -64,6 +64,9 @@
   function signature(a){return {status:a.status,effective:P.effective(a),assistant:a.assistant,end:a.end,change:!!a.change,n:a.history.length};}
   function remember(){source.forEach(a=>previous.set(a.id,signature(a)));}
   function sync(){
+    if(window.TanTrackerNotifications){
+      window.TanTrackerNotifications.drain().forEach(n=>add(n.user,n.key,n.title,n.text,n.id,n.kind||"detail",n.at||S.clock));
+    }
     if(source!==P.assignments()){init();return;}
     source.forEach(a=>{
       if(P.effective(a)==="active"&&a.end-S.clock<=86400000){

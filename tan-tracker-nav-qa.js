@@ -13,11 +13,10 @@ var TT_NAV_QA = await (async () => {
     await page.locator("#tt-root").waitFor({ state: "visible" });
   };
 
-  await page.goto(`${base}/`);
-  ok((await navCount()) === 1, "cold entry no hash shows tan-tracker nav once");
-  await openViaNav();
-  ok(await page.locator("#tt-root").count() === 1, "sidebar nav opens tracker");
-  ok((await page.locator(".tt-table tbody tr").count()) >= 20, "tracker registry at least 20 rows");
+  await page.goto(`${base}/#tan-tracker?role=director`);
+  ok((await navCount()) === 1, "director hash entry shows tan-tracker nav once");
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.locator(".tt-table tbody tr").count()) >= 21, "director tracker registry at least 21 rows");
 
   await page.goto(`${base}/#exchange?role=manager`);
   ok((await navCount()) === 1, "exchange clients deep link shows tan-tracker nav");
@@ -30,7 +29,7 @@ var TT_NAV_QA = await (async () => {
   await page.goto(`${base}/#exchange?role=director`);
   ok((await navCount()) === 1, "director exchange shows tan-tracker nav");
   await openViaNav();
-  ok((await page.locator(".tt-table tbody tr").count()) >= 20, "director nav opens 20-row registry");
+  ok((await page.locator(".tt-table tbody tr").count()) >= 21, "director nav opens 21+ row registry");
 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(`${base}/#exchange?role=manager`);

@@ -8,12 +8,16 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
   const employees = {
-    m1: { id: "m1", name: "Алексей Морозов", phone: "79001234001" },
-    m2: { id: "m2", name: "Дмитрий Петров", phone: "79001234002" },
-    m3: { id: "m3", name: "Иван Орлов", phone: "79001234003" },
-    a1: { id: "a1", name: "Анна Белова", phone: "79001234011" },
-    c1: { id: "c1", name: "Наталья Савельева", phone: "79001234021" },
+    d1: { id: "d1", name: "Андрей Власов", phone: "79001234090", team: null },
+    r1: { id: "r1", name: "Елена Волкова", phone: "79001234040", team: "volkova" },
+    r2: { id: "r2", name: "Дмитрий Орлов", phone: "79001234041", team: "orlov" },
+    m1: { id: "m1", name: "Алексей Морозов", phone: "79001234001", team: "volkova" },
+    m2: { id: "m2", name: "Дмитрий Петров", phone: "79001234002", team: "orlov" },
+    m3: { id: "m3", name: "Иван Орлов", phone: "79001234003", team: "orlov" },
+    a1: { id: "a1", name: "Анна Белова", phone: "79001234011", team: "volkova" },
+    c1: { id: "c1", name: "Наталья Савельева", phone: "79001234021", team: "volkova" },
   };
+  const Sc = () => window.TanTrackerScope;
   const fmtPhone = (digits) => {
     const d = String(digits).replace(/\D/g, "");
     if (d.length < 11) return "+7 (900) 000-00-XX · демо";
@@ -68,6 +72,38 @@
     return contacts.find((c) => c.employeeId === empId);
   }
 
+  function scopeCtx() {
+    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    return {
+      prototypeRole: Sc()?.prototypeRoleKey?.() || (typeof prototypeRole === "string" ? prototypeRole : "manager"),
+      employeeId: state.employeeId,
+      actorContactId: actor,
+      contacts,
+      employees,
+      externalActing: isExternalShell(),
+    };
+  }
+
+  function syncEmployeeFromRole() {
+    const map = Sc()?.ROLE_EMPLOYEE || { manager: "m1", director: "d1", rop: "r1" };
+    const role = scopeCtx().prototypeRole;
+    const next = map[role] || "m1";
+    if (state.employeeId !== next) {
+      state.employeeId = next;
+      state.actingContactId = null;
+      bumpAttachOpGen();
+    }
+  }
+
+  function orderVisible(o) {
+    if (!o) return false;
+    return Sc()?.canViewOrder(o, scopeCtx()) ?? true;
+  }
+
+  function deniedView() {
+    return `<div class="tt-panel tt-denied" data-tt="access-denied"><h2>Нет доступа к этой передаче</h2><p>По правам прототипа эта передача недоступна. Содержимое и файлы не показываются.</p>${btn("← К реестру", 'data-tt="back-list"')}</div>`;
+  }
+
   function seedOrders() {
     const ago = (h) => Date.now() - h * 3600000;
     const ahead = (h) => Date.now() + h * 3600000;
@@ -98,6 +134,9 @@
         holderSince: ago(20),
         timeline: [tl("emp_m1", "emp_m2", "Передано менеджеру для визита", ago(30))],
         code: null,
+        finalRecipientId: "emp_m2",
+        createdById: "emp_m1",
+        allowLegacyComplete: true,
       },
       {
         id: "TT-2026-003",
@@ -339,8 +378,27 @@
         timeline: [tl("emp_m1", "emp_m2", "Собрано на замещении", ago(10))],
         code: null,
       },
+      {
+        id: "TT-2026-021",
+        item: "Образцы для клиента «Север»",
+        qty: "1 пакет",
+        holderId: "ext_04",
+        pendingId: null,
+        finalRecipientId: "ext_01",
+        createdById: "emp_m1",
+        status: "active",
+        dueAt: ahead(8),
+        comment: "Курьер везёт в магазин клиента",
+        holderSince: ago(2),
+        timeline: [
+          tl("emp_m1", "ext_04", "Создана передача · сначала курьеру", ago(3)),
+          tl("ext_04", "ext_04", "Курьер принял в демо", ago(2)),
+        ],
+        code: null,
+      },
     ];
-    nextTrack = 21;
+    nextTrack = 22;
+    orders.forEach((o) => Sc()?.migrateOrderFields(o));
   }
 
   seedContacts();
@@ -359,6 +417,7 @@
     orderId: null,
     query: "",
     statusFilter: "all",
+    mineFilter: "all",
     employeeId: "m1",
     actingContactId: null,
     recipientMode: false,
@@ -698,12 +757,24 @@
   function createStepNumber(phase) {
     if (phase === "item") return 1;
     if (phase === "files") return 2;
-    if (phase.startsWith("recipient")) return 3;
+    if (phase.startsWith("recipient") || phase === "relay-pick" || phase === "edit-relay") return 3;
     return 4;
   }
 
   function defaultCreateForm() {
-    return { item: "", recipientId: "", comment: "", due: "", pickQ: "", newName: "", newPhone: "", mode: "list" };
+    return {
+      item: "",
+      finalRecipientId: "",
+      relayId: "",
+      recipientId: "",
+      comment: "",
+      due: "",
+      pickQ: "",
+      newName: "",
+      newPhone: "",
+      mode: "list",
+      pickTarget: "final",
+    };
   }
 
   function wizardShell(phase, title, hint, body, actionsHtml) {
@@ -728,8 +799,9 @@
   }
 
   function recipientSummary(f) {
-    if (f.recipientId) {
-      const c = contactById(f.recipientId);
+    const fid = f.finalRecipientId || f.recipientId;
+    if (fid) {
+      const c = contactById(fid);
       return c ? `${c.name} · ${fmtPhone(c.phone)}` : "—";
     }
     if (f.mode === "new" && f.newName && f.newPhone) {
@@ -745,7 +817,10 @@
       if (!f.item.trim()) return "Напишите, что передаёте. Это обязательное поле.";
     }
     if (phase === "recipient") {
-      if (!f.recipientId) return "Выберите получателя из списка или добавьте нового.";
+      if (!f.finalRecipientId && !f.recipientId) return "Выберите конечного получателя из списка или добавьте нового.";
+    }
+    if (phase === "relay-pick") {
+      if (!f.relayId) return "Выберите, кому передать первым.";
     }
     if (phase === "recipient-new-name") {
       if (!f.newName.trim()) return "Введите имя получателя.";
@@ -772,19 +847,29 @@
     if (p === "item") state.createPhase = "files";
     else if (p === "files") state.createPhase = "recipient";
     else if (p === "recipient") state.createPhase = "review";
+    else if (p === "relay-pick") state.createPhase = "review";
     else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
     else if (p === "recipient-new-phone") {
       const r = addExternalContact(state.form.newName, state.form.newPhone);
       if (r.error) {
         state.error = r.error;
-        if (r.existing) state.form.recipientId = r.existing.id;
+        if (r.existing) {
+          if (state.form.pickTarget === "relay") state.form.relayId = r.existing.id;
+          else state.form.finalRecipientId = r.existing.id;
+        }
         return false;
       }
-      state.form.recipientId = r.contact.id;
-      state.form.mode = "list";
       r.contact.addedBy = employeeContact(state.employeeId)?.id;
-      state.createPhase = "review";
-    } else if (p === "edit-comment" || p === "edit-due") state.createPhase = "review";
+      state.form.mode = "list";
+      if (state.form.pickTarget === "relay") {
+        state.form.relayId = r.contact.id;
+        state.createPhase = "review";
+      } else {
+        state.form.finalRecipientId = r.contact.id;
+        state.form.recipientId = r.contact.id;
+        state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
+      }
+    } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") state.createPhase = "review";
     return true;
   }
 
@@ -797,7 +882,8 @@
     else if (p === "recipient-new-name") state.createPhase = "recipient";
     else if (p === "recipient-new-phone") state.createPhase = "recipient-new-name";
     else if (p === "review") state.createPhase = "recipient";
-    else if (p === "edit-comment" || p === "edit-due") state.createPhase = "review";
+    else if (p === "relay-pick") state.createPhase = "review";
+    else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") state.createPhase = "review";
     return "ok";
   }
 
@@ -956,7 +1042,16 @@
       to,
       note: via === "qr" ? "Подтверждено по QR" : "Подтверждено одноразовым кодом",
     });
-    state.toast = "Держатель обновлён.";
+    if (o.holderId === o.finalRecipientId) {
+      o.status = "completed";
+      o.timeline.push({
+        at: now(),
+        from: o.holderId,
+        to: o.finalRecipientId,
+        note: "Доставлено конечному получателю",
+      });
+      state.toast = "Передача завершена — конечный получатель подтвердил.";
+    } else state.toast = "Держатель обновлён.";
     return true;
   }
 
@@ -1069,6 +1164,10 @@
       state.error = "Завершить может только текущий держатель.";
       return;
     }
+    if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) {
+      state.error = "Промежуточный держатель не может завершить передачу — передайте конечному получателю.";
+      return;
+    }
     o.status = "completed";
     o.timeline.push({
       at: now(),
@@ -1125,13 +1224,18 @@
 
   function visibleOrders() {
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
-    let list = orders.slice();
+    let list = orders.filter((o) => orderVisible(o));
     if (state.actingContactId) {
-      const seen = new Set();
       list = list.filter((o) => {
         const parts = [o.holderId, o.pendingId, ...o.timeline.flatMap((t) => [t.from, t.to])];
         return parts.includes(state.actingContactId);
       });
+    }
+    if (state.mineFilter === "handoff") {
+      list = list.filter((o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId);
+    }
+    if (state.mineFilter === "receive") {
+      list = list.filter((o) => o.pendingId === actor);
     }
     const q = state.query.trim().toLowerCase();
     list = list.filter((o) => {
@@ -1195,6 +1299,7 @@
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
+    syncEmployeeFromRole();
     if (state.view === "create") {
       const ph = p.get("tt_cphase");
       const allowed = new Set([
@@ -1203,9 +1308,11 @@
         "recipient",
         "recipient-new-name",
         "recipient-new-phone",
+        "relay-pick",
         "review",
         "edit-comment",
         "edit-due",
+        "edit-relay",
       ]);
       state.createPhase = ph && allowed.has(ph) ? ph : state.createPhase || "item";
       if (!state.form) state.form = defaultCreateForm();
@@ -1220,6 +1327,11 @@
   function registryView() {
     const rows = visibleOrders();
     return `<div class="tt-toolbar">
+      <div class="tt-mine-filters" role="group" aria-label="Мои передачи">
+        ${btn("Все", `data-tt="mine-all"${state.mineFilter === "all" ? ' aria-pressed="true"' : ""}`)}
+        ${btn("У меня: нужно передать", `data-tt="mine-handoff"${state.mineFilter === "handoff" ? ' aria-pressed="true"' : ""}`)}
+        ${btn("Ожидает моего получения", `data-tt="mine-receive"${state.mineFilter === "receive" ? ' aria-pressed="true"' : ""}`)}
+      </div>
       <label>Поиск<input data-tt="search" value="${E(state.query)}" placeholder="Трек, предмет, держатель"></label>
       <label>Статус<select data-tt="filter">
         <option value="all">Все</option>
@@ -1276,20 +1388,38 @@
       );
     }
     if (phase === "recipient") {
+      const sel = f.finalRecipientId || f.recipientId;
       return wizardShell(
         phase,
-        "Кому передаём",
-        "Выберите человека из списка или добавьте нового получателя.",
+        "Кому нужно доставить",
+        "Конечный получатель — клиент или человек, которому должны передать предмет.",
         `<label class="tt-wizard-field">Поиск по имени или телефону<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Начните вводить имя или цифры телефона"></label>
         <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
           .slice(0, 20)
           .map(
             (c) =>
-              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
           )
           .join("")}</div>
         ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
         `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+      );
+    }
+    if (phase === "relay-pick") {
+      return wizardShell(
+        phase,
+        "Сначала передать",
+        "Шаг 3 из 4 · кто примет предмет первым (водитель, коллега).",
+        `<label class="tt-wizard-field">Поиск<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Имя или телефон"></label>
+        <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
+          .slice(0, 20)
+          .map(
+            (c) =>
+              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${f.relayId === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+          )
+          .join("")}</div>
+        ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
+        `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     if (phase === "recipient-new-name") {
@@ -1322,14 +1452,16 @@
     if (phase === "edit-due") {
       return wizardShell(
         phase,
-        "Срок передачи",
-        "Необязательно · когда нужно успеть передать.",
+        "Срок доставки",
+        "Необязательно · до какого момента нужно доставить конечному получателю.",
         `<label class="tt-wizard-field">Дата и время<input type="datetime-local" data-tt-field="due" value="${E(f.due)}"></label>`,
         `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     const attCount = state.attachStaging.length;
     const attLabel = attCount ? `${attCount} файл(ов)` : "Без файлов";
+    const relay = f.relayId ? contactById(f.relayId) : null;
+    const relayLine = relay ? `${relay.name} · ${fmtPhone(relay.phone)}` : "Напрямую конечному получателю";
     return wizardShell(
       "review",
       "Проверить и создать",
@@ -1337,9 +1469,10 @@
       `<dl class="tt-wizard-summary">
         <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd>${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd>${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Получатель</dt><dd>${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Кому доставить</dt><dd>${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Сначала передать</dt><dd>${E(relayLine)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relay ? "Изменить" : "Добавить", "create-edit-relay")}</dd></div>
         <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd>${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Срок</dt><dd>${f.due ? E(f.due.replace("T", " · ")) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Срок доставки</dt><dd>${f.due ? E(f.due.replace("T", " · ")) : "Срок не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
       </dl>`,
       `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back")}`
     );
@@ -1366,9 +1499,16 @@
   function detailView(o) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
+    const fin = contactById(o.finalRecipientId);
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
-    const canComplete = isHolder && !o.pendingId && o.status !== "completed";
+    const canComplete =
+      isHolder &&
+      !o.pendingId &&
+      o.status !== "completed" &&
+      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const mustRelay =
+      isHolder && !o.pendingId && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     return `<div class="tt-panel" data-tt="detail">
@@ -1376,8 +1516,10 @@
       <h2>${E(o.id)} · ${E(o.item)}</h2>
       <p>${E(o.qty || "")}${o.comment ? " · " + E(o.comment) : ""}</p>
       <p><strong>Текущий держатель:</strong> ${E(h?.name)} ${h ? `<small>${E(fmtPhone(h.phone))}</small>` : ""}</p>
-      <p><strong>Следующий:</strong> ${p ? E(p.name) : "не назначен"}</p>
-      <p><strong>Срок:</strong> ${o.dueAt ? dt(o.dueAt) : "не указан"} · ${statusBadge(o)}</p>
+      <p><strong>Кому доставить:</strong> ${fin ? `${E(fin.name)} <small>${E(fmtPhone(fin.phone))}</small>` : "—"}</p>
+      <p><strong>Ожидает подтверждения:</strong> ${p ? E(p.name) : "никого"}</p>
+      <p><strong>Срок доставки:</strong> ${o.dueAt ? dt(o.dueAt) : "Срок не указан"} · ${statusBadge(o)}</p>
+      ${mustRelay ? `<div class="tt-reminder" data-tt="relay-reminder"><strong>Нужно передать дальше</strong><p>Вы держите предмет, но конечный получатель — ${E(fin?.name || "—")}. Подтверждение следующего человека возможно только по коду или QR.</p></div>` : ""}
       ${attachmentsSection(o, {
         readonly: !isHolder || o.status === "completed",
         showPicker: isHolder && o.status !== "completed",
@@ -1400,7 +1542,8 @@
         })
         .join("")}</div>
       <div class="tt-actions" style="margin-top:16px">
-        ${isHolder && o.status !== "completed" ? btn("Передать", 'data-tt="transfer"') : ""}
+        ${mustRelay ? btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary") : ""}
+        ${isHolder && o.status !== "completed" && !o.pendingId ? btn("Передать другому человеку", 'data-tt="transfer"') : ""}
         ${canComplete && !confirmingComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""}
         ${isHolder && o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""}
         ${showActHolder ? btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
@@ -1489,6 +1632,7 @@
 
   function bodyHtml() {
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (state.view === "detail" && o && !orderVisible(o)) return deniedView();
     if (state.view === "create") return createView();
     if (state.view === "transfer" && o) return transferView(o);
     if (state.view === "code" && o) return codeView(o);
@@ -1561,6 +1705,7 @@
     if (content) content.innerHTML = bodyHtml();
     paintQrHosts();
     document.title = "Tandoor RF · Тан-трекер";
+    if (Sc() && !state.recipientMode) Sc().syncReminders(orders.filter(orderVisible), scopeCtx(), contacts, dt);
     lucide.createIcons();
     restoreFocus(snap);
   }
@@ -1577,23 +1722,14 @@
       state.error = "Укажите, что передаёте.";
       return;
     }
-    let recipientId = f.recipientId;
-    if (f.mode === "new") {
-      const r = addExternalContact(f.newName, f.newPhone);
-      if (r.error) {
-        state.error = r.error;
-        if (r.existing) f.recipientId = r.existing.id;
-        return;
-      }
-      recipientId = r.contact.id;
-      r.contact.addedBy = employeeContact(state.employeeId)?.id;
-    }
-    if (!recipientId) {
-      state.error = "Выберите или добавьте получателя.";
+    const finalId = f.finalRecipientId || f.recipientId;
+    if (!finalId) {
+      state.error = "Выберите конечного получателя.";
       return;
     }
+    const pendingId = f.relayId || finalId;
     const holder = employeeContact(state.employeeId);
-    if (recipientId === holder?.id) {
+    if (finalId === holder?.id || pendingId === holder?.id) {
       state.error = "Нельзя назначить себя получателем при создании.";
       return;
     }
@@ -1604,12 +1740,21 @@
       item: f.item.trim(),
       qty: "",
       holderId: holder.id,
-      pendingId: recipientId,
+      pendingId,
+      finalRecipientId: finalId,
+      createdById: holder.id,
       status: "waiting",
       dueAt,
       comment: f.comment.trim(),
       holderSince: now(),
-      timeline: [{ at: now(), from: holder.id, to: recipientId, note: "Создана передача" }],
+      timeline: [
+        {
+          at: now(),
+          from: holder.id,
+          to: pendingId,
+          note: f.relayId ? "Создана передача · сначала промежуточному звену" : "Создана передача · конечному получателю",
+        },
+      ],
       code: null,
       handoffVer: 1,
       pastInvitations: [],
@@ -1651,7 +1796,12 @@
     }
     if (b.hasAttribute("data-tt-pick")) {
       if (!state.form) state.form = {};
-      state.form.recipientId = b.getAttribute("data-tt-pick");
+      const pid = b.getAttribute("data-tt-pick");
+      if (state.createPhase === "relay-pick") state.form.relayId = pid;
+      else {
+        state.form.finalRecipientId = pid;
+        state.form.recipientId = pid;
+      }
       renderTracker();
       return;
     }
@@ -1714,7 +1864,7 @@
     if (action === "create-new-recipient") {
       if (!state.form) state.form = defaultCreateForm();
       state.form.mode = "new";
-      state.form.recipientId = "";
+      state.form.pickTarget = state.createPhase === "relay-pick" ? "relay" : "final";
       state.error = "";
       state.createPhase = "recipient-new-name";
       writeUrl();
@@ -1739,6 +1889,35 @@
       state.createPhase = "recipient";
       state.error = "";
       writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-edit-relay") {
+      state.createPhase = "relay-pick";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "transfer-final" && o) {
+      startPending(o, o.finalRecipientId);
+      state.view = "detail";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "mine-all") {
+      state.mineFilter = "all";
+      renderTracker();
+      return;
+    }
+    if (action === "mine-handoff") {
+      state.mineFilter = "handoff";
+      renderTracker();
+      return;
+    }
+    if (action === "mine-receive") {
+      state.mineFilter = "receive";
       renderTracker();
       return;
     }

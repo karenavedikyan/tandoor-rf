@@ -5,12 +5,18 @@ var TT_QA = await (async () => {
     checks.push(s);
   };
   page.on("dialog", (d) => d.accept());
-  const open = (id) => page.locator(`.tt-table [data-tt-open="${id}"]`).click();
+  const open = async (id) => {
+    const row = page.locator(`.tt-table [data-tt-open="${id}"]`);
+    await row.waitFor({ state: "visible" });
+    await row.click();
+    await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  };
   const visibleRows = () => page.locator(".tt-table tbody tr:visible").count();
   await page.goto("http://127.0.0.1:4317/#tan-tracker?role=manager");
   await page.reload();
   ok(await page.locator("#tt-root").count() === 1, "tan-tracker shell mounts");
-  ok((await visibleRows()) >= 18, "registry has at least 18 transfers");
+  const mgrCount = await visibleRows();
+  ok(mgrCount > 0 && mgrCount < 21, "manager registry scoped below full director set");
   await page.locator('[data-tt="search"]').pressSequentially("договор", { delay: 30 });
   ok((await page.locator('[data-tt="search"]').inputValue()) === "договор", "search keeps focus and full query");
   ok(await page.evaluate(() => document.activeElement?.matches('[data-tt="search"]')), "search input stays focused");
