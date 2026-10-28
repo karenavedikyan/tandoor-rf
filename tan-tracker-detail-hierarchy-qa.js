@@ -18,7 +18,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });
   ok(await page.locator(".tt-detail-title").count() === 1, "detail shows prominent item title");
-  ok((await page.locator(".tt-detail-meta").textContent()).includes("Доставить до"), "detail due line labeled");
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Доставить"), "detail due line labeled");
   await page.locator('[data-tt="detail-route-disclosure"] summary').click();
   ok(await page.locator('[data-tt="route-node"]').count() >= 2, "detail route nodes for holder and destination");
   ok(await page.locator('[data-tt="enter-code"]').count() === 1, "pending holder primary enter-code visible");
@@ -26,7 +26,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await ttOpenOtherActions();
   ok(await page.locator('[data-tt="cancel-pending"]').isVisible(), "cancel pending in other actions disclosure");
   await page.locator('[data-tt="other-actions"] summary').click();
-  ok(await page.locator('[data-tt="history-disclosure"]').count() === 1, "history disclosure present");
+  ok((await page.locator('[data-tt="history-panel"], [data-tt="history-disclosure"]').count()) >= 1, "history block present");
   const historySummary = page.locator('[data-tt="history-disclosure"] summary');
   if (await historySummary.isVisible()) await historySummary.click();
   ok((await page.locator('[data-tt="timeline"] div').count()) >= 1, "history shows timeline");
@@ -70,7 +70,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   }
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
-  const enterLoc = page.locator('[data-tt="detail-mobile-dock"] [data-tt="enter-code"], [data-tt="handoff-panel"] [data-tt="enter-code"]').first();
+  const enterLoc = page.locator('[data-tt-detail-hero-primary][data-tt="enter-code"]').first();
   await enterLoc.waitFor({ state: "visible" });
   ok(await page.locator("#af-required-reminder").count() === 0, "required reminder suppressed on TT detail");
   ok(await page.evaluate(() => document.body.classList.contains("tt-detail-focus")), "detail focus body class set");
@@ -89,7 +89,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
   await page.reload();
-  ok(await page.locator('[data-tt="demo-settings"]').evaluate((el) => !el.open), "demo settings closed by default on registry");
+  ok(await page.locator('.tt-demo-head-popover[data-tt="demo-settings"]').evaluate((el) => !el.open), "demo settings closed by default on registry");
   await ttOpenDemoSettings();
   ok(await page.locator('[data-tt="employee"]').isVisible(), "employee switcher discoverable in demo settings");
 

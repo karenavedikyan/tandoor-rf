@@ -21,12 +21,10 @@ var TT_DETAIL_TASK_QA = await (async () => {
   });
   ok(order.ok, "task card appears before route disclosure");
 
-  const routeInitiallyClosed = await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => !el.open);
-  const mobileWide = await page.evaluate(() => window.innerWidth <= 767);
-  ok(routeInitiallyClosed || mobileWide, "route closed on desktop; open by default on mobile (redesign tt52)");
-  ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "notes disclosure closed initially");
+  ok(await page.locator('[data-tt="detail-route-disclosure"]').evaluate((el) => el.open), "route open by default on desktop (tt54)");
   ok(await page.locator('[data-tt="detail-attachments-disclosure"]').evaluate((el) => !el.open), "attachments disclosure closed initially");
-  ok(await page.locator('[data-tt="history-disclosure"]').evaluate((el) => !el.open), "history closed initially");
+  ok((await page.locator('[data-tt="history-panel"]').count()) >= 1, "desktop history panel always visible");
+  ok((await page.locator('[data-tt="detail-facts"]').count()) >= 1, "desktop facts card in aside");
   ok((await page.locator(".tt-detail-sub").count()) === 0, "no inline comment block above task card");
 
   const longComment = "Длинный комментарий для проверки первого экрана · ".repeat(12);
@@ -40,14 +38,30 @@ var TT_DETAIL_TASK_QA = await (async () => {
     },
     longComment.trim()
   );
-  await page.locator('[data-tt="enter-code"]').click();
+  await page.locator('[data-tt="enter-code"]').first().click();
   await page.locator('button[data-tt="detail"]').click();
   await page.locator('[data-tt="detail-task-card"]').waitFor({ state: "visible" });
-  ok((await page.locator(".tt-detail-sub").count()) === 0, "long comment not inline above task after rerender");
-  ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "long comment hidden in closed notes disclosure");
-  ok(!(await page.locator(".tt-detail-note-comment").isVisible()), "comment body not visible until expand");
+  ok((await page.locator('[data-tt="detail-facts"]').textContent()).includes("Длинный комментарий"), "desktop facts card shows long comment");
 
   await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
+  await page.reload();
+  await page.evaluate(
+    (text) => {
+      const o = window.TanTrackerPrototype.orders().find((x) => x.id === "TT-2026-001");
+      if (o) {
+        o.comment = text;
+        o.qty = "3 коробки";
+      }
+    },
+    longComment.trim()
+  );
+  await page.locator('[data-tt="enter-code"]').first().click();
+  await page.locator('button[data-tt="detail"]').click();
+  await page.locator('[data-tt="detail-task-card"]').waitFor({ state: "visible" });
+  ok((await page.locator(".tt-detail-sub").count()) === 0, "long comment not inline above task on mobile");
+  ok(await page.locator('[data-tt="detail-notes-disclosure"]').evaluate((el) => !el.open), "long comment hidden in closed notes disclosure");
+  ok(!(await page.locator(".tt-detail-note-comment").isVisible()), "comment body not visible until expand");
   const taskBeforeNotes = await page.evaluate(() => {
     const task = document.querySelector('[data-tt="detail-task-card"]');
     const notes = document.querySelector('[data-tt="detail-notes-disclosure"]');
@@ -55,17 +69,19 @@ var TT_DETAIL_TASK_QA = await (async () => {
   });
   ok(taskBeforeNotes, "task card precedes notes disclosure with long comment");
 
-  const hit = await page.evaluate(() => {
-    const btn = document.querySelector('[data-tt="enter-code"]');
+  const heroEnter = page.locator('[data-tt="handoff-panel"] [data-tt="enter-code"]').first();
+  await heroEnter.waitFor({ state: "visible" });
+  const hit = await heroEnter.evaluate((btn) => {
     if (!btn) return false;
     const r = btn.getBoundingClientRect();
     const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return el === btn || btn.contains(el);
   });
   ok(hit, "375px enter-code hit-test on first screen");
-  const box = await page.locator('[data-tt="enter-code"]').boundingBox();
+  const box = await heroEnter.boundingBox();
   ok(box && box.y + box.height <= 812, "375px primary in viewport");
 
+  await page.evaluate(() => document.getElementById("af-required-reminder")?.remove());
   await page.locator('[data-tt="detail-notes-disclosure"] summary').click();
   ok((await page.locator(".tt-detail-note-comment").textContent()).includes("Длинный комментарий"), "expand notes reveals full long comment");
   ok((await page.locator(".tt-detail-note-value").textContent()).includes("3 коробки"), "expand notes shows qty");
@@ -74,10 +90,11 @@ var TT_DETAIL_TASK_QA = await (async () => {
   ok((await page.locator(".tt-att-compact .tt-att-action").count()) >= 1, "attachments expand with action chips");
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
-  ok(await page.locator('[data-tt="enter-code"]').isVisible(), "dark theme primary visible");
+  ok(await page.locator('[data-tt="handoff-panel"] [data-tt="enter-code"]').isVisible(), "dark theme primary visible");
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-002`);
   await page.reload();

@@ -165,7 +165,8 @@
   .tt-active:has([data-tt="create-wizard"]) .tt-work{ padding-bottom:8px; }
 }
 .tt-active.tt-create-wizard #af-required-reminder,
-.tt-active.tt-detail-focus #af-required-reminder { display:none !important; }
+.tt-active.tt-detail-focus #af-required-reminder,
+.tt-active.tt-code-view #af-required-reminder { display:none !important; }
 .tt-active.tt-detail-focus #app:has(#af-required-reminder) { padding-bottom:0 !important; }
 .tt-active.tt-create-wizard .tt-demo { display:none !important; }
 .tt-active.tt-create-wizard [data-tt="chrome"] { display:none !important; }
