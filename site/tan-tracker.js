@@ -369,7 +369,12 @@
     phoneVerifiedKey: "",
     contactSearch: "",
     newRecipient: false,
+    completeConfirmOrderId: null,
   };
+
+  function clearCompleteConfirm() {
+    state.completeConfirmOrderId = null;
+  }
 
   function syncInvitation(o) {
     if (!o.pendingId) {
@@ -449,6 +454,7 @@
     state.actingContactId = null;
     state.orderId = null;
     state.view = "list";
+    clearCompleteConfirm();
     resetPhoneIdentity();
     ttShellMounted = false;
     TT_BODY.forEach((c) => document.body.classList.remove(c));
@@ -982,6 +988,7 @@
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
     const canComplete = isHolder && !o.pendingId && o.status !== "completed";
+    const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     return `<div class="tt-panel" data-tt="detail">
       <div class="tt-actions">${btn(isExternalShell() ? "← К передаче" : "← К реестру", 'data-tt="back-list"')}</div>
@@ -1002,11 +1009,19 @@
         .join("")}</div>
       <div class="tt-actions" style="margin-top:16px">
         ${isHolder && o.status !== "completed" ? btn("Передать", 'data-tt="transfer"') : ""}
-        ${canComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""}
+        ${canComplete && !confirmingComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""}
         ${isHolder && o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""}
         ${showActHolder ? btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
         ${p && o.holderId !== p.id && !state.actingContactId ? btn("Действовать как получатель", 'data-tt="act-recipient"') : ""}
       </div>
+      ${
+        confirmingComplete
+          ? `<div class="tt-complete-confirm" data-tt="complete-confirm">
+        <p class="tt-warning">Завершить передачу «${E(o.item)}» (${E(o.id)})? Это необратимо: дальнейшие передачи по этому треку будут недоступны.</p>
+        <div class="tt-actions">${btn("Подтвердить завершение", 'data-tt="confirm-complete"', "tt-primary")}${btn("Отмена", 'data-tt="cancel-complete"')}</div>
+      </div>`
+          : ""
+      }
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
     </div>`;
@@ -1217,6 +1232,7 @@
       state.orderId = b.getAttribute("data-tt-open");
       state.view = "detail";
       state.error = state.toast = "";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1232,6 +1248,7 @@
       state.view = "create";
       state.form = { item: "", recipientId: "", comment: "", due: "", mode: "list" };
       state.error = "";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1241,12 +1258,14 @@
       state.orderId = null;
       state.form = null;
       state.error = state.toast = "";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
     }
     if (action === "detail" && o) {
       state.view = "detail";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1255,6 +1274,7 @@
       state.view = "transfer";
       state.form = { pickQ: "", mode: "list" };
       state.error = "";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1306,13 +1326,35 @@
       return;
     }
     if (action === "complete" && o) {
-      if (confirm("Завершить передачу? Дальнейшие передачи по этому треку будут недоступны.")) completeOrder(o);
+      state.error = "";
+      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      if (o.status === "completed") state.error = "Передача уже завершена.";
+      else if (o.pendingId) state.error = "Сначала отмените ожидание или подтвердите передачу.";
+      else if (!actor || o.holderId !== actor) state.error = "Завершить может только текущий держатель.";
+      else state.completeConfirmOrderId = o.id;
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "cancel-complete") {
+      clearCompleteConfirm();
+      renderTracker();
+      return;
+    }
+    if (action === "confirm-complete" && o) {
+      if (state.completeConfirmOrderId !== o.id) {
+        renderTracker();
+        return;
+      }
+      clearCompleteConfirm();
+      completeOrder(o);
       writeUrl();
       renderTracker();
       return;
     }
     if (action === "cancel-pending" && o) {
       cancelPending(o);
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1325,7 +1367,7 @@
     if (action === "tab-qr") {
       state.handoffTab = "qr";
       renderTracker();
-      scrollQrIntoView();
+      if (window.innerWidth < 768) scrollQrIntoView();
       return;
     }
     if (action === "scan-qr-demo" && o) {
@@ -1372,6 +1414,7 @@
       state.actingContactId = o.pendingId;
       state.recipientMode = false;
       state.view = "detail";
+      clearCompleteConfirm();
       writeUrl();
       renderTracker();
       return;
@@ -1379,6 +1422,7 @@
     if (action === "act-holder" && o) {
       state.actingContactId = o.holderId;
       state.view = "detail";
+      clearCompleteConfirm();
       ttShellMounted = false;
       lastViewKey = "";
       writeUrl();
@@ -1387,6 +1431,7 @@
     }
     if (action === "clear-act") {
       state.actingContactId = null;
+      clearCompleteConfirm();
       ttShellMounted = false;
       lastViewKey = "";
       renderTracker();
@@ -1462,6 +1507,7 @@
     if (e.target.matches('[data-tt="employee"]')) {
       state.employeeId = e.target.value;
       state.actingContactId = null;
+      clearCompleteConfirm();
       renderTracker();
     }
   });

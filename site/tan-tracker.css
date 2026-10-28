@@ -78,6 +78,7 @@
 .tt-recipient h1 { font-size:22px; margin:0 0 8px; }
 .tt-code { font-size:28px; letter-spacing:.25em; font-weight:700; text-align:center; padding:16px; border:2px dashed var(--line); border-radius:10px; margin:16px 0; }
 .tt-warning { background:var(--tt-warn-bg); color:var(--tt-warn); padding:12px 14px; border-radius:8px; font-size:13px; margin:12px 0; }
+.tt-complete-confirm { margin-top:16px; padding-top:4px; }
 .tt-handoff { margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
 .tt-seg { display:flex; gap:8px; margin-bottom:12px; }
 .tt-seg button { flex:1; border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--tt-panel); cursor:pointer; }

@@ -106,8 +106,31 @@ var TT_QA = await (async () => {
   await open("TT-2026-002");
   if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
     await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
+  const confirmCalls = await page.evaluate(() => {
+    window.__ttConfirmCalls = 0;
+    const orig = window.confirm;
+    window.confirm = () => {
+      window.__ttConfirmCalls += 1;
+      return false;
+    };
+    return orig;
+  });
   await page.getByRole("button", { name: "Завершить передачу", exact: true }).click();
+  ok(await page.locator('[data-tt="complete-confirm"]').count() === 1, "complete opens inline confirm");
+  ok(!(await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "complete not immediate");
+  await page.locator('[data-tt="complete-confirm"]').getByRole("button", { name: "Отмена", exact: true }).click();
+  ok(await page.locator('[data-tt="complete-confirm"]').count() === 0, "complete cancel clears confirm");
+  ok(
+    (await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-002").status)) !== "completed",
+    "complete cancel leaves order active"
+  );
+  await page.getByRole("button", { name: "Завершить передачу", exact: true }).click();
+  await page.getByRole("button", { name: "Подтвердить завершение", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "complete transfer as holder");
+  ok((await page.evaluate(() => window.__ttConfirmCalls)) === 0, "complete does not call native confirm");
+  await page.evaluate((orig) => {
+    if (orig) window.confirm = orig;
+  }, confirmCalls);
   await page.locator('[data-tt="employee"]').selectOption("m1");
   await page.locator('[data-tt="back-list"]').click();
   await open("TT-2026-001");
