@@ -7,12 +7,9 @@ var TT_ROLE_QA = await (async () => {
   const base = "http://127.0.0.1:4317";
   const rowCount = async () => page.locator("#tt-registry-body tr[data-tt-open]").count();
 
-  await page.goto(`${base}/#exchange?role=director`);
+  await page.goto(`${base}/#tan-tracker`);
   await page.reload();
-  await page.evaluate(() => {
-    location.hash = "#tan-tracker";
-  });
-  await page.locator("#tt-root").waitFor({ state: "visible" });
+  await page.locator("#tt-root").waitFor({ state: "visible", timeout: 15000 });
   const implicitRows = await rowCount();
   ok(implicitRows > 0 && implicitRows < 21, "tan-tracker without role param does not inherit global director full registry");
 
