@@ -72,6 +72,11 @@ var TT_QA = await (async () => {
   const tlAfter = await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-004").timeline.length);
   ok(tlAfter === tlBefore + 1, "single handoff appends timeline once");
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Сергей Приёмка"), "valid code updates holder");
+  ok((await page.locator('[data-tt="access-denied"]').count()) === 0, "code confirm shows sender success not access denied");
+  ok(
+    (await page.locator('[data-tt="detail"]').textContent()).includes("Сергей"),
+    "code confirm sender still reads successful handoff detail"
+  );
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
   await page.locator('[data-tt="transfer"]').click();
   await page.locator('[data-tt="confirm-transfer"]').waitFor({ state: "visible" });
@@ -109,6 +114,8 @@ var TT_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Смена QR"), "QR confirm handoff once");
+  ok((await page.locator('[data-tt="access-denied"]').count()) === 0, "QR receipt does not access-deny sender after new external holder");
+  ok((await page.evaluate(() => location.hash)).includes("tt_act=") === false, "QR receipt clears stale tt_act external sender");
   const holderAfter = await page.evaluate(() => window.TanTrackerPrototype.orders().find((o) => o.id === "TT-2026-004").holderId);
   const replayHash = usedQrPayload.startsWith("#") ? usedQrPayload : usedQrPayload.includes("#") ? usedQrPayload.slice(usedQrPayload.indexOf("#")) : "#" + usedQrPayload;
   await navHash(replayHash);

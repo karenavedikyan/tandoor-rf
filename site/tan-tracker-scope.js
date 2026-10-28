@@ -143,17 +143,17 @@
     if (actor && [o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
     const participants = orderParticipantIds(o);
     if (participants.has(actor)) return true;
-    if ((o.revokedParticipants || []).includes(actor)) return false;
     if (role === "rop" || role === "regional") {
       const team = teamOfEmployee(ctx.employeeId, ctx.employees);
-      if (!team) return false;
-      const teamEmp = new Set(employeeIdsInTeam(team));
-      for (const cid of participants) {
-        const eid = contactEmployeeId(cid, ctx.contacts);
-        if (eid && teamEmp.has(eid)) return true;
+      if (team) {
+        const teamEmp = new Set(employeeIdsInTeam(team));
+        for (const cid of participants) {
+          const eid = contactEmployeeId(cid, ctx.contacts);
+          if (eid && teamEmp.has(eid)) return true;
+        }
       }
-      return false;
     }
+    if ((o.revokedParticipants || []).includes(actor)) return false;
     return false;
   }
 

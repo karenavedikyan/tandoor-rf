@@ -1087,6 +1087,15 @@
     return true;
   }
 
+  function afterConfirmedHandoff(o) {
+    state.recipientMode = false;
+    state.recipientTicket = null;
+    state.view = "detail";
+    state.codeInput = "";
+    if (state.actingContactId && state.actingContactId !== o.holderId) state.actingContactId = null;
+    ttShellMounted = false;
+  }
+
   function generateCode(o) {
     if (o.status === "completed" || !o.pendingId) return null;
     const code = String(Math.floor(100000 + Math.random() * 900000));
@@ -2110,10 +2119,7 @@
       return;
     }
     if (action === "confirm-code" && o) {
-      if (tryConfirmCode(o, state.codeInput)) {
-        state.view = "detail";
-        state.codeInput = "";
-      }
+      if (tryConfirmCode(o, state.codeInput)) afterConfirmedHandoff(o);
       writeUrl();
       renderTracker();
       return;
@@ -2213,11 +2219,7 @@
     }
     if (action === "confirm-qr-receive" && o) {
       const ticket = resolveInvitation(o, state.recipientTicket?.hv ?? o.activeInvitation?.hv);
-      if (tryConfirmQr(o, ticket)) {
-        state.recipientMode = false;
-        state.view = "detail";
-        ttShellMounted = false;
-      }
+      if (tryConfirmQr(o, ticket)) afterConfirmedHandoff(o);
       writeUrl();
       renderTracker();
       return;

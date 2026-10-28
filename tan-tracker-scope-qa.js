@@ -70,6 +70,11 @@ var TT_SCOPE_QA = await (async () => {
   });
   await page.locator('[data-tt="access-denied"]').waitFor({ state: "visible" });
   ok((await page.locator("#tt-content").textContent()).includes("Нет доступа"), "revoked pending employee cannot open order");
+  await page.evaluate(() => {
+    location.hash = "#tan-tracker?role=rop&tt_emp=r1&tt_id=TT-2026-016";
+  });
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("TT-2026-016"), "rop keeps own-team track after canceled pending revoke");
   ok((await page.locator(".tt-att-item").count()) === 0, "revoked pending employee sees no attachments");
   await page.evaluate(() => {
     location.hash = "#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-016";
