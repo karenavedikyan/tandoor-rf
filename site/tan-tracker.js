@@ -560,12 +560,33 @@
   }
 
   function scrollQrIntoView() {
+    if (window.innerWidth >= 768) return;
+    const minTop = 80;
+    const bottomGap = 150;
+    const pick = () =>
+      document.querySelector('[data-tt="handoff-panel"] .tt-qr-wrap') ||
+      document.querySelector('[data-tt="handoff-panel"] [data-tt="qr-host"]') ||
+      document.querySelector('[data-tt="qr-host"]');
+    const fit = (el) => {
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      return r.top >= minTop && r.bottom <= vh - bottomGap;
+    };
+    const nudge = (el, attempt) => {
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      let delta = 0;
+      if (r.top < minTop) delta = r.top - minTop;
+      else if (r.bottom > vh - bottomGap) delta = r.bottom - (vh - bottomGap);
+      if (delta) window.scrollBy({ top: delta, behavior: attempt === 0 ? "smooth" : "auto" });
+      if (attempt < 20 && !fit(el)) requestAnimationFrame(() => nudge(el, attempt + 1));
+    };
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const el =
-          document.querySelector('[data-tt="handoff-panel"] [data-tt="qr-host"]') ||
-          document.querySelector('[data-tt="qr-host"]');
-        el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        const el = pick();
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        requestAnimationFrame(() => nudge(el, 0));
       });
     });
   }
@@ -1304,6 +1325,7 @@
     if (action === "tab-qr") {
       state.handoffTab = "qr";
       renderTracker();
+      scrollQrIntoView();
       return;
     }
     if (action === "scan-qr-demo" && o) {
