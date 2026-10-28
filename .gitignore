@@ -5,3 +5,4 @@ dist/
 .DS_Store
 test-results/
 tmp/
+.tt56-prototype-ref/

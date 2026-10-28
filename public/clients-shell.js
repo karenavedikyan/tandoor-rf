@@ -185,6 +185,16 @@
     var workLink = showClients && (!launch || launch.navigation.work)
       ? navLink("/work", "Моя работа", "work", active, "work")
       : "";
+    var ttRoles =
+      effectiveUser &&
+      effectiveUser.role !== "assistant" &&
+      effectiveUser.role !== "marketer" &&
+      effectiveUser.role !== "analyst" &&
+      effectiveUser.role !== "category_manager";
+    var tanTrackerLink =
+      showClients && ttRoles && (!launch || launch.navigation.tanTracker !== false)
+        ? navLink("/tan-tracker", "Тан-трекер", "work", active, "tan-tracker")
+        : "";
     var workspaceLink = showAccessWorkspace && (!launch || launch.navigation.substitution)
       ? navLink("/access", "Назначения ассистентам", "substitution", active, "access-workspace")
       : "";
@@ -203,6 +213,7 @@
       clientsLink +
       salesLink +
       workLink +
+      tanTrackerLink +
       workspaceLink +
       "</nav>" +
       '<div class="legacy-sidebar__footer">' +

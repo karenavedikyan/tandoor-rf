@@ -16,6 +16,7 @@ import { createAccessAdminRouter, createAccessRouter } from "./access/router";
 import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
+import { createTanTrackerRouter } from "./tan-tracker/router";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
 import { logServerError } from "./http/safe-server-error-log";
@@ -65,6 +66,7 @@ function isStructuredApi(req: Request): boolean {
     req.path.startsWith("/api/admin/clients") ||
     req.path.startsWith("/api/access") ||
     req.path.startsWith("/api/work") ||
+    req.path.startsWith("/api/tan-tracker") ||
     req.path.startsWith("/api/ready")
   );
 }
@@ -213,6 +215,7 @@ export function createApp(): express.Application {
   app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/access", createAccessRouter());
   app.use("/api/work", createWorkRouter());
+  app.use("/api/tan-tracker", createTanTrackerRouter());
 
   app.use("/api", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });
@@ -266,6 +269,10 @@ export function createApp(): express.Application {
 
   app.get("/work", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "work.html");
+  });
+
+  app.get("/tan-tracker", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "tan-tracker.html");
   });
 
   app.use(

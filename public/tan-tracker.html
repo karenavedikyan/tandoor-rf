@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/brand/theme-init.js"></script>
+    <title>Тан-трекер | Тандор</title>
+    <link rel="stylesheet" href="/fonts/golos/fonts.css" />
+    <link rel="stylesheet" href="/brand/legacy-shell.css" />
+    <link rel="stylesheet" href="/clients.css" />
+    <link rel="stylesheet" href="/brand/cabinet.css" />
+    <link rel="stylesheet" href="/tan-tracker/tan-tracker.css?v=20261028-tt56" />
+    <link rel="stylesheet" href="/tan-tracker/tan-tracker-ui.css?v=20261028-tt56" />
+    <style>
+      body.tt-lk-mode [data-tt="demo-settings"],
+      body.tt-lk-mode .tt-demo-head-popover,
+      body.tt-lk-mode [data-tt="detail-demo"] {
+        display: none !important;
+      }
+      #tt-root-host {
+        min-width: 0;
+        width: 100%;
+        max-width: 1500px;
+      }
+    </style>
+  </head>
+  <body class="legacy-body tt-active">
+    <div class="legacy-app">
+      <div id="workspace-sidebar"></div>
+      <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
+      <div class="legacy-frame">
+        <div id="workspace-topbar"></div>
+        <div id="tt-state-panel" class="clients-hidden" role="alert"></div>
+        <main class="legacy-content" id="tt-root-host">
+          <div id="tt-root" class="tt-work" data-testid="tan-tracker"></div>
+        </main>
+      </div>
+    </div>
+    <script src="/common.js"></script>
+    <script src="/clients-shell.js"></script>
+    <script src="/tan-tracker-lk-shell.js"></script>
+    <script src="/tan-tracker/assets/qrcode-generator.js"></script>
+    <script src="/tan-tracker/tan-tracker-scope.js"></script>
+    <script src="/tan-tracker/tan-tracker-attachments.js"></script>
+    <script src="/tan-tracker/tan-tracker.js?v=20261028-tt56"></script>
+    <script src="/tan-tracker-lk-boot.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        if (window.ClientsShell && window.ClientsShell.mount) {
+          window.ClientsShell.mount({ active: "tan-tracker" });
+        }
+      });
+    </script>
+  </body>
+</html>
