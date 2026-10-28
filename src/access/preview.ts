@@ -91,15 +91,8 @@ export async function getSessionPreviewDetails(sessionId: string): Promise<Sessi
   const staleWorkFlag =
     row.preview_work_enabled &&
     (!expiresAt || !(expiresAt instanceof Date) || expiresAt.getTime() <= Date.now());
-  if (staleWorkFlag && row.preview_user_id) {
-    await query(
-      `
-        UPDATE sessions
-        SET preview_work_enabled = false, preview_work_started_at = NULL, preview_work_expires_at = NULL
-        WHERE id = $1::uuid
-      `,
-      [sessionId],
-    );
+  if (staleWorkFlag) {
+    // Fail-closed: do not mutate session on read; computed workEnabled stays false.
   }
   const workEnabled = Boolean(row.preview_user_id && hasValidLease);
   return {

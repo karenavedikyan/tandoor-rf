@@ -2,7 +2,10 @@ import express from "express";
 import {
   attachAccessContext,
   blockPreviewWrites,
+  effectiveBusinessRole,
   requireClientReadAccess,
+  requireNonAssistantForSalesSection,
+  type AccessRequest,
 } from "../access/middleware";
 import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
@@ -89,15 +92,15 @@ export function createClientsRouter(): express.Router {
   const writeChain = [
     requireDatabaseReady,
     requireAuth,
+    attachAccessContext,
+    blockPreviewWrites,
     ((req, res, next) => {
-      if ((req as import("../middleware/auth").AuthenticatedRequest).authUser?.role === "assistant") {
+      if (effectiveBusinessRole(req as AccessRequest) === "assistant") {
         res.status(403).json({ error: { code: "FORBIDDEN", message: "Ассистенту предоставлен только просмотр информации по назначенным клиентам." } });
         return;
       }
       next();
     }) as express.RequestHandler,
-    attachAccessContext,
-    blockPreviewWrites,
     requireClientReadAccess,
   ] as const;
 
@@ -141,19 +144,27 @@ export function createClientsRouter(): express.Router {
     void v3LegalSalesMonthHandler(req, res).catch(next);
   });
 
-  router.get("/v3/sales/months", ...readChain, (req, res, next) => {
+  const salesSectionReadChain = [
+    requireDatabaseReady,
+    requireAuth,
+    attachAccessContext,
+    requireNonAssistantForSalesSection,
+    requireClientReadAccess,
+  ] as const;
+
+  router.get("/v3/sales/months", ...salesSectionReadChain, (req, res, next) => {
     void v3SalesSectionMonthsHandler(req, res).catch(next);
   });
 
-  router.get("/v3/sales/overview", ...readChain, (req, res, next) => {
+  router.get("/v3/sales/overview", ...salesSectionReadChain, (req, res, next) => {
     void v3SalesSectionOverviewHandler(req, res).catch(next);
   });
 
-  router.get("/v3/sales/sku", ...readChain, (req, res, next) => {
+  router.get("/v3/sales/sku", ...salesSectionReadChain, (req, res, next) => {
     void v3SalesSectionSkuHandler(req, res).catch(next);
   });
 
-  router.get("/v3/sales/clients", ...readChain, (req, res, next) => {
+  router.get("/v3/sales/clients", ...salesSectionReadChain, (req, res, next) => {
     void v3SalesSectionClientsHandler(req, res).catch(next);
   });
 

@@ -1,4 +1,5 @@
 import type { AccessContext } from "../access/types";
+import { effectiveAccessRole } from "../access/middleware";
 import { selfRopEmployeeGuidFromContext } from "./self-rop-identity";
 import type { UserRole } from "../shared/user";
 import type { ClientsEntityMode, ClientsViewMode } from "./query";
@@ -162,7 +163,9 @@ export function resolveRolePresentation(context: AccessContext): RolePresentatio
     return null;
   }
 
-  const businessRole = resolveBusinessClientsRole(context.role);
+  const businessRole = resolveBusinessClientsRole(
+    effectiveAccessRole(context) as UserRole,
+  );
 
   switch (businessRole) {
     case "manager":

@@ -9,14 +9,13 @@ import { QA_PASSWORD, seedAssignmentQa } from "../helpers/assistant-assignment-f
 import { getIntegrationDatabaseUrl, setIntegrationEnv } from "../helpers/test-db";
 import { loginCabinet, waitClientsShellReady } from "./helpers/cabinet-login";
 
-const ORIGIN = "http://127.0.0.1:3000";
 const SCREENSHOT_DIR =
   process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ?? path.join("/cursor/stores/self/media");
 
 describe("admin preview work mode browser", { concurrency: false }, () => {
   let browser: Browser;
   let server: http.Server;
-  let baseUrl = ORIGIN;
+  let baseUrl = "http://127.0.0.1:3000";
   let databaseUrl: string;
   let users: Awaited<ReturnType<typeof seedAssignmentQa>>;
 
@@ -24,7 +23,7 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     databaseUrl = getIntegrationDatabaseUrl();
     browser = await chromium.launch({ headless: true });
-    users = await seedAssignmentQa(databaseUrl, ORIGIN);
+    users = await seedAssignmentQa(databaseUrl, baseUrl);
   });
 
   after(async () => {
@@ -52,21 +51,31 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
     });
   }
 
-  async function adminPreviewManager(page: Page): Promise<void> {
-    await loginCabinet(page, users.admin!.email, QA_PASSWORD);
-    await waitClientsShellReady(page);
+  async function waitStableClientsShell(page: Page): Promise<void> {
     await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await page.waitForURL(/\/clients(\?|$)/, { timeout: 30000 });
+    await waitClientsShellReady(page);
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => undefined);
+  }
+
+  async function openPreviewAsManager(page: Page): Promise<void> {
+    await waitStableClientsShell(page);
+    const pickerReady = page.waitForSelector("#shell-preview-picker", { state: "visible", timeout: 30000 });
     await page.click("#shell-preview-open");
-    await page.waitForSelector("#shell-preview-picker");
+    await pickerReady;
+    const candidates = page.waitForResponse(
+      (r) => r.url().includes("/api/admin/access/preview/candidates") && r.ok(),
+      { timeout: 30000 },
+    );
     await page.fill("#shell-preview-query", "Морозов");
-    await page.waitForResponse(
-      (r) => r.url().includes("/api/admin/access/preview/candidates") && r.status() === 200,
+    await candidates;
+    const start = page.waitForResponse(
+      (r) => r.url().includes("/api/admin/access/preview/start") && r.status() === 200,
+      { timeout: 30000 },
     );
     await page.click('[data-preview-id="' + users.manager!.id + '"]');
-    await page.waitForResponse(
-      (r) => r.url().includes("/api/admin/access/preview/start") && r.status() === 200,
-    );
-    await page.waitForSelector(".clients-preview-banner");
+    await start;
+    await page.waitForSelector(".clients-preview-banner", { timeout: 20000 });
   }
 
   it("preserves assignment form across readonly to work enable reload", async () => {
@@ -75,9 +84,10 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: baseUrl });
     try {
       const page = await context.newPage();
-      await adminPreviewManager(page);
-      await page.goto("/access-workspace", { waitUntil: "domcontentloaded" });
-      await page.waitForSelector("#access-workspace-app:not(.clients-hidden)");
+      await loginCabinet(page, users.admin!.email, QA_PASSWORD);
+      await openPreviewAsManager(page);
+      await page.goto("/access", { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#access-workspace-app:not(.clients-hidden)", { timeout: 30000 });
       await page.click('[data-aa="new"]');
       await page.waitForSelector("#aa-assignment-form");
       await page.waitForSelector("#aa-picker-data input[data-pick]", { timeout: 30000 });
@@ -90,14 +100,15 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
       const selectedBefore = await page.locator("#aa-selected").innerText();
       await page.fill("#aa-basis", "Браузерный тест сохранения формы при включении рабочего режима.");
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "pr116-preview-form-before-work-enable.png"),
+        path: path.join(SCREENSHOT_DIR, "pr116-preview-form-before-work-enable-desktop.png"),
         fullPage: true,
       });
       page.once("dialog", (d) => d.accept());
-      await page.click("#clients-preview-work-btn");
-      await page.waitForResponse(
+      const enable = page.waitForResponse(
         (r) => r.url().includes("/api/admin/access/preview/work/enable") && r.status() === 200,
       );
+      await page.click("#clients-preview-work-btn");
+      await enable;
       await page.waitForSelector(".clients-preview-banner--work");
       await page.waitForSelector("#aa-assignment-form");
       const selectedAfter = await page.locator("#aa-selected").innerText();
@@ -105,12 +116,10 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
       assert.match(selectedAfter, /Выбрано юрлиц: (\d+)/);
       const count = Number(selectedAfter.match(/Выбрано юрлиц: (\d+)/)?.[1] ?? "0");
       assert.ok(count >= 11);
-      const basis = await page.locator("#aa-basis").inputValue();
-      assert.match(basis, /Браузерный тест сохранения формы/);
-      const submitDisabled = await page.locator("#aa-assignment-form button.aa-primary").isDisabled();
-      assert.equal(submitDisabled, false);
+      assert.match(await page.locator("#aa-basis").inputValue(), /Браузерный тест/);
+      assert.equal(await page.locator("#aa-assignment-form button.aa-primary").isDisabled(), false);
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "pr116-preview-form-after-work-enable.png"),
+        path: path.join(SCREENSHOT_DIR, "pr116-preview-form-after-work-enable-desktop.png"),
         fullPage: true,
       });
     } finally {
@@ -119,34 +128,41 @@ describe("admin preview work mode browser", { concurrency: false }, () => {
     }
   });
 
-  it("picker pagination clamps page 4 on mobile viewport", async () => {
+  it("picker pager reaches page 4 without overflow on mobile", async () => {
     await resetPoolForTests();
     await startServer();
     const context = await browser.newContext({ viewport: { width: 375, height: 812 }, baseURL: baseUrl });
     try {
       const page = await context.newPage();
       await loginCabinet(page, users.manager!.email, QA_PASSWORD);
-      await page.goto("/access-workspace", { waitUntil: "domcontentloaded" });
+      await page.goto("/access", { waitUntil: "domcontentloaded" });
       await page.waitForSelector("#access-workspace-app:not(.clients-hidden)");
       await page.click('[data-aa="new"]');
       await page.waitForSelector("#aa-picker-data");
-      const pickerRes = await page.waitForResponse(
-        (r) => r.url().includes("/api/access/delegators/") && r.url().includes("/clients?") && r.status() === 200,
+      const first = await page.waitForResponse(
+        (r) => r.url().includes("/delegators/") && r.url().includes("/clients?") && r.ok(),
       );
-      const body = (await pickerRes.json()) as { totalPages?: number };
-      if ((body.totalPages ?? 1) >= 4) {
-        await page.evaluate(() => {
-          const u = new URL(window.location.href);
-          u.searchParams.set("pickPage", "4");
-          history.replaceState({}, "", u.toString());
-        });
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await page.waitForSelector("#aa-picker-data");
+      const body = (await first.json()) as { totalPages?: number; page?: number; total?: number };
+      assert.ok((body.total ?? 0) >= 50, "expected seeded client volume");
+      const targetPage = Math.min(4, body.totalPages ?? 1);
+      for (let p = 1; p < targetPage; p++) {
+        await page.click('[data-aa="pick-next"]');
+        await page.waitForResponse(
+          (r) => r.url().includes("/delegators/") && r.url().includes("page=") && r.ok(),
+        );
       }
       const pagerText = await page.locator("#aa-picker-data .aa-pager span").first().innerText();
-      assert.match(pagerText, /Страница \d+ из \d+/);
+      assert.match(pagerText, /Страница (\d+) из (\d+)/);
+      const current = Number(pagerText.match(/Страница (\d+) из (\d+)/)?.[1]);
+      const totalPages = Number(pagerText.match(/Страница (\d+) из (\d+)/)?.[2]);
+      assert.ok(current >= 1 && current <= totalPages);
+      if (targetPage >= 4) {
+        assert.equal(current, 4);
+      }
+      assert.ok(await page.locator("#aa-picker-data input[data-pick]").count() > 0);
+      await page.emulateMedia({ colorScheme: "dark" });
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "pr116-assignment-picker-mobile375.png"),
+        path: path.join(SCREENSHOT_DIR, "pr116-assignment-picker-page4-mobile375-dark.png"),
         fullPage: true,
       });
     } finally {

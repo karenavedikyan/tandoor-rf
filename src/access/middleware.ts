@@ -7,17 +7,55 @@ import { canReadClientsApi } from "./policy";
 import { buildPreviewAccessContext } from "./preview";
 import { getSessionPreviewUserId } from "./preview-service";
 import type { AccessContext } from "./types";
+import type { UserRole } from "../shared/user";
 
 export type AccessRequest = AuthenticatedRequest & {
   accessContext?: AccessContext;
 };
 
-export function effectiveBusinessRole(req: AccessRequest): string {
-  const ctx = req.accessContext;
-  if (ctx?.preview?.active) {
-    return ctx.preview.targetUser.role;
+/** Role for business authorization and DTO shaping (never the actual admin auth identity). */
+export function effectiveAccessRole(context: AccessContext | undefined, authRole?: string): string {
+  if (context?.preview?.active) {
+    return context.preview.targetUser.role;
   }
-  return ctx?.role ?? req.authUser?.role ?? "";
+  return context?.role ?? authRole ?? "";
+}
+
+export function effectiveBusinessRole(req: AccessRequest): string {
+  return effectiveAccessRole(req.accessContext, req.authUser?.role);
+}
+
+const ASSISTANT_WORK_FORBIDDEN =
+  "На первом этапе ассистенту доступен только раздел «Клиенты».";
+
+/** Blocks work hub / queue for effective assistant (real login or admin preview-as-assistant). */
+export function requireNonAssistantBusinessRole(
+  req: AccessRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (effectiveBusinessRole(req) === "assistant") {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, ASSISTANT_WORK_FORBIDDEN));
+    return;
+  }
+  next();
+}
+
+/** Standalone Sales section is not available to effective assistants. */
+export function requireNonAssistantForSalesSection(
+  req: AccessRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (effectiveBusinessRole(req) === "assistant") {
+    setNoStore(res);
+    res.status(403).json(
+      apiError(ERROR_CODES.FORBIDDEN, "Раздел «Продажи» недоступен для роли ассистента на этом этапе."),
+    );
+    return;
+  }
+  next();
 }
 
 export async function attachAccessContext(
@@ -49,7 +87,11 @@ export async function attachAccessContext(
         res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, previewResult.message));
         return;
       }
-      req.accessContext = previewResult.context;
+      const targetRole = previewResult.context.preview!.targetUser.role as UserRole;
+      req.accessContext = {
+        ...previewResult.context,
+        role: targetRole,
+      };
       next();
       return;
     }

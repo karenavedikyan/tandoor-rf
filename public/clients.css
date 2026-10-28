@@ -918,3 +918,5 @@
   font-size: 0.75rem;
   max-height: 12rem;
 }
+
+/* Preview banner theming lives in brand/cabinet.css (all shell routes). */

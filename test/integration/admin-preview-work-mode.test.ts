@@ -235,8 +235,24 @@ describe("admin preview work mode", { concurrency: false }, () => {
 
     const adminCookie = await login(users.admin!.email, app);
     assert.equal((await startPreview(app, adminCookie, users.assistant!.id)).status, 200);
+    const me = await request(app).get("/api/auth/me").set(authHeaders(adminCookie));
+    assert.equal(me.status, 200);
+    assert.equal(me.body.preview?.targetUser?.id, users.assistant!.id);
     const previewTasks = await request(app).get("/api/work/tasks").set(authHeaders(adminCookie));
     assert.equal(previewTasks.status, 403, JSON.stringify(previewTasks.body));
+  });
+
+  it("admin-as-assistant cannot read standalone sales section (P0)", async () => {
+    const app = await loadApp();
+    const adminCookie = await login(users.admin!.email, app);
+    assert.equal((await startPreview(app, adminCookie, users.assistant!.id)).status, 200);
+    const sales = await request(app).get("/api/clients/v3/sales/months").set(authHeaders(adminCookie));
+    assert.equal(sales.status, 403, JSON.stringify(sales.body));
+    const realAssistant = await login(users.assistant!.email, app);
+    assert.equal(
+      (await request(app).get("/api/clients/v3/sales/months").set(authHeaders(realAssistant))).status,
+      403,
+    );
   });
 
   it("admin-as-assistant cannot POST bitrix label — policy blocks before handler (P0)", async () => {

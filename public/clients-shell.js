@@ -713,8 +713,22 @@
       var adminName =
         actorUser && actorUser.fullName ? escapeHtml(actorUser.fullName) : "администратор";
       var workMode = Boolean(previewState.workMode);
+      var expiryNote = "";
+      if (workMode && previewState.workExpiresAt) {
+        try {
+          expiryNote =
+            " Действует до " +
+            new Date(previewState.workExpiresAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) +
+            " МСК.";
+        } catch (_fmt) {
+          expiryNote = "";
+        }
+      }
       var modeText = workMode
-        ? "Рабочий режим: действия изменяют данные и уведомления. Инициатор — " + adminName + "."
+        ? "Рабочий режим: действия изменяют данные и уведомления. Инициатор — " +
+          adminName +
+          "." +
+          expiryNote
         : "Только просмотр. Изменения запрещены.";
       bannerHtml =
         '<div class="clients-preview-banner' + (workMode ? " clients-preview-banner--work" : "") + '" role="status">' +

@@ -18,6 +18,18 @@
   --rf-sidebar-compact: 4.25rem;
   --rf-header-height: 3.5rem;
   --rf-content-max: 87.5rem;
+  --rf-preview-banner-bg: #fff4df;
+  --rf-preview-banner-text: #7c4a03;
+  --rf-preview-banner-border: #d97706;
+  --rf-preview-banner-btn-text: #7c4a03;
+  --rf-preview-banner-btn-border: #b45309;
+  --rf-preview-banner-btn-hover-bg: rgb(124 74 3 / 0.08);
+  --rf-preview-banner-error-bg: #fef2f2;
+  --rf-preview-banner-error-text: #991b1b;
+  --rf-preview-banner-error-border: #dc2626;
+  --rf-preview-banner-error-btn-text: #991b1b;
+  --rf-preview-banner-error-btn-border: #dc2626;
+  --rf-preview-banner-error-btn-hover-bg: rgb(153 27 27 / 0.08);
 }
 
 [data-theme="dark"] {
@@ -33,4 +45,16 @@
   --rf-danger-text: #d4a0b0;
   --rf-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   --rf-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --rf-preview-banner-bg: #3a2f1a;
+  --rf-preview-banner-text: #f8e4c4;
+  --rf-preview-banner-border: #c68a28;
+  --rf-preview-banner-btn-text: #fef3c7;
+  --rf-preview-banner-btn-border: #e5a84b;
+  --rf-preview-banner-btn-hover-bg: rgb(255 255 255 / 0.1);
+  --rf-preview-banner-error-bg: #3d2226;
+  --rf-preview-banner-error-text: #fecaca;
+  --rf-preview-banner-error-border: #f87171;
+  --rf-preview-banner-error-btn-text: #fecaca;
+  --rf-preview-banner-error-btn-border: #f87171;
+  --rf-preview-banner-error-btn-hover-bg: rgb(254 202 202 / 0.12);
 }
