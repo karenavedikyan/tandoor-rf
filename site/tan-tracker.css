@@ -79,6 +79,16 @@
 .tt-recipient { max-width:420px; margin:0 auto; }
 .tt-recipient h1 { font-size:22px; margin:0 0 8px; }
 .tt-code { font-size:28px; letter-spacing:.25em; font-weight:700; text-align:center; padding:16px; border:2px dashed var(--line); border-radius:10px; margin:16px 0; }
+.tt-code-field { display:flex; flex-direction:column; gap:8px; font-size:15px; font-weight:600; margin-bottom:12px; }
+.tt-code-input-row { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; }
+.tt-code-input-row input { flex:1 1 140px; min-width:0; min-height:48px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-weight:400; }
+.tt-code-input-row button { flex:1 1 auto; min-height:48px; white-space:normal; }
+.tt-holder-demo-code { margin:0 0 12px; }
+.tt-code-inline { display:inline-block; font-size:24px; letter-spacing:.2em; padding:10px 14px; margin:8px 0; }
+@media (max-width:767px){
+  .tt-code-input-row { flex-direction:column; }
+  .tt-code-input-row button { width:100%; }
+}
 .tt-warning { background:var(--tt-warn-bg); color:var(--tt-warn); padding:12px 14px; border-radius:8px; font-size:13px; margin:12px 0; }
 .tt-complete-confirm { margin-top:16px; padding-top:4px; }
 .tt-handoff { margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }

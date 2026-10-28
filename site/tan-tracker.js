@@ -469,6 +469,7 @@
     ttRoleUnsupported: false,
     ttRequestedRole: "",
     handoffReceipt: null,
+    codeDemoRevealed: false,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -610,6 +611,7 @@
     resetPhoneIdentity();
     state.createPhase = "item";
     state.handoffReceipt = null;
+    state.codeDemoRevealed = false;
     ttShellMounted = false;
     TT_BODY.forEach((c) => document.body.classList.remove(c));
     document.dispatchEvent(new Event("assistant:paint"));
@@ -1171,6 +1173,34 @@
       <p class="tt-muted">От имени: ${E(sender?.name || "—")}. Дальнейшие файлы и история передачи здесь не показываются.</p>
       ${btn(isExternalShell() ? "Закрыть" : "← К реестру", 'data-tt="back-list"')}
     </div>`;
+  }
+
+  function ensureDemoCodeForHolder(o) {
+    state.error = "";
+    state.toast = "";
+    if (!o || o.status === "completed") {
+      state.error = "Передача завершена — код недоступен.";
+      return null;
+    }
+    if (!o.pendingId) {
+      state.error = "Нет ожидающего получателя.";
+      return null;
+    }
+    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    if (o.holderId !== actor) {
+      state.error = "Демо-код доступен только текущему держателю.";
+      return null;
+    }
+    state.phoneVerified = true;
+    state.phoneVerifiedKey = recipientKey(o);
+    if (codeValid(o)) {
+      state.codeDemoRevealed = true;
+      return o.code;
+    }
+    const c = generateCode(o);
+    if (c) state.codeDemoRevealed = true;
+    else state.error = "Не удалось выпустить код для этой передачи.";
+    return c;
   }
 
   function generateCode(o) {
@@ -1850,11 +1880,21 @@
   }
 
   function codeView(o) {
-    return `<div class="tt-panel"><h2>Ввести код получателя</h2>
+    const showCode = state.codeDemoRevealed && o.code && codeValid(o);
+    return `<div class="tt-panel tt-code-screen" data-tt="code-screen"><h2>Ввести код получателя</h2>
       <p>Предмет: ${E(o.item)} · ожидает ${E(contactById(o.pendingId)?.name || "")}</p>
-      <label>6-значный код<input inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(state.codeInput)}" autocomplete="one-time-code"></label>
+      <label class="tt-code-field">6-значный код
+        <div class="tt-code-input-row">
+          <input inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(state.codeInput)}" autocomplete="one-time-code" aria-describedby="tt-code-demo-help">
+          ${btn("Получить демо-код", 'data-tt="demo-reveal-code"')}
+        </div>
+      </label>
+      ${
+        showCode
+          ? `<div class="tt-holder-demo-code" data-tt="holder-shown-code"><span class="tt-code tt-code-inline">${E(o.code.code)}</span><p id="tt-code-demo-help" class="tt-muted">Демо без СМС: код для проверки на этом экране. Введите его и нажмите «Подтвердить» — автоподтверждения нет.</p></div>`
+          : `<p id="tt-code-demo-help" class="tt-muted">Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить».</p>`
+      }
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
-      ${state.toast ? `<p class="tt-success">${E(state.toast)}</p>` : ""}
       <div class="tt-actions">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div>
       <div class="tt-demo-controls">${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"')}</div>
     </div>`;
@@ -2288,6 +2328,7 @@
     }
     if (action === "detail" && o) {
       state.view = "detail";
+      state.codeDemoRevealed = false;
       clearCompleteConfirm();
       writeUrl();
       renderTracker();
@@ -2309,6 +2350,14 @@
       state.view = "code";
       state.codeInput = "";
       state.error = "";
+      state.toast = "";
+      state.codeDemoRevealed = false;
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "demo-reveal-code" && o) {
+      ensureDemoCodeForHolder(o);
       writeUrl();
       renderTracker();
       return;
