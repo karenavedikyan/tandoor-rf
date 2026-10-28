@@ -458,6 +458,7 @@
     newRecipient: false,
     completeConfirmOrderId: null,
     createPhase: "item",
+    createReturnPhase: null,
     attachStaging: [],
     attachOrderStaging: [],
     attachError: "",
@@ -811,7 +812,7 @@
       compact,
       omitResetNote: compact,
       title: compact ? "Файлы" : "Фото и файлы",
-      pickerLabel: compact ? "Добавить" : "Прикрепить фото или файл",
+      pickerLabel: compact ? "Добавить фото или файл" : "Прикрепить фото или файл",
       pickerMode: compact ? "button" : "native",
     });
   }
@@ -894,7 +895,7 @@
         <strong class="tt-wizard-recipient-selected-name">${E(c.name)}</strong>
         <span class="tt-wizard-recipient-selected-phone">${E(fmtPhone(c.phone))}</span>
       </div>
-      ${wizardReviewLink("Изменить", "create-recipient-change", "Изменить выбранного получателя")}
+      ${wizardReviewLink("Выбрать другого получателя", "create-recipient-change", "Выбрать другого получателя")}
     </div>`;
   }
 
@@ -908,10 +909,8 @@
     const relayHint = finContact
       ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
       : "Должен передать предмет конечному получателю.";
-    const relayEditLabel = relay ? "Изменить" : "Передать через другого человека";
-    const relayEditAria = relay
-      ? "Изменить промежуточного получателя"
-      : "Передать через другого человека";
+    const relayEditLabel = relay ? "Изменить посредника" : "Передать через другого человека";
+    const relayEditAria = relay ? "Изменить посредника" : "Передать через другого человека";
     const senderLi = `<li class="tt-wizard-route-stop" data-tt="route-stop-sender">
       <span class="tt-wizard-route-role">Отправитель</span>
       <span class="tt-wizard-route-you">Вы</span>
@@ -924,7 +923,7 @@
     const finalLi = `<li class="tt-wizard-route-stop" data-tt="route-stop-final">
       <div class="tt-wizard-review-block-head">
         <span class="tt-wizard-route-role">Получатель</span>
-        ${wizardReviewLink("Изменить", "create-edit-recipient", "Изменить конечного получателя")}
+        ${wizardReviewLink("Выбрать другого получателя", "create-edit-recipient", "Выбрать другого получателя", true)}
       </div>
       <div class="tt-wizard-route-person">${reviewPersonHtml(finContact, finSummary, f)}</div>
       ${!relay ? `<p class="tt-wizard-review-handoff-hint">${E(directHint)}</p>` : ""}
@@ -1070,14 +1069,24 @@
     state.error = wizardValidate(state.createPhase);
     if (state.error) return false;
     const p = state.createPhase;
+    if (state.createReturnPhase === "review" && (p === "item" || p === "files")) {
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+      return true;
+    }
     if (p === "item") state.createPhase = "files";
     else if (p === "files") {
       state.createPhase = "recipient";
       ensureRecipientStep(state.form);
       if (!state.form.finalRecipientId && !state.form.recipientId) state.form.recipientStep = "choose";
     }
-    else if (p === "recipient") state.createPhase = "review";
-    else if (p === "relay-pick") state.createPhase = "review";
+    else if (p === "recipient") {
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+    } else if (p === "relay-pick") {
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+    }
     else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
     else if (p === "recipient-new-phone") {
       const r = addExternalContact(state.form.newName, state.form.newPhone);
@@ -1100,14 +1109,29 @@
         state.form.recipientStep = "confirmed";
         state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
       }
-    } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") state.createPhase = "review";
+    } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") {
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+    }
     return true;
   }
 
   function wizardBack() {
     state.error = "";
     const p = state.createPhase;
-    if (p === "item") return "cancel";
+    if (p === "item") {
+      if (state.createReturnPhase === "review") {
+        state.createPhase = "review";
+        state.createReturnPhase = null;
+        return "ok";
+      }
+      return "cancel";
+    }
+    if (state.createReturnPhase === "review" && (p === "files" || p === "recipient" || p === "relay-pick")) {
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+      return "ok";
+    }
     if (p === "files") state.createPhase = "item";
     else if (p === "recipient") {
       const f = state.form || defaultCreateForm();
@@ -1762,12 +1786,16 @@
     });
 
     if (phase === "item") {
+      const itemActions =
+        state.createReturnPhase === "review"
+          ? `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+          : `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Отмена", "back-list")}`;
       return wizardShell(
         phase,
         "Что передаём",
         "Опишите одним предложением, что вы передаёте другому человеку.",
         `<label class="tt-wizard-field">Предмет или документ<input data-tt-field="item" value="${E(f.item)}" placeholder="Например: договор, ключи, образцы ткани" autocomplete="off"></label>`,
-        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Отмена", "back-list")}`
+        itemActions
       );
     }
     if (phase === "files") {
@@ -1874,7 +1902,7 @@
       <header class="tt-wizard-review-hero">
         <div class="tt-wizard-review-hero-head">
           <span class="tt-wizard-review-kicker">Предмет</span>
-          ${wizardReviewLink("Изменить", "create-edit-item", "Изменить предмет")}
+          ${wizardReviewLink("Изменить предмет", "create-edit-item", "Изменить предмет")}
         </div>
         <h3 class="tt-wizard-review-item-title">${E(f.item)}</h3>
       </header>
@@ -1882,7 +1910,7 @@
       <section class="tt-wizard-review-due${f.due ? " tt-wizard-review-due--set" : " tt-wizard-review-due--empty"}">
         <div class="tt-wizard-review-block-head">
           <span class="tt-wizard-review-person-label">Срок доставки</span>
-          ${wizardReviewLink(f.due ? "Изменить" : "Добавить", "create-edit-due", f.due ? "Изменить срок доставки" : "Добавить срок доставки")}
+          ${wizardReviewLink(f.due ? "Изменить срок доставки" : "Указать срок доставки", "create-edit-due", f.due ? "Изменить срок доставки" : "Указать срок доставки")}
         </div>
         <p class="tt-wizard-review-due-value">${f.due ? E(dueValue) : "Срок не указан"}</p>
       </section>
@@ -1890,14 +1918,14 @@
         <div class="tt-wizard-review-detail-row">
           <div class="tt-wizard-review-block-head">
             <span class="tt-wizard-review-detail-label">Фото и файлы</span>
-            ${wizardReviewLink("Изменить", "create-edit-files", "Изменить вложения")}
+            ${wizardReviewLink(attCount ? "Изменить фото и файлы" : "Добавить фото или файл", "create-edit-files", attCount ? "Изменить фото и файлы" : "Добавить фото или файл")}
           </div>
           <p class="tt-wizard-review-detail-value">${E(attLabel)}</p>
         </div>
         <div class="tt-wizard-review-detail-row">
           <div class="tt-wizard-review-block-head">
             <span class="tt-wizard-review-detail-label">Комментарий</span>
-            ${wizardReviewLink(f.comment ? "Изменить" : "Добавить", "create-edit-comment", f.comment ? "Изменить комментарий" : "Добавить комментарий")}
+            ${wizardReviewLink(f.comment ? "Изменить комментарий" : "Добавить комментарий", "create-edit-comment", f.comment ? "Изменить комментарий" : "Добавить комментарий")}
           </div>
           <p class="tt-wizard-review-detail-value">${f.comment ? E(f.comment) : "Не указан"}</p>
         </div>
@@ -1912,28 +1940,66 @@
     );
   }
 
-  function routePersonCard(c, label) {
-    if (!c) {
-      return `<div class="tt-route-card"><span class="tt-route-label">${E(label)}</span><span class="tt-route-name">—</span></div>`;
-    }
-    return `<div class="tt-route-card"><span class="tt-route-label">${E(label)}</span><strong class="tt-route-name">${E(c.name)}</strong><span class="tt-route-phone">${E(fmtPhone(c.phone))}</span></div>`;
+  function contactInitials(c) {
+    if (!c?.name) return "?";
+    const parts = c.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  function routePersonNode(c, roleEyebrow, variant, planned) {
+    const phone = c?.phone ? fmtPhone(c.phone) : "";
+    const telDigits = c?.phone ? normPhone(c.phone) : "";
+    const phoneHtml =
+      telDigits && c?.phone
+        ? `<a class="tt-route-phone" href="tel:+7${E(telDigits)}" data-tt="route-phone">${E(phone)}</a>`
+        : `<span class="tt-route-phone">${phone ? E(phone) : "—"}</span>`;
+    const plannedChip = planned
+      ? `<span class="tt-route-planned" data-tt="route-planned">План · ждёт подтверждения</span>`
+      : "";
+    return `<article class="tt-route-node tt-route-card tt-route-node--${variant}" data-tt="route-node" data-tt-route-variant="${variant}">
+      <div class="tt-route-node-marker" aria-hidden="true"><span class="tt-route-avatar">${E(contactInitials(c))}</span></div>
+      <div class="tt-route-node-body">
+        <span class="tt-route-label tt-route-role">${E(roleEyebrow)}</span>
+        ${plannedChip}
+        <strong class="tt-route-name">${E(c?.name || "—")}</strong>
+        ${phoneHtml}
+      </div>
+    </article>`;
+  }
+
+  function routeConnector() {
+    return `<div class="tt-route-connector" aria-hidden="true"><span class="tt-route-connector-line"></span><span class="tt-route-connector-arrow"></span></div>`;
   }
 
   function detailRouteGrid(o) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    let dest = "";
-    if (o.status === "completed" && fin) {
-      dest = routePersonCard(fin, "Доставлено");
-    } else if (o.pendingId && fin && o.pendingId === o.finalRecipientId) {
-      dest = routePersonCard(p, "Получатель · конечный");
-    } else if (o.pendingId && fin) {
-      dest = routePersonCard(p, "Следующий получатель") + routePersonCard(fin, "Конечный получатель");
-    } else if (fin && o.holderId !== o.finalRecipientId) {
-      dest = routePersonCard(fin, "Конечный получатель");
+    const parts = [];
+
+    if (o.status === "completed") {
+      const delivered = fin || h;
+      parts.push(routePersonNode(delivered, "Доставлено · конечный получатель", "delivered", false));
+      return `<div class="tt-route-grid" data-tt="detail-route-grid">${parts.join("")}</div>`;
     }
-    return `<div class="tt-route-grid">${routePersonCard(h, "Сейчас у · ответственный")}${dest}</div>`;
+
+    parts.push(routePersonNode(h, "Сейчас у · ответственный", "current", false));
+
+    if (o.pendingId) {
+      if (fin && o.pendingId === o.finalRecipientId) {
+        parts.push(routeConnector(), routePersonNode(p, "Следующий · конечный получатель", "pending", true));
+      } else {
+        parts.push(routeConnector(), routePersonNode(p, "Следующий получатель", "pending", true));
+        if (fin && o.pendingId !== o.finalRecipientId) {
+          parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+        }
+      }
+    } else if (fin && o.holderId !== o.finalRecipientId) {
+      parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+    }
+
+    return `<div class="tt-route-grid" data-tt="detail-route-grid">${parts.join("")}</div>`;
   }
 
   function disclosureSummary(titleHtml) {
@@ -1998,6 +2064,50 @@
   function deliveryTargetContact(o) {
     if (o.finalRecipientId) return contactById(o.finalRecipientId);
     return null;
+  }
+
+  function hasVerifiedDeliveryConfirmation(o) {
+    return o.timeline.some(
+      (t) => isConfirmedHandoffTimelineNote(t.note) || /Доставлено конечному получателю/.test(t.note || "")
+    );
+  }
+
+  function completedTerminalAudience(o, actor) {
+    if (!actor) return "observer";
+    const finId = o.finalRecipientId || o.holderId;
+    const isContributor = o.createdById === actor || actorHasConfirmedOutboundHandoff(o, actor);
+    const isFinalRecipient = finId === actor || o.holderId === actor;
+    if (isContributor) return "contributor";
+    if (isFinalRecipient) return "recipient";
+    return "observer";
+  }
+
+  function completedTaskCard(o, actor) {
+    const custodian = contactById(o.finalRecipientId) || contactById(o.holderId);
+    const audience = completedTerminalAudience(o, actor);
+    const verified = hasVerifiedDeliveryConfirmation(o);
+    const lastConfirm = lastConfirmedHandoffEntry(o);
+    const confirmLine =
+      verified && lastConfirm
+        ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Подтверждение получения</span><span class="tt-detail-monitor-value">${E(dt(lastConfirm.at))}</span></div>`
+        : "";
+    let body = "";
+    if (audience === "contributor") {
+      body = `<p class="tt-detail-done" data-tt="detail-completed" data-tt-terminal-audience="contributor">Вы свою часть выполнили. Передача завершена. Больше ничего делать не нужно.</p>`;
+    } else if (audience === "recipient") {
+      body = `<p class="tt-detail-done" data-tt="detail-completed" data-tt-terminal-audience="recipient">Вы получили предмет. Передача завершена — сохраните результат для себя.</p>`;
+    } else {
+      body = `<p class="tt-detail-done" data-tt="detail-completed" data-tt-terminal-audience="observer">Передача закрыта. Доступен только просмотр истории и материалов.</p>`;
+    }
+    return `<section class="tt-detail-task-card tt-detail-task-card--terminal" data-tt="detail-task-card">
+      <h3 class="tt-detail-task-heading">Передача завершена</h3>
+      ${body}
+      <div class="tt-detail-monitor tt-detail-monitor--terminal" data-tt="detail-terminal-monitor">
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(custodian?.name || "—")}</strong></span></div>
+        ${confirmLine}
+      </div>
+      <div class="tt-detail-primary" data-tt="detail-terminal-nav">${btn("Вернуться к передачам", 'data-tt="terminal-back-list"', "tt-primary tt-btn-block")}</div>
+    </section>`;
   }
 
   function formerHolderTaskCard(o) {
@@ -2070,12 +2180,7 @@
       isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
 
-    if (o.status === "completed") {
-      return `<section class="tt-detail-task-card tt-detail-task-card--terminal" data-tt="detail-task-card">
-        <h3 class="tt-detail-task-heading">Передача завершена</h3>
-        <p class="tt-detail-done" data-tt="detail-completed">Дальнейшие действия по этому треку недоступны.</p>
-      </section>`;
-    }
+    if (o.status === "completed") return completedTaskCard(o, actor);
     if (!isHolder) {
       if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
       const wait = p
@@ -2141,27 +2246,31 @@
 
     const otherActions =
       isHolder && o.status !== "completed" && o.pendingId
-        ? `<details class="tt-disclosure" data-tt="other-actions">
+        ? `<details class="tt-disclosure tt-detail-other" data-tt="other-actions">
         ${disclosureSummary("Другие действия")}
-        <div class="tt-disclosure-body tt-actions">${btn("Изменить получателя", 'data-tt="change-pending"')}${btn("Отменить ожидание", 'data-tt="cancel-pending"')}</div>
+        <div class="tt-disclosure-body tt-detail-secondary-actions tt-actions">${btn("Изменить получателя", 'data-tt="change-pending"', "tt-detail-quiet-btn")}${btn("Отменить ожидание", 'data-tt="cancel-pending"', "tt-detail-quiet-btn")}</div>
       </details>`
         : "";
 
     const demoBtns = [];
-    if (showActHolder) demoBtns.push(btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"'));
+    if (showActHolder) demoBtns.push(btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"', "tt-detail-quiet-btn"));
     if (p && o.holderId !== p.id && !state.actingContactId)
-      demoBtns.push(btn("Действовать как получатель", 'data-tt="act-recipient"'));
-    if (isHolder && o.pendingId) demoBtns.push(btn("Открыть экран получателя (демо)", 'data-tt="open-recipient"'));
+      demoBtns.push(btn("Действовать как получатель", 'data-tt="act-recipient"', "tt-detail-quiet-btn"));
+    if (isHolder && o.pendingId) demoBtns.push(btn("Открыть экран получателя (демо)", 'data-tt="open-recipient"', "tt-detail-quiet-btn"));
     const demoSection = demoBtns.length
       ? `<details class="tt-disclosure tt-detail-demo" data-tt="detail-demo">
         ${disclosureSummary("Демо-сценарии")}
-        <div class="tt-disclosure-body tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">${demoBtns.join("")}</div>
+        <div class="tt-disclosure-body tt-detail-secondary-actions tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">${demoBtns.join("")}</div>
       </details>`
       : "";
 
     return `<div class="tt-panel tt-detail-panel" data-tt="detail">
       <header class="tt-detail-head">
-        ${btn(isExternalShell() ? "← Назад" : "← К реестру", 'data-tt="back-list"', "tt-back")}
+        ${
+          o.status === "completed"
+            ? ""
+            : btn(isExternalShell() ? "← Назад" : "← К реестру", 'data-tt="back-list"', "tt-back")
+        }
         <span class="tt-detail-id">${E(o.id)}</span>
       </header>
       <h2 class="tt-detail-title">${E(o.item)}</h2>
@@ -2183,13 +2292,13 @@
       </details>
       <details class="tt-disclosure tt-history" data-tt="history-disclosure">
         ${disclosureSummary(`История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}`)}
-        <div class="tt-timeline" data-tt="timeline">${tl
+        <div class="tt-disclosure-body tt-detail-history-body"><div class="tt-timeline" data-tt="timeline">${tl
           .map((t) => {
             const fr = contactById(t.from);
             const to = contactById(t.to);
-            return `<div><strong>${E(fr?.name || "?")} → ${E(to?.name || "?")}</strong><small>${dt(t.at)} · ${E(t.note)}</small></div>`;
+            return `<div class="tt-timeline-entry"><time class="tt-timeline-when" datetime="">${E(dt(t.at))}</time><strong class="tt-timeline-route">${E(fr?.name || "?")} → ${E(to?.name || "?")}</strong><span class="tt-timeline-note">${E(t.note)}</span></div>`;
           })
-          .join("")}</div>
+          .join("")}</div></div>
       </details>
       ${demoSection}
       ${
@@ -2602,6 +2711,7 @@
       return;
     }
     if (action === "create-edit-item") {
+      state.createReturnPhase = "review";
       state.createPhase = "item";
       state.error = "";
       writeUrl();
@@ -2609,6 +2719,7 @@
       return;
     }
     if (action === "create-edit-files") {
+      state.createReturnPhase = "review";
       state.createPhase = "files";
       state.error = "";
       writeUrl();
@@ -2632,6 +2743,7 @@
       return;
     }
     if (action === "create-edit-recipient") {
+      state.createReturnPhase = "review";
       state.createPhase = "recipient";
       if (!state.form) state.form = defaultCreateForm();
       state.form.recipientStep =
@@ -2642,6 +2754,7 @@
       return;
     }
     if (action === "create-edit-relay") {
+      state.createReturnPhase = "review";
       state.createPhase = "relay-pick";
       state.error = "";
       writeUrl();
@@ -2671,6 +2784,7 @@
       return;
     }
     if (action === "create-edit-comment") {
+      state.createReturnPhase = "review";
       state.createPhase = "edit-comment";
       state.error = "";
       writeUrl();
@@ -2678,6 +2792,7 @@
       return;
     }
     if (action === "create-edit-due") {
+      state.createReturnPhase = "review";
       state.createPhase = "edit-due";
       state.error = "";
       writeUrl();
@@ -2693,11 +2808,12 @@
       renderTracker();
       return;
     }
-    if (action === "back-list") {
+    if (action === "back-list" || action === "terminal-back-list") {
       state.view = "list";
       state.orderId = null;
       state.form = null;
       state.createPhase = "item";
+      state.createReturnPhase = null;
       state.error = state.toast = "";
       state.handoffReceipt = null;
       clearCompleteConfirm();

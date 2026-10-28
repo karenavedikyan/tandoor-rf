@@ -102,8 +102,8 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   const deliverRow = await page.locator('[data-tt="route-stop-final"]').textContent();
   ok(deliverRow.includes("Сергей Приёмка"), "final recipient unchanged after relay pick");
   ok(
-    (await page.locator('[data-tt="review-handoff"] [data-tt="create-edit-relay"]').textContent()) === "Изменить",
-    "relay path uses Изменить on handoff row"
+    (await page.locator('[data-tt="review-handoff"] [data-tt="create-edit-relay"]').textContent()) === "Изменить посредника",
+    "relay path uses Изменить посредника on handoff row"
   );
 
   await page.locator('[data-tt="create-edit-item"]').click();
