@@ -2196,12 +2196,15 @@
       }
       if (state.recipientVia === "qr") p.set("tt_via", "qr");
       else p.delete("tt_via");
+      if (o?.activeInvitation?.invitationToken) p.set("tt_tok", o.activeInvitation.invitationToken);
+      else p.delete("tt_tok");
     } else {
       p.delete("tt_view");
       p.delete("tt_order");
       p.delete("tt_hv");
       p.delete("tt_rcv");
       p.delete("tt_via");
+      p.delete("tt_tok");
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
