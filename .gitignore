@@ -6,3 +6,4 @@ dist/
 test-results/
 tmp/
 .tt56-prototype-ref/
+var/tt-attachments/

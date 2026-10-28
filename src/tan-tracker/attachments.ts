@@ -20,7 +20,13 @@ const ALLOW_MIME = new Set([
   "image/heif",
   "application/pdf",
   "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
+const MAX_FILES_PER_TRANSFER = 10;
+const MAX_TOTAL_BYTES_PER_TRANSFER = 50 * 1024 * 1024;
 
 function storageRoot(): string {
   return process.env.TT_ATTACHMENTS_DIR?.trim() || path.join(process.cwd(), "var/tt-attachments");
@@ -56,7 +62,11 @@ export async function stageAttachmentHandler(req: AccessRequest, res: Response):
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый размер файла."));
     return;
   }
-  if (!ALLOW_MIME.has(mime)) {
+  const ext = path.extname(filename).toLowerCase();
+  const extOk = [".pdf", ".txt", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".doc", ".docx", ".xls", ".xlsx"].includes(
+    ext,
+  );
+  if (!ALLOW_MIME.has(mime) && !(extOk && (!mime || mime === "application/octet-stream"))) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Тип файла не поддерживается."));
     return;
@@ -93,6 +103,20 @@ export async function linkStagedAttachmentsToTransfer(
   );
   if (res.rows.length !== stagingIds.length) {
     throw Object.assign(new Error("Вложение не найдено или уже использовано."), { http: 400 });
+  }
+  const existing = await client.query<{ cnt: string; total: string }>(
+    `SELECT COUNT(*)::text AS cnt, COALESCE(SUM(byte_size),0)::text AS total
+     FROM tt_transfer_attachments WHERE transfer_id = $1`,
+    [transferId],
+  );
+  const existingCount = Number(existing.rows[0]?.cnt ?? 0);
+  const existingTotal = Number(existing.rows[0]?.total ?? 0);
+  const addTotal = res.rows.reduce((s, r) => s + Number(r.byte_size), 0);
+  if (existingCount + res.rows.length > MAX_FILES_PER_TRANSFER) {
+    throw Object.assign(new Error(`Не более ${MAX_FILES_PER_TRANSFER} файлов на передачу.`), { http: 400 });
+  }
+  if (existingTotal + addTotal > MAX_TOTAL_BYTES_PER_TRANSFER) {
+    throw Object.assign(new Error("Общий объём вложений превышает лимит."), { http: 400 });
   }
   for (const row of res.rows) {
     await client.query(

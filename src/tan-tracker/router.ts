@@ -1,7 +1,7 @@
 import express from "express";
 import { attachAccessContext, blockPreviewWrites } from "../access/middleware";
 import { requireAuth } from "../middleware/auth";
-import { csrfProtection } from "../middleware/csrf";
+import { csrfOriginProtection, csrfProtection } from "../middleware/csrf";
 import { requireDatabaseReady } from "../middleware/database";
 import { getTanTrackerBootstrapHandler } from "./handlers";
 import { generateHandoffCodeHandler, verifyHandoffCodeHandler } from "./handoff-mutations";
@@ -9,7 +9,11 @@ import { createTransferHandler } from "./mutations";
 import { cancelPendingHandler, changePendingHandler } from "./pending-mutations";
 import { downloadAttachmentHandler } from "./attachments";
 import { addTransferAttachmentsHandler, deleteTransferAttachmentHandler } from "./attachment-mutations";
-
+import {
+  publicConfirmQrHandoffHandler,
+  publicSendPhoneCodeHandler,
+  publicVerifyPhoneCodeHandler,
+} from "./public-recipient";
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
   const readChain = [
@@ -18,6 +22,16 @@ export function createTanTrackerRouter(): express.Router {
     attachAccessContext,
   ] as const;
   const writeChain = [...readChain, blockPreviewWrites] as const;
+
+  router.post("/public/recipient/phone/send", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicSendPhoneCodeHandler(req, res).catch(next);
+  });
+  router.post("/public/recipient/phone/verify", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicVerifyPhoneCodeHandler(req, res).catch(next);
+  });
+  router.post("/public/recipient/handoff/qr-confirm", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicConfirmQrHandoffHandler(req, res).catch(next);
+  });
 
   router.get("/bootstrap", ...readChain, (req, res, next) => {
     void getTanTrackerBootstrapHandler(req, res).catch(next);

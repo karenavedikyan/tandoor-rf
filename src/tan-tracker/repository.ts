@@ -6,6 +6,7 @@ import type {
   TanTrackerTimelineRow,
   TanTrackerTransferRow,
 } from "./types";
+import { invitationTokenTtlMs, signInvitationToken } from "./invitation-token";
 
 type Db = Pool | PoolClient;
 
@@ -159,6 +160,12 @@ export function mapTransferToOrderDto(
           holderId: row.holder_party_id,
           item: row.item_title,
           id: row.public_code,
+          invitationToken: signInvitationToken({
+            transferId: row.public_code,
+            hv: row.handoff_version,
+            pendingPartyId: row.pending_party_id,
+            exp: Date.now() + invitationTokenTtlMs(),
+          }),
         }
       : null;
   return {

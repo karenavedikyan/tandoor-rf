@@ -117,6 +117,7 @@
 
   function orderVisible(o) {
     if (!o) return false;
+    if (TT_LK) return orders.some((x) => x.id === o.id);
     if (!Sc()) return true;
     return Sc().canViewOrder(o, scopeCtx());
   }
@@ -492,6 +493,9 @@
     registryFilterSheet: false,
     lkActorPartyId: null,
     lkLinkedEmployeeId: null,
+    lkPhoneSessionToken: "",
+    lkPhoneSessionKey: "",
+    recipientPhoneCodeInput: "",
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -610,6 +614,7 @@
         const c = contactById(actor);
         if (c && (c.employeeId || c.kind === "user")) return true;
       }
+      if (state.lkPhoneSessionToken && state.lkPhoneSessionKey === recipientKey(o)) return true;
     }
     return state.phoneVerified && state.phoneVerifiedKey === recipientKey(o);
   }
@@ -629,7 +634,15 @@
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
     if (!t) return `${location.pathname}#tan-tracker?role=${role}`;
-    const p = new URLSearchParams({ role, tt_view: "recipient", tt_order: t.id, tt_hv: String(t.hv), tt_rcv: t.pendingId, tt_via: "qr" });
+    const p = new URLSearchParams({
+      role,
+      tt_view: "recipient",
+      tt_order: t.id,
+      tt_hv: String(t.hv),
+      tt_rcv: t.pendingId,
+      tt_via: "qr",
+    });
+    if (t.invitationToken) p.set("tt_tok", t.invitationToken);
     return `${location.pathname}#tan-tracker?${p}`;
   }
 
@@ -1845,8 +1858,12 @@
       window.TanTrackerLk.verifyHandoffCode(o.id, input)
         .then(() => {
           o._codeBusy = false;
+          state.recipientMode = false;
+          state.recipientTicket = null;
+          state.codeInput = "";
           state.toast = "Держатель обновлён.";
           state.view = "detail";
+          writeUrl();
           renderTracker();
         })
         .catch((err) => {
@@ -1906,12 +1923,35 @@
   }
 
   function tryConfirmQr(o, ticket) {
-    if (!identityVerified(o)) {
-      state.error = "Сначала подтвердите номер (демо).";
-      return false;
-    }
     if (ticket?.stale) {
       state.error = "Это приглашение больше не действует. Запросите новый QR у передающего.";
+      return false;
+    }
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.confirmQrHandoff) {
+      if (!identityVerified(o) || !state.lkPhoneSessionToken) {
+        state.error = "Сначала подтвердите номер телефона кодом из SMS.";
+        return false;
+      }
+      if (o._qrBusy) return false;
+      o._qrBusy = true;
+      window.TanTrackerLk.confirmQrHandoff(o, state.recipientTicket, state.lkPhoneSessionToken)
+        .then(() => {
+          o._qrBusy = false;
+          state.lkPhoneSessionToken = "";
+          state.lkPhoneSessionKey = "";
+          afterQrReceive(o);
+          writeUrl();
+          renderTracker();
+        })
+        .catch((err) => {
+          o._qrBusy = false;
+          state.error = err?.message || "Не удалось подтвердить получение.";
+          renderTracker();
+        });
+      return false;
+    }
+    if (!identityVerified(o)) {
+      state.error = "Сначала подтвердите номер (демо).";
       return false;
     }
     return completeHandoff(o, "qr", ticket?.inv);
@@ -2051,9 +2091,13 @@
   }
 
   function visibleOrders() {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     let list = orders.filter((o) => orderVisible(o));
-    if (state.actingContactId) {
+    const narrowByActing =
+      state.actingContactId &&
+      (!TT_LK ||
+        (state.actingContactId !== state.lkActorPartyId && contactById(state.actingContactId)?.kind === "external"));
+    if (narrowByActing) {
       list = list.filter((o) => {
         const parts = [o.holderId, o.pendingId, ...o.timeline.flatMap((t) => [t.from, t.to])];
         return parts.includes(state.actingContactId);
@@ -2205,7 +2249,11 @@
     };
     state.ttRoleUnsupported = resolved.unsupported;
     state.ttRequestedRole = resolved.requested || "";
-    state.actingContactId = p.get("tt_act") || null;
+    if (TT_LK) {
+      const act = p.get("tt_act");
+      if (act && contactById(act)?.kind === "external") state.actingContactId = act;
+      else if (!p.get("tt_act")) state.actingContactId = state.lkActorPartyId || state.actingContactId;
+    } else state.actingContactId = p.get("tt_act") || null;
     const urlExternalActing = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
     const ttEmp = p.get("tt_emp");
     if (!resolved.unsupported && ttEmp && employees[ttEmp] && !urlExternalActing) {
@@ -2220,9 +2268,23 @@
     if (oid) state.orderId = oid;
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
     if (state.recipientMode && oid) {
-      state.recipientTicket = { hv: p.get("tt_hv"), rcv: p.get("tt_rcv"), order: oid };
+      state.recipientTicket = {
+        hv: p.get("tt_hv"),
+        rcv: p.get("tt_rcv"),
+        order: oid,
+        tok: p.get("tt_tok"),
+      };
       resetPhoneIdentity();
+      state.lkPhoneSessionToken = "";
+      state.lkPhoneSessionKey = "";
     } else state.recipientTicket = null;
+    const ordForRoute = oid ? orders.find((x) => x.id === oid) : null;
+    if (ordForRoute?.status === "completed" && (state.recipientMode || state.view === "code")) {
+      state.recipientMode = false;
+      state.view = "detail";
+      state.recipientTicket = null;
+      state.codeInput = "";
+    }
     const scr = p.get("tt_screen");
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
@@ -2823,8 +2885,8 @@
       tab === "qr"
         ? `<div class="tt-handoff-qr" data-tt="handoff-qr">
         <div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
-        <p class="tt-muted tt-qr-note">Получатель может отсканировать QR в демо — откроется экран подтверждения в этом окне. Передача завершится только после успешного кода или QR.</p>
-        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
+        <p class="tt-muted tt-qr-note">QR ведёт на экран получателя с подтверждением телефона и приёмом передачи на сервере.</p>
+        ${TT_LK ? btn("Открыть экран получателя (QR)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action") : btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
       </div>`
         : "";
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
@@ -3127,7 +3189,16 @@
       </div>`
         : "";
     const verifyStep = !verified
-      ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
+      ? TT_LK
+        ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
+        <p class="tt-recipient-step-label">Шаг 1 · подтвердите, что это ваш номер</p>
+        ${btn("Отправить код на телефон", 'data-tt="recipient-phone-send"', "tt-btn-ghost tt-btn-block")}
+        <label class="tt-field"><span class="tt-field-label">Код из SMS</span>
+        <input class="tt-input" inputmode="numeric" maxlength="6" data-tt="recipient-phone-code" value="${E(state.recipientPhoneCodeInput || "")}" autocomplete="one-time-code"></label>
+        ${btn("Подтвердить номер", 'data-tt="recipient-phone-verify"', "tt-primary tt-btn-block")}
+        <p class="tt-muted tt-recipient-step-hint">Без настроенного SMS-провайдера отправка кода недоступна.</p>
+      </div>`
+        : `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
         <p class="tt-recipient-step-label">Шаг 1 · подтвердите, что это ваш номер</p>
         ${btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary tt-btn-block")}
         <p class="tt-muted tt-recipient-step-hint">Демо без СМС: нажмите кнопку, чтобы продолжить.</p>
@@ -3373,8 +3444,8 @@
           .filter(Boolean),
       };
       window.TanTrackerLk.createTransfer(payload)
-        .then((code) => {
-          state.orderId = code;
+        .then((created) => {
+          state.orderId = created.publicCode || created;
           state.view = "detail";
           clearDetailAttDisclosure();
           state.form = null;
@@ -3382,6 +3453,10 @@
           state.createReturnPhase = null;
           state.attachStaging = [];
           state.attachError = "";
+          if (created.refreshFailed) {
+            state.toast = `Передача ${E(created.publicCode)} создана. ${E(created.refreshError || "")}`.trim();
+            state.error = "Данные реестра не обновились — нажмите «Обновить» или перезагрузите страницу.";
+          }
           state.toast = "Передача создана.";
           writeUrl();
           renderTracker();
@@ -3868,6 +3943,7 @@
           hv: String(o.activeInvitation.hv),
           rcv: o.activeInvitation.pendingId,
           order: o.id,
+          tok: o.activeInvitation.invitationToken || null,
         };
       }
       writeUrl();
@@ -3884,9 +3960,37 @@
     }
     if (action === "confirm-qr-receive" && o) {
       const ticket = resolveInvitation(o, state.recipientTicket?.hv ?? o.activeInvitation?.hv);
-      if (tryConfirmQr(o, ticket)) afterQrReceive(o);
-      writeUrl();
+      tryConfirmQr(o, ticket);
       renderTracker();
+      return;
+    }
+    if (action === "recipient-phone-send" && o && TT_LK && window.TanTrackerLk?.sendRecipientPhoneCode) {
+      state.error = "";
+      window.TanTrackerLk.sendRecipientPhoneCode(o, state.recipientTicket)
+        .then(() => {
+          state.toast = "Код отправлен на номер получателя.";
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось отправить код.";
+          renderTracker();
+        });
+      return;
+    }
+    if (action === "recipient-phone-verify" && o && TT_LK && window.TanTrackerLk?.verifyRecipientPhoneCode) {
+      const code = state.recipientPhoneCodeInput.replace(/\D/g, "");
+      state.error = "";
+      window.TanTrackerLk.verifyRecipientPhoneCode(o, state.recipientTicket, code)
+        .then((token) => {
+          state.lkPhoneSessionToken = token;
+          state.lkPhoneSessionKey = recipientKey(o);
+          state.toast = "Номер подтверждён.";
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Неверный код.";
+          renderTracker();
+        });
       return;
     }
     if (action === "exit-recipient") {
@@ -3993,6 +4097,7 @@
       return;
     }
     if (action === "demo-verify-phone") {
+      if (TT_LK) return;
       const order = o || orders.find((x) => x.id === state.orderId);
       if (!order) return;
       const hv = state.recipientTicket?.hv;
@@ -4018,6 +4123,10 @@
     if (e.target.matches('[data-tt="search"]')) {
       state.query = e.target.value;
       renderTracker({ soft: true });
+    }
+    if (e.target.matches('[data-tt="recipient-phone-code"]')) {
+      state.recipientPhoneCodeInput = e.target.value;
+      return;
     }
     if (e.target.matches('[data-tt="code-input"]')) {
       state.codeInput = e.target.value.replace(/\D/g, "").slice(0, 6);

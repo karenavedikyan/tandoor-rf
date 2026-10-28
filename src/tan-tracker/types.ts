@@ -52,6 +52,7 @@ export type TanTrackerActiveInvitationDto = {
   holderId: string;
   item: string;
   id: string;
+  invitationToken?: string;
 };
 
 export type TanTrackerAttachmentDto = {

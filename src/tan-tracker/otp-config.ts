@@ -15,3 +15,7 @@ export function requireHandoffOtpPepper(): string {
 
 export const HANDOFF_CODE_TTL_MS = 5 * 60 * 1000;
 export const HANDOFF_CODE_MAX_VERIFY_ATTEMPTS = 5;
+
+export const PHONE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
+export const PHONE_VERIFICATION_MAX_ATTEMPTS = 5;
+export const PHONE_SESSION_TTL_MS = 15 * 60 * 1000;

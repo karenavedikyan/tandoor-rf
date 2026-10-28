@@ -135,7 +135,12 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
   }
 
   setNoStore(res);
+  const forceRefreshFault =
+    process.env.NODE_ENV === "test" && process.env.TT_TEST_BOOTSTRAP_FAIL_AFTER_CREATE === "1";
   try {
+    if (forceRefreshFault) {
+      throw new Error("injected bootstrap failure");
+    }
     const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
     res.status(201).json({
       publicCode: created,

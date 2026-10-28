@@ -4,6 +4,28 @@
   var api = window.TandoorRf;
   var ORIGIN = window.location.origin;
 
+  function jsonFetch(path, options) {
+    var headers = Object.assign({ Origin: ORIGIN }, options.headers || {});
+    if (options.body !== undefined && !(options.body instanceof FormData)) {
+      headers["Content-Type"] = "application/json";
+    }
+    return fetch(ORIGIN + path, {
+      method: options.method || "GET",
+      credentials: options.credentials || "same-origin",
+      headers: headers,
+      body:
+        options.body === undefined
+          ? undefined
+          : options.body instanceof FormData
+            ? options.body
+            : JSON.stringify(options.body),
+    }).then(function (response) {
+      return response.json().then(function (data) {
+        return { response: response, data: data };
+      });
+    });
+  }
+
   function refreshBootstrap() {
     return api.apiRequest("/api/tan-tracker/bootstrap").then(function (result) {
       if (result.response.status !== 200 || !result.data) {
@@ -25,6 +47,23 @@
     }
   }
 
+  function invitationPayloadFromOrder(order, ticket) {
+    var inv = order.activeInvitation;
+    var hv = ticket && ticket.hv != null ? Number(ticket.hv) : inv && inv.hv;
+    var pendingId = (ticket && ticket.rcv) || (inv && inv.pendingId);
+    if (ticket && ticket.tok) {
+      return { invitationToken: ticket.tok };
+    }
+    if (inv && inv.invitationToken) {
+      return { invitationToken: inv.invitationToken };
+    }
+    return {
+      transferId: order.id,
+      hv: hv,
+      pendingPartyId: pendingId,
+    };
+  }
+
   window.TanTrackerLk = {
     uploadStagingFile: function (file) {
       return fetch(ORIGIN + "/api/tan-tracker/staging-attachments", {
@@ -36,17 +75,16 @@
           "X-TT-Mime-Type": file.type || "application/octet-stream",
         },
         body: file,
-      })
-        .then(function (response) {
-          return response.json().then(function (data) {
-            if (!response.ok) {
-              throw new Error(
-                (data && data.error && data.error.message) || "Не удалось загрузить файл.",
-              );
-            }
-            return data;
-          });
+      }).then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) {
+            throw new Error(
+              (data && data.error && data.error.message) || "Не удалось загрузить файл.",
+            );
+          }
+          return data;
         });
+      });
     },
     createTransfer: function (payload) {
       return api
@@ -55,14 +93,26 @@
           if (result.response.status !== 201 || !result.data || !result.data.publicCode) {
             throw new Error(api.extractErrorMessage(result.data, "Не удалось создать передачу."));
           }
+          var publicCode = result.data.publicCode;
           if (result.data.bootstrap) {
             window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
-          } else if (result.data.refreshRequired) {
-            return refreshBootstrap().then(function () {
-              return result.data.publicCode;
-            });
+            return { publicCode: publicCode, refreshFailed: false };
           }
-          return result.data.publicCode;
+          if (result.data.refreshRequired) {
+            return refreshBootstrap()
+              .then(function () {
+                return { publicCode: publicCode, refreshFailed: false };
+              })
+              .catch(function (refreshErr) {
+                return {
+                  publicCode: publicCode,
+                  refreshFailed: true,
+                  refreshError:
+                    (refreshErr && refreshErr.message) || "Не удалось обновить данные после создания.",
+                };
+              });
+          }
+          return { publicCode: publicCode, refreshFailed: false };
         });
     },
     verifyHandoffCode: function (transferId, code) {
@@ -128,6 +178,45 @@
         });
     },
     refreshBootstrap: refreshBootstrap,
+    sendRecipientPhoneCode: function (order, ticket) {
+      return jsonFetch("/api/tan-tracker/public/recipient/phone/send", {
+        method: "POST",
+        body: invitationPayloadFromOrder(order, ticket),
+      }).then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(
+            api.extractErrorMessage(result.data, "Подтверждение телефона недоступно."),
+          );
+        }
+        return true;
+      });
+    },
+    verifyRecipientPhoneCode: function (order, ticket, code) {
+      var body = invitationPayloadFromOrder(order, ticket);
+      body.code = code;
+      return jsonFetch("/api/tan-tracker/public/recipient/phone/verify", {
+        method: "POST",
+        body: body,
+      }).then(function (result) {
+        if (result.response.status !== 200 || !result.data.phoneSessionToken) {
+          throw new Error(api.extractErrorMessage(result.data, "Неверный код подтверждения."));
+        }
+        return result.data.phoneSessionToken;
+      });
+    },
+    confirmQrHandoff: function (order, ticket, phoneSessionToken) {
+      var body = invitationPayloadFromOrder(order, ticket);
+      body.phoneSessionToken = phoneSessionToken;
+      return jsonFetch("/api/tan-tracker/public/recipient/handoff/qr-confirm", {
+        method: "POST",
+        body: body,
+      }).then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось подтвердить получение."));
+        }
+        return refreshBootstrap();
+      });
+    },
     addTransferAttachments: function (transferId, stagingAttachmentIds) {
       return api
         .apiRequest(

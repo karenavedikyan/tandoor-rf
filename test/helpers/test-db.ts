@@ -63,6 +63,8 @@ export function setIntegrationEnv(databaseUrl: string, origin = "http://127.0.0.
   process.env.PGSSLMODE = "disable";
   process.env.TRUSTED_PROXIES = "";
   process.env.NODE_ENV = "test";
+  process.env.TT_PHONE_VERIFICATION_PROVIDER = "test";
+  process.env.TT_OTP_PEPPER = process.env.TT_OTP_PEPPER || "test-handoff-pepper-fixed";
 }
 
 export async function createTestUser(input: {

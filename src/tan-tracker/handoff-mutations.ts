@@ -13,6 +13,7 @@ import {
   HANDOFF_CODE_TTL_MS,
   requireHandoffOtpPepper,
 } from "./otp-config";
+import { applyPendingReceiptHandoff } from "./handoff-complete";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
@@ -201,34 +202,12 @@ export async function verifyHandoffCodeHandler(req: AccessRequest, res: Response
       }
 
       await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
-      const from = row.holder_party_id;
-      const to = row.pending_party_id;
-      let newStatus = "active";
-      const completed = to === row.final_recipient_party_id;
-      if (completed) newStatus = "completed";
-      await client.query(
-        `UPDATE tt_transfers SET holder_party_id = $2, pending_party_id = NULL, status = $3,
-                holder_since = NOW(), handoff_version = handoff_version + 1, row_version = row_version + 1,
-                completed_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE completed_at END
-         WHERE id = $1 AND row_version = $4`,
-        [row.id, to, newStatus, row.row_version],
-      );
-      await client.query(
-        `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
-         VALUES ($1,$2,$3,$4,$5::uuid)`,
-        [row.id, from, to, "Подтверждено одноразовым кодом", auditUserId],
-      );
-      if (completed) {
-        await client.query(
-          `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
-           VALUES ($1,$2,$3,$4,$5::uuid)`,
-          [row.id, to, row.final_recipient_party_id, "Доставлено конечному получателю", auditUserId],
-        );
-      }
-      await client.query(
-        `UPDATE tt_transfer_invitations SET superseded_at = NOW()
-         WHERE transfer_id = $1 AND superseded_at IS NULL`,
-        [row.id],
+      await applyPendingReceiptHandoff(
+        client,
+        row,
+        auditUserId,
+        party.id,
+        "Подтверждено одноразовым кодом",
       );
       await client.query(
         `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)

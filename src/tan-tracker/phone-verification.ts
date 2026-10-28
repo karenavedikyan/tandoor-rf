@@ -25,6 +25,23 @@ export function generateNumericOtp(length = 6): string {
   return String(n).padStart(length, "0");
 }
 
+const testCodes = new Map<string, string>();
+
+export function testPhoneCodeKey(transferId: string, partyId: string): string {
+  return `${transferId}|${partyId}`;
+}
+
+/** Integration tests only — read OTP written by test provider. */
+export function peekTestPhoneVerificationCode(transferId: string, partyId: string): string | null {
+  if (process.env.NODE_ENV !== "test") return null;
+  return testCodes.get(testPhoneCodeKey(transferId, partyId)) ?? null;
+}
+
+export function storeTestPhoneVerificationCode(transferId: string, partyId: string, code: string): void {
+  if (process.env.NODE_ENV !== "test") return;
+  testCodes.set(testPhoneCodeKey(transferId, partyId), code);
+}
+
 /** Production must wire a real provider; tests use TestPhoneVerificationProvider. */
 export function resolvePhoneVerificationProvider(): PhoneVerificationProvider {
   const isTestEnv = process.env.NODE_ENV === "test";
