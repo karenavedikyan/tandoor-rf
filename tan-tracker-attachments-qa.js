@@ -8,7 +8,10 @@ var TT_ATT_QA = await (async () => {
   const png1x1 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
   const open = async (id) => {
-    await page.locator(`.tt-table [data-tt-open="${id}"]`).click();
+    const card = page.locator(`.tt-card[data-tt-open="${id}"]`);
+    const row = page.locator(`.tt-table [data-tt-open="${id}"]`);
+    if (await card.isVisible()) await card.click();
+    else await row.click();
     await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   };
 
@@ -93,6 +96,7 @@ var TT_ATT_QA = await (async () => {
   await page.setViewportSize({ width: 375, height: 812 });
   ok(await page.locator('[data-tt="attachments"]').isVisible(), "attachments block visible at 375px");
 
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${base}/#tan-tracker?role=manager`);
   await page.reload();
   await page.locator("#tt-root").waitFor({ state: "visible" });

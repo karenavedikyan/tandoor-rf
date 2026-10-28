@@ -70,7 +70,11 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("recipient", "Кому передаём");
   await page.getByRole("button", { name: "Назад", exact: true }).click();
   await waitWizardTitle("files", "Фото и файлы");
+  await page.getByRole("button", { name: "Назад", exact: true }).click();
+  await waitWizardTitle("item", "Что передаём");
   ok((await page.locator('[data-tt-field="item"]').inputValue()) === "Wizard QA item edited", "back retains item text");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await waitWizardTitle("files", "Фото и файлы");
 
   await page.locator('[data-tt="attach-input"]').setInputFiles({
     name: "wiz.png",
@@ -84,6 +88,11 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("review", "Проверить и создать");
   ok((await page.locator(".tt-wizard-summary").textContent()).includes("1 файл"), "back/forward retains staged files");
 
+  for (let i = 0; i < 4; i++) {
+    const back = page.getByRole("button", { name: "Назад", exact: true });
+    if (!(await back.count())) break;
+    await back.click();
+  }
   await page.locator('[data-tt="back-list"]').click();
   await page.locator("#tt-root").waitFor({ state: "visible" });
 
@@ -162,6 +171,7 @@ var TT_WIZ_QA = await (async () => {
   });
   ok(contrast >= 4.5, "dark wizard primary contrast");
 
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${base}/#exchange?role=manager`);
   await page.locator('[data-go="tan-tracker"]').click();
   await page.locator("#tt-root").waitFor({ state: "visible" });
