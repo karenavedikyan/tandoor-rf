@@ -11,6 +11,10 @@ var TT_DEMO_CODE_QA = await (async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
   await page.locator('[data-tt="enter-code"]').click();
   await page.locator('[data-tt="code-screen"]').waitFor({ state: "visible" });
+  ok(
+    (await page.getByLabel("6-значный код", { exact: true }).getAttribute("data-tt")) === "code-input",
+    "code input accessible name is exactly 6-значный код without button text"
+  );
   await page.getByRole("button", { name: "Получить демо-код", exact: true }).click();
   await page.locator('[data-tt="holder-shown-code"]').waitFor({ state: "visible" });
   const code1 = (await page.locator('[data-tt="holder-shown-code"] .tt-code-inline').textContent()).trim();
