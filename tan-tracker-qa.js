@@ -97,6 +97,76 @@ var TT_QA = await (async () => {
   ok(await page.evaluate(() => !document.body.classList.contains("tt-recipient-shell")), "recipient shell class cleared");
   ok(await page.locator(".sidebar").isVisible(), "sidebar visible after leaving tan-tracker");
   await page.goto("http://127.0.0.1:4317/#tan-tracker?role=manager");
+  await page.reload();
+  if (await page.locator('[data-tt="reset-filters"]').count()) await page.locator('[data-tt="reset-filters"]').click();
+  await open("TT-2026-003");
+  const detailOverdue = await page.locator('[data-tt="detail"]').textContent();
+  ok(detailOverdue.includes("Ожидает код") && detailOverdue.includes("Просрочено"), "waiting keeps overdue chip");
+  await page.locator('[data-tt="back-list"]').click();
+  await open("TT-2026-002");
+  if (await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).count())
+    await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
+  await page.getByRole("button", { name: "Завершить передачу", exact: true }).click();
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "complete transfer as holder");
+  await page.locator('[data-tt="employee"]').selectOption("m1");
+  await page.locator('[data-tt="back-list"]').click();
+  await open("TT-2026-001");
+  await page.locator('[data-tt="open-recipient"]').click();
+  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  await page.getByRole("button", { name: "Получить код", exact: true }).click();
+  await page.locator('[data-tt="exit-recipient"]').click();
+  await page.locator('[data-tt="enter-code"]').click();
+  for (let i = 0; i < 5; i++) {
+    await page.locator('[data-tt="code-input"]').fill(`00000${i}`);
+    await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
+  }
+  await page.locator('[data-tt="code-input"]').fill("000005");
+  await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
+  ok((await page.locator('[data-tt="code-error"]').textContent()).includes("попыт"), "five wrong attempts exhaust code");
+  await page.locator('button[data-tt="detail"]').click();
+  await page.locator('[data-tt="back-list"]').click();
+  await open("TT-2026-016");
+  await page.locator('[data-tt="transfer"]').click();
+  await page.locator('[data-tt-pick="ext_02"]').click();
+  await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
+  await page.locator('[data-tt="open-recipient"]').click();
+  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  await page.getByRole("button", { name: "Получить код", exact: true }).click();
+  const code016 = (await page.locator('[data-tt="shown-code"]').textContent()).trim();
+  await page.locator('[data-tt="exit-recipient"]').click();
+  await page.locator('[data-tt="enter-code"]').click();
+  await page.getByRole("button", { name: "Истечь срок кода (демо)", exact: true }).click();
+  await page.locator('[data-tt="code-input"]').fill(code016);
+  await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
+  ok((await page.locator('[data-tt="code-error"]').textContent()).includes("истёк"), "expired code rejected");
+  await page.locator('button[data-tt="detail"]').click();
+  await page.locator('[data-tt="back-list"]').click();
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  const contrast = await page.locator('[data-tt-main-cta]').first().evaluate((el) => {
+    const s = getComputedStyle(el);
+    const parse = (c) => {
+      const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      return m ? [+m[1], +m[2], +m[3]] : [255, 255, 255];
+    };
+    const lum = ([r, g, b]) => {
+      const f = (v) => {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const fg = parse(s.color);
+    const bg = parse(s.backgroundColor);
+    const L1 = lum(fg);
+    const L2 = lum(bg);
+    return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+  });
+  ok(contrast >= 4.5, "dark primary CTA contrast >= 4.5:1");
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
   await page.locator('[data-tt="create"]').click();
   await page.locator('[data-tt-field="item"]').fill("QR create QA");
   await page.getByRole("button", { name: "Новый получатель", exact: true }).click();

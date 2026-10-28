@@ -491,7 +491,7 @@
       .map((o) => {
         const h = contactById(o.holderId);
         const p = o.pendingId ? contactById(o.pendingId) : null;
-        return `<tr data-tt-open="${E(o.id)}"><td><strong>${E(o.id)}</strong></td><td>${E(o.item)}<small>${E(o.qty || "")}</small></td><td>${E(h?.name || "—")}</td><td>${p ? E(p.name) : "—"}</td><td>${statusBadge(o)}</td><td>${o.dueAt ? dt(o.dueAt) : "—"}</td><td>${o.holderSince ? dt(o.holderSince) : "—"}</td></tr>`;
+        return `<tr data-tt-open="${E(o.id)}"><td><strong>${E(o.id)}</strong></td><td>${E(o.item)}<small>${E(o.qty || "")}</small></td><td>${E(h?.name || "—")}</td><td>${p ? E(p.name) : "—"}</td><td>${statusBadge(o)}</td><td>${dueCell(o)}</td><td>${o.holderSince ? dt(o.holderSince) : "—"}</td></tr>`;
       })
       .join("");
   }
@@ -571,10 +571,20 @@
   }
   function statusBadge(o) {
     const st = orderStatus(o);
+    const overdue = isOverdue(o);
+    const overdueChip = overdue ? `<span class="tt-badge bad tt-badge-overdue">Просрочено</span>` : "";
     if (st === "completed") return `<span class="tt-badge good">Завершена</span>`;
-    if (st === "waiting") return `<span class="tt-badge blue">Ожидает код</span>`;
-    if (isOverdue(o)) return `<span class="tt-badge bad">Просрочка</span>`;
+    if (st === "waiting") {
+      return `<span class="tt-status-group"><span class="tt-badge blue">Ожидает код</span>${overdueChip}</span>`;
+    }
+    if (overdue) return `<span class="tt-badge bad">Просрочка</span>`;
     return `<span class="tt-badge warn">В работе</span>`;
+  }
+
+  function dueCell(o) {
+    if (!o.dueAt) return "—";
+    const label = dt(o.dueAt);
+    return isOverdue(o) ? `<span class="tt-due-overdue">${E(label)}</span>` : E(label);
   }
 
   function invalidateCode(o) {
