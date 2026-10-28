@@ -14,6 +14,34 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
 
   const assertHierarchy = async (label) => {
     const h = await page.evaluate(() => {
+      const parseRgb = (c) => {
+        const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        return m ? [+m[1], +m[2], +m[3]] : null;
+      };
+      const lum = ([r, g, b]) => {
+        const f = (v) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      const effectiveBg = (el) => {
+        let n = el;
+        while (n) {
+          const bg = getComputedStyle(n).backgroundColor;
+          if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") return bg;
+          n = n.parentElement;
+        }
+        return getComputedStyle(document.body).backgroundColor;
+      };
+      const contrastRatio = (fg, bg) => {
+        const f = parseRgb(fg);
+        const b = parseRgb(bg);
+        if (!f || !b) return 0;
+        const L1 = lum(f);
+        const L2 = lum(b);
+        return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+      };
       const item = document.querySelector(".tt-wizard-review-item-title");
       const finalName = document.querySelector(".tt-wizard-review-route-block:not(.tt-wizard-review-handoff) .tt-wizard-review-person-name");
       const detailVal = document.querySelector(".tt-wizard-review-detail-value");
@@ -24,6 +52,8 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
       const fw = (el) => parseFloat(getComputedStyle(el).fontWeight);
       const primaryBg = getComputedStyle(primary).backgroundColor;
       const editBorder = getComputedStyle(edit).borderWidth;
+      const editStyle = getComputedStyle(edit);
+      const linkContrast = contrastRatio(editStyle.color, effectiveBg(edit));
       return {
         ok: fs(item) > fs(finalName) && fs(finalName) >= fs(detailVal) && fw(item) >= 700,
         editTextLike:
@@ -32,12 +62,14 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
           (editBorder === "0px" || editBorder === "0"),
         primaryFilled: primary.classList.contains("tt-primary") && primaryBg !== "rgba(0, 0, 0, 0)",
         editMinH: edit.getBoundingClientRect().height >= 44,
+        linkContrast,
       };
     });
     ok(h.ok, `${label}: item title visually dominates route and details`);
     ok(h.editTextLike, `${label}: review edit control is text-style`);
     ok(h.primaryFilled, `${label}: only submit uses filled primary styling`);
     ok(h.editMinH, `${label}: review edit min 44px hit area`);
+    ok(h.linkContrast >= 4.5, `${label}: review edit link contrast >= 4.5:1 (${h.linkContrast.toFixed(2)})`);
   };
 
   const assertStickyClearance = async () => {
