@@ -919,32 +919,4 @@
   max-height: 12rem;
 }
 
-.clients-preview-banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-  margin: 0 0 16px;
-  padding: 12px 16px;
-  border: 1px solid #d97706;
-  border-radius: 8px;
-  background: #fff4df;
-  color: #7c4a03;
-}
-
-.clients-preview-banner__text {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.clients-preview-banner--error {
-  border-color: #dc2626;
-  background: #fef2f2;
-  color: #991b1b;
-}
-
-.clients-preview-banner__stop {
-  flex-shrink: 0;
-}
+/* Preview banner theming lives in brand/cabinet.css (all shell routes). */
