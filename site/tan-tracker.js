@@ -1516,12 +1516,22 @@
   const priorNav = roleNav;
   roleNav = function (items) {
     const rows = priorNav(items);
+    if (rows.some((r) => r[0] === ROUTE)) return rows;
+    const assistantOnly = rows.length > 0 && rows.every((r) => String(r[0]).startsWith("assistant"));
+    if (assistantOnly) return rows;
     const at = rows.findIndex((r) => r[0] === "handover");
-    const insert = ["tan-tracker", "Тан-трекер", "package-check", "tan-tracker"];
+    const insert = [ROUTE, "Тан-трекер", "package-check", ROUTE];
     if (at >= 0) rows.splice(at + 1, 0, insert);
     else rows.push(insert);
     return rows;
   };
+
+  function syncShellNav() {
+    const route = location.hash.slice(1).split("?")[0] || "";
+    if (route === ROUTE) current = ROUTE;
+    if (current === ROUTE) render();
+    else priorRender();
+  }
 
   const priorRender = render;
   render = function () {
@@ -1553,9 +1563,5 @@
     routeActive: () => current === ROUTE,
   };
 
-  const requestedRoute = location.hash.slice(1).split("?")[0];
-  if (requestedRoute === ROUTE) {
-    current = ROUTE;
-    render();
-  }
+  syncShellNav();
 })();

@@ -1,14 +1,14 @@
 # Main flows
 
 ## Tan-tracker (document handoff prototype)
-- Static `#tan-tracker` in the existing employee shell; nav label «Тан-трекер», subtitle «Передача документов и предметов», main CTA «Создать передачу».
+- Static `#tan-tracker` in the existing employee shell; nav label «Тан-трекер», subtitle «Передача документов и предметов», main CTA «Создать передачу». After all deferred scripts load, `syncShellNav()` re-renders the employee shell once so «Тан-трекер» appears on cold entry (no hash), `#exchange`, sales and other deep links without changing the current screen; assistant-only nav and external recipient shells stay unchanged.
 - In-memory demo only: reload restores ≥18 synthetic transfers; banner «Демо-данные · изменения до обновления страницы»; no storage, SMS, or external APIs.
 - Registry: search, status/overdue filters, reset, row/card open, desktop table scroll inside `.tt-table-scroll`, mobile cards at 375px.
 - Create: item + recipient (pick or new phone), optional due/comment; creator stays holder, recipient pending; reject self, invalid phone, duplicate phone.
 - Detail: transfer, enter code, open recipient demo screen, complete when holder with no pending, cancel pending, timeline; wrong/expired/replay/5-try code rules.
 - Recipient URL `#tan-tracker?tt_view=recipient&tt_order=…` simplified shell without corporate nav; demo phone verify + one-time 6-digit code (5 min).
 - External holder demo mode: limited registry/contacts; employee sections (clients, assignments, notifications, stars) unchanged on other routes.
-- `tan-tracker-qa.js`: end-to-end clicks for create, codes, filters, privacy, 375/1440, theme toggle, reload reset. Regression: existing assistant QA scripts unchanged.
+- `tan-tracker-qa.js`: end-to-end clicks for create, codes, filters, privacy, 375/1440, theme toggle, reload reset. `tan-tracker-nav-qa.js`: cold entry and sidebar/mobile nav to tracker (≥20 rows), return via «Клиенты» (`exchange`), no duplicate nav after re-render. Regression: existing assistant QA scripts unchanged.
 
 ## Required star feedback
 - Completion of the access period always revokes access on time. Business closure
