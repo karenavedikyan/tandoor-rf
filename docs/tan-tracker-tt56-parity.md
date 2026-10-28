@@ -3,7 +3,7 @@
 **Эталон (только чтение):** SHA `7f28457d3f76d262f4b0c7313c865ad3b482c866`, worktree `.tt56-prototype-ref/`.  
 **Реализация:** ветка `cursor/tan-tracker-lk-tt56-20261028`, от `origin/main`.
 
-Перенос = копия DOM/CSS/поведения tt56 + серверные данные/пraва. Демо-обходы в LK **скрыты/отключены по мере реализации**; полная зачистка demo-copy и public recipient — см. статус ниже.
+Перенос = копия DOM/CSS/поведения tt56 + серверные данные/права. Демо-обходы в LK **скрыты/отключены по мере реализации**; полная зачистка demo-copy и public recipient — см. статус ниже.
 
 ## Baseline прототипа (tt56)
 
@@ -47,7 +47,7 @@
 | Demo settings, «Действовать как…», demo employee select | **Скрыто** (`tt-lk-mode`) |
 | «Подтвердить номер (демо)», demo OTP | **Замена** SMS-провайдером; без конфига — fail-closed (`PhoneVerificationUnavailableError`) |
 | `seedOrders` / localStorage | **Нет** — PostgreSQL |
-| In-memory attachments | **Private storage** + `tt_transfer_attachments` |
+| In-memory attachments | **Staging upload** + `tt_transfer_attachments` (LK API; browser E2E — в работе) |
 
 ## Блокеры (честно)
 
