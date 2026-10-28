@@ -860,14 +860,23 @@
     return `<button type="button" class="tt-wizard-review-link${longCls}" data-tt="${action}"${aria}${dis}>${E(label)}</button>`;
   }
 
-  function reviewPersonHtml(c, summaryFallback) {
+  function reviewPersonHtml(c, summaryFallback, form) {
     if (c) {
       return `<strong class="tt-wizard-review-person-name">${E(c.name)}</strong><span class="tt-wizard-review-person-phone">${E(fmtPhone(c.phone))}</span>`;
     }
+    const f = form || state.form;
+    if (f?.mode === "new" && f.newName?.trim()) {
+      const p = normPhone(f.newPhone || "");
+      const phoneLine = p ? fmtPhone(p) : f.newPhone?.trim() || "";
+      if (phoneLine) {
+        return `<strong class="tt-wizard-review-person-name">${E(f.newName.trim())}</strong><span class="tt-wizard-review-person-phone">${E(phoneLine)}</span>`;
+      }
+      return `<strong class="tt-wizard-review-person-name">${E(f.newName.trim())}</strong>`;
+    }
     const s = summaryFallback || "—";
     const sep = " · ";
-    if (s.includes(sep)) {
-      const idx = s.lastIndexOf(sep);
+    const idx = s.indexOf(sep);
+    if (idx > -1) {
       return `<strong class="tt-wizard-review-person-name">${E(s.slice(0, idx))}</strong><span class="tt-wizard-review-person-phone">${E(s.slice(idx + sep.length))}</span>`;
     }
     return `<strong class="tt-wizard-review-person-name">${E(s)}</strong>`;
@@ -1718,7 +1727,7 @@
             <span class="tt-wizard-review-person-label">Кому доставить</span>
             ${wizardReviewLink("Изменить", "create-edit-recipient", "Изменить конечного получателя")}
           </div>
-          <div class="tt-wizard-review-person">${reviewPersonHtml(finContact, finSummary)}</div>
+          <div class="tt-wizard-review-person">${reviewPersonHtml(finContact, finSummary, f)}</div>
         </div>
         <div class="tt-wizard-review-route-block tt-wizard-review-handoff" data-tt="review-handoff">
           <div class="tt-wizard-review-block-head">

@@ -76,6 +76,11 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
 
+  ok(
+    await page.locator('[data-tt="demo-settings"]').evaluate((el) => !el.open),
+    "review demo settings compact closed by default"
+  );
+
   ok((await page.locator(".tt-wizard-review-route-card").count()) === 1, "route grouped card present");
   ok((await page.locator(".tt-wizard-review-handoff-mode").textContent()).includes("Напрямую"), "direct mode avoids duplicate large handoff name");
   ok((await page.locator(".tt-wizard-review-route-block .tt-wizard-review-person-name").first().textContent()).includes("Сергей"), "final name on route card");
@@ -126,11 +131,45 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.locator(".tt-wizard-contact").filter({ hasText: "Ольга" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
+  ok(
+    await page.locator('[data-tt="demo-settings"]').evaluate((el) => !el.open),
+    "review demo settings still closed before second create"
+  );
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Review direct only"), "direct create succeeds");
+  ok(
+    await page.locator('[data-tt="demo-settings"]').evaluate((el) => !el.open),
+    "detail demo settings compact closed by default"
+  );
 
-  ok(await page.locator('[data-tt="demo-settings"]').evaluate((el) => !el.open), "review demo settings compact closed by default");
+  await page.locator('[data-tt="back-list"]').click();
+  await page.locator('[data-tt-main-cta]').first().click();
+  await page.locator('[data-tt-field="item"]').fill("Review new recipient split");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.getByRole("button", { name: "Пропустить", exact: true }).click();
+  await page.getByRole("button", { name: "Добавить нового получателя", exact: true }).click();
+  await page.locator('[data-tt-field="newName"]').fill("Иерархия Новый");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.locator('[data-tt-field="newPhone"]').fill("79000000977");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await waitReview();
+  const newRecipientDom = await page.evaluate(() => {
+    const block = document.querySelector(".tt-wizard-review-route-block:not(.tt-wizard-review-handoff)");
+    const nameEl = block?.querySelector(".tt-wizard-review-person-name");
+    const phoneEl = block?.querySelector(".tt-wizard-review-person-phone");
+    if (!nameEl || !phoneEl) return { ok: false };
+    const name = nameEl.textContent || "";
+    const phone = phoneEl.textContent || "";
+    const nameFs = parseFloat(getComputedStyle(nameEl).fontSize);
+    const phoneFs = parseFloat(getComputedStyle(phoneEl).fontSize);
+    return {
+      ok: nameFs > phoneFs && !/\d/.test(name) && /09-77|977|900/.test(phone),
+      name,
+      phone,
+    };
+  });
+  ok(newRecipientDom.ok, "new recipient review splits large name without digits and smaller phone line");
 
   return { passed: checks.length, checks };
 })();
