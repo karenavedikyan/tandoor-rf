@@ -34,6 +34,20 @@ globalThis.ttOpenDetailDemo = async () => {
   const panel = page.locator('[data-tt="detail-demo"]');
   if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
 };
+globalThis.ttBackToList = async () => {
+  const terminal = page.locator('[data-tt="terminal-back-list"]');
+  const headerBack = page.locator('[data-tt="detail-head"] [data-tt="back-list"]');
+  const genericBack = page.locator('[data-tt="back-list"]');
+  if (await terminal.isVisible()) {
+    await terminal.click();
+  } else if (await headerBack.isVisible()) {
+    await headerBack.click();
+  } else {
+    await genericBack.first().waitFor({ state: "visible" });
+    await genericBack.first().click();
+  }
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+};
 globalThis.ttOpenOtherActions = async () => {
   const panel = page.locator('[data-tt="other-actions"]');
   if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
@@ -81,6 +95,9 @@ globalThis.ttWizardRecipientToReview = async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
 };
+
+const contrastHelper = await readFile(join(process.cwd(), "tan-tracker-qa-contrast.js"), "utf8");
+await page.addInitScript(contrastHelper);
 
 const script = process.argv[2];
 if (!script) throw new Error("usage: node run-browser-qa.mjs <qa.js>");

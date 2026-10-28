@@ -108,6 +108,24 @@ var TT_WIZ_REVIEW_LABELS_QA = await (async () => {
   ok(primaries === 1, "only Создать передачу uses bright primary");
   ok((await page.locator('[data-tt="create-wizard-submit"]').textContent()).includes("Создать передачу"), "submit label unchanged");
 
+  await page.locator('[data-tt="create-edit-recipient"]').click();
+  await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="create-recipient-change"]').click();
+  await page.locator('[data-tt="create-new-recipient"]').first().click();
+  await page.locator('[data-create-phase="recipient-new-name"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt-field="newName"]').fill("Return QA Contact");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.locator('[data-tt-field="newPhone"]').fill("9001234567");
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await waitReview();
+  await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await ttBackToList();
+  await page.locator('[data-tt-main-cta]').first().click();
+  await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
+  ok((await page.locator('[data-create-phase="review"]').count()) === 0, "new create starts at item not stale review");
+  ok((await page.locator('[data-tt-field="item"]').inputValue()) === "", "new create clears prior item");
+
   return { passed: checks.length, checks };
 })();
 console.log(JSON.stringify(TT_WIZ_REVIEW_LABELS_QA, null, 2));

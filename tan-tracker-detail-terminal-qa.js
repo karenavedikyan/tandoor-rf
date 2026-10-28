@@ -41,6 +41,10 @@ var TT_DETAIL_TERMINAL_QA = await (async () => {
   await page.reload();
   ok((await page.locator(".tt-detail-task-heading").textContent()).includes("Передача завершена"), "header unchanged for legacy completed");
   ok((await page.locator('[data-tt-terminal-audience="contributor"]').count()) === 1, "legacy initiator still contributor audience");
+  ok(
+    !(await page.locator('[data-tt="detail-terminal-monitor"]').textContent()).includes("Подтверждение получения"),
+    "legacy completed with only intermediate handoffs — no final receipt claim"
+  );
 
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";

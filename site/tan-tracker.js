@@ -195,6 +195,7 @@
         holderSince: ago(50),
         timeline: [
           tl("emp_m2", "ext_03", "Передано подрядчику", ago(72)),
+          tl("emp_m1", "emp_m2", "Координировал отгрузку (без передачи)", ago(74)),
           tl("ext_03", "ext_03", "Передача завершена", ago(50)),
         ],
         code: null,
@@ -361,6 +362,8 @@
         qty: "1 шт.",
         holderId: "emp_m3",
         pendingId: "ext_01",
+        finalRecipientId: "ext_02",
+        createdById: "emp_m3",
         status: "waiting",
         dueAt: ahead(18),
         comment: "Вернуть после фото",
@@ -1103,11 +1106,13 @@
       if (state.form.pickTarget === "relay") {
         state.form.relayId = r.contact.id;
         state.createPhase = "review";
+        state.createReturnPhase = null;
       } else {
         state.form.finalRecipientId = r.contact.id;
         state.form.recipientId = r.contact.id;
         state.form.recipientStep = "confirmed";
         state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
+        if (state.createPhase === "review") state.createReturnPhase = null;
       }
     } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") {
       state.createPhase = "review";
@@ -1952,7 +1957,7 @@
     const telDigits = c?.phone ? normPhone(c.phone) : "";
     const phoneHtml =
       telDigits && c?.phone
-        ? `<a class="tt-route-phone" href="tel:+7${E(telDigits)}" data-tt="route-phone">${E(phone)}</a>`
+        ? `<a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phone)}</a>`
         : `<span class="tt-route-phone">${phone ? E(phone) : "—"}</span>`;
     const plannedChip = planned
       ? `<span class="tt-route-planned" data-tt="route-planned">План · ждёт подтверждения</span>`
@@ -1977,29 +1982,37 @@
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const parts = [];
+    let nodeCount = 0;
 
     if (o.status === "completed") {
-      const delivered = fin || h;
+      const delivered = contactById(o.holderId);
+      nodeCount = 1;
       parts.push(routePersonNode(delivered, "Доставлено · конечный получатель", "delivered", false));
-      return `<div class="tt-route-grid" data-tt="detail-route-grid">${parts.join("")}</div>`;
+      return `<div class="tt-route-grid" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${parts.join("")}</div>`;
     }
 
     parts.push(routePersonNode(h, "Сейчас у · ответственный", "current", false));
+    nodeCount = 1;
 
     if (o.pendingId) {
       if (fin && o.pendingId === o.finalRecipientId) {
         parts.push(routeConnector(), routePersonNode(p, "Следующий · конечный получатель", "pending", true));
+        nodeCount += 1;
       } else {
         parts.push(routeConnector(), routePersonNode(p, "Следующий получатель", "pending", true));
+        nodeCount += 1;
         if (fin && o.pendingId !== o.finalRecipientId) {
           parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+          nodeCount += 1;
         }
       }
     } else if (fin && o.holderId !== o.finalRecipientId) {
       parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+      nodeCount += 1;
     }
 
-    return `<div class="tt-route-grid" data-tt="detail-route-grid">${parts.join("")}</div>`;
+    const triple = nodeCount >= 3 ? " tt-route-grid--triple" : "";
+    return `<div class="tt-route-grid${triple}" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${parts.join("")}</div>`;
   }
 
   function disclosureSummary(titleHtml) {
@@ -2066,10 +2079,26 @@
     return null;
   }
 
-  function hasVerifiedDeliveryConfirmation(o) {
-    return o.timeline.some(
-      (t) => isConfirmedHandoffTimelineNote(t.note) || /Доставлено конечному получателю/.test(t.note || "")
+  function isDeliveryVerificationEntry(t, recipientId) {
+    if (!recipientId || t.to !== recipientId) return false;
+    return (
+      isConfirmedHandoffTimelineNote(t.note) || /Доставлено конечному получателю/.test(t.note || "")
     );
+  }
+
+  function verifiedDeliveryConfirmationEntry(o) {
+    const recipientId = o.holderId;
+    if (!recipientId) return null;
+    return (
+      o.timeline
+        .filter((t) => isDeliveryVerificationEntry(t, recipientId))
+        .sort((a, b) => a.at - b.at)
+        .pop() || null
+    );
+  }
+
+  function hasVerifiedDeliveryConfirmation(o) {
+    return !!verifiedDeliveryConfirmationEntry(o);
   }
 
   function completedTerminalAudience(o, actor) {
@@ -2083,10 +2112,10 @@
   }
 
   function completedTaskCard(o, actor) {
-    const custodian = contactById(o.finalRecipientId) || contactById(o.holderId);
+    const custodian = contactById(o.holderId);
     const audience = completedTerminalAudience(o, actor);
     const verified = hasVerifiedDeliveryConfirmation(o);
-    const lastConfirm = lastConfirmedHandoffEntry(o);
+    const lastConfirm = verifiedDeliveryConfirmationEntry(o);
     const confirmLine =
       verified && lastConfirm
         ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Подтверждение получения</span><span class="tt-detail-monitor-value">${E(dt(lastConfirm.at))}</span></div>`
@@ -2603,6 +2632,7 @@
     clearDetailAttDisclosure();
     state.form = null;
     state.createPhase = "item";
+    state.createReturnPhase = null;
     state.attachStaging = [];
     state.attachError = "";
     state.toast = "Передача создана. Держатель — создатель; получатель ожидает код.";
@@ -2647,6 +2677,7 @@
     if (action === "create") {
       state.view = "create";
       state.createPhase = "item";
+      state.createReturnPhase = null;
       state.form = defaultCreateForm();
       state.error = "";
       clearCompleteConfirm();
@@ -2678,6 +2709,7 @@
         state.orderId = null;
         state.form = null;
         state.createPhase = "item";
+        state.createReturnPhase = null;
         state.error = state.toast = "";
         clearCompleteConfirm();
         clearAttachStaging();

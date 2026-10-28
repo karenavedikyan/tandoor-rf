@@ -82,41 +82,65 @@ var TT_DETAIL_ROUTE_QA = await (async () => {
     const grid = document.querySelector('[data-tt="detail-route-grid"]');
     const style = grid ? getComputedStyle(grid) : null;
     const conn = grid?.querySelector(".tt-route-connector");
+    const el = grid?.querySelector(".tt-route-name");
+    const contrast =
+      el && typeof ttQaContrastRatioOnElement === "function" ? ttQaContrastRatioOnElement(el) : 0;
     return {
       flexDir: style?.flexDirection,
       connDisplay: conn ? getComputedStyle(conn).flexDirection : null,
-      contrast: (() => {
-        const el = grid?.querySelector(".tt-route-name");
-        if (!el) return 0;
-        const parse = (c) => {
-          const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-          return m ? [+m[1], +m[2], +m[3]] : null;
-        };
-        const lum = ([r, g, b]) => {
-          const f = (v) => {
-            v /= 255;
-            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-          };
-          return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-        };
-        const fg = parse(getComputedStyle(el).color);
-        let n = el.closest(".tt-route-node");
-        let bg = n ? parse(getComputedStyle(n).backgroundColor) : null;
-        if (!bg || bg.join("") === "0,0,0") bg = parse(getComputedStyle(document.body).backgroundColor);
-        if (!fg || !bg) return 0;
-        const L1 = lum(fg);
-        const L2 = lum(bg);
-        return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
-      })(),
+      contrast,
     };
   });
   ok(desktop.flexDir === "row", "desktop route grid horizontal when wide");
   ok(desktop.contrast >= 4.5, `dark route name contrast (${desktop.contrast.toFixed(2)})`);
 
+  const tripleLayoutAt = async (vw, label) => {
+    await page.setViewportSize({ width: vw, height: 812 });
+    await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m3&tt_id=TT-2026-018`);
+    await page.reload();
+    await openRoute();
+    ok((await page.locator('[data-tt-route-nodes="3"]').count()) === 1, `${label}: three-node relay route`);
+    const metrics = await page.evaluate(() => {
+      const grid = document.querySelector('[data-tt="detail-route-grid"]');
+      const style = grid ? getComputedStyle(grid) : null;
+      const names = [...(grid?.querySelectorAll(".tt-route-name") || [])].map((el) => {
+        const r = el.getBoundingClientRect();
+        return { w: r.width, text: el.textContent?.trim() };
+      });
+      const conn = grid?.querySelector(".tt-route-connector");
+      const connBox = conn?.getBoundingClientRect();
+      const gridBox = grid?.getBoundingClientRect();
+      const connInside =
+        connBox && gridBox
+          ? connBox.left >= gridBox.left - 2 && connBox.right <= gridBox.right + 2
+          : true;
+      return { flexDir: style?.flexDirection, names, connInside, scrollW: document.documentElement.scrollWidth, vw: document.documentElement.clientWidth };
+    });
+    ok(metrics.flexDir === "column", `${label}: triple route stays vertical in panel`);
+    ok(metrics.names.every((n) => n.w >= 72 && (n.text?.length || 0) >= 2), `${label}: route names readable width`);
+    ok(metrics.connInside && metrics.scrollW <= metrics.vw + 2, `${label}: connectors in grid, no overflow`);
+  };
+  await tripleLayoutAt(375, "375");
+  await tripleLayoutAt(520, "520");
+  await tripleLayoutAt(1440, "1440");
+
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-002`);
   await page.reload();
   await openRoute();
   ok((await page.locator('[data-tt="route-phone"]').count()) >= 1, "read-only observer still sees route phones");
+  const tel = await page.locator('[data-tt="route-phone"]').first();
+  const href = await tel.getAttribute("href");
+  const visible = (await tel.textContent()).trim();
+  ok(href && /^tel:\+\d{11}$/.test(href) && href.startsWith("tel:+7"), "tel href is tel:+ plus 11 normalized digits");
+  ok(!/tel:\+77\d{9}/.test(href || ""), "tel href does not duplicate country code");
+  const hrefDigits = (href || "").replace(/^tel:\+/, "");
+  const displayDigits = visible.replace(/\D/g, "");
+  ok(
+    hrefDigits.length === 11 &&
+      displayDigits.length >= 10 &&
+      hrefDigits.slice(-10) === displayDigits.slice(-10),
+    "tel href matches displayed normalized phone (no dial)"
+  );
 
   return { passed: checks.length, checks };
 })();

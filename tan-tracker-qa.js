@@ -36,7 +36,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-create-phase="item"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   ok((await page.locator('[data-tt="form-error"]').textContent()).includes("переда"), "empty item rejected");
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await open("TT-2026-016");
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="ext_02"]').click();
@@ -44,7 +44,7 @@ var TT_QA = await (async () => {
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Ожидает код"), "pending set");
   await ttOpenOtherActions();
   await page.locator('[data-tt="cancel-pending"]').click();
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await open("TT-2026-004");
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="ext_01"]').click();
@@ -151,7 +151,7 @@ var TT_QA = await (async () => {
   await open("TT-2026-003");
   const detailOverdue = await page.locator('[data-tt="detail"]').textContent();
   ok(detailOverdue.includes("Ожидает код") && detailOverdue.includes("Просрочено"), "waiting keeps overdue chip");
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await open("TT-2026-002");
   if (await page.locator('[data-tt="act-holder"]').count()) {
     await ttOpenDetailDemo();
@@ -184,7 +184,7 @@ var TT_QA = await (async () => {
   }, confirmCalls);
   await ttOpenDemoSettings();
   await page.locator('[data-tt="employee"]').selectOption("m1");
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await open("TT-2026-001");
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
@@ -200,7 +200,7 @@ var TT_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="code-error"]').textContent()).includes("попыт"), "five wrong attempts exhaust code");
   await page.locator('button[data-tt="detail"]').click();
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await open("TT-2026-016");
   await page.locator('[data-tt="transfer"], [data-tt="transfer-final"]').first().click();
   await page.locator('[data-tt-pick="ext_02"]').click();
@@ -217,7 +217,7 @@ var TT_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="code-error"]').textContent()).includes("истёк"), "expired code rejected");
   await page.locator('button[data-tt="detail"]').click();
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
@@ -276,7 +276,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt="code-input"]').fill(codeNew);
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Контакт QA99"), "new contact code handoff");
-  await page.locator('[data-tt="back-list"]').click();
+  await ttBackToList();
   await page.setViewportSize({ width: 900, height: 650 });
   ok((await page.locator(".tt-table-scroll").evaluate((el) => el.scrollWidth > el.clientWidth)), "table overflows at 900px");
   return { passed: checks.length, checks };

@@ -58,22 +58,7 @@ var TT_DETAIL_DISCLOSURES_BRAND_QA = await (async () => {
   await page.locator('[data-tt-route-variant="current"] .tt-route-name').first().waitFor({ state: "visible" });
   const dark = await page.evaluate(() => {
     const name = document.querySelector('[data-tt="detail-route-grid"] .tt-route-name');
-    const parse = (c) => {
-      const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      return m ? [+m[1], +m[2], +m[3]] : null;
-    };
-    const lum = ([r, g, b]) => {
-      const f = (v) => {
-        v /= 255;
-        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-      };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    const node = name?.closest(".tt-route-node");
-    const fg = name ? parse(getComputedStyle(name).color) : null;
-    const bg = node ? parse(getComputedStyle(node).backgroundColor) : null;
-    const ratio =
-      fg && bg ? (Math.max(lum(fg), lum(bg)) + 0.05) / (Math.min(lum(fg), lum(bg)) + 0.05) : 0;
+    const ratio = typeof ttQaContrastRatioOnElement === "function" ? ttQaContrastRatioOnElement(name) : 0;
     return { ratio, overflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2 };
   });
   ok(dark.overflow, "375 dark expanded stack no overflow");
