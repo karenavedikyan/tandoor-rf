@@ -363,6 +363,81 @@
 .tt-disclosure summary { cursor:pointer; padding:10px 12px; font-size:14px; font-weight:650; list-style:none; min-height:44px; display:flex; align-items:center; }
 .tt-disclosure summary::-webkit-details-marker { display:none; }
 .tt-disclosure-body { padding:0 12px 12px; }
+.tt-detail-panel .tt-disclosure {
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tt-detail-panel .tt-disclosure > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--tt-ink);
+  font-weight: 650;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.tt-detail-panel .tt-disclosure > summary::before {
+  content: "Показать";
+  grid-column: 2;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tt-muted);
+  white-space: nowrap;
+  line-height: 1.2;
+  pointer-events: none;
+}
+.tt-detail-panel .tt-disclosure[open] > summary::before {
+  content: "Скрыть";
+}
+.tt-detail-panel .tt-disclosure > summary::after {
+  content: "";
+  grid-column: 3;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--tt-muted);
+  border-bottom: 2px solid var(--tt-muted);
+  transform: rotate(45deg);
+  transition: transform 0.18s ease, border-color 0.15s ease;
+  opacity: 0.9;
+  flex-shrink: 0;
+  align-self: center;
+}
+.tt-detail-panel .tt-disclosure[open] > summary::after {
+  transform: rotate(-135deg);
+  margin-top: 2px;
+}
+.tt-detail-panel .tt-disclosure > summary:hover {
+  background: var(--bg);
+}
+.tt-detail-panel .tt-disclosure > summary:active {
+  background: color-mix(in srgb, var(--bg) 70%, var(--line));
+}
+.tt-detail-panel .tt-disclosure > summary:focus-visible {
+  outline: 3px solid var(--green, #507f22);
+  outline-offset: -2px;
+}
+.tt-detail-panel .tt-disclosure[open] {
+  border-color: color-mix(in srgb, var(--line) 55%, var(--tt-muted));
+  background: color-mix(in srgb, var(--tt-panel) 92%, var(--bg));
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+[data-theme=dark] .tt-detail-panel .tt-disclosure[open] {
+  box-shadow: none;
+  background: color-mix(in srgb, var(--tt-panel) 88%, var(--bg));
+}
+.tt-detail-panel .tt-disclosure[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: 8px 8px 0 0;
+}
+.tt-detail-panel .tt-disclosure[open] > summary:hover {
+  background: color-mix(in srgb, var(--bg) 85%, var(--tt-panel));
+}
 .tt-detail-panel { padding:14px 16px; max-width:720px; margin:0 auto; }
 .tt-detail-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; }
 .tt-back { min-height:40px; padding:8px 12px; font-size:14px; }
