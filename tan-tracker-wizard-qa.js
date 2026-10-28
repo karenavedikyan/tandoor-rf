@@ -35,7 +35,7 @@ var TT_WIZ_QA = await (async () => {
   ok((await page.locator(".tt-wizard-progress").textContent()).includes("Шаг 2 из 4"), "step 2 progress");
 
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
-  await waitWizardTitle("recipient", "Кому передаём");
+  await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   ok((await page.locator('[data-tt="form-error"]').textContent()).includes("получ"), "recipient required");
 
@@ -49,7 +49,7 @@ var TT_WIZ_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("files", "Фото и файлы");
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
-  await waitWizardTitle("recipient", "Кому передаём");
+  await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
   ok((await page.locator(".tt-wizard-summary").textContent()).includes("edited"), "edit from summary returns to step");
@@ -61,13 +61,13 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("review", "Проверить и создать");
 
   await page.locator('[data-tt="create-edit-due"]').click();
-  await waitWizardTitle("edit-due", "Срок передачи");
+  await waitWizardTitle("edit-due", "До какого срока доставить");
   await page.locator('[data-tt-field="due"]').fill("2030-06-15T12:00");
   await page.getByRole("button", { name: "Готово", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
 
   await page.getByRole("button", { name: "Назад", exact: true }).click();
-  await waitWizardTitle("recipient", "Кому передаём");
+  await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Назад", exact: true }).click();
   await waitWizardTitle("files", "Фото и файлы");
   await page.getByRole("button", { name: "Назад", exact: true }).click();
@@ -83,7 +83,7 @@ var TT_WIZ_QA = await (async () => {
   });
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await waitWizardTitle("recipient", "Кому передаём");
+  await waitWizardTitle("recipient", "Кому нужно доставить");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
   ok((await page.locator(".tt-wizard-summary").textContent()).includes("1 файл"), "back/forward retains staged files");

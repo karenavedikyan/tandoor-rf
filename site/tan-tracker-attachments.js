@@ -297,7 +297,9 @@
       error = "",
       omitTitle = false,
       stagedIds = null,
+      pickerMode = "native",
     } = opts;
+    const inputId = `tt-att-file-${inputKey}`;
     const stagedSet = stagedIds instanceof Set ? stagedIds : stagedIds ? new Set(stagedIds) : null;
     const list =
       items.length > 0
@@ -311,9 +313,14 @@
             )
             .join("")}</ul>`
         : `<p class="tt-muted tt-att-empty">Нет вложений.</p>`;
-    const picker = showPicker
-      ? `<div class="tt-att-picker"><label class="tt-att-file-label">${pickerLabel}<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.heic,.heif,image/jpeg,image/png,image/webp,application/pdf,text/plain" data-tt="attach-input" data-input-key="${E(inputKey)}"></label><p class="tt-muted tt-att-hint">${E(hint)}</p></div>`
-      : "";
+    const accept =
+      ".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.heic,.heif,image/jpeg,image/png,image/webp,application/pdf,text/plain";
+    const picker =
+      showPicker && pickerMode === "button"
+        ? `<div class="tt-att-picker tt-att-picker-btn"><input type="file" id="${E(inputId)}" class="tt-att-input-sr" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"><label for="${E(inputId)}" class="tt-att-file-btn tt-wizard-btn">${E(pickerLabel)}</label><p class="tt-muted tt-att-hint">${E(hint)}</p></div>`
+        : showPicker
+          ? `<div class="tt-att-picker"><label class="tt-att-file-label">${pickerLabel}<input type="file" multiple accept="${accept}" data-tt="attach-input" data-input-key="${E(inputKey)}"></label><p class="tt-muted tt-att-hint">${E(hint)}</p></div>`
+          : "";
     const titleHtml = omitTitle ? "" : `<h3 class="tt-att-title">${E(title)}</h3>`;
     return `<section class="tt-att-block" data-tt="attachments"${orderId ? ` data-order-id="${E(orderId)}"` : ""}>${titleHtml}${picker}${list}${error ? `<p class="tt-error">${E(error)}</p>` : ""}<p class="tt-muted tt-att-reset-note">Вложения хранятся только в памяти демо и сбрасываются при обновлении страницы.</p></section>`;
   }

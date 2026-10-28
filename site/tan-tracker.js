@@ -74,8 +74,9 @@
 
   function scopeCtx() {
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const role = state.ttRoleUnsupported ? null : state.ttPrototypeRole || "manager";
     return {
-      prototypeRole: Sc()?.prototypeRoleKey?.() || (typeof prototypeRole === "string" ? prototypeRole : "manager"),
+      prototypeRole: role,
       employeeId: state.employeeId,
       actorContactId: actor,
       contacts,
@@ -84,24 +85,39 @@
     };
   }
 
-  function syncEmployeeFromRole() {
-    const map = Sc()?.ROLE_EMPLOYEE || { manager: "m1", director: "d1", rop: "r1" };
-    const role = scopeCtx().prototypeRole;
+  let lastPrototypeRoleSynced = null;
+
+  function syncEmployeeFromRole(forcedPersonId) {
+    if (state.ttRoleUnsupported) return;
+    const map = Sc()?.ROLE_EMPLOYEE || { manager: "m1", director: "d1", rop: "r1", assistant: "a1", coordinator: "c1" };
+    const role = state.ttPrototypeRole || "manager";
     const next = map[role] || "m1";
-    if (state.employeeId !== next) {
+    if (forcedPersonId && employees[forcedPersonId]) {
+      state.employeeId = forcedPersonId;
+      lastPrototypeRoleSynced = role;
+      return;
+    }
+    if (lastPrototypeRoleSynced !== role) {
       state.employeeId = next;
       state.actingContactId = null;
       bumpAttachOpGen();
+      lastPrototypeRoleSynced = role;
     }
   }
 
   function orderVisible(o) {
     if (!o) return false;
-    return Sc()?.canViewOrder(o, scopeCtx()) ?? true;
+    if (!Sc()) return true;
+    return Sc().canViewOrder(o, scopeCtx());
   }
 
   function deniedView() {
     return `<div class="tt-panel tt-denied" data-tt="access-denied"><h2>Нет доступа к этой передаче</h2><p>По правам прототипа эта передача недоступна. Содержимое и файлы не показываются.</p>${btn("← К реестру", 'data-tt="back-list"')}</div>`;
+  }
+
+  function unsupportedRoleView() {
+    const label = state.ttRequestedRole ? `«${state.ttRequestedRole}»` : "не указана";
+    return `<div class="tt-panel tt-denied" data-tt="unsupported-role"><h2>Роль не поддерживается в Тан-трекере</h2><p>Запрошена роль ${E(label)}. Здесь доступны только демо-роли участника передач: менеджер, РОП, директор, ассистент, координатор.</p><p class="tt-muted">Область не расширяется до директора и не подменяется другой ролью автоматически.</p>${btn("← К реестру", 'data-tt="back-list"')}</div>`;
   }
 
   function seedOrders() {
@@ -441,6 +457,9 @@
     attachOpGen: 0,
     attachBusyGen: null,
     lightboxReturn: null,
+    ttPrototypeRole: "manager",
+    ttRoleUnsupported: false,
+    ttRequestedRole: "",
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -542,8 +561,9 @@
 
   function handoffUrl(o, inv) {
     const t = inv || o.activeInvitation;
-    if (!t) return `${location.pathname}#tan-tracker?role=${prototypeRole}`;
-    const p = new URLSearchParams({ role: prototypeRole, tt_view: "recipient", tt_order: t.id, tt_hv: String(t.hv), tt_rcv: t.pendingId, tt_via: "qr" });
+    const role = state.ttPrototypeRole || "manager";
+    if (!t) return `${location.pathname}#tan-tracker?role=${role}`;
+    const p = new URLSearchParams({ role, tt_view: "recipient", tt_order: t.id, tt_hv: String(t.hv), tt_rcv: t.pendingId, tt_via: "qr" });
     return `${location.pathname}#tan-tracker?${p}`;
   }
 
@@ -634,7 +654,9 @@
     return rows
       .map((o) => {
         const h = contactById(o.holderId);
-        return `<article class="tt-card" data-tt-open="${E(o.id)}"><h3>${E(o.id)} · ${E(o.item)}</h3><p>Держатель: ${E(h?.name)}</p><p>${statusBadge(o)}</p></article>`;
+        const fin = contactById(o.finalRecipientId);
+        const dueLabel = o.dueAt ? dt(o.dueAt) : "Срок не указан";
+        return `<article class="tt-card" data-tt-open="${E(o.id)}"><h3>${E(o.id)} · ${E(o.item)}</h3><p>Держатель: ${E(h?.name)}</p><p class="tt-card-dest">Кому: ${E(fin?.name || "—")} · ${E(dueLabel)}</p><p>${statusBadge(o)}</p></article>`;
       })
       .join("");
   }
@@ -749,6 +771,8 @@
       showPicker: !state.attachBusy,
       inputKey: "create",
       omitTitle: true,
+      pickerMode: "button",
+      pickerLabel: "Выбрать файл на устройстве",
       error: state.attachError,
       hint: "Можно пропустить этот шаг, если фото не нужны.",
     });
@@ -1138,12 +1162,15 @@
 
   function cancelPending(o) {
     if (!o.pendingId) return;
+    const revoked = o.pendingId;
     o.timeline.push({
       at: now(),
       from: o.holderId,
-      to: o.pendingId,
+      to: revoked,
       note: "Ожидание передачи отменено",
     });
+    o.revokedParticipants = o.revokedParticipants || [];
+    if (!o.revokedParticipants.includes(revoked)) o.revokedParticipants.push(revoked);
     o.pendingId = null;
     archiveInvitation(o);
     o.activeInvitation = null;
@@ -1195,7 +1222,12 @@
       state.error = "Завершённую передачу нельзя продолжить.";
       return;
     }
+    const prevPending = o.pendingId;
     archiveInvitation(o);
+    if (prevPending && prevPending !== recipientId) {
+      o.revokedParticipants = o.revokedParticipants || [];
+      if (!o.revokedParticipants.includes(prevPending)) o.revokedParticipants.push(prevPending);
+    }
     o.pendingId = recipientId;
     o.status = "waiting";
     o.handoffVer = (o.handoffVer ?? 0) + 1;
@@ -1255,7 +1287,8 @@
 
   function writeUrl() {
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
-    p.set("role", prototypeRole);
+    if (state.ttPrototypeRole && !state.ttRoleUnsupported) p.set("role", state.ttPrototypeRole);
+    else p.delete("role");
     if (state.recipientMode && state.orderId) {
       p.set("tt_view", "recipient");
       p.set("tt_order", state.orderId);
@@ -1286,6 +1319,16 @@
 
   function readUrl() {
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
+    const resolved = Sc()?.resolveTanTrackerRole?.(p) || {
+      unsupported: false,
+      role: "manager",
+      person: null,
+      explicit: false,
+      requested: "",
+    };
+    state.ttRoleUnsupported = resolved.unsupported;
+    state.ttRequestedRole = resolved.requested || "";
+    state.ttPrototypeRole = resolved.unsupported ? "manager" : resolved.role || "manager";
     state.recipientMode = p.get("tt_view") === "recipient";
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
@@ -1299,7 +1342,7 @@
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
-    syncEmployeeFromRole();
+    syncEmployeeFromRole(resolved.person || null);
     if (state.view === "create") {
       const ph = p.get("tt_cphase");
       const allowed = new Set([
@@ -1345,12 +1388,7 @@
     ${rows.length ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table" data-tt="registry"><thead><tr>
       <th>Трек</th><th>Предмет</th><th>Держатель</th><th>Ожидает</th><th>Статус</th><th>Срок</th><th>У держателя</th>
     </tr></thead><tbody id="tt-registry-body">${registryRowsHtml(rows)}</tbody></table></div>
-    <div class="tt-cards" data-tt="cards">${rows
-      .map((o) => {
-        const h = contactById(o.holderId);
-        return `<article class="tt-card" data-tt-open="${E(o.id)}"><h3>${E(o.id)} · ${E(o.item)}</h3><p>Держатель: ${E(h?.name)}</p><p>${statusBadge(o)}</p></article>`;
-      })
-      .join("")}</div>` : `<div class="tt-empty" data-tt="empty"><p>Нет передач по фильтрам.</p>${btn("Сбросить фильтры", 'data-tt="reset-filters"')}</div>`}`;
+    <div class="tt-cards" data-tt="cards">${registryCardsHtml(rows)}</div>` : `<div class="tt-empty" data-tt="empty"><p>Нет передач по фильтрам.</p>${btn("Сбросить фильтры", 'data-tt="reset-filters"')}</div>`}`;
   }
 
   function createView() {
@@ -1452,8 +1490,8 @@
     if (phase === "edit-due") {
       return wizardShell(
         phase,
-        "Срок доставки",
-        "Необязательно · до какого момента нужно доставить конечному получателю.",
+        "До какого срока доставить",
+        "Необязательно · срок для конечного получателя.",
         `<label class="tt-wizard-field">Дата и время<input type="datetime-local" data-tt-field="due" value="${E(f.due)}"></label>`,
         `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
@@ -1467,12 +1505,12 @@
       "Проверить и создать",
       "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
       `<dl class="tt-wizard-summary">
-        <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd>${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd>${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Кому доставить</dt><dd>${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Сначала передать</dt><dd>${E(relayLine)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relay ? "Изменить" : "Добавить", "create-edit-relay")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd>${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>
-        <div class="tt-wizard-summary-row"><dt>Срок доставки</dt><dd>${f.due ? E(f.due.replace("T", " · ")) : "Срок не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Предмет</dt><dd class="tt-wizard-summary-value">${E(f.item)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-item")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Кому доставить</dt><dd class="tt-wizard-summary-value">${E(recipientSummary(f))}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-recipient")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Сначала передать</dt><dd class="tt-wizard-summary-value">${E(relayLine)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(relay ? "Изменить" : "Добавить", "create-edit-relay")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Срок доставки</dt><dd class="tt-wizard-summary-value">${f.due ? E(f.due.replace("T", " · ")) : "Срок не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.due ? "Изменить" : "Добавить", "create-edit-due")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Фото и файлы</dt><dd class="tt-wizard-summary-value">${E(attLabel)}</dd><dd class="tt-wizard-summary-edit">${wizardBtn("Изменить", "create-edit-files")}</dd></div>
+        <div class="tt-wizard-summary-row"><dt>Комментарий</dt><dd class="tt-wizard-summary-value">${f.comment ? E(f.comment) : "Не указан"}</dd><dd class="tt-wizard-summary-edit">${wizardBtn(f.comment ? "Изменить" : "Добавить", "create-edit-comment")}</dd></div>
       </dl>`,
       `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back")}`
     );
@@ -1508,9 +1546,25 @@
       o.status !== "completed" &&
       (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
     const mustRelay =
-      isHolder && !o.pendingId && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+      isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
+    const relayPrimary =
+      isHolder && mustRelay && !o.pendingId
+        ? `${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary")}${btn("Передать другому человеку", 'data-tt="transfer"')}`
+        : "";
+    const holderPrimary =
+      isHolder && o.status !== "completed"
+        ? `${!mustRelay && !o.pendingId ? btn("Передать другому человеку", 'data-tt="transfer"') : ""}${
+            canComplete && !confirmingComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""
+          }${o.pendingId ? btn("Изменить получателя", 'data-tt="change-pending"') : ""}${
+            o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""
+          }`
+        : "";
+    const primaryActions =
+      relayPrimary || holderPrimary
+        ? `<div class="tt-actions tt-actions-primary" data-tt="detail-primary-actions">${relayPrimary}${holderPrimary}</div>`
+        : "";
     return `<div class="tt-panel" data-tt="detail">
       <div class="tt-actions">${btn(isExternalShell() ? "← К передаче" : "← К реестру", 'data-tt="back-list"')}</div>
       <h2>${E(o.id)} · ${E(o.item)}</h2>
@@ -1519,7 +1573,9 @@
       <p><strong>Кому доставить:</strong> ${fin ? `${E(fin.name)} <small>${E(fmtPhone(fin.phone))}</small>` : "—"}</p>
       <p><strong>Ожидает подтверждения:</strong> ${p ? E(p.name) : "никого"}</p>
       <p><strong>Срок доставки:</strong> ${o.dueAt ? dt(o.dueAt) : "Срок не указан"} · ${statusBadge(o)}</p>
-      ${mustRelay ? `<div class="tt-reminder" data-tt="relay-reminder"><strong>Нужно передать дальше</strong><p>Вы держите предмет, но конечный получатель — ${E(fin?.name || "—")}. Подтверждение следующего человека возможно только по коду или QR.</p></div>` : ""}
+      ${mustRelay ? `<div class="tt-reminder tt-holder-next" data-tt="relay-reminder"><strong>Нужно передать дальше</strong><p>Конечный получатель — ${E(fin?.name || "—")}${fin ? ` · ${E(fmtPhone(fin.phone))}` : ""}.${o.pendingId ? ` Ожидается подтверждение от ${E(p?.name || "следующего участника")} — вы ответственны до подтверждения по коду или QR.` : " Передайте дальше и дождитесь подтверждения следующего участника."}</p>${relayPrimary ? `<div class="tt-actions tt-actions-primary" data-tt="detail-primary-actions">${relayPrimary}</div>` : ""}</div>` : !mustRelay ? primaryActions : ""}
+      ${mustRelay && o.pendingId && isHolder ? `<div class="tt-actions tt-actions-primary" data-tt="detail-pending-actions">${btn("Изменить получателя", 'data-tt="change-pending"')}${btn("Отменить ожидание", 'data-tt="cancel-pending"')}</div>` : ""}
+      ${isHolder && o.pendingId ? pendingHandoffPanel(o) : ""}
       ${attachmentsSection(o, {
         readonly: !isHolder || o.status === "completed",
         showPicker: isHolder && o.status !== "completed",
@@ -1531,7 +1587,6 @@
             }))
           : [],
       })}
-      ${isHolder && o.pendingId ? pendingHandoffPanel(o) : ""}
       <div class="tt-timeline" data-tt="timeline">${o.timeline
         .slice()
         .reverse()
@@ -1541,11 +1596,7 @@
           return `<div><strong>${E(fr?.name || "?")} → ${E(to?.name || "?")}</strong><small>${dt(t.at)} · ${E(t.note)}</small></div>`;
         })
         .join("")}</div>
-      <div class="tt-actions" style="margin-top:16px">
-        ${mustRelay ? btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary") : ""}
-        ${isHolder && o.status !== "completed" && !o.pendingId ? btn("Передать другому человеку", 'data-tt="transfer"') : ""}
-        ${canComplete && !confirmingComplete ? btn("Завершить передачу", 'data-tt="complete"') : ""}
-        ${isHolder && o.pendingId ? btn("Отменить ожидание", 'data-tt="cancel-pending"') : ""}
+      <div class="tt-actions tt-actions-secondary" data-tt="detail-secondary-actions">
         ${showActHolder ? btn("Смотреть как текущий держатель (демо)", 'data-tt="act-holder"') : ""}
         ${p && o.holderId !== p.id && !state.actingContactId ? btn("Действовать как получатель", 'data-tt="act-recipient"') : ""}
       </div>
@@ -1606,6 +1657,9 @@
     const inv = resolved.inv || o.activeInvitation;
     const from = contactById(inv?.holderId || o.holderId);
     const to = contactById(inv?.pendingId || o.pendingId);
+    const fin = contactById(o.finalRecipientId);
+    const intermediate =
+      fin && o.finalRecipientId && to?.id && o.finalRecipientId !== to.id && o.status !== "completed";
     const c = o.code;
     const verified = identityVerified(o);
     const qrMode = state.recipientVia === "qr";
@@ -1618,6 +1672,9 @@
       <p>От: <strong>${E(from?.name || "—")}</strong></p>
       <p>Кому: <strong>${E(to?.name || "—")}</strong></p>
       <p>Телефон: ${E(maskPhone(to?.phone || ""))}</p>
+      ${fin && intermediate ? `<p><strong>Конечный получатель:</strong> ${E(fin.name)} · ${E(maskPhone(fin.phone))}</p>` : ""}
+      ${fin && intermediate ? `<p><strong>Срок доставки:</strong> ${o.dueAt ? dt(o.dueAt) : "Срок не указан"}</p>` : ""}
+      ${intermediate ? `<div class="tt-reminder" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить «${E(o.item)}» нужно ${E(fin?.name || "конечному получателю")}${o.dueAt ? ` до ${dt(o.dueAt)}` : ""}.</p></div>` : ""}
       <p class="tt-warning">Демонстрация: подтверждение телефона. СМС не отправляется.</p>
       ${!verified ? btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary") : `<p class="tt-success">Номер отмечен в демо (без реальной проверки).</p>`}
       ${verified && !stale ? attachmentsSection(o, { readonly: true, items: Att() ? Att().listForOrder(o) : [] }) : stale ? `<p class="tt-muted">Вложения недоступны для устаревшего приглашения.</p>` : ""}
@@ -1631,6 +1688,7 @@
   }
 
   function bodyHtml() {
+    if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
     if (state.view === "detail" && o && !orderVisible(o)) return deniedView();
     if (state.view === "create") return createView();
@@ -1657,9 +1715,15 @@
     if (state.recipientMode) {
       ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
-      main.innerHTML = o
-        ? `<div class="tt-work">${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
-        : `<div class="tt-work tt-recipient"><p class="tt-error">Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа.</p></div>`;
+      const rcv = state.recipientTicket?.rcv;
+      const allowed =
+        o &&
+        (!rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv) &&
+        (!Sc() || Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId }));
+      main.innerHTML =
+        o && allowed
+          ? `<div class="tt-work">${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
+          : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
       return;
@@ -1705,7 +1769,7 @@
     if (content) content.innerHTML = bodyHtml();
     paintQrHosts();
     document.title = "Tandoor RF · Тан-трекер";
-    if (Sc() && !state.recipientMode) Sc().syncReminders(orders.filter(orderVisible), scopeCtx(), contacts, dt);
+    if (Sc() && !state.recipientMode) Sc().syncReminders(orders, contacts, dt);
     lucide.createIcons();
     restoreFocus(snap);
   }
@@ -2048,6 +2112,31 @@
       renderTracker();
       return;
     }
+    if (action === "change-pending" && o) {
+      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      if (o.holderId !== actor) {
+        state.error = "Изменить получателя может только текущий держатель.";
+        renderTracker();
+        return;
+      }
+      if (!o.pendingId) {
+        state.error = "Нет ожидающего получателя.";
+        renderTracker();
+        return;
+      }
+      state.view = "transfer";
+      state.form = {
+        pickQ: "",
+        recipientId: o.pendingId,
+        mode: "list",
+        newName: "",
+        newPhone: "",
+      };
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
     if (action === "cancel-pending" && o) {
       cancelPending(o);
       clearCompleteConfirm();
@@ -2290,12 +2379,21 @@
   window.addEventListener("hashchange", () => {
     const route = location.hash.slice(1).split("?")[0] || "clients";
     if (route !== ROUTE) leaveRouteCleanup();
+    else {
+      current = ROUTE;
+      render();
+    }
   });
 
   window.TanTrackerPrototype = {
     orders: () => orders,
     contacts: () => contacts,
     state,
+    employeeId: () => state.employeeId,
+    canViewOrder: (orderId) => {
+      const o = orders.find((x) => x.id === orderId);
+      return o && orderVisible(o);
+    },
     seed: () => {
       seedContacts();
       seedOrders();

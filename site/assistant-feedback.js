@@ -22,6 +22,31 @@
     const uid=user+":"+key;if(seen.has(uid))return;seen.add(uid);
     notes.push({key:uid,user,title,text,id,kind,at,read:false,seq:++seq});
   }
+  function upsert(user,key,title,text,id,kind,at){
+    const uid=user+":"+key;seen.add(uid);
+    const n=notes.find(x=>x.key===uid);
+    if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;return n;}
+    const row={key:uid,user,title,text,id,kind,at,read:false,seq:++seq};notes.push(row);return row;
+  }
+  function inboxUserId(){
+    if(typeof location!=="undefined"&&location.hash.includes("tan-tracker")&&window.TanTrackerPrototype?.employeeId)
+      return window.TanTrackerPrototype.employeeId();
+    return ctx().id;
+  }
+  function syncTrackerInbox(){
+    const TN=window.TanTrackerNotifications;
+    if(!TN?.forEmployee)return;
+    const user=inboxUserId(),clock=S.clock,items=TN.forEmployee(user)||[];
+    const keep=new Set(items.map(i=>user+":tt:"+i.key));
+    notes=notes.filter(n=>n.kind!=="tt-track"||n.user!==user||keep.has(n.key));
+    items.forEach(i=>{
+      const existing=notes.find(n=>n.key===user+":tt:"+i.key);
+      upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",clock);
+      if(existing?.read||i.read){
+        const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
+      }
+    });
+  }
   function snapshot(a){return {assignment:a.id,manager:a.manager,assistant:a.assistant,clients:[...a.clients],start:a.start,
     end:a.status==="revoked"?Math.min(a.end,revokedAt(a)):a.end,agreedEnd:a.end,completion:a.status==="revoked"?"revoked":"period"};}
   function init(){
@@ -64,9 +89,7 @@
   function signature(a){return {status:a.status,effective:P.effective(a),assistant:a.assistant,end:a.end,change:!!a.change,n:a.history.length};}
   function remember(){source.forEach(a=>previous.set(a.id,signature(a)));}
   function sync(){
-    if(window.TanTrackerNotifications){
-      window.TanTrackerNotifications.drain().forEach(n=>add(n.user,n.key,n.title,n.text,n.id,n.kind||"detail",n.at||S.clock));
-    }
+    syncTrackerInbox();
     if(source!==P.assignments()){init();return;}
     source.forEach(a=>{
       if(P.effective(a)==="active"&&a.end-S.clock<=86400000){
@@ -165,7 +188,7 @@
     const el=document.createElement("aside");el.id="af-inbox";el.className="af af-inbox";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");el.setAttribute("aria-label","Уведомления");
     el.innerHTML=`<div class="af-inbox-head"><div><h2>Уведомления</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p></div>${action("close-inbox","Закрыть")}</div>
       <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}</div>
-      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||'<div class="af-empty"><h3>Новых уведомлений нет</h3><p>Все события останутся на вкладке «Все».</p></div>'}</div>
+      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||'<div class="af-empty"><h3>Новых уведомлений нет</h3><p>Все события останутся на вкладке «Все».</p></div>'}</div>
       <p class="af-inbox-foot">Только внутри прототипа. Внешней отправки нет.</p>`;
     document.body.append(el);
     el.querySelector(".af-inbox-list").scrollTop=scroll;
@@ -187,6 +210,20 @@
   function openNote(n){
     n.read=true;inbox=false;
     if(n.kind==="info"){paint();return;}
+    if(n.kind==="tt-track"){
+      const orderId=n.id,role=typeof prototypeRole==="string"?prototypeRole:"manager";
+      if(window.TanTrackerNotifications?.markRead){
+        const pref=n.user+":tt:";
+        window.TanTrackerNotifications.markRead(inboxUserId(),n.key.startsWith(pref)?n.key.slice(pref.length):"");
+      }
+      location.hash="#tan-tracker?role="+role+(orderId?"&tt_id="+encodeURIComponent(orderId):"");
+      requestAnimationFrame(()=>{
+        if(window.TanTrackerPrototype?.canViewOrder&&!window.TanTrackerPrototype.canViewOrder(orderId))
+          location.hash="#tan-tracker?role="+role;
+        paint();
+      });
+      return;
+    }
     if(!P.routeActive()){location.hash="#handover?as_role="+ctx().role+"&as_person="+ctx().id+"&as_view=list";requestAnimationFrame(()=>openNote(n));return;}
     if(n.kind==="clients"){P.go("clients");}
     else if(n.kind==="rate"){refreshRatings();const a=source.find(a=>a.id===n.id);if(canRate(a))openDialog(a);}
