@@ -251,7 +251,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-create-phase="files"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Добавить нового получателя", exact: true }).click();
+  await page.locator('[data-tt="recipient-choose"] [data-tt="create-new-recipient"]').click();
   await page.locator('[data-create-phase="recipient-new-name"]').waitFor({ state: "visible" });
   await page.locator('[data-tt-field="newName"]').fill("Контакт QA99");
   await page.getByRole("button", { name: "Далее", exact: true }).click();

@@ -56,7 +56,7 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
     const report = await page.evaluate(() => {
       const review = document.querySelector('[data-tt="wizard-review"]');
       const item = document.querySelector(".tt-wizard-review-item-title");
-      const route = document.querySelector(".tt-wizard-review-route-card");
+      const route = document.querySelector('[data-tt="review-route-nav"]');
       const details = document.querySelector(".tt-wizard-review-details");
       const links = [...document.querySelectorAll(".tt-wizard-review-link")];
       if (!review || !item || !route || !details || !links.length) return { ok: false };
@@ -90,13 +90,16 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
+  await ttOpenRecipientList();
   await assertContactCards("375px step3");
   await assertStickyClearance();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await assertContactCards("desktop step3");
 
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").first().click();
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
   await assertReviewHierarchy();

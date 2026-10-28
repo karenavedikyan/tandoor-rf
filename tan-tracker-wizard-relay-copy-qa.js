@@ -14,7 +14,7 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
 
   const assertHandoffLayout = async (label) => {
     const layout = await page.evaluate(() => {
-      const row = document.querySelector('[data-tt="review-handoff"]');
+      const row = document.querySelector('[data-tt="route-stop-final"]');
       const btn = row?.querySelector('[data-tt="create-edit-relay"]');
       const hint = row?.querySelector(".tt-wizard-review-handoff-hint");
       if (!row || !btn || !hint) return { ok: false };
@@ -39,12 +39,13 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("Relay copy QA direct");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").filter({ hasText: "Сергей Приёмка" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
 
   const reviewDirect = await page.locator('[data-tt="wizard-review"]').textContent();
-  ok(reviewDirect.includes("Кому отдать сейчас"), "review handoff row heading");
+  ok(reviewDirect.includes("Получатель") && reviewDirect.includes("Отправитель"), "review route role labels");
   ok(reviewDirect.includes("Сергей Приёмка"), "direct handoff shows final recipient name");
   ok(reviewDirect.includes("79000000001") || reviewDirect.includes("+7"), "direct handoff shows final phone");
   ok(reviewDirect.includes("напрямую, без посредника"), "direct handoff helper");
@@ -80,8 +81,8 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   ok(reviewRelay.includes("Наталья Савельева"), "relay handoff shows intermediary name");
   ok(reviewRelay.includes("передать предмет дальше"), "relay handoff helper");
   ok(reviewRelay.includes("Сергей Приёмка"), "relay helper names final recipient");
-  const deliverRow = await page.locator(".tt-wizard-review-route-block").first().textContent();
-  ok(deliverRow.includes("Сергей Приёмка"), "Кому доставить unchanged after relay pick");
+  const deliverRow = await page.locator('[data-tt="route-stop-final"]').textContent();
+  ok(deliverRow.includes("Сергей Приёмка"), "final recipient unchanged after relay pick");
   ok(
     (await page.locator('[data-tt="review-handoff"] [data-tt="create-edit-relay"]').textContent()) === "Изменить",
     "relay path uses Изменить on handoff row"

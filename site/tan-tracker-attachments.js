@@ -255,6 +255,29 @@
     return m.includes("heic") || m.includes("heif") || /\.heic$/i.test(name) || /\.heif$/i.test(name);
   }
 
+  function onThumbError(img) {
+    const thumb = img && img.closest ? img.closest(".tt-att-thumb") : null;
+    if (!thumb) return;
+    img.classList.add("tt-att-img-broken");
+    thumb.classList.add("tt-att-thumb--fallback");
+  }
+
+  const ATT_ICON = {
+    open: '<svg class="tt-att-action-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 4.5C7 4.5 2.7 7.6 1 12c1.7 4.4 6 7.5 11 7.5s9.3-3.1 11-7.5c-1.7-4.4-6-7.5-11-7.5Zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-2.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/></svg>',
+    download:
+      '<svg class="tt-att-action-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.6l2.3-2.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L11 13.6V4a1 1 0 0 1 1-1Zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>',
+    remove:
+      '<svg class="tt-att-action-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9 3a1 1 0 0 0-1 1v1H4a1 1 0 1 0 0 2h1v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7h1a1 1 0 1 0 0-2h-4V4a1 1 0 0 0-1-1H9Zm2 2h2v1h-2V5ZM7 7h10v13H7V7Zm3 3a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Zm4 0a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Z"/></svg>',
+  };
+
+  function attActionChip(label, iconKey, attrs, modClass) {
+    const icon = ATT_ICON[iconKey] || "";
+    const isLink = /href=/.test(attrs);
+    const tag = isLink ? "a" : "button";
+    const type = isLink ? "" : ' type="button"';
+    return `<${tag}${type} class="tt-att-action${modClass ? ` ${modClass}` : ""}" ${attrs}>${icon}<span class="tt-att-action-label">${E(label)}</span></${tag}>`;
+  }
+
   function shortDocLabel(mime, name) {
     const m = (mime || "").toLowerCase();
     if (m.includes("pdf")) return "PDF";
@@ -272,16 +295,32 @@
 
   function itemHtml(a, { readonly, isStaged, orderId }) {
     const prev = canPreview(a.mime);
+    const docLabel = shortDocLabel(a.mime, a.name);
+    const ext = extOf(a.name);
+    const baseName = ext ? a.name.slice(0, -ext.length) : a.name;
     const thumb = prev
-      ? `<button type="button" class="tt-att-thumb" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}"><img src="${E(a.url)}" alt="${E(a.name)}" loading="lazy" onerror="this.hidden=true;this.parentElement.classList.add('tt-att-broken')"><span class="tt-att-fallback" hidden>${E(shortDocLabel(a.mime, a.name))}</span></button>`
-      : `<div class="tt-att-doc" aria-hidden="true">${E(shortDocLabel(a.mime, a.name))}</div>`;
-    const meta = `<span class="tt-att-name">${E(a.name)}</span><span class="tt-att-meta">${E(fmtBytes(a.size))}${a.demo ? " · демо" : ""}${a.addedLabel ? ` · ${E(a.addedLabel)}` : ""}</span>`;
-    const dl = `<a class="tt-link tt-att-dl" data-tt="attach-download" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" href="${E(a.url)}" download="${E(a.name)}">Скачать</a>`;
+      ? `<button type="button" class="tt-att-thumb" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" aria-label="Открыть ${E(a.name)}"><img src="${E(a.url)}" alt="" loading="lazy" decoding="async" onerror="TanTrackerAttachments.onThumbError(this)"><span class="tt-att-fallback" aria-hidden="true">${E(docLabel)}</span></button>`
+      : `<div class="tt-att-doc" aria-hidden="true">${E(docLabel)}</div>`;
+    const meta = `<div class="tt-att-name-row"><span class="tt-att-name">${E(baseName)}</span>${ext ? `<span class="tt-att-ext">${E(ext)}</span>` : ""}</div><span class="tt-att-meta">${E(fmtBytes(a.size))}${a.demo ? " · демо" : ""}${a.addedLabel ? ` · ${E(a.addedLabel)}` : ""}</span>`;
+    const dl = attActionChip(
+      "Скачать",
+      "download",
+      `data-tt="attach-download" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" href="${E(a.url)}" download="${E(a.name)}"`,
+      "tt-att-action--download"
+    );
+    const openBtn = prev
+      ? attActionChip(
+          "Открыть",
+          "open",
+          `data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}"`,
+          "tt-att-action--open"
+        )
+      : "";
     const rm =
       !readonly && isStaged
-        ? `<button type="button" class="tt-link tt-att-rm" data-tt="attach-remove" data-staging-id="${E(a.id)}">Убрать</button>`
+        ? attActionChip("Убрать", "remove", `data-tt="attach-remove" data-staging-id="${E(a.id)}"`, "tt-att-action--remove")
         : "";
-    return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">Скачайте PDF, чтобы открыть его на устройстве.</span>` : ""}<div class="tt-att-actions">${prev ? `<button type="button" class="tt-link" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}">Открыть</button>` : ""}${dl}${rm}</div></div></li>`;
+    return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">Скачайте PDF, чтобы открыть его на устройстве.</span>` : ""}<div class="tt-att-actions">${openBtn}${dl}${rm}</div></div></li>`;
   }
 
   function blockHtml(opts) {
@@ -335,7 +374,7 @@
       compact && !omitTitle
         ? `<div class="tt-att-head-row">${titleHtml}${showPicker ? picker : ""}</div>`
         : `${titleHtml}${picker}`;
-    return `<section class="tt-att-block${compact ? " tt-att-compact" : ""}" data-tt="attachments"${orderId ? ` data-order-id="${E(orderId)}"` : ""}>${head}${list}${error ? `<p class="tt-error">${E(error)}</p>` : ""}${resetNote}</section>`;
+    return `<section class="tt-att-block${compact ? " tt-att-compact" : " tt-att-block--cards"}" data-tt="attachments"${orderId ? ` data-order-id="${E(orderId)}"` : ""}>${head}${list}${error ? `<p class="tt-error">${E(error)}</p>` : ""}${resetNote}</section>`;
   }
 
   function lightboxHtml() {
@@ -358,6 +397,7 @@
     trackUrl,
     untrackUrl,
     canPreview,
+    onThumbError,
     totalBytes,
     mergeToOrder(order, stagingItems, addedBy) {
       if (!order.attachments) order.attachments = [];

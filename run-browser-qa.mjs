@@ -38,6 +38,13 @@ globalThis.ttOpenOtherActions = async () => {
   const panel = page.locator('[data-tt="other-actions"]');
   if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
 };
+globalThis.ttOpenRecipientList = async () => {
+  await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
+  if ((await page.locator('[data-tt="contact-pick"]').count()) === 0) {
+    await page.locator('[data-tt="create-recipient-browse"]').click();
+    await page.locator('[data-tt="contact-pick"]').waitFor({ state: "visible" });
+  }
+};
 
 const script = process.argv[2];
 if (!script) throw new Error("usage: node run-browser-qa.mjs <qa.js>");

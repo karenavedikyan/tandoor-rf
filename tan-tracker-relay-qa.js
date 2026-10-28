@@ -28,6 +28,7 @@ var TT_RELAY_QA = await (async () => {
   });
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").filter({ hasText: "Сергей" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-tt="create-edit-relay"]').click();
@@ -84,6 +85,7 @@ var TT_RELAY_QA = await (async () => {
     await ttOpenDetailDemo();
     await page.locator('[data-tt="act-holder"]').click();
   }
+  await page.locator('[data-tt="detail-route-disclosure"] summary').click();
   const detailRelay = await page.locator('[data-tt="detail"]').textContent();
   ok(
     detailRelay.includes("Сергей") && (detailRelay.includes("79000000001") || detailRelay.includes("000-00-01")),

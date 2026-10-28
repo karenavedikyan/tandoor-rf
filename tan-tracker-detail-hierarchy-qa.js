@@ -19,6 +19,7 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
   ok(await page.locator(".tt-detail-title").count() === 1, "detail shows prominent item title");
   ok((await page.locator(".tt-detail-meta").textContent()).includes("Доставить до"), "detail due line labeled");
+  await page.locator('[data-tt="detail-route-disclosure"] summary').click();
   ok(await page.locator(".tt-route-card").count() >= 2, "detail route cards for holder and destination");
   ok(await page.locator('[data-tt="enter-code"]').count() === 1, "pending holder primary enter-code visible");
   ok(await page.locator(".tt-seg").count() === 0, "no equal-width code/QR tabs on detail");
@@ -46,13 +47,13 @@ var TT_DETAIL_HIERARCHY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok(await page.locator('[data-tt="enter-code"]').count() === 0, "non-holder read-only has no enter-code");
   ok(await page.locator('[data-tt="transfer"]').count() === 0, "non-holder has no transfer action");
-  ok(await page.locator(".tt-detail-do").count() === 0, "non-holder hides empty action section");
-  ok((await page.locator(".tt-detail-readonly").textContent()).includes("Только просмотр"), "non-holder read-only hint shown");
+  ok(await page.locator('[data-tt="detail-task-readonly"]').count() === 1, "non-holder info task card");
+  ok((await page.locator('[data-tt="detail-task-readonly"]').textContent()).includes("Только просмотр"), "non-holder read-only hint shown");
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-009`);
   await page.reload();
-  ok((await page.locator('[data-tt="detail-completed"]').textContent()).includes("завершена"), "completed shows delivered state");
-  ok(await page.locator(".tt-detail-do").count() === 0, "completed hides action section heading");
+  ok((await page.locator(".tt-detail-task-heading").textContent()).includes("Передача завершена"), "completed shows terminal heading");
+  ok((await page.locator(".tt-detail-task-card--terminal").count()) === 1, "completed terminal task card");
 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(`${base}/#clients?role=manager`);

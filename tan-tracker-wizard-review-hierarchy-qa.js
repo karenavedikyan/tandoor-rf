@@ -43,7 +43,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
         return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
       };
       const item = document.querySelector(".tt-wizard-review-item-title");
-      const finalName = document.querySelector(".tt-wizard-review-route-block:not(.tt-wizard-review-handoff) .tt-wizard-review-person-name");
+      const finalName = document.querySelector('[data-tt="route-stop-final"] .tt-wizard-review-person-name');
       const detailVal = document.querySelector(".tt-wizard-review-detail-value");
       const edit = document.querySelector(".tt-wizard-review-link");
       const primary = document.querySelector('[data-tt="create-wizard-submit"]');
@@ -73,10 +73,10 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   };
 
   const assertStickyClearance = async () => {
-    await page.locator('[data-tt="review-handoff"]').scrollIntoViewIfNeeded();
+    await page.locator('[data-tt="route-stop-final"]').scrollIntoViewIfNeeded();
     const hit = await page.evaluate(() => {
-      const handoff = document.querySelector('[data-tt="review-handoff"]');
-      const link = handoff?.querySelector(".tt-wizard-review-link");
+      const handoff = document.querySelector('[data-tt="route-stop-final"]');
+      const link = handoff?.querySelector('[data-tt="create-edit-relay"]');
       const bar = document.querySelector(".tt-wizard-actions");
       if (!link || !bar) return { ok: false };
       const lr = link.getBoundingClientRect();
@@ -104,6 +104,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   });
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").filter({ hasText: "Сергей Приёмка" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
@@ -113,9 +114,9 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
     "review demo settings compact closed by default"
   );
 
-  ok((await page.locator(".tt-wizard-review-route-card").count()) === 1, "route grouped card present");
-  ok((await page.locator(".tt-wizard-review-handoff-mode").textContent()).includes("Напрямую"), "direct mode avoids duplicate large handoff name");
-  ok((await page.locator(".tt-wizard-review-route-block .tt-wizard-review-person-name").first().textContent()).includes("Сергей"), "final name on route card");
+  ok((await page.locator('[data-tt="review-route-nav"]').count()) === 1, "route navigator present");
+  ok((await page.locator(".tt-wizard-route-plan-note").textContent()).includes("ещё не создана"), "planned route not completion state");
+  ok((await page.locator('[data-tt="route-stop-final"] .tt-wizard-review-person-name').textContent()).includes("Сергей"), "final name on route navigator");
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await assertHierarchy("1440 light");
@@ -136,7 +137,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.locator('[data-tt-pick="emp_c1"]').click();
   await page.getByRole("button", { name: "Готово", exact: true }).click();
   await waitReview();
-  ok((await page.locator(".tt-wizard-review-handoff .tt-wizard-review-person-name").textContent()).includes("Наталья"), "relay shows intermediary name");
+  ok((await page.locator('[data-tt="review-handoff"] .tt-wizard-review-person-name').textContent()).includes("Наталья"), "relay shows intermediary name");
 
   await page.locator('[data-tt="create-edit-due"]').click();
   await page.locator('[data-tt-field="due"]').fill("2032-03-20T14:30");
@@ -160,6 +161,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("Review direct only");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").filter({ hasText: "Ольга" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
@@ -187,7 +189,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();
   const newRecipientDom = await page.evaluate(() => {
-    const block = document.querySelector(".tt-wizard-review-route-block:not(.tt-wizard-review-handoff)");
+    const block = document.querySelector('[data-tt="route-stop-final"]');
     const nameEl = block?.querySelector(".tt-wizard-review-person-name");
     const phoneEl = block?.querySelector(".tt-wizard-review-person-phone");
     if (!nameEl || !phoneEl) return { ok: false };

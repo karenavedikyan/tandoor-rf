@@ -710,18 +710,24 @@
     const host = document.querySelector('[data-tt="contact-pick"]');
     if (!host || !state.form) return false;
     const f = state.form;
+    const relay = state.createPhase === "relay-pick";
+    const holder = employeeContact(state.employeeId);
+    const q = (f.pickQ || "").toLowerCase().trim();
     const pick = contacts.filter((c) => {
-      const q = f.pickQ || "";
+      if (c.id === holder?.id) return false;
       if (!q) return true;
-      return (c.name + c.phone).toLowerCase().includes(q.toLowerCase());
+      return (c.name + c.phone + fmtPhone(c.phone)).toLowerCase().includes(q);
     });
-    host.innerHTML = pick
-      .slice(0, 12)
-      .map(
-        (c) =>
-          `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
-      )
-      .join("");
+    const sel = relay ? f.relayId : f.finalRecipientId || f.recipientId;
+    host.innerHTML = pick.length
+      ? pick
+          .slice(0, 40)
+          .map(
+            (c) =>
+              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+          )
+          .join("")
+      : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
     return true;
   }
 
@@ -823,7 +829,120 @@
       newPhone: "",
       mode: "list",
       pickTarget: "final",
+      recipientStep: "choose",
     };
+  }
+
+  function ensureRecipientStep(f) {
+    if (!f.recipientStep) {
+      f.recipientStep = f.finalRecipientId || f.recipientId ? "confirmed" : "choose";
+    }
+  }
+
+  function wizardContactPickList(f, { relay = false, selectedId }) {
+    const holder = employeeContact(state.employeeId);
+    const q = (f.pickQ || "").toLowerCase().trim();
+    const pick = contacts.filter((c) => {
+      if (c.id === holder?.id) return false;
+      if (!q) return true;
+      return (c.name + c.phone + fmtPhone(c.phone)).toLowerCase().includes(q);
+    });
+    const sel = selectedId || (relay ? f.relayId : f.finalRecipientId || f.recipientId);
+    const listInner = pick.length
+      ? pick
+          .slice(0, 40)
+          .map(
+            (c) =>
+              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
+          )
+          .join("")
+      : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
+    return `<label class="tt-wizard-field">Поиск по имени или телефону<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Начните вводить имя или цифры телефона" autocomplete="off"></label>
+        <div class="tt-wizard-contact-list" data-tt="contact-pick">${listInner}</div>
+        <button type="button" class="tt-wizard-btn tt-wizard-btn-secondary tt-wizard-new-recipient-link" data-tt="create-new-recipient" aria-label="Добавить нового получателя">Добавить нового получателя</button>`;
+  }
+
+  function wizardRecipientSelectedCard(contactId) {
+    const c = contactById(contactId);
+    if (!c) return "";
+    return `<div class="tt-wizard-recipient-selected" data-tt="recipient-selected">
+      <div class="tt-wizard-recipient-selected-card">
+        <span class="tt-wizard-recipient-selected-label">Конечный получатель</span>
+        <strong class="tt-wizard-recipient-selected-name">${E(c.name)}</strong>
+        <span class="tt-wizard-recipient-selected-phone">${E(fmtPhone(c.phone))}</span>
+      </div>
+      ${wizardReviewLink("Изменить", "create-recipient-change", "Изменить выбранного получателя")}
+    </div>`;
+  }
+
+  function wizardRouteConnectorLi() {
+    return `<li class="tt-wizard-route-connector" role="presentation" aria-hidden="true"><span class="tt-wizard-route-arrow"></span></li>`;
+  }
+
+  function wizardReviewRouteNav(f, finContact, finSummary, relay) {
+    const sender = contactById(state.actingContactId) || employeeContact(state.employeeId);
+    const directHint = "Отдайте предмет этому получателю напрямую, без посредника.";
+    const relayHint = finContact
+      ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
+      : "Должен передать предмет конечному получателю.";
+    const relayEditLabel = relay ? "Изменить" : "Передать через другого человека";
+    const relayEditAria = relay
+      ? "Изменить промежуточного получателя"
+      : "Передать через другого человека";
+    const senderLi = `<li class="tt-wizard-route-stop" data-tt="route-stop-sender">
+      <span class="tt-wizard-route-role">Отправитель</span>
+      <span class="tt-wizard-route-you">Вы</span>
+      ${
+        sender
+          ? `<div class="tt-wizard-route-person">${reviewPersonHtml(sender)}</div>`
+          : `<p class="tt-wizard-route-missing">Текущий участник не определён в демо.</p>`
+      }
+    </li>`;
+    const finalLi = `<li class="tt-wizard-route-stop" data-tt="route-stop-final">
+      <div class="tt-wizard-review-block-head">
+        <span class="tt-wizard-route-role">Получатель</span>
+        ${wizardReviewLink("Изменить", "create-edit-recipient", "Изменить конечного получателя")}
+      </div>
+      <div class="tt-wizard-route-person">${reviewPersonHtml(finContact, finSummary, f)}</div>
+      ${!relay ? `<p class="tt-wizard-review-handoff-hint">${E(directHint)}</p>` : ""}
+      ${
+        !relay
+          ? `<div class="tt-wizard-route-relay-cta" data-tt="review-handoff">${wizardReviewLink(relayEditLabel, "create-edit-relay", relayEditAria, true)}</div>`
+          : ""
+      }
+    </li>`;
+    if (relay) {
+      const relayLi = `<li class="tt-wizard-route-stop" data-tt="review-handoff">
+        <div class="tt-wizard-review-block-head">
+          <span class="tt-wizard-route-role">Передать сейчас</span>
+          <span class="tt-wizard-route-subrole">Посредник</span>
+          ${wizardReviewLink(relayEditLabel, "create-edit-relay", relayEditAria, false)}
+        </div>
+        <div class="tt-wizard-route-person">${reviewPersonHtml(relay)}</div>
+        <p class="tt-wizard-review-handoff-hint">${E(relayHint)}</p>
+      </li>`;
+      return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" aria-label="План маршрута до создания">
+        <p class="tt-wizard-route-plan-note">План маршрута · передача ещё не создана</p>
+        <ol class="tt-wizard-route-scheme tt-wizard-route-scheme--relay">${senderLi}${wizardRouteConnectorLi()}${relayLi}${wizardRouteConnectorLi()}${finalLi}</ol>
+      </section>`;
+    }
+    return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" aria-label="План маршрута до создания">
+      <p class="tt-wizard-route-plan-note">План маршрута · передача ещё не создана</p>
+      <ol class="tt-wizard-route-scheme tt-wizard-route-scheme--direct">${senderLi}${wizardRouteConnectorLi()}${finalLi}</ol>
+    </section>`;
+  }
+
+  function wizardRecipientChooseBody() {
+    return `<div class="tt-wizard-recipient-choose" data-tt="recipient-choose">
+      <button type="button" class="tt-wizard-choice-card" data-tt="create-recipient-browse">
+        <span class="tt-wizard-choice-title">Выбрать из списка</span>
+        <span class="tt-wizard-choice-hint">Контакты компании и клиенты демо-каталога</span>
+      </button>
+      <button type="button" class="tt-wizard-choice-card" data-tt="create-new-recipient" aria-label="Добавить нового получателя">
+        <span class="tt-wizard-choice-title">Добавить нового</span>
+        <span class="tt-wizard-choice-hint">Имя и телефон — как в карточке контакта</span>
+      </button>
+    </div>`;
   }
 
   function wizardShell(phase, title, hint, body, actionsHtml) {
@@ -929,7 +1048,11 @@
     if (state.error) return false;
     const p = state.createPhase;
     if (p === "item") state.createPhase = "files";
-    else if (p === "files") state.createPhase = "recipient";
+    else if (p === "files") {
+      state.createPhase = "recipient";
+      ensureRecipientStep(state.form);
+      if (!state.form.finalRecipientId && !state.form.recipientId) state.form.recipientStep = "choose";
+    }
     else if (p === "recipient") state.createPhase = "review";
     else if (p === "relay-pick") state.createPhase = "review";
     else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
@@ -951,6 +1074,7 @@
       } else {
         state.form.finalRecipientId = r.contact.id;
         state.form.recipientId = r.contact.id;
+        state.form.recipientStep = "confirmed";
         state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
       }
     } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") state.createPhase = "review";
@@ -962,10 +1086,23 @@
     const p = state.createPhase;
     if (p === "item") return "cancel";
     if (p === "files") state.createPhase = "item";
-    else if (p === "recipient") state.createPhase = "files";
-    else if (p === "recipient-new-name") state.createPhase = "recipient";
+    else if (p === "recipient") {
+      const f = state.form || defaultCreateForm();
+      if (f.recipientStep === "pick-list") f.recipientStep = "choose";
+      else state.createPhase = "files";
+    } else if (p === "recipient-new-name") {
+      state.createPhase = "recipient";
+      if (state.form) state.form.recipientStep = "choose";
+    }
     else if (p === "recipient-new-phone") state.createPhase = "recipient-new-name";
-    else if (p === "review") state.createPhase = "recipient";
+    else if (p === "review") {
+      state.createPhase = "recipient";
+      ensureRecipientStep(state.form || defaultCreateForm());
+      if (state.form) {
+        state.form.recipientStep =
+          state.form.finalRecipientId || state.form.recipientId ? "confirmed" : "choose";
+      }
+    }
     else if (p === "relay-pick") state.createPhase = "review";
     else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") state.createPhase = "review";
     return "ok";
@@ -1620,21 +1757,26 @@
       );
     }
     if (phase === "recipient") {
+      ensureRecipientStep(f);
       const sel = f.finalRecipientId || f.recipientId;
+      let body = "";
+      let actions = `${wizardBtn("Назад", "create-wizard-back")}`;
+      if (f.recipientStep === "pick-list") {
+        body = `${wizardReviewLink("← К выбору способа", "create-recipient-back-choose", "Вернуться к выбору способа", true)}${wizardContactPickList(f, { selectedId: sel })}`;
+        actions = `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`;
+      } else if (f.recipientStep === "confirmed" && sel) {
+        body = wizardRecipientSelectedCard(sel);
+        actions = `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`;
+      } else {
+        f.recipientStep = "choose";
+        body = wizardRecipientChooseBody();
+      }
       return wizardShell(
         phase,
         "Кому нужно доставить",
         "Конечный получатель — клиент или человек, которому должны передать предмет.",
-        `<label class="tt-wizard-field">Поиск по имени или телефону<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Начните вводить имя или цифры телефона"></label>
-        <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
-          .slice(0, 20)
-          .map(
-            (c) =>
-              `<button type="button" class="tt-wizard-contact" data-tt-pick="${E(c.id)}" aria-pressed="${sel === c.id}"><span class="tt-wizard-contact-name">${E(c.name)}</span><span class="tt-wizard-contact-phone">${E(fmtPhone(c.phone))}</span></button>`
-          )
-          .join("")}</div>
-        ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
-        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+        body,
+        actions
       );
     }
     if (phase === "relay-pick") {
@@ -1700,18 +1842,6 @@
     const finId = f.finalRecipientId || f.recipientId;
     const finContact = finId ? contactById(finId) : null;
     const finSummary = recipientSummary(f);
-    const handoffHint = relay
-      ? finContact
-        ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
-        : "Должен передать предмет конечному получателю."
-      : "Отдайте предмет этому получателю напрямую, без посредника.";
-    const relayEditLabel = relay ? "Изменить" : "Передать через другого человека";
-    const relayEditAria = relay
-      ? "Изменить промежуточного получателя"
-      : "Передать через другого человека";
-    const handoffBody = relay
-      ? `${reviewPersonHtml(relay)}<p class="tt-wizard-review-handoff-hint">${E(handoffHint)}</p>`
-      : `<p class="tt-wizard-review-handoff-mode">Напрямую, без посредника</p><p class="tt-wizard-review-handoff-hint">${E(handoffHint)}</p>`;
     const dueValue = f.due ? f.due.replace("T", " · ") : "";
     const reviewBody = `<div class="tt-wizard-review" data-tt="wizard-review">
       <header class="tt-wizard-review-hero">
@@ -1721,22 +1851,7 @@
         </div>
         <h3 class="tt-wizard-review-item-title">${E(f.item)}</h3>
       </header>
-      <section class="tt-wizard-review-route-card" aria-label="Маршрут передачи">
-        <div class="tt-wizard-review-route-block">
-          <div class="tt-wizard-review-block-head">
-            <span class="tt-wizard-review-person-label">Кому доставить</span>
-            ${wizardReviewLink("Изменить", "create-edit-recipient", "Изменить конечного получателя")}
-          </div>
-          <div class="tt-wizard-review-person">${reviewPersonHtml(finContact, finSummary, f)}</div>
-        </div>
-        <div class="tt-wizard-review-route-block tt-wizard-review-handoff" data-tt="review-handoff">
-          <div class="tt-wizard-review-block-head">
-            <span class="tt-wizard-review-person-label">Кому отдать сейчас</span>
-            ${wizardReviewLink(relayEditLabel, "create-edit-relay", relayEditAria, !relay)}
-          </div>
-          ${handoffBody}
-        </div>
-      </section>
+      ${wizardReviewRouteNav(f, finContact, finSummary, relay)}
       <section class="tt-wizard-review-due${f.due ? " tt-wizard-review-due--set" : " tt-wizard-review-due--empty"}">
         <div class="tt-wizard-review-block-head">
           <span class="tt-wizard-review-person-label">Срок доставки</span>
@@ -1777,7 +1892,7 @@
     return `<div class="tt-route-card"><span class="tt-route-label">${E(label)}</span><strong class="tt-route-name">${E(c.name)}</strong><span class="tt-route-phone">${E(fmtPhone(c.phone))}</span></div>`;
   }
 
-  function detailRouteSection(o) {
+  function detailRouteGrid(o) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
@@ -1791,10 +1906,14 @@
     } else if (fin && o.holderId !== o.finalRecipientId) {
       dest = routePersonCard(fin, "Конечный получатель");
     }
-    return `<section class="tt-detail-route" aria-label="Маршрут">
-      <h3 class="tt-detail-section-title">Маршрут</h3>
-      <div class="tt-route-grid">${routePersonCard(h, "Сейчас у · ответственный")}${dest}</div>
-    </section>`;
+    return `<div class="tt-route-grid">${routePersonCard(h, "Сейчас у · ответственный")}${dest}</div>`;
+  }
+
+  function detailRouteDisclosure(o) {
+    return `<details class="tt-disclosure tt-detail-route-wrap" data-tt="detail-route-disclosure">
+      <summary>Маршрут и контакты</summary>
+      <div class="tt-disclosure-body tt-detail-route">${detailRouteGrid(o)}</div>
+    </details>`;
   }
 
   function shortRelayReminder(o, p, isHolder, mustRelay) {
@@ -1805,7 +1924,7 @@
     return `<p class="tt-reminder tt-reminder-compact tt-holder-next" data-tt="relay-reminder">${E(text)}</p>`;
   }
 
-  function pendingHandoffPanel(o) {
+  function pendingHandoffPanel(o, p) {
     if (!o.pendingId || !o.activeInvitation) return "";
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
@@ -1814,17 +1933,87 @@
       tab === "qr"
         ? `<div class="tt-handoff-qr" data-tt="handoff-qr">
         <div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
-        <p class="tt-muted tt-qr-note">Демо: «Сканировать QR» открывает экран получателя в этом окне.</p>
-        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"')} ${btn("Скрыть QR", 'data-tt="tab-code"')}
+        <p class="tt-muted tt-qr-note">Получатель может отсканировать QR в демо — откроется экран подтверждения в этом окне. Передача завершится только после успешного кода или QR.</p>
+        ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
       </div>`
         : "";
-    return `<div class="tt-handoff" data-tt="handoff-panel">
-      <div class="tt-handoff-actions">
-        ${btn("Ввести код", 'data-tt="enter-code"', "tt-primary tt-btn-block")}
-        ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"')}
+    return `<section class="tt-detail-task-card" data-tt="detail-task-card">
+      <h3 class="tt-detail-task-heading">Подтвердите передачу</h3>
+      <p class="tt-detail-task-receiver">Получатель: <strong>${E(p?.name || "—")}</strong></p>
+      <p class="tt-detail-task-instructions">Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет.</p>
+      <div class="tt-handoff" data-tt="handoff-panel">
+        <div class="tt-handoff-actions">
+          ${btn("Ввести код", 'data-tt="enter-code"', "tt-primary tt-btn-block")}
+          ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
+        </div>
+        ${qrBlock}
       </div>
-      ${qrBlock}
-    </div>`;
+      ${
+        o.finalRecipientId && o.holderId !== o.finalRecipientId
+          ? shortRelayReminder(o, p, true, true)
+          : ""
+      }
+    </section>`;
+  }
+
+  function detailTaskSection(o) {
+    const p = o.pendingId ? contactById(o.pendingId) : null;
+    const h = contactById(o.holderId);
+    const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
+    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const isHolder = o.holderId === actor;
+    const canComplete =
+      isHolder &&
+      !o.pendingId &&
+      o.status !== "completed" &&
+      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const mustRelay =
+      isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+    const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
+
+    if (o.status === "completed") {
+      return `<section class="tt-detail-task-card tt-detail-task-card--terminal" data-tt="detail-task-card">
+        <h3 class="tt-detail-task-heading">Передача завершена</h3>
+        <p class="tt-detail-done" data-tt="detail-completed">Дальнейшие действия по этому треку недоступны.</p>
+      </section>`;
+    }
+    if (!isHolder) {
+      const wait = p
+        ? `Ожидается подтверждение от ${p.name}.`
+        : fin && o.holderId !== o.finalRecipientId
+          ? `Предмет должен дойти до ${fin.name}.`
+          : "Следите за статусом в истории.";
+      return `<section class="tt-detail-task-card tt-detail-task-card--info" data-tt="detail-task-readonly">
+        <h3 class="tt-detail-task-heading">Только просмотр</h3>
+        <p class="tt-detail-readonly">Сейчас ответственный: <strong>${E(h?.name || "—")}</strong>. ${E(wait)} Действия доступны держателю.</p>
+      </section>`;
+    }
+    if (o.pendingId) return pendingHandoffPanel(o, p);
+    if (mustRelay) {
+      return `<section class="tt-detail-task-card" data-tt="detail-task-card">
+        <h3 class="tt-detail-task-heading">Передайте дальше</h3>
+        <p class="tt-detail-task-receiver">Конечный получатель: <strong>${E(fin?.name || "—")}</strong></p>
+        <p class="tt-detail-task-instructions">Выберите, кому передать предмет сейчас — получатель подтвердит кодом или QR.</p>
+        <div class="tt-detail-primary" data-tt="detail-primary-actions">
+          ${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary tt-btn-block")}
+          ${btn("Передать другому человеку", 'data-tt="transfer"', "tt-detail-alt-action")}
+        </div>
+        ${shortRelayReminder(o, p, isHolder, mustRelay)}
+      </section>`;
+    }
+    const parts = [];
+    if (canComplete && !confirmingComplete) {
+      parts.push(btn("Завершить передачу", 'data-tt="complete"', "tt-primary tt-btn-block"));
+      parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-detail-alt-action"));
+    } else if (!mustRelay) {
+      parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-primary tt-btn-block"));
+    }
+    if (!parts.length) return "";
+    return `<section class="tt-detail-task-card" data-tt="detail-task-card">
+      <h3 class="tt-detail-task-heading">Следующий шаг</h3>
+      <p class="tt-detail-task-instructions">Вы ответственны за предмет. Выберите действие ниже.</p>
+      <div class="tt-detail-primary" data-tt="detail-primary-actions">${parts.join("")}</div>
+    </section>`;
   }
 
   function detailView(o) {
@@ -1836,42 +2025,19 @@
       !o.pendingId &&
       o.status !== "completed" &&
       (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
-    const mustRelay =
-      isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     const dueLabel = o.dueAt ? `Доставить до ${dt(o.dueAt)}` : "Срок доставки не указан";
     const dueCls = isOverdue(o) ? "tt-due-overdue" : "tt-due-line";
     const tl = o.timeline.slice().reverse();
     const tlPreview = tl[0];
-
-    let primaryHtml = "";
-    if (isHolder && o.status !== "completed") {
-      if (o.pendingId) {
-        primaryHtml = pendingHandoffPanel(o);
-      } else if (mustRelay) {
-        primaryHtml = `<div class="tt-detail-primary" data-tt="detail-primary-actions">
-          ${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary tt-btn-block")}
-          ${btn("Передать другому человеку", 'data-tt="transfer"')}
-        </div>`;
-      } else {
-        const parts = [];
-        if (canComplete && !confirmingComplete) {
-          parts.push(btn("Завершить передачу", 'data-tt="complete"', "tt-primary tt-btn-block"));
-          if (!mustRelay) parts.push(btn("Передать другому человеку", 'data-tt="transfer"'));
-        } else if (!mustRelay) {
-          parts.push(btn("Передать другому человеку", 'data-tt="transfer"', "tt-primary tt-btn-block"));
-        }
-        if (parts.length)
-          primaryHtml = `<div class="tt-detail-primary" data-tt="detail-primary-actions">${parts.join("")}</div>`;
-      }
-    }
-    const completedHtml =
-      o.status === "completed"
-        ? `<p class="tt-detail-done tt-muted" data-tt="detail-completed">Передача завершена · дальнейшие действия недоступны.</p>`
-        : "";
-    const relayRem = shortRelayReminder(o, p, isHolder, mustRelay);
-    const showDoSection = isHolder && o.status !== "completed" && !!(relayRem || primaryHtml);
+    const attItems = Att()
+      ? Att().listForOrder(o).map((a) => ({
+          ...a,
+          addedLabel: `${dt(a.addedAt)} · ${contactById(a.addedBy)?.name || "—"}`,
+        }))
+      : [];
+    const attCount = attItems.length;
 
     const otherActions =
       isHolder && o.status !== "completed" && o.pendingId
@@ -1899,34 +2065,22 @@
         <span class="tt-detail-id">${E(o.id)}</span>
       </header>
       <h2 class="tt-detail-title">${E(o.item)}</h2>
-      ${o.qty || o.comment ? `<p class="tt-detail-sub">${E(o.qty || "")}${o.comment ? (o.qty ? " · " : "") + E(o.comment) : ""}</p>` : ""}
       <div class="tt-detail-meta">${statusBadge(o)}<span class="${dueCls}">${E(dueLabel)}</span></div>
-      ${completedHtml}
-      ${detailRouteSection(o)}
-      ${
-        showDoSection
-          ? `<section class="tt-detail-do" aria-label="Действия">
-        <h3 class="tt-detail-section-title">Что сделать</h3>
-        ${relayRem}
-        ${primaryHtml}
-      </section>`
-          : !isHolder && o.status === "active"
-            ? `<p class="tt-detail-readonly tt-muted">Только просмотр — действия доступны текущему держателю.</p>`
-            : ""
-      }
+      ${o.qty || o.comment ? `<p class="tt-detail-sub">${E(o.qty || "")}${o.comment ? (o.qty ? " · " : "") + E(o.comment) : ""}</p>` : ""}
+      ${detailTaskSection(o)}
+      ${detailRouteDisclosure(o)}
       ${otherActions}
-      ${attachmentsSection(o, {
-        readonly: !isHolder || o.status === "completed",
-        showPicker: isHolder && o.status !== "completed",
-        compact: true,
-        inputKey: "detail",
-        items: Att()
-          ? Att().listForOrder(o).map((a) => ({
-              ...a,
-              addedLabel: `${dt(a.addedAt)} · ${contactById(a.addedBy)?.name || "—"}`,
-            }))
-          : [],
-      })}
+      <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure">
+        <summary>Фото и файлы${attCount ? ` · ${attCount}` : ""}</summary>
+        <div class="tt-disclosure-body">${attachmentsSection(o, {
+          readonly: !isHolder || o.status === "completed",
+          showPicker: isHolder && o.status !== "completed",
+          compact: true,
+          omitTitle: true,
+          inputKey: "detail",
+          items: attItems,
+        })}</div>
+      </details>
       <details class="tt-disclosure tt-history" data-tt="history-disclosure">
         <summary>История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}</summary>
         <div class="tt-timeline" data-tt="timeline">${tl
@@ -2272,6 +2426,7 @@
       else {
         state.form.finalRecipientId = pid;
         state.form.recipientId = pid;
+        state.form.recipientStep = "confirmed";
       }
       renderTracker();
       return;
@@ -2338,6 +2493,7 @@
       state.form.pickTarget = state.createPhase === "relay-pick" ? "relay" : "final";
       state.error = "";
       state.createPhase = "recipient-new-name";
+      state.form.recipientStep = "choose";
       writeUrl();
       renderTracker();
       return;
@@ -2356,8 +2512,27 @@
       renderTracker();
       return;
     }
+    if (action === "create-recipient-browse") {
+      if (!state.form) state.form = defaultCreateForm();
+      state.form.recipientStep = "pick-list";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "create-recipient-back-choose" || action === "create-recipient-change") {
+      if (!state.form) state.form = defaultCreateForm();
+      state.form.recipientStep = action === "create-recipient-change" ? "pick-list" : "choose";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
     if (action === "create-edit-recipient") {
       state.createPhase = "recipient";
+      if (!state.form) state.form = defaultCreateForm();
+      state.form.recipientStep =
+        state.form.finalRecipientId || state.form.recipientId ? "confirmed" : "choose";
       state.error = "";
       writeUrl();
       renderTracker();

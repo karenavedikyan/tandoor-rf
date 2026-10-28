@@ -74,6 +74,7 @@ var TT_INGEST_QA = await (async () => {
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
+  await ttOpenRecipientList();
   await page.locator('[data-tt-pick="ext_02"]').click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });

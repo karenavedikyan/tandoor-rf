@@ -39,6 +39,7 @@ var TT_WIZ_QA = await (async () => {
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   ok((await page.locator('[data-tt="form-error"]').textContent()).includes("получ"), "recipient required");
 
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("review", "Проверить и создать");
@@ -101,7 +102,7 @@ var TT_WIZ_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("New contact wizard");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
-  await page.getByRole("button", { name: "Добавить нового получателя", exact: true }).click();
+  await page.locator('[data-tt="recipient-choose"] [data-tt="create-new-recipient"]').click();
   await waitWizardTitle("recipient-new-name", "Имя нового получателя");
   ok((await page.locator(".tt-wizard-progress").textContent()).includes("Шаг 3 из 4"), "new name stays step 3 label");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
