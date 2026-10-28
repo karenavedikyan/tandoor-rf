@@ -665,6 +665,10 @@
       "tt-detail-focus",
       !state.recipientMode && !ext && state.view === "detail" && !!state.orderId
     );
+    document.body.classList.toggle(
+      "tt-registry-list",
+      !state.recipientMode && !ext && state.view === "list"
+    );
   }
 
   function captureFocus() {
@@ -750,6 +754,13 @@
     return `<span class="${cls}" title="${E(d.title || d.secondary)}">${E(d.primary)}</span>${d.secondary && d.primary !== d.secondary ? `<span class="tt-due-human-sub">${E(d.secondary)}</span>` : ""}`;
   }
 
+  function humanDueTableCell(o) {
+    const d = humanDueLabel(o);
+    if (!o.dueAt) return "—";
+    const cls = d.overdue ? "tt-due-human tt-due-human--over" : "tt-due-human";
+    return `<span class="${cls}">${E(d.primary)}</span><span class="tt-due-human-sub">${E(d.secondary || d.title)}</span>`;
+  }
+
   function registryActorContext(o, actor) {
     if (!actor) return { key: "route", label: "В пути / у другого", icon: "route" };
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
@@ -763,38 +774,64 @@
     return { key: "route", label: "В пути / у другого", icon: "route" };
   }
 
-  function statusBadge(o, actor) {
+  function shortContactName(c) {
+    if (!c?.name) return "—";
+    const parts = c.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+    return parts[0].length > 14 ? `${parts[0].slice(0, 13)}…` : parts[0];
+  }
+
+  function statusChipIcon(ctx) {
+    if (ctx.key === "route") return `<span class="tt-status-dot" aria-hidden="true"></span>`;
+    return `<i data-lucide="${ctx.icon}"></i>`;
+  }
+
+  function statusBadge(o, actor, opts = {}) {
     actor = actor ?? state.actingContactId ?? employeeContact(state.employeeId)?.id;
     const ctx = registryActorContext(o, actor);
     const overdue = isOverdue(o);
+    const compact = !!opts.compact;
     const overdueChip = overdue
       ? `<span class="tt-status-chip tt-status-chip--bad" data-tt-status="overdue"><i data-lucide="alert-triangle"></i>Просрочено</span>`
       : "";
-    const main = `<span class="tt-status-chip tt-status-chip--${ctx.key}" data-tt-status="${ctx.key}"><i data-lucide="${ctx.icon}"></i>${E(ctx.label)}${ctx.hint ? ` · ${E(ctx.hint)}` : ""}</span>`;
+    const label = ctx.key === "wait" && compact ? ctx.label : `${ctx.label}${ctx.hint && !compact ? ` · ${ctx.hint}` : ""}`;
+    const main = `<span class="tt-status-chip tt-status-chip--${ctx.key}" data-tt-status="${ctx.key}">${statusChipIcon(ctx)}${E(label)}</span>`;
     if (ctx.key === "done") return main;
     return `<span class="tt-status-group">${main}${overdueChip}</span>`;
   }
 
-  function registryRouteLine(o) {
+  function registryRouteLine(o, { table = false } = {}) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const next = p || (fin && fin.id !== o.holderId ? fin : null);
-    const qty = o.qty ? `<span class="tt-card-v2-qty">${E(o.qty)}</span>` : "";
-    return `<span class="tt-card-v2-route">${contactAvatarHtml(h)} <span>${E(h?.name || "—")}</span>${qty}${
-      next ? `<span class="tt-card-v2-route-arrow">→</span>${contactAvatarHtml(next)} <span>${E(next.name)}</span>` : ""
+    const name = table ? (c) => E(c?.name || "—") : (c) => E(shortContactName(c));
+    return `<span class="tt-card-v2-route">${contactAvatarHtml(h)}<span class="tt-card-v2-route-name">${name(h)}</span>${
+      next
+        ? `<span class="tt-card-v2-route-arrow" aria-hidden="true">→</span>${contactAvatarHtml(next)}<span class="tt-card-v2-route-name">${name(next)}</span>`
+        : ""
     }</span>`;
   }
 
+  function registryCardMeta(o) {
+    const parts = [E(o.id)];
+    if (o.qty) parts.push(E(o.qty));
+    const ts = o.dueAt || o.holderSince;
+    if (ts) parts.push(E(dt(ts)));
+    return parts.join(" · ");
+  }
+
   function registryCardHtml(o, actor) {
+    const ctx = registryActorContext(o, actor);
     const overdue = isOverdue(o);
     const done = o.status === "completed";
+    const due = humanDueLabel(o);
     const accent =
-      registryActorContext(o, actor).key === "send"
+      ctx.key === "send"
         ? "var(--green,#507f22)"
-        : registryActorContext(o, actor).key === "wait"
+        : ctx.key === "wait"
           ? "var(--tt-blue,#285a82)"
-          : registryActorContext(o, actor).key === "inbox"
+          : ctx.key === "inbox"
             ? "var(--warn,#93600d)"
             : overdue
               ? "var(--bad,#ac4343)"
@@ -803,8 +840,8 @@
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
       <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
-      <div class="tt-card-v2-foot">${statusBadge(o, actor)}<span class="tt-card-v2-id">${E(o.id)}</span></div>
-      <div class="tt-card-v2-due">${humanDueHtml(o)}</div>
+      <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(due.primary)}</span></div>
+      <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
     </button>`;
   }
 
@@ -864,7 +901,7 @@
           <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
           <td>${registryRouteLine(o)}</td>
           <td>${statusBadge(o, actor)}</td>
-          <td>${humanDueHtml(o)}</td>
+          <td class="tt-table-due">${humanDueTableCell(o)}</td>
         </tr>`;
       })
       .join("");
@@ -1956,22 +1993,20 @@
   function registryStatTiles() {
     const c = registryCounts();
     const filtActive = state.statusFilter !== "all" || state.mineFilter !== "all" || !!state.query.trim();
+    const tile = (action, dim, pressed, warn, icon, labelHtml, statKey, val) =>
+      `<button type="button" class="tt-stat-tile${dim ? " tt-stat-tile--dim" : ""}${warn ? " tt-stat-tile--warn" : ""}${warn && val > 0 ? " tt-stat-tile--warn-hot" : ""}" data-tt="${action}" aria-pressed="${pressed}">
+        <span class="tt-stat-tile-inner"><i data-lucide="${icon}" aria-hidden="true"></i><span class="tt-stat-tile-text"><span class="tt-stat-tile-value" data-tt-stat="${statKey}">${val}</span><span class="tt-stat-tile-label">${labelHtml}</span></span></span>
+      </button>`;
     return `<div class="tt-stat-tiles" data-tt="registry-stats">
-      <button type="button" class="tt-stat-tile${c.handoff ? "" : " tt-stat-tile--dim"}" data-tt="mine-handoff" aria-pressed="${state.mineFilter === "handoff"}">
-        <span class="tt-stat-tile-label">Нужно передать</span><span class="tt-stat-tile-value" data-tt-stat="handoff">${c.handoff}</span>
-      </button>
-      <button type="button" class="tt-stat-tile${c.receive ? "" : " tt-stat-tile--dim"}" data-tt="mine-receive" aria-pressed="${state.mineFilter === "receive"}">
-        <span class="tt-stat-tile-label">Жду получения</span><span class="tt-stat-tile-value" data-tt-stat="receive">${c.receive}</span>
-      </button>
-      <button type="button" class="tt-stat-tile tt-stat-tile--warn${c.overdue ? "" : " tt-stat-tile--dim"}" data-tt="mine-overdue" aria-pressed="${state.statusFilter === "overdue"}">
-        <span class="tt-stat-tile-label">Просрочено</span><span class="tt-stat-tile-value" data-tt-stat="overdue">${c.overdue}</span>
-      </button>
-      <button type="button" class="tt-stat-tile tt-stat-tile--desktop-only" data-tt="mine-active" aria-pressed="false">
-        <span class="tt-stat-tile-label">Всего активных</span><span class="tt-stat-tile-value" data-tt-stat="active">${c.active}</span>
+      ${tile("mine-handoff", !c.handoff, state.mineFilter === "handoff", false, "send", "Нужно<br>передать", "handoff", c.handoff)}
+      ${tile("mine-receive", !c.receive, state.mineFilter === "receive", false, "inbox", "Жду<br>получения", "receive", c.receive)}
+      ${tile("mine-overdue", !c.overdue, state.statusFilter === "overdue", true, "alert-triangle", "Просрочено", "overdue", c.overdue)}
+      <button type="button" class="tt-stat-tile tt-stat-tile--desktop-only tt-stat-tile--info" data-tt="mine-active" aria-pressed="false" tabindex="-1">
+        <span class="tt-stat-tile-inner"><i data-lucide="layers" aria-hidden="true"></i><span class="tt-stat-tile-text"><span class="tt-stat-tile-value" data-tt-stat="active">${c.active}</span><span class="tt-stat-tile-label">Всего<br>активных</span></span></span>
       </button>
     </div>
     <div class="tt-registry-toolbar">
-      <div class="tt-registry-search-wrap"><i data-lucide="search"></i>
+      <div class="tt-registry-search-wrap"><span class="tt-registry-search-icon" aria-hidden="true"><i data-lucide="search"></i></span>
         <input data-tt="search" value="${E(state.query)}" placeholder="Предмет, номер, человек" autocomplete="off">
       </div>
       <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i></button>
@@ -1991,11 +2026,6 @@
       </select></label>
     </div>
     ${filtActive ? `<div class="tt-registry-reset-row">${btn("Сбросить фильтры", 'data-tt="reset-filters"', "tt-link")}</div>` : ""}
-    <div class="tt-registry-toolbar--desktop tt-seg-control" role="group" aria-label="Быстрый фильтр">
-      ${btn("Все", `data-tt="mine-all"${state.mineFilter === "all" && state.statusFilter === "all" ? ' aria-pressed="true"' : ""}`)}
-      ${btn("Нужно передать", `data-tt="mine-handoff"${state.mineFilter === "handoff" ? ' aria-pressed="true"' : ""}`)}
-      ${btn("Жду получения", `data-tt="mine-receive"${state.mineFilter === "receive" ? ' aria-pressed="true"' : ""}`)}
-    </div>
     <div class="tt-filter-sheet" data-tt="registry-filter-sheet" data-open="${state.registryFilterSheet}">
       <div class="tt-filter-sheet-backdrop" data-tt="registry-filter-close"></div>
       <div class="tt-filter-sheet-panel">
@@ -2025,7 +2055,7 @@
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
       }
-      <button type="button" class="tt-primary tt-fab" data-tt="create" data-tt-main-cta"><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>
+      <button type="button" class="tt-primary tt-fab" data-tt="create" data-tt-main-cta=""><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>
     </div>`;
   }
 
@@ -2206,7 +2236,7 @@
     return parts[0].slice(0, 2).toUpperCase();
   }
 
-  function routePersonNode(c, roleEyebrow, variant, planned) {
+  function routeStepperNode(c, roleEyebrow, variant, planned, showLine) {
     const phone = c?.phone ? fmtPhone(c.phone) : "";
     const telDigits = c?.phone ? normPhone(c.phone) : "";
     const phoneHtml =
@@ -2216,9 +2246,10 @@
     const plannedChip = planned
       ? `<span class="tt-route-planned" data-tt="route-planned">План · ждёт подтверждения</span>`
       : "";
-    return `<article class="tt-route-node tt-route-card tt-route-node--${variant}" data-tt="route-node" data-tt-route-variant="${variant}">
-      <div class="tt-route-node-marker" aria-hidden="true"><span class="tt-route-avatar">${E(contactInitials(c))}</span></div>
-      <div class="tt-route-node-body">
+    const avSize = variant === "current" ? " tt-avatar--lg tt-avatar--current" : " tt-avatar--lg";
+    return `<article class="tt-route-stepper-node tt-route-node tt-route-node--${variant}" data-tt="route-node" data-tt-route-variant="${variant}">
+      <div class="tt-route-stepper-rail">${contactAvatarHtml(c, avSize)}${showLine ? '<span class="tt-route-stepper-line" aria-hidden="true"></span>' : ""}</div>
+      <div class="tt-route-stepper-body">
         <span class="tt-route-label tt-route-role">${E(roleEyebrow)}</span>
         ${plannedChip}
         <strong class="tt-route-name">${E(c?.name || "—")}</strong>
@@ -2227,56 +2258,57 @@
     </article>`;
   }
 
-  function routeConnector() {
-    return `<div class="tt-route-connector" aria-hidden="true"><span class="tt-route-connector-line"></span><span class="tt-route-connector-arrow"></span></div>`;
-  }
-
   function detailRouteGrid(o) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    const parts = [];
+    const nodes = [];
     let nodeCount = 0;
 
     if (o.status === "completed") {
       const delivered = contactById(o.holderId);
       nodeCount = 1;
-      parts.push(routePersonNode(delivered, "Доставлено · конечный получатель", "delivered", false));
-      return `<div class="tt-route-grid" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${parts.join("")}</div>`;
+      nodes.push(routeStepperNode(delivered, "Доставлено · конечный получатель", "delivered", false, false));
+      return `<div class="tt-route-stepper" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${nodes.join("")}</div>`;
     }
 
-    parts.push(routePersonNode(h, "Сейчас у · ответственный", "current", false));
+    nodes.push(routeStepperNode(h, "Сейчас у · ответственный", "current", false, !!(o.pendingId || (fin && o.holderId !== o.finalRecipientId))));
     nodeCount = 1;
 
     if (o.pendingId) {
       if (fin && o.pendingId === o.finalRecipientId) {
-        parts.push(routeConnector(), routePersonNode(p, "Следующий · конечный получатель", "pending", true));
+        nodes.push(routeStepperNode(p, "Следующий · конечный получатель", "pending", true, false));
         nodeCount += 1;
       } else {
-        parts.push(routeConnector(), routePersonNode(p, "Следующий получатель", "pending", true));
+        const hasFinAfter = !!(fin && o.pendingId !== o.finalRecipientId);
+        nodes.push(routeStepperNode(p, "Следующий получатель", "pending", true, hasFinAfter));
         nodeCount += 1;
-        if (fin && o.pendingId !== o.finalRecipientId) {
-          parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+        if (hasFinAfter) {
+          nodes.push(routeStepperNode(fin, "Конечный получатель", "final", false, false));
           nodeCount += 1;
         }
       }
     } else if (fin && o.holderId !== o.finalRecipientId) {
-      parts.push(routeConnector(), routePersonNode(fin, "Конечный получатель", "final", false));
+      nodes.push(routeStepperNode(fin, "Конечный получатель", "final", false, false));
       nodeCount += 1;
     }
 
-    const triple = nodeCount >= 3 ? " tt-route-grid--triple" : "";
-    return `<div class="tt-route-grid${triple}" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${parts.join("")}</div>`;
+    return `<div class="tt-route-stepper" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${nodes.join("")}</div>`;
   }
 
-  function disclosureSummary(titleHtml) {
-    return `<summary><span class="tt-disclosure-title">${titleHtml}</span></summary>`;
+  function disclosureSummary(titleHtml, opts = {}) {
+    const icon = opts.icon ? `<i class="tt-disclosure-icon" data-lucide="${opts.icon}" aria-hidden="true"></i>` : "";
+    const count =
+      opts.count != null && opts.count !== ""
+        ? `<span class="tt-disclosure-count" aria-label="Количество: ${opts.count}">${E(String(opts.count))}</span>`
+        : "";
+    return `<summary><span class="tt-disclosure-title">${icon}<span class="tt-disclosure-title-text">${titleHtml}</span>${count}</span></summary>`;
   }
 
   function detailRouteDisclosure(o) {
     const openMobile = typeof window !== "undefined" && window.innerWidth <= 767;
     return `<details class="tt-disclosure tt-detail-route-wrap${openMobile ? " tt-route-default-open" : ""}" data-tt="detail-route-disclosure"${openMobile ? " open" : ""}>
-      ${disclosureSummary("Маршрут и контакты")}
+      ${disclosureSummary("Маршрут и контакты", { icon: "route" })}
       <div class="tt-disclosure-body tt-detail-route">${detailRouteGrid(o)}</div>
     </details>`;
   }
@@ -2294,9 +2326,28 @@
     }
     const summary = o.comment ? "Комментарий и детали" : "Детали передачи";
     return `<details class="tt-disclosure tt-detail-notes" data-tt="detail-notes-disclosure">
-      ${disclosureSummary(E(summary))}
+      ${disclosureSummary(E(summary), { icon: "message-square" })}
       <div class="tt-disclosure-body">${parts.join("")}</div>
     </details>`;
+  }
+
+  function detailMobilePrimaryDock(o) {
+    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const isHolder = o.holderId === actor;
+    if (o.status === "completed" || !isHolder) return "";
+    if (o.pendingId) {
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock">${btn("Ввести код", 'data-tt="enter-code"', "tt-primary")}</div>`;
+    }
+    const canComplete =
+      !o.pendingId && (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const mustRelay = o.finalRecipientId && o.holderId !== o.finalRecipientId;
+    if (mustRelay && !o.pendingId) {
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock">${btn("Передать конечному получателю", 'data-tt="transfer-final"', "tt-primary")}</div>`;
+    }
+    if (canComplete && state.completeConfirmOrderId !== o.id) {
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock">${btn("Завершить передачу", 'data-tt="complete"', "tt-primary")}</div>`;
+    }
+    return "";
   }
 
   function shortRelayReminder(o, p, isHolder, mustRelay) {
@@ -2521,7 +2572,6 @@
     const dueLabel = o.dueAt ? dueHuman.primary : "Срок доставки не указан";
     const dueCls = dueHuman.overdue ? "tt-due-overdue" : "tt-due-line";
     const tl = o.timeline.slice().reverse();
-    const tlPreview = tl[0];
     const attItems = Att()
       ? Att().listForOrder(o).map((a) => ({
           ...a,
@@ -2556,7 +2606,9 @@
         <div class="tt-detail-overflow-panel">${overflowInner}</div></details>`
       : "";
 
-    return `<div class="tt-panel tt-detail-panel tt-view-enter" data-tt="detail">
+    const mobileDock =
+      typeof window !== "undefined" && window.innerWidth <= 767 ? detailMobilePrimaryDock(o) : "";
+    return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--docked" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
         ${
           o.status === "completed"
@@ -2574,7 +2626,7 @@
       ${detailNotesDisclosure(o)}
       ${detailRouteDisclosure(o)}
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
-        ${disclosureSummary(`Фото и файлы${attCount ? ` · ${attCount}` : ""}`)}
+        ${disclosureSummary("Фото и файлы", { icon: "paperclip", count: attCount ? attCount : null })}
         <div class="tt-disclosure-body">${attachmentsSection(o, {
           readonly: !isHolder || o.status === "completed",
           showPicker: isHolder && o.status !== "completed",
@@ -2587,7 +2639,7 @@
       </div>
       <aside class="tt-detail-aside">
       <details class="tt-disclosure tt-history" data-tt="history-disclosure">
-        ${disclosureSummary(`История передачи${tl.length ? ` · ${tl.length}` : ""}${tlPreview ? ` · ${E(dt(tlPreview.at))}` : ""}`)}
+        ${disclosureSummary("История передачи", { icon: "history", count: tl.length || null })}
         <div class="tt-disclosure-body tt-detail-history-body"><div class="tt-timeline" data-tt="timeline">${tl
           .map((t) => {
             const fr = contactById(t.from);
@@ -2608,6 +2660,7 @@
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
       </aside>
       </div>
+      ${mobileDock}
     </div>`;
   }
 
@@ -2770,6 +2823,7 @@
     }
 
     const ext = isExternalShell();
+    const onListRegistry = !state.recipientMode && !ext && state.view === "list";
     const inCreateWizard = state.view === "create" && !ext;
     const inCreateReview = inCreateWizard && state.createPhase === "review";
     const inDetailFocus = !state.recipientMode && !ext && state.view === "detail" && !!state.orderId;
@@ -2785,28 +2839,38 @@
             .join("")}</select></label>`;
 
     const demoOpen = inCreateWizard && !inCreateReview ? " open" : "";
+    const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
     const demoShell = ext
       ? `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span><div data-tt="chrome">${chrome}</div>`
       : inDetailFocus || inCreateReview
         ? `<details class="tt-disclosure tt-demo-settings tt-demo-settings-compact" data-tt="demo-settings">
         <summary><span class="tt-demo-pill">Демо</span> · настройки</summary>
-        <div class="tt-disclosure-body">
-          <p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>
-          <div data-tt="chrome">${chrome}</div>
-        </div>
+        <div class="tt-disclosure-body">${demoBody}</div>
       </details>`
-        : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
+        : onListRegistry
+          ? ""
+          : `<span class="tt-demo-pill" title="Данные сбрасываются при обновлении">Демо</span>
       <details class="tt-disclosure tt-demo-settings" data-tt="demo-settings"${demoOpen}>
         <summary>Демо-настройки</summary>
-        <div class="tt-disclosure-body">
-          <p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>
-          <div data-tt="chrome">${chrome}</div>
-        </div>
+        <div class="tt-disclosure-body">${demoBody}</div>
       </details>`;
+
+    const listDemoHead = onListRegistry
+      ? `<details class="tt-disclosure tt-demo-settings tt-demo-head-popover" data-tt="demo-settings">
+        <summary class="tt-demo-head-pill"><span class="tt-demo-pill">Демо</span></summary>
+        <div class="tt-disclosure-body tt-demo-popover-body">${demoBody}</div>
+      </details>`
+      : "";
 
     const headBlock = inDetailFocus
       ? `<div class="tt-head tt-head-compact"><span class="tt-head-compact-label">Тан-трекер</span></div>`
-      : `<div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
+      : onListRegistry
+        ? `<div class="tt-head tt-registry-head"><div class="tt-registry-head-row">
+        <div><h1>Тан-трекер</h1><p class="tt-registry-sub">Передача документов и предметов</p></div>
+        ${listDemoHead}
+        <span class="tt-head-cta-desktop" data-tt="head-cta">${btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary")}</span>
+      </div></div>`
+        : `<div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
         <span data-tt="head-cta">${state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
       </div>`;
 
@@ -2820,9 +2884,12 @@
       const root = document.getElementById("tt-root");
       if (root) root.classList.toggle("tt-work-detail", inDetailFocus);
       const head = document.querySelector(".tt-head");
-      if (head && inDetailFocus && !head.classList.contains("tt-head-compact")) {
-        head.outerHTML = headBlock;
-      } else if (head && !inDetailFocus && head.classList.contains("tt-head-compact")) {
+      const headNeedsSwap =
+        (inDetailFocus && !head?.classList.contains("tt-head-compact")) ||
+        (!inDetailFocus && head?.classList.contains("tt-head-compact")) ||
+        (onListRegistry && !head?.classList.contains("tt-registry-head")) ||
+        (!onListRegistry && head?.classList.contains("tt-registry-head"));
+      if (head && headNeedsSwap) {
         head.outerHTML = headBlock;
       } else {
         const cta = document.querySelector('[data-tt="head-cta"]');
@@ -2831,6 +2898,7 @@
       const meta = document.querySelector(".tt-shell-meta");
       if (meta) {
         meta.classList.toggle("tt-shell-meta-compact", inDetailFocus);
+        meta.classList.toggle("tt-shell-meta--empty", onListRegistry);
         meta.innerHTML = demoShell;
       }
     }
@@ -3090,20 +3158,20 @@
       return;
     }
     if (action === "mine-handoff") {
-      state.mineFilter = "handoff";
-      state.statusFilter = "all";
+      state.mineFilter = state.mineFilter === "handoff" ? "all" : "handoff";
+      if (state.mineFilter === "handoff") state.statusFilter = "all";
       renderTracker();
       return;
     }
     if (action === "mine-receive") {
-      state.mineFilter = "receive";
-      state.statusFilter = "all";
+      state.mineFilter = state.mineFilter === "receive" ? "all" : "receive";
+      if (state.mineFilter === "receive") state.statusFilter = "all";
       renderTracker();
       return;
     }
     if (action === "mine-overdue") {
-      state.mineFilter = "all";
-      state.statusFilter = "overdue";
+      state.statusFilter = state.statusFilter === "overdue" ? "all" : "overdue";
+      if (state.statusFilter === "overdue") state.mineFilter = "all";
       renderTracker();
       return;
     }
