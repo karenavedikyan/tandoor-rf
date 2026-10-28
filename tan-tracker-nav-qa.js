@@ -10,6 +10,7 @@ var TT_NAV_QA = await (async () => {
     const btn = page.locator('.sidebar .nav [data-go="tan-tracker"]').first();
     await btn.waitFor({ state: "visible" });
     await btn.click();
+    await page.locator("#tt-root").waitFor({ state: "visible" });
   };
 
   await page.goto(`${base}/`);
@@ -36,6 +37,7 @@ var TT_NAV_QA = await (async () => {
   await page.locator("[data-menu]").click();
   ok(await page.locator(".sidebar.open [data-go=\"tan-tracker\"]").count() === 1, "mobile menu exposes tan-tracker");
   await page.locator(".sidebar.open [data-go=\"tan-tracker\"]").click();
+  await page.locator("#tt-root").waitFor({ state: "visible" });
   ok(await page.locator("#tt-root").count() === 1, "mobile nav opens tracker");
 
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -43,6 +45,8 @@ var TT_NAV_QA = await (async () => {
   await page.reload();
   ok((await navCount()) === 1, "tracker refresh keeps single nav item");
   await page.locator('[data-go="exchange"]').click();
+  await page.locator("#tt-root").waitFor({ state: "detached" });
+  await page.locator(".screenbody .x6.x13").waitFor({ state: "visible" });
   ok(await page.locator("#tt-root").count() === 0, "exchange nav leaves tracker");
   ok((await page.evaluate(() => (location.hash.split("?")[0] || "#").replace(/^#/, ""))) === "exchange", "exchange is clients target route");
   ok((await navCount()) === 1, "exchange view keeps single tan-tracker nav");
