@@ -559,6 +559,17 @@
     });
   }
 
+  function scrollQrIntoView() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el =
+          document.querySelector('[data-tt="handoff-panel"] [data-tt="qr-host"]') ||
+          document.querySelector('[data-tt="qr-host"]');
+        el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      });
+    });
+  }
+
   function now() {
     return Date.now();
   }
