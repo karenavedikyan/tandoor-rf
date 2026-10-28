@@ -1603,7 +1603,7 @@
     if (phase === "relay-pick") {
       const finPick = contactById(f.finalRecipientId || f.recipientId);
       const relayHint = finPick
-        ? `Шаг 3 из 4 · водитель или коллега примет предмет и передаст его ${finPick.name}.`
+        ? `Шаг 3 из 4 · водитель или коллега примет предмет. Доставить нужно получателю: ${finPick.name}.`
         : "Шаг 3 из 4 · кто примет предмет и передаст его конечному получателю.";
       return wizardShell(
         phase,
