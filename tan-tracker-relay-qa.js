@@ -104,8 +104,16 @@ var TT_RELAY_QA = await (async () => {
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "final QR receipt completes track");
   ok(await page.locator('[data-tt="relay-reminder"]').count() === 0, "relay reminder cleared after delivery");
+  ok(await page.evaluate(() => document.body.classList.contains("tt-external-shell")), "final external recipient stays external shell");
+  ok(await page.locator(".sidebar").isHidden(), "final external recipient hides sidebar");
+  ok(await page.locator("#af-bell").isHidden(), "final external recipient hides corporate bell");
+  ok((await page.locator('[data-tt="employee"]').count()) === 0, "final external recipient has no employee selector");
 
-  await page.locator('[data-tt="employee"]').selectOption("c1");
+  await page.evaluate((id) => {
+    location.hash = `#tan-tracker?role=coordinator&tt_emp=c1&tt_id=${id}`;
+  }, orderId);
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="employee"]').waitFor({ state: "visible" });
   await page.locator("#af-bell").waitFor({ state: "visible" });
   const c1UnreadAfter = await bellUnread();
   ok(c1UnreadAfter === 0 || !(await page.locator("#af-inbox").isVisible()), "c1 pending/holder TT notices cleared after handoff complete");
