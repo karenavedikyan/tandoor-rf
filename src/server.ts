@@ -290,6 +290,10 @@ export function createApp(): express.Application {
     sendHtmlPage(res, publicDir, "tan-tracker.html");
   });
 
+  app.get("/tan-tracker/recipient", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "tan-tracker-recipient.html");
+  });
+
   app.use(
     (err: unknown, req: Request, res: Response, next: NextFunction): void => {
       if (res.headersSent) {

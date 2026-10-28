@@ -14,6 +14,10 @@ import {
   publicSendPhoneCodeHandler,
   publicVerifyPhoneCodeHandler,
 } from "./public-recipient";
+import {
+  publicRecipientAttachmentHandler,
+  publicRecipientContextHandler,
+} from "./public-recipient-context";
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
   const readChain = [
@@ -31,6 +35,14 @@ export function createTanTrackerRouter(): express.Router {
   });
   router.post("/public/recipient/handoff/qr-confirm", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
     void publicConfirmQrHandoffHandler(req, res).catch(next);
+  });
+
+  router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {
+    void publicRecipientContextHandler(req, res).catch(next);
+  });
+
+  router.get("/public/recipient/attachments/:attId", requireDatabaseReady, (req, res, next) => {
+    void publicRecipientAttachmentHandler(req, res).catch(next);
   });
 
   router.get("/bootstrap", ...readChain, (req, res, next) => {

@@ -35,7 +35,7 @@
 | Карточка передачи | `detailView` | `tan-tracker.js` | detail-* QA | UI да; pending cancel/change + code verify — **API да** |
 | Меню «⋯» popover | tt56 overflow | CSS/JS tt56 | redesign QA | UI да |
 | Код / QR handoff | `codeView`, QR host | `POST .../code/generate|verify` + public `phone/send|verify` + `handoff/qr-confirm` | demo-code QA | Код **да**; QR **да** (SMS fail-closed без провайдера; test provider в integration) |
-| Экран получателя | `recipientScreen` | hash `tt_view=recipient` + public phone API | attachments/recipient QA | **частично** (в LK shell; отдельный public HTML — нет) |
+| Экран получателя | `recipientScreen` | `/tan-tracker/recipient` + `GET public/recipient/context` + phone API | attachments/recipient QA | **частично** (public HTML без ЛК auth; browser E2E — в работе) |
 | Terminal / former sender | `detailView` variants | server scope | former-sender QA | scope TS; UI — с данными |
 | Завершение цепочки | `completed` status | `tt_transfers.status` | relay/terminal QA | схема да; логика — **нет** |
 
@@ -51,9 +51,9 @@
 
 ## Блокеры (честно)
 
-1. **SMS/OTP:** провайдер не подключён; `TT_PHONE_VERIFICATION_PROVIDER=test` только в тестах.
-2. **Остаток API/UI:** explicit complete-order (legacy), external relay/final цепочки, отдельный public recipient URL без LK shell, адаптация 26 QA.
-3. **E2E против живого API:** `test/integration/tan-tracker-linked-bootstrap.test.ts` (+ scope/guards); 26 прототипных QA — эталон `7f28457`.
+1. **SMS/OTP (production):** реальный провайдер не подключён → send 503; в test `TT_PHONE_VERIFICATION_PROVIDER=test`. Лимиты: 5 verify attempts (persist), cooldown 60s send, max 3 send / 15 min.
+2. **Остаток UI/API:** relay/final цепочки, legacy complete, полная адаптация 26 QA + relay regression.
+3. **Integration:** `tan-tracker-linked-bootstrap.test.ts`, `tan-tracker-public-phone-guards.test.ts`, guards/scope/schema — на изолированной PostgreSQL.
 
 ## Следующие шаги исполнителя
 

@@ -166,7 +166,13 @@ describe("tan-tracker linked employee bootstrap", { concurrency: false }, () => 
 
     const stageRes = await request(app)
       .post("/api/tan-tracker/staging-attachments")
-      .set(headers(cookie, { "X-TT-Filename": encodeURIComponent("Договор.txt"), "X-TT-Mime-Type": "text/plain" }))
+      .set(
+        headers(cookie, {
+          "Content-Type": "text/plain",
+          "X-TT-Filename": encodeURIComponent("Договор.txt"),
+          "X-TT-Mime-Type": "text/plain",
+        }),
+      )
       .send(Buffer.from("hello", "utf8"));
     assert.equal(stageRes.status, 201, stageRes.text);
     assert.equal(stageRes.body.name, "Договор.txt");
@@ -245,16 +251,17 @@ describe("tan-tracker linked employee bootstrap", { concurrency: false }, () => 
           [holder.id],
         )
       ).rows[0].id;
+      const qrCode = `TT-T-QR-${randomUUID().slice(0, 8)}`;
       publicCode = (
-        await client.query<{ id: string }>(
+        await client.query<{ public_code: string }>(
           `INSERT INTO tt_transfers (
             id, public_code, item_title, status, creator_party_id, holder_party_id, pending_party_id,
             final_recipient_party_id, handoff_version
-          ) VALUES ('TT-T-QR-1','TT-T-QR-1','QR item','waiting',$1,$1,$2,$2,1)
+          ) VALUES ($1,$1,'QR item','waiting',$2,$2,$3,$3,1)
           RETURNING public_code`,
-          [holderParty.id, pendingPartyId],
+          [qrCode, holderParty.id, pendingPartyId],
         )
-      ).rows[0].id;
+      ).rows[0].public_code;
       await client.query(
         `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
          VALUES ($1,1,$2,$3,'QR item')`,

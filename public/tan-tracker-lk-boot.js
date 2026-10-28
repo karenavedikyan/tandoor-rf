@@ -75,6 +75,9 @@
   }
 
   function mountPage() {
+    if (location.pathname.indexOf("/tan-tracker/recipient") >= 0) {
+      return;
+    }
     if (!shell || !shell.ensureAuthenticated) {
       window.location.replace("/login?next=" + encodeURIComponent("/tan-tracker"));
       return;

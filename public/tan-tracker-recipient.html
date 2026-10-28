@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="/brand/theme-init.js"></script>
+    <title>Получение передачи | Тандор</title>
+    <link rel="stylesheet" href="/fonts/golos/fonts.css" />
+    <link rel="stylesheet" href="/brand/legacy-shell.css" />
+    <link rel="stylesheet" href="/brand/cabinet.css" />
+    <link rel="stylesheet" href="/tan-tracker/tan-tracker.css?v=20261028-tt56" />
+    <link rel="stylesheet" href="/tan-tracker/tan-tracker-ui.css?v=20261028-tt56" />
+    <link rel="stylesheet" href="/tan-tracker/tan-tracker-lk-theme.css?v=20261028-tt56" />
+    <style>
+      body.tt-public-recipient {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--surface, #f4f6f4);
+      }
+      .tt-public-recipient-wrap {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      #tt-state-panel[role="alert"]:not(.clients-hidden) {
+        margin: 16px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: #fdecea;
+        color: #611a15;
+      }
+    </style>
+  </head>
+  <body class="legacy-body tt-public-recipient tt-recipient-shell">
+    <div id="tt-state-panel" class="clients-hidden" role="alert"></div>
+    <div class="tt-public-recipient-wrap">
+      <main id="tt-root-host">
+        <div id="tt-root" class="tt-work" data-testid="tan-tracker-recipient"></div>
+      </main>
+    </div>
+    <script src="/common.js" defer></script>
+    <script src="/tan-tracker/assets/lucide.js" defer></script>
+    <script src="/tan-tracker/assets/qrcode-generator.js" defer></script>
+    <script src="/tan-tracker/tan-tracker-scope.js" defer></script>
+    <script src="/tan-tracker/tan-tracker-attachments.js" defer></script>
+    <script src="/tan-tracker/tan-tracker.js?v=20261028-tt56" defer></script>
+    <script src="/tan-tracker-lk-api.js" defer></script>
+    <script src="/tan-tracker-recipient-boot.js" defer></script>
+  </body>
+</html>

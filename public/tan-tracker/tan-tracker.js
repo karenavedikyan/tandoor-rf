@@ -431,7 +431,8 @@
     orders.forEach((o) => Sc()?.migrateOrderFields(o));
   }
 
-  const TT_LK = /\/tan-tracker(?:\/|$)/.test(location.pathname);
+  const TT_PUBLIC_RECIPIENT = /\/tan-tracker\/recipient(?:\/|$)/.test(location.pathname);
+  const TT_LK = TT_PUBLIC_RECIPIENT || /\/tan-tracker(?:\/|$)/.test(location.pathname);
   if (!TT_LK) {
     seedContacts();
     seedOrders();
@@ -633,7 +634,8 @@
   function handoffUrl(o, inv) {
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
-    if (!t) return `${location.pathname}#tan-tracker?role=${role}`;
+    const base = TT_LK ? "/tan-tracker/recipient" : location.pathname;
+    if (!t) return `${base}#tan-tracker?role=${role}`;
     const p = new URLSearchParams({
       role,
       tt_view: "recipient",
@@ -643,7 +645,7 @@
       tt_via: "qr",
     });
     if (t.invitationToken) p.set("tt_tok", t.invitationToken);
-    return `${location.pathname}#tan-tracker?${p}`;
+    return `${base}#tan-tracker?${p}`;
   }
 
   function qrSvg(text) {

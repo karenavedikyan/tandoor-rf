@@ -45,7 +45,7 @@ function decodeUploadFilename(rawHeader: string): string {
   return decoded || "file";
 }
 
-function contentDispositionFilename(name: string): string {
+export function contentDispositionFilename(name: string): string {
   const asciiFallback = name.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_") || "file";
   return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
