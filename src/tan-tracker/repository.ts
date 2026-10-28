@@ -146,7 +146,20 @@ export function mapTransferToOrderDto(
   row: TanTrackerTransferRow,
   timeline: TanTrackerTimelineRow[],
   revoked: string[],
+  extras?: {
+    attachments?: TanTrackerOrderDto["attachments"];
+  },
 ): TanTrackerOrderDto {
+  const activeInvitation =
+    row.pending_party_id != null
+      ? {
+          hv: row.handoff_version,
+          pendingId: row.pending_party_id,
+          holderId: row.holder_party_id,
+          item: row.item_title,
+          id: row.public_code,
+        }
+      : null;
   return {
     id: row.public_code,
     item: row.item_title,
@@ -168,6 +181,8 @@ export function mapTransferToOrderDto(
     allowLegacyComplete: row.allow_legacy_complete,
     handoffVer: row.handoff_version,
     revokedParticipants: revoked,
+    activeInvitation,
+    attachments: extras?.attachments ?? [],
   };
 }
 

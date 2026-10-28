@@ -46,6 +46,23 @@ export type TanTrackerScopeContext = {
   previewReadOnly: boolean;
 };
 
+export type TanTrackerActiveInvitationDto = {
+  hv: number;
+  pendingId: string;
+  holderId: string;
+  item: string;
+  id: string;
+};
+
+export type TanTrackerAttachmentDto = {
+  id: string;
+  name: string;
+  mimeType: string;
+  byteSize: number;
+  addedAt: number;
+  addedBy?: string | null;
+};
+
 export type TanTrackerOrderDto = {
   id: string;
   item: string;
@@ -62,6 +79,8 @@ export type TanTrackerOrderDto = {
   allowLegacyComplete?: boolean;
   handoffVer?: number;
   revokedParticipants?: string[];
+  activeInvitation?: TanTrackerActiveInvitationDto | null;
+  attachments?: TanTrackerAttachmentDto[];
 };
 
 export type TanTrackerContactDto = {

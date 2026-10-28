@@ -7,6 +7,7 @@ import { getTanTrackerBootstrapHandler } from "./handlers";
 import { generateHandoffCodeHandler, verifyHandoffCodeHandler } from "./handoff-mutations";
 import { createTransferHandler } from "./mutations";
 import { cancelPendingHandler, changePendingHandler } from "./pending-mutations";
+import { downloadAttachmentHandler } from "./attachments";
 
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
@@ -19,6 +20,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.get("/bootstrap", ...readChain, (req, res, next) => {
     void getTanTrackerBootstrapHandler(req, res).catch(next);
+  });
+
+  router.get("/transfers/:id/attachments/:attId", ...readChain, (req, res, next) => {
+    void downloadAttachmentHandler(req, res).catch(next);
   });
 
   // Placeholder for upcoming mutations (create/handoff/attachments) — wired with writeChain.

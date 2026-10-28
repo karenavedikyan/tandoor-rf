@@ -1,12 +1,19 @@
-/** Normalize RU mobile to +7XXXXXXXXXX or null if invalid. */
+/** Normalize RU mobile to +7XXXXXXXXXX (12 chars) or null if invalid. */
 export function normalizeRuPhoneE164(raw: string): string | null {
-  const digits = String(raw ?? "").replace(/\D/g, "");
-  let ten = digits;
-  if (ten.length === 11 && (ten.startsWith("7") || ten.startsWith("8"))) {
-    ten = ten.slice(1);
+  let d = String(raw ?? "").replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("77")) {
+    d = d.slice(1);
   }
-  if (ten.length !== 10) return null;
-  return `+7${ten}`;
+  if (d.length === 11 && d.startsWith("8")) {
+    d = `7${d.slice(1)}`;
+  }
+  if (d.length === 11 && d.startsWith("7")) {
+    return `+${d}`;
+  }
+  if (d.length === 10) {
+    return `+7${d}`;
+  }
+  return null;
 }
 
 export function isUuid(value: string): boolean {

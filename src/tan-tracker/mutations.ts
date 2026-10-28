@@ -8,6 +8,7 @@ import { ensurePartyForUserOnWrite, nextPublicTransferCode } from "./repository"
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
+import { linkStagedAttachmentsToTransfer } from "./attachments";
 
 type CreateBody = {
   item?: string;
@@ -18,6 +19,7 @@ type CreateBody = {
   finalRecipientExternal?: ExternalRecipientInput;
   relayPartyId?: string | null;
   relayExternal?: ExternalRecipientInput;
+  stagingAttachmentIds?: string[];
 };
 
 function parseDueAt(raw: string | null | undefined): Date | null {
@@ -111,6 +113,12 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
        VALUES ($1,$2::uuid,$3,'create',$4::jsonb)`,
         [publicCode, auditUserId, holderParty.id, JSON.stringify({ item })],
       );
+      const stagingIds = Array.isArray(body.stagingAttachmentIds)
+        ? body.stagingAttachmentIds.map(String).filter(Boolean).slice(0, 10)
+        : [];
+      if (stagingIds.length) {
+        await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingIds);
+      }
       return publicCode;
     });
   } catch (err: unknown) {

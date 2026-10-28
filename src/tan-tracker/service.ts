@@ -16,6 +16,8 @@ import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import type { TanTrackerContactDto, TanTrackerOrderDto, TanTrackerScopeContext } from "./types";
 import { loadPartyEmployeeMap } from "./party-employee-map";
 import { tanTrackerCanWrite } from "./guards";
+import { loadWholesalePeerUserIds } from "./team-peers";
+import { listAttachmentsForTransfers } from "./attachments";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -74,6 +76,8 @@ export async function buildTanTrackerBootstrap(
   const actorPartyId = party?.id ?? null;
   const teamEmployeeGuids = await loadTanTrackerTeamEmployeeGuids(scopedAccess);
   const teamUserIds = await loadTeamUserIds(teamEmployeeGuids);
+  const peerUserIds = await loadWholesalePeerUserIds(user.id, access.employeeId);
+  const pickerUserIds = [...new Set([...teamUserIds, ...peerUserIds, user.id])];
   const ctx: TanTrackerScopeContext = {
     userId: user.id,
     role: user.role,
@@ -86,6 +90,8 @@ export async function buildTanTrackerBootstrap(
   const allPartyIds = new Set<string>();
   const transferBundles: Array<{
     row: (typeof transfers)[0];
+    timeline: Awaited<ReturnType<typeof listTimelineForTransfer>>;
+    revoked: string[];
     dto: TanTrackerOrderDto;
   }> = [];
 
@@ -93,30 +99,37 @@ export async function buildTanTrackerBootstrap(
     const timeline = await listTimelineForTransfer(pool, row.id);
     const revoked = await listRevokedParties(pool, row.id);
     const dto = mapTransferToOrderDto(row, timeline, revoked);
-    transferBundles.push({ row, dto });
+    transferBundles.push({ row, timeline, revoked, dto });
     for (const pid of collectParticipantPartyIds(dto)) allPartyIds.add(pid);
   }
 
   const partyEmployeeMap = await loadPartyEmployeeMap(pool, [...allPartyIds]);
 
-  const visibleIds: string[] = [];
-  for (const { dto } of transferBundles) {
+  const visibleTransferIds: string[] = [];
+  const visiblePublicCodes: string[] = [];
+  for (const { dto, row } of transferBundles) {
     if (canViewOrder(dto, ctx, [], teamEmployeeGuids, false, partyEmployeeMap)) {
-      visibleIds.push(dto.id);
+      visibleTransferIds.push(row.id);
+      visiblePublicCodes.push(dto.id);
     }
   }
+
+  const attachmentMap = await listAttachmentsForTransfers(pool, visibleTransferIds);
 
   const partyRows = await listScopedPartyRows(pool, {
     actorPartyId,
     userId: user.id,
-    visibleTransferIds: visibleIds,
-    teamUserIds,
+    visibleTransferIds: visiblePublicCodes,
+    teamUserIds: pickerUserIds,
   });
   const contacts = partyRows.map(partyToContact);
 
   const orders: TanTrackerOrderDto[] = [];
-  for (const { dto } of transferBundles) {
-    if (!visibleIds.includes(dto.id)) continue;
+  for (const { row, timeline, revoked } of transferBundles) {
+    if (!visibleTransferIds.includes(row.id)) continue;
+    const dto = mapTransferToOrderDto(row, timeline, revoked, {
+      attachments: attachmentMap.get(row.id) ?? [],
+    });
     if (canViewOrder(dto, ctx, contacts, teamEmployeeGuids, false, partyEmployeeMap)) {
       orders.push(dto);
     }

@@ -17,6 +17,8 @@ import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
+import { stageAttachmentHandler } from "./tan-tracker/attachments";
+import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
 import { logServerError } from "./http/safe-server-error-log";
@@ -125,6 +127,19 @@ export function createApp(): express.Application {
   app.get("/api/ready", (req, res, next) => {
     void readyHandler(req, res).catch(next);
   });
+
+  app.post(
+    "/api/tan-tracker/staging-attachments",
+    express.raw({ type: "*/*", limit: "11mb" }),
+    requireDatabaseReady,
+    requireAuth,
+    attachAccessContext,
+    blockPreviewWrites,
+    csrfProtection,
+    (req, res, next) => {
+      void stageAttachmentHandler(req, res).catch(next);
+    },
+  );
 
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
 

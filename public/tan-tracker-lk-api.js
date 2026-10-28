@@ -2,6 +2,7 @@
   "use strict";
 
   var api = window.TandoorRf;
+  var ORIGIN = window.location.origin;
 
   function refreshBootstrap() {
     return api.apiRequest("/api/tan-tracker/bootstrap").then(function (result) {
@@ -16,7 +17,37 @@
     });
   }
 
+  function applyBootstrapWithCode(bootstrap, transferId, codePayload) {
+    if (bootstrap && window.TanTrackerPrototype && window.TanTrackerPrototype.hydrateFromServer) {
+      window.TanTrackerPrototype.hydrateFromServer(bootstrap, {
+        preserveCode: { transferId: transferId, code: codePayload },
+      });
+    }
+  }
+
   window.TanTrackerLk = {
+    uploadStagingFile: function (file) {
+      return fetch(ORIGIN + "/api/tan-tracker/staging-attachments", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Origin: ORIGIN,
+          "X-TT-Filename": file.name,
+          "X-TT-Mime-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      })
+        .then(function (response) {
+          return response.json().then(function (data) {
+            if (!response.ok) {
+              throw new Error(
+                (data && data.error && data.error.message) || "Не удалось загрузить файл.",
+              );
+            }
+            return data;
+          });
+        });
+    },
     createTransfer: function (payload) {
       return api
         .apiRequest("/api/tan-tracker/transfers", { method: "POST", body: payload })
@@ -49,10 +80,14 @@
           body: {},
         })
         .then(function (result) {
-          if (result.response.status === 200 && result.data) {
-            if (result.data.bootstrap) {
-              window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
-            }
+          if (result.response.status === 200 && result.data && result.data.code) {
+            var codePayload = {
+              code: result.data.code,
+              expiresAt: result.data.expiresAt,
+              attempts: 0,
+              used: false,
+            };
+            applyBootstrapWithCode(result.data.bootstrap, transferId, codePayload);
             return result.data;
           }
           throw new Error(api.extractErrorMessage(result.data, "Не удалось выпустить код."));

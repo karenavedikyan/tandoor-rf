@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
-import { getPool } from "../../src/db/pool";
+import { after, beforeEach, describe, it } from "node:test";
+import request from "supertest";
+import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
   createTestUser,
   getIntegrationDatabaseUrl,
@@ -8,139 +9,100 @@ import {
   setIntegrationEnv,
 } from "../helpers/test-db";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
-import { createTransferHandler } from "../../src/tan-tracker/mutations";
-import type { AccessRequest } from "../../src/access/middleware";
-import type { Response } from "express";
+import { getPool } from "../../src/db/pool";
 
+const ORIGIN = "http://127.0.0.1:3000";
+const PASSWORD = "StrongPass123!";
 const databaseUrl = getIntegrationDatabaseUrl();
 
-function mockRes(): { res: Response; out: { status: number; body: unknown } } {
-  const out = { status: 200, body: null as unknown };
-  const res = {
-    status(code: number) {
-      out.status = code;
-      return res;
-    },
-    json(payload: unknown) {
-      out.body = payload;
-      return res;
-    },
-  } as unknown as Response;
-  return { res, out };
+function headers(cookie?: string): Record<string, string> {
+  const h: Record<string, string> = { Origin: ORIGIN, "Content-Type": "application/json" };
+  if (cookie) h.Cookie = cookie;
+  return h;
 }
 
-describe("tan-tracker mutation guards", () => {
-  before(async () => {
-    setIntegrationEnv(databaseUrl);
+async function loadApp() {
+  await resetPoolForTests();
+  const { createApp } = await import("../../src/server");
+  return createApp();
+}
+
+async function login(email: string, app: Awaited<ReturnType<typeof loadApp>>) {
+  const res = await request(app).post("/api/auth/login").set(headers()).send({ email, password: PASSWORD });
+  assert.equal(res.status, 200);
+  return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+}
+
+describe("tan-tracker HTTP mutation guards", { concurrency: false }, () => {
+  beforeEach(async () => {
+    setIntegrationEnv(databaseUrl, ORIGIN);
+    await resetPoolForTests();
     await prepareDatabase(databaseUrl);
   });
 
   after(async () => {
-    await getPool()?.end();
+    await closePool();
   });
 
-  it("rejects create with another manager's external contact", async () => {
-    const pool = getPool();
-    assert.ok(pool);
+  it("POST /transfers rejects another manager's external contact", async () => {
     const m1 = await createTestUser({
       databaseUrl,
-      email: "guard-m1@test.local",
-      password: "x",
-      fullName: "Guard M1",
+      email: "http-m1@test.local",
+      password: PASSWORD,
+      fullName: "HTTP M1",
       role: "manager",
     });
     const m2 = await createTestUser({
       databaseUrl,
-      email: "guard-m2@test.local",
-      password: "x",
-      fullName: "Guard M2",
+      email: "http-m2@test.local",
+      password: PASSWORD,
+      fullName: "HTTP M2",
       role: "manager",
     });
+    const pool = getPool();
+    assert.ok(pool);
     const client = await pool.connect();
     let secretPartyId = "";
     try {
-      await ensurePartyForUserOnWrite(client, m1.id, "Guard M1", "+79994444444");
-      await ensurePartyForUserOnWrite(client, m2.id, "Guard M2", "+79995555555");
-      const ins = await client.query<{ id: string }>(
-        `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
-         VALUES ('external', 'Secret', '+79996666666', $1::uuid) RETURNING id::text`,
-        [m2.id],
-      );
-      secretPartyId = ins.rows[0].id;
+      await ensurePartyForUserOnWrite(client, m1.id, "HTTP M1", "+79991112233");
+      await ensurePartyForUserOnWrite(client, m2.id, "HTTP M2", "+79992223344");
+      secretPartyId = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
+           VALUES ('external','Secret','+79993334455',$1::uuid) RETURNING id::text`,
+          [m2.id],
+        )
+      ).rows[0].id;
     } finally {
       client.release();
     }
 
-    const req = {
-      authUser: {
-        id: m1.id,
-        email: "guard-m1@test.local",
-        fullName: "Guard M1",
-        role: "manager",
-        phone: "+79994444444",
-        mustChangePassword: false,
-      },
-      accessContext: {
-        userId: m1.id,
-        role: "manager",
-        status: "active",
-        employeeId: null,
-        employeeLinkConflict: false,
-        hasEmployeeLink: false,
-        hasScopedClientAccess: true,
-        fullClientBase: false,
-        explicitlyDeniedAll: false,
-      },
-      body: { item: "Box", finalRecipientPartyId: secretPartyId },
-    } as unknown as AccessRequest;
-
-    const captured = mockRes();
-    await createTransferHandler(req, captured.res);
-    assert.equal(captured.out.status, 403);
+    const app = await loadApp();
+    const cookie = await login("http-m1@test.local", app);
+    const res = await request(app)
+      .post("/api/tan-tracker/transfers")
+      .set(headers(cookie))
+      .send({ item: "Box", finalRecipientPartyId: secretPartyId });
+    assert.equal(res.status, 403);
   });
 
-  it("rejects marketer create even when party exists", async () => {
-    const pool = getPool();
-    assert.ok(pool);
-    const mk = await createTestUser({
+  it("POST /transfers rejects marketer role", async () => {
+    await createTestUser({
       databaseUrl,
-      email: "marketer@test.local",
-      password: "x",
+      email: "http-marketer@test.local",
+      password: PASSWORD,
       fullName: "Marketer",
       role: "marketer",
     });
-    const client = await pool.connect();
-    try {
-      await ensurePartyForUserOnWrite(client, mk.id, "Marketer", "+79997777777");
-    } finally {
-      client.release();
-    }
-
-    const req = {
-      authUser: {
-        id: mk.id,
-        email: "marketer@test.local",
-        fullName: "Marketer",
-        role: "marketer",
-        phone: "+79997777777",
-        mustChangePassword: false,
-      },
-      accessContext: {
-        userId: mk.id,
-        role: "marketer",
-        status: "active",
-        employeeId: null,
-        employeeLinkConflict: false,
-        hasEmployeeLink: false,
-        hasScopedClientAccess: false,
-        fullClientBase: false,
-        explicitlyDeniedAll: false,
-      },
-      body: { item: "Box", finalRecipientPartyId: "00000000-0000-4000-8000-000000000099" },
-    } as unknown as AccessRequest;
-
-    const captured = mockRes();
-    await createTransferHandler(req, captured.res);
-    assert.equal(captured.out.status, 403);
+    const app = await loadApp();
+    const cookie = await login("http-marketer@test.local", app);
+    const res = await request(app)
+      .post("/api/tan-tracker/transfers")
+      .set(headers(cookie))
+      .send({
+        item: "Box",
+        finalRecipientExternal: { name: "X", phone: "+79001112233" },
+      });
+    assert.equal(res.status, 403);
   });
 });

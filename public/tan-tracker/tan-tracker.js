@@ -1583,7 +1583,19 @@
           break;
         }
         if (r.error) errors.push(r.error);
-        else accepted.push(r.item);
+        else {
+          if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile && target === "create") {
+            try {
+              const uploaded = await window.TanTrackerLk.uploadStagingFile(file);
+              r.item.serverStagingId = uploaded.id;
+            } catch (upErr) {
+              Att().revokeStagingItem(r.item);
+              errors.push(upErr?.message || "Не удалось загрузить файл.");
+              continue;
+            }
+          }
+          accepted.push(r.item);
+        }
       }
       if (attachSnapValid(snap)) {
         if (target === "create") state.attachStaging = [...staging, ...accepted];
@@ -1775,15 +1787,9 @@
     if (o.status === "completed" || !o.pendingId) return null;
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.generateHandoffCode) {
       window.TanTrackerLk.generateHandoffCode(o.id)
-        .then((data) => {
-          o.code = {
-            code: data.code,
-            expiresAt: data.expiresAt,
-            attempts: 0,
-            used: false,
-            forContact: o.pendingId,
-          };
-          state.toast = "Код выпущен.";
+        .then(() => {
+          state.toast = "";
+          state.error = "";
           renderTracker();
         })
         .catch((err) => {
@@ -2014,7 +2020,7 @@
       id,
       kind: "external",
       name: name.trim() || "Внешний получатель",
-      phone: TT_LK ? `+7${phone}` : phone,
+      phone: TT_LK ? `+${phone}` : phone,
       draft: TT_LK,
     };
     contacts.push(c);
@@ -2781,7 +2787,9 @@
   }
 
   function pendingHandoffPanel(o, p) {
-    if (!o.pendingId || !o.activeInvitation) return "";
+    if (!o.pendingId) return "";
+    if (!o.activeInvitation) syncInvitation(o);
+    if (!o.activeInvitation) return "";
     const heroAttr = 'data-tt-detail-hero-primary=""';
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
@@ -2813,11 +2821,24 @@
     </section>`;
   }
 
+  function pendingRecipientCodeBlock(o) {
+    const c = o.code;
+    if (!c || !codeValid(o)) {
+      return `<div class="tt-recipient-step" data-tt="recipient-step-code">${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>`;
+    }
+    return `<div class="tt-recipient-code-block">
+        <span class="tt-recipient-code-display" data-tt="shown-code">${E(c.code)}</span>
+        ${btn("Скопировать", 'data-tt="copy-recipient-code"', "tt-btn-ghost")}
+        <p class="tt-muted">Код действует 5 мин · до ${dt(c.expiresAt)}</p>
+      </div>`;
+  }
+
   function pendingRecipientDetailCard(o, holder) {
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-pending-recipient">
       <h3 class="tt-detail-task-heading">Примите передачу</h3>
       <p class="tt-detail-task-instructions">От <strong>${E(holder?.name || "—")}</strong>. Получите одноразовый код и сообщите его держателю.</p>
-      <div class="tt-detail-primary" data-tt="detail-primary-actions">${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>
+      ${pendingRecipientCodeBlock(o)}
+      ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
     </section>`;
   }
 
@@ -3321,6 +3342,9 @@
           relayContact && (relayContact.draft || isDraftPartyId(f.relayId))
             ? { name: relayContact.name, phone: relayContact.phone }
             : undefined,
+        stagingAttachmentIds: state.attachStaging
+          .map((s) => s.serverStagingId)
+          .filter(Boolean),
       };
       window.TanTrackerLk.createTransfer(payload)
         .then((code) => {
@@ -4083,7 +4107,7 @@
     return { role, person, label };
   }
 
-  function hydrateFromServer(data) {
+  function hydrateFromServer(data, opts) {
     if (!data) return;
     contacts = (data.contacts || []).map((c) => ({
       id: c.id,
@@ -4096,8 +4120,32 @@
     orders = (data.orders || []).map((o) => {
       const copy = { ...o, timeline: [...(o.timeline || [])] };
       if (Sc()?.migrateOrderFields) Sc().migrateOrderFields(copy);
+      if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
+      if (copy.attachments && copy.attachments.length) {
+        copy.attachments = copy.attachments.map((a) => ({
+          id: a.id,
+          name: a.name,
+          mime: a.mimeType || a.mime,
+          size: a.byteSize || a.size,
+          addedAt: a.addedAt,
+          addedBy: a.addedBy,
+          url: `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}`,
+        }));
+      } else {
+        copy.attachments = copy.attachments || [];
+      }
       return copy;
     });
+    if (opts?.preserveCode) {
+      const target = orders.find((x) => x.id === opts.preserveCode.transferId);
+      if (target) {
+        target.code = {
+          ...opts.preserveCode.code,
+          forContact: target.pendingId,
+        };
+        state.codeDemoRevealed = true;
+      }
+    }
     state.ttPrototypeRole = data.prototypeRole || "manager";
     state.ttRoleUnsupported = false;
     state.actingContactId = data.actorPartyId || null;

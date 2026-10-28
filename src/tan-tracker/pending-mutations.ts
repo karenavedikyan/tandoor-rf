@@ -41,9 +41,16 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
     if (!row || !row.pending_party_id) return { ok: false as const, code: 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     const revoked = row.pending_party_id;
-    await client.query(`UPDATE tt_transfers SET pending_party_id = NULL, status = 'active' WHERE id = $1`, [
-      row.id,
-    ]);
+    await client.query(
+      `UPDATE tt_transfers SET pending_party_id = NULL, status = 'active',
+              handoff_version = handoff_version + 1, row_version = row_version + 1 WHERE id = $1`,
+      [row.id],
+    );
+    await client.query(
+      `UPDATE tt_handoff_codes SET consumed_at = NOW()
+       WHERE transfer_id = $1 AND consumed_at IS NULL`,
+      [row.id],
+    );
     await client.query(
       `INSERT INTO tt_transfer_revoked_parties (transfer_id, party_id) VALUES ($1,$2)
        ON CONFLICT DO NOTHING`,
