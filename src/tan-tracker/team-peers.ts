@@ -25,7 +25,7 @@ export async function loadWholesalePeerUserIds(
       UNION
       SELECT $1::text AS user_id
     `,
-    [userId, employeeId],
+    [userId],
   );
   return res.rows.map((r) => r.user_id);
 }

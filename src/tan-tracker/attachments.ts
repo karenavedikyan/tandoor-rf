@@ -26,15 +26,29 @@ function storageRoot(): string {
   return process.env.TT_ATTACHMENTS_DIR?.trim() || path.join(process.cwd(), "var/tt-attachments");
 }
 
-function safeName(name: string): string {
-  return path.basename(name).replace(/[^\w.\-()+ ]/g, "_").slice(0, 200);
+function decodeUploadFilename(rawHeader: string): string {
+  const trimmed = String(rawHeader ?? "").trim();
+  if (!trimmed) return "file";
+  let decoded = trimmed;
+  try {
+    decoded = decodeURIComponent(trimmed);
+  } catch {
+    decoded = trimmed;
+  }
+  decoded = path.basename(decoded).replace(/[\0\r\n/\\]/g, "").slice(0, 200);
+  return decoded || "file";
+}
+
+function contentDispositionFilename(name: string): string {
+  const asciiFallback = name.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_") || "file";
+  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 export async function stageAttachmentHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
   if (!gate) return;
   const { user } = gate;
-  const filename = safeName(String(req.headers["x-tt-filename"] ?? "file"));
+  const filename = decodeUploadFilename(String(req.headers["x-tt-filename"] ?? "file"));
   const mime = String(req.headers["x-tt-mime-type"] ?? "application/octet-stream").toLowerCase();
   const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
   if (!buf.length || buf.length > MAX_FILE_BYTES) {
@@ -163,7 +177,7 @@ export async function downloadAttachmentHandler(req: AccessRequest, res: Respons
   try {
     const data = await fs.readFile(abs);
     res.setHeader("Content-Type", row.mime_type);
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(row.original_name)}"`);
+    res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name));
     res.status(200).send(data);
   } catch {
     setNoStore(res);

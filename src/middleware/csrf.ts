@@ -9,12 +9,7 @@ function normalizeOrigin(value: string): string {
   return value.trim().replace(/\/$/, "");
 }
 
-export function csrfProtection(req: Request, res: Response, next: NextFunction): void {
-  if (!MUTATING_METHODS.has(req.method)) {
-    next();
-    return;
-  }
-
+function rejectCsrf(req: Request, res: Response, next: NextFunction, requireJson: boolean): boolean {
   const appOrigin = getAppOrigin();
   if (!appOrigin) {
     setNoStore(res);
@@ -24,7 +19,7 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction):
         "Сервис временно недоступен. Настройте APP_ORIGIN.",
       ),
     );
-    return;
+    return false;
   }
 
   const originHeader = req.headers.origin;
@@ -33,7 +28,7 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction):
     res.status(403).json(
       apiError(ERROR_CODES.CSRF_REJECTED, "Запрос отклонён из соображений безопасности."),
     );
-    return;
+    return false;
   }
 
   if (normalizeOrigin(originHeader) !== normalizeOrigin(appOrigin)) {
@@ -41,20 +36,39 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction):
     res.status(403).json(
       apiError(ERROR_CODES.CSRF_REJECTED, "Запрос отклонён из соображений безопасности."),
     );
-    return;
+    return false;
   }
 
-  const contentType = req.headers["content-type"] ?? "";
-  if (!contentType.toLowerCase().startsWith("application/json")) {
-    setNoStore(res);
-    res.status(415).json(
-      apiError(
-        ERROR_CODES.INVALID_CONTENT_TYPE,
-        "Ожидается Content-Type: application/json.",
-      ),
-    );
-    return;
+  if (requireJson) {
+    const contentType = req.headers["content-type"] ?? "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      setNoStore(res);
+      res.status(415).json(
+        apiError(
+          ERROR_CODES.INVALID_CONTENT_TYPE,
+          "Ожидается Content-Type: application/json.",
+        ),
+      );
+      return false;
+    }
   }
 
-  next();
+  return true;
+}
+
+/** Origin check only — for raw/binary uploads that are not JSON bodies. */
+export function csrfOriginProtection(req: Request, res: Response, next: NextFunction): void {
+  if (!MUTATING_METHODS.has(req.method)) {
+    next();
+    return;
+  }
+  if (rejectCsrf(req, res, next, false)) next();
+}
+
+export function csrfProtection(req: Request, res: Response, next: NextFunction): void {
+  if (!MUTATING_METHODS.has(req.method)) {
+    next();
+    return;
+  }
+  if (rejectCsrf(req, res, next, true)) next();
 }

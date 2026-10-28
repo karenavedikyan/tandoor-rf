@@ -138,6 +138,7 @@ export function partyToContact(row: PartyRowWithEmployee): TanTrackerContactDto 
     id: row.id,
     name: row.display_name,
     phone: row.phone_e164 ?? "",
+    kind: row.kind,
     employeeId: row.linked_employee_id,
   };
 }

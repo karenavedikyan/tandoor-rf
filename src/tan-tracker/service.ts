@@ -59,6 +59,8 @@ export async function buildTanTrackerBootstrap(
 ): Promise<{
   lkMode: true;
   actorPartyId: string | null;
+  actorContact: { id: string; kind: "user" | "external"; employeeId: string | null } | null;
+  linkedEmployeeId: string | null;
   prototypeRole: string;
   navAllowed: boolean;
   previewReadOnly: boolean;
@@ -135,9 +137,20 @@ export async function buildTanTrackerBootstrap(
     }
   }
 
+  const actorContact =
+    actorPartyId != null
+      ? {
+          id: actorPartyId,
+          kind: (party?.kind ?? "user") as "user" | "external",
+          employeeId: access.employeeId,
+        }
+      : null;
+
   return {
     lkMode: true,
     actorPartyId,
+    actorContact,
+    linkedEmployeeId: access.employeeId,
     prototypeRole: mapRoleToPrototype(user.role),
     navAllowed: tanTrackerNavAllowed(user.role),
     previewReadOnly: ctx.previewReadOnly,

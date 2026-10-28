@@ -293,7 +293,7 @@
     return ext || "FILE";
   }
 
-  function itemHtml(a, { readonly, isStaged, orderId }) {
+  function itemHtml(a, { readonly, isStaged, orderId, allowServerDelete }) {
     const prev = canPreview(a.mime);
     const docLabel = shortDocLabel(a.mime, a.name);
     const ext = extOf(a.name);
@@ -319,7 +319,14 @@
     const rm =
       !readonly && isStaged
         ? attActionChip("Убрать", "remove", `data-tt="attach-remove" data-staging-id="${E(a.id)}"`, "tt-att-action--remove")
-        : "";
+        : !readonly && allowServerDelete && a.url && !a.demo
+          ? attActionChip(
+              "Удалить",
+              "delete",
+              `data-tt="attach-delete" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}"`,
+              "tt-att-action--remove",
+            )
+          : "";
     return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">Скачайте PDF, чтобы открыть его на устройстве.</span>` : ""}<div class="tt-att-actions">${openBtn}${dl}${rm}</div></div></li>`;
   }
 
@@ -339,6 +346,7 @@
       pickerMode = "native",
       compact = false,
       omitResetNote = false,
+      allowServerDelete = false,
     } = opts;
     const inputId = `tt-att-file-${inputKey}`;
     const stagedSet = stagedIds instanceof Set ? stagedIds : stagedIds ? new Set(stagedIds) : null;
@@ -350,6 +358,7 @@
                 readonly,
                 isStaged: !!(stagedSet && stagedSet.has(a.id)),
                 orderId,
+                allowServerDelete,
               })
             )
             .join("")}</ul>`

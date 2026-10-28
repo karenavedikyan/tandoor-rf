@@ -87,6 +87,13 @@ export type TanTrackerContactDto = {
   id: string;
   name: string;
   phone: string;
+  kind: TanTrackerPartyKind;
   employeeId?: string | null;
   team?: string | null;
+};
+
+export type TanTrackerActorContactDto = {
+  id: string;
+  kind: TanTrackerPartyKind;
+  employeeId?: string | null;
 };

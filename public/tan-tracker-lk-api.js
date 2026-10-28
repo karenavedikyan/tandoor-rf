@@ -32,7 +32,7 @@
         credentials: "same-origin",
         headers: {
           Origin: ORIGIN,
-          "X-TT-Filename": file.name,
+          "X-TT-Filename": encodeURIComponent(file.name),
           "X-TT-Mime-Type": file.type || "application/octet-stream",
         },
         body: file,
@@ -52,11 +52,17 @@
       return api
         .apiRequest("/api/tan-tracker/transfers", { method: "POST", body: payload })
         .then(function (result) {
-          if (result.response.status === 201 && result.data && result.data.bootstrap) {
-            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
-            return result.data.publicCode;
+          if (result.response.status !== 201 || !result.data || !result.data.publicCode) {
+            throw new Error(api.extractErrorMessage(result.data, "Не удалось создать передачу."));
           }
-          throw new Error(api.extractErrorMessage(result.data, "Не удалось создать передачу."));
+          if (result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+          } else if (result.data.refreshRequired) {
+            return refreshBootstrap().then(function () {
+              return result.data.publicCode;
+            });
+          }
+          return result.data.publicCode;
         });
     },
     verifyHandoffCode: function (transferId, code) {
@@ -122,5 +128,36 @@
         });
     },
     refreshBootstrap: refreshBootstrap,
+    addTransferAttachments: function (transferId, stagingAttachmentIds) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/attachments",
+          { method: "POST", body: { stagingAttachmentIds: stagingAttachmentIds } },
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return true;
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось прикрепить файлы."));
+        });
+    },
+    deleteTransferAttachment: function (transferId, attachmentId) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" +
+            encodeURIComponent(transferId) +
+            "/attachments/" +
+            encodeURIComponent(attachmentId),
+          { method: "DELETE", body: {} },
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return true;
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось удалить файл."));
+        });
+    },
   };
 })();

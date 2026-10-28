@@ -78,7 +78,7 @@
   }
 
   function actorContactId() {
-    if (TT_LK) return state.actingContactId || state.employeeId || null;
+    if (TT_LK) return state.actingContactId || state.lkActorPartyId || null;
     return state.actingContactId || employeeContact(state.employeeId)?.id;
   }
 
@@ -87,7 +87,7 @@
     const role = state.ttRoleUnsupported ? null : state.ttPrototypeRole || "manager";
     return {
       prototypeRole: role,
-      employeeId: state.employeeId,
+      employeeId: TT_LK ? state.lkLinkedEmployeeId || null : state.employeeId,
       actorContactId: actor,
       contacts,
       employees,
@@ -490,6 +490,8 @@
     codeDemoRevealed: false,
     detailAttDisclosureOpen: null,
     registryFilterSheet: false,
+    lkActorPartyId: null,
+    lkLinkedEmployeeId: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -618,7 +620,8 @@
 
   function isExternalShell() {
     if (state.recipientMode) return false;
-    const c = state.actingContactId && contactById(state.actingContactId);
+    const actor = state.actingContactId || (TT_LK ? state.lkActorPartyId : null);
+    const c = actor && contactById(actor);
     return !!(c && c.kind === "external");
   }
 
@@ -1157,6 +1160,7 @@
       title: compact ? "Файлы" : "Фото и файлы",
       pickerLabel: compact ? "Добавить фото или файл" : "Прикрепить фото или файл",
       pickerMode: compact ? "button" : "native",
+      allowServerDelete: !!opts.allowServerDelete,
     });
   }
 
@@ -1584,7 +1588,7 @@
         }
         if (r.error) errors.push(r.error);
         else {
-          if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile && target === "create") {
+          if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile) {
             try {
               const uploaded = await window.TanTrackerLk.uploadStagingFile(file);
               r.item.serverStagingId = uploaded.id;
@@ -1600,8 +1604,27 @@
       if (attachSnapValid(snap)) {
         if (target === "create") state.attachStaging = [...staging, ...accepted];
         else if (order && accepted.length) {
-          Att().mergeToOrder(order, accepted, addedBy);
-          state.toast = `Добавлено файлов: ${accepted.length}.`;
+          if (
+            TT_LK &&
+            window.TanTrackerLk &&
+            window.TanTrackerLk.addTransferAttachments &&
+            accepted.every((x) => x.serverStagingId)
+          ) {
+            try {
+              await window.TanTrackerLk.addTransferAttachments(
+                order.id,
+                accepted.map((x) => x.serverStagingId),
+              );
+              accepted.forEach((x) => Att().revokeStagingItem(x));
+              state.toast = `Добавлено файлов: ${accepted.length}.`;
+            } catch (upErr) {
+              Att().revokeStagingItems(accepted);
+              errors.push(upErr?.message || "Не удалось сохранить файлы на сервере.");
+            }
+          } else {
+            Att().mergeToOrder(order, accepted, addedBy);
+            state.toast = `Добавлено файлов: ${accepted.length}.`;
+          }
         }
         if (errors.length) state.attachError = errors.slice(0, 3).join(" ");
       } else Att().revokeStagingItems(accepted);
@@ -2166,8 +2189,10 @@
       state.ttRoleUnsupported = false;
       state.ttRequestedRole = "";
       state.ttPrototypeRole = window.__TT_LK_BOOTSTRAP__.prototypeRole || "manager";
-      state.actingContactId = window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
-      state.employeeId = window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
+      state.lkActorPartyId = window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
+      state.lkLinkedEmployeeId = window.__TT_LK_BOOTSTRAP__.linkedEmployeeId || null;
+      state.actingContactId =
+        window.__TT_LK_BOOTSTRAP__.actorContact?.id || window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
     }
     const resolved = TT_LK && window.__TT_LK_BOOTSTRAP__
       ? { unsupported: false, role: state.ttPrototypeRole, person: null, explicit: false, requested: "" }
@@ -2982,6 +3007,7 @@
           omitTitle: true,
           inputKey: "detail",
           items: attItems,
+          allowServerDelete: TT_LK && isHolder && o.status !== "completed",
         })}</div>
       </details>
       </div>
@@ -3937,6 +3963,24 @@
       renderTracker();
       return;
     }
+    if (action === "attach-delete" && o && TT_LK && window.TanTrackerLk?.deleteTransferAttachment) {
+      const attId = b.getAttribute("data-att-id");
+      if (!attId) return;
+      state.attachBusy = true;
+      renderTracker();
+      window.TanTrackerLk.deleteTransferAttachment(o.id, attId)
+        .then(() => {
+          state.toast = "Файл удалён.";
+        })
+        .catch((err) => {
+          state.attachError = err?.message || "Не удалось удалить файл.";
+        })
+        .finally(() => {
+          state.attachBusy = false;
+          renderTracker();
+        });
+      return;
+    }
     if (action === "attach-preview") {
       const attId = b.getAttribute("data-att-id");
       const oid = b.getAttribute("data-order") || state.orderId;
@@ -4115,11 +4159,11 @@
       phone: c.phone || "",
       employeeId: c.employeeId || null,
       team: c.team || null,
-      kind: c.kind || (c.employeeId ? "user" : "external"),
+      kind: c.kind ?? (data.lkMode ? "user" : c.employeeId ? "user" : "external"),
     }));
     orders = (data.orders || []).map((o) => {
       const copy = { ...o, timeline: [...(o.timeline || [])] };
-      if (Sc()?.migrateOrderFields) Sc().migrateOrderFields(copy);
+      if (!data.lkMode && Sc()?.migrateOrderFields) Sc().migrateOrderFields(copy);
       if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
       if (copy.attachments && copy.attachments.length) {
         copy.attachments = copy.attachments.map((a) => ({
@@ -4148,8 +4192,9 @@
     }
     state.ttPrototypeRole = data.prototypeRole || "manager";
     state.ttRoleUnsupported = false;
-    state.actingContactId = data.actorPartyId || null;
-    state.employeeId = data.actorPartyId || null;
+    state.lkActorPartyId = data.actorPartyId || null;
+    state.lkLinkedEmployeeId = data.linkedEmployeeId || null;
+    state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     state.recipientMode = false;
     bumpAttachOpGen();
     renderTracker();

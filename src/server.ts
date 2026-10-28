@@ -10,7 +10,7 @@ import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
 import { startNightlyExchangeScheduler } from "./onec-nightly-exchange/scheduler";
 import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
-import { csrfProtection } from "./middleware/csrf";
+import { csrfOriginProtection, csrfProtection } from "./middleware/csrf";
 import { requireDatabaseReady } from "./middleware/database";
 import { createAccessAdminRouter, createAccessRouter } from "./access/router";
 import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
@@ -135,7 +135,7 @@ export function createApp(): express.Application {
     requireAuth,
     attachAccessContext,
     blockPreviewWrites,
-    csrfProtection,
+    csrfOriginProtection,
     (req, res, next) => {
       void stageAttachmentHandler(req, res).catch(next);
     },

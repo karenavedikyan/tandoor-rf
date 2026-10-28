@@ -134,10 +134,18 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
     throw err;
   }
 
-  const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
   setNoStore(res);
-  res.status(201).json({
-    publicCode: created,
-    bootstrap,
-  });
+  try {
+    const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
+    res.status(201).json({
+      publicCode: created,
+      bootstrap,
+    });
+  } catch {
+    res.status(201).json({
+      publicCode: created,
+      bootstrap: null,
+      refreshRequired: true,
+    });
+  }
 }

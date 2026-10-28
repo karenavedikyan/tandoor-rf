@@ -8,6 +8,7 @@ import { generateHandoffCodeHandler, verifyHandoffCodeHandler } from "./handoff-
 import { createTransferHandler } from "./mutations";
 import { cancelPendingHandler, changePendingHandler } from "./pending-mutations";
 import { downloadAttachmentHandler } from "./attachments";
+import { addTransferAttachmentsHandler, deleteTransferAttachmentHandler } from "./attachment-mutations";
 
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
@@ -45,6 +46,14 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/transfers/:id/pending/change", csrfProtection, ...writeChain, (req, res, next) => {
     void changePendingHandler(req, res).catch(next);
+  });
+
+  router.post("/transfers/:id/attachments", csrfProtection, ...writeChain, (req, res, next) => {
+    void addTransferAttachmentsHandler(req, res).catch(next);
+  });
+
+  router.delete("/transfers/:id/attachments/:attId", csrfProtection, ...writeChain, (req, res, next) => {
+    void deleteTransferAttachmentHandler(req, res).catch(next);
   });
 
   return router;
