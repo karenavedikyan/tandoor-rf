@@ -1308,6 +1308,8 @@
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
+    if (state.employeeId && employees[state.employeeId] && !state.ttRoleUnsupported) p.set("tt_emp", state.employeeId);
+    else p.delete("tt_emp");
     if (state.view !== "list") p.set("tt_screen", state.view);
     else p.delete("tt_screen");
     if (state.orderId && !state.recipientMode) p.set("tt_id", state.orderId);
@@ -1328,7 +1330,14 @@
     };
     state.ttRoleUnsupported = resolved.unsupported;
     state.ttRequestedRole = resolved.requested || "";
-    state.ttPrototypeRole = resolved.unsupported ? "manager" : resolved.role || "manager";
+    const ttEmp = p.get("tt_emp");
+    if (!resolved.unsupported && ttEmp && employees[ttEmp]) {
+      state.employeeId = ttEmp;
+      state.ttPrototypeRole = Sc().effectiveRoleForEmployee(ttEmp);
+      lastPrototypeRoleSynced = state.ttPrototypeRole;
+    } else {
+      state.ttPrototypeRole = resolved.unsupported ? "manager" : resolved.role || "manager";
+    }
     state.recipientMode = p.get("tt_view") === "recipient";
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
@@ -1342,7 +1351,7 @@
     if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
-    syncEmployeeFromRole(resolved.person || null);
+    if (!(ttEmp && employees[ttEmp] && !resolved.unsupported)) syncEmployeeFromRole(resolved.person || null);
     if (state.view === "create") {
       const ph = p.get("tt_cphase");
       const allowed = new Set([
@@ -1745,8 +1754,11 @@
       ? ""
       : ext
         ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
-        : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.entries(employees)
-            .map(([id, e]) => `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(e.name)}</option>`)
+        : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.keys(employees)
+            .map((id) => {
+              const label = Sc()?.employeeDemoOptionLabel?.(id, employees) || employees[id].name;
+              return `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(label)}</option>`;
+            })
             .join("")}</select></label>`;
 
     if (!ttShellMounted) {
@@ -2315,8 +2327,13 @@
       state.attachBusy = false;
       state.attachBusyGen = null;
       state.employeeId = e.target.value;
+      if (!state.ttRoleUnsupported && Sc()?.effectiveRoleForEmployee) {
+        state.ttPrototypeRole = Sc().effectiveRoleForEmployee(state.employeeId);
+        lastPrototypeRoleSynced = state.ttPrototypeRole;
+      }
       state.actingContactId = null;
       clearCompleteConfirm();
+      writeUrl();
       renderTracker();
     }
     if (e.target.matches('[data-tt="attach-input"]')) {

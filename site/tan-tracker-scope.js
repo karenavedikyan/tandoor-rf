@@ -15,7 +15,38 @@
     coordinator: "c1",
   };
 
+  const EMPLOYEE_PROTOTYPE_ROLE = {
+    d1: "director",
+    r1: "rop",
+    r2: "rop",
+    m1: "manager",
+    m2: "manager",
+    m3: "manager",
+    a1: "assistant",
+    c1: "coordinator",
+  };
+
+  const DEMO_ROLE_LABEL = {
+    director: "Директор",
+    rop: "РОП",
+    manager: "Менеджер",
+    assistant: "Ассистент",
+    coordinator: "Координатор",
+  };
+
   const TT_SUPPORTED_ROLES = new Set(Object.keys(ROLE_EMPLOYEE));
+
+  function effectiveRoleForEmployee(empId) {
+    return EMPLOYEE_PROTOTYPE_ROLE[empId] || "manager";
+  }
+
+  function employeeDemoOptionLabel(empId, employees) {
+    const e = employees?.[empId];
+    if (!e) return empId;
+    const role = effectiveRoleForEmployee(empId);
+    const roleLabel = DEMO_ROLE_LABEL[role] || role;
+    return `${e.name} · ${roleLabel}`;
+  }
 
   function normalizeTanTrackerRole(raw) {
     if (!raw) return null;
@@ -245,6 +276,9 @@
     employeeIdsInTeam,
     prototypeRoleKey,
     contactEmployeeId,
+    effectiveRoleForEmployee,
+    employeeDemoOptionLabel,
+    DEMO_ROLE_LABEL,
   };
 
   window.TanTrackerNotifications = {
