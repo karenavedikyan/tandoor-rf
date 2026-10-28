@@ -76,8 +76,8 @@ var TT_INGEST_QA = await (async () => {
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
   await ttOpenRecipientList();
   await page.locator('[data-tt-pick="ext_02"]').click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="recipient-selected"]').waitFor({ state: "visible" });
+  await ttWizardRecipientToReview();
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   const orderId = await page.evaluate(() => window.TanTrackerPrototype.state.orderId);

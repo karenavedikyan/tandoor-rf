@@ -85,9 +85,9 @@ var TT_WIZ_ATT_CARDS_QA = await (async () => {
   ]);
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="attach-list"] .tt-att-item').count()) === 2, "two staged files render");
-
+  await ttWaitAttThumbLoaded();
   const nw = await page.locator(".tt-att-thumb img").first().evaluate((img) => img.naturalWidth);
-  ok(nw > 0, "valid thumbnail naturalWidth>0");
+  ok(nw > 0, "valid thumbnail naturalWidth>0 after load settles");
 
   ok((await page.locator(".tt-att-action-label", { hasText: "Открыть" }).count()) >= 1, "Открыть label visible");
   ok((await page.locator(".tt-att-action-label", { hasText: "Скачать" }).count()) >= 2, "Скачать labels on items");
@@ -155,7 +155,7 @@ var TT_WIZ_ATT_CARDS_QA = await (async () => {
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "review retains one file after remove");
 
-  await page.locator('[data-tt="back-list"]').click();
+  await ttExitWizardToRegistry();
   await page.locator('[data-tt-open="TT-2026-001"]').first().click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   ok((await page.locator(".tt-att-compact .tt-att-action").count()) >= 1, "detail compact uses action chips");

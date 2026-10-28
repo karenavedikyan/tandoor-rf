@@ -36,9 +36,13 @@ var TT_WIZ_QA = await (async () => {
 
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   await waitWizardTitle("recipient", "Кому нужно доставить");
+  ok((await page.getByRole("button", { name: "Далее", exact: true }).count()) === 0, "recipient chooser hides Далее until confirmed");
+  await ttOpenRecipientList();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
-  ok((await page.locator('[data-tt="form-error"]').textContent()).includes("получ"), "recipient required");
+  ok((await page.locator('[data-tt="form-error"]').textContent()).includes("получ"), "recipient required on list without pick");
 
+  await page.locator('[data-tt="create-recipient-back-choose"]').click();
+  await page.locator('[data-tt="recipient-choose"]').waitFor({ state: "visible" });
   await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
@@ -51,8 +55,7 @@ var TT_WIZ_QA = await (async () => {
   await waitWizardTitle("files", "Фото и файлы");
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   await waitWizardTitle("recipient", "Кому нужно доставить");
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await waitWizardTitle("review", "Проверить и создать");
+  await ttWizardRecipientToReview();
   ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("edited"), "edit from summary returns to step");
 
   await page.locator('[data-tt="create-edit-comment"]').click();
@@ -85,16 +88,10 @@ var TT_WIZ_QA = await (async () => {
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitWizardTitle("recipient", "Кому нужно доставить");
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await waitWizardTitle("review", "Проверить и создать");
+  await ttWizardRecipientToReview();
   ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "back/forward retains staged files");
 
-  for (let i = 0; i < 4; i++) {
-    const back = page.getByRole("button", { name: "Назад", exact: true });
-    if (!(await back.count())) break;
-    await back.click();
-  }
-  await page.locator('[data-tt="back-list"]').click();
+  await ttExitWizardToRegistry();
   await page.locator("#tt-root").waitFor({ state: "visible" });
 
   await page.locator('[data-tt-main-cta]').first().click();

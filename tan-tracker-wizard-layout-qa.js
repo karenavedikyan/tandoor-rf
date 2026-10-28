@@ -48,8 +48,12 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
     });
     ok(hit.ok, "375px last contact row hit target not occluded by sticky actions");
     ok(hit.pad >= 100, "375px wizard body reserves space above sticky actions");
+    const pickedLabel = await last.evaluate((el) => el.querySelector(".tt-wizard-contact-name")?.textContent?.trim() || "");
+    ok(!!pickedLabel, "375px last contact row has readable name before pick");
     await last.click();
-    ok((await last.getAttribute("aria-pressed")) === "true", "375px last contact row clickable after scroll");
+    await page.locator('[data-tt="recipient-selected"]').waitFor({ state: "visible" });
+    ok((await page.locator(".tt-wizard-recipient-selected-name").textContent()).includes(pickedLabel.split(/\s+/)[0]), "375px pick shows selected summary card");
+    ok((await page.locator(".tt-wizard-contact").count()) === 0, "375px list replaced by summary after pick");
   };
 
   const assertReviewHierarchy = async () => {
@@ -95,13 +99,12 @@ var TT_WIZ_LAYOUT_QA = await (async () => {
   await assertStickyClearance();
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('[data-tt="create-recipient-change"]').click();
+  await page.locator('[data-tt="contact-pick"]').waitFor({ state: "visible" });
   await assertContactCards("desktop step3");
 
-  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").first().click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
+  await ttWizardRecipientToReview();
   await assertReviewHierarchy();
 
   return { passed: checks.length, checks };

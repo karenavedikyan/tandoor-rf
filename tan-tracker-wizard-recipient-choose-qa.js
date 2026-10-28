@@ -58,7 +58,7 @@ var TT_WIZ_RECIPIENT_QA = await (async () => {
   await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="route-stop-final"]').textContent()).includes("Ольга"), "change recipient updates review route");
 
-  await page.locator('[data-tt="back-list"]').click();
+  await ttExitWizardToRegistry();
   await page.locator('[data-tt="create"]').click();
   await page.locator('[data-tt-field="item"]').fill("Recipient new path");
   await page.getByRole("button", { name: "Далее", exact: true }).click();

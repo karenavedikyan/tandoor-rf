@@ -13,6 +13,17 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   };
 
   const assertHandoffLayout = async (label) => {
+    const relayLink = page.locator('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]');
+    await relayLink.evaluate((link) => link.scrollIntoView({ block: "center", inline: "nearest" }));
+    await page.evaluate(() => {
+      const link = document.querySelector('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]');
+      const body = document.querySelector(".tt-wizard-body");
+      const bar = document.querySelector(".tt-wizard-actions");
+      if (!link || !body || !bar) return;
+      const lr = link.getBoundingClientRect();
+      const br = bar.getBoundingClientRect();
+      if (lr.bottom > br.top - 10) body.scrollTop += lr.bottom - br.top + 20;
+    });
     const layout = await page.evaluate(() => {
       const row = document.querySelector('[data-tt="route-stop-final"]');
       const btn = row?.querySelector('[data-tt="create-edit-relay"]');
@@ -21,13 +32,20 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
       const br = btn.getBoundingClientRect();
       const hr = hint.getBoundingClientRect();
       const vw = document.documentElement.clientWidth;
-      return {
-        ok: br.right <= vw + 1 && br.bottom <= hr.bottom + 2 && br.width >= 44 && br.height >= 44,
-        btnRight: br.right,
-        vw,
-      };
+      const separated = br.top >= hr.bottom - 2 || hr.top >= br.bottom - 2;
+      const inViewport = br.right <= vw + 1 && br.left >= -1;
+      const sizeOk = br.width >= 44 && br.height >= 44;
+      const cx = br.left + br.width / 2;
+      const cy = br.top + br.height / 2;
+      const topEl = document.elementFromPoint(cx, cy);
+      const hit = !!(topEl && (btn.contains(topEl) || topEl === btn));
+      return { ok: separated && inViewport && sizeOk && hit };
     });
-    ok(layout.ok, `${label}: relay CTA fits viewport without overlapping hint`);
+    ok(layout.ok, `${label}: relay CTA separated from hint, 44px+, hit-test clickable`);
+    await relayLink.click();
+    await page.locator('[data-create-phase="relay-pick"]').waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Назад", exact: true }).click();
+    await waitReview();
   };
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
@@ -99,8 +117,7 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   });
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await waitReview();
+  await ttWizardRecipientToReview();
   ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("relay chain"), "edit item preserved through relay flow");
   ok((await page.locator('[data-tt="wizard-review"]').textContent()).includes("1 файл"), "staged file preserved after edit loops");
 
@@ -113,6 +130,7 @@ var TT_WIZ_RELAY_COPY_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("Relay copy QA direct order");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
+  await ttOpenRecipientList();
   await page.locator(".tt-wizard-contact").filter({ hasText: "Ольга Магазин" }).first().click();
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await waitReview();

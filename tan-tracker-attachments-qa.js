@@ -37,6 +37,7 @@ var TT_ATT_QA = await (async () => {
   ]);
   await page.locator('[data-tt="attach-list"] .tt-att-item').first().waitFor({ state: "visible" });
   ok((await page.locator('[data-tt="attach-list"] .tt-att-item').count()) === 2, "create stages multiple files");
+  await ttWaitAttThumbLoaded();
   const nw = await page.locator(".tt-att-thumb img").first().evaluate((img) => img.naturalWidth);
   ok(nw > 0, "thumbnail image loads with naturalWidth>0");
   await page.locator(".tt-att-item", { hasText: "qa-note.txt" }).locator('[data-tt="attach-remove"]').click();
@@ -54,12 +55,12 @@ var TT_ATT_QA = await (async () => {
   await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
   await ttOpenRecipientList();
   await page.locator('[data-tt-pick="ext_02"]').click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.getByRole("button", { name: "Далее", exact: true }).click();
-  await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="recipient-selected"]').waitFor({ state: "visible" });
+  await ttWizardRecipientToReview();
   await page.getByRole("button", { name: "Создать передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  ok((await page.locator('[data-tt="attachments"] .tt-att-item').count()) >= 1, "create saved with attachment");
+  await page.locator('[data-tt="detail-attachments-disclosure"] summary').click();
+  ok((await page.locator('[data-tt="detail-attachments-disclosure"] .tt-att-item').count()) >= 1, "create saved with attachment");
 
   const orderId = await page.evaluate(() => window.TanTrackerPrototype.orders().find((x) => x.item === "Attach QA")?.id);
   ok(!!orderId, "created order in memory");
@@ -87,17 +88,35 @@ var TT_ATT_QA = await (async () => {
   ok(Buffer.concat(dlChunks).length > 0, "download has nonzero bytes");
 
   await page.locator('[data-tt="exit-recipient"]').click();
-  await page.locator('[data-tt="attach-input"]').setInputFiles({
+  const attPanel = page.locator('[data-tt="detail-attachments-disclosure"]');
+  if (!(await attPanel.evaluate((el) => el.open))) await attPanel.locator("summary").click();
+  ok(await attPanel.evaluate((el) => el.open), "holder opens attachments disclosure before append");
+  await page.locator('[data-tt="detail-attachments-disclosure"] [data-tt="attach-input"]').setInputFiles({
     name: "holder-add.png",
     mimeType: "image/png",
     buffer: Buffer.from(png1x1, "base64"),
   });
-  await page.locator('[data-tt="attachments"] .tt-att-item').filter({ hasText: "holder-add" }).waitFor({ state: "visible" });
+  await page.waitForFunction(
+    (id) => {
+      const o = window.TanTrackerPrototype.orders().find((x) => x.id === id);
+      return o && o.attachments.some((a) => String(a.name || "").includes("holder-add"));
+    },
+    orderId,
+    { timeout: 10000 }
+  );
+  ok(await attPanel.evaluate((el) => el.open), "attachments disclosure stays open after holder upload rerender");
+  const holderItem = page.locator('[data-tt="detail-attachments-disclosure"] .tt-att-item').filter({ hasText: "holder-add" });
+  await holderItem.waitFor({ state: "visible" });
+  await ttWaitAttThumbLoaded();
   const attCount = await page.evaluate((id) => window.TanTrackerPrototype.orders().find((o) => o.id === id).attachments.length, orderId);
   ok(attCount >= 2, "holder appended attachment on detail");
 
   await page.setViewportSize({ width: 375, height: 812 });
-  ok(await page.locator('[data-tt="attachments"]').isVisible(), "attachments block visible at 375px");
+  ok(await page.locator('[data-tt="detail-attachments-disclosure"]').isVisible(), "attachments disclosure visible at 375px");
+  ok(
+    (await page.locator('[data-tt="detail-attachments-disclosure"] .tt-att-item').filter({ hasText: "holder-add" }).count()) >= 1,
+    "holder-added file listed inside open attachments disclosure at 375px"
+  );
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${base}/#tan-tracker?role=manager`);

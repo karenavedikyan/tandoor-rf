@@ -60,6 +60,28 @@ var TT_WIZ_REVIEW_ROUTE_QA = await (async () => {
   ok((await page.locator('[data-tt="route-stop-final"]').textContent()).includes("Сергей"), "final unchanged with relay");
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  const relayLayout = await page.evaluate(() => {
+    const scheme = document.querySelector(".tt-wizard-route-scheme--relay");
+    if (!scheme || getComputedStyle(scheme).flexDirection !== "column") return { ok: false, why: "not-column" };
+    const person =
+      scheme.querySelector('[data-tt="review-handoff"] .tt-wizard-route-person') ||
+      scheme.querySelector(".tt-wizard-route-person");
+    const name = person?.querySelector(".tt-wizard-review-person-name");
+    const phone = person?.querySelector(".tt-wizard-review-person-phone");
+    const nr = name?.getBoundingClientRect();
+    const pr = phone?.getBoundingClientRect();
+    const stacked = !!(nr && pr && pr.top >= nr.bottom - 2);
+    const tops = [...scheme.querySelectorAll(".tt-wizard-route-stop")].map((s) => s.getBoundingClientRect().top);
+    const verticalStops = tops.length === 3 && tops.every((t, i) => i === 0 || t >= tops[i - 1] - 2);
+    const arrows = [...scheme.querySelectorAll(".tt-wizard-route-connector .tt-wizard-route-arrow")];
+    const verticalArrows = arrows.length === 2 && arrows.every((a) => {
+      const r = a.getBoundingClientRect();
+      return r.height >= 18 && r.width <= 4;
+    });
+    return { ok: stacked && verticalStops && verticalArrows };
+  });
+  ok(relayLayout.ok, "1440px relay route vertical stack name/phone lines connected");
+
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });

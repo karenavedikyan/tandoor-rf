@@ -45,6 +45,42 @@ globalThis.ttOpenRecipientList = async () => {
     await page.locator('[data-tt="contact-pick"]').waitFor({ state: "visible" });
   }
 };
+globalThis.ttExitWizardToRegistry = async () => {
+  for (let i = 0; i < 10; i++) {
+    if ((await page.locator('[data-tt="create-wizard"]').count()) === 0) {
+      await page.locator("#tt-root").waitFor({ state: "visible" });
+      return;
+    }
+    if (await page.locator('[data-tt="back-list"]').count()) {
+      await page.locator('[data-tt="back-list"]').click();
+      await page.locator("#tt-root").waitFor({ state: "visible" });
+      return;
+    }
+    const back = page.getByRole("button", { name: "Назад", exact: true });
+    if (await back.count()) {
+      await back.click();
+      continue;
+    }
+    throw new Error("ttExitWizardToRegistry: no Назад or Отмена control");
+  }
+  throw new Error("ttExitWizardToRegistry: wizard still open after steps");
+};
+globalThis.ttWaitAttThumbLoaded = async () => {
+  await page.locator(".tt-att-thumb img").first().waitFor({ state: "visible" });
+  await page.waitForFunction(() => {
+    const img = document.querySelector(".tt-att-thumb img:not(.tt-att-img-broken)");
+    return img && img.naturalWidth > 0;
+  });
+};
+/** After pick or when summary card is shown: one «Далее» → review. */
+globalThis.ttWizardRecipientToReview = async () => {
+  await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
+  if ((await page.locator('[data-tt="recipient-selected"]').count()) === 0) {
+    throw new Error("ttWizardRecipientToReview: expected recipient summary");
+  }
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.locator('[data-create-phase="review"]').waitFor({ state: "visible" });
+};
 
 const script = process.argv[2];
 if (!script) throw new Error("usage: node run-browser-qa.mjs <qa.js>");

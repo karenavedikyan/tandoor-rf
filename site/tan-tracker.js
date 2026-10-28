@@ -470,9 +470,32 @@
     ttRequestedRole: "",
     handoffReceipt: null,
     codeDemoRevealed: false,
+    detailAttDisclosureOpen: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
+
+  function detailActorKey() {
+    return state.actingContactId || employeeContact(state.employeeId)?.id || state.employeeId || "";
+  }
+
+  function clearDetailAttDisclosure() {
+    state.detailAttDisclosureOpen = null;
+  }
+
+  function isDetailAttDisclosureOpen(o) {
+    const key = state.detailAttDisclosureOpen;
+    if (!key || !o) return false;
+    return key.orderId === o.id && key.actorId === detailActorKey();
+  }
+
+  function syncDetailAttDisclosureFromDom(o) {
+    if (!o || state.view !== "detail" || state.orderId !== o.id) return;
+    const el = document.querySelector('[data-tt="detail-attachments-disclosure"]');
+    if (!el) return;
+    if (el.open) state.detailAttDisclosureOpen = { orderId: o.id, actorId: detailActorKey() };
+    else if (isDetailAttDisclosureOpen(o)) clearDetailAttDisclosure();
+  }
 
   function bumpAttachOpGen() {
     state.attachOpGen += 1;
@@ -1154,6 +1177,10 @@
     if (!files.length) return;
     const snap = captureAttachSnap(target);
     const opGen = snap.gen;
+    if (target === "detail") {
+      const cur = orders.find((x) => x.id === state.orderId);
+      syncDetailAttDisclosureFromDom(cur);
+    }
     state.attachBusy = true;
     state.attachBusyGen = opGen;
     state.attachError = "";
@@ -2070,7 +2097,7 @@
       ${detailTaskSection(o)}
       ${detailRouteDisclosure(o)}
       ${otherActions}
-      <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure">
+      <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
         <summary>Фото и файлы${attCount ? ` · ${attCount}` : ""}</summary>
         <div class="tt-disclosure-body">${attachmentsSection(o, {
           readonly: !isHolder || o.status === "completed",
@@ -2391,6 +2418,7 @@
     orders.unshift(order);
     state.orderId = id;
     state.view = "detail";
+    clearDetailAttDisclosure();
     state.form = null;
     state.createPhase = "item";
     state.attachStaging = [];
@@ -2411,7 +2439,9 @@
       state.attachError = "";
       state.attachBusy = false;
       state.attachBusyGen = null;
-      state.orderId = b.getAttribute("data-tt-open");
+      const nextOrderId = b.getAttribute("data-tt-open");
+      if (nextOrderId !== state.orderId) clearDetailAttDisclosure();
+      state.orderId = nextOrderId;
       state.view = "detail";
       state.error = state.toast = "";
       clearCompleteConfirm();
@@ -2598,6 +2628,7 @@
       state.error = state.toast = "";
       state.handoffReceipt = null;
       clearCompleteConfirm();
+      clearDetailAttDisclosure();
       clearAttachStaging();
       writeUrl();
       renderTracker();
@@ -2892,6 +2923,15 @@
     }
   });
 
+  document.addEventListener("toggle", (e) => {
+    if (current !== ROUTE) return;
+    if (!e.target.matches('[data-tt="detail-attachments-disclosure"]')) return;
+    const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (!o || state.view !== "detail") return;
+    if (e.target.open) state.detailAttDisclosureOpen = { orderId: o.id, actorId: detailActorKey() };
+    else if (isDetailAttDisclosureOpen(o)) clearDetailAttDisclosure();
+  });
+
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;
     if (e.target.matches('[data-tt="filter"]')) {
@@ -2909,6 +2949,7 @@
       }
       state.actingContactId = null;
       clearCompleteConfirm();
+      clearDetailAttDisclosure();
       writeUrl();
       renderTracker();
     }

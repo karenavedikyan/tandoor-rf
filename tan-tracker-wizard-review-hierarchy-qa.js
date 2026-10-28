@@ -73,21 +73,35 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   };
 
   const assertStickyClearance = async () => {
-    await page.locator('[data-tt="route-stop-final"]').scrollIntoViewIfNeeded();
+    await page.locator('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]').evaluate((link) => {
+      link.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await page.evaluate(() => {
+      const link = document.querySelector('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]');
+      const body = document.querySelector(".tt-wizard-body");
+      const bar = document.querySelector(".tt-wizard-actions");
+      if (!link || !body || !bar) return;
+      const lr = link.getBoundingClientRect();
+      const br = bar.getBoundingClientRect();
+      if (lr.bottom > br.top - 10) body.scrollTop += lr.bottom - br.top + 20;
+    });
     const hit = await page.evaluate(() => {
-      const handoff = document.querySelector('[data-tt="route-stop-final"]');
-      const link = handoff?.querySelector('[data-tt="create-edit-relay"]');
+      const link = document.querySelector('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]');
       const bar = document.querySelector(".tt-wizard-actions");
       if (!link || !bar) return { ok: false };
       const lr = link.getBoundingClientRect();
       const br = bar.getBoundingClientRect();
       const x = lr.left + lr.width / 2;
       const y = lr.top + lr.height / 2;
-      if (y >= br.top - 4) return { ok: false, reason: "link under sticky bar" };
+      if (y >= br.top - 4 || lr.bottom > br.top - 4) return { ok: false, reason: "link under sticky bar" };
       const topEl = document.elementFromPoint(x, y);
       return { ok: !!(topEl && (link.contains(topEl) || topEl === link)) };
     });
-    ok(hit.ok, "375px review handoff link not permanently covered by sticky footer");
+    ok(hit.ok, "375px review handoff link reachable above sticky footer");
+    await page.locator('[data-tt="route-stop-final"] [data-tt="create-edit-relay"]').click();
+    await page.locator('[data-create-phase="relay-pick"]').waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Назад", exact: true }).click();
+    await waitReview();
   };
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
@@ -182,7 +196,7 @@ var TT_WIZ_REVIEW_HIER_QA = await (async () => {
   await page.locator('[data-tt-field="item"]').fill("Review new recipient split");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.getByRole("button", { name: "Пропустить", exact: true }).click();
-  await page.getByRole("button", { name: "Добавить нового получателя", exact: true }).click();
+  await page.locator('[data-tt="recipient-choose"] [data-tt="create-new-recipient"]').click();
   await page.locator('[data-tt-field="newName"]').fill("Иерархия Новый");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
   await page.locator('[data-tt-field="newPhone"]').fill("79000000977");
