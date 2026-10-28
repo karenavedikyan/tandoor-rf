@@ -1973,19 +1973,26 @@
     return `<p class="tt-reminder tt-reminder-compact tt-holder-next" data-tt="relay-reminder">${E(text)}</p>`;
   }
 
+  function isConfirmedHandoffTimelineNote(note) {
+    return /Подтверждено (одноразовым кодом|по QR)/.test(note || "");
+  }
+
   function lastConfirmedHandoffEntry(o) {
     return (
       o.timeline
-        .filter((t) => /Подтверждено (одноразовым кодом|по QR)/.test(t.note || ""))
+        .filter((t) => isConfirmedHandoffTimelineNote(t.note))
         .sort((a, b) => a.at - b.at)
         .pop() || null
     );
   }
 
+  function actorHasConfirmedOutboundHandoff(o, actor) {
+    return o.timeline.some((t) => t.from === actor && isConfirmedHandoffTimelineNote(t.note));
+  }
+
   function isFormerHolderAfterHandoff(o, actor) {
     if (!actor || o.status === "completed" || o.holderId === actor) return false;
-    const last = lastConfirmedHandoffEntry(o);
-    return !!(last && last.from === actor);
+    return actorHasConfirmedOutboundHandoff(o, actor);
   }
 
   function deliveryTargetContact(o) {
@@ -2008,7 +2015,7 @@
       <p class="tt-detail-task-instructions">Ваш этап завершён. От вас больше не требуется действий.</p>
       <p class="tt-detail-task-follow">Далее за передачу отвечает <strong>${E(h?.name || "—")}</strong>.</p>
       <div class="tt-detail-monitor" data-tt="detail-monitor">
-        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Где предмет сейчас</span><span class="tt-detail-monitor-value">у <strong>${E(h?.name || "—")}</strong></span></div>
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(h?.name || "—")}</strong></span></div>
         <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Статус</span><span class="tt-detail-monitor-value tt-detail-monitor-status">${statusBadge(o)}</span></div>
         ${finLine}
         ${lastLine}
