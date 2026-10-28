@@ -1881,14 +1881,16 @@
 
   function codeView(o) {
     const showCode = state.codeDemoRevealed && o.code && codeValid(o);
+    const codeInputId = `tt-code-input-${String(o.id).replace(/[^\w-]/g, "")}`;
     return `<div class="tt-panel tt-code-screen" data-tt="code-screen"><h2>Ввести код получателя</h2>
       <p>Предмет: ${E(o.item)} · ожидает ${E(contactById(o.pendingId)?.name || "")}</p>
-      <label class="tt-code-field">6-значный код
+      <div class="tt-code-field">
+        <label class="tt-code-field-label" for="${E(codeInputId)}">6-значный код</label>
         <div class="tt-code-input-row">
-          <input inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(state.codeInput)}" autocomplete="one-time-code" aria-describedby="tt-code-demo-help">
+          <input id="${E(codeInputId)}" inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(state.codeInput)}" autocomplete="one-time-code" aria-describedby="tt-code-demo-help">
           ${btn("Получить демо-код", 'data-tt="demo-reveal-code"')}
         </div>
-      </label>
+      </div>
       ${
         showCode
           ? `<div class="tt-holder-demo-code" data-tt="holder-shown-code"><span class="tt-code tt-code-inline">${E(o.code.code)}</span><p id="tt-code-demo-help" class="tt-muted">Демо без СМС: код для проверки на этом экране. Введите его и нажмите «Подтвердить» — автоподтверждения нет.</p></div>`
