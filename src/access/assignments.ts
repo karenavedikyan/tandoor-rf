@@ -16,6 +16,7 @@ import { v3JsonManagerField } from "../clients/v3/json-paths";
 import type { ActiveUserRow } from "./types";
 import { assignmentReviewStates, ensureReviewNotifications, pendingAssignmentReviews } from "./assignment-reviews";
 import { adminOnBehalfNotice, insertAccessAudit, type PreviewProxyAudit } from "./preview-audit";
+import { ACCESS_AUDIT_ACTIONS } from "./constants";
 
 type Row = Record<string, any>;
 export type AssignmentActor = {
@@ -441,8 +442,7 @@ export async function assignmentManagers(actor: AssignmentActor) {
   return result.rows;
 }
 export async function assignmentPicker(actor: AssignmentActor, managerId: string, input: Row) {
-  const denialUserId = typeof input.denialUserId === "string" ? input.denialUserId : actor.id;
-  if (!(actor.role === "coordinator" || actor.role === "admin" || actor.role === "manager" && actor.id === managerId)) {
+  if (!(actor.role === "coordinator" || actor.role === "manager" && actor.id === managerId)) {
     fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
   }
   const ctx = await loadAccessContext(managerId);
@@ -463,7 +463,7 @@ export async function assignmentPicker(actor: AssignmentActor, managerId: string
   const month = input.month || monthResult.rows[0]?.month || null;
   params.push(month ? month + "-01" : null);
   const monthP = "$" + params.length;
-  params.push(denialUserId);
+  params.push(actor.id);
   const actorP = "$" + params.length;
   params.push(input.startsAt || null, input.endsAt || null, input.excludeId || null);
   const startP = "$" + (params.length - 2), endP = "$" + (params.length - 1), excludeP = "$" + params.length;
@@ -574,8 +574,48 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1, 
     nextScopeChangeAt: boundaries?.rows[0]?.next || null, scopeRevision: revision?.rows[0]?.value || null };
 }
 export async function readAssignmentNotifications(actor: AssignmentActor, id?: string) {
-  if (id) {
-    const result = await query("UPDATE assistant_assignment_notifications SET read_at=COALESCE(read_at,NOW()) WHERE user_id=$1 AND id=$2 RETURNING id", [actor.id, id]);
-    if (!result.rowCount) fail("Уведомление не найдено.", "NOT_FOUND");
-  } else await query("UPDATE assistant_assignment_notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL", [actor.id]);
+  return withTransaction(async c => {
+    let proxy: PreviewProxyAudit | undefined;
+    if (actor.previewProxy) {
+      if (actor.previewProxy.effectiveUserId !== actor.id) {
+        fail("Сессия просмотра не соответствует выбранному сотруднику.", "FORBIDDEN");
+      }
+      proxy = {
+        actualAdmin: await getActiveUser(c, actor.previewProxy.adminUserId),
+        effectiveEmployee: await getActiveUser(c, actor.previewProxy.effectiveUserId),
+      };
+    }
+    if (id) {
+      const result = await c.query(
+        "UPDATE assistant_assignment_notifications SET read_at=COALESCE(read_at,NOW()) WHERE user_id=$1 AND id=$2 RETURNING id,delegation_id",
+        [actor.id, id],
+      );
+      if (!result.rowCount) fail("Уведомление не найдено.", "NOT_FOUND");
+      if (proxy) {
+        await insertAccessAudit(c, {
+          actorUserId: proxy.actualAdmin.id,
+          businessActorUserId: proxy.effectiveEmployee.id,
+          action: ACCESS_AUDIT_ACTIONS.ASSIGNMENT_NOTIFICATION_READ,
+          entityType: "assistant_assignment_notification",
+          entityId: id,
+          basis: "Read in admin work mode" + adminOnBehalfNotice(proxy),
+        });
+      }
+    } else {
+      await c.query(
+        "UPDATE assistant_assignment_notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL",
+        [actor.id],
+      );
+      if (proxy) {
+        await insertAccessAudit(c, {
+          actorUserId: proxy.actualAdmin.id,
+          businessActorUserId: proxy.effectiveEmployee.id,
+          action: ACCESS_AUDIT_ACTIONS.ASSIGNMENT_NOTIFICATION_READ_ALL,
+          entityType: "assistant_assignment_notifications",
+          entityId: actor.id,
+          basis: "Read all in admin work mode" + adminOnBehalfNotice(proxy),
+        });
+      }
+    }
+  });
 }

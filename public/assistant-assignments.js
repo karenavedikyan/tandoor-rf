@@ -15,11 +15,25 @@
       ? '<p class="aa-note aa-preview-block" role="status">Изменения запрещены в режиме просмотра. Включите «Работать от имени сотрудника» в плашке сверху — данные не отправятся автоматически.</p>'
       : "";
   }
+  var pendingTransfer = null;
+  function transferIdentity() {
+    var p = previewState();
+    var actor = shell.getActorUser && shell.getActorUser();
+    return {
+      targetUserId: user && user.id,
+      actorUserId: actor && actor.id,
+    };
+  }
   function saveTransferState() {
     if (!document.getElementById("aa-assignment-form")) return;
     try {
-      var terms = formTerms();
+      var id = transferIdentity();
       sessionStorage.setItem(TRANSFER_KEY, JSON.stringify({
+        v: 1,
+        targetUserId: id.targetUserId,
+        actorUserId: id.actorUserId,
+        editingId: editing && editing.id,
+        rowVersion: editing && editing.row_version,
         managerId: $("aa-manager") && $("aa-manager").value,
         assistantId: $("aa-assistant") && $("aa-assistant").value,
         start: $("aa-start") && $("aa-start").value,
@@ -31,21 +45,28 @@
       }));
     } catch (_err) { /* ignore */ }
   }
-  function loadTransferState() {
+  function transferMatches(data) {
+    if (!data || data.v !== 1 || !user) return false;
+    var id = transferIdentity();
+    if (data.targetUserId && data.targetUserId !== id.targetUserId) return false;
+    if (data.actorUserId && data.actorUserId !== id.actorUserId) return false;
+    if (data.editingId) {
+      if (!editing || editing.id !== data.editingId) return false;
+      if (data.rowVersion != null && editing.row_version !== data.rowVersion) return false;
+    } else if (editing) return false;
+    return true;
+  }
+  function takePendingTransfer() {
+    var raw = sessionStorage.getItem(TRANSFER_KEY);
+    if (!raw) return null;
     try {
-      var raw = sessionStorage.getItem(TRANSFER_KEY);
-      if (!raw) return false;
       var data = JSON.parse(raw);
       sessionStorage.removeItem(TRANSFER_KEY);
-      if (data.selected && Array.isArray(data.selected)) {
-        selected = new Map(data.selected);
-      }
-      if (data.filters) filters = data.filters;
-      if (data.pickPage) pickPage = data.pickPage;
+      if (!transferMatches(data)) return null;
       return data;
     } catch (_err) {
       sessionStorage.removeItem(TRANSFER_KEY);
-      return false;
+      return null;
     }
   }
   var labels = { create: "Создание", edit: "Исправление", submit: "Отправка заявки", approve: "Согласование",
@@ -156,15 +177,31 @@
       basis:$("aa-basis").value,clientGuids:Array.from(selected.keys()),rowVersion:editing&&editing.row_version};
   }
   function renderForm() {
-    var d=editing||{}, proposal=d.proposal||d.returnedProposal||null, initial=proposal||d, starts=initial.starts_at||new Date().toISOString(), ends=initial.ends_at||new Date(Date.now()+7*86400000).toISOString();
-    selected=new Map((initial.clients||[]).map(function(c){return [c.guid,c.name];})); pickPage=1;filters={};pickData=null;
+    var transferApply = pendingTransfer;
+    pendingTransfer = null;
+    var d=editing||{}, proposal=d.proposal||d.returnedProposal||null, initial=proposal||d;
+    var starts=initial.starts_at||new Date().toISOString(), ends=initial.ends_at||new Date(Date.now()+7*86400000).toISOString();
+    if (transferApply) {
+      selected = new Map(transferApply.selected || []);
+      filters = transferApply.filters || {};
+      pickPage = transferApply.pickPage || 1;
+      if (transferApply.start) starts = dt.parseMskLocalInput(transferApply.start) || starts;
+      if (transferApply.end) ends = dt.parseMskLocalInput(transferApply.end) || ends;
+    } else {
+      selected=new Map((initial.clients||[]).map(function(c){return [c.guid,c.name];}));
+      pickPage=1;filters={};
+    }
+    pickData=null;
+    var managerId = transferApply && transferApply.managerId ? transferApply.managerId : (d.delegator_user_id || (user.role==="manager"?user.id:""));
+    var assistantId = transferApply && transferApply.assistantId ? transferApply.assistantId : initial.assistant_user_id;
+    var basisText = transferApply && transferApply.basis ? transferApply.basis : (proposal?proposal.basis:d.basis||"");
     $("aa-detail").innerHTML="";
     $("aa-view").innerHTML='<section class="aa-box"><h2>'+(editing?(d.status==="draft"?"Исправить заявку":"Запрос изменения условий"):"Новое назначение")+'</h2><p class="aa-muted">На первом этапе предоставляется только просмотр выбранных клиентов. Задачи и другие права не передаются.</p><form id="aa-assignment-form"><div class="aa-grid">'+
-      '<label>Чьих клиентов передаём<select id="aa-manager" required '+(editing||user.role==="manager"?"disabled":"")+">"+(user.role==="manager"?opts([{id:user.id,full_name:user.fullName}],user.id):opts(managers,d.delegator_user_id,"Выберите менеджера"))+'</select></label>'+
-      '<label>Ассистент<select id="aa-assistant" required>'+opts(assistants,initial.assistant_user_id,"Выберите ассистента")+'</select></label>'+
+      '<label>Чьих клиентов передаём<select id="aa-manager" required '+(editing||user.role==="manager"?"disabled":"")+">"+(user.role==="manager"?opts([{id:user.id,full_name:user.fullName}],user.id):opts(managers,managerId,"Выберите менеджера"))+'</select></label>'+
+      '<label>Ассистент<select id="aa-assistant" required>'+opts(assistants,assistantId,"Выберите ассистента")+'</select></label>'+
       '<label>Начало, Москва (МСК)<input id="aa-start" type="datetime-local" value="'+e(dt.isoToMskLocalInput(starts))+'" required></label><label>Окончание, МСК (не включая)<input id="aa-end" type="datetime-local" value="'+e(dt.isoToMskLocalInput(ends))+'" required></label></div>'+
       '<h3>Выбор клиентов</h3><p class="aa-muted">Клиент выбирается вместе с доступными вам юрлицами. Скрытые фильтрами отметки сохраняются.</p><div id="aa-picker"></div>'+
-      '<label>Основание<textarea id="aa-basis" minlength="5" maxlength="2000" required placeholder="Для чего и на какой период нужен доступ">'+e(proposal?proposal.basis:d.basis||"")+'</textarea></label>'+
+      '<label>Основание<textarea id="aa-basis" minlength="5" maxlength="2000" required placeholder="Для чего и на какой период нужен доступ">'+e(basisText)+'</textarea></label>'+
       previewWriteHint()+
       '<div class="aa-actions" style="margin-top:16px">'+
       '<button type="submit" class="aa-primary" '+(previewReadOnly()?"disabled":"")+'>'+(editing&&d.status==="active"?"Отправить изменения на согласование":"Отправить на согласование")+'</button>'+
@@ -271,17 +308,9 @@
       if(u.role==="coordinator")managers=(await request("/coordinator-managers")).managers;
       var params=new URLSearchParams(window.location.search);
       if(["manager","coordinator","director"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
-      var transfer=loadTransferState();
-      if(transfer&&view!=="new"){view="new";}
+      pendingTransfer = takePendingTransfer();
+      if (pendingTransfer) view = "new";
       mount();
-      if(transfer&&$("aa-manager")){
-        if(transfer.managerId)$("aa-manager").value=transfer.managerId;
-        if(transfer.assistantId&&$("aa-assistant"))$("aa-assistant").value=transfer.assistantId;
-        if(transfer.start&&$("aa-start"))$("aa-start").value=transfer.start;
-        if(transfer.end&&$("aa-end"))$("aa-end").value=transfer.end;
-        if(transfer.basis&&$("aa-basis"))$("aa-basis").value=transfer.basis;
-        await loadPicker();
-      }
       var id=params.get("assignment");if(id)await openDetail(id);
       var reviewId=params.get("review");if(reviewId&&/^[0-9a-f-]{36}$/i.test(reviewId)&&window.AssignmentReviews)await window.AssignmentReviews.open(reviewId);
     });

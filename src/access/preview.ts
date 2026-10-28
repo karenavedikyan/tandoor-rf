@@ -82,11 +82,16 @@ export async function getSessionPreviewDetails(sessionId: string): Promise<Sessi
   );
   const row = result.rows[0];
   if (!row) return null;
-  const workExpired =
+  const expiresAt = row.preview_work_expires_at;
+  const hasValidLease =
     row.preview_work_enabled &&
-    row.preview_work_expires_at &&
-    row.preview_work_expires_at.getTime() <= Date.now();
-  if (workExpired && row.preview_user_id) {
+    expiresAt instanceof Date &&
+    Number.isFinite(expiresAt.getTime()) &&
+    expiresAt.getTime() > Date.now();
+  const staleWorkFlag =
+    row.preview_work_enabled &&
+    (!expiresAt || !(expiresAt instanceof Date) || expiresAt.getTime() <= Date.now());
+  if (staleWorkFlag && row.preview_user_id) {
     await query(
       `
         UPDATE sessions
@@ -96,13 +101,12 @@ export async function getSessionPreviewDetails(sessionId: string): Promise<Sessi
       [sessionId],
     );
   }
-  const workEnabled =
-    Boolean(row.preview_user_id && row.preview_work_enabled && !workExpired);
+  const workEnabled = Boolean(row.preview_user_id && hasValidLease);
   return {
     previewUserId: row.preview_user_id,
     actorUserId: row.user_id,
     workEnabled,
-    workExpiresAt: workEnabled && row.preview_work_expires_at ? row.preview_work_expires_at : null,
+    workExpiresAt: workEnabled && expiresAt ? expiresAt : null,
   };
 }
 

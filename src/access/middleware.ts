@@ -12,6 +12,10 @@ export type AccessRequest = AuthenticatedRequest & {
   accessContext?: AccessContext;
 };
 
+export function effectiveBusinessRole(req: AccessRequest): string {
+  return req.accessContext?.role ?? req.authUser?.role ?? "";
+}
+
 export async function attachAccessContext(
   req: AccessRequest,
   res: Response,

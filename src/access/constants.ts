@@ -30,6 +30,8 @@ export const ACCESS_AUDIT_ACTIONS = {
   PREVIEW_STOP: "preview.stop",
   PREVIEW_WORK_ENABLE: "preview.work_enable",
   PREVIEW_WORK_DISABLE: "preview.work_disable",
+  ASSIGNMENT_NOTIFICATION_READ: "assignment.notification_read",
+  ASSIGNMENT_NOTIFICATION_READ_ALL: "assignment.notification_read_all",
   USER_CREATE: "user.create",
   USER_ROLE_ASSIGN: "user.role_assign",
   USER_PASSWORD_SET: "user.password_set",
