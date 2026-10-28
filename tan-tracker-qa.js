@@ -117,6 +117,7 @@ var TT_QA = await (async () => {
   await page.locator('[data-tt="code-input"]').fill(codeNew);
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   ok((await page.locator('[data-tt="detail"]').textContent()).includes("Контакт QA99"), "new contact code handoff");
+  await page.locator('[data-tt="back-list"]').click();
   await page.setViewportSize({ width: 900, height: 650 });
   ok((await page.locator(".tt-table-scroll").evaluate((el) => el.scrollWidth > el.clientWidth)), "table overflows at 900px");
   return { passed: checks.length, checks };
