@@ -25,7 +25,7 @@
   background:var(--green,#507f22) !important; color:#fff !important; border:1px solid var(--green,#507f22) !important;
   border-radius:7px; padding:10px 16px; font-weight:650; cursor:pointer;
 }
-.tt-work button.tt-primary:hover,.tt-work .tt-primary:hover { filter:brightness(1.05); color:#fff !important; }
+.tt-work button.tt-primary:hover,.tt-work .tt-primary:hover { filter:brightness(0.96); color:#fff !important; }
 .tt-work button.tt-primary:focus-visible,.tt-work .tt-primary:focus-visible { outline:3px solid var(--green,#507f22); outline-offset:2px; color:#fff !important; }
 [data-theme=dark] .tt-work button.tt-primary,[data-theme=dark] .tt-work .tt-primary,
 [data-theme=dark] .tt-work button.tt-primary:hover,[data-theme=dark] .tt-work .tt-primary:hover,
