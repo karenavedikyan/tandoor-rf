@@ -710,15 +710,41 @@
     } else if (previewState.targetUser) {
       var roleLabel =
         PREVIEW_ROLE_LABELS[previewState.targetUser.role] || previewState.targetUser.role || "";
+      var adminName =
+        actorUser && actorUser.fullName ? escapeHtml(actorUser.fullName) : "администратор";
+      var workMode = Boolean(previewState.workMode);
+      var expiryNote = "";
+      if (workMode && previewState.workExpiresAt) {
+        try {
+          expiryNote =
+            " Действует до " +
+            new Date(previewState.workExpiresAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) +
+            " МСК.";
+        } catch (_fmt) {
+          expiryNote = "";
+        }
+      }
+      var modeText = workMode
+        ? "Рабочий режим: действия изменяют данные и уведомления. Инициатор — " +
+          adminName +
+          "." +
+          expiryNote
+        : "Только просмотр. Изменения запрещены.";
       bannerHtml =
-        '<div class="clients-preview-banner" role="status">' +
-        '<span class="clients-preview-banner__text">Просмотр от имени: ' +
+        '<div class="clients-preview-banner' + (workMode ? " clients-preview-banner--work" : "") + '" role="status">' +
+        '<span class="clients-preview-banner__text"><strong>' +
         escapeHtml(previewState.targetUser.fullName) +
-        " · " +
+        "</strong> · " +
         escapeHtml(roleLabel) +
-        ". Только просмотр. Изменения запрещены.</span>" +
-        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Вернуться к администратору</button>' +
-        "</div>";
+        ". " +
+        modeText +
+        "</span>" +
+        '<div class="clients-preview-banner__actions">' +
+        (workMode
+          ? '<button type="button" class="workspace-button workspace-button--secondary" id="clients-preview-readonly-btn">Только просмотр</button>'
+          : '<button type="button" class="workspace-button workspace-button--secondary" id="clients-preview-work-btn">Работать от имени сотрудника</button>') +
+        '<button type="button" class="workspace-button workspace-button--ghost clients-preview-banner__stop" id="clients-preview-stop-btn">Выйти к администратору</button>' +
+        "</div></div>";
     } else {
       if (existing) {
         existing.remove();
@@ -739,11 +765,55 @@
     }
     existing.innerHTML = bannerHtml;
     document.body.classList.add("clients-preview-active");
-    document.getElementById("clients-preview-stop-btn")?.addEventListener("click", function () {
-      stopPreviewSession().catch(function (err) {
-        window.alert(err.message || "Не удалось выйти из просмотра.");
+    var stopBtn = document.getElementById("clients-preview-stop-btn");
+    if (stopBtn) {
+      stopBtn.addEventListener("click", function () {
+        stopPreviewSession().catch(function (err) {
+          window.alert(err.message || "Не удалось выйти из просмотра.");
+        });
       });
-    });
+    }
+    var workBtn = document.getElementById("clients-preview-work-btn");
+    if (workBtn) {
+      workBtn.addEventListener("click", function () {
+        var ok = window.confirm(
+          "Действия изменяют реальные данные и могут отправлять внутренние уведомления. В истории будет указан администратор. Продолжить?",
+        );
+        if (!ok) return;
+        if (window.AssignmentWorkspace && window.AssignmentWorkspace.saveTransferState) {
+          window.AssignmentWorkspace.saveTransferState();
+        }
+        api
+          .apiRequest("/api/admin/access/preview/work/enable", { method: "POST", body: { confirm: true } })
+          .then(function (result) {
+            if (result.response.status !== 200) {
+              throw new Error(api.extractErrorMessage(result.data, "Не удалось включить рабочий режим."));
+            }
+            previewState = result.data.preview || previewState;
+            window.location.reload();
+          })
+          .catch(function (err) {
+            window.alert(err.message || "Не удалось включить рабочий режим.");
+          });
+      });
+    }
+    var readonlyBtn = document.getElementById("clients-preview-readonly-btn");
+    if (readonlyBtn) {
+      readonlyBtn.addEventListener("click", function () {
+        api
+          .apiRequest("/api/admin/access/preview/work/disable", { method: "POST", body: {} })
+          .then(function (result) {
+            if (result.response.status !== 200) {
+              throw new Error(api.extractErrorMessage(result.data, "Не удалось вернуть режим просмотра."));
+            }
+            previewState = result.data.preview || previewState;
+            window.location.reload();
+          })
+          .catch(function (err) {
+            window.alert(err.message || "Не удалось вернуть режим просмотра.");
+          });
+      });
+    }
   }
 
   function mountShellParts(active, showClients, showAdminAccess, showAccessWorkspace, clientsHref) {

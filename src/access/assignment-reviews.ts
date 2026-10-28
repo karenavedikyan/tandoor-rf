@@ -146,6 +146,19 @@ export async function submitAssignmentReview(actor: AssignmentActor, id: string,
   const values = validateReview(body);
   return withTransaction(async c => {
     const user = await getActiveUser(c, actor.id);
+    let auditAdminId = user.id;
+    let auditBusinessId: string | null = null;
+    let noticeSuffix = "";
+    if (actor.previewProxy) {
+      if (actor.previewProxy.effectiveUserId !== user.id) {
+        fail("Сессия просмотра не соответствует выбранному сотруднику.", "FORBIDDEN");
+      }
+      const admin = await getActiveUser(c, actor.previewProxy.adminUserId);
+      if (admin.role !== "admin") fail("Действие от имени сотрудника доступно только администратору.", "FORBIDDEN");
+      auditAdminId = admin.id;
+      auditBusinessId = user.id;
+      noticeSuffix = " Выполнено администратором " + admin.full_name + " от имени " + user.full_name + ".";
+    }
     if (user.role !== actor.role || user.role !== "manager") fail("Оценку оставляет передающий менеджер.", "FORBIDDEN");
     const locked = await c.query(`SELECT d.*,m.full_name AS manager_name,a.full_name AS assistant_name,
       (${REVIEW_ELIGIBLE_SQL}) AS eligible
@@ -160,26 +173,47 @@ export async function submitAssignmentReview(actor: AssignmentActor, id: string,
     const clients = await c.query(`SELECT dc.guid_client AS guid,COALESCE(le.name_client,oc.name_client) AS name
       FROM delegation_clients dc LEFT JOIN onec_v3_legal_entities le ON le.guid_client=dc.guid_client
       LEFT JOIN onec_clients oc ON oc.guid_client=dc.guid_client WHERE dc.delegation_id=$1 ORDER BY dc.guid_client`, [id]);
-    const snap = { assignmentId: id, managerId: user.id, assistantId: d.assistant_user_id,
-      managerName: user.full_name, assistantName: d.assistant_name, clients: clients.rows,
-      agreedStartsAt: d.starts_at, agreedEndsAt: d.ends_at, rowVersion: d.row_version };
+    const snap = {
+      assignmentId: id,
+      managerId: user.id,
+      assistantId: d.assistant_user_id,
+      managerName: user.full_name,
+      assistantName: d.assistant_name,
+      clients: clients.rows,
+      agreedStartsAt: d.starts_at,
+      agreedEndsAt: d.ends_at,
+      rowVersion: d.row_version,
+      performedByAdmin: actor.previewProxy
+        ? {
+            adminUserId: auditAdminId,
+            adminName: (await getActiveUser(c, auditAdminId)).full_name,
+            effectiveEmployeeUserId: user.id,
+            effectiveEmployeeName: user.full_name,
+          }
+        : null,
+    };
     await c.query(`INSERT INTO assistant_assignment_reviews(delegation_id,manager_user_id,assistant_user_id,score,comment,
       worked_starts_at,worked_ends_at,snapshot)
       VALUES($1,$2,$3,$4,$5,GREATEST($6::timestamptz,$7::timestamptz),
       LEAST($8::timestamptz,COALESCE($9::timestamptz,$8::timestamptz)),$10::jsonb)`,
     [id, user.id, d.assistant_user_id, values.score, values.comment, d.starts_at, d.approved_at, d.ends_at, d.revoked_at, JSON.stringify(snap)]);
     // Private review audit is separate from the assignment history visible to ROP.
-    await c.query(`INSERT INTO access_audit_log(actor_user_id,action,entity_type,entity_id,after_json,basis)
-      VALUES($1,'assignment.review_submitted','delegation',$2,$3::jsonb,'Mandatory end-of-work feedback')`,
-    [user.id, id, JSON.stringify({ reviewSubmitted: true, managerId: user.id, assistantId: d.assistant_user_id })]);
+    await c.query(`INSERT INTO access_audit_log(actor_user_id,business_actor_user_id,action,entity_type,entity_id,after_json,basis)
+      VALUES($1,$2,'assignment.review_submitted','delegation',$3,$4::jsonb,'Mandatory end-of-work feedback')`,
+    [auditAdminId, auditBusinessId, id, JSON.stringify({ reviewSubmitted: true, managerId: user.id, assistantId: d.assistant_user_id })]);
     await c.query(`INSERT INTO assistant_assignment_notifications(user_id,delegation_id,event_key,kind,title,message)
       SELECT id,$1::uuid,'review-received:'||($1::uuid)::text,'review_received',$2,$3 FROM users
       WHERE status='active' AND role IN('coordinator','director') ON CONFLICT(user_id,event_key) DO NOTHING`,
     [id, values.score <= 3 ? "Низкая оценка: зона внимания" : "Получена оценка работы ассистента",
-      "Назначение №" + id.slice(0, 8) + ". " + values.score + " из 5. Откройте оценку для просмотра результата."]);
-    await c.query(`INSERT INTO assistant_assignment_notifications(user_id,delegation_id,event_key,kind,title,message)
-      VALUES($1::uuid,$2::uuid,'review-submitted:'||($2::uuid)::text,'review_submitted','Оценка передана РОА и директору',
-        'Назначение закрыто с оценкой. Доступ ассистента не продлён.') ON CONFLICT(user_id,event_key) DO NOTHING`, [user.id, id]);
+      "Назначение №" + id.slice(0, 8) + ". " + values.score + " из 5. Откройте оценку для просмотра результата." + noticeSuffix]);
+    const managerSubmittedMessage =
+      "Назначение закрыто с оценкой. Доступ ассистента не продлён." + noticeSuffix;
+    await c.query(
+      `INSERT INTO assistant_assignment_notifications(user_id,delegation_id,event_key,kind,title,message)
+      VALUES($1::uuid,$2::uuid,'review-submitted:'||($2::uuid)::text,'review_submitted','Оценка передана РОА и директору',$3)
+      ON CONFLICT(user_id,event_key) DO NOTHING`,
+      [user.id, id, managerSubmittedMessage],
+    );
     return { delegationId: id, state: "rated", score: values.score };
   });
 }

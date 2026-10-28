@@ -15,9 +15,15 @@ import { v3EntityAssignmentScope } from "../clients/v3/access-scope";
 import { v3JsonManagerField } from "../clients/v3/json-paths";
 import type { ActiveUserRow } from "./types";
 import { assignmentReviewStates, ensureReviewNotifications, pendingAssignmentReviews } from "./assignment-reviews";
+import { adminOnBehalfNotice, insertAccessAudit, type PreviewProxyAudit } from "./preview-audit";
+import { ACCESS_AUDIT_ACTIONS } from "./constants";
 
 type Row = Record<string, any>;
-export type AssignmentActor = { id: string; role: string };
+export type AssignmentActor = {
+  id: string;
+  role: string;
+  previewProxy?: { adminUserId: string; effectiveUserId: string };
+};
 function fail(message: string, code: "VALIDATION" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" = "VALIDATION"): never {
   throw new AccessServiceError(message, code);
 }
@@ -134,16 +140,42 @@ async function snapshot(c: PoolClient, id: string): Promise<Row> {
     WHERE d.id=$1`, [id]);
   return result.rows[0]!;
 }
-async function record(c: PoolClient, user: ActiveUserRow, id: string, action: string, before: Row | null, comment: string): Promise<void> {
+async function record(
+  c: PoolClient,
+  user: ActiveUserRow,
+  id: string,
+  action: string,
+  before: Row | null,
+  comment: string,
+  proxy?: PreviewProxyAudit,
+): Promise<void> {
   const after = await snapshot(c, id);
+  if (proxy) {
+    after.performed_by_admin = {
+      id: proxy.actualAdmin.id,
+      name: proxy.actualAdmin.full_name,
+      effective_employee_id: proxy.effectiveEmployee.id,
+      effective_employee_name: proxy.effectiveEmployee.full_name,
+    };
+  }
   const event = randomUUID();
+  const historyActor = proxy?.actualAdmin ?? user;
+  const historyRole = proxy ? "admin" : user.role;
+  const historyComment = proxy ? comment + adminOnBehalfNotice(proxy) : comment;
   await c.query(`INSERT INTO delegation_change_history(id,delegation_id,changed_by_user_id,change_type,
     before_json,after_json,actor_role,actor_name,snapshot,comment)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$6,$9)`,
-  [event, id, user.id, action, before ? JSON.stringify(before) : null, JSON.stringify(after), user.role, user.full_name, comment]);
-  await c.query(`INSERT INTO access_audit_log(actor_user_id,action,entity_type,entity_id,before_json,after_json,basis)
-    VALUES($1,$2,'delegation',$3,$4,$5,$6)`,
-  [user.id, "assignment." + action, id, before ? JSON.stringify(before) : null, JSON.stringify(after), comment]);
+  [event, id, historyActor.id, action, before ? JSON.stringify(before) : null, JSON.stringify(after), historyRole, historyActor.full_name, historyComment]);
+  await insertAccessAudit(c, {
+    actorUserId: historyActor.id,
+    businessActorUserId: proxy ? proxy.effectiveEmployee.id : null,
+    action: "assignment." + action,
+    entityType: "delegation",
+    entityId: id,
+    beforeJson: before ? JSON.stringify(before) : null,
+    afterJson: JSON.stringify(after),
+    basis: historyComment,
+  });
 
   const labels: Record<string, string> = {
     submit: "Новая заявка на назначение", approve: "Назначение согласовано", reject: "Назначение отклонено",
@@ -172,6 +204,9 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
     if (!target) continue;
     // No client identities, turnover, or decision comments in the notification payload.
     let message = "Назначение №" + id.slice(0, 8) + ". " + range + ".";
+    if (proxy) {
+      message += adminOnBehalfNotice(proxy);
+    }
     if (target.role === "assistant") {
       message += action === "propose_change" ? " Доступ приостановлен до решения координатора."
         : action === "approve_change" && recipient !== after.assistant_user_id ? " Ваш доступ завершён."
@@ -187,6 +222,17 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
 export async function writeAssignment(actor: AssignmentActor, action: string, id: string | null, body: Row) {
   return withTransaction(async c => {
     const user = await actorInTransaction(c, actor);
+    let proxy: PreviewProxyAudit | undefined;
+    if (actor.previewProxy) {
+      if (actor.previewProxy.effectiveUserId !== user.id) {
+        fail("Сессия просмотра не соответствует выбранному сотруднику.", "FORBIDDEN");
+      }
+      proxy = {
+        actualAdmin: await getActiveUser(c, actor.previewProxy.adminUserId),
+        effectiveEmployee: await getActiveUser(c, actor.previewProxy.effectiveUserId),
+      };
+      if (proxy.actualAdmin.role !== "admin") fail("Действие от имени сотрудника доступно только администратору.", "FORBIDDEN");
+    }
     if (!["manager", "coordinator"].includes(user.role)) fail("Эта роль не изменяет назначения.", "FORBIDDEN");
     if (action === "create") {
       const delegatorId = user.role === "manager" ? user.id : String(body.delegatorUserId);
@@ -197,8 +243,8 @@ export async function writeAssignment(actor: AssignmentActor, action: string, id
       [delegatorId, terms.assistantUserId, body.submit === false ? "draft" : "pending_approval", terms.startsAt, terms.endsAt, user.id, terms.basis]);
       id = inserted.rows[0]!.id;
       await replaceClients(c, id!, terms.clientGuids);
-      await record(c, user, id!, "create", null, terms.basis);
-      if (body.submit !== false) await record(c, user, id!, "submit", null, terms.basis);
+      await record(c, user, id!, "create", null, terms.basis, proxy);
+      if (body.submit !== false) await record(c, user, id!, "submit", null, terms.basis, proxy);
       return { id, status: body.submit === false ? "draft" : "pending_approval", rowVersion: inserted.rows[0]!.row_version };
     }
     const locked = await c.query("SELECT * FROM delegations WHERE id=$1 FOR UPDATE", [id]);
@@ -274,7 +320,7 @@ export async function writeAssignment(actor: AssignmentActor, action: string, id
       await c.query("UPDATE delegation_change_requests SET status='superseded',updated_at=NOW() WHERE delegation_id=$1 AND status='pending_approval'", [id]);
     } else fail("Неизвестное действие.");
     await c.query("UPDATE delegations SET row_version=row_version+1,updated_at=NOW() WHERE id=$1", [id]);
-    await record(c, user, id!, action, before, comment);
+    await record(c, user, id!, action, before, comment, proxy);
     const after = await snapshot(c, id!);
     return { id, status: after.status, rowVersion: after.row_version };
   });
@@ -305,14 +351,18 @@ export async function listAssignments(actor: AssignmentActor, input: { page: num
   if (input.status === "archive") where += " AND (d.status IN('revoked','expired') OR (d.status='active' AND d.ends_at<=NOW()))";
   const from = `FROM delegations d JOIN users m ON m.id=d.delegator_user_id JOIN users a ON a.id=d.assistant_user_id WHERE ${where}`;
   const count = await query(`SELECT COUNT(*)::int AS total ${from}`, params);
+  const total = Number(count.rows[0]!.total);
+  const pageSize = 30;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, input.page), totalPages);
   const result = await query(`SELECT d.*,m.full_name AS delegator_name,a.full_name AS assistant_name,
     (SELECT COUNT(*)::int FROM delegation_clients dc WHERE dc.delegation_id=d.id) AS client_count,
     EXISTS(SELECT 1 FROM delegation_change_requests r WHERE r.delegation_id=d.id AND r.status='pending_approval') AS pending_change
-    ${from} ORDER BY d.created_at DESC,d.id DESC LIMIT 30 OFFSET $${params.length + 1}`, [...params, (input.page - 1) * 30]);
+    ${from} ORDER BY d.created_at DESC,d.id DESC LIMIT 30 OFFSET $${params.length + 1}`, [...params, (page - 1) * pageSize]);
   const coordinators = await query("SELECT COUNT(*)::int AS count FROM users WHERE role='coordinator' AND status='active'");
   const states = await assignmentReviewStates(actor, result.rows.map(r => String(r.id)));
   return { items: result.rows.map(r => ({ ...presentStatus(r), ...(states.has(String(r.id)) ? { review: states.get(String(r.id)) } : {}) })),
-    total: count.rows[0]!.total, page: input.page, pageSize: 30, coordinatorCount: coordinators.rows[0]!.count };
+    total, page, pageSize, totalPages, coordinatorCount: coordinators.rows[0]!.count };
 }
 function presentStatus(row: Row): Row {
   const result = enrichDelegationRow(row);
@@ -392,7 +442,9 @@ export async function assignmentManagers(actor: AssignmentActor) {
   return result.rows;
 }
 export async function assignmentPicker(actor: AssignmentActor, managerId: string, input: Row) {
-  if (!(actor.role === "coordinator" || actor.role === "manager" && actor.id === managerId)) fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
+  if (!(actor.role === "coordinator" || actor.role === "manager" && actor.id === managerId)) {
+    fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
+  }
   const ctx = await loadAccessContext(managerId);
   const actorCtx = await loadAccessContext(actor.id);
   if (!["manager", "rop"].includes(ctx.role)) fail("Выберите передающего менеджера.");
@@ -460,10 +512,14 @@ export async function assignmentPicker(actor: AssignmentActor, managerId: string
   if (input.conflict === "free") where += " AND NOT conflict";
   const count = await query(base + ` SELECT COUNT(*)::int AS total FROM grouped WHERE ${where}`, params);
   const order = input.sort === "sales_desc" ? "sales DESC NULLS LAST,name,key" : input.sort === "sales_asc" ? "sales ASC NULLS LAST,name,key" : "name,key";
+  const total = Number(count.rows[0]!.total);
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Number(input.page) || 1), totalPages);
   const items = await query(base + ` SELECT key,guids,name,city,category,legal_count,tt_count,sales::text,conflict FROM grouped
-    WHERE ${where} ORDER BY ${order} LIMIT 50 OFFSET $${params.length + 1}`, [...params, (input.page - 1) * 50]);
+    WHERE ${where} ORDER BY ${order} LIMIT 50 OFFSET $${params.length + 1}`, [...params, (page - 1) * pageSize]);
   const months = await query("SELECT DISTINCT to_char(sale_month,'YYYY-MM') AS month FROM onec_v3_legal_sales_lines ORDER BY month DESC");
-  return { items: items.rows, total: count.rows[0]!.total, page: input.page, pageSize: 50, month, months: months.rows.map(r => r.month) };
+  return { items: items.rows, total, page, pageSize, totalPages, month, months: months.rows.map(r => r.month) };
 }
 
 export async function assignmentNotifications(actor: AssignmentActor, page = 1, unreadOnly = false, readOnly = false) {
@@ -518,8 +574,48 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1, 
     nextScopeChangeAt: boundaries?.rows[0]?.next || null, scopeRevision: revision?.rows[0]?.value || null };
 }
 export async function readAssignmentNotifications(actor: AssignmentActor, id?: string) {
-  if (id) {
-    const result = await query("UPDATE assistant_assignment_notifications SET read_at=COALESCE(read_at,NOW()) WHERE user_id=$1 AND id=$2 RETURNING id", [actor.id, id]);
-    if (!result.rowCount) fail("Уведомление не найдено.", "NOT_FOUND");
-  } else await query("UPDATE assistant_assignment_notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL", [actor.id]);
+  return withTransaction(async c => {
+    let proxy: PreviewProxyAudit | undefined;
+    if (actor.previewProxy) {
+      if (actor.previewProxy.effectiveUserId !== actor.id) {
+        fail("Сессия просмотра не соответствует выбранному сотруднику.", "FORBIDDEN");
+      }
+      proxy = {
+        actualAdmin: await getActiveUser(c, actor.previewProxy.adminUserId),
+        effectiveEmployee: await getActiveUser(c, actor.previewProxy.effectiveUserId),
+      };
+    }
+    if (id) {
+      const result = await c.query(
+        "UPDATE assistant_assignment_notifications SET read_at=COALESCE(read_at,NOW()) WHERE user_id=$1 AND id=$2 RETURNING id,delegation_id",
+        [actor.id, id],
+      );
+      if (!result.rowCount) fail("Уведомление не найдено.", "NOT_FOUND");
+      if (proxy) {
+        await insertAccessAudit(c, {
+          actorUserId: proxy.actualAdmin.id,
+          businessActorUserId: proxy.effectiveEmployee.id,
+          action: ACCESS_AUDIT_ACTIONS.ASSIGNMENT_NOTIFICATION_READ,
+          entityType: "assistant_assignment_notification",
+          entityId: id,
+          basis: "Read in admin work mode" + adminOnBehalfNotice(proxy),
+        });
+      }
+    } else {
+      await c.query(
+        "UPDATE assistant_assignment_notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL",
+        [actor.id],
+      );
+      if (proxy) {
+        await insertAccessAudit(c, {
+          actorUserId: proxy.actualAdmin.id,
+          businessActorUserId: proxy.effectiveEmployee.id,
+          action: ACCESS_AUDIT_ACTIONS.ASSIGNMENT_NOTIFICATION_READ_ALL,
+          entityType: "assistant_assignment_notifications",
+          entityId: actor.id,
+          basis: "Read all in admin work mode" + adminOnBehalfNotice(proxy),
+        });
+      }
+    }
+  });
 }

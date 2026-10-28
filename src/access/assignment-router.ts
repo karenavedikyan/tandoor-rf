@@ -34,8 +34,18 @@ function numeric(value: unknown): string | undefined {
   if (!/^-?\d{1,16}([.,]\d{1,4})?$/.test(v)) throw new AccessServiceError("Некорректная сумма.", "VALIDATION");
   return v.replace(",", ".");
 }
-function actor(req: AccessRequest) {
-  return { id: req.accessContext?.userId ?? req.authUser!.id, role: req.accessContext?.role ?? req.authUser!.role };
+function actor(req: AccessRequest): assignments.AssignmentActor {
+  const preview = req.accessContext?.preview;
+  const effectiveId = req.accessContext?.userId ?? req.authUser!.id;
+  const effectiveRole = req.accessContext?.role ?? req.authUser!.role;
+  if (preview?.active && preview.workMode && req.authUser?.role === "admin") {
+    return {
+      id: effectiveId,
+      role: effectiveRole,
+      previewProxy: { adminUserId: preview.actorUserId, effectiveUserId: preview.targetUserId },
+    };
+  }
+  return { id: effectiveId, role: effectiveRole };
 }
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 function handle(fn: Handler): express.RequestHandler {

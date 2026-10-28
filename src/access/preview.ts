@@ -34,18 +34,74 @@ export type PreviewState =
   | {
       active: true;
       targetUser: UserDto;
-      readOnly: true;
+      readOnly: boolean;
+      workMode: boolean;
+      workExpiresAt?: string | null;
+      actorUserId: string;
       error?: undefined;
     }
   | {
       active: true;
       targetUser: UserDto | null;
       readOnly: true;
+      workMode: false;
+      actorUserId: string;
       error: PreviewErrorState;
     }
   | {
       active: false;
     };
+
+export type SessionPreviewDetails = {
+  previewUserId: string | null;
+  actorUserId: string | null;
+  workEnabled: boolean;
+  workExpiresAt: Date | null;
+};
+
+const PREVIEW_WORK_TTL_HOURS = 8;
+
+export function previewWorkExpiryDate(): Date {
+  return new Date(Date.now() + PREVIEW_WORK_TTL_HOURS * 60 * 60 * 1000);
+}
+
+export async function getSessionPreviewDetails(sessionId: string): Promise<SessionPreviewDetails | null> {
+  const result = await query<{
+    preview_user_id: string | null;
+    user_id: string;
+    preview_work_enabled: boolean;
+    preview_work_expires_at: Date | null;
+  }>(
+    `
+      SELECT preview_user_id::text, user_id::text, preview_work_enabled, preview_work_expires_at
+      FROM sessions
+      WHERE id = $1::uuid AND revoked_at IS NULL
+      LIMIT 1
+    `,
+    [sessionId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const expiresAt = row.preview_work_expires_at;
+  const hasValidLease =
+    row.preview_work_enabled &&
+    expiresAt instanceof Date &&
+    Number.isFinite(expiresAt.getTime()) &&
+    expiresAt.getTime() > Date.now();
+  const staleWorkFlag =
+    row.preview_work_enabled &&
+    (!expiresAt || !(expiresAt instanceof Date) || expiresAt.getTime() <= Date.now());
+  if (staleWorkFlag) {
+    // Fail-closed: do not mutate session on read; computed workEnabled stays false.
+  }
+  const workEnabled = Boolean(row.preview_user_id && hasValidLease);
+  return {
+    previewUserId: row.preview_user_id,
+    actorUserId: row.user_id,
+    workEnabled,
+    workExpiresAt: workEnabled && expiresAt ? expiresAt : null,
+  };
+}
 
 import type { AccessPreviewMeta } from "./types";
 
@@ -269,16 +325,19 @@ export async function resolvePreviewState(sessionId: string | undefined): Promis
   if (!sessionId) {
     return { active: false };
   }
-  const previewUserId = await getSessionPreviewUserId(sessionId);
-  if (!previewUserId) {
+  const details = await getSessionPreviewDetails(sessionId);
+  if (!details?.previewUserId || !details.actorUserId) {
     return { active: false };
   }
+  const previewUserId = details.previewUserId;
   const validation = await validatePreviewTarget(previewUserId);
   if (!validation.ok) {
     const targetUser = await loadPreviewTargetUserSnapshot(previewUserId);
     return {
       active: true,
       readOnly: true,
+      workMode: false,
+      actorUserId: details.actorUserId,
       targetUser,
       error: {
         code: validation.code,
@@ -286,10 +345,14 @@ export async function resolvePreviewState(sessionId: string | undefined): Promis
       },
     };
   }
+  const workMode = details.workEnabled;
   return {
     active: true,
     targetUser: validation.user,
-    readOnly: true,
+    readOnly: !workMode,
+    workMode,
+    workExpiresAt: details.workExpiresAt?.toISOString() ?? null,
+    actorUserId: details.actorUserId,
   };
 }
 
@@ -297,6 +360,7 @@ export async function buildPreviewAccessContext(
   actorUserId: string,
   targetUserId: string,
   loadAccessContext: (userId: string, role?: UserRole) => Promise<AccessContext>,
+  sessionId?: string,
 ): Promise<
   | { ok: true; context: AccessContext; preview: AccessPreviewMeta }
   | { ok: false; message: string }
@@ -308,12 +372,18 @@ export async function buildPreviewAccessContext(
 
   const context = await loadAccessContext(targetUserId, validation.user.role);
 
+  const details = sessionId
+    ? await getSessionPreviewDetails(sessionId)
+    : null;
+  const workMode = Boolean(details?.workEnabled && details.previewUserId === targetUserId);
   const preview: AccessPreviewMeta = {
     active: true,
     actorUserId,
     targetUserId,
     targetUser: validation.user,
-    readOnly: true,
+    readOnly: !workMode,
+    workMode,
+    workExpiresAt: workMode && details?.workExpiresAt ? details.workExpiresAt.toISOString() : null,
   };
 
   return {

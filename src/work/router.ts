@@ -2,6 +2,8 @@ import express from "express";
 import {
   attachAccessContext,
   requireClientReadAccess,
+  requireNonAssistantBusinessRole,
+  type AccessRequest,
 } from "../access/middleware";
 import { requireAuth } from "../middleware/auth";
 import { requireDatabaseReady } from "../middleware/database";
@@ -14,14 +16,11 @@ export function createWorkRouter(): express.Router {
     requireAuth,
     attachAccessContext,
     requireClientReadAccess,
+    requireNonAssistantBusinessRole,
   ] as const;
 
   router.get("/tasks", ...readChain, (req, res, next) => {
-    if ((req as import("../middleware/auth").AuthenticatedRequest).authUser?.role === "assistant") {
-      res.status(403).json({ error: { code: "FORBIDDEN", message: "На первом этапе ассистенту доступен только раздел «Клиенты»." } });
-      return;
-    }
-    void getWorkQueueHandler(req, res).catch(next);
+    void getWorkQueueHandler(req as AccessRequest, res).catch(next);
   });
 
   return router;

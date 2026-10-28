@@ -1,4 +1,5 @@
 import type { AccessContext } from "../../access/types";
+import { effectiveAccessRole } from "../../access/middleware";
 
 /** Field visibility for the standalone Sales section only (not legal card sales). */
 export type SalesSectionFieldPolicy = {
@@ -45,7 +46,8 @@ export const RETURNS_SOURCE_FINANCE_AVAILABILITY: SalesSectionFinanceAvailabilit
 };
 
 export function resolveSalesSectionFieldPolicy(context: AccessContext): SalesSectionFieldPolicy {
-  if (context.role === "admin" || context.fullClientBase) {
+  const role = effectiveAccessRole(context);
+  if (role === "admin" && !context.preview?.active) {
     return {
       quantity: true,
       income: true,
@@ -58,7 +60,7 @@ export function resolveSalesSectionFieldPolicy(context: AccessContext): SalesSec
       profitability: true,
     };
   }
-  if (context.role === "rop") {
+  if (role === "rop") {
     return {
       quantity: true,
       income: true,
