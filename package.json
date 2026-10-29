@@ -55,6 +55,7 @@
     "tanbot-max-outbox-worker:local": "node --env-file=.env dist/cli/tanbot-max-outbox-worker.js --once",
     "verify:tanbot-readonly-check": "node scripts/verify-tanbot-readonly-check.mjs",
     "verify:tanbot-readonly-preflight": "node scripts/tanbot-readonly-packaging-preflight.mjs",
+    "verify:production-omit-dev-startup": "node scripts/verify-production-omit-dev-startup.mjs",
     "bitrix24-labels-bootstrap": "node dist/cli/bitrix24-labels-bootstrap.js",
     "bitrix24-labels-bootstrap:local": "node --env-file=.env dist/cli/bitrix24-labels-bootstrap.js",
     "test": "node scripts/run-unit-tests.mjs",
