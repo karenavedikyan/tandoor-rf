@@ -15,11 +15,20 @@
     var params = new URLSearchParams(q >= 0 ? hash.slice(q + 1) : "");
     var search = new URLSearchParams(location.search || "");
     var token = params.get("tt_tok") || search.get("tt_tok") || "";
+    var holderAccessToken = params.get("tt_hat") || search.get("tt_hat") || "";
     var orderId = params.get("tt_order") || params.get("tt_id") || search.get("tt_order") || "";
     var hv = params.get("tt_hv") || search.get("tt_hv") || "";
     var rcv = params.get("tt_rcv") || search.get("tt_rcv") || "";
     var via = params.get("tt_via") || search.get("tt_via") || "qr";
-    return { token: token, orderId: orderId, hv: hv, rcv: rcv, via: via, params: params };
+    return {
+      token: token,
+      holderAccessToken: holderAccessToken,
+      orderId: orderId,
+      hv: hv,
+      rcv: rcv,
+      via: via,
+      params: params,
+    };
   }
 
   function loadPublicContext(token) {
@@ -86,6 +95,41 @@
     }, 25);
   }
 
+  function loadPublicHolderContext(holderAccessToken) {
+    var url =
+      "/api/tan-tracker/public/holder/context?holderAccessToken=" +
+      encodeURIComponent(holderAccessToken);
+    return fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }).then(
+      function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) {
+            throw new Error(
+              (data && data.error && data.error.message) || "Передача недоступна.",
+            );
+          }
+          return data;
+        });
+      },
+    );
+  }
+
+  function finishBootHolder(data, inv) {
+    window.__TT_PUBLIC_RECIPIENT__ = true;
+    window.__TT_PUBLIC_HOLDER__ = true;
+    window.__TT_LK_BOOTSTRAP__ = data;
+    var p = inv.params;
+    p.set("tt_screen", "public-holder");
+    if (inv.holderAccessToken) p.set("tt_hat", inv.holderAccessToken);
+    if (data.orders && data.orders[0]) p.set("tt_order", data.orders[0].id);
+    location.hash = "tan-tracker?" + p.toString();
+    whenTanTrackerReady(function () {
+      window.TanTrackerPrototype.hydrateFromServer(data);
+      if (typeof window.__ttLkRenderTracker === "function") {
+        window.__ttLkRenderTracker();
+      }
+    });
+  }
+
   function finishBoot(data, inv) {
     window.__TT_PUBLIC_RECIPIENT__ = true;
     if (inv.token) {
@@ -116,6 +160,16 @@
   function boot() {
     document.body.classList.add("tt-lk-mode", "tt-active");
     var inv = parseInvitationFromLocation();
+    if (inv.holderAccessToken) {
+      void loadPublicHolderContext(inv.holderAccessToken)
+        .then(function (data) {
+          finishBootHolder(data, inv);
+        })
+        .catch(function (err) {
+          showError(err && err.message ? err.message : "Не удалось открыть передачу.");
+        });
+      return;
+    }
     if (!inv.token) {
       showError("Ссылка приглашения неполная или устарела.");
       return;

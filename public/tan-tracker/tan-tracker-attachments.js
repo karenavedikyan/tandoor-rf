@@ -330,10 +330,17 @@
     return `<li class="tt-att-item" data-att-id="${E(a.id)}">${thumb}<div class="tt-att-info">${meta}${heicLike(a.mime, a.name) && !prev ? `<span class="tt-att-note">Предпросмотр HEIC недоступен в браузере — скачайте файл.</span>` : !prev && (a.mime || "").includes("pdf") ? `<span class="tt-att-note">Скачайте PDF, чтобы открыть его на устройстве.</span>` : ""}<div class="tt-att-actions">${openBtn}${dl}${rm}</div></div></li>`;
   }
 
+  function lkAttachmentMode() {
+    return !!(typeof window !== "undefined" && (window.__TT_LK_BOOTSTRAP__?.lkMode || window.__TT_PUBLIC_RECIPIENT__));
+  }
+
   function blockHtml(opts) {
+    const lk = lkAttachmentMode();
     const {
       title = "Фото и файлы",
-      hint = "До 10 файлов · 10 МБ каждый · 50 МБ суммарно. Демо: файлы только до обновления страницы.",
+      hint = lk
+        ? "До 10 файлов · 10 МБ каждый · 50 МБ суммарно."
+        : "До 10 файлов · 10 МБ каждый · 50 МБ суммарно. Демо: файлы только до обновления страницы.",
       items = [],
       readonly = false,
       showPicker = false,
@@ -376,7 +383,7 @@
     const countLabel = items.length ? ` · ${items.length}` : "";
     const titleHtml = omitTitle ? "" : `<h3 class="tt-att-title">${E(title)}${compact ? countLabel : ""}</h3>`;
     const resetNote =
-      omitResetNote || compact
+      omitResetNote || compact || lk
         ? ""
         : `<p class="tt-muted tt-att-reset-note">Вложения хранятся только в памяти демо и сбрасываются при обновлении страницы.</p>`;
     const head =

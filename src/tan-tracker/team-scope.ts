@@ -17,7 +17,23 @@ export async function loadTanTrackerTeamEmployeeGuids(
     return new Set();
   }
   if (access.role === "rop") {
-    return loadRopTeamEmployeeGuids(access.userId, employeeId);
+    const legacy = await loadRopTeamEmployeeGuids(access.userId, employeeId);
+    const onecTeams = await query<{ employee_guid: string }>(
+      `
+        SELECT DISTINCT lower(m.guid_manager::text) AS employee_guid
+        FROM onec_wholesale_team_groups g
+        JOIN onec_wholesale_employee_team_memberships m ON m.guid_team = g.guid_team
+        WHERE lower(g.guid_team_leader::text) = lower($1::text)
+        UNION
+        SELECT lower($1::text) AS employee_guid
+      `,
+      [employeeId],
+    );
+    const merged = new Set(legacy);
+    for (const row of onecTeams.rows) {
+      merged.add(row.employee_guid.toLowerCase());
+    }
+    return merged;
   }
   if (access.role === "regional_manager") {
     const result = await query<{ employee_guid: string }>(

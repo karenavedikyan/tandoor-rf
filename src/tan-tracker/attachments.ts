@@ -141,8 +141,16 @@ export async function linkStagedAttachmentsToTransfer(
 export async function listAttachmentsForTransfers(
   client: Db,
   transferIds: string[],
-): Promise<Map<string, Array<{ id: string; name: string; mimeType: string; byteSize: number; addedAt: number }>>> {
-  const map = new Map<string, Array<{ id: string; name: string; mimeType: string; byteSize: number; addedAt: number }>>();
+): Promise<
+  Map<
+    string,
+    Array<{ id: string; name: string; mimeType: string; byteSize: number; addedAt: number; addedBy: string | null }>
+  >
+> {
+  const map = new Map<
+    string,
+    Array<{ id: string; name: string; mimeType: string; byteSize: number; addedAt: number; addedBy: string | null }>
+  >();
   if (!transferIds.length) return map;
   const res = await client.query<{
     transfer_id: string;
@@ -151,9 +159,14 @@ export async function listAttachmentsForTransfers(
     mime_type: string;
     byte_size: string;
     created_at: Date;
+    added_by_party_id: string | null;
   }>(
-    `SELECT transfer_id, id::text, original_name, mime_type, byte_size::text, created_at
-     FROM tt_transfer_attachments WHERE transfer_id = ANY($1::text[]) ORDER BY created_at ASC`,
+    `SELECT a.transfer_id, a.id::text, a.original_name, a.mime_type, a.byte_size::text, a.created_at,
+            p.id::text AS added_by_party_id
+     FROM tt_transfer_attachments a
+     LEFT JOIN tt_parties p ON p.user_id = a.uploaded_by_user_id AND p.kind = 'user'
+     WHERE a.transfer_id = ANY($1::text[])
+     ORDER BY a.created_at ASC`,
     [transferIds],
   );
   for (const row of res.rows) {
@@ -164,6 +177,7 @@ export async function listAttachmentsForTransfers(
       mimeType: row.mime_type,
       byteSize: Number(row.byte_size),
       addedAt: row.created_at.getTime(),
+      addedBy: row.added_by_party_id,
     });
     map.set(row.transfer_id, list);
   }

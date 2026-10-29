@@ -49,11 +49,21 @@
 | `seedOrders` / localStorage | **Нет** — PostgreSQL |
 | In-memory attachments | **Staging upload** + `tt_transfer_attachments` (LK API; browser E2E — в работе) |
 
-## Блокеры (честно)
+## Блокеры (честно, обновление после P1)
 
-1. **SMS/OTP (production):** реальный провайдер не подключён → send 503; в test `TT_PHONE_VERIFICATION_PROVIDER=test`. Лимиты: 5 verify attempts (persist), cooldown 60s send, max 3 send / 15 min.
-2. **Остаток UI/API:** relay/final цепочки, полная адаптация 26 QA + relay regression; public recipient browser E2E (SMS, файлы, confirm, reload) — отдельная приёмка.
-3. **Integration:** `tan-tracker-linked-bootstrap.test.ts`, `tan-tracker-public-phone-guards.test.ts`, guards/scope/schema — на изолированной PostgreSQL.
+| ID | Статус в ветке `cursor/tan-tracker-lk-tt56-20261028` |
+|----|--------------------------------------------------------|
+| RELAY-01 | **Исправлено в коде:** qr-confirm не завершает маршрут у посредника; `holderAccessToken`, `GET/POST public/holder/*`, UI `public-holder`, boot по `tt_hat`. **Нужна независимая browser E2E + PG.** |
+| CODE-01 | **Исправлено:** `POST /public/recipient/code/generate` с `phoneSessionToken`. Integration-тест. Browser E2E — приёмка. |
+| SCOPE-01 | **Исправлено:** ROP union legacy + 1С команды в `team-scope.ts`. Integration-тест с двумя командами. |
+| PICKER-01 | **Исправлено:** единый `transferPickAllowed` для initial render и `patchContactPick`; LK не подставляет `actingContactId` сотрудника. |
+| DEMO/COPY/FILES/VISUAL P2 | **Частично:** demo chrome в LK/public, FILES-01/02 server, tt56 токены в `tan-tracker-lk-theme.css`. Остаток demo-copy в wizard/strings, VISUAL-01 logo — см. diff. |
+
+**Не заявляется «полностью принято»** без повторной независимой browser-матрицы и merge.
+
+1. **SMS/OTP (production):** реальный провайдер не подключён → send 503; в test `TT_PHONE_VERIFICATION_PROVIDER=test`.
+2. **Integration:** `tan-tracker-p1-regression.test.ts` + существующие tan-tracker integration — PostgreSQL test DB.
+3. **26 QA tt56 на LK:** адаптация к `/api/tan-tracker` — следующий этап.
 
 ## Следующие шаги исполнителя
 

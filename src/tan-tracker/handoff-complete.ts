@@ -16,7 +16,7 @@ export async function applyPendingReceiptHandoff(
   auditUserId: string | null,
   actingPartyId: string,
   timelineNote: string,
-): Promise<void> {
+): Promise<{ transferStatus: string; routeComplete: boolean }> {
   if (!row.pending_party_id) {
     throw Object.assign(new Error("Нет ожидающего получателя."), { http: 409 });
   }
@@ -49,4 +49,5 @@ export async function applyPendingReceiptHandoff(
      WHERE transfer_id = $1 AND superseded_at IS NULL`,
     [row.id],
   );
+  return { transferStatus: newStatus, routeComplete: completed };
 }

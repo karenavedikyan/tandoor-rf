@@ -73,9 +73,15 @@ export async function addTransferAttachmentsHandler(req: AccessRequest, res: Res
   const { user, access } = gate;
   const transferId = String(req.params.id ?? "").trim();
   const body = req.body as AddBody;
-  const stagingIds = Array.isArray(body.stagingAttachmentIds)
-    ? body.stagingAttachmentIds.map(String).filter(Boolean).slice(0, 10)
+  const stagingRaw = Array.isArray(body.stagingAttachmentIds)
+    ? body.stagingAttachmentIds.map(String).filter(Boolean)
     : [];
+  if (stagingRaw.length > 10) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Не более 10 файлов на передачу."));
+    return;
+  }
+  const stagingIds = stagingRaw;
   if (!stagingIds.length) {
     setNoStore(res);
     res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите файлы для прикрепления."));

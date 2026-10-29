@@ -11,9 +11,11 @@ import { downloadAttachmentHandler } from "./attachments";
 import { addTransferAttachmentsHandler, deleteTransferAttachmentHandler } from "./attachment-mutations";
 import {
   publicConfirmQrHandoffHandler,
+  publicRecipientCodeGenerateHandler,
   publicSendPhoneCodeHandler,
   publicVerifyPhoneCodeHandler,
 } from "./public-recipient";
+import { publicHolderContextHandler, publicHolderSendToFinalHandler } from "./public-holder";
 import { legacyCompleteHandler } from "./legacy-complete-mutation";
 import {
   publicRecipientAttachmentHandler,
@@ -37,6 +39,18 @@ export function createTanTrackerRouter(): express.Router {
   });
   router.post("/public/recipient/handoff/qr-confirm", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
     void publicConfirmQrHandoffHandler(req, res).catch(next);
+  });
+
+  router.post("/public/recipient/code/generate", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicRecipientCodeGenerateHandler(req, res).catch(next);
+  });
+
+  router.get("/public/holder/context", requireDatabaseReady, (req, res, next) => {
+    void publicHolderContextHandler(req, res).catch(next);
+  });
+
+  router.post("/public/holder/send-to-final", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicHolderSendToFinalHandler(req, res).catch(next);
   });
 
   router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {

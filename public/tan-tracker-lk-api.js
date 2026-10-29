@@ -129,7 +129,33 @@
           throw new Error(api.extractErrorMessage(result.data, "Неверный код."));
         });
     },
-    generateHandoffCode: function (transferId) {
+    generateHandoffCode: function (transferId, publicOpts) {
+      if (window.__TT_PUBLIC_RECIPIENT__ && publicOpts && publicOpts.invitationToken) {
+        return jsonFetch("/api/tan-tracker/public/recipient/code/generate", {
+          method: "POST",
+          body: {
+            invitationToken: publicOpts.invitationToken,
+            phoneSessionToken: publicOpts.phoneSessionToken,
+          },
+        }).then(function (result) {
+          if (result.response.status !== 200 || !result.data || !result.data.code) {
+            throw new Error(api.extractErrorMessage(result.data, "Не удалось выпустить код."));
+          }
+          var order = window.TanTrackerPrototype.orders().find(function (x) {
+            return x.id === transferId;
+          });
+          if (order) {
+            order.code = {
+              code: result.data.code,
+              expiresAt: result.data.expiresAt,
+              attempts: 0,
+              used: false,
+              forContact: order.pendingId,
+            };
+          }
+          return result.data;
+        });
+      }
       return api
         .apiRequest("/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/code/generate", {
           method: "POST",
@@ -148,6 +174,30 @@
           }
           throw new Error(api.extractErrorMessage(result.data, "Не удалось выпустить код."));
         });
+    },
+    publicHolderSendToFinal: function (holderAccessToken) {
+      return jsonFetch("/api/tan-tracker/public/holder/send-to-final", {
+        method: "POST",
+        body: { holderAccessToken: holderAccessToken },
+      }).then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось назначить получателя."));
+        }
+        if (result.data.orders && window.TanTrackerPrototype.hydrateFromServer) {
+          window.TanTrackerPrototype.hydrateFromServer(result.data);
+        }
+        return result.data;
+      });
+    },
+    loadPublicHolderContext: function (holderAccessToken) {
+      var url =
+        "/api/tan-tracker/public/holder/context?holderAccessToken=" + encodeURIComponent(holderAccessToken);
+      return jsonFetch(url, { method: "GET" }).then(function (result) {
+        if (result.response.status !== 200) {
+          throw new Error(api.extractErrorMessage(result.data, "Передача недоступна."));
+        }
+        return result.data;
+      });
     },
     cancelPending: function (transferId) {
       return api

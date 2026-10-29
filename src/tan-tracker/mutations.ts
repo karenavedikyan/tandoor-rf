@@ -113,9 +113,13 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
        VALUES ($1,$2::uuid,$3,'create',$4::jsonb)`,
         [publicCode, auditUserId, holderParty.id, JSON.stringify({ item })],
       );
-      const stagingIds = Array.isArray(body.stagingAttachmentIds)
-        ? body.stagingAttachmentIds.map(String).filter(Boolean).slice(0, 10)
+      const stagingRaw = Array.isArray(body.stagingAttachmentIds)
+        ? body.stagingAttachmentIds.map(String).filter(Boolean)
         : [];
+      if (stagingRaw.length > 10) {
+        throw Object.assign(new Error("Не более 10 файлов на передачу."), { http: 400 });
+      }
+      const stagingIds = stagingRaw;
       if (stagingIds.length) {
         await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingIds);
       }

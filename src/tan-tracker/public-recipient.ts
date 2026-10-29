@@ -18,10 +18,12 @@ import {
   PHONE_VERIFICATION_MAX_ATTEMPTS,
   PHONE_VERIFICATION_TTL_MS,
   PHONE_SESSION_TTL_MS,
+  HANDOFF_CODE_TTL_MS,
 } from "./otp-config";
 import { verifyInvitationToken } from "./invitation-token";
 import { signPhoneSession, verifyPhoneSession } from "./phone-session";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
+import { holderAccessTtlMs, signHolderAccess } from "./holder-access";
 
 type InviteBody = {
   invitationToken?: string;
@@ -283,8 +285,14 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
     return;
   }
 
-  let receipt: { publicCode: string; item: string; status: string; completedAt: number | null } | null =
-    null;
+  let receipt: {
+    publicCode: string;
+    item: string;
+    transferStatus: string;
+    routeComplete: boolean;
+    completedAt: number | null;
+    holderAccessToken: string | null;
+  } | null = null;
   try {
     await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
@@ -300,7 +308,7 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
           [row.id],
         )
       ).rows[0];
-      await applyPendingReceiptHandoff(
+      const outcome = await applyPendingReceiptHandoff(
         client,
         row,
         null,
@@ -312,11 +320,27 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
          VALUES ($1,NULL,$2::uuid,'qr_confirm','{}'::jsonb)`,
         [row.id, invite.pendingPartyId],
       );
+      const after = (
+        await client.query<{ holder_party_id: string; handoff_version: number }>(
+          `SELECT holder_party_id, handoff_version FROM tt_transfers WHERE id = $1`,
+          [row.id],
+        )
+      ).rows[0];
       receipt = {
         publicCode: itemRow?.public_code ?? row.id,
         item: itemRow?.item_title ?? "",
-        status: "completed",
-        completedAt: Date.now(),
+        transferStatus: outcome.transferStatus,
+        routeComplete: outcome.routeComplete,
+        completedAt: outcome.routeComplete ? Date.now() : null,
+        holderAccessToken:
+          outcome.routeComplete || !after
+            ? null
+            : signHolderAccess({
+                transferId: row.id,
+                partyId: after.holder_party_id,
+                hv: after.handoff_version,
+                exp: Date.now() + holderAccessTtlMs(),
+              }),
       };
     });
   } catch (err: unknown) {
@@ -331,6 +355,82 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
 
   setNoStore(res);
   res.status(200).json({ ok: true, receipt });
+}
+
+export async function publicRecipientCodeGenerateHandler(req: Request, res: Response): Promise<void> {
+  const body = req.body as InviteBody & { phoneSessionToken?: string };
+  const invite = await resolveInvitation(body);
+  const session = body.phoneSessionToken ? verifyPhoneSession(body.phoneSessionToken) : null;
+  if (!invite || !session) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Подтвердите номер телефона."));
+    return;
+  }
+  if (session.partyId !== invite.pendingPartyId || session.hv !== invite.hv) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия подтверждения недействительна."));
+    return;
+  }
+  let pepper: string;
+  try {
+    pepper = requireHandoffOtpPepper();
+  } catch {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис кодов временно недоступен."));
+    return;
+  }
+  type GenResult =
+    | { ok: true; code: string; expiresAt: number }
+    | { ok: false; http: number; message: string };
+  let payload: GenResult;
+  try {
+    payload = await withTransaction(async (client) => {
+      const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
+      if (!row || row.status === "completed" || !row.pending_party_id) {
+        return { ok: false, http: 404, message: "Приглашение недоступно." };
+      }
+      if (row.id !== session.transferId || row.pending_party_id !== invite.pendingPartyId) {
+        return { ok: false, http: 403, message: "Нет доступа." };
+      }
+      const code = generateNumericOtp(6);
+      const hash = hashOtp(code, pepper);
+      const expiresAt = new Date(Date.now() + HANDOFF_CODE_TTL_MS);
+      await client.query(
+        `UPDATE tt_handoff_codes SET consumed_at = NOW()
+         WHERE transfer_id = $1 AND handoff_version = $2 AND consumed_at IS NULL`,
+        [row.id, row.handoff_version],
+      );
+      await client.query(
+        `INSERT INTO tt_handoff_codes (transfer_id, handoff_version, pending_party_id, code_hash, expires_at, verify_attempt_count)
+         VALUES ($1,$2,$3,$4,$5,0)`,
+        [row.id, row.handoff_version, row.pending_party_id, hash, expiresAt],
+      );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'code_generate_public','{}'::jsonb)`,
+        [row.id, invite.pendingPartyId],
+      );
+      return { ok: true, code, expiresAt: expiresAt.getTime() };
+    });
+  } catch {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Не удалось выпустить код."));
+    return;
+  }
+  if (!payload.ok) {
+    setNoStore(res);
+    res
+      .status(payload.http)
+      .json(
+        apiError(
+          payload.http === 403 ? ERROR_CODES.FORBIDDEN : ERROR_CODES.NOT_FOUND,
+          payload.message,
+        ),
+      );
+    return;
+  }
+  setNoStore(res);
+  res.status(200).json({ ok: true, code: payload.code, expiresAt: payload.expiresAt });
 }
 
 /** Authenticated holder refresh after public QR confirm (optional poll). */

@@ -5,12 +5,19 @@
 body.legacy-body .legacy-content .tt-work,
 body.legacy-body #tt-root-host .tt-work {
   --surface: var(--rf-surface, #ffffff);
-  --text: var(--rf-text, #1a1a1a);
-  --muted: var(--rf-text-muted, #58665e);
+  --text: #232c35;
+  --muted: #697683;
   --line: var(--rf-border, #d8dce8);
   --bg: var(--rf-bg, #f3f5f6);
-  --green: var(--rf-primary, #507f22);
+  --green: #507f22;
   --tint: var(--rf-green-soft, #eef5e7);
+}
+
+[data-theme="dark"] body.legacy-body .legacy-content .tt-work,
+[data-theme="dark"] body.legacy-body #tt-root-host .tt-work {
+  --text: #232c35;
+  --muted: #697683;
+  --green: #507f22;
 }
 
 [data-theme="dark"] body.legacy-body .legacy-content .tt-work,
