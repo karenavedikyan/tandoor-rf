@@ -6,13 +6,10 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { buildTanTrackerBootstrap } from "./service";
 import { ensurePartyForUserOnWrite } from "./repository";
-import { generateNumericOtp, hashOtp } from "./phone-verification";
+import { hashOtp } from "./phone-verification";
 import { requireTanTrackerMutationAccess } from "./guards";
-import {
-  HANDOFF_CODE_MAX_VERIFY_ATTEMPTS,
-  HANDOFF_CODE_TTL_MS,
-  requireHandoffOtpPepper,
-} from "./otp-config";
+import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS, requireHandoffOtpPepper } from "./otp-config";
+import { generateHandoffCodeForPendingParty } from "./handoff-code-generate";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
 
 async function loadTransfer(client: { query: Function }, id: string) {
@@ -40,14 +37,6 @@ export async function generateHandoffCodeHandler(req: AccessRequest, res: Respon
   const { user, access } = gate;
   const transferId = String(req.params.id ?? "").trim().slice(0, 64);
   const auditUserId = resolveTanTrackerAuditUserId(req.authUser!, access);
-  let pepper: string;
-  try {
-    pepper = requireHandoffOtpPepper();
-  } catch {
-    setNoStore(res);
-    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис кодов временно недоступен."));
-    return;
-  }
 
   type GenResult =
     | { ok: true; code: string; expiresAt: number; transferId: string }
@@ -57,36 +46,22 @@ export async function generateHandoffCodeHandler(req: AccessRequest, res: Respon
   try {
     payload = await withTransaction(async (client) => {
       const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
-      const row = await loadTransfer(client, transferId);
-      if (!row || !row.pending_party_id) {
-        return { ok: false, http: 404, message: "Передача не найдена." };
+      const generated = await generateHandoffCodeForPendingParty(client, {
+        transferIdOrCode: transferId,
+        pendingPartyId: party.id,
+        auditUserId,
+        auditPartyId: party.id,
+        auditAction: "code_generate",
+      });
+      if (!generated.ok) {
+        return generated;
       }
-      if (row.pending_party_id !== party.id) {
-        return {
-          ok: false,
-          http: 403,
-          message: "Только ожидающий получатель может выпустить код.",
-        };
-      }
-      const code = generateNumericOtp(6);
-      const hash = hashOtp(code, pepper);
-      const expiresAt = new Date(Date.now() + HANDOFF_CODE_TTL_MS);
-      await client.query(
-        `UPDATE tt_handoff_codes SET consumed_at = NOW()
-         WHERE transfer_id = $1 AND handoff_version = $2 AND consumed_at IS NULL`,
-        [row.id, row.handoff_version],
-      );
-      await client.query(
-        `INSERT INTO tt_handoff_codes (transfer_id, handoff_version, pending_party_id, code_hash, expires_at, verify_attempt_count)
-         VALUES ($1,$2,$3,$4,$5,0)`,
-        [row.id, row.handoff_version, row.pending_party_id, hash, expiresAt],
-      );
-      await client.query(
-        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
-         VALUES ($1,$2::uuid,$3,'code_generate','{}'::jsonb)`,
-        [row.id, auditUserId, party.id],
-      );
-      return { ok: true, code, expiresAt: expiresAt.getTime(), transferId: row.id };
+      return {
+        ok: true,
+        code: generated.code,
+        expiresAt: generated.expiresAt,
+        transferId: generated.transferId,
+      };
     });
   } catch {
     setNoStore(res);

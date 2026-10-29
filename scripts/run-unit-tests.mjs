@@ -6,7 +6,11 @@ import { spawnSync } from "node:child_process";
 function discover(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const filename = path.join(dir, entry.name);
-    return entry.isDirectory() ? discover(filename) : filename.endsWith(".test.ts") ? [filename] : [];
+    return entry.isDirectory()
+      ? discover(filename)
+      : filename.endsWith(".test.ts") || filename.endsWith(".test.mjs")
+        ? [filename]
+        : [];
   });
 }
 const tests = ["test/server.test.ts", ...discover("test/unit").sort()];

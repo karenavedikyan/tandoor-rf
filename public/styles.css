@@ -213,6 +213,22 @@ body.auth-body {
   font-weight: 700;
 }
 
+.profile-card--nested {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle, #e5e5e5);
+}
+
+.profile-section-title {
+  font-size: 1.125rem;
+  margin: 0 0 0.75rem;
+}
+
+.profile-muted {
+  color: var(--text-muted, #555);
+  margin: 0 0 0.75rem;
+}
+
 .profile-card {
   background: var(--rf-surface);
   border: 1px solid var(--rf-border);
