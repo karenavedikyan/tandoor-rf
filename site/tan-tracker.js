@@ -2035,11 +2035,30 @@
     return false;
   }
 
+  function isRegistryInitiator(o, actor) {
+    if (!o || !actor) return false;
+    const cid = o.createdById || orderCreatorId(o);
+    return cid === actor;
+  }
+
+  function actorRegistrySeesOrder(o, actor) {
+    if (!o || !actor) return false;
+    if (!orderVisible(o)) return false;
+    if (state.actingContactId) {
+      const parts = [o.holderId, o.pendingId, ...o.timeline.flatMap((t) => [t.from, t.to])];
+      if (!parts.includes(state.actingContactId)) return false;
+    }
+    return true;
+  }
+
   function registryPersonallyHidden(o, actor) {
     const RP = RegPersonal();
-    if (!RP || !actor || o.createdById !== actor) return false;
+    if (!RP || !actor) return false;
     if (actorHasRegistryObligation(o, actor)) return false;
-    return RP.isRemoved(o.id, actor) || RP.isArchived(o.id, actor);
+    if (state.mineFilter === "handoff" || state.mineFilter === "receive") return false;
+    if (RP.isArchived(o.id, actor)) return true;
+    if (RP.isRemoved(o.id, actor) && isRegistryInitiator(o, actor)) return true;
+    return false;
   }
 
   function applyRegistryPersonalView(list, actor) {
@@ -2047,20 +2066,20 @@
     const view = state.registryPersonalView || "main";
     if (!RP || !actor) return list;
     if (view === "archived") {
-      return list.filter((o) => o.createdById === actor && RP.isArchived(o.id, actor));
+      return list.filter((o) => actorRegistrySeesOrder(o, actor) && RP.isArchived(o.id, actor));
     }
     if (view === "removed") {
-      return list.filter((o) => o.createdById === actor && RP.isRemoved(o.id, actor));
+      return list.filter((o) => isRegistryInitiator(o, actor) && RP.isRemoved(o.id, actor));
     }
     return list.filter((o) => !registryPersonallyHidden(o, actor));
   }
 
   function canInitiatorRemoveFromRegistry(o, actor) {
-    return !!(o && actor && o.createdById === actor && !actorHasRegistryObligation(o, actor));
+    return !!(isRegistryInitiator(o, actor) && !actorHasRegistryObligation(o, actor));
   }
 
-  function canInitiatorArchive(o, actor) {
-    return !!(o && actor && o.createdById === actor && o.status === "completed");
+  function canPersonalArchive(o, actor) {
+    return !!(o && actor && o.status === "completed" && actorRegistrySeesOrder(o, actor));
   }
 
   function visibleOrders() {
@@ -2115,6 +2134,17 @@
     if (state.statusFilter !== "all") n += 1;
     if (state.mineFilter !== "all") n += 1;
     return n;
+  }
+
+  function ensureMessengerDemoConfig() {
+    const raw = window.__TT_MESSENGER_DEMO__;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) window.__TT_MESSENGER_DEMO__ = {};
+    return window.__TT_MESSENGER_DEMO__;
+  }
+
+  function demoMaxSimulationToggleHtml() {
+    const on = ensureMessengerDemoConfig().maxEnabled === true;
+    return `<label class="tt-demo-max-row"><input type="checkbox" data-tt="demo-max-enabled"${on ? " checked" : ""}> Симуляция: MAX настроен (демо, без реальных сообщений)</label>`;
   }
 
   function demoHeadPopoverHtml(demoBody) {
@@ -3054,8 +3084,8 @@
 
     const initiatorBtns = [];
     const RP = RegPersonal();
-    if (actor && o.createdById === actor && RP) {
-      if (canInitiatorArchive(o, actor) && !RP.isArchived(o.id, actor)) {
+    if (actor && RP) {
+      if (canPersonalArchive(o, actor) && !RP.isArchived(o.id, actor)) {
         initiatorBtns.push(overflowActionBtn("В мой архив", "registry-archive", "archive"));
       }
       if (canInitiatorRemoveFromRegistry(o, actor) && !RP.isRemoved(o.id, actor)) {
@@ -3408,7 +3438,7 @@
         Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId });
       const allowed = o && rcvOk && scopeOk;
       const recipDemo = demoHeadPopoverHtml(
-        `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>`
+        `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>${demoMaxSimulationToggleHtml()}`
       );
       main.innerHTML =
         o && allowed
@@ -3449,7 +3479,7 @@
             })
             .join("")}</select></label>`;
 
-    const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
+    const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>${demoMaxSimulationToggleHtml()}<div data-tt="chrome">${chrome}</div>`;
     const demoShell = "";
 
     const demoHeadPopover = demoHeadPopoverHtml(demoBody);
@@ -4254,8 +4284,8 @@
     if (action === "registry-archive" && o) {
       const actor = registryActorId();
       const RP = RegPersonal();
-      if (!RP || !canInitiatorArchive(o, actor)) {
-        state.error = "В архив можно отправить только завершённую передачу, которую вы создали.";
+      if (!RP || !canPersonalArchive(o, actor)) {
+        state.error = "В архив можно отправить только завершённую передачу из вашей области видимости.";
         renderTracker();
         return;
       }
@@ -4273,7 +4303,7 @@
     }
     if (action === "registry-unremove" && o) {
       const actor = registryActorId();
-      if (o.createdById !== actor) {
+      if (!isRegistryInitiator(o, actor)) {
         state.error = "Восстановить может только инициатор.";
         renderTracker();
         return;
@@ -4495,6 +4525,18 @@
     }
   });
 
+  document.addEventListener("change", (e) => {
+    if (current !== ROUTE) return;
+    if (!e.target.matches?.('[data-tt="demo-max-enabled"]')) return;
+    const cfg = ensureMessengerDemoConfig();
+    cfg.maxEnabled = e.target.checked === true;
+    if (!cfg.maxEnabled && state.recipientChannel === "max") {
+      state.recipientChannel = null;
+      resetRecipientIdentity();
+    }
+    renderTracker();
+  });
+
   document.addEventListener("keydown", (e) => {
     if (current !== ROUTE) return;
     if (e.key === "Escape") closeAttachLightbox();
@@ -4615,6 +4657,12 @@
     hasFirstConfirmedCustodyHandoff,
   };
 
-  RegPersonal()?.init?.();
+  let regPersonalHydratedRendered = false;
+  const paintAfterRegPersonalReady = () => {
+    if (regPersonalHydratedRendered || current !== ROUTE) return;
+    regPersonalHydratedRendered = true;
+    renderTracker();
+  };
+  RegPersonal()?.init?.()?.then?.(paintAfterRegPersonalReady)?.catch?.(() => {});
   syncShellNav();
 })();

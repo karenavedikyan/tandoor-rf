@@ -17,19 +17,40 @@ var TT_REGISTRY_PERSONAL_QA = await (async () => {
     window.TtRegistryPersonal._testReset();
     await window.NotificationDemoStore.resetRemote();
   });
-  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-002`);
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-009`);
   await page.reload();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await page.locator('summary[aria-label="Ещё действия"]').click();
   await page.getByRole("button", { name: "В мой архив", exact: true }).click();
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1`);
   await page.reload();
-  ok((await page.locator('[data-tt-open="TT-2026-002"]').count()) === 0, "archived completed hidden from main registry");
+  ok((await page.locator('[data-tt-open="TT-2026-009"]').count()) === 0, "archived completed hidden from main registry");
   await page.getByRole("button", { name: /Архив/ }).click();
-  ok((await page.locator('[data-tt-open="TT-2026-002"]').count()) === 1, "archived view shows record");
+  ok((await page.locator('[data-tt-open="TT-2026-009"]').count()) === 1, "archived view shows record");
+
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m3&tt_id=TT-2026-017`);
+  await page.reload();
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await page.locator('summary[aria-label="Ещё действия"]').click();
+  await page.getByRole("button", { name: "В мой архив", exact: true }).click();
+  await page.evaluate(async () => {
+    await window.NotificationDemoStore.flush();
+  });
+  await page.waitForFunction(() => window.NotificationDemoStore.getSaveStatus() === "saved");
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m3`);
+  await page.reload();
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.locator('[data-tt-open="TT-2026-017"]').count()) === 0, "cold reload hides archived row without manual RP.init");
+
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-017`);
+  await page.reload();
+  await page.locator('summary[aria-label="Ещё действия"]').click();
+  ok((await page.getByRole("button", { name: "Убрать из моего реестра" }).count()) === 0, "non-creator overflow has no remove");
+  ok((await page.getByRole("button", { name: "В мой архив", exact: true }).count()) === 1, "non-creator can archive completed in scope");
+
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m3&tt_id=TT-2026-010`);
   await page.reload();
-  ok((await page.locator('[data-tt="registry-remove-ask"]').count()) === 0, "non-creator no remove control");
+  ok((await page.locator('[data-tt="registry-remove-ask"]').count()) === 0, "non-creator no remove control on list");
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m3&tt_id=TT-2026-010`);
   await page.reload();
   await page.locator('summary[aria-label="Ещё действия"]').click();
