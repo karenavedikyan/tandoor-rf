@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Regression: production image installs only runtime deps (npm ci --omit=dev).
- * Stages a clean directory (no parent node_modules), installs prod deps, starts dist/server.js,
- * expects GET /api/health → 200. Fails if a runtime import (e.g. undici) is missing from dependencies.
+ * Stages outside the repository (OS temp), installs prod deps only, starts dist/server.js,
+ * expects GET /api/health → 200. Fails if a runtime import is missing from prod dependencies
+ * or if a parent node_modules could satisfy imports instead of the staged tree.
  *
  * Usage: npm run build && node scripts/verify-production-omit-dev-startup.mjs
  */
@@ -14,7 +15,39 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const distEntry = path.join(repoRoot, "dist", "server.js");
+
+function resolveReal(dir) {
+  return fs.realpathSync(dir);
+}
+
+/** Stage directory must not live under the repo (avoids walking up into repo/node_modules). */
+export function assertProductionStageIsolation(stageDir, repo) {
+  const stage = resolveReal(stageDir);
+  const repoRootResolved = resolveReal(repo);
+  const rel = path.relative(repoRootResolved, stage);
+  if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+    throw new Error(
+      `Production stage must be outside the repository (stage=${stage}, repo=${repoRootResolved}).`,
+    );
+  }
+
+  let cursor = path.dirname(stage);
+  for (;;) {
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    const foreignNm = path.join(cursor, "node_modules");
+    if (fs.existsSync(foreignNm)) {
+      throw new Error(
+        `Parent node_modules on module resolution path would mask missing prod deps: ${foreignNm}`,
+      );
+    }
+    cursor = parent;
+  }
+}
+
+function createIsolatedStageDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "tandoor-prod-omit-dev-"));
+}
 
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -28,11 +61,11 @@ function pickFreePort() {
   });
 }
 
-function copyProductionArtifacts(stageDir) {
-  fs.cpSync(path.join(repoRoot, "package.json"), path.join(stageDir, "package.json"));
-  fs.cpSync(path.join(repoRoot, "package-lock.json"), path.join(stageDir, "package-lock.json"));
-  fs.cpSync(path.join(repoRoot, "dist"), path.join(stageDir, "dist"), { recursive: true });
-  const serverDir = path.join(repoRoot, "server");
+function copyProductionArtifacts(stageDir, repo) {
+  fs.cpSync(path.join(repo, "package.json"), path.join(stageDir, "package.json"));
+  fs.cpSync(path.join(repo, "package-lock.json"), path.join(stageDir, "package-lock.json"));
+  fs.cpSync(path.join(repo, "dist"), path.join(stageDir, "dist"), { recursive: true });
+  const serverDir = path.join(repo, "server");
   if (fs.existsSync(serverDir)) {
     fs.cpSync(serverDir, path.join(stageDir, "server"), { recursive: true });
   }
@@ -52,15 +85,37 @@ function npmCiOmitDev(stageDir) {
       `npm ci --omit=dev failed (exit ${result.status}):\n${result.stderr || result.stdout}`,
     );
   }
-  if (fs.existsSync(path.join(repoRoot, "node_modules", "undici"))) {
-    if (fs.existsSync(path.join(stageDir, "node_modules", "undici"))) {
-      /* expected when undici is a direct dependency */
+}
+
+/** Same resolution path as dist/tanbot-max/tls-fetch.js — must stay inside staged node_modules. */
+function assertRuntimeResolveFromStagedTree(stageDir, nodeBin) {
+  const probe = `
+    const path = require("path");
+    const cwd = process.cwd();
+    const entryDir = path.join(cwd, "dist", "tanbot-max");
+    let resolved;
+    try {
+      resolved = require.resolve("undici", { paths: [entryDir] });
+    } catch (err) {
+      console.error(err && err.message ? err.message : err);
+      process.exit(2);
     }
-  }
-  const stagedUndici = path.join(stageDir, "node_modules", "undici", "package.json");
-  if (!fs.existsSync(stagedUndici)) {
+    const nmRoot = path.join(cwd, "node_modules") + path.sep;
+    if (!resolved.startsWith(nmRoot)) {
+      console.error("resolve left staged node_modules:", resolved);
+      process.exit(3);
+    }
+  `;
+  const env = { PATH: process.env.PATH ?? "" };
+  delete env.NODE_PATH;
+  const result = spawnSync(nodeBin, ["-e", probe], {
+    cwd: stageDir,
+    env,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
     throw new Error(
-      "Production tree missing node_modules/undici after npm ci --omit=dev (required for tanbot-max/tls-fetch).",
+      `Runtime resolve probe failed (exit ${result.status}): ${result.stderr || result.stdout}`,
     );
   }
 }
@@ -109,15 +164,17 @@ export async function runProductionOmitDevStartupVerify(options = {}) {
     throw new Error("dist/server.js missing — run npm run build first.");
   }
 
-  const stageDir = fs.mkdtempSync(path.join(repo, "var", "prod-omit-dev-"));
+  const stageDir = createIsolatedStageDir();
+  assertProductionStageIsolation(stageDir, repo);
   const port = options.port ?? (await pickFreePort());
 
   let child;
   try {
-    copyProductionArtifacts(stageDir);
+    copyProductionArtifacts(stageDir, repo);
     npmCiOmitDev(stageDir);
-
     const nodeBin = options.nodeBin ?? process.execPath;
+    assertRuntimeResolveFromStagedTree(stageDir, nodeBin);
+
     child = spawn(nodeBin, ["dist/server.js"], {
       cwd: stageDir,
       env: serverChildEnv(port),
@@ -145,7 +202,8 @@ export async function runProductionOmitDevStartupVerify(options = {}) {
       );
     }
 
-    return { ok: true, stageDir, port };
+    assertProductionStageIsolation(stageDir, repo);
+    return { ok: true, stageDir, port, repoRoot: repo };
   } finally {
     if (child && !child.killed) {
       child.kill("SIGTERM");

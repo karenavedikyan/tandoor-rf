@@ -18,5 +18,10 @@ describe("production npm ci --omit=dev packaging", () => {
 
     const result = await runProductionOmitDevStartupVerify({ healthTimeoutMs: 60_000 });
     assert.equal(result.ok, true);
+    const rel = path.relative(path.resolve(result.repoRoot), path.resolve(result.stageDir));
+    assert.ok(
+      rel.startsWith("..") || path.isAbsolute(rel),
+      `stage dir must be outside repo (got relative path ${JSON.stringify(rel)})`,
+    );
   });
 });
