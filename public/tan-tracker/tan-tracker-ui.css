@@ -14,6 +14,21 @@
   color: var(--text, #f2f2f2);
 }
 
+.tt-readonly-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: var(--tt-radius-md, 12px);
+  background: color-mix(in srgb, var(--tt-blue, #285a82) 12%, var(--surface, #fff));
+  color: var(--text, #1a1a1a);
+  font-size: 14px;
+  line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--tt-blue, #285a82) 28%, transparent);
+}
+[data-theme="dark"] .tt-readonly-banner {
+  background: color-mix(in srgb, var(--tt-blue, #6ba3c7) 18%, var(--surface, #1e1e1e));
+  color: var(--text, #f2f2f2);
+}
+
 /* Tan-tracker redesign tt52/tt53 — scoped under .tt-work / shells */
 .tt-work {
   --tt-radius-lg:16px; --tt-radius-md:12px; --tt-radius-sm:10px;

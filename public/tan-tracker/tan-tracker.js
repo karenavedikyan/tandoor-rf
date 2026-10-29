@@ -501,6 +501,9 @@
     lkPhoneSessionToken: "",
     lkPhoneSessionKey: "",
     recipientPhoneCodeInput: "",
+    lkCanWrite: true,
+    lkPreviewReadOnly: false,
+    createSubmitting: false,
     createSavedReceipt: null,
     publicReceipt: null,
     publicInvitationToken: "",
@@ -513,6 +516,90 @@
 
   function isPublicHolderSession() {
     return !!(window.__TT_PUBLIC_HOLDER__ && state.publicHolderAccessToken);
+  }
+
+  function lkAuthenticatedCabinet() {
+    return TT_LK && !isPublicGuestPage() && !isPublicHolderSession();
+  }
+
+  function applyLkCapabilitiesFromBootstrap(data) {
+    if (!data || !data.lkMode) {
+      state.lkCanWrite = true;
+      state.lkPreviewReadOnly = false;
+      return;
+    }
+    state.lkCanWrite = data.capabilities?.canWrite === true;
+    state.lkPreviewReadOnly = !!data.previewReadOnly;
+  }
+
+  function lkMutationAllowed() {
+    if (!lkAuthenticatedCabinet()) return true;
+    return state.lkCanWrite === true;
+  }
+
+  function lkMutationBlockedMessage() {
+    if (state.lkPreviewReadOnly) {
+      return "Изменения недоступны в режиме просмотра «Войти как». Для операций нужен вход под своей учётной записью с рабочей ролью; этот режим не даёт права записи.";
+    }
+    return "У этой учётной записи нет права изменять передачи. Войдите под личным профилем с разрешённой бизнес-ролью (например, менеджер).";
+  }
+
+  function lkReadOnlyBannerHtml() {
+    if (!lkAuthenticatedCabinet() || lkMutationAllowed()) return "";
+    return `<div class="tt-readonly-banner" role="status" data-tt="lk-readonly-banner">${E(lkMutationBlockedMessage())}</div>`;
+  }
+
+  function showCreateEntryPoints() {
+    if (state.recipientMode || isExternalShell()) return false;
+    if (lkAuthenticatedCabinet() && !lkMutationAllowed()) return false;
+    return true;
+  }
+
+  const CABINET_WRITE_ACTIONS = new Set([
+    "create",
+    "create-fab",
+    "create-wizard-next",
+    "create-wizard-submit",
+    "create-skip-files",
+    "create-new-recipient",
+    "create-recipient-browse",
+    "create-edit-item",
+    "create-edit-files",
+    "create-edit-recipient",
+    "create-edit-relay",
+    "create-edit-comment",
+    "create-edit-due",
+    "transfer",
+    "transfer-final",
+    "confirm-transfer",
+    "complete",
+    "confirm-complete",
+    "change-pending",
+    "cancel-pending",
+    "gen-code",
+    "confirm-code",
+    "confirm-qr-receive",
+    "scan-qr-demo",
+    "attach-delete",
+    "toggle-new",
+    "demo-expire",
+  ]);
+
+  function denyCabinetWriteMutation() {
+    if (!lkAuthenticatedCabinet() || lkMutationAllowed()) return false;
+    state.error = lkMutationBlockedMessage();
+    return true;
+  }
+
+  function enforceReadOnlyRouteGuards() {
+    if (!lkAuthenticatedCabinet() || lkMutationAllowed()) return;
+    if (state.view === "create" || state.view === "transfer") {
+      state.view = "list";
+      state.form = null;
+      state.createPhase = "item";
+      state.createReturnPhase = null;
+      clearAttachStaging();
+    }
   }
 
   function applyPublicHolderPayload(data) {
@@ -1455,6 +1542,7 @@
       <p class="tt-wizard-hint">${E(hint)}</p>
       <div class="tt-wizard-body">${body}</div>
       ${state.attachBusy ? `<p class="tt-muted" data-tt="attach-busy">Обрабатываем файлы… Подождите — «Далее» и «Создать передачу» включатся сами.</p>` : ""}
+      ${state.createSubmitting ? `<p class="tt-muted" data-tt="create-pending">Создаём передачу…</p>` : ""}
       ${state.error ? `<p class="tt-error" data-tt="form-error">${E(state.error)}</p>` : ""}
       <div class="tt-wizard-actions tt-wizard-actions--dock">${actionsHtml}</div>
     </div></div>`;
@@ -1462,8 +1550,9 @@
 
   function wizardBtn(label, action, primary = false, extraClass = "") {
     const freeze =
-      state.attachBusy &&
-      (action === "create-wizard-next" || action === "create-wizard-submit" || action === "create-skip-files");
+      (state.attachBusy &&
+        (action === "create-wizard-next" || action === "create-wizard-submit" || action === "create-skip-files")) ||
+      (state.createSubmitting && action === "create-wizard-submit");
     const extra = freeze ? ' disabled aria-disabled="true"' : "";
     const base = primary ? "tt-primary tt-wizard-btn" : "tt-wizard-btn tt-wizard-btn-secondary";
     const cls = extraClass ? `${base} ${extraClass}` : base;
@@ -1682,6 +1771,11 @@
 
   async function ingestFiles(fileList, target) {
     if (!Att() || state.attachBusy) return;
+    if (lkAuthenticatedCabinet() && !lkMutationAllowed()) {
+      state.attachError = lkMutationBlockedMessage();
+      renderTracker();
+      return;
+    }
     const files = [...fileList];
     if (!files.length) return;
     const snap = captureAttachSnap(target);
@@ -2580,6 +2674,8 @@
       state.lkActorPartyId = window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
       state.lkLinkedEmployeeId = window.__TT_LK_BOOTSTRAP__.linkedEmployeeId || null;
       state.actingContactId = null;
+      applyLkCapabilitiesFromBootstrap(window.__TT_LK_BOOTSTRAP__);
+      enforceReadOnlyRouteGuards();
     }
     const resolved = TT_LK && window.__TT_LK_BOOTSTRAP__
       ? { unsupported: false, role: state.ttPrototypeRole, person: null, explicit: false, requested: "" }
@@ -2706,6 +2802,7 @@
       state.createPhase = ph && allowed.has(ph) ? ph : state.createPhase || "item";
       if (!state.form) state.form = defaultCreateForm();
     }
+    enforceReadOnlyRouteGuards();
   }
 
   function btn(label, attrs = "", cls = "tt-link") {
@@ -2804,7 +2901,11 @@
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
       }
-      <button type="button" class="tt-primary tt-fab" data-tt="create-fab"><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>
+      ${
+        showCreateEntryPoints()
+          ? `<button type="button" class="tt-primary tt-fab" data-tt="create-fab"><i data-lucide="plus"></i><span class="tt-fab-label">Создать передачу</span></button>`
+          : ""
+      }
     </div>`;
   }
 
@@ -3744,9 +3845,11 @@
     const demoBody = lkRuntime
       ? `<div data-tt="chrome">${TT_LK && !isPublicGuestPage() ? chrome : ""}</div>`
       : `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
-    const demoShell = state.userTestEnvironmentBanner
-      ? `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`
-      : "";
+    const demoShell = `${lkReadOnlyBannerHtml()}${
+      state.userTestEnvironmentBanner
+        ? `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`
+        : ""
+    }`;
 
     const demoHeadPopover = lkRuntime ? "" : demoHeadPopoverHtml(demoBody);
 
@@ -3756,10 +3859,10 @@
         ? `<div class="tt-head tt-registry-head"><div class="tt-registry-head-row">
         <div class="tt-registry-head-main"><h1>Тан-трекер</h1>
         <div class="tt-registry-sub-row"><p class="tt-registry-sub">Передача документов и предметов</p>${demoHeadPopover}</div></div>
-        <span class="tt-head-cta-desktop" data-tt="head-cta">${btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary")}</span>
+        <span class="tt-head-cta-desktop" data-tt="head-cta">${showCreateEntryPoints() ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
       </div></div>`
         : `<div class="tt-head"><div><h1>Тан-трекер</h1><p>Передача документов и предметов</p></div>
-        <span data-tt="head-cta">${state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
+        <span data-tt="head-cta">${state.view === "list" && showCreateEntryPoints() ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : ""}</span>
       </div>`;
 
     if (!ttShellMounted) {
@@ -3784,7 +3887,7 @@
         head.outerHTML = headBlock;
       } else {
         const cta = document.querySelector('[data-tt="head-cta"]');
-        if (cta) cta.innerHTML = state.view === "list" && !ext ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
+        if (cta) cta.innerHTML = state.view === "list" && showCreateEntryPoints() ? btn("Создать передачу", 'data-tt="create" data-tt-main-cta', "tt-primary") : "";
         const popBody = document.querySelector(".tt-demo-head-popover .tt-demo-popover-body");
         if (popBody && (onListRegistry || inCompactHead)) popBody.innerHTML = demoBody;
       }
@@ -3793,7 +3896,9 @@
         meta.classList.toggle("tt-shell-meta-compact", inDetailFocus);
         meta.classList.toggle(
           "tt-shell-meta--empty",
-          (onListRegistry || inCompactHead) && !state.userTestEnvironmentBanner,
+          (onListRegistry || inCompactHead) &&
+            !state.userTestEnvironmentBanner &&
+            !(lkAuthenticatedCabinet() && !lkMutationAllowed()),
         );
         meta.innerHTML = demoShell;
       }
@@ -3819,6 +3924,8 @@
     syncWizardFieldsFromDom();
     const f = state.form;
     state.error = "";
+    if (state.createSubmitting) return;
+    if (denyCabinetWriteMutation()) return;
     if (state.attachBusy) {
       state.error = "Дождитесь обработки файлов.";
       return;
@@ -3860,8 +3967,11 @@
           .map((s) => s.serverStagingId)
           .filter(Boolean),
       };
+      state.createSubmitting = true;
+      renderTracker();
       window.TanTrackerLk.createTransfer(payload)
         .then((created) => {
+          state.createSubmitting = false;
           state.orderId = created.publicCode || created;
           state.view = "detail";
           clearDetailAttDisclosure();
@@ -3890,6 +4000,7 @@
           renderTracker();
         })
         .catch((err) => {
+          state.createSubmitting = false;
           state.error = err?.message || "Не удалось создать передачу.";
           renderTracker();
         });
@@ -3978,6 +4089,10 @@
       return;
     }
     const action = b.getAttribute("data-tt");
+    if (action && CABINET_WRITE_ACTIONS.has(action) && denyCabinetWriteMutation()) {
+      renderTracker();
+      return;
+    }
     if (action === "item-suggest") {
       if (!state.form) state.form = defaultCreateForm();
       const s = b.getAttribute("data-suggest") || "";
@@ -4210,7 +4325,7 @@
       return;
     }
     if (action === "create-wizard-submit") {
-      if (state.attachBusy) {
+      if (state.attachBusy || state.createSubmitting) {
         renderTracker();
         return;
       }
@@ -4825,6 +4940,8 @@
       }
     }
     state.userTestEnvironmentBanner = data.userTestEnvironmentBanner || null;
+    applyLkCapabilitiesFromBootstrap(data);
+    enforceReadOnlyRouteGuards();
     state.ttPrototypeRole = data.prototypeRole || "manager";
     state.ttRoleUnsupported = false;
     state.lkActorPartyId = data.actorPartyId || null;
@@ -4870,6 +4987,10 @@
     employeeId: () => state.employeeId,
     effectiveProfile,
     hydrateFromServer,
+    applyLkCapabilitiesFromBootstrap,
+    lkMutationAllowed,
+    lkAuthenticatedCabinet,
+    enforceReadOnlyRouteGuards,
     canViewOrder: (orderId) => {
       const o = orders.find((x) => x.id === orderId);
       return o && orderVisible(o);

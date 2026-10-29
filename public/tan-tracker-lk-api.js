@@ -76,11 +76,24 @@
         },
         body: file,
       }).then(function (response) {
-        return response.json().then(function (data) {
+        return response.text().then(function (text) {
+          var data = null;
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch (_err) {
+            data = null;
+          }
           if (!response.ok) {
-            throw new Error(
-              (data && data.error && data.error.message) || "Не удалось загрузить файл.",
-            );
+            var msg =
+              (data && data.error && data.error.message) ||
+              (response.status >= 500
+                ? "Ошибка сервера при загрузке файла."
+                : "Не удалось загрузить файл.");
+            if (!data && text) msg += " Ответ сервера не в формате JSON.";
+            throw new Error(msg);
+          }
+          if (!data) {
+            throw new Error("Некорректный ответ сервера при загрузке файла.");
           }
           return data;
         });
@@ -91,7 +104,11 @@
         .apiRequest("/api/tan-tracker/transfers", { method: "POST", body: payload })
         .then(function (result) {
           if (result.response.status !== 201 || !result.data || !result.data.publicCode) {
-            throw new Error(api.extractErrorMessage(result.data, "Не удалось создать передачу."));
+            var fallback = "Не удалось создать передачу.";
+            if (!result.data && result.text) {
+              fallback = "Не удалось создать передачу (ответ сервера не JSON).";
+            }
+            throw new Error(api.extractErrorMessage(result.data, fallback));
           }
           var publicCode = result.data.publicCode;
           if (result.data.bootstrap) {

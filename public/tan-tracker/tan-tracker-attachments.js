@@ -225,6 +225,8 @@
       else if (/\.png$/i.test(file.name)) mime = "image/png";
       else if (/\.jpe?g$/i.test(file.name)) mime = "image/jpeg";
       else if (/\.webp$/i.test(file.name)) mime = "image/webp";
+      else if (/\.heic$/i.test(file.name)) mime = "image/heic";
+      else if (/\.heif$/i.test(file.name)) mime = "image/heif";
     }
     return {
       item: attachRecord({
