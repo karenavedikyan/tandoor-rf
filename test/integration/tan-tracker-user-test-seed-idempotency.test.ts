@@ -97,4 +97,49 @@ describe("tan-tracker user-test seed idempotency", { concurrency: false, skip: !
     );
     assert.ok(bootstrap.rows[0]!.n >= 3);
   });
+
+  it("second seed preserves disabled user, deleted fixture attachment, and team leader name", async () => {
+    const attachKey = "tt56-seed-active-a.txt";
+    const userB = await pool.query(
+      `SELECT id::text FROM users WHERE email = 'tt56-employee-b@tt56-user-test.local'`,
+    );
+    const userBId = userB.rows[0]!.id;
+    const hashBefore = (
+      await pool.query(`SELECT password_hash FROM users WHERE id = $1::uuid`, [userBId])
+    ).rows[0]!.password_hash;
+
+    await pool.query(`UPDATE users SET status = 'disabled' WHERE id = $1::uuid`, [userBId]);
+    await pool.query(`DELETE FROM tt_transfer_attachments WHERE storage_key = $1`, [attachKey]);
+
+    const attachDir = path.join(repoRoot, "var/tt56-user-test/attachments");
+    const attachPath = path.join(attachDir, attachKey);
+    try {
+      const { unlinkSync, existsSync } = await import("node:fs");
+      if (existsSync(attachPath)) unlinkSync(attachPath);
+    } catch {
+      /* optional file */
+    }
+
+    runSeed(databaseUrl);
+
+    const statusAfter = await pool.query(`SELECT status FROM users WHERE id = $1::uuid`, [userBId]);
+    assert.equal(statusAfter.rows[0]!.status, "disabled");
+
+    const attachAfter = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM tt_transfer_attachments WHERE storage_key = $1`,
+      [attachKey],
+    );
+    assert.equal(attachAfter.rows[0]!.n, 0);
+
+    const hashAfter = (
+      await pool.query(`SELECT password_hash FROM users WHERE id = $1::uuid`, [userBId])
+    ).rows[0]!.password_hash;
+    assert.equal(hashAfter, hashBefore);
+
+    const team = await pool.query(
+      `SELECT name_team_leader FROM onec_wholesale_team_groups WHERE guid_team = $1::uuid`,
+      [FIXTURE.TEAM],
+    );
+    assert.equal(team.rows[0]!.name_team_leader, "ROP Lead");
+  });
 });

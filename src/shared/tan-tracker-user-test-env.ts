@@ -26,6 +26,11 @@ export function tanTrackerUserTestBannerForApi(
   };
 }
 
+/** True when operator explicitly enabled tt56 user-test mode (may still be misconfigured). */
+export function isTanTrackerUserTestEnvRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TT_USER_TEST_ENV?.trim().toLowerCase() === "true";
+}
+
 export function isTanTrackerUserTestEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.TT_USER_TEST_ENV?.trim().toLowerCase() !== "true") {
     return false;

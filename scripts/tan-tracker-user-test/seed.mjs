@@ -69,6 +69,19 @@ async function main() {
   try {
     await client.query("BEGIN");
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tt56_user_test_fixture_provenance (
+        storage_key TEXT PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      INSERT INTO tt56_user_test_fixture_provenance (storage_key)
+      SELECT storage_key FROM tt_transfer_attachments
+      WHERE storage_key IN ('tt56-seed-active-a.txt', 'tt56-seed-wait-ab.txt')
+      ON CONFLICT DO NOTHING
+    `);
+
     for (const u of USERS) {
       await client.query(
         `INSERT INTO users (email, password_hash, full_name, role, status)
@@ -76,7 +89,6 @@ async function main() {
          ON CONFLICT ((LOWER(BTRIM(email)))) DO UPDATE SET
            full_name = EXCLUDED.full_name,
            role = EXCLUDED.role,
-           status = 'active',
            password_hash = users.password_hash`,
         [u.email, passwordHash, u.fullName, u.role],
       );
@@ -117,8 +129,18 @@ async function main() {
     await client.query(
       `INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader)
        VALUES ($1::uuid, 'TT56 test team', $2::uuid, 'ROP Lead')
-       ON CONFLICT (guid_team) DO UPDATE SET name_team_leader = EXCLUDED.guid_team_leader, name_team = EXCLUDED.name_team`,
+       ON CONFLICT (guid_team) DO UPDATE SET
+         guid_team_leader = EXCLUDED.guid_team_leader,
+         name_team_leader = EXCLUDED.name_team_leader,
+         name_team = EXCLUDED.name_team`,
       [FIXTURE.TEAM, FIXTURE.EMP_ROP],
+    );
+    await client.query(
+      `UPDATE onec_wholesale_team_groups
+       SET name_team_leader = 'ROP Lead'
+       WHERE guid_team = $1::uuid
+         AND name_team_leader ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+      [FIXTURE.TEAM],
     );
     await client.query(`DELETE FROM onec_wholesale_employee_team_memberships WHERE guid_team = $1::uuid`, [
       FIXTURE.TEAM,

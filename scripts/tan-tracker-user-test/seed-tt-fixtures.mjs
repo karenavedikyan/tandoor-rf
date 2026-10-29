@@ -92,21 +92,42 @@ async function seedTransfer(client, row) {
 }
 
 async function seedAttachment(client, repoRoot, transferId, storageKey, name, uploadedByUserId) {
+  const dup = await client.query(
+    `SELECT 1 FROM tt_transfer_attachments WHERE storage_key = $1 LIMIT 1`,
+    [storageKey],
+  );
+  if (dup.rowCount) {
+    await client.query(
+      `INSERT INTO tt56_user_test_fixture_provenance (storage_key) VALUES ($1) ON CONFLICT DO NOTHING`,
+      [storageKey],
+    );
+    return;
+  }
+
+  const provenance = await client.query(
+    `SELECT 1 FROM tt56_user_test_fixture_provenance WHERE storage_key = $1 LIMIT 1`,
+    [storageKey],
+  );
+  if (provenance.rowCount) {
+    return;
+  }
+
   const absDir = process.env.TT_ATTACHMENTS_DIR?.trim() || path.join(repoRoot, "var/tt56-user-test/attachments");
   fs.mkdirSync(absDir, { recursive: true, mode: 0o700 });
   const absPath = path.join(absDir, storageKey);
+  const body = `tt56 seed fixture ${name}\n`;
   if (!fs.existsSync(absPath)) {
-    fs.writeFileSync(absPath, `tt56 seed fixture ${name}\n`, { mode: 0o600 });
+    fs.writeFileSync(absPath, body, { mode: 0o600 });
   }
-  const dup = await client.query(
-    `SELECT 1 FROM tt_transfer_attachments WHERE transfer_id = $1 AND storage_key = $2 LIMIT 1`,
-    [transferId, storageKey],
-  );
-  if (dup.rowCount) return;
+
   await client.query(
     `INSERT INTO tt_transfer_attachments (transfer_id, storage_key, original_name, mime_type, byte_size, uploaded_by_user_id)
      VALUES ($1, $2, $3, 'text/plain', $4, $5::uuid)`,
-    [transferId, storageKey, name, Buffer.byteLength(`tt56 seed fixture ${name}\n`), uploadedByUserId],
+    [transferId, storageKey, name, Buffer.byteLength(body), uploadedByUserId],
+  );
+  await client.query(
+    `INSERT INTO tt56_user_test_fixture_provenance (storage_key) VALUES ($1) ON CONFLICT DO NOTHING`,
+    [storageKey],
   );
 }
 

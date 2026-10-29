@@ -25,8 +25,7 @@ import { changePasswordHandler } from "./profile/password-handlers";
 import { logServerError } from "./http/safe-server-error-log";
 import { apiError, ERROR_CODES } from "./shared/errors";
 import {
-  applyTanTrackerUserTestRuntimeDefaults,
-  assertTanTrackerUserTestRuntimeIsolation,
+  assertTanTrackerUserTestStartup,
   shouldSkipBackgroundIntegrations,
 } from "./shared/tan-tracker-user-test-runtime";
 
@@ -357,8 +356,7 @@ export function createApp(): express.Application {
 }
 
 export function startServer(): ReturnType<express.Application["listen"]> {
-  applyTanTrackerUserTestRuntimeDefaults();
-  assertTanTrackerUserTestRuntimeIsolation();
+  assertTanTrackerUserTestStartup();
   const port = parsePort(process.env.PORT);
   const app = createApp();
 

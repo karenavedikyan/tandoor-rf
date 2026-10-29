@@ -12,13 +12,9 @@ fi
 # Fail-closed: do not inherit production/integration flags from the parent shell.
 cd "$ROOT"
 node --env-file="$ENV_FILE" --input-type=module -e "
-import { assertTanTrackerUserTestDatabaseUrl } from './dist/shared/tan-tracker-user-test-env.js';
-import { assertTanTrackerUserTestRuntimeIsolation, applyTanTrackerUserTestRuntimeDefaults } from './dist/shared/tan-tracker-user-test-runtime.js';
-assertTanTrackerUserTestDatabaseUrl(process.env.DATABASE_URL, 'start-local');
-if (process.env.NODE_ENV === 'production') throw new Error('Refusing production NODE_ENV');
+import { assertTanTrackerUserTestStartup } from './dist/shared/tan-tracker-user-test-runtime.js';
 if (process.env.TT_USER_TEST_ENV !== 'true') throw new Error('TT_USER_TEST_ENV must be true');
-applyTanTrackerUserTestRuntimeDefaults();
-assertTanTrackerUserTestRuntimeIsolation();
+assertTanTrackerUserTestStartup(process.env);
 "
 
 exec env -i \
