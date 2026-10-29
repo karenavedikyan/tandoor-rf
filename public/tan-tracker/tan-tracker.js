@@ -549,6 +549,97 @@
     return !!(c && c.kind === "external");
   }
 
+  function shouldUseExternalMessengerHandoff(o) {
+    return !!(TT_LK && state.externalMessengerEnabled && o?.pendingId && pendingContactIsExternal(o.pendingId));
+  }
+
+  function messengerPortalCacheKey(o) {
+    return recipientKey(o);
+  }
+
+  function clearMessengerPortalCache(o) {
+    if (!o) return;
+    delete o.messengerPortalUrl;
+    delete o.messengerStartToken;
+    delete o.messengerPortalCacheKey;
+  }
+
+  function messengerPortalUrlValid(o) {
+    return !!(o?.messengerPortalUrl && o.messengerPortalCacheKey === messengerPortalCacheKey(o));
+  }
+
+  function applyMessengerInviteData(o, data) {
+    o.messengerPortalUrl = data.portalUrl || data.portalPath || "";
+    o.messengerStartToken = data.startToken || "";
+    o.messengerPortalCacheKey = messengerPortalCacheKey(o);
+  }
+
+  function absoluteHandoffUrl(url) {
+    if (!url) return "";
+    if (/^https?:\/\//i.test(url)) return url;
+    const origin = trustedAppOrigin();
+    return origin ? `${origin}${url.startsWith("/") ? url : `/${url}`}` : url;
+  }
+
+  function ensureMessengerPortalUrl(o) {
+    if (!shouldUseExternalMessengerHandoff(o)) return Promise.resolve(null);
+    if (messengerPortalUrlValid(o)) return Promise.resolve(o.messengerPortalUrl);
+    if (!window.TanTrackerLk?.createExternalMessengerInvite) return Promise.resolve(null);
+    if (o._messengerPortalFetch) return o._messengerPortalFetch;
+    o._messengerPortalFetch = window.TanTrackerLk.createExternalMessengerInvite(o.id)
+      .then((data) => {
+        applyMessengerInviteData(o, data);
+        state.messengerInviteError = "";
+        return o.messengerPortalUrl;
+      })
+      .catch((err) => {
+        state.messengerInviteError = (err && err.message) || "Не удалось создать ссылку.";
+        return null;
+      })
+      .finally(() => {
+        delete o._messengerPortalFetch;
+      });
+    return o._messengerPortalFetch;
+  }
+
+  function openExternalMessengerPortalTab(o) {
+    void ensureMessengerPortalUrl(o).then((url) => {
+      if (!url) {
+        state.error = state.messengerInviteError || "Не удалось подготовить ссылку для получателя.";
+      } else {
+        window.open(absoluteHandoffUrl(url), "_blank", "noopener,noreferrer");
+      }
+      renderTracker();
+    });
+  }
+
+  function copyInviteUrlWithFeedback(url, inputSelector) {
+    if (!url) {
+      renderTracker();
+      return;
+    }
+    const manual = () => {
+      const el = document.querySelector(inputSelector);
+      if (el) {
+        el.focus();
+        el.select();
+      }
+      state.toast = "Не удалось скопировать автоматически. Выделите ссылку и скопируйте вручную.";
+      renderTracker();
+    };
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(url).then(
+        () => {
+          state.toast = "Ссылка скопирована";
+          renderTracker();
+        },
+        () => manual(),
+      );
+      return;
+    }
+    manual();
+  }
+
   function messengerInviteBlockHtml(o) {
     if (!externalMessengerUiEnabled() || !pendingContactIsExternal(o.pendingId)) return "";
     const err =
@@ -850,6 +941,9 @@
   }
 
   function handoffUrl(o, inv) {
+    if (shouldUseExternalMessengerHandoff(o) && messengerPortalUrlValid(o)) {
+      return absoluteHandoffUrl(o.messengerPortalUrl);
+    }
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
     const basePath = TT_LK ? "/tan-tracker/recipient" : location.pathname;
@@ -2433,6 +2527,7 @@
     archiveInvitation(o);
     o.activeInvitation = null;
     o.code = null;
+    clearMessengerPortalCache(o);
     resetPhoneIdentity();
     o.status = "active";
     state.toast = "Ожидание отменено.";
@@ -2535,6 +2630,7 @@
     o.status = "waiting";
     o.handoffVer = (o.handoffVer ?? 0) + 1;
     o.code = null;
+    clearMessengerPortalCache(o);
     resetPhoneIdentity();
     syncInvitation(o);
     state.handoffTab = "code";
@@ -3472,13 +3568,30 @@
     const heroAttr = 'data-tt-detail-hero-primary=""';
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
+    const extHandoff = shouldUseExternalMessengerHandoff(o);
+    if (extHandoff && tab === "qr" && !messengerPortalUrlValid(o) && !o._messengerPortalFetch) {
+      void ensureMessengerPortalUrl(o).then(() => renderTracker({ soft: true }));
+    }
     const payload = handoffUrl(o, inv);
+    const qrLoading = extHandoff && tab === "qr" && !payload;
+    const qrNote = extHandoff
+      ? "QR ведёт на страницу подтверждения номера в мессенджере (Telegram / MAX)."
+      : "QR ведёт на экран получателя с подтверждением телефона и приёмом передачи на сервере.";
+    const openRecipientLabel = extHandoff
+      ? "Открыть страницу получателя"
+      : TT_LK
+        ? "Открыть экран получателя (QR)"
+        : "Сканировать QR (демо)";
     const qrBlock =
       tab === "qr"
         ? `<div class="tt-handoff-qr" data-tt="handoff-qr">
-        <div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>
-        <p class="tt-muted tt-qr-note">QR ведёт на экран получателя с подтверждением телефона и приёмом передачи на сервере.</p>
-        ${TT_LK ? btn("Открыть экран получателя (QR)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action") : btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
+        ${
+          qrLoading
+            ? `<p class="tt-muted" data-tt="handoff-qr-loading">Подготовка QR…</p>`
+            : `<div class="tt-qr-wrap" data-tt="qr-host" data-payload="${E(payload)}"></div>`
+        }
+        <p class="tt-muted tt-qr-note">${E(qrNote)}</p>
+        ${btn(openRecipientLabel, 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
       </div>`
         : "";
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
@@ -4480,8 +4593,7 @@
       renderTracker({ soft: true });
       void window.TanTrackerLk.createExternalMessengerInvite(o.id)
         .then(function (data) {
-          o.messengerPortalUrl = data.portalUrl || data.portalPath || "";
-          o.messengerStartToken = data.startToken || "";
+          applyMessengerInviteData(o, data);
           state.toast = "Ссылка для мессенджера создана.";
           state.messengerInviteError = "";
         })
@@ -4496,12 +4608,16 @@
     }
     if (action === "messenger-invite-copy") {
       const o = orders.find((x) => x.id === state.orderId);
-      const url = o?.messengerPortalUrl;
-      if (url && navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(url).catch(() => {});
-        state.toast = "Ссылка скопирована";
+      if (!o) {
+        renderTracker();
+        return;
       }
-      renderTracker();
+      const runCopy = (url) => copyInviteUrlWithFeedback(url, '[data-tt="messenger-invite-url"]');
+      if (messengerPortalUrlValid(o)) {
+        runCopy(o.messengerPortalUrl);
+        return;
+      }
+      void ensureMessengerPortalUrl(o).then((url) => runCopy(url));
       return;
     }
     if (action === "messenger-invite-share") {
@@ -4726,6 +4842,10 @@
       return;
     }
     if (action === "scan-qr-demo" && o) {
+      if (shouldUseExternalMessengerHandoff(o)) {
+        openExternalMessengerPortalTab(o);
+        return;
+      }
       state.recipientMode = true;
       state.recipientVia = "qr";
       resetPhoneIdentity();
@@ -4742,6 +4862,10 @@
       return;
     }
     if (action === "open-recipient" && o) {
+      if (shouldUseExternalMessengerHandoff(o)) {
+        openExternalMessengerPortalTab(o);
+        return;
+      }
       state.recipientMode = true;
       state.recipientVia = state.handoffTab === "qr" ? "qr" : "code";
       resetPhoneIdentity();
@@ -5120,6 +5244,7 @@
     }));
     orders = (data.orders || []).map((o) => {
       const copy = { ...o, timeline: [...(o.timeline || [])] };
+      clearMessengerPortalCache(copy);
       if (!data.lkMode && Sc()?.migrateOrderFields) Sc().migrateOrderFields(copy);
       if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
       if (copy.attachments && copy.attachments.length) {

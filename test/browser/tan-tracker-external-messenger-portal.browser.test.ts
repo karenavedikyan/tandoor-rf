@@ -61,12 +61,27 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     await page.waitForSelector('[data-tt="detail"]', { timeout: 30000 });
   }
 
-  it("holder creates invite in UI, copies URL, logged-out portal opens Telegram", async () => {
+  async function closeMobileSidebarIfOpen(page: Page) {
+    const toggle = page.locator('[data-sidebar-toggle], .sidebar-toggle, button[aria-label*="меню" i]').first();
+    if (await toggle.isVisible().catch(() => false)) {
+      const sidebarOpen = await page.locator(".sidebar.open, .sidebar--open, body.sidebar-open").count();
+      if (sidebarOpen > 0) await toggle.click();
+    }
+  }
+
+  it("holder QR and copy use mst portal; guest portal styled without SMS hint", async () => {
     const holderContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
     try {
       const holderPage = await holderContext.newPage();
       await login(holderPage, "tt-browser-admin@test.local");
       await createExternalTransferViaUi(holderPage);
+
+      await holderPage.click('[data-tt="tab-qr"]');
+      await holderPage.waitForSelector('[data-tt="qr-host"][data-payload*="mst=er"]', { timeout: 30000 });
+
+      const qrPayload = await holderPage.getAttribute('[data-tt="handoff-qr"] [data-tt="qr-host"]', "data-payload");
+      assert.ok(qrPayload);
+      assert.match(qrPayload, /\/tan-tracker\/recipient\?mst=er/);
 
       const inviteResp = holderPage.waitForResponse(
         (r) =>
@@ -77,7 +92,6 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       );
       await holderPage.click('[data-tt="messenger-invite-create"]');
       await inviteResp;
-
       await holderPage.waitForSelector('[data-tt="messenger-invite-url"]', { timeout: 15000 });
       const portalUrl = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.match(portalUrl, /\/tan-tracker\/recipient\?mst=er/);
@@ -87,8 +101,23 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       const guestContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
       try {
         const guestPage = await guestContext.newPage();
+        await guestPage.setViewportSize({ width: 375, height: 812 });
         await guestPage.goto(portalUrl);
         await guestPage.waitForSelector('[data-tt="messenger-portal"]', { timeout: 20000 });
+        await guestPage.waitForSelector(".tt-recipient-card", { timeout: 10000 });
+        assert.equal(await guestPage.locator('[data-tt="messenger-sms-hint"]').count(), 0);
+        await guestPage.waitForSelector('[data-tt="messenger-channel-unavailable"][data-channel="max"]', {
+          timeout: 10000,
+        });
+        const maxReason = await guestPage.locator(
+          '[data-tt="messenger-channel-unavailable"][data-channel="max"] [data-tt="messenger-unavailable-reason"]',
+        );
+        assert.ok((await maxReason.textContent())?.trim());
+        const overflow = await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2);
+        assert.ok(overflow, "375px viewport should not horizontal overflow");
+
+        await guestPage.setViewportSize({ width: 1440, height: 900 });
+        await closeMobileSidebarIfOpen(guestPage);
         await guestPage.waitForSelector('[data-tt="messenger-channel-open"][data-channel="telegram"]', {
           timeout: 15000,
         });

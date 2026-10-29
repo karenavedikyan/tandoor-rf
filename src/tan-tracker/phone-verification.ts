@@ -83,7 +83,7 @@ export function storeTestPhoneVerificationCode(transferId: string, partyId: stri
   });
 }
 
-/** True when public SMS phone verification can actually send codes. */
+/** True when SMS phone verification can actually send codes (includes test provider in test env). */
 export function isPhoneSmsVerificationAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
     resolvePhoneVerificationProvider(env);
@@ -91,6 +91,14 @@ export function isPhoneSmsVerificationAvailable(env: NodeJS.ProcessEnv = process
   } catch {
     return false;
   }
+}
+
+/** Public recipient pages must not advertise SMS unless a real (non-test) provider is configured. */
+export function isPublicRecipientSmsAlternativeAvailable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (env.TT_PHONE_VERIFICATION_PROVIDER === "test") return false;
+  return isPhoneSmsVerificationAvailable(env);
 }
 
 /** Production must wire a real provider; tests use TestPhoneVerificationProvider. */

@@ -452,6 +452,23 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-recipient-code-display { font-size:36px; font-weight:800; letter-spacing:.12em; font-variant-numeric:tabular-nums; }
 .tt-recipient-code-block { text-align:center; margin:16px 0; }
 
+.tt-messenger-portal-page .tt-public-recipient-wrap { padding-top:12px; }
+.tt-messenger-portal-channels { display:flex; flex-direction:column; gap:10px; margin:12px 0 4px; }
+.tt-messenger-portal-channel { display:block; text-align:center; text-decoration:none; min-height:48px; line-height:1.25; }
+.tt-messenger-portal-channel--off {
+  padding:12px 14px; border-radius:var(--tt-radius-md); border:1px dashed var(--line);
+  background:color-mix(in srgb, var(--bg) 88%, var(--surface)); color:var(--muted); cursor:not-allowed;
+}
+.tt-messenger-portal-channel--off strong { display:block; font-size:15px; font-weight:700; color:var(--text); margin:0 0 6px; }
+.tt-messenger-portal-reason { display:block; font-size:13px; line-height:1.4; color:var(--muted); }
+.tt-messenger-portal-sms { margin:14px 0 0; font-size:13px; line-height:1.45; color:var(--muted); }
+.tt-messenger-invite { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.tt-messenger-invite-url {
+  display:block; width:100%; box-sizing:border-box; min-height:44px; margin:8px 0 0; padding:10px 12px;
+  border:1px solid var(--line); border-radius:var(--tt-radius-sm); font-size:14px; background:var(--bg); color:var(--text);
+}
+.tt-messenger-invite-actions { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+
 /* Wizard tt52 */
 .tt-wizard-shell-card {
   max-width:640px; margin:0 auto; border:1px solid var(--line); border-radius:var(--tt-radius-lg);

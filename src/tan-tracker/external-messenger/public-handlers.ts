@@ -11,7 +11,7 @@ import {
 import { buildTelegramDeepLink } from "../../tanbot-telegram/link-tokens";
 import { loadTanbotTelegramStage2Config } from "../../tanbot-telegram/stage2-config";
 import { isTanbotTelegramEnabled } from "../../tanbot-telegram/config";
-import { isPhoneSmsVerificationAvailable } from "../phone-verification";
+import { isPublicRecipientSmsAlternativeAvailable } from "../phone-verification";
 
 function maxDeepLinkPlaceholder(startToken: string): string | null {
   const base = process.env.TANBOT_MAX_BOT_PUBLIC_LINK?.trim();
@@ -83,7 +83,7 @@ export async function publicExternalMessengerPortalHandler(req: Request, res: Re
       itemTitle: transfer.rows[0]?.item_title ?? "",
       startToken: mst,
       channels,
-      smsAlternative: isPhoneSmsVerificationAvailable(),
+      smsAlternative: isPublicRecipientSmsAlternativeAvailable(),
     });
   } catch {
     await client.query("ROLLBACK").catch(() => undefined);

@@ -192,16 +192,20 @@
   }
 
   function renderMessengerPortal(root, data) {
-    var html = '<div class="tt-messenger-portal" data-tt="messenger-portal">';
-    if (data.itemTitle) {
-      html += '<h1 class="tt-messenger-portal-title">' + escapeHtml(data.itemTitle) + "</h1>";
-    }
-    if (data.transferPublicCode) {
-      html +=
-        '<p class="tt-messenger-portal-code">Передача ' + escapeHtml(data.transferPublicCode) + "</p>";
-    }
-    html += '<p class="tt-messenger-portal-lead">Выберите мессенджер для подтверждения номера:</p>';
-    html += '<div class="tt-messenger-portal-channels">';
+    var codeLine = data.transferPublicCode
+      ? '<p class="tt-recipient-kicker">Передача ' + escapeHtml(data.transferPublicCode) + "</p>"
+      : "";
+    var title = data.itemTitle
+      ? '<h2 class="tt-recipient-title">' + escapeHtml(data.itemTitle) + "</h2>"
+      : '<h2 class="tt-recipient-title">Подтверждение получателя</h2>';
+    var html =
+      '<div class="tt-recipient-wrap"><article class="tt-recipient-card" data-tt="messenger-portal">' +
+      '<p class="tt-recipient-hero">Получение передачи</p>' +
+      title +
+      codeLine +
+      '<div class="tt-recipient-step">' +
+      '<p class="tt-recipient-step-label">Выберите мессенджер для подтверждения номера</p>' +
+      '<div class="tt-messenger-portal-channels">';
     var channels = data.channels || [];
     for (var i = 0; i < channels.length; i++) {
       var ch = channels[i];
@@ -219,9 +223,9 @@
         html +=
           '<div class="tt-messenger-portal-channel tt-messenger-portal-channel--off" data-tt="messenger-channel-unavailable" data-channel="' +
           escapeHtml(ch.channel) +
-          '"><strong>' +
+          '" aria-disabled="true"><strong>' +
           escapeHtml(label) +
-          "</strong>";
+          " недоступен</strong>";
         if (ch.reason) {
           html +=
             '<span class="tt-messenger-portal-reason" data-tt="messenger-unavailable-reason">' +
@@ -231,12 +235,12 @@
         html += "</div>";
       }
     }
-    html += "</div>";
+    html += "</div></div>";
     if (data.smsAlternative) {
       html +=
         '<p class="tt-messenger-portal-sms" data-tt="messenger-sms-hint">Можно также подтвердить номер по SMS, если отправитель прислал QR или ссылку с кодом.</p>';
     }
-    html += "</div>";
+    html += "</article></div>";
     root.innerHTML = html;
   }
 
