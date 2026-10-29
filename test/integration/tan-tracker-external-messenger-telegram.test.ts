@@ -93,8 +93,8 @@ describe("external recipient messenger (telegram, isolated PG)", { concurrency: 
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
     const cfg = loaded.config;
-    const chatId = 900001;
     const userId = 800001;
+    const chatId = userId;
     const startUpdate = {
       update_id: 910001,
       message: {
@@ -139,20 +139,45 @@ describe("external recipient messenger (telegram, isolated PG)", { concurrency: 
     assert.ok(contactAgain.reply?.text.includes("уже"));
   });
 
-  it("rejects forwarded contact", async () => {
+  it("rejects forwarded contact (legacy forward_date)", async () => {
     const loaded = loadTanbotTelegramStage2Config();
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
     const cfg = loaded.config;
+    const userId = 800002;
     const out = await handleTanbotTelegramUpdate(pool, cfg, {
       update_id: 910004,
       message: {
         message_id: 4,
         date: Math.floor(Date.now() / 1000),
-        chat: { id: 900002, type: "private" },
-        from: { id: 800002, is_bot: false, first_name: "Bad" },
+        chat: { id: userId, type: "private" },
+        from: { id: userId, is_bot: false, first_name: "Bad" },
         forward_date: 1,
-        contact: { phone_number: "+79991112233", user_id: 800002, first_name: "Bad" },
+        contact: { phone_number: "+79991112233", user_id: userId, first_name: "Bad" },
+      },
+    });
+    assert.ok(out.reply?.text.includes("Переслан"));
+  });
+
+  it("rejects forwarded contact (forward_origin)", async () => {
+    const loaded = loadTanbotTelegramStage2Config();
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const cfg = loaded.config;
+    const userId = 800003;
+    const out = await handleTanbotTelegramUpdate(pool, cfg, {
+      update_id: 910005,
+      message: {
+        message_id: 5,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: userId, type: "private" },
+        from: { id: userId, is_bot: false, first_name: "Bad" },
+        forward_origin: {
+          type: "user",
+          sender_user: { id: 700001, is_bot: false, first_name: "Other" },
+          date: 1,
+        },
+        contact: { phone_number: "+79991112233", user_id: userId, first_name: "Bad" },
       },
     });
     assert.ok(out.reply?.text.includes("Переслан"));

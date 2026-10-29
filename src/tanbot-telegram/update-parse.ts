@@ -68,13 +68,21 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
   if (fromRow.is_bot === true) {
     return { ok: false, reason: "bot_sender" };
   }
+  if (BigInt(chatId) !== BigInt(userId)) {
+    return { ok: false, reason: "private_chat_user_mismatch" };
+  }
   const contact = msg.contact;
   if (contact && typeof contact === "object" && !Array.isArray(contact)) {
     const c = contact as Record<string, unknown>;
     const phoneNumber = typeof c.phone_number === "string" ? c.phone_number : "";
     const contactUserId = typeof c.user_id === "number" ? c.user_id : null;
     if (!phoneNumber.trim()) return { ok: false, reason: "invalid_contact" };
-    const isForwarded = msg.forward_date != null || msg.forward_from != null || msg.forward_from_chat != null;
+    const isForwarded =
+      msg.forward_origin != null ||
+      msg.forward_date != null ||
+      msg.forward_from != null ||
+      msg.forward_from_chat != null ||
+      (typeof msg.forward_sender_name === "string" && msg.forward_sender_name.length > 0);
     return {
       kind: "contact",
       update: {
