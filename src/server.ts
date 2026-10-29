@@ -17,6 +17,7 @@ import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
+import { createTanbotTelegramAdminRouter } from "./tanbot-telegram/admin-router";
 import { stageAttachmentHandler } from "./tan-tracker/attachments";
 import { publicHolderStageAttachmentHandler } from "./tan-tracker/public-holder";
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
@@ -239,6 +240,7 @@ export function createApp(): express.Application {
   app.use("/api/clients", createClientsRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
   app.use("/api/admin/clients", createAdminClientsRouter());
+  app.use("/api/admin/tanbot-telegram", createTanbotTelegramAdminRouter());
   app.use("/api/access", createAccessRouter());
   app.use("/api/work", createWorkRouter());
   app.use("/api/tan-tracker", createTanTrackerRouter());

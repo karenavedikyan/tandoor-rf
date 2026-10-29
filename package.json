@@ -45,6 +45,8 @@
     "bitrix24-sync:local": "node --env-file=.env dist/cli/bitrix24-sync.js",
     "bitrix24-diagnostics": "node dist/cli/bitrix24-diagnostics.js",
     "bitrix24-diagnostics:local": "node --env-file=.env dist/cli/bitrix24-diagnostics.js",
+    "tanbot-telegram-probe": "node dist/cli/tanbot-telegram-probe.js",
+    "tanbot-telegram-probe:local": "node --env-file=.env dist/cli/tanbot-telegram-probe.js",
     "bitrix24-labels-bootstrap": "node dist/cli/bitrix24-labels-bootstrap.js",
     "bitrix24-labels-bootstrap:local": "node --env-file=.env dist/cli/bitrix24-labels-bootstrap.js",
     "test": "node scripts/run-unit-tests.mjs",
