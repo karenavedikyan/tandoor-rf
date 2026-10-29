@@ -1,0 +1,98 @@
+{
+  "v": 1,
+  "kind": "FROZEN_SEPTEMBER_MATCHED_ONLY_SCOPE_CANDIDATE_NOT_WRITE_AUTHORIZATION",
+  "appId": 258307,
+  "databaseId": 4212461,
+  "targetFingerprint": "42946d0cc9e541918783dbd963c483227afb20428cad51af64481c3b2ab38f0f",
+  "appRelease": "6109c1a23a2528a1471da92c4a126b492ff6ca84",
+  "saleMonth": "2026-09-01",
+  "sourceDirectory": "/tmp/synthetic-scope-fixture-only",
+  "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sources": {
+    "saleAggregate": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "bytes": 2,
+      "rawRows": 1,
+      "guidFields": 2,
+      "legacyIdFields": 0
+    },
+    "saleItems": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "bytes": 2,
+      "rawRows": 1,
+      "guidFields": 2,
+      "legacyIdFields": 0
+    },
+    "returnsAggregate": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000003",
+      "bytes": 2,
+      "rawRows": 0,
+      "guidFields": 2,
+      "legacyIdFields": 0
+    },
+    "returnItems": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000004",
+      "bytes": 2,
+      "rawRows": 0,
+      "guidFields": 2,
+      "legacyIdFields": 0
+    }
+  },
+  "counts": {
+    "saleAggregate": { "full": 4415, "matched": 3416, "excluded": 999 },
+    "saleItems": { "full": 26928, "matched": 24030, "excluded": 2898 },
+    "returnsAggregate": { "full": 462, "matched": 413, "excluded": 49 },
+    "returnItems": { "full": 775, "matched": 697, "excluded": 78 }
+  },
+  "catalog": {
+    "count": 2747,
+    "sha256": "33cd0d4220afdbd310b54db4564117ee4112f58305bb022e104e80f450c607be"
+  },
+  "unknownUniqueGuidCount": 414,
+  "unknownUnionSha256": "00000000000000000000000000000000000000000000000000000000000000aa",
+  "financialTotals": {
+    "saleAggregate": {
+      "full": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" },
+      "matched": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" },
+      "excluded": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" }
+    },
+    "saleItems": {
+      "full": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" },
+      "matched": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" },
+      "excluded": { "quantity": "0", "income": "0", "manualDiscount": "0", "automaticDiscount": "0", "totalDiscount": "0", "costPrice": "0", "additionalExpenses": "0", "grossProfit": "0" }
+    },
+    "returnsAggregate": {
+      "full": { "quantity": "0", "income": "0" },
+      "matched": { "quantity": "0", "income": "0" },
+      "excluded": { "quantity": "0", "income": "0" }
+    },
+    "returnItems": {
+      "full": { "quantity": "0", "income": "0" },
+      "matched": { "quantity": "0", "income": "0" },
+      "excluded": { "quantity": "0", "income": "0" }
+    }
+  },
+  "beforeStateDigest": "b8b0946873bc8079c559c9b5f746e7388bfa6c4555c2d33bcc611947b14b8ce5",
+  "beforeCounts": {
+    "saleAggregateLinesJson": 0,
+    "saleItemLinesJson": 0,
+    "returnLinesJson": 0,
+    "returnItemLinesJson": 0,
+    "importStatesJson": 0,
+    "monthActivationsJson": 0
+  },
+  "expectedMatchedRows": 28556,
+  "excludedRows": 4024,
+  "allowedBusinessTables": [
+    "onec_v3_legal_sales_lines",
+    "onec_v3_legal_sale_item_lines",
+    "onec_v3_legal_return_lines",
+    "onec_v3_legal_return_item_lines"
+  ],
+  "allowedMetadata": "Four corresponding import_state id=1 and four September month_activation rows only",
+  "migrationsAllowed": false,
+  "sourceFtpRefreshAllowed": false,
+  "backupBusinessValuesAuthorized": false,
+  "applyAuthorized": false,
+  "rollbackAuthorized": false
+}
