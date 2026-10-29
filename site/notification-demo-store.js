@@ -2,7 +2,7 @@
   "use strict";
 
   const PATH = "/v1/demo-notification-state";
-  let memory = { users: {} };
+  let memory = { users: {}, registryPersonal: {} };
   let apiBase = null;
   let apiEnabled = false;
   let hydrated = false;
@@ -78,8 +78,11 @@
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       if (data && typeof data === "object" && data.users && typeof data.users === "object") {
-        memory = { users: structuredClone(data.users) };
-      } else memory = { users: {} };
+        memory = {
+          users: structuredClone(data.users),
+          registryPersonal: data.registryPersonal && typeof data.registryPersonal === "object" ? structuredClone(data.registryPersonal) : {},
+        };
+      } else memory = { users: {}, registryPersonal: {} };
       setStatus("saved");
       hydrated = true;
       return { ok: true };
@@ -150,7 +153,7 @@
   }
 
   async function resetRemote() {
-    memory = { users: {} };
+    memory = { users: {}, registryPersonal: {} };
     if (!apiEnabled) {
       setStatus("unavailable");
       return;

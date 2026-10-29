@@ -420,6 +420,23 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-recipient-att { margin-top:12px; }
 .tt-recipient-code-display { font-size:36px; font-weight:800; letter-spacing:.12em; font-variant-numeric:tabular-nums; }
 .tt-recipient-code-block { text-align:center; margin:16px 0; }
+.tt-messenger-grid { display:grid; grid-template-columns:1fr; gap:10px; margin:10px 0; }
+@media (min-width:480px) { .tt-messenger-grid { grid-template-columns:1fr 1fr; } }
+.tt-messenger-card {
+  display:flex; flex-direction:column; align-items:flex-start; gap:6px; text-align:left;
+  padding:14px 12px; border-radius:14px; border:1px solid var(--line); background:var(--surface);
+  min-height:72px; cursor:pointer;
+}
+.tt-messenger-card--picked { border-color:var(--green,#507f22); box-shadow:0 0 0 1px color-mix(in srgb, var(--green) 35%, transparent); }
+.tt-messenger-card--disabled { opacity:.72; cursor:not-allowed; }
+.tt-messenger-card-title { font-weight:650; font-size:15px; }
+.tt-messenger-card-reason { font-size:12px; color:var(--muted); line-height:1.35; }
+.tt-handoff-invite-link { margin:12px 0; }
+.tt-invite-url { display:block; font-size:11px; word-break:break-all; margin:6px 0; color:var(--muted); }
+.tt-handoff-recover { margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+.tt-registry-personal-bar { display:flex; flex-wrap:wrap; gap:8px 14px; margin:8px 0 4px; padding:0 2px; }
+.tt-registry-personal-active { font-weight:650; color:var(--green,#507f22); }
+.tt-registry-remove-confirm { margin-top:12px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--tint,#eef5e7); }
 
 /* Wizard tt52 */
 .tt-wizard-shell-card {

@@ -142,6 +142,8 @@
         holderSince: ago(5),
         timeline: [tl("emp_m1", "ext_01", "Ожидает подтверждения получателем", ago(1))],
         code: null,
+        createdById: "emp_m1",
+        finalRecipientId: "ext_01",
       },
       {
         id: "TT-2026-002",
@@ -269,6 +271,7 @@
         holderSince: ago(2),
         timeline: [tl("emp_m3", "ext_05", "На склад Tandoor", ago(2))],
         code: null,
+        createdById: "emp_m3",
       },
       {
         id: "TT-2026-011",
@@ -463,6 +466,10 @@
     error: "",
     phoneVerified: false,
     phoneVerifiedKey: "",
+    recipientChannel: null,
+    messengerVerified: false,
+    messengerVerifiedKey: "",
+    messengerError: "",
     contactSearch: "",
     newRecipient: false,
     completeConfirmOrderId: null,
@@ -482,9 +489,14 @@
     codeDemoRevealed: false,
     detailAttDisclosureOpen: null,
     registryFilterSheet: false,
+    registryPersonalView: "main",
+    registryConfirmRemoveOrderId: null,
+    editOrderId: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
+  const Ms = () => window.TanTrackerMessengerDemo;
+  const RegPersonal = () => window.TtRegistryPersonal;
 
   function detailActorKey() {
     return state.actingContactId || employeeContact(state.employeeId)?.id || state.employeeId || "";
@@ -565,12 +577,20 @@
       o.activeInvitation = null;
       return;
     }
+    const hv = o.handoffVer ?? 0;
+    const prev = o.activeInvitation;
+    const samePending = prev && prev.pendingId === o.pendingId && prev.hv === hv;
+    let startTokenPlain = samePending && prev.startTokenPlain ? prev.startTokenPlain : null;
+    if (!startTokenPlain && Ms()?.mintStartToken) startTokenPlain = Ms().mintStartToken();
     o.activeInvitation = {
-      hv: o.handoffVer ?? 0,
+      hv,
       pendingId: o.pendingId,
       holderId: o.holderId,
       item: o.item,
       id: o.id,
+      startTokenPlain,
+      startTokenIssuedAt: samePending && prev.startTokenIssuedAt ? prev.startTokenIssuedAt : now(),
+      codeIssueCount: samePending && prev.codeIssueCount != null ? prev.codeIssueCount : 0,
     };
   }
   orders.forEach((o) => {
@@ -593,8 +613,41 @@
     state.phoneVerifiedKey = "";
   }
 
+  function resetMessengerSession() {
+    state.recipientChannel = null;
+    state.messengerVerified = false;
+    state.messengerVerifiedKey = "";
+    state.messengerError = "";
+  }
+
+  function resetRecipientIdentity() {
+    resetPhoneIdentity();
+    resetMessengerSession();
+  }
+
   function identityVerified(o) {
+    if (state.messengerVerified && state.messengerVerifiedKey === recipientKey(o) && state.recipientChannel) {
+      return true;
+    }
     return state.phoneVerified && state.phoneVerifiedKey === recipientKey(o);
+  }
+
+  function pendingIsExternal(o) {
+    const p = o?.pendingId || o?.activeInvitation?.pendingId;
+    return !!(p && contactById(p)?.kind === "external");
+  }
+
+  function holderDemoCodeAllowed(o) {
+    return !pendingIsExternal(o);
+  }
+
+  function invitationTokenValid(o, inv, token) {
+    if (!token || !inv) return false;
+    if (!Ms()?.tokenMatches?.(inv, token)) return false;
+    const ttl = Ms()?.START_TOKEN_TTL_MS ?? 7 * 24 * 60 * 60 * 1000;
+    const issued = inv.startTokenIssuedAt ?? 0;
+    if (issued && now() - issued > ttl) return false;
+    return true;
   }
 
   function isExternalShell() {
@@ -607,7 +660,15 @@
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
     if (!t) return `${location.pathname}#tan-tracker?role=${role}`;
-    const p = new URLSearchParams({ role, tt_view: "recipient", tt_order: t.id, tt_hv: String(t.hv), tt_rcv: t.pendingId, tt_via: "qr" });
+    const p = new URLSearchParams({
+      role,
+      tt_view: "recipient",
+      tt_order: t.id,
+      tt_hv: String(t.hv),
+      tt_rcv: t.pendingId,
+      tt_via: "qr",
+    });
+    if (t.startTokenPlain) p.set("tt_st", t.startTokenPlain);
     return `${location.pathname}#tan-tracker?${p}`;
   }
 
@@ -927,8 +988,11 @@
   }
 
   function registryCounts() {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
-    const base = orders.filter((o) => orderVisible(o));
+    const actor = registryActorId();
+    let base = orders.filter((o) => orderVisible(o));
+    if (state.registryPersonalView === "main") {
+      base = base.filter((o) => !registryPersonallyHidden(o, actor));
+    }
     const handoff = base.filter(
       (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
     ).length;
@@ -1599,7 +1663,7 @@
 
   function invalidateCode(o) {
     o.code = null;
-    resetPhoneIdentity();
+    resetRecipientIdentity();
   }
 
   function completeHandoff(o, via, ticket) {
@@ -1629,7 +1693,7 @@
     o.code = null;
     archiveInvitation(o);
     o.activeInvitation = null;
-    resetPhoneIdentity();
+    resetRecipientIdentity();
     o.timeline.push({
       at: now(),
       from,
@@ -1740,6 +1804,10 @@
       state.error = "Демо-код доступен только текущему держателю.";
       return null;
     }
+    if (!holderDemoCodeAllowed(o)) {
+      state.error = "Для внешнего получателя код выдаётся только в его мессенджере.";
+      return null;
+    }
     state.phoneVerified = true;
     state.phoneVerifiedKey = recipientKey(o);
     if (codeValid(o)) {
@@ -1752,8 +1820,29 @@
     return c;
   }
 
-  function generateCode(o) {
+  function generateCode(o, opts = {}) {
+    state.messengerError = "";
     if (o.status === "completed" || !o.pendingId) return null;
+    if (!identityVerified(o)) {
+      state.messengerError = "Сначала подтвердите номер через выбранный мессенджер.";
+      return null;
+    }
+    const inv = o.activeInvitation;
+    if (inv && state.recipientTicket?.hv != null && Number(state.recipientTicket.hv) !== inv.hv) {
+      state.messengerError = "Приглашение устарело — запросите новую ссылку у отправителя.";
+      return null;
+    }
+    const st = state.recipientTicket?.st;
+    if (st && inv && !invitationTokenValid(o, inv, st)) {
+      state.messengerError = "Ссылка приглашения недействительна или истекла.";
+      return null;
+    }
+    const limit = Ms()?.CODE_ISSUE_LIMIT ?? 5;
+    if (inv && inv.codeIssueCount >= limit && !opts.forceReissue) {
+      state.messengerError = "Превышен лимит выдачи кодов. Попросите отправителя обновить приглашение.";
+      return null;
+    }
+    if (o.code && codeValid(o) && !opts.forceReissue) return o.code;
     const code = String(Math.floor(100000 + Math.random() * 900000));
     o.code = {
       code,
@@ -1761,7 +1850,9 @@
       attempts: 0,
       used: false,
       forContact: o.pendingId,
+      channel: state.recipientChannel || null,
     };
+    if (inv) inv.codeIssueCount = (inv.codeIssueCount || 0) + 1;
     return o.code;
   }
 
@@ -1823,7 +1914,11 @@
 
   function tryConfirmQr(o, ticket) {
     if (!identityVerified(o)) {
-      state.error = "Сначала подтвердите номер (демо).";
+      state.error = "Сначала подтвердите номер в выбранном мессенджере.";
+      return false;
+    }
+    if (pendingIsExternal(o)) {
+      state.error = "Для внешнего получателя нужен одноразовый код из мессенджера.";
       return false;
     }
     if (ticket?.stale) {
@@ -1848,7 +1943,7 @@
     archiveInvitation(o);
     o.activeInvitation = null;
     o.code = null;
-    resetPhoneIdentity();
+    resetRecipientIdentity();
     o.status = "active";
     state.toast = "Ожидание отменено.";
   }
@@ -1906,7 +2001,7 @@
     o.status = "waiting";
     o.handoffVer = (o.handoffVer ?? 0) + 1;
     o.code = null;
-    resetPhoneIdentity();
+    resetRecipientIdentity();
     syncInvitation(o);
     state.handoffTab = "code";
     o.timeline.push({
@@ -1929,8 +2024,47 @@
     return { contact: c };
   }
 
+  function registryActorId() {
+    return state.actingContactId || employeeContact(state.employeeId)?.id;
+  }
+
+  function actorHasRegistryObligation(o, actor) {
+    if (!o || !actor || o.status === "completed") return false;
+    if (o.holderId === actor && o.pendingId) return true;
+    if (o.pendingId === actor) return true;
+    return false;
+  }
+
+  function registryPersonallyHidden(o, actor) {
+    const RP = RegPersonal();
+    if (!RP || !actor || o.createdById !== actor) return false;
+    if (actorHasRegistryObligation(o, actor)) return false;
+    return RP.isRemoved(o.id, actor) || RP.isArchived(o.id, actor);
+  }
+
+  function applyRegistryPersonalView(list, actor) {
+    const RP = RegPersonal();
+    const view = state.registryPersonalView || "main";
+    if (!RP || !actor) return list;
+    if (view === "archived") {
+      return list.filter((o) => o.createdById === actor && RP.isArchived(o.id, actor));
+    }
+    if (view === "removed") {
+      return list.filter((o) => o.createdById === actor && RP.isRemoved(o.id, actor));
+    }
+    return list.filter((o) => !registryPersonallyHidden(o, actor));
+  }
+
+  function canInitiatorRemoveFromRegistry(o, actor) {
+    return !!(o && actor && o.createdById === actor && !actorHasRegistryObligation(o, actor));
+  }
+
+  function canInitiatorArchive(o, actor) {
+    return !!(o && actor && o.createdById === actor && o.status === "completed");
+  }
+
   function visibleOrders() {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = registryActorId();
     let list = orders.filter((o) => orderVisible(o));
     if (state.actingContactId) {
       list = list.filter((o) => {
@@ -1961,6 +2095,7 @@
       }
       return true;
     });
+    list = applyRegistryPersonalView(list, actor);
     return list;
   }
 
@@ -2031,12 +2166,16 @@
       }
       if (state.recipientVia === "qr") p.set("tt_via", "qr");
       else p.delete("tt_via");
+      const inv = o?.activeInvitation;
+      if (inv?.startTokenPlain) p.set("tt_st", inv.startTokenPlain);
+      else p.delete("tt_st");
     } else {
       p.delete("tt_view");
       p.delete("tt_order");
       p.delete("tt_hv");
       p.delete("tt_rcv");
       p.delete("tt_via");
+      p.delete("tt_st");
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
@@ -2088,8 +2227,13 @@
     if (oid) state.orderId = oid;
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
     if (state.recipientMode && oid) {
-      state.recipientTicket = { hv: p.get("tt_hv"), rcv: p.get("tt_rcv"), order: oid };
-      resetPhoneIdentity();
+      state.recipientTicket = {
+        hv: p.get("tt_hv"),
+        rcv: p.get("tt_rcv"),
+        order: oid,
+        st: p.get("tt_st") || "",
+      };
+      resetRecipientIdentity();
     } else state.recipientTicket = null;
     const scr = p.get("tt_screen");
     if (scr) state.view = scr;
@@ -2139,6 +2283,23 @@
     </button>`;
   }
 
+  function registryPersonalToolbar() {
+    const actor = registryActorId();
+    const RP = RegPersonal();
+    const counts = RP?.counts?.(actor) || { archived: 0, removed: 0 };
+    const view = state.registryPersonalView || "main";
+    const link = (label, action, active) =>
+      btn(label, `data-tt="${action}"`, active ? "tt-link tt-registry-personal-active" : "tt-link");
+    const parts = [link(view === "main" ? "Мой реестр" : "← Основной реестр", "registry-view-main", view === "main")];
+    if (counts.archived > 0 || view === "archived") {
+      parts.push(link(`Архив (${counts.archived})`, "registry-view-archived", view === "archived"));
+    }
+    if (counts.removed > 0 || view === "removed") {
+      parts.push(link(`Удалённые (${counts.removed})`, "registry-view-removed", view === "removed"));
+    }
+    return `<div class="tt-registry-personal-bar" data-tt="registry-personal-bar">${parts.join("")}</div>`;
+  }
+
   function registryStatTiles() {
     const c = registryCounts();
     const labels = statTileLabels();
@@ -2166,6 +2327,7 @@
       </div>
       <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i>${badge ? `<span class="tt-filter-badge" data-tt="filter-badge">${badge}</span>` : ""}</button>
     </div>
+    ${registryPersonalToolbar()}
     ${registryDesktopStatusChips()}
     <div class="tt-toolbar tt-toolbar--legacy">
       <div class="tt-mine-filters tt-mine-filters--legacy" role="group" aria-label="Мои передачи">
@@ -2384,12 +2546,17 @@
         </div>
       </section>
     </div>`;
+    const editing = !!state.editOrderId;
     return wizardShell(
       "review",
-      "Проверить и создать",
-      "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
+      editing ? "Проверить и сохранить" : "Проверить и создать",
+      editing
+        ? "Изменения сохраняются в той же передаче (тот же ID и инициатор). Любое сохранение аннулирует действующий код, ссылку и QR — получателю нужен новый код."
+        : "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
       reviewBody,
-      `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back", false, "tt-wizard-btn-quiet")}`
+      editing
+        ? `${wizardBtn("Сохранить изменения", "create-wizard-submit", true)}${wizardBtn("Отмена", "order-edit-cancel", false, "tt-wizard-btn-quiet")}`
+        : `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back", false, "tt-wizard-btn-quiet")}`
     );
   }
 
@@ -2572,6 +2739,72 @@
     return /Подтверждено (одноразовым кодом|по QR)/.test(note || "");
   }
 
+  function hasFirstConfirmedCustodyHandoff(o) {
+    return o.timeline.some((t) => isConfirmedHandoffTimelineNote(t.note));
+  }
+
+  function orderCreatorId(o) {
+    if (o?.createdById) return o.createdById;
+    const created = o?.timeline?.find((t) => /Создана передача/.test(t.note || ""));
+    return created?.from || null;
+  }
+
+  function orderHasRelayLeg(o) {
+    return !!(o.finalRecipientId && o.pendingId && o.pendingId !== o.finalRecipientId);
+  }
+
+  function canFullEditOrder(o, actor) {
+    if (!o || !actor || o.status === "completed") return false;
+    if (o.holderId !== actor) return false;
+    if (orderCreatorId(o) !== actor) return false;
+    if (hasFirstConfirmedCustodyHandoff(o)) return false;
+    return true;
+  }
+
+  function dueInputFromTs(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function orderToCreateForm(o) {
+    const relay = orderHasRelayLeg(o);
+    const fin = o.finalRecipientId || o.pendingId || "";
+    return {
+      item: o.item,
+      comment: o.comment || "",
+      due: dueInputFromTs(o.dueAt),
+      finalRecipientId: fin,
+      recipientId: fin,
+      relayId: relay ? o.pendingId : "",
+      pickQ: "",
+      newName: "",
+      newPhone: "",
+      mode: "list",
+      pickTarget: "final",
+      recipientStep: "confirmed",
+    };
+  }
+
+  function loadOrderAttachmentsToStaging(o) {
+    if (!Att()) return;
+    Att().revokeStaging(state.attachStaging);
+    state.attachStaging = (o.attachments || []).map((a) => ({ ...a }));
+  }
+
+  function applyAttachmentsFromStaging(o, actorId) {
+    if (!Att()) return;
+    const next = state.attachStaging.map((s) => ({
+      ...s,
+      addedBy: s.addedBy || actorId,
+      addedAt: s.addedAt || now(),
+    }));
+    const drop = (o.attachments || []).filter((a) => !next.some((n) => n.id === a.id));
+    if (drop.length) Att().revokeStaging(drop);
+    o.attachments = next;
+  }
+
   function lastConfirmedHandoffEntry(o) {
     return (
       o.timeline
@@ -2679,9 +2912,10 @@
     </section>`;
   }
 
-  function pendingHandoffPanel(o, p) {
+  function pendingHandoffPanel(o, p, actor) {
     if (!o.pendingId || !o.activeInvitation) return "";
     const heroAttr = 'data-tt-detail-hero-primary=""';
+    const fullEdit = canFullEditOrder(o, actor);
     const tab = state.handoffTab || "code";
     const inv = o.activeInvitation;
     const payload = handoffUrl(o, inv);
@@ -2696,14 +2930,28 @@
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
       <h3 class="tt-detail-task-heading">Подтвердите передачу</h3>
       <p class="tt-detail-task-receiver">Получатель: <strong>${E(p?.name || "—")}</strong></p>
-      <p class="tt-detail-task-instructions">Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет.</p>
+      <p class="tt-detail-task-instructions">${
+        pendingIsExternal(o)
+          ? "Отправьте персональную ссылку или QR. Получатель без ЛК выберет Telegram или MAX, подтвердит свой номер в боте и сообщит вам одноразовый код."
+          : "Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет."
+      }</p>
       <div class="tt-handoff" data-tt="handoff-panel">
+        ${invitationLinkBlock(o)}
         <div class="tt-handoff-actions">
           ${btn("Ввести код", `data-tt="enter-code" ${heroAttr}`, "tt-primary tt-btn-block")}
           ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
         </div>
         ${qrBlock}
       </div>
+      ${
+        fullEdit
+          ? `<div class="tt-handoff-recover" data-tt="handoff-recover">
+        ${btn("Изменить передачу", 'data-tt="order-full-edit"', "tt-detail-alt-action")}
+        ${btn("Сменить получателя", 'data-tt="change-pending"', "tt-detail-alt-action")}
+        <p class="tt-muted">Код не пришёл? Измените получателя, мессенджер или параметры до физической передачи — custody не меняется, пока код не подтверждён.</p>
+      </div>`
+          : ""
+      }
       ${
         o.finalRecipientId && o.holderId !== o.finalRecipientId
           ? shortRelayReminder(o, p, true, true)
@@ -2740,7 +2988,7 @@
         <p class="tt-detail-readonly">Сейчас ответственный: <strong>${E(h?.name || "—")}</strong>. ${E(wait)} Действия доступны держателю.</p>
       </section>`;
     }
-    if (o.pendingId) return pendingHandoffPanel(o, p);
+    if (o.pendingId) return pendingHandoffPanel(o, p, actor);
     const heroAttr = 'data-tt-detail-hero-primary=""';
     if (mustRelay) {
       return `<section class="tt-detail-task-card" data-tt="detail-task-card">
@@ -2804,7 +3052,29 @@
       demoBtns.push(overflowActionBtn("Действовать как получатель", "act-recipient", "user-check"));
     if (isHolder && o.pendingId) demoBtns.push(overflowActionBtn("Открыть экран получателя (демо)", "open-recipient", "external-link"));
 
+    const initiatorBtns = [];
+    const RP = RegPersonal();
+    if (actor && o.createdById === actor && RP) {
+      if (canInitiatorArchive(o, actor) && !RP.isArchived(o.id, actor)) {
+        initiatorBtns.push(overflowActionBtn("В мой архив", "registry-archive", "archive"));
+      }
+      if (canInitiatorRemoveFromRegistry(o, actor) && !RP.isRemoved(o.id, actor)) {
+        initiatorBtns.push(overflowActionBtn("Убрать из моего реестра", "registry-remove-ask", "trash-2"));
+      }
+      if (RP.isArchived(o.id, actor)) {
+        initiatorBtns.push(overflowActionBtn("Вернуть из архива", "registry-unarchive", "archive-restore"));
+      }
+      if (RP.isRemoved(o.id, actor)) {
+        initiatorBtns.push(overflowActionBtn("Восстановить в реестре", "registry-unremove", "undo-2"));
+      }
+    }
+
     const overflowGroups = [];
+    if (initiatorBtns.length) {
+      overflowGroups.push(
+        `<div class="tt-detail-overflow-group" data-tt="registry-personal-actions"><p class="tt-detail-overflow-label">Мой реестр</p>${initiatorBtns.join("")}</div>`
+      );
+    }
     if (otherActionBtns) {
       overflowGroups.push(
         `<div class="tt-detail-overflow-group" data-tt="other-actions"><p class="tt-detail-overflow-label">Другие действия</p>${otherActionBtns}</div>`
@@ -2865,6 +3135,14 @@
       </div>`
           : ""
       }
+      ${
+        state.registryConfirmRemoveOrderId === o.id
+          ? `<div class="tt-registry-remove-confirm" data-tt="registry-remove-confirm">
+        <p class="tt-warning">Убрать «${E(o.item)}» из вашего реестра? Каноническая история и обязанности других участников не изменятся.</p>
+        <div class="tt-actions">${btn("Убрать из реестра", 'data-tt="registry-remove-confirm"', "tt-primary")}${btn("Отмена", 'data-tt="registry-remove-cancel"')}</div>
+      </div>`
+          : ""
+      }
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
       </aside>
@@ -2911,8 +3189,68 @@
     });
   }
 
+  function messengerChannelsUi() {
+    const ch = Ms()?.channelAvailability?.() || {
+      telegram: { available: true, label: "Telegram", reason: "" },
+      max: { available: false, label: "MAX", reason: "MAX недоступен." },
+    };
+    return ch;
+  }
+
+  function messengerChannelPickBlock(o, stale) {
+    if (stale) return "";
+    const ch = messengerChannelsUi();
+    const cards = ["telegram", "max"]
+      .map((key) => {
+        const meta = ch[key];
+        const picked = state.recipientChannel === key;
+        const disabled = !meta.available;
+        const cls = `tt-messenger-card${picked ? " tt-messenger-card--picked" : ""}${disabled ? " tt-messenger-card--disabled" : ""}`;
+        return `<button type="button" class="${cls}" data-tt="pick-channel" data-channel="${key}" ${
+          disabled ? "disabled aria-disabled=true" : ""
+        }>
+          <span class="tt-messenger-card-title">${E(meta.label || key)}</span>
+          ${disabled ? `<span class="tt-messenger-card-reason">${E(meta.reason)}</span>` : `<span class="tt-muted">Получатель выбирает сам</span>`}
+        </button>`;
+      })
+      .join("");
+    return `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-channel">
+      <p class="tt-recipient-step-label">Шаг 1 · выберите мессенджер</p>
+      <p class="tt-muted tt-recipient-step-hint">Отправитель не угадывает канал — выберите Telegram или MAX (когда доступен).</p>
+      <div class="tt-messenger-grid" data-tt="messenger-choose">${cards}</div>
+      ${state.recipientChannel ? `<p class="tt-muted">Выбран: <strong>${E(ch[state.recipientChannel]?.label || state.recipientChannel)}</strong> ${btn("Сменить канал", 'data-tt="switch-channel"', "tt-btn-ghost tt-messenger-switch")}</p>` : ""}
+    </div>`;
+  }
+
+  function messengerVerifyBlock(o, stale) {
+    if (stale || !state.recipientChannel) return "";
+    const ch = state.recipientChannel;
+    const label = messengerChannelsUi()[ch]?.label || ch;
+    if (identityVerified(o)) {
+      return `<p class="tt-success tt-recipient-verified" data-tt="messenger-verified">Номер подтверждён через ${E(label)}.</p>`;
+    }
+    const err = state.messengerError ? `<p class="tt-error" data-tt="messenger-error">${E(state.messengerError)}</p>` : "";
+    return `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
+      <p class="tt-recipient-step-label">Шаг 2 · подтвердите свой номер в ${E(label)}</p>
+      <p class="tt-muted tt-recipient-step-hint">Демо: имитируем кнопку «Поделиться контактом» бота. Код появится только здесь, не у отправителя.</p>
+      ${btn(`Поделиться контактом (демо · ${label})`, 'data-tt="messenger-share-own"', "tt-primary tt-btn-block")}
+      ${err}
+    </div>`;
+  }
+
+  function invitationLinkBlock(o) {
+    const inv = o.activeInvitation;
+    if (!inv?.startTokenPlain) return "";
+    const url = handoffUrl(o, inv);
+    return `<div class="tt-handoff-invite-link">
+      <p class="tt-muted">Персональная ссылка для получателя (выбор Telegram/MAX на экране):</p>
+      <code class="tt-invite-url" data-tt="invite-url">${E(url)}</code>
+      ${btn("Скопировать ссылку", 'data-tt="copy-invite-link"', "tt-btn-ghost")}
+    </div>`;
+  }
+
   function codeView(o) {
-    const showCode = state.codeDemoRevealed && o.code && codeValid(o);
+    const showCode = state.codeDemoRevealed && o.code && codeValid(o) && holderDemoCodeAllowed(o);
     const codeInputId = `tt-code-input-${String(o.id).replace(/[^\w-]/g, "")}`;
     const val = state.codeInput || "";
     const active = Math.min(val.length, 5);
@@ -2931,8 +3269,7 @@
           <input id="${E(codeInputId)}" class="tt-code-input-overlay" inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(val)}" autocomplete="one-time-code" aria-describedby="tt-code-demo-help">
         </div>
         <div class="tt-code-secondary-actions">
-          ${btn("Получить демо-код", 'data-tt="demo-reveal-code"', "tt-btn-ghost")}
-          ${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost")}
+          ${holderDemoCodeAllowed(o) ? `${btn("Получить демо-код", 'data-tt="demo-reveal-code"', "tt-btn-ghost")}${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost")}` : `<p class="tt-muted">Внешний получатель сообщит код из мессенджера — демо-код держателю недоступен.</p>`}
         </div>
       </div>
       ${
@@ -2969,25 +3306,32 @@
         <p class="tt-muted">Код действует 5 мин · до ${dt(c.expiresAt)}</p>
       </div>`
         : "";
-    const verifyStep = !verified
-      ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-verify">
-        <p class="tt-recipient-step-label">Шаг 1 · подтвердите, что это ваш номер</p>
-        ${btn("Подтвердить номер (демо)", 'data-tt="demo-verify-phone"', "tt-primary tt-btn-block")}
-        <p class="tt-muted tt-recipient-step-hint">Демо без СМС: нажмите кнопку, чтобы продолжить.</p>
-      </div>`
-      : `<p class="tt-success tt-recipient-verified">Номер подтверждён.</p>`;
-    const receiveStep =
-      verified && !stale && qrMode
-        ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-receive">
-        <p class="tt-recipient-step-label">Шаг 2 · примите предмет</p>
+    const token = state.recipientTicket?.st;
+    const tokenBad =
+      !stale &&
+      token &&
+      inv &&
+      !invitationTokenValid(o, inv, token) &&
+      !(resolved.stale && Ms()?.tokenMatches?.(inv, token));
+    const channelStep = !verified && !tokenBad ? messengerChannelPickBlock(o, stale) : "";
+    const verifyStep = !verified && !tokenBad ? messengerVerifyBlock(o, stale) : verified ? messengerVerifyBlock(o, stale) : "";
+    const qrAllowed = verified && !stale && qrMode && !pendingIsExternal(o);
+    const codePath = verified && !stale && (!qrMode || pendingIsExternal(o));
+    const receiveStep = qrAllowed
+      ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-receive">
+        <p class="tt-recipient-step-label">Шаг 3 · примите предмет</p>
         ${btn("Подтвердить получение", 'data-tt="confirm-qr-receive"', "tt-primary tt-btn-block")}
         <p class="tt-muted tt-recipient-step-hint">Нажмите, когда предмет у вас на руках.</p>
       </div>`
-        : verified && !stale && !qrMode && !c
-          ? `<div class="tt-recipient-step" data-tt="recipient-step-code">${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>`
-          : verified && !stale && !qrMode && c && !codeValid(o)
-            ? `<div class="tt-recipient-step"><p class="tt-error">Код недоступен.</p>${btn("Получить новый код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}</div>`
-            : "";
+      : codePath && !c
+        ? `<div class="tt-recipient-step tt-recipient-step--active" data-tt="recipient-step-code">
+        <p class="tt-recipient-step-label">Шаг 3 · получите код в ${E(messengerChannelsUi()[state.recipientChannel]?.label || "мессенджере")}</p>
+        ${btn("Получить код", 'data-tt="gen-code"', "tt-primary tt-btn-block")}
+        <p class="tt-muted tt-recipient-step-hint">Код показывается только на этом экране — сообщите его держателю устно или по телефону.</p>
+      </div>`
+        : codePath && c && !codeValid(o)
+          ? `<div class="tt-recipient-step"><p class="tt-error">Код недоступен.</p>${btn("Получить новый код", 'data-tt="gen-code-reissue"', "tt-primary tt-btn-block")}</div>`
+          : "";
     const attDisclosure =
       verified && !stale && attCount
         ? `<details class="tt-disclosure tt-recipient-att" data-tt="recipient-attachments-disclosure">
@@ -3006,6 +3350,8 @@
       <p class="tt-recipient-to">Вам · ${E(maskPhone(to?.phone || ""))}</p>
       ${fin && intermediate ? `<p class="tt-recipient-fin">Конечный получатель: <strong>${E(fin.name)}</strong></p>` : ""}
       ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
+      ${tokenBad ? `<p class="tt-error" data-tt="invite-token-error">Ссылка приглашения недействительна, истекла или уже заменена новой версией.</p>` : ""}
+      ${channelStep}
       ${verifyStep}
       ${receiveStep}
       ${codeBlock}
@@ -3170,12 +3516,76 @@
     restoreFocus(snap);
   }
 
+  function submitOrderUpdate(o, f) {
+    const actor = registryActorId();
+    if (!canFullEditOrder(o, actor)) {
+      state.error = "Полное редактирование доступно только инициатору-держателю до первого подтверждённого получения.";
+      return;
+    }
+    const finalId = f.finalRecipientId || f.recipientId;
+    if (!finalId) {
+      state.error = "Выберите конечного получателя.";
+      return;
+    }
+    const newPending = f.relayId || finalId;
+    const oldRelay = orderHasRelayLeg(o) ? o.pendingId : "";
+    const recipientChanged =
+      newPending !== o.pendingId || finalId !== (o.finalRecipientId || o.pendingId) || (f.relayId || "") !== oldRelay;
+    if (recipientChanged) {
+      const prevPending = o.pendingId;
+      if (prevPending && prevPending !== newPending) {
+        o.revokedParticipants = o.revokedParticipants || [];
+        if (!o.revokedParticipants.includes(prevPending)) o.revokedParticipants.push(prevPending);
+      }
+      o.pendingId = newPending;
+    }
+    o.item = f.item.trim();
+    o.comment = (f.comment || "").trim();
+    o.dueAt = f.due ? new Date(f.due).getTime() : null;
+    o.finalRecipientId = finalId;
+    archiveInvitation(o);
+    o.handoffVer = (o.handoffVer ?? 0) + 1;
+    o.code = null;
+    syncInvitation(o);
+    o.status = "waiting";
+    o.timeline.push({
+      at: now(),
+      from: actor,
+      to: o.pendingId,
+      note: recipientChanged
+        ? "Изменён получатель — код, QR и приглашение аннулированы"
+        : "Параметры передачи изменены — код, QR и приглашение аннулированы",
+    });
+    applyAttachmentsFromStaging(o, actor);
+    state.editOrderId = null;
+    state.orderId = o.id;
+    state.view = "detail";
+    state.form = null;
+    state.createPhase = "item";
+    state.createReturnPhase = null;
+    state.attachStaging = [];
+    state.attachError = "";
+    state.toast =
+      "Передача обновлена (тот же номер). Старый код, ссылка и QR недействительны — получателю нужен новый код.";
+    writeUrl();
+  }
+
   function submitCreate() {
     syncWizardFieldsFromDom();
     const f = state.form;
     state.error = "";
     if (state.attachBusy) {
       state.error = "Дождитесь обработки файлов.";
+      return;
+    }
+    if (state.editOrderId) {
+      const existing = orders.find((x) => x.id === state.editOrderId);
+      if (!existing) {
+        state.error = "Передача для редактирования не найдена.";
+        state.editOrderId = null;
+        return;
+      }
+      submitOrderUpdate(existing, f);
       return;
     }
     if (!f.item.trim()) {
@@ -3280,6 +3690,7 @@
       return;
     }
     if (action === "create" || action === "create-fab") {
+      state.editOrderId = null;
       state.view = "create";
       state.createPhase = "item";
       state.createReturnPhase = null;
@@ -3302,7 +3713,49 @@
       renderTracker();
       return;
     }
+    if (action === "order-edit-cancel") {
+      const oid = state.editOrderId || state.orderId;
+      state.editOrderId = null;
+      state.view = oid ? "detail" : "list";
+      state.orderId = oid || null;
+      state.form = null;
+      state.createPhase = "item";
+      state.createReturnPhase = null;
+      clearAttachStaging();
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "order-full-edit" && o) {
+      const actor = registryActorId();
+      if (!canFullEditOrder(o, actor)) {
+        state.error = "Редактирование недоступно: нужны роль инициатора и отсутствие подтверждённой передачи.";
+        renderTracker();
+        return;
+      }
+      state.editOrderId = o.id;
+      state.orderId = o.id;
+      state.form = orderToCreateForm(o);
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+      loadOrderAttachmentsToStaging(o);
+      state.view = "create";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
     if (action === "create-wizard-back") {
+      if (state.editOrderId && state.createPhase === "review") {
+        state.editOrderId = null;
+        state.view = state.orderId ? "detail" : "list";
+        state.form = null;
+        state.createPhase = "item";
+        clearAttachStaging();
+        writeUrl();
+        renderTracker();
+        return;
+      }
       if (state.attachBusy) {
         bumpAttachOpGen();
         state.attachBusy = false;
@@ -3658,12 +4111,13 @@
     if (action === "scan-qr-demo" && o) {
       state.recipientMode = true;
       state.recipientVia = "qr";
-      resetPhoneIdentity();
+      resetRecipientIdentity();
       if (o.activeInvitation) {
         state.recipientTicket = {
           hv: String(o.activeInvitation.hv),
           rcv: o.activeInvitation.pendingId,
           order: o.id,
+          st: o.activeInvitation.startTokenPlain || "",
         };
       }
       writeUrl();
@@ -3673,7 +4127,15 @@
     if (action === "open-recipient" && o) {
       state.recipientMode = true;
       state.recipientVia = state.handoffTab === "qr" ? "qr" : "code";
-      resetPhoneIdentity();
+      resetRecipientIdentity();
+      if (o.activeInvitation) {
+        state.recipientTicket = {
+          hv: String(o.activeInvitation.hv),
+          rcv: o.activeInvitation.pendingId,
+          order: o.id,
+          st: o.activeInvitation.startTokenPlain || "",
+        };
+      }
       writeUrl();
       renderTracker();
       return;
@@ -3732,6 +4194,93 @@
     if (action === "reset-filters") {
       state.query = "";
       state.statusFilter = "all";
+      state.mineFilter = "all";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-view-main") {
+      state.registryPersonalView = "main";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-view-archived") {
+      state.registryPersonalView = "archived";
+      state.statusFilter = "all";
+      state.mineFilter = "all";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-view-removed") {
+      state.registryPersonalView = "removed";
+      state.statusFilter = "all";
+      state.mineFilter = "all";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-remove-ask" && o) {
+      const actor = registryActorId();
+      if (!canInitiatorRemoveFromRegistry(o, actor)) {
+        state.error = "Убрать из реестра может только инициатор, без активных обязательств по передаче.";
+        renderTracker();
+        return;
+      }
+      state.registryConfirmRemoveOrderId = o.id;
+      state.error = "";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-remove-cancel") {
+      state.registryConfirmRemoveOrderId = null;
+      renderTracker();
+      return;
+    }
+    if (action === "registry-remove-confirm" && o) {
+      const actor = registryActorId();
+      const RP = RegPersonal();
+      if (!RP || !canInitiatorRemoveFromRegistry(o, actor)) {
+        state.error = "Нельзя убрать эту передачу из реестра.";
+        state.registryConfirmRemoveOrderId = null;
+        renderTracker();
+        return;
+      }
+      RP.addRemoved(o.id, actor);
+      state.registryConfirmRemoveOrderId = null;
+      state.toast = "Передача убрана из вашего реестра. Другие участники по-прежнему видят её.";
+      if (state.view === "detail") state.view = "list";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "registry-archive" && o) {
+      const actor = registryActorId();
+      const RP = RegPersonal();
+      if (!RP || !canInitiatorArchive(o, actor)) {
+        state.error = "В архив можно отправить только завершённую передачу, которую вы создали.";
+        renderTracker();
+        return;
+      }
+      RP.addArchived(o.id, actor);
+      state.toast = "Передача в вашем архиве.";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-unarchive" && o) {
+      const actor = registryActorId();
+      RegPersonal()?.removeArchived(o.id, actor);
+      state.toast = "Передача снова в основном реестре.";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-unremove" && o) {
+      const actor = registryActorId();
+      if (o.createdById !== actor) {
+        state.error = "Восстановить может только инициатор.";
+        renderTracker();
+        return;
+      }
+      RegPersonal()?.removeRemoved(o.id, actor);
+      state.toast = "Передача восстановлена в реестре.";
+      state.registryPersonalView = "main";
       renderTracker();
       return;
     }
@@ -3740,13 +4289,88 @@
       renderTracker();
       return;
     }
-    if (action === "gen-code") {
+    if (action === "gen-code" || action === "gen-code-reissue") {
       const order = o || orders.find((x) => x.id === state.orderId);
       if (!order) return;
+      state.messengerError = "";
       if (!identityVerified(order)) {
-        state.error = "Сначала подтвердите номер (демо).";
-      } else generateCode(order);
+        state.messengerError = "Сначала подтвердите номер через выбранный мессенджер.";
+      } else {
+        generateCode(order, { forceReissue: action === "gen-code-reissue" });
+      }
       renderTracker();
+      return;
+    }
+    if (action === "pick-channel") {
+      const order = o || orders.find((x) => x.id === state.orderId);
+      const ch = b.getAttribute("data-channel");
+      if (!order || !ch) return;
+      const avail = Ms()?.channelAvailability?.()?.[ch];
+      if (!avail?.available) {
+        state.messengerError = avail?.reason || "Канал недоступен.";
+        renderTracker();
+        return;
+      }
+      if (state.recipientChannel && state.recipientChannel !== ch) {
+        order.code = null;
+        state.messengerError = "Канал изменён — прежний код аннулирован. Подтвердите номер снова.";
+        resetPhoneIdentity();
+        state.messengerVerified = false;
+        state.messengerVerifiedKey = "";
+      }
+      state.recipientChannel = ch;
+      renderTracker();
+      return;
+    }
+    if (action === "switch-channel") {
+      const order = o || orders.find((x) => x.id === state.orderId);
+      if (order) {
+        order.code = null;
+        resetRecipientIdentity();
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "messenger-share-own") {
+      const order = o || orders.find((x) => x.id === state.orderId);
+      if (!order || !state.recipientChannel) return;
+      const pending = contactById(order.pendingId);
+      (async () => {
+        let payload;
+        if (state.recipientChannel === "telegram") {
+          payload = Ms()?.buildTelegramOwnContactPayload?.(pending?.phone);
+        } else {
+          payload = await Ms()?.buildMaxOwnContactPayload?.(pending?.phone);
+        }
+        const result = await Ms()?.verifyContactProof?.({
+          channel: state.recipientChannel,
+          pendingPhone: pending?.phone,
+          scenario: "own",
+          payload,
+        });
+        if (!result?.ok) {
+          state.messengerError = result?.error || "Подтверждение отклонено.";
+          state.messengerVerified = false;
+        } else {
+          state.messengerError = "";
+          state.messengerVerified = true;
+          state.messengerVerifiedKey = recipientKey(order);
+          state.phoneVerified = true;
+          state.phoneVerifiedKey = recipientKey(order);
+        }
+        renderTracker();
+      })();
+      return;
+    }
+    if (action === "copy-invite-link" && o) {
+      const inv = o.activeInvitation;
+      const url = inv ? handoffUrl(o, inv) : "";
+      if (url && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(new URL(url, location.href).href).then(() => {
+          state.toast = "Ссылка скопирована";
+          renderTracker();
+        });
+      }
       return;
     }
     if (action === "attach-remove") {
@@ -3773,15 +4397,24 @@
     if (action === "demo-verify-phone") {
       const order = o || orders.find((x) => x.id === state.orderId);
       if (!order) return;
-      const hv = state.recipientTicket?.hv;
-      const resolved = hv != null ? resolveInvitation(order, hv) : null;
-      const keyOrder =
-        resolved?.inv && resolved.stale
-          ? { id: order.id, handoffVer: resolved.inv.hv, pendingId: resolved.inv.pendingId }
-          : order;
-      state.phoneVerified = true;
-      state.phoneVerifiedKey = recipientKey(keyOrder);
-      renderTracker();
+      state.recipientChannel = "telegram";
+      const pending = contactById(order.pendingId);
+      const payload = Ms()?.buildTelegramOwnContactPayload?.(pending?.phone);
+      Ms()?.verifyContactProof?.({
+        channel: "telegram",
+        pendingPhone: pending?.phone,
+        scenario: "own",
+        payload,
+      }).then((result) => {
+        if (result?.ok) {
+          state.messengerVerified = true;
+          state.messengerVerifiedKey = recipientKey(order);
+          state.phoneVerified = true;
+          state.phoneVerifiedKey = recipientKey(order);
+          state.messengerError = "";
+        } else state.messengerError = result?.error || "Подтверждение отклонено.";
+        renderTracker();
+      });
       return;
     }
   });
@@ -3944,7 +4577,44 @@
       seedOrders();
     },
     routeActive: () => current === ROUTE,
+    async simulateMessengerContact(scenario, payloadExtra) {
+      const order = orders.find((x) => x.id === state.orderId);
+      if (!order || !state.recipientChannel) return { ok: false, error: "no channel" };
+      const pending = contactById(order.pendingId);
+      let payload = payloadExtra;
+      if (!payload) {
+        if (state.recipientChannel === "telegram") {
+          payload = Ms()?.buildTelegramOwnContactPayload?.(pending?.phone);
+        } else {
+          payload = await Ms()?.buildMaxOwnContactPayload?.(pending?.phone);
+        }
+      }
+      const result = await Ms()?.verifyContactProof?.({
+        channel: state.recipientChannel,
+        pendingPhone: pending?.phone,
+        scenario: scenario || "own",
+        payload,
+      });
+      if (result?.ok) {
+        state.messengerVerified = true;
+        state.messengerVerifiedKey = recipientKey(order);
+        state.phoneVerified = true;
+        state.phoneVerifiedKey = recipientKey(order);
+        state.messengerError = "";
+      } else state.messengerError = result?.error || "fail";
+      return result;
+    },
+    pickMessengerChannel(ch) {
+      state.recipientChannel = ch;
+    },
+    canFullEditOrder: (orderId) => {
+      const o = orders.find((x) => x.id === orderId);
+      return o && canFullEditOrder(o, registryActorId());
+    },
+    orderCreatorId,
+    hasFirstConfirmedCustodyHandoff,
   };
 
+  RegPersonal()?.init?.();
   syncShellNav();
 })();

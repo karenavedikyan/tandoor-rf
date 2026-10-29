@@ -66,7 +66,19 @@
 - **Delivery (demo):** Telegram + MAX connect/disconnect without codes/bots; shared prefs for all event types; status line under each item; LK history when channels off or delivery fails; profile «Повторить отправку (демо)» clears last error.
 - **A11y / layout:** `role="dialog"`, Escape, focus return; 375px inbox width; theme toggle; no duplicate bell.
 - **Doc:** `docs/prototype/unified-notification-center.md` (decision, privacy, LK vs delivery).
-- QA: `notification-demo-api-qa.mjs` (7 checks: visitor isolation, validation); `notification-center-qa.js` (23 checks incl. backend flush/reload, failed save state); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
+- QA: `notification-demo-api-qa.mjs` (visitor isolation, validation, optional `registryPersonal` flags); `notification-center-qa.js` (39 checks incl. gated two-PUT save status); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
+
+### External recipient messengers (Telegram / MAX, prototype)
+- Recipient shell: choose **Telegram** or **MAX** (MAX disabled until demo config); simulated bot **share contact**; code only on recipient UI; holder enters code (no demo-code leak for external pending). Personal link/QR includes `tt_st` token. See `docs/prototype/external-recipient-messengers.md`.
+- QA: `tan-tracker-external-messenger-qa.js`, updated `tan-tracker-handoff-identity-qa.js`.
+
+### Pre-first-handoff full edit (same transfer id)
+- **Initiator + current holder** before any timeline «Подтверждено одноразовым кодом/по QR»: **Изменить передачу** → prefilled create wizard (item, route, files, due, comment); **Сохранить изменения** updates **same** `TT-…` id and creator audit. **Any** saved edit bumps `handoffVer` and invalidates code/QR/invitation/messenger context (not only recipient change), because title/files/deadline change what the recipient confirms. **Сменить получателя** / handoff recover when code fails. Non-initiator / post-confirm: no controls; handlers denied.
+- QA: `tan-tracker-pre-handoff-edit-qa.js`.
+
+### Personal registry visibility (initiator-only, demo backend)
+- **Убрать из моего реестра** (initiator, logical hide; canonical order/history/other actors unchanged) with confirm; **Архив** for initiator’s completed rows; **Архив / Удалённые** views + restore. Active holder obligations stay visible in main registry. Flags in `registryPersonal` via same `:34113` store per visitor+actor (`site/tt-registry-personal.js`).
+- QA: `tan-tracker-registry-personal-qa.js`.
 
 ## Notifications and completed-assignment feedback
 - Preserve manager picker, coordinator-only decisions, director audit and assistant

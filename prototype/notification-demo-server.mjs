@@ -75,6 +75,24 @@ function validatePayload(body) {
     if (u.read && Object.keys(u.read).length > 5000) return "read map too large";
     if (u.deliveryStatus && Object.keys(u.deliveryStatus).length > 5000) return "deliveryStatus too large";
   }
+  if (body.registryPersonal != null) {
+    if (typeof body.registryPersonal !== "object" || Array.isArray(body.registryPersonal)) return "invalid registryPersonal";
+    const actors = Object.keys(body.registryPersonal);
+    if (actors.length > 128) return "too many registry actors";
+    for (const aid of actors) {
+      if (typeof aid !== "string" || aid.length > 64) return "invalid registry actor id";
+      const rec = body.registryPersonal[aid];
+      if (!rec || typeof rec !== "object" || Array.isArray(rec)) return "invalid registry actor record";
+      for (const key of ["removed", "archived"]) {
+        if (rec[key] == null) continue;
+        if (!Array.isArray(rec[key])) return "registry lists must be arrays";
+        if (rec[key].length > 500) return "registry list too large";
+        for (const oid of rec[key]) {
+          if (typeof oid !== "string" || oid.length > 64) return "invalid order id in registry list";
+        }
+      }
+    }
+  }
   return null;
 }
 
@@ -119,7 +137,8 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET") {
       const db = readDb();
-      const slice = db.visitors[vid] || { users: {} };
+      const slice = db.visitors[vid] || { users: {}, registryPersonal: {} };
+      if (!slice.registryPersonal) slice.registryPersonal = {};
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(slice));
       return;
@@ -156,7 +175,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const db = readDb();
-      db.visitors[vid] = { users: body.users };
+      db.visitors[vid] = {
+        users: body.users,
+        registryPersonal: body.registryPersonal && typeof body.registryPersonal === "object" ? body.registryPersonal : {},
+      };
       writeDb(db);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
