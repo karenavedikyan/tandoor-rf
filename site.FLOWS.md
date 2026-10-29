@@ -66,7 +66,7 @@
 - **Delivery (demo):** Telegram + MAX connect/disconnect without codes/bots; shared prefs for all event types; status line under each item; LK history when channels off or delivery fails; profile «Повторить отправку (демо)» clears last error.
 - **A11y / layout:** `role="dialog"`, Escape, focus return; 375px inbox width; theme toggle; no duplicate bell.
 - **Doc:** `docs/prototype/unified-notification-center.md` (decision, privacy, LK vs delivery).
-- QA: `notification-demo-api-qa.mjs` (visitor isolation, validation); `notification-center-qa.js` (22 checks incl. backend flush/reload, failed save state); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
+- QA: `notification-demo-api-qa.mjs` (7 checks: visitor isolation, validation); `notification-center-qa.js` (23 checks incl. backend flush/reload, failed save state); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
 
 ## Notifications and completed-assignment feedback
 - Preserve manager picker, coordinator-only decisions, director audit and assistant
