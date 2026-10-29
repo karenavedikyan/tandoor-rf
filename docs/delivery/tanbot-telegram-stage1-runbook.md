@@ -62,6 +62,10 @@ Copy names and empty placeholders from `.env.example` only. Never commit real to
 5. Separate data model for external participants vs staff; no broad tt56 rule changes without product sign-off.
 6. Explicit opt-in for message types (handoff reminders, codes policy alignment with SMS).
 
+## Isolated one-shot check (without LK deploy)
+
+For token validation **before** merging to production hosting, use the separate Docker packaging and operator flow in [tanbot-readonly-isolated-check-runbook.md](./tanbot-readonly-isolated-check-runbook.md). It runs the same CLI with no database and no HTTP server.
+
 ## Stage 1 acceptance evidence
 
 - Unit tests with mock transport (no real token).

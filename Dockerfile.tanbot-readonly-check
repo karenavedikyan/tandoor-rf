@@ -1,0 +1,42 @@
+# One-shot Tanbot read-only diagnostics (stage 1). Not used by production Dockerfile.
+# Build: docker build -f Dockerfile.tanbot-readonly-check -t tanbot-readonly-check:<sha> .
+# Run:   docker run --rm --env-file /secure/tanbot.env tanbot-readonly-check:<sha> [--live]
+# Never pass TANBOT_TELEGRAM_BOT_TOKEN as build-arg or embed it in this file.
+
+FROM node:22-alpine AS build
+
+WORKDIR /app
+
+RUN apk add --no-cache python3 make g++
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY scripts ./scripts
+COPY src ./src
+COPY public ./public
+
+RUN npm run build
+
+FROM node:22-alpine AS runtime
+
+WORKDIR /app
+
+RUN addgroup -g 1001 -S tanbot \
+  && adduser -S tanbot -u 1001 -G tanbot
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=build /app/dist ./dist
+
+USER tanbot
+
+ENV NODE_ENV=production
+ENV TANBOT_TELEGRAM_ENABLED=false
+ENV TANBOT_TELEGRAM_EXPECTED_USERNAME=TANDOOR_IBOT
+
+# No PORT, EXPOSE, DATABASE_URL, or HTTP server — process exits after CLI report.
+ENTRYPOINT ["node", "dist/cli/tanbot-telegram-probe.js"]
+CMD []
