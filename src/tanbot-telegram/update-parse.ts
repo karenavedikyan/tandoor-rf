@@ -20,8 +20,18 @@ export type ParsedCallbackUpdate = {
   callbackData: string;
 };
 
+export type ParsedTelegramContactUpdate = {
+  updateId: number;
+  chatId: bigint;
+  telegramUserId: bigint;
+  contactUserId: number | null;
+  phoneNumber: string;
+  isForwarded: boolean;
+};
+
 export type ParsedTelegramWebhookUpdate =
   | { kind: "message"; update: ParsedPrivateMessageUpdate }
+  | { kind: "contact"; update: ParsedTelegramContactUpdate }
   | { kind: "callback"; update: ParsedCallbackUpdate };
 
 function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhookUpdate | { ok: false; reason: string } {
@@ -58,6 +68,26 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
   if (fromRow.is_bot === true) {
     return { ok: false, reason: "bot_sender" };
   }
+  const contact = msg.contact;
+  if (contact && typeof contact === "object" && !Array.isArray(contact)) {
+    const c = contact as Record<string, unknown>;
+    const phoneNumber = typeof c.phone_number === "string" ? c.phone_number : "";
+    const contactUserId = typeof c.user_id === "number" ? c.user_id : null;
+    if (!phoneNumber.trim()) return { ok: false, reason: "invalid_contact" };
+    const isForwarded = msg.forward_date != null || msg.forward_from != null || msg.forward_from_chat != null;
+    return {
+      kind: "contact",
+      update: {
+        updateId,
+        chatId: BigInt(chatId),
+        telegramUserId: BigInt(userId),
+        contactUserId,
+        phoneNumber,
+        isForwarded: Boolean(isForwarded),
+      },
+    };
+  }
+
   const textRaw = msg.text;
   if (typeof textRaw !== "string") {
     return { ok: false, reason: "no_text" };

@@ -14,11 +14,16 @@ import {
 import { deliverTelegramWebhookReply } from "./webhook-reply-delivery";
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
+import {
+  handleExternalRecipientStart,
+  handleExternalRecipientTelegramContact,
+} from "../tanbot/external-recipient/bot-flow";
+import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 
 export type WebhookReply = {
   chatId: bigint;
   text: string;
-  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
 } | null;
 
@@ -37,6 +42,42 @@ async function processParsedUpdate(
   config: TanbotTelegramStage2Config,
   parsed: ParsedTelegramWebhookUpdate,
 ): Promise<WebhookReply> {
+  if (parsed.kind === "contact") {
+    const update = parsed.update;
+    const claim = await claimTelegramUpdate(client, update.updateId);
+    if (claim.kind === "ignore") return null;
+    if (claim.kind === "resend") return claim.reply;
+    try {
+      const ext = await handleExternalRecipientTelegramContact(client, {
+        telegramChatId: update.chatId,
+        telegramUserId: update.telegramUserId,
+        contactUserId: update.contactUserId,
+        phoneRaw: update.phoneNumber,
+        isForwarded: update.isForwarded,
+      });
+      const reply: WebhookReply = ext
+        ? {
+            chatId: update.chatId,
+            text: ext.text,
+            replyMarkup: ext.requestContact
+              ? {
+                  keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
+                  one_time_keyboard: true,
+                  resize_keyboard: true,
+                }
+              : ext.clearContactKeyboard
+                ? { remove_keyboard: true }
+                : undefined,
+          }
+        : { chatId: update.chatId, text: "Контакт не принят." };
+      await commitTelegramUpdateReply(client, update.updateId, reply);
+      return reply;
+    } catch (err) {
+      await markTelegramUpdateFailed(client, update.updateId);
+      throw err;
+    }
+  }
+
   if (parsed.kind === "callback") {
     const update = parsed.update;
     const claim = await claimTelegramUpdate(client, update.updateId);
@@ -100,6 +141,25 @@ async function processParsedUpdate(
             chatId: update.chatId,
             text: "Telegram не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
+    } else if (command.startsWith("/start") && isExternalMessengerStartToken(update.startPayload)) {
+      const ext = await handleExternalRecipientStart(client, {
+        channel: "telegram",
+        startPayload: update.startPayload,
+        chatId: update.chatId,
+      });
+      reply = ext
+        ? {
+            chatId: update.chatId,
+            text: ext.text,
+            replyMarkup: ext.requestContact
+              ? {
+                  keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
+                  one_time_keyboard: true,
+                  resize_keyboard: true,
+                }
+              : undefined,
+          }
+        : { chatId: update.chatId, text: "Приглашение недоступно." };
     } else if (command.startsWith("/start")) {
       const lkUrl = `${config.appOrigin}/profile`;
       if (!update.startPayload) {
