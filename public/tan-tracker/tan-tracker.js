@@ -954,8 +954,8 @@
   }
 
   function registryActorContext(o, actor) {
-    if (!actor) return { key: "route", label: "В пути", icon: "route" };
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
+    if (!actor) return { key: "route", label: "В пути", icon: "route" };
     if (o.pendingId === actor) return { key: "inbox", label: "Жду получения", icon: "download" };
     if (o.holderId === actor && o.pendingId) {
       const p = contactById(o.pendingId);
