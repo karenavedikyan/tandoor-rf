@@ -19,10 +19,7 @@ import { loadPartyEmployeeMap } from "./party-employee-map";
 import { tanTrackerCanWrite } from "./guards";
 import { loadWholesalePeerUserIds } from "./team-peers";
 import { listAttachmentsForTransfers } from "./attachments";
-import {
-  TT56_USER_TEST_BANNER,
-  isTanTrackerUserTestEnv,
-} from "../shared/tan-tracker-user-test-env";
+import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -167,6 +164,6 @@ export async function buildTanTrackerBootstrap(
     contacts,
     orders,
     capabilities: { canWrite: tanTrackerCanWrite(user, access) },
-    userTestEnvironmentBanner: isTanTrackerUserTestEnv() ? TT56_USER_TEST_BANNER : null,
+    ...tanTrackerUserTestBannerForApi(),
   };
 }

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +9,11 @@ import {
   TT56_USER_TEST_DATABASE_NAME,
   assertTanTrackerUserTestDatabaseUrl,
 } from "../../dist/shared/tan-tracker-user-test-env.js";
+import {
+  FIXTURE,
+  seedTanTrackerFixtures,
+  upsertEmployeeLink,
+} from "./seed-tt-fixtures.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "../..");
@@ -25,6 +29,28 @@ const USERS = [
   { email: "tt56-employee-b@tt56-user-test.local", role: "manager", fullName: "TT56 Employee B" },
 ];
 
+async function cleanupLegacyRoster(client) {
+  await client.query(
+    `DELETE FROM onec_wholesale_employee_team_memberships
+     WHERE guid_team IN (
+       SELECT guid_team FROM onec_wholesale_team_groups
+       WHERE name_team = 'TT56 test team' AND guid_team <> $1::uuid
+     )`,
+    [FIXTURE.TEAM],
+  );
+  await client.query(
+    `DELETE FROM onec_wholesale_team_groups
+     WHERE name_team = 'TT56 test team' AND guid_team <> $1::uuid`,
+    [FIXTURE.TEAM],
+  );
+  await client.query(
+    `DELETE FROM onec_wholesale_employee_roster
+     WHERE guid_manager NOT IN ($1::uuid, $2::uuid, $3::uuid)
+       AND name_manager IN ('Employee A', 'Employee B', 'ROP Lead')`,
+    [FIXTURE.EMP_A, FIXTURE.EMP_B, FIXTURE.EMP_ROP],
+  );
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required.");
@@ -39,11 +65,6 @@ async function main() {
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
   const passwordHash = await hashPassword(password);
 
-  const empA = randomUUID();
-  const empB = randomUUID();
-  const empRop = randomUUID();
-  const teamId = randomUUID();
-
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -55,7 +76,8 @@ async function main() {
          ON CONFLICT ((LOWER(BTRIM(email)))) DO UPDATE SET
            full_name = EXCLUDED.full_name,
            role = EXCLUDED.role,
-           status = 'active'`,
+           status = 'active',
+           password_hash = users.password_hash`,
         [u.email, passwordHash, u.fullName, u.role],
       );
     }
@@ -68,64 +90,67 @@ async function main() {
       ).rows.map((r) => [r.email, r.id]),
     );
     const adminId = ids[USERS[0].email];
+    const directorId = ids["tt56-director@tt56-user-test.local"];
     const ropId = ids["tt56-rop@tt56-user-test.local"];
     const userAId = ids["tt56-employee-a@tt56-user-test.local"];
     const userBId = ids["tt56-employee-b@tt56-user-test.local"];
 
-    await client.query(
-      `INSERT INTO onec_wholesale_employee_roster (guid_manager, name_manager, post, raw_json)
-       VALUES ($1::uuid, 'Employee A', 'Manager', '{}'), ($2::uuid, 'Employee B', 'Manager', '{}'), ($3::uuid, 'ROP Lead', 'ROP', '{}')
-       ON CONFLICT (guid_manager) DO NOTHING`,
-      [empA, empB, empRop],
-    );
+    await cleanupLegacyRoster(client);
 
-    for (const [userId, employeeId] of [
-      [userAId, empA],
-      [userBId, empB],
-      [ropId, empRop],
+    for (const [guid, name, post] of [
+      [FIXTURE.EMP_A, "Employee A", "Manager"],
+      [FIXTURE.EMP_B, "Employee B", "Manager"],
+      [FIXTURE.EMP_ROP, "ROP Lead", "ROP"],
     ]) {
       await client.query(
-        `DELETE FROM user_onec_employee_links WHERE user_id = $1::uuid AND revoked_at IS NULL`,
-        [userId],
-      );
-      await client.query(
-        `INSERT INTO user_onec_employee_links (user_id, employee_id, basis, confirmed_by_user_id)
-         VALUES ($1::uuid, $2::uuid, 'tt56 user test seed', $3::uuid)`,
-        [userId, employeeId, adminId],
+        `INSERT INTO onec_wholesale_employee_roster (guid_manager, name_manager, post, raw_json)
+         VALUES ($1::uuid, $2, $3, '{}')
+         ON CONFLICT (guid_manager) DO UPDATE SET name_manager = EXCLUDED.name_manager, post = EXCLUDED.post`,
+        [guid, name, post],
       );
     }
+
+    await upsertEmployeeLink(client, userAId, FIXTURE.EMP_A, adminId);
+    await upsertEmployeeLink(client, userBId, FIXTURE.EMP_B, adminId);
+    await upsertEmployeeLink(client, ropId, FIXTURE.EMP_ROP, adminId);
 
     await client.query(
       `INSERT INTO onec_wholesale_team_groups (guid_team, name_team, guid_team_leader, name_team_leader)
        VALUES ($1::uuid, 'TT56 test team', $2::uuid, 'ROP Lead')
-       ON CONFLICT (guid_team) DO NOTHING`,
-      [teamId, empRop],
+       ON CONFLICT (guid_team) DO UPDATE SET name_team_leader = EXCLUDED.guid_team_leader, name_team = EXCLUDED.name_team`,
+      [FIXTURE.TEAM, FIXTURE.EMP_ROP],
     );
     await client.query(`DELETE FROM onec_wholesale_employee_team_memberships WHERE guid_team = $1::uuid`, [
-      teamId,
+      FIXTURE.TEAM,
     ]);
     await client.query(
       `INSERT INTO onec_wholesale_employee_team_memberships (guid_team, guid_manager, name_team)
        VALUES ($1::uuid, $2::uuid, 'TT56 test team'), ($1::uuid, $3::uuid, 'TT56 test team')`,
-      [teamId, empRop, empA],
+      [FIXTURE.TEAM, FIXTURE.EMP_ROP, FIXTURE.EMP_A],
     );
 
-    await client.query(
-      `INSERT INTO onec_client_import_runs (status, mode, source_sha256, source_record_count, finished_at)
-       VALUES ('success', 'apply', $1, 2, NOW())`,
-      ["b".repeat(64)],
-    );
+    const importRun = await client.query(`SELECT 1 FROM onec_client_import_runs LIMIT 1`);
+    if (!importRun.rowCount) {
+      await client.query(
+        `INSERT INTO onec_client_import_runs (status, mode, source_sha256, source_record_count, finished_at)
+         VALUES ('success', 'apply', $1, 2, NOW())`,
+        ["b".repeat(64)],
+      );
+    }
 
     for (const [guid, name, managerGuid, managerName] of [
-      [CLIENT_A, "TT56 Synthetic Client Alpha", empA, "Employee A"],
-      [CLIENT_B, "TT56 Synthetic Client Beta", empB, "Employee B"],
+      [CLIENT_A, "TT56 Synthetic Client Alpha", FIXTURE.EMP_A, "Employee A"],
+      [CLIENT_B, "TT56 Synthetic Client Beta", FIXTURE.EMP_B, "Employee B"],
     ]) {
       await client.query(
         `INSERT INTO onec_clients (
            guid_client, name_client, guid_holding, name_holding, guid_manager, name_manager,
            address, telephone, source_sha256, last_imported_at, manager_roster_state, baseline_status
          ) VALUES ($1::uuid, $2, NULL, '', $3::uuid, $4, '', '[]'::jsonb, $5, NOW(), 'in_wholesale_roster', 'active')
-         ON CONFLICT (guid_client) DO UPDATE SET name_client = EXCLUDED.name_client`,
+         ON CONFLICT (guid_client) DO UPDATE SET
+           name_client = EXCLUDED.name_client,
+           guid_manager = EXCLUDED.guid_manager,
+           name_manager = EXCLUDED.name_manager`,
         [guid, name, managerGuid, managerName, "c".repeat(64)],
       );
     }
@@ -134,6 +159,8 @@ async function main() {
       [userAId, CLIENT_A],
       [userBId, CLIENT_B],
       [ropId, CLIENT_A],
+      [directorId, CLIENT_A],
+      [directorId, CLIENT_B],
     ]) {
       await client.query(
         `DELETE FROM access_grants WHERE user_id = $1::uuid AND grant_type = 'client' AND object_id = $2::uuid`,
@@ -146,6 +173,12 @@ async function main() {
       );
     }
 
+    await seedTanTrackerFixtures(client, {
+      userIds: { employeeA: userAId, employeeB: userBId, rop: ropId, director: directorId },
+      adminId,
+      repoRoot,
+    });
+
     await client.query("COMMIT");
 
     const outDir = path.join(repoRoot, "var/tt56-user-test");
@@ -157,6 +190,7 @@ async function main() {
           database: TT56_USER_TEST_DATABASE_NAME,
           users: USERS.map((u) => ({ email: u.email, role: u.role })),
           passwordSource: "TT_USER_TEST_DEFAULT_PASSWORD (runtime env, not stored here)",
+          fixtureTransferIds: Object.values(FIXTURE).filter((v) => String(v).startsWith("TT56-S-")),
         },
         null,
         2,

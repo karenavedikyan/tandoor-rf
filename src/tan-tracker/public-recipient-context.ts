@@ -12,6 +12,7 @@ import {
   partyToContact,
 } from "./repository";
 import { getAppOrigin } from "../config";
+import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
 import { attachmentAbsolutePath, contentDispositionFilename, listAttachmentsForTransfers } from "./attachments";
 
 function maskPhone(phone: string | null): string {
@@ -96,6 +97,7 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
     contacts,
     orders: [dto],
     capabilities: { canWrite: false },
+    ...tanTrackerUserTestBannerForApi(),
   });
 }
 
@@ -136,6 +138,7 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
     publicRecipient: true,
     publicReceipt: true,
     appOrigin,
+    ...tanTrackerUserTestBannerForApi(),
     receipt: {
       publicCode: row.public_code,
       item: row.item_title,

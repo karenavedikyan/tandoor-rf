@@ -9,17 +9,21 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 2
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-
-node --input-type=module -e "
+# Fail-closed: do not inherit production/integration flags from the parent shell.
+cd "$ROOT"
+node --env-file="$ENV_FILE" --input-type=module -e "
 import { assertTanTrackerUserTestDatabaseUrl } from './dist/shared/tan-tracker-user-test-env.js';
+import { assertTanTrackerUserTestRuntimeIsolation, applyTanTrackerUserTestRuntimeDefaults } from './dist/shared/tan-tracker-user-test-runtime.js';
 assertTanTrackerUserTestDatabaseUrl(process.env.DATABASE_URL, 'start-local');
 if (process.env.NODE_ENV === 'production') throw new Error('Refusing production NODE_ENV');
 if (process.env.TT_USER_TEST_ENV !== 'true') throw new Error('TT_USER_TEST_ENV must be true');
+applyTanTrackerUserTestRuntimeDefaults();
+assertTanTrackerUserTestRuntimeIsolation();
 "
 
-cd "$ROOT"
-exec node dist/server.js
+exec env -i \
+  HOME="${HOME:-/tmp}" \
+  PATH="${PATH:-/usr/bin:/bin}" \
+  LANG="${LANG:-C.UTF-8}" \
+  NODE_ENV=development \
+  node --env-file="$ENV_FILE" dist/server.js

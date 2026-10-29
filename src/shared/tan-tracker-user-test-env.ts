@@ -18,6 +18,14 @@ export function assertTanTrackerUserTestDatabaseUrl(
   }
 }
 
+export function tanTrackerUserTestBannerForApi(
+  env: NodeJS.ProcessEnv = process.env,
+): { userTestEnvironmentBanner: string | null } {
+  return {
+    userTestEnvironmentBanner: isTanTrackerUserTestEnv(env) ? TT56_USER_TEST_BANNER : null,
+  };
+}
+
 export function isTanTrackerUserTestEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.TT_USER_TEST_ENV?.trim().toLowerCase() !== "true") {
     return false;

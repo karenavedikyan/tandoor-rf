@@ -5,6 +5,7 @@ import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { getAppOrigin } from "../config";
+import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
 import { holderAccessTtlMs, signHolderAccess, verifyHolderAccess } from "./holder-access";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
 import { requireHandoffOtpPepper } from "./otp-config";
@@ -120,6 +121,7 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
       canSendToFinal: !row.pending_party_id && !!row.final_recipient_party_id,
     },
     holderAccessToken: holderToken,
+    ...tanTrackerUserTestBannerForApi(),
   };
 }
 

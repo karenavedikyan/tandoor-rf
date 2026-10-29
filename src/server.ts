@@ -24,6 +24,11 @@ import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handle
 import { changePasswordHandler } from "./profile/password-handlers";
 import { logServerError } from "./http/safe-server-error-log";
 import { apiError, ERROR_CODES } from "./shared/errors";
+import {
+  applyTanTrackerUserTestRuntimeDefaults,
+  assertTanTrackerUserTestRuntimeIsolation,
+  shouldSkipBackgroundIntegrations,
+} from "./shared/tan-tracker-user-test-runtime";
 
 const HEALTH_BODY = { status: "ok", app: "tandoor-rf" } as const;
 
@@ -352,11 +357,17 @@ export function createApp(): express.Application {
 }
 
 export function startServer(): ReturnType<express.Application["listen"]> {
+  applyTanTrackerUserTestRuntimeDefaults();
+  assertTanTrackerUserTestRuntimeIsolation();
   const port = parsePort(process.env.PORT);
   const app = createApp();
 
   const server = app.listen(port, "0.0.0.0", () => {
     console.log(`Server listening on 0.0.0.0:${port}`);
+    if (shouldSkipBackgroundIntegrations()) {
+      console.log("tt56 user-test: background 1C/Bitrix workers skipped");
+      return;
+    }
     void Promise.resolve().then(async () => {
       const pool = getPool();
       if (!pool) return;

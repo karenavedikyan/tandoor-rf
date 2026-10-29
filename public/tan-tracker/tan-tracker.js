@@ -1961,7 +1961,7 @@
       r.routeComplete || r.transferStatus === "completed" || r.status === "completed"
         ? "Передача завершена"
         : "Получение подтверждено";
-    return `<div class="tt-panel tt-handoff-receipt" data-tt="public-receipt">
+    return `${userTestBannerBlock()}<div class="tt-panel tt-handoff-receipt" data-tt="public-receipt">
       <h2>${E(title)}</h2>
       <p class="tt-success">${E(r.item || "Передача")}</p>
       <p><strong>Номер передачи:</strong> ${E(r.publicCode)}</p>
@@ -1979,7 +1979,7 @@
       o.pendingId && o.activeInvitation
         ? `<div class="tt-reminder"><strong>Передайте конечному получателю</strong><p>${E(fin?.name || "—")}</p>${btn("Открыть QR для получателя", 'data-tt="public-open-recipient-qr"', "tt-primary tt-btn-block")}</div>`
         : "";
-    return `<div class="tt-panel" data-tt="public-holder">
+    return `${userTestBannerBlock()}<div class="tt-panel" data-tt="public-holder">
       <h2>Вы приняли передачу</h2>
       <p class="tt-success">${E(o.item)} · ${E(o.id)}</p>
       <p>Конечный получатель: <strong>${E(fin?.name || "—")}</strong></p>
@@ -2497,6 +2497,8 @@
         state.publicInvitationToken;
       if (tok) p.set("tt_tok", tok);
       else p.delete("tt_tok");
+      if (state.lkPhoneSessionToken) p.set("tt_pts", state.lkPhoneSessionToken);
+      else p.delete("tt_pts");
     } else if (isPublicGuestPage() && (state.view === "public-receipt" || state.view === "public-holder")) {
       p.delete("tt_view");
       p.delete("tt_hv");
@@ -2642,9 +2644,15 @@
         order: oid,
         tok: ttTok,
       };
-      resetPhoneIdentity();
-      state.lkPhoneSessionToken = "";
-      state.lkPhoneSessionKey = "";
+      if (ptsEarly) {
+        state.lkPhoneSessionToken = ptsEarly;
+        const ordPts = orders.find((x) => x.id === oid);
+        if (ordPts) state.lkPhoneSessionKey = recipientKey(ordPts);
+      } else {
+        resetPhoneIdentity();
+        state.lkPhoneSessionToken = "";
+        state.lkPhoneSessionKey = "";
+      }
     } else {
       if (!isPublicGuestPage() || p.get("tt_screen") !== "public-receipt") {
         state.recipientTicket = null;
@@ -3644,6 +3652,11 @@
     return registryView();
   }
 
+  function userTestBannerBlock() {
+    if (!state.userTestEnvironmentBanner) return "";
+    return `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`;
+  }
+
   function renderTracker(opts = {}) {
     if (current !== ROUTE) return;
     applyBodyClasses();
@@ -3660,7 +3673,7 @@
     if (state.view === "public-receipt" && isPublicGuestPage()) {
       ttShellMounted = false;
       const body = publicReceiptView();
-      main.innerHTML = `<div class="tt-work tt-work-recipient" data-testid="tan-tracker-public-guest">${body}${Att() ? Att().lightboxHtml() : ""}</div>`;
+      main.innerHTML = `<div class="tt-work tt-work-recipient" data-testid="tan-tracker-public-guest">${userTestBannerBlock()}${body}${Att() ? Att().lightboxHtml() : ""}</div>`;
       document.title = "Tandoor RF · Получение подтверждено";
       lucide.createIcons();
       paintQrHosts();
@@ -3690,8 +3703,8 @@
           );
       main.innerHTML =
         o && allowed
-          ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact${isPublicGuestPage() ? "" : " tt-head-compact-demo"}"><span class="tt-head-compact-label">${isPublicGuestPage() ? "Получение передачи" : "Тан-трекер"}</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
-          : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
+          ? `<div class="tt-work tt-work-recipient">${userTestBannerBlock()}<div class="tt-head tt-head-compact${isPublicGuestPage() ? "" : " tt-head-compact-demo"}"><span class="tt-head-compact-label">${isPublicGuestPage() ? "Получение передачи" : "Тан-трекер"}</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
+          : `<div class="tt-work tt-recipient">${userTestBannerBlock()}<p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
       setupDetailOverflowMenu();
@@ -4444,6 +4457,7 @@
           state.lkPhoneSessionKey = recipientKey(o);
           applyPublicAttachmentUrls(o);
           state.toast = "Номер подтверждён.";
+          writeUrl();
           renderTracker();
         })
         .catch((err) => {
