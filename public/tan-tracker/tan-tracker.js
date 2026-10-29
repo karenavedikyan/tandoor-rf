@@ -497,6 +497,8 @@
     lkPhoneSessionToken: "",
     lkPhoneSessionKey: "",
     recipientPhoneCodeInput: "",
+    createSavedReceipt: null,
+    publicReceipt: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -631,10 +633,18 @@
     return !!(c && c.kind === "external");
   }
 
+  function trustedAppOrigin() {
+    const raw = window.__TT_LK_BOOTSTRAP__ && window.__TT_LK_BOOTSTRAP__.appOrigin;
+    if (typeof raw !== "string" || !raw.trim()) return "";
+    return raw.trim().replace(/\/$/, "");
+  }
+
   function handoffUrl(o, inv) {
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
-    const base = TT_LK ? "/tan-tracker/recipient" : location.pathname;
+    const basePath = TT_LK ? "/tan-tracker/recipient" : location.pathname;
+    const origin = trustedAppOrigin();
+    const base = origin ? `${origin}${basePath}` : basePath;
     if (!t) return `${base}#tan-tracker?role=${role}`;
     const p = new URLSearchParams({
       role,
@@ -1740,8 +1750,22 @@
     state.recipientTicket = null;
     state.codeInput = "";
     state.handoffReceipt = null;
+    state.publicReceipt = null;
     state.view = "detail";
     applyContactProfile(o.holderId);
+    ttShellMounted = false;
+  }
+
+  function afterPublicQrReceive(receipt) {
+    state.recipientMode = false;
+    state.recipientTicket = null;
+    state.codeInput = "";
+    state.lkPhoneSessionToken = "";
+    state.lkPhoneSessionKey = "";
+    state.handoffReceipt = null;
+    state.publicReceipt = receipt;
+    state.orderId = receipt?.publicCode || state.orderId;
+    state.view = "public-receipt";
     ttShellMounted = false;
   }
 
@@ -1777,6 +1801,43 @@
     if ((o.handoffVer ?? 0) !== r.ver) return false;
     if (r.senderId !== (state.actingContactId || employeeContact(state.employeeId)?.id)) return false;
     return true;
+  }
+
+  function publicReceiptView() {
+    const r = state.publicReceipt;
+    if (!r) return deniedView();
+    return `<div class="tt-panel tt-handoff-receipt" data-tt="public-receipt">
+      <h2>Получение подтверждено</h2>
+      <p class="tt-success">${E(r.item || "Передача")}</p>
+      <p><strong>Номер передачи:</strong> ${E(r.publicCode)}</p>
+      ${r.completedAt ? `<p class="tt-muted">${E(dt(r.completedAt))} МСК</p>` : ""}
+      <p class="tt-muted">Сохранено на сервере. Эту страницу можно обновить или открыть повторно по ссылке из QR.</p>
+    </div>`;
+  }
+
+  function createSavedReceiptVisible() {
+    const r = state.createSavedReceipt;
+    if (state.view !== "detail" || !r || !state.orderId) return false;
+    if (r.publicCode !== state.orderId) return false;
+    return !orders.some((x) => x.id === state.orderId);
+  }
+
+  function createSavedReceiptView() {
+    const r = state.createSavedReceipt;
+    if (!r) return deniedView();
+    const retryBtn = r.refreshFailed
+      ? btn("Повторить обновление", 'data-tt="create-retry-refresh"', "tt-primary")
+      : "";
+    return `<div class="tt-panel" data-tt="create-saved-receipt">
+      <h2>Передача сохранена</h2>
+      <p class="tt-success">Номер: <strong>${E(r.publicCode)}</strong></p>
+      ${
+        r.refreshFailed
+          ? `<p class="tt-warning">${E(r.refreshError || "Не удалось обновить реестр после создания.")}</p>${retryBtn}`
+          : `<p class="tt-muted">Данные реестра обновляются…</p>`
+      }
+      ${btn("← К реестру", 'data-tt="back-list"', "tt-btn-ghost")}
+    </div>`;
   }
 
   function handoffReceiptView(o) {
@@ -1937,11 +1998,12 @@
       if (o._qrBusy) return false;
       o._qrBusy = true;
       window.TanTrackerLk.confirmQrHandoff(o, state.recipientTicket, state.lkPhoneSessionToken)
-        .then(() => {
+        .then((receipt) => {
           o._qrBusy = false;
           state.lkPhoneSessionToken = "";
           state.lkPhoneSessionKey = "";
-          afterQrReceive(o);
+          if (window.__TT_PUBLIC_RECIPIENT__ && receipt) afterPublicQrReceive(receipt);
+          else afterQrReceive(o);
           writeUrl();
           renderTracker();
         })
@@ -2004,6 +2066,18 @@
     }
     if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) {
       state.error = "Промежуточный держатель не может завершить передачу — передайте конечному получателю.";
+      return;
+    }
+    if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.legacyCompleteTransfer) {
+      void window.TanTrackerLk.legacyCompleteTransfer(o.id)
+        .then(() => {
+          state.toast = "Передача завершена.";
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось завершить передачу.";
+          renderTracker();
+        });
       return;
     }
     o.status = "completed";
@@ -3251,6 +3325,8 @@
   function bodyHtml() {
     if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (state.view === "public-receipt") return publicReceiptView();
+    if (createSavedReceiptVisible()) return createSavedReceiptView();
     if (state.view === "handoff-receipt") {
       if (!o || !handoffReceiptValid(o)) return deniedView();
       return handoffReceiptView(o);
@@ -3458,11 +3534,22 @@
           state.createReturnPhase = null;
           state.attachStaging = [];
           state.attachError = "";
-          if (created.refreshFailed) {
-            state.toast = `Передача ${E(created.publicCode)} создана. ${E(created.refreshError || "")}`.trim();
-            state.error = "Данные реестра не обновились — нажмите «Обновить» или перезагрузите страницу.";
+          const inRegistry = orders.some((x) => x.id === created.publicCode);
+          if (created.refreshFailed || !inRegistry) {
+            state.createSavedReceipt = {
+              publicCode: created.publicCode,
+              refreshFailed: !!created.refreshFailed,
+              refreshError: created.refreshError || "",
+            };
+            state.toast = "";
+            state.error = created.refreshFailed
+              ? `Передача ${created.publicCode} сохранена на сервере. ${created.refreshError || "Не удалось обновить реестр."}`.trim()
+              : "";
+          } else {
+            state.createSavedReceipt = null;
+            state.error = "";
+            state.toast = "Передача создана.";
           }
-          state.toast = "Передача создана.";
           writeUrl();
           renderTracker();
         })
@@ -3782,6 +3869,28 @@
       renderTracker();
       return;
     }
+    if (action === "create-retry-refresh" && window.TanTrackerLk?.refreshBootstrap) {
+      void window.TanTrackerLk.refreshBootstrap()
+        .then(() => {
+          const code = state.createSavedReceipt?.publicCode || state.orderId;
+          if (code && orders.some((x) => x.id === code)) {
+            state.createSavedReceipt = null;
+            state.orderId = code;
+            state.view = "detail";
+            state.error = "";
+            state.toast = "Данные обновлены.";
+          } else {
+            state.error = "Передача пока не появилась в реестре — попробуйте позже или перезагрузите страницу.";
+          }
+          writeUrl();
+          renderTracker();
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось обновить данные.";
+          renderTracker();
+        });
+      return;
+    }
     if (action === "back-list" || action === "terminal-back-list") {
       state.view = "list";
       state.orderId = null;
@@ -3790,6 +3899,8 @@
       state.createReturnPhase = null;
       state.error = state.toast = "";
       state.handoffReceipt = null;
+      state.publicReceipt = null;
+      state.createSavedReceipt = null;
       clearCompleteConfirm();
       clearDetailAttDisclosure();
       clearAttachStaging();
@@ -4310,6 +4421,12 @@
     state.lkLinkedEmployeeId = data.linkedEmployeeId || null;
     state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     state.recipientMode = false;
+    if (window.__TT_PUBLIC_RECEIPT__) {
+      state.publicReceipt = window.__TT_PUBLIC_RECEIPT__;
+      state.orderId = state.publicReceipt.publicCode || state.orderId;
+      state.view = "public-receipt";
+      delete window.__TT_PUBLIC_RECEIPT__;
+    }
     bumpAttachOpGen();
     renderTracker();
   }

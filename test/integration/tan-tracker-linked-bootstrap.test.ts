@@ -299,7 +299,9 @@ describe("tan-tracker linked employee bootstrap", { concurrency: false }, () => 
       .send({ invitationToken: token, phoneSessionToken: verifyRes.body.phoneSessionToken });
     assert.equal(confirmRes.status, 200, confirmRes.text);
 
-    const after = await pool!.query(
+    const verifyPool = getPool();
+    assert.ok(verifyPool);
+    const after = await verifyPool.query(
       `SELECT status, holder_party_id::text FROM tt_transfers WHERE public_code = $1`,
       [publicCode],
     );

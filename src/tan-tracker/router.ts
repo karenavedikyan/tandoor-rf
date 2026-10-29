@@ -14,9 +14,11 @@ import {
   publicSendPhoneCodeHandler,
   publicVerifyPhoneCodeHandler,
 } from "./public-recipient";
+import { legacyCompleteHandler } from "./legacy-complete-mutation";
 import {
   publicRecipientAttachmentHandler,
   publicRecipientContextHandler,
+  publicRecipientReceiptHandler,
 } from "./public-recipient-context";
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
@@ -39,6 +41,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {
     void publicRecipientContextHandler(req, res).catch(next);
+  });
+
+  router.get("/public/recipient/receipt", requireDatabaseReady, (req, res, next) => {
+    void publicRecipientReceiptHandler(req, res).catch(next);
   });
 
   router.get("/public/recipient/attachments/:attId", requireDatabaseReady, (req, res, next) => {
@@ -72,6 +78,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/transfers/:id/pending/change", csrfProtection, ...writeChain, (req, res, next) => {
     void changePendingHandler(req, res).catch(next);
+  });
+
+  router.post("/transfers/:id/legacy-complete", csrfProtection, ...writeChain, (req, res, next) => {
+    void legacyCompleteHandler(req, res).catch(next);
   });
 
   router.post("/transfers/:id/attachments", csrfProtection, ...writeChain, (req, res, next) => {

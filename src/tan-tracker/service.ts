@@ -1,3 +1,4 @@
+import { getAppOrigin } from "../config";
 import { getPool, query } from "../db/pool";
 import type { AccessContext } from "../access/types";
 import type { UserDto } from "../shared/user";
@@ -58,6 +59,7 @@ export async function buildTanTrackerBootstrap(
   access: AccessContext,
 ): Promise<{
   lkMode: true;
+  appOrigin: string | null;
   actorPartyId: string | null;
   actorContact: { id: string; kind: "user" | "external"; employeeId: string | null } | null;
   linkedEmployeeId: string | null;
@@ -146,8 +148,11 @@ export async function buildTanTrackerBootstrap(
         }
       : null;
 
+  const appOrigin = getAppOrigin() ?? null;
+
   return {
     lkMode: true,
+    appOrigin,
     actorPartyId,
     actorContact,
     linkedEmployeeId: access.employeeId,

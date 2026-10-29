@@ -39,6 +39,23 @@
     );
   }
 
+  function loadPublicReceipt(token) {
+    var url =
+      "/api/tan-tracker/public/recipient/receipt?invitationToken=" + encodeURIComponent(token);
+    return fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }).then(
+      function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) {
+            throw new Error(
+              (data && data.error && data.error.message) || "Результат получения недоступен.",
+            );
+          }
+          return data;
+        });
+      },
+    );
+  }
+
   function applyPublicRoute(inv) {
     if (!window.TanTrackerPrototype) return;
     var p = inv.params;
@@ -59,13 +76,30 @@
       return;
     }
     void loadPublicContext(inv.token)
+      .catch(function () {
+        return loadPublicReceipt(inv.token);
+      })
       .then(function (data) {
-        window.__TT_LK_BOOTSTRAP__ = data;
         window.__TT_PUBLIC_RECIPIENT__ = true;
-        if (window.TanTrackerPrototype.hydrateFromServer) {
-          window.TanTrackerPrototype.hydrateFromServer(data);
+        if (data.publicReceipt && data.receipt) {
+          window.__TT_PUBLIC_RECEIPT__ = data.receipt;
+          window.__TT_LK_BOOTSTRAP__ = {
+            lkMode: true,
+            publicRecipient: true,
+            appOrigin: data.appOrigin || null,
+            actorPartyId: data.receipt.recipientPartyId,
+            prototypeRole: "manager",
+            contacts: [],
+            orders: [],
+            capabilities: { canWrite: false },
+          };
+        } else {
+          window.__TT_LK_BOOTSTRAP__ = data;
         }
-        applyPublicRoute(inv);
+        if (window.TanTrackerPrototype.hydrateFromServer) {
+          window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
+        }
+        if (!data.publicReceipt) applyPublicRoute(inv);
         if (typeof window.__ttLkRenderTracker === "function") {
           window.__ttLkRenderTracker();
         }

@@ -214,8 +214,25 @@
         if (result.response.status !== 200) {
           throw new Error(api.extractErrorMessage(result.data, "Не удалось подтвердить получение."));
         }
+        if (window.__TT_PUBLIC_RECIPIENT__) {
+          return result.data && result.data.receipt ? result.data.receipt : { publicCode: order.id };
+        }
         return refreshBootstrap();
       });
+    },
+    legacyCompleteTransfer: function (transferId) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/legacy-complete",
+          { method: "POST", body: {} },
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return true;
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось завершить передачу."));
+        });
     },
     addTransferAttachments: function (transferId, stagingAttachmentIds) {
       return api

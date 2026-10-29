@@ -10,6 +10,7 @@ import {
   mapTransferToOrderDto,
   partyToContact,
 } from "./repository";
+import { getAppOrigin } from "../config";
 import { attachmentAbsolutePath, contentDispositionFilename, listAttachmentsForTransfers } from "./attachments";
 
 function maskPhone(phone: string | null): string {
@@ -33,9 +34,9 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
   }
   const row = (
     await pool.query(
-      `SELECT t.id, public_code, item_title, qty_label, comment_text, status,
-              creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-              due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
+      `SELECT t.id, t.public_code, t.item_title, t.qty_label, t.comment_text, t.status,
+              t.creator_party_id, t.holder_party_id, t.pending_party_id, t.final_recipient_party_id,
+              t.due_at, t.holder_since, t.handoff_version, t.allow_legacy_complete, t.completed_at, t.row_version
        FROM tt_transfers t
        JOIN tt_transfer_invitations inv
          ON inv.transfer_id = t.id AND inv.handoff_version = t.handoff_version AND inv.superseded_at IS NULL
@@ -75,10 +76,13 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
     phone: c.id === row.pending_party_id ? maskPhone(c.phone) : c.phone,
   }));
 
+  const appOrigin = getAppOrigin() ?? null;
+
   setNoStore(res);
   res.status(200).json({
     lkMode: true,
     publicRecipient: true,
+    appOrigin,
     actorPartyId: row.pending_party_id,
     actorContact: {
       id: row.pending_party_id,
@@ -92,6 +96,53 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
     contacts,
     orders: [dto],
     capabilities: { canWrite: false },
+  });
+}
+
+/** Read-only receipt after successful public QR handoff (no corporate session). */
+export async function publicRecipientReceiptHandler(req: Request, res: Response): Promise<void> {
+  const token = String(req.query.invitationToken ?? "").trim();
+  const invite = verifyInvitationToken(token);
+  if (!invite) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Приглашение недоступно или устарело."));
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const row = (
+    await pool.query(
+      `SELECT t.id, t.public_code, t.item_title, t.status, t.holder_party_id, t.completed_at
+       FROM tt_transfers t
+       WHERE (t.id = $1 OR t.public_code = $1)
+         AND t.status = 'completed'
+         AND t.holder_party_id = $2::uuid
+       LIMIT 1`,
+      [invite.transferId, invite.pendingPartyId],
+    )
+  ).rows[0];
+  if (!row) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Результат получения недоступен."));
+    return;
+  }
+  const appOrigin = getAppOrigin() ?? null;
+  setNoStore(res);
+  res.status(200).json({
+    publicRecipient: true,
+    publicReceipt: true,
+    appOrigin,
+    receipt: {
+      publicCode: row.public_code,
+      item: row.item_title,
+      status: row.status,
+      completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
+      recipientPartyId: invite.pendingPartyId,
+    },
   });
 }
 

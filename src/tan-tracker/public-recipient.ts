@@ -283,6 +283,8 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
     return;
   }
 
+  let receipt: { publicCode: string; item: string; status: string; completedAt: number | null } | null =
+    null;
   try {
     await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
@@ -290,8 +292,14 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
         throw Object.assign(new Error("Приглашение недоступно."), { http: 404 });
       }
       if (row.id !== session.transferId) {
-        throw Object.assign(new Error(" Сессия подтверждения недействительна."), { http: 403 });
+        throw Object.assign(new Error("Сессия подтверждения недействительна."), { http: 403 });
       }
+      const itemRow = (
+        await client.query<{ public_code: string; item_title: string }>(
+          `SELECT public_code, item_title FROM tt_transfers WHERE id = $1`,
+          [row.id],
+        )
+      ).rows[0];
       await applyPendingReceiptHandoff(
         client,
         row,
@@ -304,6 +312,12 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
          VALUES ($1,NULL,$2::uuid,'qr_confirm','{}'::jsonb)`,
         [row.id, invite.pendingPartyId],
       );
+      receipt = {
+        publicCode: itemRow?.public_code ?? row.id,
+        item: itemRow?.item_title ?? "",
+        status: "completed",
+        completedAt: Date.now(),
+      };
     });
   } catch (err: unknown) {
     const http = (err as { http?: number }).http ?? 503;
@@ -316,7 +330,7 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
   }
 
   setNoStore(res);
-  res.status(200).json({ ok: true });
+  res.status(200).json({ ok: true, receipt });
 }
 
 /** Authenticated holder refresh after public QR confirm (optional poll). */
