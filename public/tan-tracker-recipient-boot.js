@@ -88,6 +88,9 @@
 
   function finishBoot(data, inv) {
     window.__TT_PUBLIC_RECIPIENT__ = true;
+    if (inv.token) {
+      window.__TT_PUBLIC_INVITATION_TOKEN__ = inv.token;
+    }
     if (data.publicReceipt && data.receipt) {
       window.__TT_PUBLIC_RECEIPT__ = data.receipt;
       window.__TT_LK_BOOTSTRAP__ = {

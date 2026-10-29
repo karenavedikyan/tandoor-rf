@@ -499,7 +499,12 @@
     recipientPhoneCodeInput: "",
     createSavedReceipt: null,
     publicReceipt: null,
+    publicInvitationToken: "",
   };
+
+  function isPublicGuestPage() {
+    return !!window.__TT_PUBLIC_RECIPIENT__;
+  }
 
   const Att = () => window.TanTrackerAttachments;
 
@@ -627,7 +632,7 @@
   }
 
   function isExternalShell() {
-    if (state.recipientMode) return false;
+    if (state.recipientMode || isPublicGuestPage()) return false;
     const actor = state.actingContactId || (TT_LK ? state.lkActorPartyId : null);
     const c = actor && contactById(actor);
     return !!(c && c.kind === "external");
@@ -1781,6 +1786,10 @@
   }
 
   function afterPublicQrReceive(receipt) {
+    state.publicInvitationToken =
+      state.recipientTicket?.tok ||
+      state.publicInvitationToken ||
+      publicInvitationTokenForOrder(orders.find((x) => x.id === state.orderId));
     state.recipientMode = false;
     state.recipientTicket = null;
     state.codeInput = "";
@@ -2293,10 +2302,27 @@
       if (o?.activeInvitation) {
         p.set("tt_hv", String(o.activeInvitation.hv));
         p.set("tt_rcv", o.activeInvitation.pendingId);
+      } else if (state.recipientTicket) {
+        if (state.recipientTicket.hv != null) p.set("tt_hv", String(state.recipientTicket.hv));
+        if (state.recipientTicket.rcv) p.set("tt_rcv", state.recipientTicket.rcv);
       }
       if (state.recipientVia === "qr") p.set("tt_via", "qr");
       else p.delete("tt_via");
-      if (o?.activeInvitation?.invitationToken) p.set("tt_tok", o.activeInvitation.invitationToken);
+      const tok =
+        o?.activeInvitation?.invitationToken ||
+        state.recipientTicket?.tok ||
+        state.publicInvitationToken;
+      if (tok) p.set("tt_tok", tok);
+      else p.delete("tt_tok");
+    } else if (isPublicGuestPage() && state.view === "public-receipt") {
+      p.delete("tt_view");
+      p.delete("tt_hv");
+      p.delete("tt_rcv");
+      p.delete("tt_via");
+      if (state.orderId) p.set("tt_order", state.orderId);
+      else p.delete("tt_order");
+      const tok = state.publicInvitationToken || state.recipientTicket?.tok;
+      if (tok) p.set("tt_tok", tok);
       else p.delete("tt_tok");
     } else {
       p.delete("tt_view");
@@ -2318,14 +2344,17 @@
     else if (!state.recipientMode) p.delete("tt_id");
     if (state.view === "create" && state.createPhase) p.set("tt_cphase", state.createPhase);
     else p.delete("tt_cphase");
-    if (state.view === "handoff-receipt" && state.handoffReceipt) {
+    if (state.view === "public-receipt" && isPublicGuestPage()) {
+      p.set("tt_screen", "public-receipt");
+      p.delete("tt_receipt");
+    } else if (state.view === "handoff-receipt" && state.handoffReceipt) {
       p.set("tt_screen", "handoff-receipt");
       p.set(
         "tt_receipt",
         `${state.handoffReceipt.senderId}|${state.handoffReceipt.orderId}|${state.handoffReceipt.ver}`
       );
-    } else {
-      if (state.view !== "handoff-receipt") p.delete("tt_receipt");
+    } else if (state.view !== "handoff-receipt") {
+      p.delete("tt_receipt");
     }
     history.replaceState(null, "", `#${ROUTE}?${p}`);
   }
@@ -2366,7 +2395,20 @@
     } else {
       state.ttPrototypeRole = resolved.unsupported ? "manager" : resolved.role || "manager";
     }
-    state.recipientMode = p.get("tt_view") === "recipient";
+    const ttTok = p.get("tt_tok");
+    if (ttTok && isPublicGuestPage()) state.publicInvitationToken = ttTok;
+    let recipientFromUrl = p.get("tt_view") === "recipient";
+    if (
+      isPublicGuestPage() &&
+      !recipientFromUrl &&
+      ttTok &&
+      (p.get("tt_order") || p.get("tt_id")) &&
+      p.get("tt_via") === "qr"
+    ) {
+      recipientFromUrl = true;
+      p.set("tt_view", "recipient");
+    }
+    state.recipientMode = recipientFromUrl;
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
@@ -2375,12 +2417,14 @@
         hv: p.get("tt_hv"),
         rcv: p.get("tt_rcv"),
         order: oid,
-        tok: p.get("tt_tok"),
+        tok: ttTok,
       };
       resetPhoneIdentity();
       state.lkPhoneSessionToken = "";
       state.lkPhoneSessionKey = "";
-    } else state.recipientTicket = null;
+    } else if (!isPublicGuestPage() || p.get("tt_screen") !== "public-receipt") {
+      state.recipientTicket = null;
+    }
     const ordForRoute = oid ? orders.find((x) => x.id === oid) : null;
     if (ordForRoute?.status === "completed" && (state.recipientMode || state.view === "code")) {
       state.recipientMode = false;
@@ -2389,7 +2433,10 @@
       state.codeInput = "";
     }
     const scr = p.get("tt_screen");
-    if (scr) state.view = scr;
+    if (scr === "public-receipt" && isPublicGuestPage()) {
+      state.view = "public-receipt";
+      state.recipientMode = false;
+    } else if (scr) state.view = scr;
     else if (oid && !state.recipientMode) state.view = "detail";
     if (state.recipientMode) state.view = "recipient";
     if (state.view === "handoff-receipt") {
@@ -3378,6 +3425,14 @@
       lastViewKey = viewKey;
     }
 
+    if (state.view === "public-receipt" && isPublicGuestPage()) {
+      ttShellMounted = false;
+      main.innerHTML = `<div class="tt-work tt-work-recipient" data-testid="tan-tracker-public-receipt">${publicReceiptView()}${Att() ? Att().lightboxHtml() : ""}</div>`;
+      document.title = "Tandoor RF · Получение подтверждено";
+      lucide.createIcons();
+      return;
+    }
+
     if (state.recipientMode) {
       ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
@@ -3394,12 +3449,14 @@
         !Sc() ||
         Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId });
       const allowed = o && rcvOk && scopeOk;
-      const recipDemo = demoHeadPopoverHtml(
-        `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>`
-      );
+      const recipDemo = isPublicGuestPage()
+        ? ""
+        : demoHeadPopoverHtml(
+            `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>`
+          );
       main.innerHTML =
         o && allowed
-          ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact tt-head-compact-demo"><span class="tt-head-compact-label">Тан-трекер</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
+          ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact${isPublicGuestPage() ? "" : " tt-head-compact-demo"}"><span class="tt-head-compact-label">${isPublicGuestPage() ? "Получение передачи" : "Тан-трекер"}</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
           : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
@@ -4446,7 +4503,15 @@
     state.lkActorPartyId = data.actorPartyId || null;
     state.lkLinkedEmployeeId = data.linkedEmployeeId || null;
     state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
-    state.recipientMode = false;
+    if (window.__TT_PUBLIC_RECIPIENT__) {
+      readUrl();
+    } else {
+      state.recipientMode = false;
+    }
+    if (window.__TT_PUBLIC_INVITATION_TOKEN__) {
+      state.publicInvitationToken = window.__TT_PUBLIC_INVITATION_TOKEN__;
+      delete window.__TT_PUBLIC_INVITATION_TOKEN__;
+    }
     if (window.__TT_PUBLIC_RECEIPT__) {
       state.publicReceipt = window.__TT_PUBLIC_RECEIPT__;
       state.orderId = state.publicReceipt.publicCode || state.orderId;
