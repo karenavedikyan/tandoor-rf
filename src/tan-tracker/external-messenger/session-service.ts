@@ -125,6 +125,68 @@ export async function assertSessionTransferStillOpen(
   return { ok: true, expectedPhoneE164: phone };
 }
 
+/** Consume open handoff OTP rows without superseding messenger sessions or invitations. */
+export async function consumeOpenHandoffCodesForTransfer(
+  client: PoolClient,
+  transferId: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE tt_handoff_codes SET consumed_at = NOW()
+     WHERE transfer_id = $1 AND consumed_at IS NULL`,
+    [transferId],
+  );
+}
+
+async function resetSessionProofForChannelSwitch(
+  client: PoolClient,
+  session: ExternalMessengerSessionRow,
+): Promise<void> {
+  await consumeOpenHandoffCodesForTransfer(client, session.transfer_id);
+  await client.query(
+    `UPDATE tt_external_messenger_sessions
+     SET phone_verified_at = NULL,
+         code_issued_at = NULL
+     WHERE id = $1::uuid`,
+    [session.id],
+  );
+}
+
+/**
+ * Bind chat to session. Pre-confirm switch to another channel invalidates prior proof/codes
+ * (same session token) but keeps global contact/code issue counters.
+ */
+export async function bindSessionMessengerChat(
+  client: PoolClient,
+  session: ExternalMessengerSessionRow,
+  channel: "telegram" | "max",
+  chatId: bigint,
+  messengerUserId: bigint,
+): Promise<void> {
+  const switchingChannel = session.channel != null && session.channel !== channel;
+  if (switchingChannel) {
+    await resetSessionProofForChannelSwitch(client, session);
+  }
+
+  if (channel === "telegram") {
+    await client.query(
+      `UPDATE tt_external_messenger_sessions SET telegram_chat_id = $2, channel = 'telegram',
+              bound_telegram_user_id = $3,
+              max_chat_id = NULL, bound_max_user_id = NULL
+       WHERE id = $1::uuid`,
+      [session.id, chatId.toString(), messengerUserId.toString()],
+    );
+    return;
+  }
+  await client.query(
+    `UPDATE tt_external_messenger_sessions SET max_chat_id = $2, channel = 'max',
+            bound_max_user_id = $3,
+            telegram_chat_id = NULL, bound_telegram_user_id = NULL
+     WHERE id = $1::uuid`,
+    [session.id, chatId.toString(), messengerUserId.toString()],
+  );
+}
+
+/** @deprecated use bindSessionMessengerChat — kept for callers that only set channel when unset */
 export async function bindSessionChannel(
   client: PoolClient,
   sessionId: string,
@@ -134,30 +196,6 @@ export async function bindSessionChannel(
     `UPDATE tt_external_messenger_sessions SET channel = $2
      WHERE id = $1::uuid AND (channel IS NULL OR channel = $2)`,
     [sessionId, channel],
-  );
-}
-
-export async function bindSessionMessengerChat(
-  client: PoolClient,
-  sessionId: string,
-  channel: "telegram" | "max",
-  chatId: bigint,
-  messengerUserId: bigint,
-): Promise<void> {
-  if (channel === "telegram") {
-    await client.query(
-      `UPDATE tt_external_messenger_sessions SET telegram_chat_id = $2, channel = 'telegram',
-              bound_telegram_user_id = $3
-       WHERE id = $1::uuid`,
-      [sessionId, chatId.toString(), messengerUserId.toString()],
-    );
-    return;
-  }
-  await client.query(
-    `UPDATE tt_external_messenger_sessions SET max_chat_id = $2, channel = 'max',
-            bound_max_user_id = $3
-     WHERE id = $1::uuid`,
-    [sessionId, chatId.toString(), messengerUserId.toString()],
   );
 }
 

@@ -2,7 +2,6 @@ import type { PoolClient } from "pg";
 import { generateHandoffCodeForPendingParty } from "../../tan-tracker/handoff-code-generate";
 import {
   assertSessionTransferStillOpen,
-  bindSessionChannel,
   bindSessionMessengerChat,
   lockSessionByStartToken,
   lockSessionByTelegramChat,
@@ -73,8 +72,7 @@ export async function handleExternalRecipientStart(
   const open = await assertSessionTransferStillOpen(client, session);
   if (!open.ok) return { text: open.message };
 
-  await bindSessionChannel(client, session.id, input.channel);
-  await bindSessionMessengerChat(client, session.id, input.channel, input.chatId, input.messengerUserId);
+  await bindSessionMessengerChat(client, session, input.channel, input.chatId, input.messengerUserId);
   return {
     text: "Подтвердите свой номер телефона кнопкой ниже. Код придёт только в этот чат и только после совпадения номера с указанным отправителем.",
     requestContact: true,
@@ -154,10 +152,12 @@ export async function handleExternalRecipientMaxContact(
 
   const cfg = loadTanbotMaxStage2Config();
   if (!cfg.ok) return { text: "MAX временно недоступен." };
-  if (!input.contact.contactHash || !verifyMaxContactVcfHash(cfg.config.botToken, input.contact.vcfInfo, input.contact.contactHash)) {
+  if (
+    !verifyMaxContactVcfHash(cfg.config.botToken, input.contact.vcfInfo, input.contact.contactHash)
+  ) {
     return { text: "Не удалось проверить подлинность контакта MAX. Отправьте номер кнопкой «Отправить мой номер»." };
   }
-  if (input.contact.contactUserId != null && BigInt(input.contact.contactUserId) !== input.maxUserId) {
+  if (BigInt(input.contact.contactUserId) !== input.maxUserId) {
     return { text: "Нужен ваш собственный контакт из MAX." };
   }
 

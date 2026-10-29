@@ -12,6 +12,7 @@ import type { MaxDeliveryTransport, MaxDeliveryResult, MaxInlineButton } from ".
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { handleExternalRecipientMaxContact, handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
+import type { MaxContactAttachmentPayload } from "../tanbot/external-recipient/max-contact-verify";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 import {
   claimMaxUpdate,
@@ -52,9 +53,7 @@ async function processUpdateInTransaction(
   const callbackPayload = (update.callbackPayload as string | null) ?? null;
   const username = (update.username as string | null) ?? null;
   const firstName = (update.firstName as string | null) ?? null;
-  const contact = update.contact as
-    | { vcfInfo: string; contactUserId: number | null; contactHash: string | null }
-    | undefined;
+  const contact = update.contact as MaxContactAttachmentPayload | undefined;
   const isForwarded = Boolean(update.isForwarded);
   const claim = await claimMaxUpdate(client, update.dedupKey);
   if (claim.kind === "ignore") {

@@ -2,12 +2,18 @@ import crypto from "crypto";
 
 export type MaxContactAttachmentPayload = {
   vcfInfo: string;
-  contactUserId: number | null;
-  contactHash: string | null;
+  contactUserId: number;
+  contactHash: string;
 };
 
+/** Convert JSON-escaped CRLF/LF in vcf_info to real line breaks before HMAC (MAX platform API). */
+export function decodeVcfInfoForHmac(vcfInfo: string): string {
+  return vcfInfo.replace(/\\r\\n/g, "\r\n").replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+}
+
 export function extractPhoneFromVcf(vcfInfo: string): string | null {
-  const lines = vcfInfo.split(/\r?\n/);
+  const decoded = decodeVcfInfoForHmac(vcfInfo);
+  const lines = decoded.split(/\r?\n/);
   for (const line of lines) {
     const m = line.match(/^TEL(?:;[^:]*)?:(.+)$/i);
     if (m?.[1]) {
@@ -18,14 +24,15 @@ export function extractPhoneFromVcf(vcfInfo: string): string | null {
   return null;
 }
 
-/** MAX docs: HMAC-SHA256(botToken, decoded vcf_info) compared to attachment hash (hex). */
+/** MAX docs: HMAC-SHA256(access_token, decoded vcf_info) compared to payload.hash (hex). */
 export function verifyMaxContactVcfHash(
   botToken: string,
   vcfInfo: string,
   hashHex: string,
 ): boolean {
   if (!botToken || !vcfInfo || !hashHex) return false;
-  const expected = crypto.createHmac("sha256", botToken).update(vcfInfo, "utf8").digest();
+  const decoded = decodeVcfInfoForHmac(vcfInfo);
+  const expected = crypto.createHmac("sha256", botToken).update(decoded, "utf8").digest();
   let got: Buffer;
   try {
     got = Buffer.from(hashHex.trim(), "hex");
@@ -52,15 +59,13 @@ export function parseMaxContactFromMessage(message: Record<string, unknown>): Ma
     const p = payload as Record<string, unknown>;
     const vcfInfo = typeof p.vcf_info === "string" ? p.vcf_info : "";
     if (!vcfInfo.trim()) continue;
+    const contactHash = typeof p.hash === "string" && p.hash.trim() ? p.hash.trim() : "";
+    if (!contactHash) continue;
     const maxInfo = p.max_info;
-    let contactUserId: number | null = null;
-    let contactHash: string | null = null;
-    if (maxInfo && typeof maxInfo === "object" && !Array.isArray(maxInfo)) {
-      const mi = maxInfo as Record<string, unknown>;
-      if (typeof mi.user_id === "number") contactUserId = mi.user_id;
-      if (typeof mi.hash === "string") contactHash = mi.hash;
-    }
-    return { vcfInfo, contactUserId, contactHash };
+    if (!maxInfo || typeof maxInfo !== "object" || Array.isArray(maxInfo)) continue;
+    const mi = maxInfo as Record<string, unknown>;
+    if (typeof mi.user_id !== "number" || !Number.isInteger(mi.user_id) || mi.user_id <= 0) continue;
+    return { vcfInfo, contactUserId: mi.user_id, contactHash };
   }
   return null;
 }
