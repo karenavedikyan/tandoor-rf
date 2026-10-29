@@ -34,9 +34,9 @@
     app.className="aa";
     app.innerHTML='<nav class="aa-tabs" aria-label="Представления назначений">'+
       button("list","Назначения",'aria-pressed="'+(view==="list")+'"')+
-      (["manager","coordinator"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
-      (["coordinator","director"].includes(user.role)?button("activity","Активность РОА",'aria-pressed="'+(view==="activity")+'"'):"")+
-      (["manager","coordinator","director"].includes(user.role)?button("reviews",user.role==="manager"?"Оценить работу":"Оценки ассистентов",'aria-pressed="'+(view==="reviews")+'"'):"")+
+      (["manager","coordinator","admin"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
+      (["coordinator","director","admin"].includes(user.role)?button("activity","Активность РОА",'aria-pressed="'+(view==="activity")+'"'):"")+
+      (["manager","coordinator","director","admin"].includes(user.role)?button("reviews",user.role==="manager"?"Оценить работу":"Оценки ассистентов",'aria-pressed="'+(view==="reviews")+'"'):"")+
       '</nav><p id="aa-status" class="aa-muted" role="status" aria-live="polite"></p><div id="aa-view"></div><div id="aa-detail"></div>'+
       '<dialog id="aa-decision" class="aa-dialog"><form id="aa-decision-form"><h2 id="aa-decision-title"></h2><p id="aa-decision-note"></p><label>Основание или комментарий<textarea id="aa-decision-reason" minlength="5" maxlength="2000" required></textarea></label><p id="aa-decision-error" class="aa-error" role="alert"></p><div class="aa-actions">'+button("close-dialog","Отмена")+'<button type="submit" class="aa-primary">Подтвердить</button></div></form></dialog>';
     app.onclick=function(ev){ var b=ev.target.closest("[data-aa]"); if(b) run(function(){return click(b.dataset.aa,b);}); };
@@ -48,7 +48,7 @@
   function renderList() {
     var activity=view==="activity";
     $("aa-view").innerHTML='<section class="aa-box" id="aa-list-box"><div class="aa-toolbar"><h2>'+ (activity?"Активность координатора":"Назначения и заявки")+"</h2>"+button("fullscreen","На весь экран")+'</div>'+
-      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия. Директору доступен только просмотр.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':user.role==="admin"?'<p class="aa-note">Технический просмотр назначений. Согласование выполняет РОА. Оценки доступны автору оценки, РОА и директору.</p>':"")+
+      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':user.role==="admin"?'<p class="aa-note">Администратор: полный доступ к назначениям — подготовка, согласование и журнал. Обязательную оценку по-прежнему оставляет передающий менеджер.</p>':"")+
       '<form id="aa-list-filter" class="aa-toolbar"><label>Поиск<input name="q" type="search" placeholder="'+(activity?"Сотрудник, основание":"Менеджер, ассистент, номер")+'" value="'+e(listQuery)+'"></label>'+
       (activity?'<label>Действие<select name="action"><option value="">Все действия</option>'+Object.keys(labels).map(function(k){return '<option value="'+k+'" '+(k===historyAction?"selected":"")+">"+e(labels[k])+"</option>";}).join("")+'</select></label>':
         '<label>Статус<select name="status">'+[["","Все назначения"],["queue","На согласовании"],["active","Согласованные"],["draft","Черновики и возвраты"],["archive","Архив"]].map(function(x){return '<option value="'+x[0]+'" '+(x[0]===listStatus?"selected":"")+">"+x[1]+"</option>";}).join("")+'</select></label>')+
@@ -214,10 +214,10 @@
       reviews:function(){view="reviews";mount();},detail:openDetail,note:note};
     view=u.role==="director"?"activity":"list";listStatus=u.role==="coordinator"?"queue":"";
     run(async function(){
-      if(["manager","coordinator"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
-      if(u.role==="coordinator")managers=(await request("/coordinator-managers")).managers;
+      if(["manager","coordinator","admin"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
+      if(["coordinator","admin"].includes(u.role))managers=(await request("/coordinator-managers")).managers;
       var params=new URLSearchParams(window.location.search);
-      if(["manager","coordinator","director"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
+      if(["manager","coordinator","director","admin"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
       mount();var id=params.get("assignment");if(id)await openDetail(id);
       var reviewId=params.get("review");if(reviewId&&/^[0-9a-f-]{36}$/i.test(reviewId)&&window.AssignmentReviews)await window.AssignmentReviews.open(reviewId);
     });

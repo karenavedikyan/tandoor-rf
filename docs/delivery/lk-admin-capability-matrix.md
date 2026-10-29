@@ -9,8 +9,12 @@ Policy date: 2026-10-29. **Admin** (`users.role = admin`) is the functional supe
 | Tan-tracker recipients (no 1C link) | **Implemented** | Bootstrap catalog of active permitted users; `tt-user:<uuid>` materializes `tt_parties` on create. |
 | Tan-tracker handoff OTP | **Unchanged validation** | Only the real pending holder/recipient confirms codes; admin cannot bypass OTP as another person. |
 | Clients / sales API | **Already supported** | Existing `admin` / `fullClientBase` paths preserved. |
-| Assignments assistant search | **Implemented** | `/assignments/assistants` allows admin in addition to manager/coordinator. |
-| Assignment reviews (manager feedback) | **Still limited** | Reviews remain tied to the assigning manager identity; no admin impersonation of another user's rating. |
+| Assignments prepare (on behalf of manager) | **Implemented** | Admin/coordinator pick delegator + clients; manager remains owner in data. |
+| Assignments coordinator decisions | **Implemented** | Admin may approve/reject/return/revoke like coordinator (`lkCanCoordinatorAssignmentDecisions`). |
+| Assignments activity journal | **Implemented** | Admin reads activity like director/coordinator. |
+| Assignments assistant/manager pickers | **Implemented** | `/assignments/assistants`, `/coordinator-managers` for admin. |
+| Assignment reviews READ | **Implemented** | Admin reads overview/list/detail like director/coordinator. |
+| Assignment review WRITE (score) | **Still limited** | Only real delegating manager (`lkCanSubmitAssignmentReview`); admin cannot impersonate. |
 | Preview «Войти как» | **Read-only** | `preview.readOnly` blocks mutations across LK including Tan-tracker. |
 
 Verification: `test/unit/lk-role-capabilities.test.ts`, `test/integration/tan-tracker-admin-unlinked.test.ts`, `test/browser/tan-tracker-lk-write-capability.browser.test.ts`.

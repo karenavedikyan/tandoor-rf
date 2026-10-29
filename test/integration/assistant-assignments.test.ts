@@ -44,39 +44,43 @@ describe("assistant assignments: coordinator-only decisions and scoped access", 
     const r = await get(who, "/api/clients/v3/list?entity=legal&pageSize=100");
     assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.total as number;
   }
-  it("only coordinator approves; director, ROP, technical admin cannot approve through legacy URLs", async () => {
-    const id = await create(); assert.equal(await total(), 0);
-    for (const role of ["director", "rop", "admin", "manager", "assistant"]) assert.equal((await decide(id, "approve", role)).status, 403, role);
-    const admin = await request(app).post("/api/admin/access/delegations/" + id + "/record-approval")
+  it("coordinator and admin approve; director, ROP, manager-as-non-author cannot approve", async () => {
+    const id = await create();
+    assert.equal(await total(), 0);
+    for (const role of ["director", "rop", "manager", "assistant"]) {
+      assert.equal((await decide(id, "approve", role)).status, 403, role);
+    }
+    const adminBypass = await request(app).post("/api/admin/access/delegations/" + id + "/record-approval")
       .set({ Origin: ORIGIN, Cookie: cookies.admin! }).send({ basis: "Попытка обхода." });
-    assert.equal(admin.status, 403);
-    assert.equal((await decide(id, "approve")).status, 200);
+    assert.equal(adminBypass.status, 403);
+    assert.equal((await decide(id, "approve", "admin")).status, 200);
     assert.equal(await total(), 1);
     assert.equal((await decide(id, "approve")).status, 409);
   });
-  it("technical admin reads the registry and detail without author, approval or review permissions", async () => {
+  it("admin: registry, activity, reviews read, coordinator actions; cannot submit manager review", async () => {
     const id = await create();
     const list = await get("admin", "/api/access/assignments?page=1");
     assert.equal(list.status, 200);
     assert.equal(list.body.total, 1);
-    assert.equal(list.body.items[0].id, id);
-    assert.ok(!("review" in list.body.items[0]));
-    const detail = await get("admin", "/api/access/delegations/" + id);
-    assert.equal(detail.status, 200);
-    assert.equal(detail.body.delegation.canAuthor, false);
-    assert.equal(detail.body.delegation.canReview, false);
-    assert.ok(!("review" in detail.body.delegation));
-    assert.ok(Array.isArray(detail.body.delegation.history));
-    assert.equal((await get("admin", "/api/access/assignments?q=no-such-person")).body.total, 0);
-    assert.equal((await get("admin", "/api/access/assignments?status=archive")).body.total, 0);
-    assert.equal((await get("admin", "/api/access/assignments/activity")).status, 403);
-    assert.equal((await get("admin", "/api/access/assignments/reviews")).status, 403);
-    assert.equal((await get("admin", "/api/access/delegations/" + id + "/review")).status, 403);
-    assert.equal((await post("admin", "/delegations", terms())).status, 403);
-    for (const action of ["approve", "reject", "return", "revoke", "cancel", "submit"]) {
-      assert.equal((await decide(id, action, "admin")).status, 403, action);
-    }
+    const detailBefore = await get("admin", "/api/access/delegations/" + id);
+    assert.equal(detailBefore.status, 200);
+    assert.equal(detailBefore.body.delegation.canReview, true);
+    assert.equal((await decide(id, "approve", "admin")).status, 200);
+    const activity = await get("admin", "/api/access/assignments/activity?page=1");
+    assert.equal(activity.status, 200);
+    assert.ok(activity.body.items.some((r: { change_type: string }) => r.change_type === "approve"));
+    const reviews = await get("admin", "/api/access/assignments/reviews?page=1");
+    assert.equal(reviews.status, 200);
+    assert.ok(Array.isArray(reviews.body.items));
+    assert.equal((await get("admin", "/api/access/coordinator-managers")).status, 200);
+    assert.equal((await get("admin", "/api/access/assignments/assistants?q=")).status, 200);
+    const onBehalf = await post("admin", "/delegations", {
+      ...terms(),
+      delegatorUserId: users.manager!.id,
+    });
+    assert.equal(onBehalf.status, 201);
     assert.equal((await get("admin", "/api/auth/me")).body.user.role, "admin");
+    assert.equal((await post("admin", "/delegations/" + id + "/review", { score: 5, comment: "Попытка подмены оценки менеджера." })).status, 403);
   });
   it("foreign manager IDs and foreign client IDs cannot grant or reveal data", async () => {
     assert.equal((await post("manager", "/delegations", terms({ delegatorUserId: users.manager2!.id }))).status, 403);

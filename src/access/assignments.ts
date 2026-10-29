@@ -15,6 +15,13 @@ import { v3EntityAssignmentScope } from "../clients/v3/access-scope";
 import { v3JsonManagerField } from "../clients/v3/json-paths";
 import type { ActiveUserRow } from "./types";
 import { assignmentReviewStates, ensureReviewNotifications, pendingAssignmentReviews } from "./assignment-reviews";
+import {
+  lkCanAuthorAssignment,
+  lkCanCoordinatorAssignmentDecisions,
+  lkCanPickAssignmentManagers,
+  lkCanPrepareAssignmentOnBehalfOfManager,
+  lkCanReadAssignmentActivity,
+} from "../shared/lk-role-capabilities";
 
 type Row = Record<string, any>;
 export type AssignmentActor = { id: string; role: string };
@@ -34,14 +41,15 @@ async function actorInTransaction(c: PoolClient, actor: AssignmentActor): Promis
   return user;
 }
 function isAuthor(user: AssignmentActor, d: Row): boolean {
-  return user.role === "coordinator" ||
-    (user.role === "manager" && user.id === d.delegator_user_id);
+  return lkCanAuthorAssignment(user.role, user.id, String(d.delegator_user_id));
 }
 function requireAuthor(user: AssignmentActor, d: Row): void {
   if (!isAuthor(user, d)) fail("Недостаточно прав для изменения назначения.", "FORBIDDEN");
 }
 function requireCoordinator(user: AssignmentActor): void {
-  if (user.role !== "coordinator") fail("Решения принимает только координатор, руководитель ассистентов.", "FORBIDDEN");
+  if (!lkCanCoordinatorAssignmentDecisions(user.role)) {
+    fail("Решения принимает координатор (РОА) или администратор с полными правами.", "FORBIDDEN");
+  }
 }
 export async function assignmentClientsAccess(input: {
   actorUserId: string; actorRole: string; delegatorUserId: string; entries: DelegationClientEntry[];
@@ -84,10 +92,17 @@ async function validateTerms(c: PoolClient, user: AssignmentActor, delegatorId: 
       AND NOT EXISTS(SELECT 1 FROM access_denials ad WHERE ad.user_id=$3 AND ad.revoked_at IS NULL
         AND (ad.scope_type='all_clients' OR ad.object_id=le.guid_client))`, [guids.guids, employeeId, delegator.id]);
   if (owned.rowCount !== guids.guids.length) fail("Выбранные клиенты не входят в действующую базу передающего менеджера.", "FORBIDDEN");
-  if (user.role === "coordinator") {
+  if (user.role === "coordinator" || user.role === "admin") {
     const denied = await c.query(`SELECT 1 FROM access_denials WHERE user_id=$1 AND revoked_at IS NULL
       AND (scope_type='all_clients' OR object_id=ANY($2::uuid[])) LIMIT 1`, [user.id, guids.guids]);
-    if (denied.rowCount) fail("Явный запрет ограничивает доступ координатора к выбранным клиентам.", "FORBIDDEN");
+    if (denied.rowCount) {
+      fail(
+        user.role === "admin"
+          ? "Явный запрет ограничивает доступ администратора к выбранным клиентам."
+          : "Явный запрет ограничивает доступ координатора к выбранным клиентам.",
+        "FORBIDDEN",
+      );
+    }
   }
   return { clientGuids: guids.guids, ...window, assistantUserId: assistant.id, basis: text(body.basis, true) };
 }
@@ -187,7 +202,7 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
 export async function writeAssignment(actor: AssignmentActor, action: string, id: string | null, body: Row) {
   return withTransaction(async c => {
     const user = await actorInTransaction(c, actor);
-    if (!["manager", "coordinator"].includes(user.role)) fail("Эта роль не изменяет назначения.", "FORBIDDEN");
+    if (!["manager", "coordinator", "admin"].includes(user.role)) fail("Эта роль не изменяет назначения.", "FORBIDDEN");
     if (action === "create") {
       const delegatorId = user.role === "manager" ? user.id : String(body.delegatorUserId);
       if (user.role === "manager" && body.delegatorUserId && body.delegatorUserId !== user.id) fail("Выбирайте только своих клиентов.", "FORBIDDEN");
@@ -359,16 +374,16 @@ export async function assignmentDetail(actor: AssignmentActor, id: string) {
     }
     d.pending_change = Boolean(d.proposal);
     d.canAuthor = isAuthor(actor, d);
-    d.canReview = actor.role === "coordinator";
+    d.canReview = lkCanCoordinatorAssignmentDecisions(actor.role);
     const reviewStates = await assignmentReviewStates(actor, [id], c);
     if (reviewStates.has(id)) d.review = reviewStates.get(id);
     return presentStatus(d);
   });
 }
 export async function assignmentActivity(actor: AssignmentActor, page: number, action: string, q: string) {
-  if (!["coordinator", "director"].includes(actor.role)) fail("Журнал доступен координатору и директору.", "FORBIDDEN");
+  if (!lkCanReadAssignmentActivity(actor.role)) fail("Журнал доступен координатору, директору и администратору.", "FORBIDDEN");
   const params: unknown[] = ["%" + q.replace(/[%_\\]/g, "\\$&") + "%"];
-  let where = `h.actor_role='coordinator' AND (h.actor_name ILIKE $1 OR h.comment ILIKE $1 OR
+  let where = `h.actor_role IN ('coordinator','admin') AND (h.actor_name ILIKE $1 OR h.comment ILIKE $1 OR
     h.snapshot->>'delegator_name' ILIKE $1 OR h.snapshot->>'assistant_name' ILIKE $1)`;
   if (action) { params.push(action); where += ` AND h.change_type=$${params.length}`; }
   const count = await query(`SELECT COUNT(*)::int AS total FROM delegation_change_history h WHERE ${where}`, params);
@@ -387,12 +402,19 @@ export async function assignmentActivity(actor: AssignmentActor, page: number, a
 }
 
 export async function assignmentManagers(actor: AssignmentActor) {
-  requireCoordinator(actor);
+  if (!lkCanPickAssignmentManagers(actor.role)) fail("Недостаточно прав.", "FORBIDDEN");
   const result = await query(`SELECT id,full_name,email FROM users WHERE status='active' AND role IN('manager','rop') ORDER BY full_name,id`);
   return result.rows;
 }
 export async function assignmentPicker(actor: AssignmentActor, managerId: string, input: Row) {
-  if (!(actor.role === "coordinator" || actor.role === "manager" && actor.id === managerId)) fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
+  if (
+    !(
+      lkCanPrepareAssignmentOnBehalfOfManager(actor.role) ||
+      (actor.role === "manager" && actor.id === managerId)
+    )
+  ) {
+    fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
+  }
   const ctx = await loadAccessContext(managerId);
   const actorCtx = await loadAccessContext(actor.id);
   if (!["manager", "rop"].includes(ctx.role)) fail("Выберите передающего менеджера.");

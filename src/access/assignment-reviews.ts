@@ -2,6 +2,10 @@ import { query } from "../db/pool";
 import { AccessServiceError, withTransaction, type TransactionClient } from "./db";
 import { getActiveUser } from "./authorization";
 import type { AssignmentActor } from "./assignments";
+import {
+  lkCanReadAssignmentReviewsOverview,
+  lkCanSubmitAssignmentReview,
+} from "../shared/lk-role-capabilities";
 
 type Row = Record<string, any>;
 let ready = false;
@@ -25,8 +29,10 @@ export const REVIEW_ELIGIBLE_SQL = `d.status IN('active','expired','revoked')
   AND NOT EXISTS(SELECT 1 FROM delegation_change_requests cr
     WHERE cr.delegation_id=d.id AND cr.status='pending_approval')`;
 function scope(actor: AssignmentActor, params: unknown[]): string {
-  if (["coordinator", "director"].includes(actor.role)) return "TRUE";
-  if (actor.role !== "manager") fail("Оценки доступны автору, РОА и директору.", "FORBIDDEN");
+  if (["coordinator", "director", "admin"].includes(actor.role)) return "TRUE";
+  if (!lkCanReadAssignmentReviewsOverview(actor.role)) {
+    fail("Оценки доступны автору, РОА, директору и администратору.", "FORBIDDEN");
+  }
   params.push(actor.id);
   return `d.delegator_user_id=$${params.length}::uuid`;
 }
@@ -50,7 +56,9 @@ export function validateReview(body: Row): { score: number; comment: string } {
   return { score: body.score, comment };
 }
 export async function assignmentReviewStates(actor: AssignmentActor, ids: string[], client?: TransactionClient) {
-  if (!["manager", "coordinator", "director"].includes(actor.role) || !ids.length || !(await reviewSchemaReady(client))) return new Map<string, Row>();
+  if (!lkCanReadAssignmentReviewsOverview(actor.role) || !ids.length || !(await reviewSchemaReady(client))) {
+    return new Map<string, Row>();
+  }
   const params: unknown[] = [ids], where = scope(actor, params);
   const sql = `SELECT d.id,r.score,r.submitted_at,(${REVIEW_ELIGIBLE_SQL}) AS eligible
     FROM delegations d LEFT JOIN assistant_assignment_reviews r ON r.delegation_id=d.id
@@ -60,7 +68,7 @@ export async function assignmentReviewStates(actor: AssignmentActor, ids: string
     state: r.score ? "rated" : r.eligible ? "required" : "not_due",
     label: r.score ? "Закрыто с оценкой" : r.eligible ? "Ожидает обязательной оценки" : "",
     score: r.score || null, submittedAt: r.submitted_at || null,
-    canRate: !r.score && r.eligible && actor.role === "manager",
+    canRate: !r.score && r.eligible && lkCanSubmitAssignmentReview(actor.role),
   }]));
 }
 export async function pendingAssignmentReviews(actor: AssignmentActor) {
@@ -122,7 +130,7 @@ export async function listAssignmentReviews(actor: AssignmentActor, input: {
     (SELECT COUNT(*)::int FROM delegation_clients dc WHERE dc.delegation_id=d.id) AS client_count
     ${base}${where} ORDER BY COALESCE(r.submitted_at,LEAST(d.ends_at,COALESCE(d.revoked_at,d.ends_at))) DESC,d.id
     LIMIT 30 OFFSET $${params.length + 1}`, [...params, (input.page - 1) * 30]);
-  return { items: rows.rows.map(r => ({ ...r, canRate: actor.role === "manager" && !r.score,
+  return { items: rows.rows.map(r => ({ ...r, canRate: lkCanSubmitAssignmentReview(actor.role) && !r.score,
     state: r.score ? "rated" : "required" })), stats, assistants: assistants.rows,
     managers: managers.rows, total: count, page: input.page, pageSize: 30 };
 }
@@ -146,7 +154,9 @@ export async function submitAssignmentReview(actor: AssignmentActor, id: string,
   const values = validateReview(body);
   return withTransaction(async c => {
     const user = await getActiveUser(c, actor.id);
-    if (user.role !== actor.role || user.role !== "manager") fail("Оценку оставляет передающий менеджер.", "FORBIDDEN");
+    if (user.role !== actor.role || !lkCanSubmitAssignmentReview(user.role)) {
+      fail("Оценку оставляет передающий менеджер.", "FORBIDDEN");
+    }
     const locked = await c.query(`SELECT d.*,m.full_name AS manager_name,a.full_name AS assistant_name,
       (${REVIEW_ELIGIBLE_SQL}) AS eligible
       FROM delegations d JOIN users m ON m.id=d.delegator_user_id JOIN users a ON a.id=d.assistant_user_id
