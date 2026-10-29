@@ -144,7 +144,7 @@
     if(isAssistant()&&state.client&&!availableClients().includes(state.client)) state.client=null;
     document.title="Тандор · Назначения ассистентам · "+roles[state.role];
     const main=document.querySelector(".main"); if(!main)return;
-    const avatar=document.querySelector(".head .avatar");if(avatar){avatar.textContent=actor().split(" ").map(x=>x[0]).join("");avatar.title=actor();}
+    const avatar=document.getElementById("af-profile-btn")||document.querySelector(".head .avatar");if(avatar){avatar.textContent=actor().split(" ").map(x=>x[0]).join("");avatar.title=actor();}
     const sideNote=document.querySelector(".r-sidebar-note");
     if(sideNote)sideNote.innerHTML=E(actor())+"<br>"+E(scopeText());
     const sourceNote=document.querySelector(".sidebar .source-note");
@@ -439,7 +439,7 @@
     const m=state.modal;if(!m)return;
     const reason=document.getElementById("as-dialog-reason")?.value.trim()||"";
     const error=text=>{document.getElementById("as-dialog-error").textContent=text;};
-    if(m.kind==="reset"){seed();state.clock=initialClock;state.next=110;state.form=null;state.detail=null;state.client=null;state.modal=null;notify("Демонстрация сброшена.");renderWorkspace();return;}
+    if(m.kind==="reset"){seed();state.clock=initialClock;state.next=110;state.form=null;state.detail=null;state.client=null;state.modal=null;window.AssistantFeedback?.resetDemo?.();notify("Демонстрация сброшена.");renderWorkspace();return;}
     const a=assignments.find(a=>a.id===m.id);if(!a||!canSee(a))return error("Назначение недоступно для выбранной роли.");
     if(m.kind!=="approve"&&reason.length<5)return error("Укажите основание или результат: не менее 5 символов.");
     if(["approve","reject","return"].includes(m.kind)) {

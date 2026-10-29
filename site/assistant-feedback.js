@@ -4,7 +4,27 @@
   const names={manager:"Менеджер",coordinator:"РОА",director:"Директор",assistant:"Ассистент",rop:"РОП",admin:"Администратор"};
   let source,notes=[],reviews=[],seen=new Set(),previous=new Map(),seq=0,inbox=false,unreadOnly=false,dialog=null;
   let filters={q:"",assistant:"",manager:"",score:"",status:""};
+  let categoryFilter="all",profileDialog=null;
+  const STORE_KEY="tandoor-lk-notifications-demo-v1";
+  const categoryLabels={all:"Все",tt:"Тан-трекер",assign:"Назначения",system:"Система"};
   const defaults={manager:"m1",coordinator:"c1",director:"d1",assistant:"a1",rop:"r1",admin:"admin"};
+  function loadStore(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||{users:{}};}catch{return {users:{}};}}
+  function saveStore(store){try{localStorage.setItem(STORE_KEY,JSON.stringify(store));}catch{}}
+  function defaultDelivery(){return {telegram:{connected:false,label:""},max:{connected:false,label:""},prefs:{tt:true,assign:true,system:true},lastError:"",lastErrorAt:0};}
+  function deliveryFor(user){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};if(!store.users[user].delivery)store.users[user].delivery=defaultDelivery();return store.users[user].delivery;}
+  function persistDelivery(user,delivery){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};store.users[user].delivery=delivery;saveStore(store);}
+  function persistReadFlag(user,key,read){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};store.users[user].read[key]=read;saveStore(store);}
+  function storedRead(user,key){return !!loadStore().users[user]?.read?.[key];}
+  function noteCategory(n){if(n.kind==="tt-track")return "tt";if(n.kind==="info")return "system";return "assign";}
+  function categoryWanted(n){return categoryFilter==="all"||noteCategory(n)===categoryFilter;}
+  function deliveryStatusLine(n,user){
+    const d=deliveryFor(user),cat=noteCategory(n),prefKey=cat==="tt"?"tt":cat==="system"?"system":"assign";
+    if(!d.prefs[prefKey])return "Только в ЛК · тип отключён в настройках";
+    const channels=[];if(d.telegram.connected)channels.push("Telegram");if(d.max.connected)channels.push("MAX");
+    if(!channels.length)return "Только в ЛК · мессенджеры не подключены";
+    if(n.deliveryFail)return `В ЛК сохранено · ${channels.join(", ")}: ошибка доставки (демо)`;
+    return `В ЛК · ${channels.join(" + ")} (демо-отправка)`;
+  }
   const ctx=()=>P.routeActive()?{role:S.role,id:S.person}:typeof prototypeRole==="string"&&prototypeRole==="regional"?{role:"rop",id:"r1",label:"Региональный менеджер"}:{role:typeof prototypeRole==="string"?prototypeRole:"manager",id:defaults[typeof prototypeRole==="string"?prototypeRole:"manager"]||"m1"};
   const action=(key,label,id="",cls="")=>`<button type="button" class="${cls}" data-af="${key}" data-id="${E(id)}">${E(label)}</button>`;
   const revokedAt=a=>a.history.filter(h=>h.kind==="revoke"||/Доступ отозван/.test(h.text)).at(-1)?.at;
@@ -32,31 +52,44 @@
   const stars=value=>`<span class="af-stars" role="img" aria-label="${Number(value).toFixed(1)} из 5">${[1,2,3,4,5].map(v=>`<span class="af-star-glyph">${starIcon}<span class="af-star-fill" style="clip-path:inset(0 ${Math.round(100-100*Math.max(0,Math.min(1,value-v+1)))}% 0 0)">${starIcon}</span></span>`).join("")}</span>`;
   const outstanding=()=>source.filter(a=>canRate(a));
   const closure=a=>!["manager","coordinator","director"].includes(S.role)||S.role==="manager"&&a.manager!==S.person||!ended(a)?"":reviews.some(r=>r.assignment===a.id)?"Закрыто с оценкой":"Ожидает обязательной оценки";
-  function add(user,key,title,text,id,kind="detail",at=S.clock){
+  function add(user,key,title,text,id,kind="detail",at=S.clock,extra={}){
     const uid=user+":"+key;if(seen.has(uid))return;seen.add(uid);
-    notes.push({key:uid,user,title,text,id,kind,at,read:false,seq:++seq});
+    const read=storedRead(user,uid);
+    notes.push({key:uid,user,title,text,id,kind,at,read,seq:++seq,deliveryFail:!!extra.deliveryFail});
+    if(read)persistReadFlag(user,uid,true);
   }
   function upsert(user,key,title,text,id,kind,at){
     const uid=user+":"+key;seen.add(uid);
     const n=notes.find(x=>x.key===uid);
-    if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;return n;}
-    const row={key:uid,user,title,text,id,kind,at,read:false,seq:++seq};notes.push(row);return row;
+    if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;if(storedRead(user,uid))n.read=true;return n;}
+    const read=storedRead(user,uid);
+    const row={key:uid,user,title,text,id,kind,at,read,seq:++seq};notes.push(row);return row;
   }
+  function markReadNote(n,read=true){n.read=read;persistReadFlag(n.user,n.key,read);}
   function inboxUserId(){return noticeUserId();}
+  function ensureDemoDeliveryNote(user){
+    if(user!=="m1")return;
+    const n=upsert(user,"delivery-demo-fail","Напоминание: срок передачи сегодня","Демо-событие Tan-трекера для проверки ошибки доставки в мессенджер. История остаётся в ЛК.","TT-2026-001","tt-track",S.clock-1800000);
+    n.deliveryFail=true;if(storedRead(user,n.key))n.read=true;
+  }
   function syncTrackerInbox(){
     const TN=window.TanTrackerNotifications;
-    if(!TN?.forEmployee)return;
-    const user=inboxUserId(),items=TN.forEmployee(user)||[];
-    const keep=new Set(items.map(i=>user+":tt:"+i.key));
-    notes=notes.filter(n=>n.kind!=="tt-track"||n.user!==user||keep.has(n.key));
-    items.forEach(i=>{
-      const existing=notes.find(n=>n.key===user+":tt:"+i.key);
-      const at=Number.isFinite(i.at)?i.at:Date.now();
-      upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at);
-      if(existing?.read||i.read){
-        const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
-      }
-    });
+    const user=inboxUserId();
+    if(TN?.forEmployee){
+      const items=TN.forEmployee(user)||[];
+      const keep=new Set(items.map(i=>user+":tt:"+i.key));
+      keep.add(user+":tt:delivery-demo-fail");
+      notes=notes.filter(n=>n.kind!=="tt-track"||n.user!==user||keep.has(n.key));
+      items.forEach(i=>{
+        const existing=notes.find(n=>n.key===user+":tt:"+i.key);
+        const at=Number.isFinite(i.at)?i.at:Date.now();
+        upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at);
+        if(existing?.read||i.read){
+          const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
+        }
+      });
+    }
+    ensureDemoDeliveryNote(user);
   }
   function snapshot(a){return {assignment:a.id,manager:a.manager,assistant:a.assistant,clients:[...a.clients],start:a.start,
     end:a.status==="revoked"?Math.min(a.end,revokedAt(a)):a.end,agreedEnd:a.end,completion:a.status==="revoked"?"revoked":"period"};}
@@ -95,8 +128,12 @@
       `${P.person(r.assistant)} · ${r.score}/5 · ${r.assignment}. Оценка доступна РОА и директору.`,r.assignment,"rating",Math.min(r.at,S.clock-1000-i))));
     ["r1","r2"].forEach(id=>add(id,"team-info","Доступ ассистенту согласован РОА","Информация о временном доступе в вашей территории. Ваше согласование не требуется.",id==="r1"?"Н-102":"Н-107","detail",S.clock-7200000));
     add("admin","system","Служебные события доступны в ЛК","Уведомления персональные. Администратор не заменяет РОА при согласовании.",null,"info",S.clock-3600000);
+    notes.forEach(n=>{if(storedRead(n.user,n.key))n.read=true;});
+    ensureDemoDeliveryNote("m1");
+    const dm=deliveryFor("m1");if(!dm.lastError){dm.lastError="Демо: Telegram не доставил push (502). Событие сохранено в центре ЛК.";dm.lastErrorAt=S.clock-900000;persistDelivery("m1",dm);}
     remember();
   }
+  function resetDemo(){try{localStorage.removeItem(STORE_KEY);}catch{}categoryFilter="all";closeProfile();init();paint();}
   function signature(a){return {status:a.status,effective:P.effective(a),assistant:a.assistant,end:a.end,change:!!a.change,n:a.history.length};}
   function remember(){source.forEach(a=>previous.set(a.id,signature(a)));}
   function sync(){
@@ -162,6 +199,16 @@
     }
     sync();
     const head=document.querySelector(".head .right");if(!head)return;
+    const av=document.querySelector(".head .avatar");
+    let profileBtn=document.getElementById("af-profile-btn");
+    if(av&&!profileBtn){
+      profileBtn=document.createElement("button");profileBtn.type="button";profileBtn.id="af-profile-btn";profileBtn.className="avatar af-profile-btn";
+      profileBtn.textContent=av.textContent;profileBtn.title=av.title||"";      profileBtn.setAttribute("aria-label","Профиль: настройки уведомлений и доставки");profileBtn.dataset.af="profile-open";
+      av.replaceWith(profileBtn);
+    }else if(profileBtn){
+      const live=document.querySelector(".head span.avatar");
+      if(live){profileBtn.textContent=live.textContent;profileBtn.title=live.title||profileBtn.title;live.remove();}
+    }
     let bell=document.getElementById("af-bell");
     if(!bell){bell=document.createElement("button");bell.id="af-bell";bell.dataset.af="inbox";head.insertBefore(bell,head.querySelector("[data-theme]")||head.lastChild);}
     const unread=mine().filter(n=>!n.read).length;
@@ -193,25 +240,52 @@
       document.getElementById("app").append(reminder);
     }
     drawInbox();
+    drawProfile();
   }
   function drawInbox(){
     const old=document.getElementById("af-inbox"),scroll=old?.querySelector(".af-inbox-list")?.scrollTop||0;
     const focus=old?.contains(document.activeElement)?{key:document.activeElement.dataset.af,id:document.activeElement.dataset.id}:null;
     old?.remove();document.getElementById("af-shade")?.remove();
-    document.getElementById("app").inert=inbox;
-    if(!S.modal)document.body.style.overflow=inbox?"hidden":"";
+    document.getElementById("app").inert=inbox||!!profileDialog;
+    if(!S.modal)document.body.style.overflow=inbox||profileDialog?"hidden":"";
     if(!inbox)return;
     const shade=document.createElement("div");shade.id="af-shade";shade.dataset.af="close-inbox";shade.setAttribute("aria-hidden","true");document.body.append(shade);
-    const c=inboxContext(),rows=mine().filter(n=>!unreadOnly||!n.read).sort((a,b)=>b.at-a.at||b.seq-a.seq);
-    const el=document.createElement("aside");el.id="af-inbox";el.className="af af-inbox";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");el.setAttribute("aria-label","Уведомления");
-    el.innerHTML=`<div class="af-inbox-head"><div><h2>Уведомления</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p></div>${action("close-inbox","Закрыть")}</div>
-      <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}</div>
-      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||'<div class="af-empty"><h3>Новых уведомлений нет</h3><p>Все события останутся на вкладке «Все».</p></div>'}</div>
-      <p class="af-inbox-foot">Только внутри прототипа. Внешней отправки нет.</p>`;
+    const c=inboxContext(),user=inboxUserId();
+    const rows=mine().filter(n=>(!unreadOnly||!n.read)&&categoryWanted(n)).sort((a,b)=>b.at-a.at||b.seq-a.seq);
+    const catTools=Object.entries(categoryLabels).map(([k,l])=>action("cat-"+k,l,"",categoryFilter===k?"af-selected":"")).join("");
+    const el=document.createElement("aside");el.id="af-inbox";el.className="af af-inbox";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");el.setAttribute("aria-label","Центр уведомлений");
+    el.innerHTML=`<div class="af-inbox-head"><div><h2>Центр уведомлений</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p><p class="af-muted af-inbox-lead">История событий ЛК сохраняется здесь. Telegram и MAX — дополнительные каналы доставки (демо).</p></div>${action("close-inbox","Закрыть")}</div>
+      <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}${action("delivery-settings","Настройки доставки")}</div>
+      <div class="af-inbox-cats" role="group" aria-label="Категории">${catTools}</div>
+      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><span class="af-cat">${E(categoryLabels[noteCategory(n)])}</span><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК · ${E(deliveryStatusLine(n,user))}</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||`<div class="af-empty"><h3>${unreadOnly?"Непрочитанных нет":"По этому фильтру пусто"}</h3><p>Смените категорию или откройте «Все». События Tan-трекера, назначений и системные уведомления используют один центр.</p></div>`}</div>
+      <p class="af-inbox-foot">Демо прототипа: без реальных ботов, SMS и учётных записей. Статус доставки не удаляет событие из ЛК.</p>`;
     document.body.append(el);
     el.querySelector(".af-inbox-list").scrollTop=scroll;
     if(focus)([...el.querySelectorAll("button")].find(b=>b.dataset.af===focus.key&&b.dataset.id===focus.id)||el.querySelector("button")).focus();
   }
+  function closeProfile(){document.getElementById("af-profile-dialog")?.close();document.getElementById("af-profile-dialog")?.remove();profileDialog=null;}
+  function openProfile(fromInbox){
+    closeProfile();inbox=false;
+    const c=inboxContext(),user=inboxUserId(),d=deliveryFor(user);
+    const el=document.createElement("dialog");el.id="af-profile-dialog";el.className="af af-dialog af-profile-dialog";el.setAttribute("aria-labelledby","af-profile-title");
+    const channel=(kind,label)=>{const ch=d[kind];return `<article class="af-channel"><div class="af-line"><h3>${label}</h3><span class="af-channel-state ${ch.connected?"af-channel-on":"af-channel-off"}">${ch.connected?"Подключено (демо)":"Не подключено"}</span></div>
+      <p class="af-muted">${ch.connected?`Канал ${E(ch.label||"привязан")}. Это симуляция — реальная привязка не выполняется.`:"Подключение симулирует личную привязку канала без кодов и внешних ссылок."}</p>
+      <div class="af-actions">${ch.connected?action("disconnect-"+kind,"Отключить (демо)"):action("connect-"+kind,"Подключить (демо)")}</div></article>`;};
+    el.innerHTML=`<div class="af-line"><div><span class="af-eyebrow">Профиль · демо</span><h2 id="af-profile-title">Уведомления и доставка</h2></div>${action("profile-close","Закрыть")}</div>
+      <p class="af-required-copy"><strong>Единый центр ЛК.</strong> Tan-трекер, назначения и другие события используют одни настройки. История остаётся в личном кабинете, даже если Telegram и MAX отключены или доставка не удалась.</p>
+      <p class="af-muted">${E(P.person(c.id))} · ${E(c.label||names[c.role]||c.role)} · настройки сохраняются локально в браузере для этого демо-сотрудника.</p>
+      <fieldset class="af-delivery-prefs"><legend>Какие события дублировать в мессенджеры (демо)</legend>
+        ${[["tt","Tan-трекер: передачи и сроки"],["assign","Назначения и доступ"],["system","Системные и служебные"]].map(([k,t])=>`<label class="af-pref"><input type="checkbox" data-af="pref" data-id="${k}" ${d.prefs[k]?"checked":""}> ${E(t)}</label>`).join("")}
+      </fieldset>
+      ${channel("telegram","Telegram")}${channel("max","MAX")}
+      ${d.lastError?`<div class="af-delivery-error" role="status"><strong>Последняя ошибка доставки (демо)</strong><p>${E(d.lastError)}</p><p class="af-muted">${d.lastErrorAt?fmt(d.lastErrorAt)+" МСК":""}</p>${action("delivery-retry","Повторить отправку (демо)")}</div>`:""}
+      <p class="af-muted">Права доступа к разделам ЛК не меняются настройками уведомлений. Ассистент не получает оценки; РОП — только информационные сообщения, как в центре уведомлений.</p>`;
+    document.body.append(el);profileDialog=el;
+    el.addEventListener("cancel",e=>{e.preventDefault();closeProfile();(fromInbox?document.getElementById("af-bell"):document.getElementById("af-profile-btn"))?.focus();});
+    el.showModal();el.querySelector("button")?.focus();
+    document.getElementById("app").inert=true;if(!S.modal)document.body.style.overflow="hidden";
+  }
+  function drawProfile(){if(!profileDialog)return;document.getElementById("app").inert=true;}
   function openDialog(a,r){
     document.getElementById("af-review-dialog")?.remove();dialog={id:a.id,readonly:!!r,score:0};
     const el=document.createElement("dialog");el.id="af-review-dialog";el.className="af af-dialog";el.setAttribute("aria-labelledby","af-review-title");
@@ -227,7 +301,7 @@
   function refreshRatings(){P.go("ratings");}
   function openNote(n,frozenCtx){
     const routeCtx=frozenCtx||inboxContext();
-    n.read=true;inbox=false;
+    markReadNote(n);inbox=false;
     if(n.kind==="info"){paint();return;}
     if(n.kind==="tt-track"){
       const orderId=n.id;
@@ -262,8 +336,16 @@
     if(k==="inbox"){inbox=!inbox;paint();if(inbox)document.querySelector("#af-inbox button")?.focus();}
     if(k==="close-inbox"){inbox=false;paint();document.getElementById("af-bell")?.focus();}
     if(k==="all"||k==="unread"){unreadOnly=k==="unread";paint();}
-    if(k==="read-all"){mine().forEach(n=>n.read=true);paint();}
-    if(k==="read"){const n=mine().find(n=>n.key===id);if(n)n.read=true;paint();}
+    if(k==="read-all"){mine().forEach(n=>markReadNote(n));paint();}
+    if(k==="read"){const n=mine().find(n=>n.key===id);if(n)markReadNote(n);paint();}
+    if(k==="delivery-settings"){openProfile(true);}
+    if(k.startsWith("cat-")){categoryFilter=k.slice(4);paint();}
+    if(k==="profile-open"){openProfile(false);}
+    if(k==="profile-close"){closeProfile();document.getElementById("af-profile-btn")?.focus();paint();}
+    if(k==="connect-telegram"||k==="connect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=true;d[kind].label=kind==="telegram"?"@demo_"+user+"_tg":"MAX · demo "+user.toUpperCase();persistDelivery(user,d);openProfile(false);}
+    if(k==="disconnect-telegram"||k==="disconnect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=false;d[kind].label="";persistDelivery(user,d);openProfile(false);}
+    if(k==="delivery-retry"){const user=inboxUserId(),d=deliveryFor(user);d.lastError="";d.lastErrorAt=0;persistDelivery(user,d);if(P.routeActive()){S.toast="Демо: повторная отправка выполнена. События в ЛК не изменились.";P.render();}closeProfile();paint();}
+    if(b.matches("[data-af=pref]")){const user=inboxUserId(),d=deliveryFor(user);d.prefs[b.dataset.id]=b.checked;persistDelivery(user,d);}
     if(k==="open-note"){const n=mine().find(n=>n.key===id);if(n)openNote(n);}
     if(k==="ratings")refreshRatings();
     if(k==="required-rate"){
@@ -302,12 +384,13 @@
       e.preventDefault();const value=e.key==="Home"?1:e.key==="End"?5:Math.min(5,Math.max(1,+e.target.dataset.id+(["ArrowRight","ArrowUp"].includes(e.key)?1:-1)));
       const b=document.querySelector(`.af-stars-input [data-id="${value}"]`);b.focus();b.click();
     }
-    if(e.key==="Escape"&&inbox&&!dialog){inbox=false;paint();document.getElementById("af-bell")?.focus();}
+    if(e.key==="Escape"&&profileDialog&&!dialog){closeProfile();document.getElementById("af-profile-btn")?.focus();paint();}
+    if(e.key==="Escape"&&inbox&&!dialog&&!profileDialog){inbox=false;paint();document.getElementById("af-bell")?.focus();}
     if(e.key==="Tab"&&inbox&&!dialog){const nodes=[...document.querySelectorAll("#af-inbox button")];const first=nodes[0],last=nodes.at(-1);
       if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
   });
-  document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();paint.person=person;}paint();});
+  document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;categoryFilter="all";filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();closeProfile();paint.person=person;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
-  window.AssistantFeedback={view,closure};
+  window.AssistantFeedback={view,closure,resetDemo};
   init();P.render();paint();
 })();

@@ -58,6 +58,16 @@
 - Reviewed light/dark desktop and 375px star form and assistant summaries;
   1280x600 dialog scrolls to submit. New form labels measured at least 4.5:1.
 
+## Unified notification center and messenger delivery (prototype QA)
+
+- **Entry:** global header `#af-bell` (same bell as assignments feedback); profile `#af-profile-btn` (avatar) → dialog «Уведомления и доставка». Not a separate Tan-tracker settings page.
+- **Center:** title «Центр уведомлений»; filters **Все / Непрочитанные**, **Прочитать все**, category chips **Все · Tan-трекер · Назначения · Система**; timestamps; read/unread; deep links (`tt-track`, assignment, clients, rate/rating). Demo Tan-tracker handoff row with delivery-fail copy; assignment and system fixtures unchanged in spirit.
+- **Persistence:** read/unread and delivery prefs per demo employee in `localStorage` (`tandoor-lk-notifications-demo-v1`); survives reload; «Сбросить демо» in handover clears store via `AssistantFeedback.resetDemo()`.
+- **Delivery (demo):** Telegram + MAX connect/disconnect without codes/bots; shared prefs for all event types; status line under each item; LK history when channels off or delivery fails; profile «Повторить отправку (демо)» clears last error.
+- **A11y / layout:** `role="dialog"`, Escape, focus return; 375px inbox width; theme toggle; no duplicate bell.
+- **Doc:** `docs/prototype/unified-notification-center.md` (decision, privacy, LK vs delivery).
+- QA: `notification-center-qa.js` (center, categories, persistence, profile channels, TT shared inbox, 375+dark, clients route no pageerror). Regression: `assistant-feedback-qa.js` (44 assertions) unchanged scope.
+
 ## Notifications and completed-assignment feedback
 - Preserve manager picker, coordinator-only decisions, director audit and assistant
   41/20-client shared directory, cards, sales, full screen and both scroll axes.

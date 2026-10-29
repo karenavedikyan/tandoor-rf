@@ -10,7 +10,20 @@
 .af-inbox{position:fixed;z-index:190;right:20px;top:82px;width:460px;max-width:calc(100vw - 24px);height:min(740px,calc(100dvh - 100px));display:flex;flex-direction:column;background:var(--surface,#fff);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 42px #0003}
 #af-shade{position:fixed;inset:0;z-index:189;background:#0003}
 .af-inbox-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;padding:18px 20px 8px}.af-inbox-head p{margin:4px 0}
-.af-inbox-tools{display:flex;flex-wrap:wrap;gap:6px;padding:10px 20px 16px;border-bottom:1px solid var(--line)}
+.af-inbox-tools{display:flex;flex-wrap:wrap;gap:6px;padding:10px 20px 12px;border-bottom:1px solid var(--line)}
+.af-inbox-cats{display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 14px;border-bottom:1px solid var(--line)}
+.af-inbox-lead{font-size:12px;line-height:1.45;margin-top:6px;max-width:36em}
+.af-cat{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--af-muted);white-space:nowrap}
+.af-profile-btn{cursor:pointer;border:0;background:var(--green);color:var(--on-green,#fff);font-weight:600;min-width:44px;min-height:44px;border-radius:999px;display:inline-grid;place-items:center;padding:0 12px}
+.af-profile-btn:focus-visible{outline:3px solid var(--green);outline-offset:3px}
+.af-profile-dialog .af-channel{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:12px 0;background:var(--bg)}
+.af-channel-state{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--line)}
+.af-channel-on{background:color-mix(in srgb,var(--green) 14%,var(--surface,#fff));color:var(--green)}
+.af-channel-off{color:var(--af-muted)}
+.af-delivery-prefs{margin:16px 0}.af-delivery-prefs legend{font-weight:600;margin-bottom:8px}
+.af-pref{display:flex;gap:10px;align-items:flex-start;margin:8px 0;min-height:44px}
+.af-pref input{width:20px;height:20px;margin-top:2px}
+.af-delivery-error{border-left:4px solid #b37b20;background:color-mix(in srgb,#b37b20 8%,var(--surface,#fff));padding:12px 14px;border-radius:8px;margin:12px 0}
 .af-inbox-list{overflow:auto;min-height:0;flex:1;overscroll-behavior:contain}
 .af-note{padding:18px 20px;border-bottom:1px solid var(--line);border-left:4px solid transparent}.af-note p{margin:8px 0}.af-note .af-line{gap:8px}.af-note .af-line small{white-space:nowrap}
 .af-unread{border-left-color:var(--green);background:color-mix(in srgb,var(--green) 8%,var(--surface,#fff))}
@@ -51,4 +64,4 @@
 [data-theme=dark] .af-low{background:#403421;color:#f1d098;border-color:#a77c33}[data-theme=dark] #af-rating-error{color:#ffb7ac}
 [data-theme=dark] .af button[aria-pressed=true],[data-theme=dark] .af-selected{background:#b6d78c!important;color:#172410!important}
 [data-theme=dark] .af-bell span{background:#b6d78c;color:#172410}
-@media(max-width:700px){.af-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.af-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.af-filters>label:first-child{grid-column:1/-1}.af-assistants{grid-template-columns:1fr}.af-inbox{right:12px;top:74px;height:calc(100dvh - 90px)}.af-inbox-head,.af-inbox-tools,.af-note{padding-left:14px;padding-right:14px}.af-dialog{padding:18px}.af-rating-buttons{gap:4px}.af-rating-buttons small{font-size:10px}.af-score{white-space:normal}.af-line{flex-wrap:wrap}.af-inbox-head .af-line{flex-wrap:nowrap}.head .right{gap:8px}.head .logo{max-width:120px}.head .brand{display:none}.head .demo{display:none}}
+@media(max-width:700px){.af-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.af-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.af-filters>label:first-child{grid-column:1/-1}.af-assistants{grid-template-columns:1fr}.af-inbox{right:12px;top:74px;height:calc(100dvh - 90px)}.af-inbox-head,.af-inbox-tools,.af-inbox-cats,.af-note{padding-left:14px;padding-right:14px}.af-dialog{padding:18px}.af-rating-buttons{gap:4px}.af-rating-buttons small{font-size:10px}.af-score{white-space:normal}.af-line{flex-wrap:wrap}.af-inbox-head .af-line{flex-wrap:nowrap}.head .right{gap:8px}.head .logo{max-width:120px}.head .brand{display:none}.head .demo{display:none}.head .af-profile-btn{display:inline-grid!important}}
