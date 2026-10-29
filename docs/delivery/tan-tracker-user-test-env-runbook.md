@@ -34,7 +34,7 @@
 | `TT_USER_TEST_DEFAULT_PASSWORD` | Только в shell при **seed** (≥12 символов), не в git |
 | `TT56_USER_TEST_DB_PASSWORD` | Только при **init-db** |
 | `TT_USER_TEST_RESET_CONFIRM` | `yes` — только для **reset** |
-| `ONEC_FTP_ENABLED`, `BITRIX24_ENABLED`, `TANBOT_TELEGRAM_ENABLED` | `false` |
+| `ONEC_FTP_ENABLED`, `ONEC_NIGHTLY_EXCHANGE_ENABLED`, `BITRIX24_ENABLED`, `TANBOT_*` | `false` (fail-closed при старте) |
 
 Guards: `assertTanTrackerUserTestDatabaseUrl` в seed/start/reset; test SMS в production запрещён (`phone-verification.ts`).
 
