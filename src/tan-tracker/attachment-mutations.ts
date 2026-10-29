@@ -103,6 +103,44 @@ export async function deleteTransferAttachmentInTransaction(
   await deleteAttachmentBytes(deleted.storage_key, client);
 }
 
+/** Atomic holder check + staged link under transfer row lock. */
+export async function addTransferAttachmentsInTransaction(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    userId: string;
+    stagingIds: string[];
+    actorPartyId: string;
+    scopeCtx: TanTrackerScopeContext;
+    teamGuids: Set<string> | null;
+    partyMap: Awaited<ReturnType<typeof loadPartyEmployeeMap>>;
+  },
+): Promise<void> {
+  const locked = await client.query(
+    `SELECT id, public_code, item_title, qty_label, comment_text, status,
+            creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
+            due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
+     FROM tt_transfers
+     WHERE id = $1 OR public_code = $1
+     LIMIT 1
+     FOR UPDATE`,
+    [input.transferId],
+  );
+  const row = locked.rows[0];
+  if (!row) {
+    throw Object.assign(new Error("Передача не найдена."), { http: 404 });
+  }
+  const dto = await loadOrderDtoFromRow(client, row);
+  if (
+    !canViewOrder(dto, input.scopeCtx, [], input.teamGuids, false, input.partyMap) ||
+    dto.holderId !== input.actorPartyId ||
+    dto.status === "completed"
+  ) {
+    throw Object.assign(new Error("Нельзя прикрепить файлы к этой передаче."), { http: 403 });
+  }
+  await linkStagedAttachmentsToTransfer(client, input.userId, dto.id, input.stagingIds);
+}
+
 async function holderScope(
   user: { id: string; role: string },
   access: AccessContext,
@@ -170,7 +208,15 @@ export async function addTransferAttachmentsHandler(req: AccessRequest, res: Res
 
   try {
     await withTransaction(async (client) => {
-      await linkStagedAttachmentsToTransfer(client, user.id, dto.id, stagingIds);
+      await addTransferAttachmentsInTransaction(client, {
+        transferId,
+        userId: user.id,
+        stagingIds,
+        actorPartyId: scope.ctx.actorPartyId!,
+        scopeCtx: scope.ctx,
+        teamGuids: scope.teamGuids,
+        partyMap,
+      });
     });
   } catch (err: unknown) {
     const http = (err as { http?: number }).http;

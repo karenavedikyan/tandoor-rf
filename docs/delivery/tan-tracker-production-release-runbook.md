@@ -87,6 +87,7 @@ Webhook URL (production): `https://lk.tandoor.ru/api/tanbot-telegram/webhook` (s
 ## Durable attachments — ограничения
 
 - Лимиты API не изменены: 10 MB/файл, 10 файлов/передача, 50 MB суммарно на передачу.
+- Прикрепление и delete сериализуются по строке `tt_transfers` (`FOR UPDATE`): holder/completed и count/bytes проверяются в той же транзакции, что и link/delete.
 - Байты в `BYTEA`: рост ≈ сумма загруженных файлов минус явные delete. **Мониторинг:** `pg_database_size`, `pg_total_relation_size('tt_attachment_blobs')`, периодический отчёт; при необходимости — политика retention для `tt_staged_attachments` с `consumed_at` и orphan blobs (оператор, не в этом релизе).
 - Учебный стенд: `TT_ATTACHMENTS_DIR` + backend `filesystem` (default при `TT_USER_TEST_ENV` / `NODE_ENV=test`).
 
@@ -99,6 +100,7 @@ Webhook URL (production): `https://lk.tandoor.ru/api/tanbot-telegram/webhook` (s
 | `npm test` | см. отчёт SHA |
 | `npm audit --omit=dev` | см. отчёт SHA |
 | `test/integration/tan-tracker-attachment-delete-postgres.test.ts` | metadata+blob delete, rollback, ACL, subprocess read |
+| `test/integration/tan-tracker-attachment-add-concurrency.test.ts` | concurrent add vs completed, file/byte limits, staged rollback |
 | `test/unit/server-background-integrations.test.ts` | independent 1C/Tanbot chains |
 | Browser UI на lk.tandoor.ru | NOT_RUN |
 

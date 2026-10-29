@@ -130,6 +130,15 @@ export async function linkStagedAttachmentsToTransfer(
   stagingIds: string[],
 ): Promise<void> {
   if (!stagingIds.length) return;
+
+  const lockedTransfer = await client.query(
+    `SELECT id FROM tt_transfers WHERE id = $1 LIMIT 1 FOR UPDATE`,
+    [transferId],
+  );
+  if (!lockedTransfer.rowCount) {
+    throw Object.assign(new Error("Передача не найдена."), { http: 404 });
+  }
+
   const res = await client.query<{ id: string; storage_key: string; original_name: string; mime_type: string; byte_size: string }>(
     `SELECT id::text, storage_key, original_name, mime_type, byte_size::text
      FROM tt_staged_attachments

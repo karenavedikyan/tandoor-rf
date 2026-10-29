@@ -8,10 +8,7 @@ tmp/
 .tt56-prototype-ref/
 var/tt-attachments/
 var/tt56-user-test/
-<<<<<<< HEAD
 var/git-worktrees/
 var/tt56-user-test-legacy-upgrade/
 var/tt56-user-test-legacy-fresh/
-=======
->>>>>>> origin/cursor/tanbot-max-stage1-20261029
 .env.tan-tracker-user-test.local
