@@ -8,4 +8,7 @@ tmp/
 .tt56-prototype-ref/
 var/tt-attachments/
 var/tt56-user-test/
+var/git-worktrees/
+var/tt56-user-test-legacy-upgrade/
+var/tt56-user-test-legacy-fresh/
 .env.tan-tracker-user-test.local

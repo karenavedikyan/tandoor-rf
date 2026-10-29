@@ -19,6 +19,34 @@ export const FIXTURE = {
   TRANSFER_DONE: "TT56-S-DONE-01",
 };
 
+/** Fixture attachments seeded with stable storage keys (see seedAttachment). */
+export const FIXTURE_ATTACHMENT_SPECS = [
+  { storageKey: "tt56-seed-active-a.txt", transferId: FIXTURE.TRANSFER_ACTIVE_A, name: "seed-active-a.txt" },
+  { storageKey: "tt56-seed-wait-ab.txt", transferId: FIXTURE.TRANSFER_WAIT_AB, name: "seed-wait-ab.txt" },
+];
+
+/**
+ * Legacy upgrade: fixture transfer already exists but attachment was removed before provenance existed.
+ * Record tombstone so seed does not recreate the file/row.
+ */
+export async function markLegacyDeletedFixtureAttachments(client) {
+  for (const spec of FIXTURE_ATTACHMENT_SPECS) {
+    const transfer = await client.query(`SELECT 1 FROM tt_transfers WHERE id = $1 LIMIT 1`, [spec.transferId]);
+    if (!transfer.rowCount) continue;
+
+    const attachment = await client.query(
+      `SELECT 1 FROM tt_transfer_attachments WHERE storage_key = $1 LIMIT 1`,
+      [spec.storageKey],
+    );
+    if (attachment.rowCount) continue;
+
+    await client.query(
+      `INSERT INTO tt56_user_test_fixture_provenance (storage_key) VALUES ($1) ON CONFLICT DO NOTHING`,
+      [spec.storageKey],
+    );
+  }
+}
+
 async function upsertEmployeeLink(client, userId, employeeId, adminId) {
   const updated = await client.query(
     `UPDATE user_onec_employee_links
@@ -133,6 +161,7 @@ async function seedAttachment(client, repoRoot, transferId, storageKey, name, up
 
 export async function seedTanTrackerFixtures(client, ctx) {
   const { userIds, adminId, repoRoot } = ctx;
+  await markLegacyDeletedFixtureAttachments(client);
   const partyA = await ensurePartyForUserOnWrite(
     client,
     userIds.employeeA,

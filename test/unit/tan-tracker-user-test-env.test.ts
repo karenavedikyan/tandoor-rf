@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   TT56_USER_TEST_DATABASE_NAME,
+  TT56_USER_TEST_SEED_EXTRA_DATABASE_NAMES,
   assertTanTrackerUserTestDatabaseUrl,
+  assertTanTrackerUserTestSeedDatabaseUrl,
   isTanTrackerUserTestEnv,
 } from "../../src/shared/tan-tracker-user-test-env";
 import {
@@ -11,6 +13,20 @@ import {
 } from "../../src/tan-tracker/phone-verification";
 
 describe("tan-tracker user test env guards", () => {
+  it("allows approved extra names for seed only", () => {
+    for (const dbName of TT56_USER_TEST_SEED_EXTRA_DATABASE_NAMES) {
+      assert.doesNotThrow(() =>
+        assertTanTrackerUserTestSeedDatabaseUrl(`postgresql://u:p@127.0.0.1:5432/${dbName}`, "seed"),
+      );
+    }
+    assert.throws(() =>
+      assertTanTrackerUserTestSeedDatabaseUrl(
+        "postgresql://u:p@127.0.0.1:5432/tandoor_rf_prod",
+        "seed",
+      ),
+    );
+  });
+
   it("allows only dedicated database name", () => {
     assert.throws(
       () =>

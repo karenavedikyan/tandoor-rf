@@ -141,5 +141,17 @@ describe("tan-tracker user-test seed idempotency", { concurrency: false, skip: !
       [FIXTURE.TEAM],
     );
     assert.equal(team.rows[0]!.name_team_leader, "ROP Lead");
+
+    const customLeader = "QA user-edited leader idempotency";
+    await pool.query(
+      `UPDATE onec_wholesale_team_groups SET name_team_leader = $2 WHERE guid_team = $1::uuid`,
+      [FIXTURE.TEAM, customLeader],
+    );
+    runSeed(databaseUrl);
+    const preserved = await pool.query(
+      `SELECT name_team_leader FROM onec_wholesale_team_groups WHERE guid_team = $1::uuid`,
+      [FIXTURE.TEAM],
+    );
+    assert.equal(preserved.rows[0]!.name_team_leader, customLeader);
   });
 });

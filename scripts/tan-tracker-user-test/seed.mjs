@@ -7,7 +7,7 @@ import { runMigrations } from "../../dist/db/migrate-runner.js";
 import { hashPassword } from "../../dist/auth/password.js";
 import {
   TT56_USER_TEST_DATABASE_NAME,
-  assertTanTrackerUserTestDatabaseUrl,
+  assertTanTrackerUserTestSeedDatabaseUrl,
 } from "../../dist/shared/tan-tracker-user-test-env.js";
 import {
   FIXTURE,
@@ -54,7 +54,7 @@ async function cleanupLegacyRoster(client) {
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required.");
-  assertTanTrackerUserTestDatabaseUrl(databaseUrl, "seed");
+  assertTanTrackerUserTestSeedDatabaseUrl(databaseUrl, "seed");
 
   const password = process.env.TT_USER_TEST_DEFAULT_PASSWORD?.trim();
   if (!password || password.length < 12) {
@@ -131,7 +131,6 @@ async function main() {
        VALUES ($1::uuid, 'TT56 test team', $2::uuid, 'ROP Lead')
        ON CONFLICT (guid_team) DO UPDATE SET
          guid_team_leader = EXCLUDED.guid_team_leader,
-         name_team_leader = EXCLUDED.name_team_leader,
          name_team = EXCLUDED.name_team`,
       [FIXTURE.TEAM, FIXTURE.EMP_ROP],
     );
@@ -139,8 +138,8 @@ async function main() {
       `UPDATE onec_wholesale_team_groups
        SET name_team_leader = 'ROP Lead'
        WHERE guid_team = $1::uuid
-         AND name_team_leader ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
-      [FIXTURE.TEAM],
+         AND name_team_leader = $2`,
+      [FIXTURE.TEAM, FIXTURE.EMP_ROP],
     );
     await client.query(`DELETE FROM onec_wholesale_employee_team_memberships WHERE guid_team = $1::uuid`, [
       FIXTURE.TEAM,
